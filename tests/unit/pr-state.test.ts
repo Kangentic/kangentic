@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { prStatePresentation, prMergeReadinessTooltip } from '../../src/renderer/lib/pr-state';
+import { prStatePresentation, prPillPresentation, prMergeReadinessTooltip } from '../../src/renderer/lib/pr-state';
 import { PR_MERGE_READINESS_VALUES } from '../../src/shared/types';
 import type { PRMergeReadiness, PRState } from '../../src/shared/types';
 
@@ -45,10 +45,10 @@ describe('prStatePresentation', () => {
       expect(result.badgeClass.length).toBeGreaterThan(0);
     });
 
-    it('closed state badgeClass includes red', () => {
+    it('closed state badgeClass is the neutral grey, never the red of a PR that needs fixing', () => {
       const result = prStatePresentation('closed');
-      expect(result.badgeClass).toContain('red');
-      expect(result.badgeClass.length).toBeGreaterThan(0);
+      expect(result.badgeClass).toContain('fg-muted');
+      expect(result.badgeClass).not.toContain('red');
     });
   });
 
@@ -63,7 +63,7 @@ describe('prStatePresentation', () => {
     it('draft returns the exact expected object', () => {
       expect(prStatePresentation('draft')).toEqual({
         label: 'draft',
-        badgeClass: 'bg-fg-muted/10 text-fg-muted ring-1 ring-fg-muted/20',
+        badgeClass: 'bg-surface-hover/50 text-fg-muted ring-1 ring-fg-muted/20',
       });
     });
 
@@ -77,7 +77,7 @@ describe('prStatePresentation', () => {
     it('closed returns the exact expected object', () => {
       expect(prStatePresentation('closed')).toEqual({
         label: 'closed',
-        badgeClass: 'bg-red-400/10 text-red-400 ring-1 ring-red-400/20',
+        badgeClass: 'bg-surface-hover/50 text-fg-muted ring-1 ring-fg-muted/20',
       });
     });
   });
@@ -121,10 +121,10 @@ describe('prStatePresentation', () => {
 /**
  * Merge readiness folds into the OPEN chip and nowhere else. The decisions
  * pinned here: `ready` keeps the open hue (one hue per card, and the promise
- * is the same green), `blocked` is amber, `conflicts` is orange rather than
- * red so it cannot be mistaken for `closed` at a glance, an undetermined or
- * pending verdict keeps plain `open`, and a stale verdict on a non-open PR is
- * ignored outright.
+ * is the same green), `failing` and `conflicts` are red (an agent can fix
+ * both; closed is grey so it cannot be mistaken for them), `blocked` is amber,
+ * an undetermined or pending verdict keeps plain `open`, and a stale verdict on
+ * a non-open PR is ignored outright.
  */
 describe('prStatePresentation with merge readiness', () => {
   // Derived from the runtime list, not retyped, so a value added to
@@ -151,14 +151,16 @@ describe('prStatePresentation with merge readiness', () => {
     });
   });
 
-  it('open + conflicting is orange, never the red that closed uses', () => {
-    const result = prStatePresentation('open', 'conflicting');
-    expect(result).toEqual({
-      label: 'conflicts',
-      badgeClass: 'bg-orange-400/10 text-orange-400 ring-1 ring-orange-400/20',
-    });
-    expect(result.badgeClass).not.toContain('red');
-  });
+  it.each([['failing', 'checks failing'], ['conflicting', 'conflicts']] as Array<[PRMergeReadiness, string]>)(
+    'open + %s is red, the hue closed no longer uses',
+    (readiness, label) => {
+      expect(prStatePresentation('open', readiness)).toEqual({
+        label,
+        badgeClass: 'bg-red-400/10 text-red-400 ring-1 ring-red-400/20',
+      });
+      expect(prStatePresentation('closed').badgeClass).not.toBe(prStatePresentation('open', readiness).badgeClass);
+    },
+  );
 
   it.each(['queued', 'running'] as PRMergeReadiness[])(
     'open + %s is sky, distinct from every pass / fail hue and from draft grey',
@@ -218,7 +220,7 @@ describe('prStatePresentation with merge readiness', () => {
 });
 
 describe('prMergeReadinessTooltip', () => {
-  it.each(['ready', 'blocked', 'conflicting', 'queued', 'running'] as PRMergeReadiness[])(
+  it.each(['ready', 'failing', 'blocked', 'conflicting', 'queued', 'running'] as PRMergeReadiness[])(
     'names the caveat for an open PR judged %s',
     (readiness) => {
       const tooltip = prMergeReadinessTooltip('open', readiness);
@@ -242,5 +244,52 @@ describe('prMergeReadinessTooltip', () => {
     for (const state of ['draft', 'merged', 'closed', null, undefined] as Array<PRState | null | undefined>) {
       expect(prMergeReadinessTooltip(state, 'ready'), String(state)).toBeUndefined();
     }
+  });
+});
+
+/**
+ * The compact pill carries no state word, so its glyph and tint must tell
+ * every state apart on their own: two states may share a glyph only if their
+ * tint differs, and vice versa. Only checks in flight pulse.
+ */
+describe('prPillPresentation', () => {
+  const OPEN_VERDICTS = PR_MERGE_READINESS_VALUES.filter((readiness) => readiness !== 'unknown');
+
+  it('gives every open verdict and every other state its own glyph and tint pair', () => {
+    const looks = new Map<string, string>();
+    const cases: Array<[string, PRState, PRMergeReadiness | null]> = [
+      ...OPEN_VERDICTS.map((readiness): [string, PRState, PRMergeReadiness] => [`open/${readiness}`, 'open', readiness]),
+      ['draft', 'draft', null],
+      ['merged', 'merged', null],
+      ['closed', 'closed', null],
+    ];
+    const glyphIds = new Map<object, number>();
+    for (const [name, state, readiness] of cases) {
+      const { glyph, toneClass } = prPillPresentation(state, readiness);
+      if (!glyphIds.has(glyph)) glyphIds.set(glyph, glyphIds.size);
+      looks.set(name, `${glyphIds.get(glyph)}|${toneClass}`);
+    }
+    // ready and queued/running pairs are the deliberate shares: ready is the
+    // open green, and queued and running are one "not done yet" look.
+    expect(looks.get('open/queued')).toBe(looks.get('open/running'));
+    const distinct = new Set(
+      [...looks.entries()].filter(([name]) => name !== 'open/running').map(([, look]) => look),
+    );
+    expect(distinct.size).toBe(looks.size - 1);
+  });
+
+  it('pulses only while checks are queued or running', () => {
+    for (const readiness of PR_MERGE_READINESS_VALUES) {
+      expect(prPillPresentation('open', readiness).pulse, readiness).toBe(readiness === 'queued' || readiness === 'running');
+    }
+    for (const state of ['draft', 'merged', 'closed'] as PRState[]) {
+      expect(prPillPresentation(state, 'running').pulse, state).toBe(false);
+    }
+  });
+
+  it('draws the conflict glyph only for a conflict, and the neutral pill for an unknown state', () => {
+    expect(prPillPresentation('open', 'conflicting').glyph).not.toBe(prPillPresentation('open', 'failing').glyph);
+    expect(prPillPresentation('open', 'failing').toneClass).toBe(prPillPresentation('open', 'conflicting').toneClass);
+    expect(prPillPresentation(null).toneClass).toBe(prPillPresentation('closed').toneClass);
   });
 });

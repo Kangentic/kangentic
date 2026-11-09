@@ -79,7 +79,7 @@ export function MonitorBody() {
   const setView = useMonitorStore((state) => state.setView);
   const closeMonitor = useMonitorStore((state) => state.close);
 
-  // Memoized so LabelPills' own React.memo is not defeated by a fresh object
+  // Memoized so TaskPills' own React.memo is not defeated by a fresh object
   // identity on every render (the trap TaskCard documents).
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors);
   const resolvedLabelColors = useMemo(() => labelColors ?? {}, [labelColors]);

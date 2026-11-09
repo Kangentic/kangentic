@@ -825,6 +825,23 @@
   50%      { opacity: 0.4; }
 }
 
+/* The PR pill's edge while its checks are queued or running: an inset ring over
+   the pill's own tint, fading in and out. 2800ms is twice the activity marks'
+   shared period, so on a card it breathes once for every two turns of the
+   working mark beside it and never beats against it (the 1400ms version read as
+   a second spinner). Opacity only, composited, and `PrLink` anchors it to the
+   document timeline as `ActivityMark` does, so every running pill on screen is
+   in phase and a re-mount or project switch never restarts it. With motion off
+   the animation is zeroed and the ring rests at full strength. */
+.kng-pr-pulse {
+  animation: pr-pulse 2800ms ease-in-out infinite;
+}
+
+@keyframes pr-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
+}
+
 
 /* Brief brightness + scale pulse for live-updating values */
 @keyframes value-update {
@@ -1017,6 +1034,12 @@
      carry the state on their own; the run-based timing that keeps the cue from
      churning is scheduling rather than animation and is unaffected. */
   .kng-drive-pulse {
+    animation: none;
+  }
+
+  /* The PR pill's ring rests at full strength; the sky tint and the pill's tip
+     carry "checks in flight" on their own. */
+  .kng-pr-pulse {
     animation: none;
   }
 

@@ -192,6 +192,10 @@ msgstr "{oldPath} na {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "{passedCount} passed"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
@@ -217,6 +221,10 @@ msgstr "{pillLabel}: {reason}"
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position} z {total}"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -707,6 +715,10 @@ msgstr "Změny jsou otevřené ve vlastním okně"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Checks"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
 msgstr ""
@@ -948,6 +960,14 @@ msgstr "Podmínka: {condition}"
 msgid "Confirm"
 msgstr "Potvrdit"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with {base}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with the base branch"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Connected"
@@ -1128,6 +1148,10 @@ msgstr "Profily se nepodařilo uložit"
 #, fuzzy
 msgid "Couldn't save task"
 msgstr "Úkol nelze uložit"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Couldn't send the failed checks"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -1556,6 +1580,10 @@ msgstr "Předání"
 #, fuzzy
 msgid "Handoff Chain"
 msgstr "Řetězec předání"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Held for the next agent"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2199,10 +2227,18 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "otevřený"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open {name} in browser"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "Open {shortHash} on {providerName}"
 msgstr "Otevřít {shortHash} na {providerName}"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open all checks in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -2266,6 +2302,10 @@ msgstr "Profily upravíte po otevření dané nástěnky"
 #, fuzzy
 msgid "Open the board to change this"
 msgstr "Chcete-li to změnit, otevřete nástěnku"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open the pull request in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2744,6 +2784,11 @@ msgstr "Vyberte commit k zobrazení jeho změn"
 msgid "Select a file to view changes"
 msgstr "Vyberte soubor k zobrazení změn"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Send to agent"
+msgstr "Odeslat agentovi"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Send to Backlog"
@@ -2753,6 +2798,11 @@ msgstr "Přesunout do backlogu"
 #, fuzzy
 msgid "Sending the original instead."
 msgstr "Místo toho se odesílá originál."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Sending..."
+msgstr "Odesílání..."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -3148,6 +3198,10 @@ msgstr "Složka projektu <0>„{projectName}“</0> již neexistuje:"
 #, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
 msgstr "Nový agent převezme konverzaci předchozího agenta, místo aby začínal od popisu úkolu."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "The next agent on this task gets the failed checks in its first message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

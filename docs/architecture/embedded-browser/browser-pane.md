@@ -1,11 +1,13 @@
 ---
 type: Reference
 title: Embedded browser pane
-description: How the Browser pane hardens its webview and keys cookie jars per task, how Draw, Inspect and Send build the XML-tagged capture prompt and paste it through the paste engine, how agents drive the pane with kangentic_browser_* tools, and its settings, limits and zero-quota preview rig.
+description: How the Browser pane hardens its webview and keys cookie jars per task, how numbered annotations (selected elements and drawings, each with a note) are drawn into the page, saved as a draft and sent as one XML-tagged prompt through the paste engine, how agents drive the pane with kangentic_browser_* tools, and its settings, limits and zero-quota preview rig.
 tags: [browser, webview, capture, paste-engine, agent-driving]
 sources:
   - resource: src/renderer/components/browser/
   - resource: src/main/ipc/handlers/browser.ts
+  - resource: src/main/ipc/handlers/browser-payload.ts
+  - resource: src/main/browser/annotation-drafts.ts
   - resource: src/main/pty/paste-engine.ts
   - resource: src/main/pty/terminal-submit.ts
   - resource: src/main/pty/write-queue.ts
@@ -56,9 +58,10 @@ A "decision N" below is entry N of the [decision log](decision-log.md).
 1. Open a task with an active agent session. Click the **Browser** pill in the dialog header (mutually exclusive with **Changes**). The pill only shows and hides: a hidden pane's page is kept alive for the agent. A green running dot on the Browser pill, and a green globe at the right end of the task card's title row, both say a browser guest is running for the task (showing, hidden, or parked). Whether the agent is driving it right now is shown in the pane itself. **Close browser** (the red-tinted button at the far left of the pane's navigation bar, ahead of Back, or the item of the same name in the task menu) is the discard: it ends the page and frees its renderer process; Show then opens the saved URL fresh.
 2. First time in a project: the empty-state prompt asks for a URL. Pick a quick-pick (`localhost:3000`, `5173`, `4321`, `8080`) or type one. Submitting auto-saves it as the project default.
 3. URL bar supports back/forward/reload, pin to project default, pin to task override.
-4. **Draw** mode (`Ctrl/Cmd+D`): free-draw strokes on a transparent overlay above the webview. Pointer-events flip to `none` on the webview while drawing so events reach the canvas. Turning Draw on and starting a stroke put focus on the note input, so what the user types or dictates while annotating goes with the strokes. The toolbar leaves it there while Draw is on, and the canvas is excluded from `WindowFrame`'s press-to-focus-the-terminal rule (`KEEPS_PANE_FOCUS_ATTRIBUTE`). A click into the terminal still moves focus, and a hold then dictates there.
-5. **Inspect** mode (`Ctrl/Cmd+I`, `Esc` to exit): click an element to capture a structured fingerprint (selector, role, ARIA name, testid, classes, ancestors, computed styles, outerHTML). The picked element keeps a blue persistent overlay that follows scroll/resize until cleared. Re-entering Inspect replaces the prior pick.
-6. **Send** (`Enter` in the note field, or the Send button): composites webview frame + strokes into a single PNG, captures any text selection, builds an XML-tagged prompt, and submits to the agent's PTY via the paste engine. The note field's `onKeyDown` bails on Shift alone, so `Ctrl/Cmd+Enter` sends as well while `Shift+Enter` stays a no-op. From anywhere else in the dialog it is a no-op: the handler lives on the note field, and the document-level listener that used to fire from anywhere was removed in `15076930` because it hijacked the terminal's `Mod+Enter` newline.
+4. **Annotations.** A small bar floats over the page with **Select element** (`Ctrl/Cmd+Shift+C`), **Draw** (`Ctrl/Cmd+Shift+D`) and **Undo**. It can be dragged to any corner, and the corner is kept per project. A mode stays on until `Esc` or its button again, and the two are exclusive. Every element selected and every stroke drawn joins the ACTIVE annotation: an annotation is a layer of any number of elements and drawings under one note. Selecting an element the active annotation already holds takes it out. A stroke that touches one of the annotation's drawings joins it, so an arrow's head and shaft are one drawing. Numbered badges are drawn into the page, so they scroll with it: an element's on its top-left corner, a drawing's on the first point drawn (decision 45, and `annotation-layout.ts` for the four cases that move one).
+5. **The composer.** With nothing marked the pane keeps its single note row. The first mark turns it into the composer: an **Annotations** header with the count (it folds the list; folded with a mode on, only the active row shows), one row per annotation (number, note, a summary that opens the annotation's items so one can be removed, and an X), a dashed **New annotation** row, and a fixed bottom row with **Clear** and **Send**. Text typed in the single row becomes annotation 1's note, and a push-to-talk hold writing there follows it (`dictationPopupActions.detachInput`, then `moveToInput`). `Enter` in a note starts the next annotation, `Ctrl/Cmd+Enter` in any note sends, and `Ctrl/Cmd+Z` in an EMPTY note takes back the last mark. At 20 annotations the New annotation row is gone. The page keeps its own Enter: composer keys act only inside a note. The list grows to four rows and gives way before the page does (annotationRowsMaxHeight): the page keeps 120px or 40% of the pane, down to a list of one row, which is what the 900x600 window floor leaves (a pane of about 275px).
+6. **Send** (the Send button, `Ctrl/Cmd+Enter` in a note, or `Enter` in the single row): captures the page with its badges, captures any text selection, builds an XML-tagged prompt, and submits it to the agent's PTY through the paste engine. A failed Send keeps every annotation. One that lands clears them back to the single row. Turning Draw on or starting a stroke puts focus on the note being written, so typing and dictation go with the marks; the canvas and the composer are excluded from `WindowFrame`'s press-to-focus-the-terminal rule (`KEEPS_PANE_FOCUS_ATTRIBUTE`). A click into the terminal still moves focus.
+7. **Nothing is lost.** The session is saved per task as it changes (`browser:annotationsSave`), with one capture of the visible page per annotation, taken when an item joins it. An annotation that later scrolls out of the screenshot, or was made on another page, is sent with that capture. A page load keeps the list: each mark is redrawn where its selector, or else its test id or tag and accessible name, still finds exactly one element, and the row reads **Not on page** otherwise. A restart restores the draft when the pane opens. While an agent drives the pane, the layer hides.
 
 ## Architecture
 
@@ -98,7 +101,7 @@ The webview is hardened in `src/main/index.ts`:
   `window.open()` call - including the one xterm's OSC-8 link fallback used to trigger - from
   spawning a bare, chrome-less `BrowserWindow`.
 
-The webview runs in its own renderer process. The host renderer cannot reach into it; the only channel is `webview.executeJavaScript()` (used by the inspector) and the navigation/capture APIs.
+The webview runs in its own renderer process. The host renderer cannot reach into it; the only channel is `webview.executeJavaScript()` (used by the Select element picker and the annotation layer) and the navigation/capture APIs.
 
 **Cookie isolation:** the webview partition is keyed PER TASK via `browserPartitionForTask(projectId, taskId)` in `src/shared/browser-partition.ts` (returns `persist:kng-<projectId>-<taskId>`, ids hyphen-stripped). Keyed by the TASK, not the worktree path, so the jar follows the task through any relocate/rename/Done round-trip - the path can change, the id cannot. Browser cookies are scoped to HOST not port, so two tasks running dev servers on `localhost:4200` and `:4300` would clobber each other's `localhost` session under one shared jar - therefore each task gets its own persistent jar for loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), while a per-project identity jar (`persist:kng-<projectId>-identity`) shares the non-loopback (IdP) login across tasks (decision 33). The names are self-describing so the sweep and the clear-storage pass parse a jar back to its project + task. The renderer (`<webview partition>`) and the main process (lane, seeder, clear-storage) derive the same name from the same ids. The legacy single jar `BROWSER_PARTITION` (`persist:kangentic-browser`) remains for the no-project fallback and is also wiped by **Clear browser data**. A project's Command Terminals share one jar, `persist:kng-<projectId>-terminals` (decision 43): every jar consumer asks `browserPartitionForOwner(projectId, ownerKey)`, which maps a Command Terminal owner key to it and a task id to the task's own.
 
@@ -107,12 +110,36 @@ The webview runs in its own renderer process. The host renderer cannot reach int
 `src/main/ipc/handlers/browser.ts` (`BROWSER_CAPTURE_SEND`):
 
 1. Validates `sessionId` is a UUID (defense-in-depth against malformed IPC).
-2. Writes the composited PNG to `<projectRoot>/.kangentic/sessions/<sessionId>/captures/capture-<timestamp>.png` via `fs.promises.writeFile` (async so libuv flushes before the agent's Read tool opens the file - avoids Windows AV sharing-violation races).
+2. Writes the PNG to `<projectRoot>/.kangentic/sessions/<sessionId>/captures/capture-<timestamp>.png` via `fs.promises.writeFile` (async so libuv flushes before the agent's Read tool opens the file - avoids Windows AV sharing-violation races). `projectRoot` is the TASK's project (`input.projectId`), so a pane in a backgrounded project writes into its own.
 3. Computes the @-mention path with `path.relative(cwd, absolutePngPath)`, where `cwd` is the folder main recorded for the session's agent (`getSessionCommandCwd`), and the pane's own value only for a session main does not know. Worktree-cwd tasks see `../../sessions/<sid>/captures/foo.png`; project-cwd tasks see the in-tree relative path. Cross-drive on Windows falls back to the absolute path with a console warning.
-4. Builds an XML-tagged prompt: top-level `Screenshot: @<path>` for bare-token @-parsers (Claude Code, Gemini CLI), then a `<browser_context>` envelope with `<url>`, optional `<picked_element>` (selector, role, testid, accessibleName, rect, computedStyles, ancestors, outerHTML), and optional `<selected_text>`.
-5. Submits via `pasteEngine.pasteAndSubmit` with `bracketed: true, source: 'browser-capture'`.
+4. With no annotations, builds today's prompt (`buildPromptPayload`): the note, a top-level `Screenshot: @<path>` for bare-token @-parsers (Claude Code, Gemini CLI), then a `<browser_context>` envelope with `<url>` and optional `<selected_text>`.
+5. With annotations (`buildAnnotationsPayload`): two plain sentences (each number matches a badge in the screenshot; coordinates are CSS px of the whole page), the screenshot, one `@` line per capture of an annotation the screenshot does not show (copied from the draft folder next to the screenshot; annotations sharing a capture are named together), then one block:
 
-Captures live under the session directory so they're cleaned up by existing lifecycle: `cleanupTaskSession` (move-to-Backlog, move-to-Done, task-delete) removes the session dir recursively, and `pruneOrphanedDirectories` sweeps stragglers on next project open. No new cleanup hook needed.
+   ```
+   <annotations url="..." viewport="1280x720" scroll="0,640" scale="1.5">
+     <annotation n="1">
+       <note>...</note>
+       <element role="button" name="Save" tag="button" testid="save" rect="32,256,118,34">
+         <selector>...</selector>
+         <classes>...</classes>
+         <styles>...</styles>
+         <ancestors>...</ancestors>
+         <outer_html>...</outer_html>
+       </element>
+       <drawing strokes="3" box="250,270,220,62" start="470,332" />
+     </annotation>
+     <annotation n="3" url="..." on_page="false">...</annotation>
+   </annotations>
+   ```
+
+   The note comes before the evidence it points at. Identity (role, accessible name, tag, test id, id, rect) is attributes, because those are what the agent searches the code for; the selector is text, because selectors carry quotes. An annotation repeats `url` only when it was made on another page. A drawing is its stroke count, box and first point: nothing about which element it means is guessed. `scale` is read from the PNG header against the viewport width. Past `ANNOTATIONS_INLINE_LIMIT` (6,000 characters) each element's `styles`, `ancestors` and `outer_html` move to `annotations-<stamp>.xml` beside the screenshot, named on a plain-path line; notes, identity and selectors never move.
+6. Submits via `TerminalSubmit.submitContent` with `bracketed: true, source: 'browser-capture'`.
+
+Captures live under the session directory so they're cleaned up by existing lifecycle: `cleanupTaskSession` (a move to To Do, a Backlog demote, a task delete) removes the session dir recursively, and `pruneOrphanedDirectories` sweeps stragglers on next project open.
+
+### Annotation drafts
+
+`src/main/browser/annotation-drafts.ts` keeps a task's unsent annotations at `<projectRoot>/.kangentic/browser-annotations/<taskId>/`: `draft.json` (notes, items, the capture each annotation keeps) and `capture-<id>.png`. The renderer saves on every change, debounced 500ms (`browser:annotationsSave`), and saves each capture as it is taken (`browser:annotationsSaveCapture`). A save prunes captures the draft no longer names. Clear and a Send that landed discard the folder (`browser:annotationsDiscard`), and so does `cleanupTaskResources` when the task is reset, demoted or deleted, and a Command Terminal's end for its own owner key. Every write is async with temp + rename. A Command Terminal's owner key has its colons replaced to make one folder segment.
 
 ### Paste engine
 
@@ -130,10 +157,16 @@ Per-adapter verification is exposed via each `AgentAdapter`'s `getSubmissionVeri
 
 ### Capture and Drawing
 
-- `src/renderer/components/browser/captureComposite.ts` - calls `webview.capturePage()` (returns NativeImage; macOS includes alpha, Windows/Linux are RGB), draws onto an offscreen canvas, scales overlay strokes from CSS px to native px, returns base64 PNG.
-- `src/renderer/components/browser/useDrawingOverlay.ts` - pointer-events to capture strokes. Captures the stroke array at schedule time to avoid a fast-drag race where `pointerLeave`/`pointerUp` reset the ref between schedule and flush, blanking the visible drawing. A left press or release with another button held, such as push-to-talk, arrives as a `pointermove`, so `chordedStrokeChange` starts and ends the stroke there.
-- `src/renderer/utils/pane-focus.ts` - `KEEPS_PANE_FOCUS_ATTRIBUTE` (`data-keeps-pane-focus`). Turning Draw on, or starting a stroke, moves keyboard focus to the note input, and a running dictation hold moves there too. The canvas and, while Draw is on, the pane toolbar carry the attribute, so `WindowFrame` does not send a press on them to the task window's terminal, and the canvas `mousedown` is default-prevented so focus is not dropped. A click into the terminal still moves focus there.
-- `src/renderer/components/browser/inspectScript.ts` - element-picker injected via `webview.executeJavaScript`. The picked element gets a persistent blue overlay that tracks scroll/resize (window scroll capture, `ResizeObserver`, viewport resize) until cleared. If the element is removed from the DOM (SPA route, re-render), the overlay is auto-disposed.
+- `src/renderer/components/browser/captureComposite.ts` - calls `webview.capturePage()` (returns NativeImage; macOS includes alpha, Windows/Linux are RGB), draws onto an offscreen canvas with any stroke still being drawn, returns base64 PNG. Finished strokes and badges are already in the page, so the capture shows them.
+- `src/renderer/components/browser/useDrawingOverlay.ts` - the canvas holds a stroke only while it is drawn. Captures the stroke array at schedule time to avoid a fast-drag race where `pointerLeave`/`pointerUp` reset the ref between schedule and flush, blanking the visible drawing. On release it hands the stroke to `onStrokeEnd`, which turns overlay px into page px (divided by the pane's zoom, plus the page's scroll) and adds it to the active annotation; the canvas keeps the ink until the page has drawn it. A left press or release with another button held, such as push-to-talk, arrives as a `pointermove`, so `chordedStrokeChange` starts and ends the stroke there.
+- `src/renderer/utils/pane-focus.ts` - `KEEPS_PANE_FOCUS_ATTRIBUTE` (`data-keeps-pane-focus`). Turning Draw on, or starting a stroke, moves keyboard focus to the note being written, and a running dictation hold moves there too. The canvas and, while Draw is on, the composer carry the attribute, so `WindowFrame` does not send a press on them to the task window's terminal; the floating bar prevents its own `mousedown`. A click into the terminal still moves focus there.
+- `src/renderer/components/browser/inspectScript.ts` - the Select element picker, injected via `webview.executeJavaScript` and injected again after each pick while the mode is on (the guest can answer only through the return value). It makes each selector unique at pick time, adding `:nth-of-type` from the leaf up until the page has one match, and reports rects in page coordinates. A press on a badge reads as the layer's host, so it hit-tests the element beneath with `elementsFromPoint`.
+- `src/renderer/components/browser/annotations/` - the annotations feature:
+  - `annotation-model.ts`: the session as pure data and every edit as a function (join, toggle, undo, remove one item, the 20 cap, capture reuse).
+  - `annotationLayerScript.ts`: the page layer. One host element at the document origin with a CLOSED shadow root, so the page's CSS never styles the badges and no DOM lookup (the page's, or an agent's `kangentic_browser_query_*`) sees them. The renderer hands it the whole state on every change; it redraws on scroll, resize and a debounced `MutationObserver` by itself. A badge click is answered through a long-lived `nextBadgeClick()` call the renderer keeps armed, because a press in the guest never reaches the host window. Its click listener sits on the shadow root: a closed root hides its nodes from `composedPath()` for any listener outside it.
+  - `annotation-layout.ts`: badge placement as SOURCE TEXT, embedded in the layer and run by its unit test through `new Function`, so the test and the guest run the same text.
+  - `useBrowserAnnotations.ts`: the draft load and save, the captures, the layer rendering, the badge-click call.
+  - `AnnotationComposer.tsx`, `AnnotationBar.tsx`: the composer and the floating bar.
 
 ### URL persistence
 
@@ -161,7 +194,7 @@ Shipped MCP tools let an agent drive THIS pane: screenshot, click, type, keypres
 - **Registration:** the renderer registers each open pane's guest webContents id (`webview.getWebContentsId()`) with the main process on `dom-ready`, via `BROWSER_PANE_REGISTER` / `BROWSER_PANE_UNREGISTER` IPC, and unregisters that same guest id on unmount. The main-process pane registry (`src/main/browser/browser-pane-registry.ts`) mints a surface HANDLE per guest (`pane_<8hex>`; a lane's is `lane_<8hex>`) and records the guest's taskId and owning agent session beside it, so the tools target one tab per handle for that tab's whole life: re-registering the same guest (a `/clear` rotates the owning session) updates the owner in place and keeps the handle, a different guest always gets a new one, and a handle whose guest is gone answers `surface-gone` naming the replacement (see decision 34). Main also tracks the guest's own `destroyed` / `did-navigate` so the registry stays honest across a hard reload. The tracked URL is a fallback, not the reported value: `kangentic_browser_list_panes` reads each pane's URL live from the guest, because `did-navigate` never fires for same-document navigation and a dev server's SPA routing, `pushState`, and fragment changes would otherwise leave the cache reporting a URL the pane had left. The cache is used only when the guest is gone or has no URL to report yet.
 - **Driving (in-process):** the driver (`src/main/browser/browser-pane-driver.ts`) resolves the target, attaches Chrome DevTools Protocol to the guest webContents, and runs the shared CDP helpers in `src/main/browser/cdp/` (the same content-agnostic driver the dev inspection bridge uses through a compat shim). No HTTP bridge, no lockfile: the pane is in the same process as the MCP server. Debuggers detach synchronously on `before-quit`.
 - **Command Terminals:** each one has this pane too, keyed by its owner key `command-terminal::<projectId>::<slot>` (`src/shared/browser-owner.ts`) in every place a task id keys a task's. Its agent's MCP URL names its session, which resolves to its slot (`resolveMcpCaller`), so it drives its own pane and never a task's by default. The pane never renders inside the Command Terminal panel, which unmounts on every hide: `CommandTerminalBrowserHost` keeps it mounted and lays it over the slot the window draws, hiding it at `opacity: 0` while no slot shows it (decision 43). Its layout is saved per project and slot (`command-terminal-browser-store.ts`), and main closes its pane, pop-out and lane when the terminal ends (`ipc/helpers/command-terminal-browser.ts`). See [Command Terminal](../renderer/command-terminal.md#browser-pane).
-- **Gating:** the global **Agent Browser** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [Browser panes](../../integrations/mcp-server/browser-panes.md#browser-automation-tool-surface-kangentic_browser_) and `.claude/rules/browser-automation-driver.md`.
+- **Gating:** the global **Browser automation** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [Browser panes](../../integrations/mcp-server/browser-panes.md#browser-automation-tool-surface-kangentic_browser_) and `.claude/rules/browser-automation-driver.md`.
 
 ## Cross-platform notes
 
@@ -179,7 +212,7 @@ Shipped MCP tools let an agent drive THIS pane: screenshot, click, type, keypres
 
 ## HMR and dev servers
 
-The webview is a regular Chromium browser context. WebSocket, ES modules, fetch all work. HMR through `vite dev` and similar patches in place silently; full reloads trigger `did-navigate` once which clears the picked element (acceptable). No special plumbing needed.
+The webview is a regular Chromium browser context. WebSocket, ES modules, fetch all work. HMR through `vite dev` and similar patches in place silently; full reloads trigger `did-navigate` once, which keeps the annotations: each is redrawn where its selector still matches, and one made on the previous page keeps its own capture. No special plumbing needed.
 
 ## Settings
 
@@ -189,7 +222,7 @@ The webview is a regular Chromium browser context. WebSocket, ES modules, fetch 
 
 The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes all three. Future additions (per-task draw color, capture history) belong here.
 
-- **Agent Browser** (global, below the separator) - a separate tab (`AppConfig.browserAutomation`) gating the `kangentic_browser_*` agent tools: `enabled` (master), `allowInteraction`, `allowNavigation`, `allowEval` (default off), `restrictNavigationToLocalhost` (default off). This is a cross-project security policy, hence global, whereas the per-project Browser tab is pane workflow.
+- **Browser automation** (global, below the separator) - a separate tab (`AppConfig.browserAutomation`) gating the `kangentic_browser_*` agent tools: `enabled` (master), `allowInteraction`, `allowNavigation`, `allowEval` (default off), `restrictNavigationToLocalhost` (default off). This is a cross-project security policy, hence global, whereas the per-project Browser tab is pane workflow.
 
 ## Limitations and future work
 
@@ -313,7 +346,7 @@ src/main/
   browser/browser-pane-opener.ts            open/close a pane for the caller's task (MCP lifecycle tools)
   browser/browser-pane-driver.ts            withGuest: gate, resolve, CDP attach, focus emulation,
                                             drive signal, error envelope
-  browser/browser-automation-config.ts      resolved Agent Browser policy
+  browser/browser-automation-config.ts      resolved Browser automation policy
   browser/agent-input-signal.ts             refcounted "an agent is driving guest N" burst edges
   browser/embedded-signin-refusal.ts        detects a provider refusing an embedded browser
   browser/webview-download-policy.ts        one will-download handler per guest Session
@@ -355,6 +388,9 @@ src/main/db/repositories/
 src/main/agent/commands/
   dev-port-commands.ts                      kangentic_reserve_dev_ports / kangentic_check_dev_ports
 
+src/main/browser/
+  annotation-drafts.ts                      a task's unsent annotations and their captures, on disk
+
 src/main/agent/mcp-http/
   browser-tools.ts                          the 26 kangentic_browser_* tools
 
@@ -362,12 +398,12 @@ src/renderer/components/browser/
   BrowserPane.tsx                           top-level component (loading/empty/active)
   BrowserEmptyState.tsx                     URL prompt + quick picks + WSL hint
   close-browser.ts                          the user's Close discard (retire the handle, then unmount)
-  AttachmentChips.tsx                       chip strip (strokes, picked element)
   captureComposite.ts                       PNG compositor
-  useDrawingOverlay.ts                      stroke capture
+  useDrawingOverlay.ts                      stroke capture (the live stroke only; the page draws finished ones)
   useBrowserUrl.ts                          URL resolution hook
-  browser-url-resolution.ts                 the pure half: which tier supplies the URL, and which note-field hint shows
-  inspectScript.ts                          element-picker + persistent overlay
+  browser-url-resolution.ts                 the pure half: which tier supplies the URL
+  inspectScript.ts                          Select element picker (unique selectors, page coordinates)
+  annotations/                              the annotation model, page layer, badge layout, composer and floating bar
   webview-types.ts                          structural types for <webview>
 
 src/renderer/window-manager/

@@ -1,45 +1,10 @@
-import { type MouseEvent } from 'react';
-import { GitPullRequest, ExternalLink } from 'lucide-react';
+import { useLayoutEffect, useRef, type MouseEvent } from 'react';
+import { ExternalLink } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { Pill } from './Pill';
 import { Tooltip } from './Tooltip';
-import { prStatePresentation, prMergeReadinessTooltip } from '../lib/pr-state';
+import { prStatePresentation, prPillPresentation, prMergeReadinessTooltip } from '../lib/pr-state';
 import type { PRMergeReadiness, PRState } from '../../shared/types';
-
-/**
- * Standalone PR state chip (open=green, draft=gray, merged=purple, closed=red).
- * Renders nothing for an unlinked / unknown state. Colors come from the shared
- * `prStatePresentation` so the badge stays in sync wherever it appears. While
- * the PR is open, a known merge verdict folds into the same chip (`ready` /
- * `blocked` / `conflicts`), with a supplementary tooltip naming the caveat.
- *
- * Deliberately a tight span, not a `Pill`: it nests inside the `PrLink` pill and
- * must be visibly shorter than the link's text line, which two equally-sized
- * pills cannot achieve. `leading-none` + `py-px` keep it compact and centered.
- */
-function PrStateBadge({
-  state,
-  readiness,
-}: {
-  state: PRState | null | undefined;
-  readiness: PRMergeReadiness | null | undefined;
-}) {
-  const { label, badgeClass } = prStatePresentation(state, readiness);
-  if (!label) return null;
-  const caveat = prMergeReadinessTooltip(state, readiness) ?? '';
-  return (
-    // With no caveat the tip is held shut and lets the pointer through, so the
-    // link pill's own tip still shows over the badge.
-    <Tooltip label={caveat}>
-      <span
-        data-testid="pr-state-badge"
-        className={`inline-flex items-center rounded px-1.5 py-px text-[11px] font-medium leading-none ${badgeClass}`}
-      >
-        {label}
-      </span>
-    </Tooltip>
-  );
-}
 
 interface PrLinkProps {
   prUrl: string;
@@ -47,7 +12,7 @@ interface PrLinkProps {
   prState: PRState | null | undefined;
   /**
    * Optional so a caller that predates readiness (or a row that never judged
-   * it) degrades to the plain state chip rather than failing to compile.
+   * it) degrades to the plain state pill rather than failing to compile.
    */
   prMergeReadiness?: PRMergeReadiness | null;
   testId: string;
@@ -55,22 +20,37 @@ interface PrLinkProps {
 }
 
 /**
- * Clickable linked-PR row, shared by the board card and the task-detail header
- * so the markup and affordance stay identical. Reads as interactive at rest (a
- * resting chip background, not a hover-only underline) and carries a trailing
- * external-link icon signaling it opens in the browser. The state shows as a
- * standalone `PrStateBadge`, not inline text. Compact (`xs`) so it sits neatly
- * beside the board card title and the task-detail header title.
+ * The compact PR pill, shared by the board card, the Agent Monitor card and
+ * the Changes panel header so the markup and affordance stay identical: one
+ * state glyph, "PR #38", and a muted open icon, the whole pill tinted to the
+ * state (`prPillPresentation`). No state word is drawn; the glyph and the tint
+ * carry it and the tooltip says it. While checks are queued or running, an
+ * inset ring pulses at 2800ms (`.kng-pr-pulse`). Clicking opens the PR.
  */
 export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, className }: PrLinkProps) {
   const { t } = useLingui();
+  const ringRef = useRef<HTMLSpanElement>(null);
+  const { glyph: Glyph, toneClass, pulse } = prPillPresentation(prState, prMergeReadiness);
+  // Anchor the pulse to the document timeline, as ActivityMark does for the
+  // activity marks, so every running pill breathes in phase and a re-mount
+  // (a project switch, a restored window) continues the cycle instead of
+  // replaying it from the start.
+  useLayoutEffect(() => {
+    const ring = ringRef.current;
+    if (!ring || typeof ring.getAnimations !== 'function') return;
+    for (const animation of ring.getAnimations()) animation.startTime = 0;
+  }, [pulse]);
+
   // pr_number can be null (a PR linked before number tracking); fall back to a
-  // bare "PR" label rather than rendering the literal string "PR #null". A
-  // string, so `Pill` trims it to its cap height like any bare text child.
+  // bare "PR" label rather than rendering the literal string "PR #null".
   const prLabel = prNumber != null ? t`PR #${prNumber}` : t`PR`;
-  const openTip = prNumber != null ? t`Open PR #${prNumber} in browser` : t`Open PR in browser`;
+  const openTip = prNumber != null ? t`Open PR #${prNumber} in default browser` : t`Open PR in default browser`;
+  // The tip names the state the glyph and tint stand for: the readiness
+  // sentence while a verdict shows, else the state word ("merged", "draft").
+  const detail = prMergeReadinessTooltip(prState, prMergeReadiness)
+    ?? (prStatePresentation(prState, prMergeReadiness).label || undefined);
   return (
-    <Tooltip label={openTip}>
+    <Tooltip label={openTip} detail={detail}>
       <Pill
         shape="square"
         size="xs"
@@ -78,13 +58,22 @@ export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, cla
           event.stopPropagation();
           window.electronAPI.shell.openExternal(prUrl);
         }}
-        className={`bg-surface-hover/50 hover:bg-surface-hover text-fg-secondary hover:text-fg transition-colors ${className ?? ''}`}
+        className={`relative transition-colors ${toneClass} hover:brightness-125 ${className ?? ''}`}
         data-testid={testId}
+        data-pr-state={prState ?? 'unknown'}
+        data-pr-readiness={prMergeReadiness ?? ''}
       >
-        <GitPullRequest size={12} className="text-fg-muted" />
+        <Glyph size={13} className="flex-shrink-0" aria-hidden="true" />
         {prLabel}
-        <PrStateBadge state={prState} readiness={prMergeReadiness} />
-        <ExternalLink size={11} className="opacity-60" />
+        <ExternalLink size={11} className="flex-shrink-0 opacity-60" aria-hidden="true" />
+        {pulse && (
+          <span
+            ref={ringRef}
+            aria-hidden="true"
+            data-testid={`${testId}-pulse`}
+            className="kng-pr-pulse pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-inset ring-current"
+          />
+        )}
       </Pill>
     </Tooltip>
   );

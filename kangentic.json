@@ -5,12 +5,51 @@
       "id": "e6350e8a-77fa-43a2-815b-6447820adf40",
       "name": "To Do",
       "role": "todo",
+      "description": "Holds tasks that have not started. No agent runs here.",
       "icon": "layers",
       "color": "#6b7280"
     },
     {
+      "id": "3c7e9a52-1f4b-4d8e-9a6c-5b2d0e8f7a14",
+      "name": "Design",
+      "description": "Draws a design canvas and revises it until the owner signs it off. For work whose result someone looks at: app UI, a demo frame, a docs figure. Only a person moves a card out of it.",
+      "icon": "brush",
+      "color": "#ec4899",
+      "autoSpawn": true,
+      "permissionMode": "auto",
+      "modelOverride": "opus",
+      "effortOverride": "high",
+      "automations": {
+        "onEnter": [
+          {
+            "name": "Design contract",
+            "type": "send_message",
+            "message": "Design phase. Draw the design canvas for this task as a Claude artifact, render-check it, and revise it from the owner's feedback. Write no feature code and make no commits. Before you write to the worktree, call kangentic_get_current_task: while the card is in Design, write only the canvas and its temporary capture spec. End each turn with the open decisions by number and the canvas link. The owner signs off by moving this card to Planning. A mode switch, or a reply that answers every open item, is not sign-off. Never move this card yourself. If the owner asks to shelve the design, append the canvas link to the task description with kangentic_update_task, then end your turn with the line \"Design: shelved\".",
+            "mode": "immediate"
+          }
+        ],
+        "onTurnEnd": [
+          {
+            "name": "Shelved",
+            "type": "move_to_column",
+            "finalLine": "Design: shelved",
+            "targetColumn": "To Do"
+          }
+        ],
+        "onExit": [
+          {
+            "name": "Signed off",
+            "type": "send_message",
+            "message": "The design is signed off, and this card moved to {{toColumn}}. In Planning, call EnterPlanMode and write the implementation plan against the signed-off canvas. In Executing, build it against the signed-off canvas.",
+            "mode": "immediate"
+          }
+        ]
+      }
+    },
+    {
       "id": "4873bb89-9291-4f05-a2f7-e93f2dcc0c26",
       "name": "Planning",
+      "description": "Reads the code and writes the implementation plan in plan mode. For work whose approach is not settled: a feature, or a fix that spans several areas.",
       "icon": "map",
       "color": "#8b5cf6",
       "autoSpawn": true,
@@ -23,6 +62,7 @@
     {
       "id": "dc9f2b38-5882-4182-8f09-923f2a583b08",
       "name": "Executing",
+      "description": "Writes and commits the change, then applies its own findings. Every task that changes the repository needs it.",
       "icon": "square-terminal",
       "autoSpawn": true,
       "permissionMode": "auto",
@@ -48,6 +88,7 @@
     {
       "id": "623a36ef-9045-4437-b9c8-f67312dc5437",
       "name": "Code Review",
+      "description": "Reviews the branch in a session of its own and fixes what it verifies. Every task that changes the repository needs it.",
       "icon": "code",
       "color": "#f59e0b",
       "autoSpawn": true,
@@ -87,6 +128,7 @@
     {
       "id": "1da886f1-804b-42ea-960e-2109f776d451",
       "name": "Testing",
+      "description": "Opens the PR and drives its CI checks to green, without merging. Every task that lands through a PR needs it.",
       "icon": "flask-conical",
       "color": "#06b6d4",
       "autoSpawn": true,
@@ -116,6 +158,7 @@
     {
       "id": "8adfe5cc-955c-4c4f-83a2-461e2a9d3c14",
       "name": "Merge",
+      "description": "Merges the green PR one task at a time and fast-forwards local main. Every task that lands through a PR needs it.",
       "icon": "merge",
       "color": "#f97316",
       "autoSpawn": true,
@@ -154,11 +197,11 @@
       "id": "64f9ef9a-c05d-44f8-a846-329a8f15e69f",
       "name": "Done",
       "role": "done",
+      "description": "Holds finished tasks. A move here suspends the task's agent.",
       "icon": "circle-check-big",
       "color": "#10b981"
     }
   ],
-  "_modifiedBy": "7ef4fd0cb484",
   "profiles": [
     {
       "id": "d8761252-7e15-4777-ba74-0c300650dc91",
@@ -171,5 +214,6 @@
         }
       }
     }
-  ]
+  ],
+  "_modifiedBy": "7ef4fd0cb484"
 }

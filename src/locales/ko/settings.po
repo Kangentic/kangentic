@@ -156,6 +156,10 @@ msgstr "{releaseBufferMs}ms"
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
 msgstr "{toWrite, plural, other {작업 #개}}"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A browser in task windows for you and your agents."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "A call failed"
@@ -266,11 +270,6 @@ msgstr "에이전트 활성"
 #, fuzzy
 msgid "Agent active time"
 msgstr "에이전트 활성 시간"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Agent Browser"
-msgstr "에이전트 브라우저"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -583,6 +582,7 @@ msgid "Browser"
 msgstr "브라우저"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Browser automation"
 msgstr "브라우저 자동화"
@@ -596,11 +596,6 @@ msgstr "브라우저 데이터"
 #, fuzzy
 msgid "Browser data cleared"
 msgstr "브라우저 데이터를 삭제했습니다"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Browser pane"
-msgstr "브라우저 창"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -712,6 +707,10 @@ msgstr "CLI 경로"
 #, fuzzy
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "작업 창 바깥의 빈 공간을 클릭하면 창이 닫힙니다. 컨트롤, 작업 카드, 실행 중인 터미널은 첫 클릭에도 그대로 동작합니다. 에이전트는 계속 실행되며 작업을 다시 열면 다시 연결됩니다."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Click with modifiers"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -899,9 +898,8 @@ msgid "Conversations, tasks, commits, summaries and source code are all rebuilt,
 msgstr "모든 프로젝트에서 대화, 작업, 커밋, 요약, 소스 코드를 모두 다시 빌드합니다. {rebuildAsk, plural, other {이전 모델로 작성된 요약 #개를 다시 작성하며}}, 백그라운드에서 약 {rewriteCalls, plural, other {#회 호출}}이 필요합니다."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Cookies and storage the embedded browser keeps."
-msgstr "내장 브라우저가 보관하는 쿠키 및 저장소입니다."
+msgid "Cookies and storage the Kangentic browser keeps."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -935,9 +933,8 @@ msgid "Copy pairing link"
 msgstr "페어링 링크 복사"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
-#, fuzzy
-msgid "Copy, paste and interrupt inside a terminal."
-msgstr "터미널에서 복사, 붙여넣기 및 중단합니다."
+msgid "Copy, paste, interrupt and open links in a terminal."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1089,15 +1086,14 @@ msgstr "기본"
 msgid "Default base branch"
 msgstr "기본 기준 분기"
 
-#: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Default browser pane URL"
-msgstr "기본 브라우저 창 URL"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Default diff scope"
 msgstr "기본 diff 범위"
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Default Kangentic browser URL"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1235,11 +1231,6 @@ msgstr "노력 수준"
 #, fuzzy
 msgid "Elapsed time"
 msgstr "경과 시간"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Embed a Browser pane in task windows that agents can open."
-msgstr "에이전트가 열 수 있는 브라우저 창을 작업 창에 포함합니다."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -1465,6 +1456,18 @@ msgstr "높은 정확도"
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
 msgstr "노력 수준이 높을수록 답변이 느리지만 여러 작업에 걸친 집계에 도움이 될 수 있습니다. 요약은 항상 에이전트 기본값을 사용합니다."
 
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold a modifier key while you click."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1474,6 +1477,10 @@ msgstr "스크립트 완료까지 프롬프트 보류"
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "푸시투토크를 누른 채 터미널이나 입력란에 말하세요."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold the modifier keys and click here. Escape to cancel."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1661,6 +1668,10 @@ msgstr "앱 설치, 휴대폰 페어링 및 푸시 알림."
 msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "조건과 워크플로 단계를 판단하고 작업 이름을 짓습니다."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic browser"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
 msgid "Kangentic could not write its settings file."
@@ -1721,11 +1732,6 @@ msgstr "키 파일"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
-msgid "Keys for a task's Browser pane."
-msgstr "작업의 브라우저 창에 사용하는 키입니다."
-
-#: src/renderer/components/settings/tabs/HotkeysTab.tsx
-#, fuzzy
 msgid "Keys for an open task window."
 msgstr "열린 작업 창에 사용하는 키입니다."
 
@@ -1733,6 +1739,10 @@ msgstr "열린 작업 창에 사용하는 키입니다."
 #, fuzzy
 msgid "Keys for the Changes panel and its diff."
 msgstr "변경 사항 패널과 해당 diff에 사용하는 키입니다."
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -1781,9 +1791,8 @@ msgid "Leftover processes"
 msgstr "남은 프로세스"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Let agents drive the Browser pane."
-msgstr "에이전트가 브라우저 창을 조작하도록 허용합니다."
+msgid "Let agents drive the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2361,9 +2370,8 @@ msgid "Project"
 msgstr "프로젝트"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr "작업별 재정의가 없을 때 사용할 프로젝트 기본 URL입니다. 브라우저 창을 처음 탐색할 때 자동 저장됩니다."
+msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -2539,9 +2547,8 @@ msgid "Release buffer"
 msgstr "해제 후 버퍼"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Reload the browser pane to apply."
-msgstr "적용하려면 브라우저 창을 다시 로드하세요."
+msgid "Reload the Kangentic browser to apply."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3214,9 +3221,8 @@ msgid "This restores every hotkey to its default. Your custom bindings will be r
 msgstr "모든 단축키가 기본값으로 복원됩니다. 사용자 지정 바인딩은 제거됩니다."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr "모든 작업과 프로젝트에서 내장 브라우저 창의 쿠키, localStorage, IndexedDB, 서비스 워커, HTTP/인증 캐시를 삭제합니다. 모든 사이트에서 로그아웃됩니다."
+msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 msgctxt "notification sound"
@@ -3547,9 +3553,8 @@ msgid "Windows"
 msgstr "창"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr "내장 브라우저의 쿠키, localStorage, IndexedDB, 서비스 워커, HTTP/인증 캐시를 삭제합니다. 저장된 URL은 유지됩니다."
+msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

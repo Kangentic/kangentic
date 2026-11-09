@@ -11,7 +11,7 @@
  * cascade over the element's own `transition-*` utility.
  *
  *  - FileTreePanel: the real `changes-viewed-progress` bar in the Changes panel.
- *  - ChangesHistorySection and TaskDetailBody: the class only exists mid-toggle
+ *  - ChangesRailSection (History and Checks) and TaskDetailBody: the class only exists mid-toggle
  *    (`animateHeight`, `expandTransition`), so a probe element carries the class
  *    literal read from the component source. Reading it from source means
  *    dropping the variant from a component turns exactly its own test red.
@@ -187,8 +187,8 @@ test.describe('.no-motion Tailwind variant', () => {
 
   const probeSites = [
     {
-      name: 'ChangesHistorySection height transition',
-      sourceFile: path.join('changes', 'ChangesHistorySection.tsx'),
+      name: 'ChangesRailSection height transition',
+      sourceFile: path.join('changes', 'ChangesRailSection.tsx'),
       literalPattern: /'(transition-\[height\][^']*)'/,
     },
     {

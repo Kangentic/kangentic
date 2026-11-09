@@ -26,6 +26,8 @@
  *     (`KeyboardEvent.code`) rather than the character it types, because that
  *     key types `` ` ``, `^`, `²` or a dead key depending on the layout.
  *   Examples: `Mod+Shift+P`, `Mod+I`, `Mod+0`, `Ctrl+C`, `F5`, `Ctrl+Backquote`.
+ *   - A link click (an entry whose `input` is `'click'`): modifiers, then
+ *     `Mouse:Left` in the main key's place, e.g. `Mod+Shift+Mouse:Left`.
  *
  * Main bundles this module with plain esbuild, so a label is a descriptor from
  * `@lingui/core/runtime-macro`, never the build-time macro (.claude/rules/i18n.md).
@@ -45,6 +47,7 @@ export type KeyScope =
   | 'browser-pane' // BrowserPane visible inside a task dialog
   | 'terminal' // xterm-owned combos; display-only
   | 'terminal-focused' // focus inside one terminal's pane (capture phase, deliberately does NOT overlap 'global' - see terminal.find)
+  | 'terminal-link' // a modifier held with a click on a terminal link; only the link actions use it
   | 'dialog' // generic dialog-local keys (Escape dismissal, the save key)
   | 'conversation'; // a focused Conversation viewer window (capture phase, deliberately does NOT overlap 'global' - see conversation.find)
 
@@ -100,6 +103,10 @@ export interface KeybindingDefinition {
   hidden?: boolean;
   /** Only listed/active when the developer overlay flag is enabled. */
   devOnly?: boolean;
+  /** `'click'`: bound to modifiers held with a left click (`Mod+Mouse:Left`), never
+   *  to a key. The rebind field takes only that, and no `useKeybinding` listens:
+   *  the terminal's link handler reads the combo when a link is clicked. */
+  input?: 'click';
 }
 
 /**
@@ -431,8 +438,8 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   },
   {
     id: 'taskDetail.toggleBrowser',
-    label: msg`Toggle Browser pane`,
-    description: msg`Show or hide the browser pane inside the task detail dialog.`,
+    label: msg`Toggle Kangentic browser`,
+    description: msg`Show or hide the Kangentic browser in the task window.`,
     group: 'Task Detail',
     scope: 'task-dialog',
     defaultCombo: 'Mod+Shift+B',
@@ -442,8 +449,8 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     // The Command Terminal's own Browser pane, on the same default as a task
     // window's: the two never hold the keyboard at once, so the scopes differ.
     id: 'commandTerminal.toggleBrowser',
-    label: msg`Toggle Command Terminal Browser pane`,
-    description: msg`Show or hide the focused Command Terminal's browser pane.`,
+    label: msg`Toggle Command Terminal browser`,
+    description: msg`Show or hide the focused Command Terminal's Kangentic browser.`,
     // 'General', beside commandBar.toggle: the Browser group is hidden from the
     // panel, and this one is rebindable and should be listed.
     group: 'General',
@@ -606,21 +613,45 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // pane toolbar, so listing them here adds only clutter.
   {
     id: 'browser.inspect',
-    label: msg`Inspect element`,
-    // Picks an element from the embedded page.
+    label: msg`Select element`,
+    // Select element mode: each click on the page adds that element to the
+    // active annotation. Chrome DevTools' own key for its element picker.
     group: 'Browser',
     scope: 'browser-pane',
-    defaultCombo: 'Mod+I',
+    defaultCombo: 'Mod+Shift+C',
     rebindable: false,
     hidden: true,
   },
   {
     id: 'browser.draw',
-    label: msg`Draw / annotate`,
-    // Toggles free-draw annotation on the embedded page.
+    label: msg`Draw on the page`,
+    // Draw mode: each stroke joins the active annotation.
     group: 'Browser',
     scope: 'browser-pane',
-    defaultCombo: 'Mod+D',
+    defaultCombo: 'Mod+Shift+D',
+    rebindable: false,
+    hidden: true,
+  },
+  {
+    id: 'browser.undoMark',
+    label: msg`Undo the last mark`,
+    // Removes the active annotation's last element or stroke. Only while its
+    // note is empty or focus is on the page: a note with text keeps its own
+    // text undo.
+    group: 'Browser',
+    scope: 'browser-pane',
+    defaultCombo: 'Mod+Z',
+    rebindable: false,
+    hidden: true,
+  },
+  {
+    id: 'browser.sendAnnotations',
+    label: msg`Send every annotation`,
+    // From any annotation's note. A plain Enter there starts the next
+    // annotation instead, and the page keeps its own Enter.
+    group: 'Browser',
+    scope: 'browser-pane',
+    defaultCombo: 'Mod+Enter',
     rebindable: false,
     hidden: true,
   },
@@ -742,6 +773,31 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Mod+F',
     rebindable: true,
   },
+  // The two ways to open a link printed in a terminal. Swapping their combos swaps
+  // which one a plain Ctrl+click does, and the link's tip lists both, the one with
+  // fewer modifiers first. A terminal with no Kangentic browser beside it (the
+  // bottom panel, a project with the Browser pane off) opens the default browser
+  // on either. Read in `terminal-links/link-actions.ts`.
+  {
+    id: 'terminal.openLinkInDefaultBrowser',
+    label: msg`Open link in default browser`,
+    description: msg`Hold these keys and click a link in a terminal to open it in your default browser.`,
+    group: 'Terminal',
+    scope: 'terminal-link',
+    defaultCombo: 'Mod+Mouse:Left',
+    rebindable: true,
+    input: 'click',
+  },
+  {
+    id: 'terminal.openLinkInKangenticBrowser',
+    label: msg`Open link in Kangentic browser`,
+    description: msg`Hold these keys and click a link in a terminal to open it in the browser beside that terminal.`,
+    group: 'Terminal',
+    scope: 'terminal-link',
+    defaultCombo: 'Mod+Shift+Mouse:Left',
+    rebindable: true,
+    input: 'click',
+  },
 
   // ── Developer ──
   {
@@ -750,7 +806,18 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     description: msg`Show or hide the activity-engine debug overlay.`,
     group: 'Developer',
     scope: 'global',
-    defaultCombo: 'Mod+Shift+D',
+    // Not Mod+Shift+D, which is the Browser pane's Draw.
+    defaultCombo: 'Mod+Alt+Shift+D',
+    rebindable: true,
+    devOnly: true,
+  },
+  {
+    id: 'app.restart',
+    label: msg`Restart Kangentic`,
+    description: msg`Rebuild main and preload, then restart. Agents pause and resume.`,
+    group: 'Developer',
+    scope: 'global',
+    defaultCombo: 'Mod+Shift+F5',
     rebindable: true,
     devOnly: true,
   },
@@ -781,7 +848,8 @@ function normalizeMainKey(key: string): string {
  * or a single mouse button, written as `Mouse:<Button>`. Only the three buttons
  * a user can reasonably bind without losing primary interaction are supported:
  * the middle button and the two side buttons. Left (DOM button 0) and right
- * (DOM button 2) are deliberately never bindable.
+ * (DOM button 2) are deliberately never bindable here. Left takes part only with
+ * a modifier held, for a terminal link click ({@link CLICK_TOKEN}).
  *
  * The map values are DOM `MouseEvent.button` codes: middle = 1, back = 3,
  * forward = 4.
@@ -804,6 +872,20 @@ export function isMouseCombo(combo: string): boolean {
  *  order. Returns [] for a non-mouse combo. */
 export function mouseComboTokens(combo: string): string[] {
   return isMouseCombo(combo) ? combo.split('+') : [];
+}
+
+/**
+ * The left button, which a binding uses only with a modifier held
+ * (`Mod+Mouse:Left`): a click on a terminal link. Never bare, and never in a
+ * {@link isMouseCombo} chord, so primary clicks stay the app's.
+ */
+export const CLICK_TOKEN = 'Mouse:Left';
+
+/** Whether a combo is one or more modifiers held with a left click (`Mod+Shift+Mouse:Left`). */
+export function isModifiedClickCombo(combo: string): boolean {
+  const parts = combo.split('+');
+  if (parts.length < 2 || parts[parts.length - 1] !== CLICK_TOKEN) return false;
+  return parts.slice(0, -1).every((part) => MODIFIER_TOKENS.some((token) => token.toLowerCase() === part.toLowerCase()));
 }
 
 /** The DOM `MouseEvent.button` code a mouse combo targets, or `null` if the combo
@@ -973,7 +1055,7 @@ export function detectConflicts(
  */
 export function comboToAccelerator(combo: string): string | null {
   // Mouse buttons are never OS global shortcuts; skip the accelerator probe.
-  if (combo === '' || isMouseCombo(combo)) return null;
+  if (combo === '' || isMouseCombo(combo) || isModifiedClickCombo(combo)) return null;
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1).map((modifier) => modifier.toLowerCase());

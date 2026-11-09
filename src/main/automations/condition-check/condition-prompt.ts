@@ -114,6 +114,7 @@ function defuse(text: string): string {
 
 const MERGE_READINESS_WORDS: Record<PRMergeReadiness, string> = {
   ready: 'ready to merge',
+  failing: 'checks failing',
   blocked: 'blocked from merging',
   conflicting: 'has merge conflicts',
   queued: 'checks queued',

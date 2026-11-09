@@ -131,6 +131,10 @@ msgstr "{releaseBufferMs} ms"
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
 msgstr "{toWrite, plural, one {# task} other {# tasks}}"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A browser in task windows for you and your agents."
+msgstr "A browser in task windows for you and your agents."
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "A call failed"
 msgstr "A call failed"
@@ -221,10 +225,6 @@ msgstr "Agent active"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Agent active time"
 msgstr "Agent active time"
-
-#: src/renderer/components/settings/settings-tabs.ts
-msgid "Agent Browser"
-msgstr "Agent Browser"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -479,6 +479,7 @@ msgid "Browser"
 msgstr "Browser"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
 msgid "Browser automation"
 msgstr "Browser automation"
 
@@ -489,10 +490,6 @@ msgstr "Browser data"
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
 msgid "Browser data cleared"
 msgstr "Browser data cleared"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Browser pane"
-msgstr "Browser pane"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Build server"
@@ -584,6 +581,10 @@ msgstr "CLI path"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Click with modifiers"
+msgstr "Click with modifiers"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click, type and drag. Off is read-only."
@@ -736,8 +737,8 @@ msgid "Conversations, tasks, commits, summaries and source code are all rebuilt,
 msgstr "Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. {rebuildAsk, plural, one {The # summary written with an earlier model is rewritten} other {The # summaries written with an earlier model are rewritten}}, about {rewriteCalls, plural, one {# call} other {# calls}} in the background."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "Cookies and storage the embedded browser keeps."
-msgstr "Cookies and storage the embedded browser keeps."
+msgid "Cookies and storage the Kangentic browser keeps."
+msgstr "Cookies and storage the Kangentic browser keeps."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Copied"
@@ -765,8 +766,8 @@ msgid "Copy pairing link"
 msgstr "Copy pairing link"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
-msgid "Copy, paste and interrupt inside a terminal."
-msgstr "Copy, paste and interrupt inside a terminal."
+msgid "Copy, paste, interrupt and open links in a terminal."
+msgstr "Copy, paste, interrupt and open links in a terminal."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Cost"
@@ -890,13 +891,13 @@ msgstr "Default"
 msgid "Default base branch"
 msgstr "Default base branch"
 
-#: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "Default browser pane URL"
-msgstr "Default browser pane URL"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default diff scope"
 msgstr "Default diff scope"
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Default Kangentic browser URL"
+msgstr "Default Kangentic browser URL"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
@@ -1009,10 +1010,6 @@ msgstr "Effort"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Elapsed time"
 msgstr "Elapsed time"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Embed a Browser pane in task windows that agents can open."
-msgstr "Embed a Browser pane in task windows that agents can open."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Enter path manually"
@@ -1199,6 +1196,18 @@ msgstr "High accuracy"
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
 msgstr "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
 
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold a modifier key while you click."
+msgstr "Hold a modifier key while you click."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
+msgstr "Hold Cmd, Option or Shift and click the box. Esc to cancel."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
+msgstr "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold prompt for script"
 msgstr "Hold prompt for script"
@@ -1206,6 +1215,10 @@ msgstr "Hold prompt for script"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Hold push-to-talk to speak into a terminal or text field."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold the modifier keys and click here. Escape to cancel."
+msgstr "Hold the modifier keys and click here. Escape to cancel."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
@@ -1359,6 +1372,10 @@ msgstr "Installing the app, pairing a phone, and push notifications."
 msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "Judges conditions and workflow steps, and names tasks."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic browser"
+msgstr "Kangentic browser"
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 msgid "Kangentic could not write its settings file."
 msgstr "Kangentic could not write its settings file."
@@ -1408,16 +1425,16 @@ msgid "Key file"
 msgstr "Key file"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
-msgid "Keys for a task's Browser pane."
-msgstr "Keys for a task's Browser pane."
-
-#: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Keys for an open task window."
 msgstr "Keys for an open task window."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Keys for the Changes panel and its diff."
 msgstr "Keys for the Changes panel and its diff."
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for the Kangentic browser."
+msgstr "Keys for the Kangentic browser."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -1458,8 +1475,8 @@ msgid "Leftover processes"
 msgstr "Leftover processes"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Let agents drive the Browser pane."
-msgstr "Let agents drive the Browser pane."
+msgid "Let agents drive the Kangentic browser."
+msgstr "Let agents drive the Kangentic browser."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
@@ -1937,8 +1954,8 @@ msgid "Project"
 msgstr "Project"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
+msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
+msgstr "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -2081,8 +2098,8 @@ msgid "Release buffer"
 msgstr "Release buffer"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "Reload the browser pane to apply."
-msgstr "Reload the browser pane to apply."
+msgid "Reload the Kangentic browser to apply."
+msgstr "Reload the Kangentic browser to apply."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Remember window size and position between launches"
@@ -2634,8 +2651,8 @@ msgid "This restores every hotkey to its default. Your custom bindings will be r
 msgstr "This restores every hotkey to its default. Your custom bindings will be removed."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
+msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
+msgstr "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 msgctxt "notification sound"
@@ -2907,8 +2924,8 @@ msgid "Windows"
 msgstr "Windows"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
+msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
+msgstr "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Workflow agent"

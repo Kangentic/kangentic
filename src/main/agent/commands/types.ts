@@ -31,6 +31,14 @@ export interface CommandContext {
    */
   getDevServerPortRange: () => { rangeStart?: number; rangeEnd?: number };
   /**
+   * This project's priority scale (bottom entry first) and label colors, from
+   * its effective config. The priority tools validate against and name levels
+   * from this scale, which a person can rename, reorder and extend, rather than
+   * the five Kangentic seeds. Optional so a test context can omit it; absent,
+   * or an empty `priorities`, reads as the seeded scale (`priorityScaleOf`).
+   */
+  getBacklogDisplayConfig?: () => { priorities: Array<{ label: string; color: string }>; labelColors: Record<string, string> };
+  /**
    * This project's configured default base branch, for the PR linker's
    * base-relative guards. Without it `linkPRForTask` falls back to the hardcoded
    * 'main', so on a project based on `develop` the commits-ahead-of-base guard

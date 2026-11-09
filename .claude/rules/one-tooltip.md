@@ -69,3 +69,11 @@ the trigger as an `aria-description`.
 
 Hover text under `src/renderer/`. Does not govern the dev-only overlays under `components/debug/`,
 or a component prop named `title` that is a heading (ConfirmDialog, BaseDialog).
+
+A terminal link is the one tip `Tooltip` cannot draw: it is cells xterm paints, with no element to
+wrap, and xterm reports its hover from outside React. So `utils/terminal-links/link-tip.ts` draws
+the tip by hand, with the classes, dwell, placement and one-tip slot from `utils/tooltip.ts`, and it
+looks the same as every other tip. One action is the label tip. A URL with two actions, or an OSC 8
+link whose text is not its address, is a stacked tip (`data-shape="stack"`): the destination line,
+a rule, then one row per action, drawn with the same tooltip color tokens.
+`tests/ui/terminal-link-click.spec.ts` pins both.

@@ -289,8 +289,8 @@ msgid "Done"
 msgstr "已完成"
 
 #: src/shared/keybindings.ts
-msgid "Draw / annotate"
-msgstr "绘制/批注"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
@@ -414,16 +414,20 @@ msgid "Headers"
 msgstr "标头"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "按住以听写；松开后将内容填入当前聚焦的终端或文本框。"
 
 #: src/shared/keybindings.ts
 msgid "Insert newline"
 msgstr "插入换行"
-
-#: src/shared/keybindings.ts
-msgid "Inspect element"
-msgstr "检查元素"
 
 #: src/shared/embedding-runtime.ts
 msgid "Intel Macs"
@@ -670,8 +674,8 @@ msgid "On task exit"
 msgstr "任务退出时"
 
 #: src/shared/task-template-vars.ts
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "待办与已完成之间的每列各占一行：该列运行的内容，以及近期任务经过该列的情况。"
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."
@@ -701,6 +705,14 @@ msgstr "未完成"
 #: src/shared/keybindings.ts
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "在当前聚焦的对话窗口中打开查看器内搜索。"
+
+#: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Open or close the command terminal overlay."
@@ -844,6 +856,10 @@ msgstr "排队中..."
 msgid "Quick Find"
 msgstr "快速查找"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 msgid "Relay address cannot contain a backslash."
 msgstr "中继地址不能包含反斜杠。"
@@ -876,6 +892,10 @@ msgstr "重置终端"
 #: src/shared/keybindings.ts
 msgid "Reset zoom"
 msgstr "重置缩放"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgid "Review the latest changes and fix any issues you find"
@@ -929,12 +949,20 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Select the next file in the Changes panel."
 msgstr "在「更改」面板中选择下一个文件。"
 
 #: src/shared/keybindings.ts
 msgid "Select the previous file in the Changes panel."
 msgstr "在「更改」面板中选择上一个文件。"
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgid "Send message to agent"
@@ -965,10 +993,6 @@ msgid "Show or hide the activity-engine debug overlay."
 msgstr "显示或隐藏活动引擎调试浮层。"
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "在任务详情对话框中显示或隐藏浏览器窗格。"
-
-#: src/shared/keybindings.ts
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "在任务详情对话框中显示或隐藏更改（差异）面板。"
 
@@ -977,9 +1001,12 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "在任务详情对话框中显示或隐藏描述面板。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr "显示或隐藏当前聚焦的命令终端的浏览器窗格。"
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Show or hide the project sidebar."
@@ -1164,10 +1191,6 @@ msgid "Toggle between the board and the backlog view."
 msgstr "在看板视图和待办列表视图之间切换。"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Browser pane"
-msgstr "切换浏览器窗格"
-
-#: src/shared/keybindings.ts
 msgid "Toggle Changes panel"
 msgstr "切换更改面板"
 
@@ -1176,9 +1199,8 @@ msgid "Toggle Command Terminal"
 msgstr "切换命令终端"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Toggle Command Terminal Browser pane"
-msgstr "切换命令终端浏览器窗格"
+msgid "Toggle Command Terminal browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Toggle debug overlay"
@@ -1187,6 +1209,10 @@ msgstr "切换调试浮层"
 #: src/shared/keybindings.ts
 msgid "Toggle description peek"
 msgstr "切换描述速览"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Toggle Knowledge Graph"
@@ -1217,6 +1243,10 @@ msgstr "土耳其语"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "乌克兰语"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

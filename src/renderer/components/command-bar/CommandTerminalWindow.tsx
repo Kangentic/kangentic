@@ -73,10 +73,12 @@ import {
   COMMAND_TERMINAL_BROWSER_SLOT_ATTRIBUTE,
   announceCommandTerminalBrowserSlot,
   hydrateCommandTerminalBrowser,
+  showCommandTerminalBrowser,
   toggleCommandTerminalBrowser,
   toggleCommandTerminalChanges,
   useCommandTerminalBrowserAlive,
 } from './command-terminal-browser';
+import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -246,6 +248,22 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const handleCloseBrowser = useCallback(() => {
     if (browserOwnerKey) void closeBrowserForTask(browserOwnerKey, browserProjectId);
   }, [browserOwnerKey, browserProjectId]);
+  // The Kangentic browser this terminal opens a link in, on its link hotkey:
+  // this slot's pane, shown as the Globe pill shows it, then loaded. Null with the
+  // project's Browser pane off, or with the pane in a window of its own, whose
+  // renderer keeps its own store: that click opens the default browser instead.
+  const browserEnabled = config.browser?.enabled !== false;
+  const linkBrowser = useMemo<TerminalLinkBrowser | null>(() => {
+    if (!browserEnabled || browserProjectId === null || browserOwnerKey === null || browserPopOut.isOpen) return null;
+    return {
+      open: (url) => {
+        changeLayout(() => showCommandTerminalBrowser(browserProjectId, slot));
+        // Optional call: a dev store pinned across a Fast Refresh from before this
+        // action existed lacks it until a reload, and the click must not throw there.
+        useSessionStore.getState().requestBrowserNavigate?.(browserOwnerKey, url);
+      },
+    };
+  }, [browserEnabled, browserProjectId, browserOwnerKey, browserPopOut.isOpen, changeLayout, slot]);
   // The slot's saved layout, read once per renderer: the pane open again after
   // a restart, and in the detached window, whose store starts empty.
   useEffect(() => {
@@ -961,6 +979,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               ready={terminalReady}
               launchLabel={launchLabel}
               gridGetterRef={gridGetterRef}
+              linkBrowser={linkBrowser}
             />
           )}
         </div>

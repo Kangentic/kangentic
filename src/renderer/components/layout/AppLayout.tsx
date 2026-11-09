@@ -39,6 +39,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { ToastContainer } from './ToastContainer';
+import { DevRestartController } from './DevRestartController';
 import { WindowLayer, isWindowDormant, useWindowStore } from '../../window-manager';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
@@ -683,6 +684,8 @@ export function AppLayout() {
       {/* The first-launch language toast and its restart prompt (main window only). */}
       <LanguageSuggestion />
       <ToastContainer />
+      {/* Dev only: the restart notice and hotkey for main-process changes. */}
+      {__KANGENTIC_DEV__ && <DevRestartController />}
       <DictationSurface />
       <WindowLayer />
     </div>

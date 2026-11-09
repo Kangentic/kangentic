@@ -18,7 +18,7 @@ front rather than reaching for ad-hoc fixes later.
 | **B. Re-sync** | Zustand stores whose truth lives in the main process (IPC-backed) | Add a `load*` / `sync*` call to the `vite:afterUpdate` handler in `App.tsx` | `loadBoard()`, `loadBacklog()`, `loadConfig()`, `loadProjects()`, `syncSessions()` |
 | **C. Re-key remount** | Stateful third-party React subtrees whose subscriptions go stale across Fast Refresh (every `<DndContext>`) | `const hmrGeneration = useHmrGeneration();` then `<DndContext key={hmrGeneration}>` | All 5 `<DndContext>` sites: `KanbanBoard`, `BacklogView`, `PrioritiesPopover`, `ProjectSidebar`, `ShortcutsTab` |
 | **D. Cleanup** | Imperative DOM or global state no React component owns | Add the clear to the top of the `vite:afterUpdate` handler | `.drop-highlight` class removal and `clearDropGapDom()` (the cross-column drop gap) in `App.tsx` |
-| **E. Pin instance** | A Zustand store whose only runtime export is the non-component hook, so the module is not a Fast Refresh boundary and a re-eval can hand a SECOND store to part of the tree | `const make = () => create<T>(init); export const useX = import.meta.hot?.data?.x ?? make();` plus `import.meta.hot.data.x = useX; import.meta.hot.accept(() => import.meta.hot.invalidate())` | `board-store.ts`, `backlog-store.ts`, `announcements-store.ts`, and the rest of `PATTERN_E_STORES` in `tests/unit/hmr-resync.test.ts` (the authoritative list) |
+| **E. Pin instance** | A Zustand store whose only runtime export is the non-component hook, so the module is not a Fast Refresh boundary and a re-eval can hand a SECOND store to part of the tree | `const preserved = import.meta.hot?.data?.x; if (preserved) refreshPinnedStore(preserved, xInitializer); export const useX = preserved ?? create<T>(xInitializer);` plus `import.meta.hot.data.x = useX; import.meta.hot.accept(() => import.meta.hot.invalidate())` | `board-store.ts`, `backlog-store.ts`, `announcements-store.ts`, and the rest of `PATTERN_E_STORES` in `tests/unit/hmr-resync.test.ts` (the authoritative list) |
 
 **Decision tree:**
 
@@ -29,6 +29,36 @@ front rather than reaching for ad-hoc fixes later.
    re-eval (a slice edit, or an edit to a store it imports) can construct a second instance while
    the mounted view stays subscribed to the first. Pattern E: pin the instance via
    `import.meta.hot.data` and self-accept with `accept(() => invalidate())`. Pair with Pattern B.
+   The self-accept does not reload the page: Vite re-runs the module, then `invalidate()` hands
+   the update on to its importers.
+
+   **The pin refreshes.** A preserved instance keeps the actions it was built with, so without
+   more an action a merge adds never reaches it until a full reload (#1052's
+   `requestBrowserNavigate`, after which Ctrl+R went to the focused terminal). So the
+   re-evaluated module calls `refreshPinnedStore(preserved, initializer)`
+   (`stores/hmr-store-pin.ts`), which runs the NEW initializer against the preserved store and
+   merges one patch. That patch carries every action that is new or whose source text changed,
+   plus every key the live store lacks with its initial value. Live data is never touched. An
+   unchanged action keeps its identity, so an effect that lists it in its deps does not re-run.
+   An edit to a helper alone, at module level or local to the initializer, does not reach the
+   actions that call it, since their own text did not change; that waits for a reload or an edit
+   to the calling action. A listener an action registered (knowledge-graph's `attach()`) keeps
+   the body it was registered with until that action runs again.
+
+   The initializer has to be safe to call again: no I/O, timers or subscriptions. Every
+   module-scope mutable value a refreshing store's actions read lives in ONE object shared
+   through `import.meta.hot.data` (`sharedModuleState`), never in a `let`. After a refresh, an
+   old action still in flight and its replacement both run, and two copies of a `let` (or a
+   dispose stash, which copies a primitive) would let them disagree. The same goes for state an
+   initializer makes for itself, such as `projectOverrideWrites` in config-store and
+   `headRefreshRerun` in the transient-session slice.
+
+   Every pinned store refreshes. State a factory used to hold in its closure moves where both
+   versions reach it: `monitor-store` and `knowledge-graph-store` keep theirs (the fetch guards,
+   `attach()`'s subscription handles, `closeCount`) in `sharedModuleState`, and `window-store.ts`
+   keeps each layer's id counters on the pinned `WindowManager` (`sequences`), so a refreshed
+   action never mints a window id an older one already handed out. A store that cannot refresh
+   gets `refreshes: false` and a reason in the test rather than a silent gap.
 
    A pinned instance outlives the module that built it. So a module-scope
    `useXStore.subscribe(...)` in a pinned store gains one more listener on every update unless the
@@ -71,6 +101,13 @@ workaround (surface the gap and extend this catalog deliberately); do not gate P
 `process.env.NODE_ENV` (`import.meta.hot` is `undefined` in production builds, so the guards
 already collapse to no-ops).
 
+**A Vite custom-event listener (`import.meta.hot.on`) is registered at module scope, never in a
+React effect.** Each evaluation of a module gets a new hot context, and Vite's client drops every
+listener the old context registered. An effect with `[]` deps registered `kangentic:main-stale`
+once, the first store edit that re-ran its module removed it, and the dev restart notice never
+showed (measured in `/preview`). `utils/dev-restart.ts` registers at module scope, so each
+evaluation registers its own, and gates on state in `sharedModuleState`.
+
 **An object a factory built, held in a component's ref, outlives an edit of the factory's
 module.** Fast Refresh keeps the ref, so the live component goes on calling the old instance,
 whose methods the edit may have renamed or removed. None of A to E reaches it. Where a stale
@@ -104,14 +141,22 @@ comment-only edit still refreshes in place. Replay a commit's edit with
   (A); every `<DndContext>` has `key={hmrGeneration}` (C); and each instance-pinned store
   (the test's `PATTERN_E_STORES` array - extend it whenever a store adopts the pin) reads and
   writes its instance in `import.meta.hot.data`, self-accepts, registers at most one
-  `dispose`, and calls every module-scope `subscribe` unsubscriber inside it (E). Runs in CI via
+  `dispose`, and calls every module-scope `subscribe` unsubscriber inside it (E). A store marked
+  `refreshes` must call `refreshPinnedStore` with its preserved binding and may have no
+  module-scope `let` in its file or its slice folder; one that does not refresh carries its
+  reason. Runs in CI via `npm run test:unit`.
+- **Test (refresh):** `tests/unit/hmr-store-pin.test.ts` refreshes a real store with a new
+  initializer and asserts the new and changed actions arrive, an unchanged one keeps its
+  identity, a new key takes its initial value, and live data is untouched. Runs in CI via
   `npm run test:unit`.
 - **Test (cycles):** `tests/unit/renderer-store-import-cycles.test.ts` fails on any value-import
   cycle under `src/renderer/stores/**`, naming the loop. This is the mechanical guard for the
   circular-import reload above; it follows value imports only, since `import type` is erased and
   cannot create a runtime edge. Runs in CI via `npm run test:unit`.
 - **Review:** the `hmr-parity` agent audits all five patterns; `hmr-integrity` is the narrow
-  Pattern B store-registration check.
+  Pattern B store-registration check. A Vite custom-event listener registered in a React effect
+  instead of at module scope is review-only: no test drives a Vite custom event, since the UI tier
+  runs a plain dev server with no `scripts/dev.js` behind it.
 
 - **Test (hook signatures):** `tests/unit/vite-refresh-hook-signatures.test.ts` runs a `.ts` hook
   module, a hook-only `.tsx` module and a component module through a real dev server with and
@@ -147,18 +192,18 @@ Fast-Refresh the main process).
 `announcements-store` and `project-cache`, and neither imports it back. Before the pin, any update
 that re-evaluated it (an edit to it or to anything it imports) built a second store whose
 `appVersion` was never loaded. The status bar lost its version pill, and the devtools mirror plus
-the pinned stores that import it kept reading the first instance. It still writes its Pattern A
-stashes, which the pin makes redundant, since a pinned store never re-runs the initializer that
-reads them. `loadAppVersion` is in the `vite:afterUpdate` re-sync as a backstop for an update
+the pinned stores that import it kept reading the first instance. Its session-only values (the
+last settings tab, the ticked onboarding steps) and its write chain live in `configModuleState`.
+`loadAppVersion` is in the `vite:afterUpdate` re-sync as a backstop for an update
 that finds no pinned instance and builds a store with no version, and `hmr-resync.test.ts`
 requires the call. Its one `dispose` releases the two
 module-scope `subscribe` calls and the `matchMedia` listener (see the decision tree's step 2).
 
-`session-store.ts` IS pinned, and is the one store that pins without self-accepting (see the
-decision tree's step 2). It also keeps its Pattern A dispose stash: the pin means the initializer
-does not re-run on a Fast Refresh, so the stash covers only the transition with no pinned instance
-to inherit (the first HMR after a cold boot or a full reload), plus `syncController`, which is
-module state and has no instance to ride.
+`session-store.ts` IS pinned and refreshes, and is the one store that pins without
+self-accepting (see the decision tree's step 2). It also keeps its Pattern A dispose stash, which
+the initializer reads back. A refresh copies only actions and missing keys, so the stash matters
+only for a store built with no pinned instance to inherit (the first HMR after a cold boot or a
+full reload). `syncController` is module state and lives in `sessionModuleState`.
 
 ## Measuring it
 
@@ -173,7 +218,9 @@ against the UI-tier mock, registers a guest, hides it (the held state), makes a 
 to a target file, and reports whether the page reloaded, whether the guest's `webContentsId`
 survived, whether the pane REMOUNTED (a new element, which a DOM-presence check cannot see), and
 Vite's own reload reason. It exits non-zero when the guest dies. `--file <path>` targets a
-different module, which is how a remount is bisected to the module that causes it.
+different module, which is how a remount is bisected to the module that causes it. For the
+refresh, `--edit-with <file>` writes an edited copy over the target (a throwaway action added to
+a slice) and `--expect-store-key session.<action>` fails unless the live store has it afterwards.
 
 Two traps it exists to avoid. Vite's reload reason prints only to the DEV SERVER terminal, so a
 `/preview` session cannot show it; the probe captures it with a `customLogger`. And

@@ -72,6 +72,9 @@ three things staying in step, and each is enforced rather than remembered.
 - **A surface Electron alone provides is mocked as a surface, never faked as content.** The
   `<webview>` tag has an iframe standing in for it (`demo/webview-shim.js`), loading a bundled
   page at the project's dev URL whose data is the project's own and nothing invented. Its
+  `executeJavaScript` runs the renderer's own guest scripts in that page, as Electron runs them in
+  the guest's main world, so the annotation layer and Inspect draw for real, and `demo/boot.js`
+  counts what the guest's own `createElement` makes as the page's. Its
   presentation, the layout and the styling, is the one authored part: the scaffold's
   `src/App.tsx` renders a bare heading and list, and rebuilding it would invalidate the
   recordings that edit that file (`demo/README.md`, Browser guest). The microphone is a silent

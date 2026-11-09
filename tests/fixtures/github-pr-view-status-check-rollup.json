@@ -1,0 +1,82 @@
+{
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-08T02:00:24Z",
+      "conclusion": "FAILURE",
+      "detailsUrl": "https://github.com/Kangentic/kangentic/actions/runs/42436059750/job/128595029334",
+      "name": "UI Test (10/11)",
+      "startedAt": "2026-11-08T01:51:45Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-08T02:02:26Z",
+      "conclusion": "FAILURE",
+      "detailsUrl": "https://github.com/Kangentic/kangentic/actions/runs/42436059750/job/128596975697",
+      "name": "UI tests (Playwright)",
+      "startedAt": "2026-11-08T02:02:24Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-08T02:28:52Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/Kangentic/kangentic/actions/runs/42438719397/job/128603152171",
+      "name": "Tree already tested",
+      "startedAt": "2026-11-08T02:28:53Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-08T02:28:59Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Kangentic/kangentic/actions/runs/42438717898/job/128603148234",
+      "name": "cla",
+      "startedAt": "2026-11-08T02:28:53Z",
+      "status": "COMPLETED",
+      "workflowName": "CLA Assistant"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-08T02:43:08Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Kangentic/kangentic/actions/runs/42439700084/job/128606081952",
+      "name": "cla",
+      "startedAt": "2026-11-08T02:43:00Z",
+      "status": "COMPLETED",
+      "workflowName": "CLA Assistant"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-08T02:31:05Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Kangentic/kangentic/actions/runs/42438719397/job/128603151485",
+      "name": "Lint, Typecheck, Build",
+      "startedAt": "2026-11-08T02:28:54Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-11-08T02:41:05Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/Kangentic/kangentic/actions/runs/42438719397/job/128603151940",
+      "name": "UI Test (10/11)",
+      "startedAt": "2026-11-08T02:32:38Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "codecov/patch",
+      "startedAt": "2026-11-08T02:35:00Z",
+      "state": "FAILURE",
+      "targetUrl": "https://app.codecov.io/gh/example-org/example-repo/pull/784"
+    }
+  ],
+  "url": "https://github.com/Kangentic/kangentic/pull/784"
+}

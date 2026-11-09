@@ -16,7 +16,7 @@ List items in the backlog staging area. Items have priority levels and labels fo
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `priority` | number | No | Filter by priority: 0=none, 1=low, 2=medium, 3=high, 4=urgent |
+| `priority` | number | No | Filter by priority: an index into the project's priority scale, which [kangentic_board_summary](task-read-tools.md#kangentic_board_summary) lists |
 | `query` | string | No | Search keyword to filter by title, description, or labels |
 
 ## kangentic_promote_backlog
@@ -39,7 +39,7 @@ Update a backlog item's title, description, priority, labels, or attachments. On
 | `itemId` | string | Yes | Backlog item UUID |
 | `title` | string | No | New title (max 200 characters) |
 | `description` | string | No | New description (max 10,000 characters) |
-| `priority` | number | No | New priority: 0=none, 1=low, 2=medium, 3=high, 4=urgent |
+| `priority` | number | No | New priority: an index into the project's priority scale. A number past its end is refused with the scale listed |
 | `labels` | array | No | Full replacement label set. Strings, or `{name, color}` objects to also set the label color. |
 | `attachments` | array | No | File attachments to ADD to the item: `[{ filePath: string, filename?: string }]`. Additive - existing attachments are kept. Files are read from where the agent runs, as on `kangentic_create_task`, and one that cannot be attached is named in the message. Use `kangentic_remove_task_attachment` to remove one. |
 

@@ -29,7 +29,7 @@ Click **Labels** in the toolbar to manage labels. Labels are free-form text tags
 
 ## Priorities
 
-Click **Priorities** in the toolbar to manage the priority scale. The default scale is None, Low, Medium, High, Urgent (0-4). You can rename priority levels, reorder them, add new ones, or remove existing ones. Priority colors are customizable.
+Click **Priorities** in the toolbar to manage the priority scale. The default scale is None, Low, Medium, High, Urgent (indices 0 to 4; a scale you extend has more, and agents set a level by its index). You can rename priority levels, reorder them, add new ones, or remove existing ones. Priority colors are customizable.
 
 ## Filtering
 

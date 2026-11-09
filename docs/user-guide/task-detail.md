@@ -1,13 +1,16 @@
 ---
 type: Guide
 title: Task detail and terminal panel
-description: The bottom terminal panel (session tabs and indicators, Activity tab, image paste, file drop), the task detail dialog's header pills, kebab menu and Close on Outside Click, the Changes panel (History graph, scopes, image diffs, per-file windows), the Browser pane, and a completed task's Summary, Changes, Conversation and Usage tabs.
+description: The bottom terminal panel (session tabs and indicators, Activity tab, image paste, file drop), the task detail dialog's header pills, kebab menu and Close on Outside Click, the Changes panel (the PR pill, Checks and Send to agent, History graph, scopes, image diffs, per-file windows), the Browser pane, and a completed task's Summary, Changes, Conversation and Usage tabs.
 tags: [terminal, dialog, changes, diff, browser]
 sources:
   - resource: src/renderer/components/terminal/TerminalPanel.tsx
   - resource: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
   - resource: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
   - resource: src/renderer/components/dialogs/task-detail/changes/
+  - resource: src/renderer/components/PrLink.tsx
+  - resource: src/renderer/lib/pr-state.ts
+  - resource: src/renderer/hooks/usePrChecks.ts
   - resource: src/main/git/task-changes.ts
   - resource: src/main/git/diff-service.ts
   - resource: src/main/git/remote-presence.ts
@@ -38,7 +41,7 @@ The leftmost tab shows an activity log - structured events from all sessions. Th
 
 ### Links
 
-Hold **Ctrl** (**Cmd** on macOS, where Ctrl+click is a right click) and click a URL in a terminal to open it in your browser. The same click on a file path that exists shows it in your file manager, with `:line` read and ignored. A link underlines under the pointer, and a plain click never opens one, so clicks in an agent's screen keep working. Paths in a session on a remote host do not link, and neither do network shares.
+Hold **Ctrl** (**Cmd** on macOS, where Ctrl+click is a right click) and click a URL in a terminal to open it in your default browser. **Ctrl+Shift+click** opens it in the Kangentic browser beside that terminal (the task's, or a Command Terminal's) instead, showing the browser if it is hidden; keyboard focus stays in the terminal. A terminal with no Kangentic browser beside it (the bottom panel, the Workflows pane, or a project with the browser switched off) opens the default browser on either click. The two are hotkeys in Settings > Hotkeys, so swapping them makes a plain Ctrl+click open the Kangentic browser. The same Ctrl+click on a file path that exists shows it in your file manager, with `:line` read and ignored. A link underlines under the pointer, and after a moment a tip lists what each click does. A link whose text is not its address (Claude's status line "canvas" link) also shows the address it opens. A plain click never opens one, so clicks in an agent's screen keep working. Paths in a session on a remote host do not link, and neither do network shares.
 
 ### Clipboard Paste
 
@@ -59,7 +62,7 @@ Drag the panel divider to resize. The terminal resizes to match. Resize events a
 Click a task card to open the detail dialog. From here you can:
 
 - View the task's **display ID** (e.g., `#42`) in the header - click it to copy to clipboard
-- See the **priority badge** next to the display ID when a priority is set
+- See the task's **priority** as the first pill in the row under the description, ahead of its labels, when a priority is set. The board card shows the same row, and the header carries no priority badge
 - View **Markdown-rendered descriptions** with full GitHub Flavored Markdown support (tables, task lists, strikethrough, links)
 - Edit the task title, description, priority, and labels (type `@` in the description field for file path autocomplete)
 - View and manage attachments of any file type (drag-and-drop files onto the dialog, or paste from clipboard)
@@ -71,7 +74,8 @@ Click a task card to open the detail dialog. From here you can:
 - Run shortcuts from the header bar (configurable pills that launch external tools)
 - Open the **Commands & Skills** popover to browse and run Claude Code commands (`.claude/commands/`) and skills (`.claude/skills/`) from the project directory. Search by name, navigate with arrow keys, press Enter to invoke.
 - Open the task's transcript in the read-only [conversation viewer](knowledge-graph.md#the-conversation-viewer) via the **View conversation** pill (speech-bubble icon). Muted until the task has session history, live or historical. A task opened from the Agent Monitor has no View conversation, since the viewer opens on the board.
-- See the **pull request pill** in the header once a PR is linked, carrying its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). `ready` means clicking Merge right now would succeed, which is a stronger claim than "no conflicts". The same pill appears on the task card. See [PR connector model](../integrations/pull-requests/connector-model.md#merge-readiness) for what each value promises and which Git settings change it.
+- See the **pull request pill** in the Changes panel's header once a PR is linked: its number, one glyph for its state, and the state's tint. Green is ready (clicking Merge right now would succeed, a stronger claim than "no conflicts") or open; sky is checks queued or running, with a slow pulse on its edge; amber is blocked by a review or branch rule; red is a failed check or a conflict, the two things an agent can fix; grey is draft or closed; purple is merged. Its tooltip names the state. The same pill appears on the task card. See [PR connector model](../integrations/pull-requests/connector-model.md#merge-readiness) for what each verdict promises and which Git settings change it.
+- When the PR has something to fix, a count on the **Changes** button says how many: each failed check, plus one for a conflict. It shows with the panel closed.
 - Access the kebab menu (three-dot icon) for additional actions:
   - **Edit** - switch to edit mode for title and description
   - **Open worktree** / **Open project folder** - open the task's directory in your file manager; the label names which one it is
@@ -97,11 +101,17 @@ The **Changes** pill works while a task waits and opens beside the line. The bot
 
 ### Changes Panel
 
-The Changes tab in the task detail dialog is a read-only review surface split horizontally: a left rail (the changed-file list, with a collapsible **History** section pinned at its bottom) and the diff pane on the right, divided by a resizable divider. The rail sizes itself proportionally, so expanding the panel widens filenames instead of leaving a narrow rail stranded in a wide window; drag the divider to override that, and double-click it to go back to the default. In a narrow panel the rail gives up width first, so the diff pane keeps at least 240px until the rail reaches its 160px floor.
+The Changes tab in the task detail dialog is a read-only review surface split horizontally: a left rail (the changed-file list, with collapsible **Checks** and **History** sections pinned at its bottom) and the diff pane on the right, divided by a resizable divider. The rail sizes itself proportionally, so expanding the panel widens filenames instead of leaving a narrow rail stranded in a wide window; drag the divider to override that, and double-click it to go back to the default. In a narrow panel the rail gives up width first, so the diff pane keeps at least 240px until the rail reaches its 160px floor.
 
-The panel's header names the branch and how far it is ahead of and behind its base. The pull request and the last commit are not repeated there: the task's own header carries the PR, and History lists every commit.
+The panel's header names the branch, how far it is ahead of and behind its base, and the linked pull request's pill, which opens the PR. The last commit is not repeated there: History lists every commit.
 
-The rail's **History** section is open by default; collapse it from its header row, which keeps a live commit count. It lists the branch's commits as a graph (a visual DAG: commit nodes down a vertical axis, lane columns for parallel branches, and edges to each commit's parents). Each commit row shows the short SHA, subject, author, and relative time; the branch tip is marked `HEAD`, and the base branch and a linked pull request's head commit are marked with tone dots (hover for the full label). A commit the repository's remote already has carries its short SHA as a link: click it to open the commit on GitHub or Azure DevOps, and click anywhere else on the row to select it. The graph reads git directly (no session required), refreshes live as you commit or the branch's refs change, and is capped at the most recent 200 commits with a note when older commits are trimmed. A history with several parallel lanes is cramped at rail width; pop the whole panel out into its own window to read it comfortably.
+The rail's **Checks** section, above History, lists the linked PR's CI checks, on GitHub and on Azure DevOps (its build and status policies). Its header reads passed of total, skipped checks counted in neither: a grey spinner while checks run, a red cross the moment any check fails (even while others still run), and a green check when all passed. A conflict leaves that badge alone; the pill carries it. Open, it lists one level of rows: a **Conflicts with main** row when the branch conflicts, each failed check (named "CI / UI Test (10/11)" with its workflow faint), **Send to agent**, the checks still running, and the passed ones as one line. Every row opens its check in your browser; the passed line opens the PR's checks page. A PR whose repository runs no checks shows only the pill, and a task with no PR shows neither.
+
+**Send to agent** hands the task's agent every failed check, with the tail of each one's log, and the conflict: a lead line saying what to fix, then each check with its link and its log cut to the last error. Logs come from `gh` for a GitHub Actions job and from `az` for an Azure Pipelines build; a check with no readable log (a status from an outside service) goes as its link and "No log". With an agent running, the message appears in its terminal, which is the confirmation, so no toast shows. With none running, the message is held for the task's next agent and a toast says so.
+
+**Checks** and **History** start collapsed, because open together they push the file list out of the rail. Opening or collapsing either is one choice remembered for every task, not per task. A new failure never opens Checks; its badge and the Changes button's count say so. History's header row keeps a live commit count while collapsed.
+
+The **History** section lists the branch's commits as a graph (a visual DAG: commit nodes down a vertical axis, lane columns for parallel branches, and edges to each commit's parents). Each commit row shows the short SHA, subject, author, and relative time; the branch tip is marked `HEAD`, and the base branch and a linked pull request's head commit are marked with tone dots (hover for the full label). A commit the repository's remote already has carries its short SHA as a link: click it to open the commit on GitHub or Azure DevOps, and click anywhere else on the row to select it. The graph reads git directly (no session required), refreshes live as you commit or the branch's refs change, and is capped at the most recent 200 commits with a note when older commits are trimmed. A history with several parallel lanes is cramped at rail width; pop the whole panel out into its own window to read it comfortably.
 
 With no commit selected the rail shows the branch's changes: it lists changed files with insertion/deletion counts in an aligned column and a checkbox to mark each one **viewed** (a viewed row dims, and the header keeps a running viewed/total count with a progress fill under it), a scope selector (working / staged / branch) picks which changes to diff, and a base-branch label shows whether the branch diverged from the default base or a custom one. Sort the list by name, status, size, or extension from the sort menu, and switch between the tree and a flat list; sorting a flat list by status groups it under status headings. Click a file to view a side-by-side or inline diff on the right. Toggle between split and inline view modes using the button in the toolbar. When there is nothing to review, the diff pane says so and names the scope it searched, so an empty **Working** view reads as "No uncommitted changes" rather than looking broken next to a History section full of commits.
 
@@ -117,7 +127,7 @@ Images open as pictures. A changed PNG, JPEG, GIF, WebP, BMP, ICO, or AVIF shows
 
 **Double-click a file** (or pick **Open in new window** from its right-click menu) to detach that one file's diff into its own OS window - read it full-screen or on a second monitor, and open several files side by side to compare them (one window per file; double-clicking the same file again focuses its existing window). The window opens maximized by default; un-maximize for a floating window, and once you resize, move, or maximize one, that becomes how every later diff window opens. Up to 8 file windows can be open at once; opening a 9th shows a toast asking you to close one first. The window is read-only, follows your diff view options (split/inline, whitespace, collapse-unchanged, wrap long lines, inline-when-narrow), live-updates as the file changes, shows an empty state if the change is reverted while it is open, and closes with its own window controls or **Escape**. Available in every file list (Working / Staged / Branch and a commit's files) except the Command Terminal's Changes view, which has no task to scope the window to.
 
-The panel persists its expanded/collapsed state, selected file, selected commit, the diff scope, which files you have marked viewed, whether the rail's History section is collapsed, and the divider positions across dialog reopens. Those are per-task; the View options above are app-wide.
+The panel persists its expanded/collapsed state, selected file, selected commit, the diff scope, which files you have marked viewed, History's height, and the divider positions across dialog reopens. Those are per-task; whether Checks and History are open, and the View options above, are app-wide.
 
 Each file also remembers where you had scrolled it. Open a file for the first time and it opens centred on its first change; leave it and come back and it returns to where you left off. That memory is per task and per diff scope, and it is held in memory rather than in the database, so it lasts as long as the app is running and a restart puts every file back on its first change.
 
@@ -135,7 +145,7 @@ Tasks can host an embedded browser inside the task detail dialog. Use it to prev
 
 Settings > Browser turns the pane on or off for a project and holds the project's default URL, which is saved the first time you navigate the pane. Clear browser data is there too.
 
-Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools (navigate, screenshot, DOM queries, click, type, eval), governed by the [Agent Browser](settings.md#agent-browser) settings tab. An agent can also open and close its own task's pane rather than waiting for you to do it. It never shows, raises or focuses a window to do so: with the task's window closed, the pane runs out of sight, and opening the task shows it on the same page.
+Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools (navigate, screenshot, DOM queries, click, type, eval), governed by the [Browser automation](settings.md#browser-automation) settings tab. An agent can also open and close its own task's pane rather than waiting for you to do it. It never shows, raises or focuses a window to do so: with the task's window closed, the pane runs out of sight, and opening the task shows it on the same page.
 
 **Hiding the pane is not the same as closing it.** The Browser pill only hides: the page stays loaded so you get it back exactly as you left it, which also means the agent driving it is never interrupted by you reclaiming the space. Closing the task's window while its agent is still running keeps it the same way. A loaded page costs real memory (roughly 120 MB, more for a heavy app), so when you are genuinely finished with a task's browser, use **Close browser** in the pane's toolbar, or the same item in the task menu when the pane is hidden. That ends the page and frees the memory. The task's URL is remembered either way, so showing the pane again reopens the same address on a fresh page. While a task's browser is loaded, its Browser pill shows a green dot and a green globe appears on the task's card.
 
@@ -145,14 +155,29 @@ Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools
 | Zoom out | **Ctrl+-** (or **Ctrl+wheel down** inside the page) |
 | Reset zoom to 100% | **Ctrl+0** |
 | Reload page | **F5** or **Ctrl+R** (outside the embedded page) |
-| Toggle Draw | **Ctrl+D** (**Cmd+D** on macOS), also while the note field has focus |
-| Send the capture to the agent | **Enter** (with the note field focused) |
+| Select element | **Ctrl+Shift+C** (**Cmd+Shift+C** on macOS), also while a note has focus |
+| Draw on the page | **Ctrl+Shift+D** (**Cmd+Shift+D** on macOS), also while a note has focus |
+| End Select element or Draw | **Esc** |
+| Undo the last mark | **Ctrl+Z** in an empty note, or with focus outside the notes |
+| Start the next annotation | **Enter** in an annotation's note |
+| Send every annotation | **Ctrl+Enter** in any note |
+| Send the capture to the agent | **Enter** in the note field, while nothing is annotated |
 
 Zoom snaps to a Chrome-compatible ladder (25%, 33%, 50%, 67%, 75%, 80%, 90%, 100%, 110%, 125%, 150%, ... up to 500%). Ctrl+wheel zoom inside the webview uses a smoother multiplicative step but stays clamped to the same range. The toolbar shows a zoom pill with the current factor, plus dedicated zoom-out / reset / zoom-in buttons.
 
-While Draw is on, keyboard focus stays in the note field, so what you type or dictate while you annotate is sent with the strokes. Clicking into the terminal still moves focus there.
+#### Annotations
 
-Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else. Send is the exception. Its handler is bound on the note field itself rather than on the pane-scoped listener, so Enter sends only while that field has focus.
+To point the agent at several things at once, annotate the page. A small bar floats over it with **Select element**, **Draw** and **Undo**; drag it by its grip to any corner, and the corner is kept for the project. A mode stays on until you press Esc or its button again.
+
+An annotation is one note and everything it points at: any number of selected elements and drawings. Every element you select and every stroke you draw goes into the active annotation, and a number badge marks each one on the page. Selecting an element the annotation already holds takes it out again. Strokes that touch, such as an arrow's shaft and head, are one drawing with one badge.
+
+The first mark turns the note row into a list of annotations, and anything you had typed becomes the first one's note. Write or dictate the note for each annotation, then press Enter or click **New annotation** to start the next. Click a row, or a badge on the page, to go back to an annotation. A row's summary opens what it holds, so one element or drawing can be removed while the rest stay. The header folds the list. You can make up to 20 annotations per send.
+
+**Send** sends every annotation in one prompt, numbered to match the badges, with a screenshot. An annotation that has scrolled out of view, or that you made on another page, goes with a picture taken when you made it. Annotations are saved as you work, so a failed send, a page load or a restart loses nothing; a send that lands clears them.
+
+While Draw is on, keyboard focus stays in the note you are writing, so what you type or dictate while you annotate goes with the marks. Clicking into the terminal still moves focus there.
+
+Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else. Enter and Ctrl+Enter act only inside a note, so the page keeps its own Enter.
 
 ## Completed task view
 

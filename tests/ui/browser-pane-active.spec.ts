@@ -211,7 +211,7 @@ test.describe('BrowserPaneActive - URL bar', () => {
 });
 
 test.describe('BrowserPaneActive - draw toggle', () => {
-  // Draw mode toggle (button click and Ctrl+D shortcut) always calls
+  // Draw mode toggle (button click and Ctrl+Shift+D shortcut) always calls
   // cancelInspect() when enabling. cancelInspect() calls
   // webviewRef.current?.executeJavaScript(...).catch(() => undefined).
   // In headless Chromium executeJavaScript is not a function on the DOM

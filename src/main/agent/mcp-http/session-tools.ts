@@ -5,6 +5,7 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import { agentPathsOf } from '../../remote/host-paths';
 import { TRANSCRIPT_TAIL_MAX, TRANSCRIPT_CHAR_BUDGET_MAX } from '../../../shared/transcript-format';
 import type { RequestResolver } from './project-resolver';
+import { LABEL_ENTRY_GUIDE, LABEL_ENTRY_SCHEMA, PRIORITY_GUIDE, PRIORITY_SCHEMA } from './label-priority-schema';
 
 /**
  * Register the read-focused tools on an McpServer:
@@ -69,7 +70,7 @@ export function registerSessionTools(
     {
       description: 'List items in the backlog staging area. The backlog holds work items before they are moved to the board. Items have priority levels and labels for organization. Pass `project` to list a different project\'s backlog.',
       inputSchema: z.object({
-        priority: z.number().min(0).max(4).optional().describe('Filter by priority level: 0=none, 1=low, 2=medium, 3=high, 4=urgent.'),
+        priority: PRIORITY_SCHEMA.optional().describe(`Filter by priority level. ${PRIORITY_GUIDE}`),
         query: z.string().optional().describe('Search keyword to filter items by title, description, or labels (case-insensitive).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -108,11 +109,8 @@ export function registerSessionTools(
         itemId: z.string().describe('Backlog item UUID (from kangentic_list_backlog or kangentic_search_tasks).'),
         title: z.string().max(200).optional().describe('New title (max 200 characters).'),
         description: z.string().max(10_000).optional().describe('New description (max 10,000 characters).'),
-        priority: z.number().int().min(0).max(4).optional().describe('New priority level: 0=none, 1=low, 2=medium, 3=high, 4=urgent.'),
-        labels: z.array(z.union([
-          z.string(),
-          z.object({ name: z.string(), color: z.string() }),
-        ])).optional().describe('Full replacement label set. Strings, or {name, color} objects to also set the label color.'),
+        priority: PRIORITY_SCHEMA.optional().describe(`New priority level. ${PRIORITY_GUIDE}`),
+        labels: z.array(LABEL_ENTRY_SCHEMA).optional().describe(`Full replacement label set. ${LABEL_ENTRY_GUIDE}`),
         attachments: z.array(z.object({
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),

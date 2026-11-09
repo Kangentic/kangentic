@@ -2,6 +2,7 @@ import { type StateCreator } from 'zustand';
 import { useProjectStore } from '../project-store';
 import type { ConversationTabRequest, GitDiffScope, Task, TaskDetailViewState } from '../../../shared/types';
 import type { SessionStore } from './types';
+import { sharedModuleState } from '../hmr-store-pin';
 
 /** A completed task view's tabs. */
 export type CompletedTab = 'summary' | 'changes' | 'conversation' | 'usage' | 'description';
@@ -12,6 +13,12 @@ export interface CompletedViewRequest {
   tab: CompletedTab;
   /** For the Conversation tab: the column (and stay) to open on. */
   conversationTab?: ConversationTabRequest;
+}
+
+/** A URL waiting for a Browser pane; see `browserNavigateRequests`. `id` tells two requests for the same URL apart. */
+export interface BrowserNavigateRequest {
+  url: string;
+  id: number;
 }
 
 export interface TaskChangesPanelSlice {
@@ -118,6 +125,17 @@ export interface TaskChangesPanelSlice {
    */
   browserUrlRefreshTokens: Record<string, number>;
   /**
+   * A link the user asked to open in a Browser pane, keyed by the pane's owner
+   * (a task id, or a Command Terminal's owner key), waiting for that pane to
+   * load it. A user's terminal link click puts one here and shows the pane;
+   * `BrowserPane` loads it (as its first page when it mounts, through its own
+   * `loadURL` when it is already showing one) and clears it. Renderer-only on
+   * purpose: an agent's navigation goes through main's driver and veils the pane,
+   * and a user's click must do neither. Never persisted; a request lost to a
+   * reload or a Fast Refresh is a click the user repeats.
+   */
+  browserNavigateRequests: Record<string, BrowserNavigateRequest>;
+  /**
    * Selected commit OID in the Changes panel's history browser, keyed by task
    * ID. `null` (or absent) means "Uncommitted changes" (the default, top-of-list
    * row) - the branch-wide working diff. A non-null value scopes the detail
@@ -131,13 +149,6 @@ export interface TaskChangesPanelSlice {
    * Absent means the default height. Mirrors {@link changesFileTreeWidth}.
    */
   changesHistoryHeight: Record<string, number>;
-  /**
-   * Task IDs whose Changes rail History section the user collapsed. Absent
-   * means open - the default: a task's commits are what the panel is for, as
-   * much as its files. Persisted (only when collapsed) in the
-   * `detail_view_state` blob.
-   */
-  changesHistoryCollapsed: Record<string, true>;
   /**
    * Non-task sentinel ids whose dialog is maximized (persists across dialog
    * open/close). Holds only the create dialogs ('new-task-dialog',
@@ -224,11 +235,14 @@ export interface TaskChangesPanelSlice {
   loadBrowserOffscreenTasks: () => Promise<void>;
   /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
   refreshBrowserUrl: (taskId: string) => void;
+  /** Ask the owner's Browser pane to load a URL. See {@link browserNavigateRequests}. */
+  requestBrowserNavigate: (ownerKey: string, url: string) => void;
+  /** The pane loaded the request: clear it, only when it is still the one with this id. */
+  clearBrowserNavigate: (ownerKey: string, requestId: number) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
   /** null clears the stored height (double-click-to-reset on the resizer), so
    *  the History section returns to its default height. */
   setChangesHistoryHeight: (taskId: string, height: number | null) => void;
-  setChangesHistoryOpen: (taskId: string, open: boolean) => void;
   requestCompletedView: (request: CompletedViewRequest) => void;
   /** Clear the request, only when it is still the one for `taskId`. */
   clearCompletedViewRequest: (taskId: string) => void;
@@ -243,16 +257,30 @@ export interface TaskChangesPanelSlice {
   hydrateDetailViewStateForTasks: (tasks: Task[]) => void;
 }
 
+interface TaskChangesPanelModuleState {
+  /** Only has to rise; requestBrowserNavigate takes the clock when it is higher. */
+  lastBrowserNavigateRequestId: number;
+  /**
+   * Pending debounced saves: the latest blob + the project id captured at the
+   * interaction that scheduled the save (project-scoped-ipc rule). Kept separate
+   * from the timer map so a flush always writes the most recent snapshot.
+   */
+  detailViewPendingSaves: Map<string, { state: TaskDetailViewState; projectId: string | null }>;
+  detailViewSaveTimers: Map<string, ReturnType<typeof setTimeout>>;
+}
+
+/** Shared by every evaluation of this module (see `sharedModuleState`), so a
+ *  save an old action scheduled is the one a refreshed action flushes. */
+const taskChangesPanelModuleState = sharedModuleState<TaskChangesPanelModuleState>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'taskChangesPanelModuleState',
+  () => ({ lastBrowserNavigateRequestId: 0, detailViewPendingSaves: new Map(), detailViewSaveTimers: new Map() }),
+);
+const { detailViewPendingSaves, detailViewSaveTimers } = taskChangesPanelModuleState;
+
 /** Debounce settle for persisting a task's detail-view-state blob to the DB. */
 const DETAIL_VIEW_SAVE_DEBOUNCE_MS = 500;
-
-/**
- * Pending debounced saves: the latest blob + the project id captured at the
- * interaction that scheduled the save (project-scoped-ipc rule). Kept separate
- * from the timer map so a flush always writes the most recent snapshot.
- */
-const detailViewPendingSaves = new Map<string, { state: TaskDetailViewState; projectId: string | null }>();
-const detailViewSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Write a pending blob to the DB now, clearing its timer + pending entry. */
 function flushDetailViewSave(taskId: string): void {
@@ -280,9 +308,6 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (selectedCommit) blob.changesSelectedCommit = selectedCommit;
   const historyHeight = state.changesHistoryHeight[taskId];
   if (historyHeight !== undefined) blob.changesHistoryHeight = historyHeight;
-  // Written only when collapsed: absent = open, the default. Mirrors changesOpen's
-  // asymmetry so reopening simply drops the key from the next blob write.
-  if (state.changesHistoryCollapsed[taskId]) blob.changesHistoryCollapsed = true;
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -321,6 +346,7 @@ export function commandTerminalChangesEntityId(slot: string): string {
  * Command Terminal would otherwise emit a spurious IPC write on every Changes
  * interaction. Their state lives for the session.
  */
+// hmr-safe: a constant lookup, never written, so two evaluations' copies agree.
 const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'board-manager-dialog']);
 
 /** The prefix of a completed task's Changes tab entity id (`completed-<taskId>`). */
@@ -380,9 +406,9 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   browserGuestTasks: new Map<string, number>(),
   browserOffscreenTasks: new Set<string>(),
   browserUrlRefreshTokens: {},
+  browserNavigateRequests: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
-  changesHistoryCollapsed: {},
   completedViewRequest: null,
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
@@ -488,6 +514,22 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     set({ browserUrlRefreshTokens: { ...tokens, [taskId]: (tokens[taskId] ?? 0) + 1 } });
   },
 
+  requestBrowserNavigate: (ownerKey, url) => {
+    // Never reused: a pane remembers the id it mounted on, and a later request
+    // under that id would read as already loaded. The clock keeps it rising
+    // across a Fast Refresh, which resets the counter.
+    const requestId = Math.max(Date.now(), taskChangesPanelModuleState.lastBrowserNavigateRequestId + 1);
+    taskChangesPanelModuleState.lastBrowserNavigateRequestId = requestId;
+    set({ browserNavigateRequests: { ...get().browserNavigateRequests, [ownerKey]: { url, id: requestId } } });
+  },
+
+  clearBrowserNavigate: (ownerKey, requestId) => {
+    const requests = get().browserNavigateRequests;
+    if (requests?.[ownerKey]?.id !== requestId) return;
+    const { [ownerKey]: _cleared, ...rest } = requests;
+    set({ browserNavigateRequests: rest });
+  },
+
   setChangesSelectedCommit: (taskId, commitOid) => {
     set({ changesSelectedCommit: { ...get().changesSelectedCommit, [taskId]: commitOid } });
     scheduleDetailViewSave(taskId, get);
@@ -499,22 +541,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       set({ changesHistoryHeight: rest });
     } else {
       set({ changesHistoryHeight: { ...get().changesHistoryHeight, [taskId]: height } });
-    }
-    scheduleDetailViewSave(taskId, get);
-  },
-
-  setChangesHistoryOpen: (taskId, open) => {
-    const current = get().changesHistoryCollapsed;
-    // The record holds collapses, so open is the absence of a key.
-    const isOpen = !current[taskId];
-    if (isOpen === open) return;
-    if (open) {
-      // Drop the key rather than storing false, so the record mirrors the blob's
-      // written-only-when-collapsed shape and stays bounded.
-      const { [taskId]: _removed, ...rest } = current;
-      set({ changesHistoryCollapsed: rest });
-    } else {
-      set({ changesHistoryCollapsed: { ...current, [taskId]: true } });
     }
     scheduleDetailViewSave(taskId, get);
   },
@@ -617,7 +643,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     const browserOpenTasks = new Set(get().browserOpenTasks);
     const changesSelectedCommit = { ...get().changesSelectedCommit };
     const changesHistoryHeight = { ...get().changesHistoryHeight };
-    const changesHistoryCollapsed = { ...get().changesHistoryCollapsed };
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -637,7 +662,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.browserOpen) browserOpenTasks.add(task.id);
       if (blob.changesSelectedCommit !== undefined) changesSelectedCommit[task.id] = blob.changesSelectedCommit;
       if (blob.changesHistoryHeight !== undefined) changesHistoryHeight[task.id] = blob.changesHistoryHeight;
-      if (blob.changesHistoryCollapsed) changesHistoryCollapsed[task.id] = true;
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -653,7 +677,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       browserOpenTasks,
       changesSelectedCommit,
       changesHistoryHeight,
-      changesHistoryCollapsed,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,

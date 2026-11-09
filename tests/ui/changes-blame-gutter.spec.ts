@@ -25,6 +25,8 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
 
+  // History starts closed; this spec stands in for a user who opened it (the choice is remembered).
+  await page.addInitScript('window.__mockConfigOverrides = Object.assign({}, window.__mockConfigOverrides, { changesHistoryOpen: true });');
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
 

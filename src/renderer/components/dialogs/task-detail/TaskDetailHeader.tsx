@@ -14,7 +14,6 @@ import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandSearchList } from './CommandSearchList';
 import { useHeaderPillOverflow, type HeaderPillSpec } from './useHeaderPillOverflow';
 import { MaximizeToggleButton } from '../dialog-maximize';
-import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import { shortRefLabel, useBaseRefKind } from '../../../hooks/useBaseRefKind';
@@ -22,6 +21,8 @@ import { useSessionStore } from '../../../stores/session-store';
 import { useTerminalFindControl } from '../../../utils/terminal-find-registry';
 import { openTaskConversation } from './open-task-conversation';
 import { prStatePresentation } from '../../../lib/pr-state';
+import { usePrChecks, prFixCount } from '../../../hooks/usePrChecks';
+import { CountBadge } from '../../CountBadge';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
@@ -203,6 +204,10 @@ export function TaskDetailHeader({
   const titleSpanRef = useRef<HTMLSpanElement>(null);
   const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
+  // The Changes button's count: what an agent could fix on the PR. Shares one
+  // read with the Changes panel's Checks section (usePrChecks' cache).
+  const { checks: prChecks } = usePrChecks(task, hostProjectId ?? null);
+  const prFixes = prFixCount(task, prChecks);
 
   // Conversation availability, for disabling the pill/kebab item rather than
   // letting a click resolve to nothing. A live session (any state, not just
@@ -272,8 +277,9 @@ export function TaskDetailHeader({
 
   return (
     <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] min-w-0">
-      {/* Leading cluster: pause / id / priority. flex-shrink-0 so the priority
-          badge never compresses, and so it measures as one unit for the overflow calc. */}
+      {/* Leading cluster: pause / id. flex-shrink-0 so it never compresses, and
+          so it measures as one unit for the overflow calc. Priority is not here:
+          it shows in the description's pill row, ahead of the labels, as on the card. */}
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
@@ -320,9 +326,6 @@ export function TaskDetailHeader({
           #{task.display_id}
         </button>
       </Tooltip>
-
-      {/* Priority badge (hidden when priority is 0) */}
-      <PriorityBadge priority={task.priority ?? 0} />
       </div>
 
       {/* Title - the overflow calc reserves only a ~50ch floor (not the full
@@ -387,16 +390,26 @@ export function TaskDetailHeader({
 
           {/* Changes toggle pill */}
           {showPill('changes') && canShowChanges && (
-            <div data-pill-id="changes" className="flex-shrink-0">
+            <div data-pill-id="changes" className="relative flex-shrink-0">
               <HeaderActionButton
                 icon={GitCompare}
                 onClick={onToggleChanges}
                 active={changesOpen}
                 tip={changesOpen ? t`Hide changes` : t`Show changes`}
                 keys="taskDetail.toggleChanges"
+                // The count overlay is decorative; the tip says it in words.
+                detail={prFixes > 0 ? t`${plural(prFixes, { one: '# thing on the PR to fix', other: '# things on the PR to fix' })}` : undefined}
                 ariaLabel={t`Toggle changes`}
                 testId="changes-toggle"
               />
+              {/* What an agent could fix on the PR (each failed check, plus a
+                  conflict), so a closed panel still says there is something to
+                  look at. The title bar's solid overlay badge, hidden at zero. */}
+              {prFixes > 0 && (
+                <span aria-hidden="true" className="pointer-events-none absolute -top-0.5 -right-1 flex">
+                  <CountBadge count={prFixes} variant="solid" size="xs" testId="changes-toggle-fix-count" />
+                </span>
+              )}
             </div>
           )}
 

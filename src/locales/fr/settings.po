@@ -156,6 +156,10 @@ msgstr "{releaseBufferMs} ms"
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
 msgstr "{toWrite, plural, one {# tâche} many {# tâches} other {# tâches}}"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A browser in task windows for you and your agents."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "A call failed"
@@ -266,11 +270,6 @@ msgstr "Agent actif"
 #, fuzzy
 msgid "Agent active time"
 msgstr "Temps d'activité de l'agent"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Agent Browser"
-msgstr "Navigateur de l'agent"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -583,6 +582,7 @@ msgid "Browser"
 msgstr "Navigateur"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Browser automation"
 msgstr "Automatisation du navigateur"
@@ -596,11 +596,6 @@ msgstr "Données du navigateur"
 #, fuzzy
 msgid "Browser data cleared"
 msgstr "Données du navigateur effacées"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Browser pane"
-msgstr "Volet Navigateur"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -712,6 +707,10 @@ msgstr "Chemin de la CLI"
 #, fuzzy
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "Cliquez dans un espace vide hors d'une fenêtre de tâche pour la fermer. Les contrôles, les cartes de tâche et les terminaux en cours réagissent toujours au premier clic. L'agent continue de s'exécuter et se rattache quand vous rouvrez la tâche."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Click with modifiers"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -899,9 +898,8 @@ msgid "Conversations, tasks, commits, summaries and source code are all rebuilt,
 msgstr "Les conversations, tâches, commits, résumés et le code source sont tous reconstruits, dans chaque projet. {rebuildAsk, plural, one {Le # résumé rédigé avec un modèle antérieur est réécrit} many {Les # de résumés rédigés avec un modèle antérieur sont réécrits} other {Les # résumés rédigés avec un modèle antérieur sont réécrits}}, en environ {rewriteCalls, plural, one {# appel} many {# d'appels} other {# appels}} en arrière-plan."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Cookies and storage the embedded browser keeps."
-msgstr "Cookies et stockage conservés par le navigateur intégré."
+msgid "Cookies and storage the Kangentic browser keeps."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -935,9 +933,8 @@ msgid "Copy pairing link"
 msgstr "Copier le lien d'association"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
-#, fuzzy
-msgid "Copy, paste and interrupt inside a terminal."
-msgstr "Copier, coller et interrompre dans un terminal."
+msgid "Copy, paste, interrupt and open links in a terminal."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1089,15 +1086,14 @@ msgstr "Par défaut"
 msgid "Default base branch"
 msgstr "Branche de base par défaut"
 
-#: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Default browser pane URL"
-msgstr "URL par défaut du volet navigateur"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Default diff scope"
 msgstr "Portée du diff par défaut"
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Default Kangentic browser URL"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1235,11 +1231,6 @@ msgstr "Effort"
 #, fuzzy
 msgid "Elapsed time"
 msgstr "Temps écoulé"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Embed a Browser pane in task windows that agents can open."
-msgstr "Volet Navigateur dans les tâches, ouvrable par les agents."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -1465,6 +1456,18 @@ msgstr "Haute précision"
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
 msgstr "Un effort plus élevé répond plus lentement et peut fiabiliser les décomptes sur de nombreuses tâches ; les résumés utilisent toujours le niveau par défaut de l'agent."
 
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold a modifier key while you click."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1474,6 +1477,10 @@ msgstr "Retenir le prompt pendant le script"
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Maintenez push-to-talk pour dicter dans un terminal/champ."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold the modifier keys and click here. Escape to cancel."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1661,6 +1668,10 @@ msgstr "Installation de l'application, association d'un téléphone et notificat
 msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "Évalue les conditions et étapes de workflow, et nomme les tâches."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic browser"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
 msgid "Kangentic could not write its settings file."
@@ -1721,11 +1732,6 @@ msgstr "Fichier de clé"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
-msgid "Keys for a task's Browser pane."
-msgstr "Touches du volet Navigateur d'une tâche."
-
-#: src/renderer/components/settings/tabs/HotkeysTab.tsx
-#, fuzzy
 msgid "Keys for an open task window."
 msgstr "Touches d'une fenêtre de tâche ouverte."
 
@@ -1733,6 +1739,10 @@ msgstr "Touches d'une fenêtre de tâche ouverte."
 #, fuzzy
 msgid "Keys for the Changes panel and its diff."
 msgstr "Touches du panneau Modifications et de son diff."
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -1781,9 +1791,8 @@ msgid "Leftover processes"
 msgstr "Processus résiduels"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Let agents drive the Browser pane."
-msgstr "Permet aux agents de piloter le volet Navigateur."
+msgid "Let agents drive the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2361,9 +2370,8 @@ msgid "Project"
 msgstr "Projet"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr "URL par défaut du projet lorsqu'une tâche n'a pas de remplacement propre. Enregistrée automatiquement lors de votre première navigation dans le volet Navigateur."
+msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -2539,9 +2547,8 @@ msgid "Release buffer"
 msgstr "Délai après relâchement"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Reload the browser pane to apply."
-msgstr "Rechargez le volet navigateur pour appliquer."
+msgid "Reload the Kangentic browser to apply."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3214,9 +3221,8 @@ msgid "This restores every hotkey to its default. Your custom bindings will be r
 msgstr "Tous les raccourcis seront rétablis par défaut. Vos associations personnalisées seront supprimées."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr "Cette action supprime les cookies, localStorage, IndexedDB, service workers et caches HTTP/d'authentification du volet navigateur intégré pour toutes les tâches et tous les projets. Vous serez déconnecté de tous les sites."
+msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 msgctxt "notification sound"
@@ -3547,9 +3553,8 @@ msgid "Windows"
 msgstr "Fenêtres"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr "Efface les cookies, le localStorage, IndexedDB, les service workers et les caches HTTP/d'authentification du navigateur intégré. Les URL enregistrées sont conservées."
+msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

@@ -9,7 +9,7 @@
 ## Working with tasks
 
 * [Tasks](tasks.md) - The task lifecycle: the New Task dialog (Column Settings or Agent Override, Board Profiles, model and effort pins, pasted images), what spawning, moving between active columns, Done and Return to To Do each do to the session and worktree, the card context menu, and the completed task view.
-* [Task detail and terminal panel](task-detail.md) - The bottom terminal panel (session tabs and indicators, Activity tab, image paste, file drop), the task detail dialog's header pills, kebab menu and Close on Outside Click, the Changes panel (History graph, scopes, image diffs, per-file windows), the Browser pane, and a completed task's Summary, Changes, Conversation and Usage tabs.
+* [Task detail and terminal panel](task-detail.md) - The bottom terminal panel (session tabs and indicators, Activity tab, image paste, file drop), the task detail dialog's header pills, kebab menu and Close on Outside Click, the Changes panel (the PR pill, Checks and Send to agent, History graph, scopes, image diffs, per-file windows), the Browser pane, and a completed task's Summary, Changes, Conversation and Usage tabs.
 * [Backlog](backlog.md) - The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects and Azure DevOps items through the gh and az CLIs with incremental sync and duplicate detection.
 
 ## Automating the board
@@ -26,6 +26,6 @@
 
 ## Settings and help
 
-* [Settings](settings.md) - Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, SSH, Privacy, Developer).
+* [Settings](settings.md) - Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile Devices, SSH, Privacy, Developer).
 * [Keyboard shortcuts](keyboard-shortcuts.md) - Every default shortcut by area (general toggles, terminal and project cycling, task detail, description editor, window snapping and dragging, terminal copy and paste), which ones are rebindable in Settings > Hotkeys, and which are fixed.
 * [Troubleshooting](troubleshooting.md) - The window vanishing with no crash dialog when the Chromium graphics process fails: Kangentic turns off Graphics acceleration, and gpu-process-gone crash records say what happened.

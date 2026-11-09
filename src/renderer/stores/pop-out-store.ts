@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore } from './hmr-store-pin';
 import { popOutInstanceKey } from '../../shared/pop-out';
 import type { PopOutKind, PopOutParams } from '../../shared/pop-out';
 
@@ -22,19 +23,21 @@ export interface PopOutStore {
   isOpen: (kind: PopOutKind, params: PopOutParams) => boolean;
 }
 
+const popOutStoreInitializer: StateCreator<PopOutStore> = (set, get) => ({
+  openInstanceKeys: {},
+
+  setOpen: (keys) => set({ openInstanceKeys: Object.fromEntries(keys.map((key) => [key, true as const])) }),
+
+  loadOpen: async () => {
+    const keys = await window.electronAPI.popOut.listOpen();
+    get().setOpen(keys);
+  },
+
+  isOpen: (kind, params) => Boolean(get().openInstanceKeys[popOutInstanceKey(kind, params)]),
+});
+
 function createPopOutStore() {
-  return create<PopOutStore>()((set, get) => ({
-    openInstanceKeys: {},
-
-    setOpen: (keys) => set({ openInstanceKeys: Object.fromEntries(keys.map((key) => [key, true as const])) }),
-
-    loadOpen: async () => {
-      const keys = await window.electronAPI.popOut.listOpen();
-      get().setOpen(keys);
-    },
-
-    isOpen: (kind, params) => Boolean(get().openInstanceKeys[popOutInstanceKey(kind, params)]),
-  }));
+  return create<PopOutStore>()(popOutStoreInitializer);
 }
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this module's
@@ -42,6 +45,7 @@ function createPopOutStore() {
 // without pinning, a re-eval could hand a second store to part of the tree.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedPopOutStore: ReturnType<typeof createPopOutStore> | undefined = import.meta.hot?.data?.popOutStore;
+if (preservedPopOutStore) refreshPinnedStore(preservedPopOutStore, popOutStoreInitializer);
 
 export const usePopOutStore = preservedPopOutStore ?? createPopOutStore();
 

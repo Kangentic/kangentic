@@ -348,6 +348,10 @@ msgstr "{worktreeCount, plural, one {# çalışma ağacından {failedCount} tane
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} Yapılacaklar sütununda kalıyor. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -409,6 +413,10 @@ msgstr "Ajan sürdürüldü"
 msgid "Agent started"
 msgstr "Ajan başlatıldı"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Agents pause during a restart and resume after."
+msgstr ""
+
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
 msgid "An unexpected error occurred."
@@ -460,6 +468,10 @@ msgstr "Dikkat"
 msgid "Change not saved to disk"
 msgstr "Değişiklik diske kaydedilmedi"
 
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Choose a project folder"
@@ -485,6 +497,11 @@ msgstr "Tüm filtreleri temizle"
 #, fuzzy
 msgid "Clear search"
 msgstr "Aramayı temizle"
+
+#: src/renderer/utils/keybindings.ts
+msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
+msgid "Click"
+msgstr ""
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -720,6 +737,10 @@ msgstr "Sütunlar yeniden sıralanamadı"
 #, fuzzy
 msgid "Couldn't reorder task"
 msgstr "Görev yeniden sıralanamadı"
+
+#: src/renderer/utils/dev-restart.ts
+msgid "Couldn't restart Kangentic"
+msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -1081,6 +1102,10 @@ msgstr "Kalan işlemler"
 msgid "Leftover processes stopped"
 msgstr "Kalan işlemler durduruldu"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Main process changed"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1092,9 +1117,8 @@ msgid "Maximize"
 msgstr "Ekranı kapla"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Son PR yenilemesine göre incelemeler, denetimler veya dal kuralları birleştirmeyi engelliyor"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy
@@ -1270,20 +1294,26 @@ msgstr "açık"
 msgid "Open a project first."
 msgstr "Önce bir proje açın."
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutButton.tsx
 #, fuzzy
 msgid "Open in new window"
 msgstr "Yeni pencerede aç"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR #{prNumber} in browser"
-msgstr "PR #{prNumber} öğesini tarayıcıda aç"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR in browser"
-msgstr "PR'ı tarayıcıda aç"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1447,6 +1477,12 @@ msgstr "Son PR yenilemesine göre gerekli denetimler veya ilkeler sırada"
 msgid "Required checks or policies are running as of the last PR refresh"
 msgstr "Son PR yenilemesine göre gerekli denetimler veya ilkeler çalışıyor"
 
+#: src/renderer/components/ErrorBoundary.tsx
+#: src/renderer/utils/dev-restart.ts
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
 #: src/renderer/stores/updater-store.ts
 #, fuzzy
 msgid "Restart to update"
@@ -1553,6 +1589,10 @@ msgstr "Kurulum betiği başarısız oldu"
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"
 msgstr "Shift+Tıklama ikincil sıralama ekler"
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Show in folder"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

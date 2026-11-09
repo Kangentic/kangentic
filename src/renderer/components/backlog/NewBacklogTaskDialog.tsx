@@ -6,7 +6,6 @@ import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { maximizedDialogLayout, MaximizeToggleButton } from '../dialogs/dialog-maximize';
 import { PriorityLabelsRow } from '../dialogs/PriorityLabelsRow';
 import { DialogFooterActions } from '../dialogs/DialogFooterActions';
-import { PriorityBadge } from './PriorityBadge';
 import { GitHubIcon } from '../icons/GitHubIcon';
 import { Tooltip } from '../Tooltip';
 import { NameFromPromptButton } from '../NameFromPromptButton';
@@ -426,7 +425,6 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
                   </button>
                 </Tooltip>
               )}
-              <PriorityBadge priority={priority} />
             </span>
           }
           icon={isEditMode

@@ -656,9 +656,12 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
 /**
  * Normalized, platform-agnostic merge readiness: would clicking Merge right now
  * succeed? Orthogonal to `PRState`, which stays the gate for the terminal
- * short-circuits. `ready` means a Merge click would succeed; `blocked` means no
- * conflicts but a failed check, a rejected or waiting review, a policy, or a
- * stale base stops it; `conflicting` means merge conflicts; `queued` and
+ * short-circuits. `ready` means a Merge click would succeed; `failing` means a
+ * check or build policy failed, which an agent can fix (it outranks a waiting
+ * review, and GitHub `UNSTABLE` with a failed non-required check reads
+ * `failing` too, though GitHub would let it merge); `blocked` means no
+ * conflicts and no failed check, but a rejected or waiting review, a policy, or
+ * a stale base stops it; `conflicting` means merge conflicts; `queued` and
  * `running` mean a blocking check or policy has not finished (queued for a
  * runner, or running), so the merge would not succeed yet but nothing has
  * failed, and an in-flight check outranks a waiting review so the chip tracks
@@ -674,8 +677,41 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
  * `tests/unit/pr-connector-gate.test.ts` can assert membership over the real
  * connector registry; the type is derived from it.
  */
-export const PR_MERGE_READINESS_VALUES = ['ready', 'blocked', 'conflicting', 'queued', 'running', 'unknown'] as const;
+export const PR_MERGE_READINESS_VALUES = ['ready', 'failing', 'blocked', 'conflicting', 'queued', 'running', 'unknown'] as const;
 export type PRMergeReadiness = (typeof PR_MERGE_READINESS_VALUES)[number];
+
+/**
+ * One CI check on a task's PR, normalized by its connector. `id` is opaque to
+ * everything but the connector that made it (a GitHub job id, an Azure policy
+ * evaluation id). `group` is the workflow or pipeline the check belongs to, when
+ * the platform has one. `pending` covers queued and running alike. `skipped`
+ * checks count toward neither number of the Checks badge. `hasLog` says the
+ * connector can fetch this check's log for the agent.
+ */
+export interface PRCheck {
+  id: string;
+  name: string;
+  group: string | null;
+  url: string;
+  status: 'passed' | 'failed' | 'pending' | 'skipped';
+  hasLog: boolean;
+}
+
+/** A PR's checks, with the page that lists them all (opened by "N passed"). */
+export interface PRChecks {
+  checks: PRCheck[];
+  checksPageUrl: string;
+}
+
+/**
+ * What `tasks.sendPrChecks` did. `sent` pasted into the task's running agent;
+ * `held` queued the message for the task's next agent (no agent was running).
+ * `count` is the failed checks sent, plus one for a conflict.
+ */
+export interface PrChecksSendResult {
+  outcome: 'sent' | 'held';
+  count: number;
+}
 
 /**
  * Outcome of an on-demand PR resolve. `linked`/`unchanged` mean a PR is associated;
@@ -983,13 +1019,10 @@ export interface TaskDetailViewState {
   changesSelectedCommit?: string;
   /** Manually-set commit-history region height (px) in the Changes panel's vertical split. */
   changesHistoryHeight?: number;
-  /**
-   * History section collapsed in the Changes rail. Written only when true;
-   * absent means open, the default. (Blobs written before #881 carry
-   * `changesHistoryOpen` instead, when History was collapsed by default; it is
-   * ignored, so those tasks open History once and keep a collapse from then.)
-   */
-  changesHistoryCollapsed?: true;
+  // History's open state is no longer per task: `AppConfig.changesHistoryOpen`
+  // is one remembered choice for every task. Blobs written before carry
+  // `changesHistoryCollapsed` (or, before #881, `changesHistoryOpen`); both
+  // are ignored on hydrate.
 }
 
 export interface TaskAttachment {
@@ -4309,6 +4342,8 @@ export interface MonitorSessionRow {
   startBlockedReason: StartBlockedReason | null;
   /** A browser is running for this task in any state (showing, hidden, parked, popped out, or offscreen), for the card's globe. */
   browserRunning: boolean;
+  /** Index into the project's priority scale; 0 (the bottom entry) draws no pill. Always 0 for a Command Terminal. */
+  priority: number;
   labels: string[];
   prUrl: string | null;
   prNumber: number | null;
@@ -4563,6 +4598,11 @@ export interface AppConfig {
   diffUseInlineWhenNarrow: boolean; // render a narrow diff pane inline even when Side by side is selected
   diffFileSort: 'name' | 'status' | 'size' | 'ext'; // Changes panel file ordering
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
+  /** Changes rail sections the user opened. One choice each for every task (folding is about rail
+   *  height, which every task shares), both closed by default: open together they push the file
+   *  list out of the rail. Pure UI state, written from the section toggles, not a Settings row. */
+  changesChecksOpen: boolean;
+  changesHistoryOpen: boolean;
 
   /** Persisted Agent Monitor view. Global-only: the monitor spans every project, so a
    *  per-project override would be meaningless. Written debounced on every change (not
@@ -4792,7 +4832,7 @@ export interface AppConfig {
    * an agent may drive the embedded Browser pane via the kangentic_browser_*
    * MCP tools. Distinct from `browser` above (the per-project pane settings):
    * this is a cross-project security policy and lives below the settings
-   * separator in its own "Agent Browser" tab.
+   * separator in its own "Browser automation" tab.
    */
   browserAutomation?: {
     /** Master switch. When false the kangentic_browser_* tools are disabled. Default true. */
@@ -5368,6 +5408,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   diffUseInlineWhenNarrow: true,
   diffFileSort: 'name',
   diffFlatList: false,
+  changesChecksOpen: false,
+  changesHistoryOpen: false,
   monitor: {
     layout: 'cards',
     // Grouped by PROJECT out of the box. This view exists because agents are
@@ -5623,17 +5665,6 @@ export interface GpuGraphicsStatus {
 }
 
 // === Backlog ===
-
-export type BacklogPriority = 0 | 1 | 2 | 3 | 4;
-// 0=none, 1=low, 2=medium, 3=high, 4=urgent
-
-export const BACKLOG_PRIORITY_LABELS: Record<number, string> = {
-  0: 'None',
-  1: 'Low',
-  2: 'Medium',
-  3: 'High',
-  4: 'Urgent',
-};
 
 export const DEFAULT_PRIORITY_CONFIG: Array<{ label: string; color: string }> = [
   { label: 'None', color: '#6b7280' },
@@ -8635,6 +8666,12 @@ export interface ElectronAPI {
     setRuntimeOverride: (input: TaskSetRuntimeOverrideInput, projectId?: string | null) => Promise<TaskSetRuntimeOverrideResult>;
     /** On-demand authoritative branch->PR resolve + link for a task (works without a live session). */
     resolvePr: (taskId: string, projectId?: string | null) => Promise<TaskResolvePrResult>;
+    /** The CI checks of a task's linked PR, from its connector. Null when the task has no PR or
+     *  its host has no check listing. Throws the connector's error (gh or az unavailable). */
+    listPrChecks: (taskId: string, projectId?: string | null) => Promise<PRChecks | null>;
+    /** Send the PR's failed checks (with log tails) and any conflict to the task's agent: pasted
+     *  into a running agent, else held for its next one. Throws when there is nothing to send. */
+    sendPrChecks: (taskId: string, projectId?: string | null) => Promise<PrChecksSendResult>;
     /** Persist the task-detail dialog's layout blob (debounced from the renderer) so it restores across restarts. Pass null to clear. */
     setDetailViewState: (taskId: string, state: TaskDetailViewState | null, projectId?: string | null) => Promise<void>;
     onAutoMoved: (callback: (taskId: string, targetSwimlaneId: string, taskTitle: string, projectId?: string) => void) => () => void;
@@ -9283,6 +9320,12 @@ export interface ElectronAPI {
   // App
   app: {
     getVersion: () => Promise<string>;
+    /** Dev only: restart Kangentic through the normal quit. Under `npm start`
+     *  that rebuilds main, preload and the workers first, so the restart loads
+     *  the code a merge changed. Every running agent is suspended and resumes on
+     *  the restart. The promise may never settle: the app quits. Rejects in a
+     *  production build, where main registers no handler. */
+    restart: () => Promise<void>;
   };
 
   // Updater
@@ -9659,6 +9702,18 @@ export interface ElectronAPI {
   browser: {
     captureAndSend: (input: BrowserCaptureInput) => Promise<{ filePath: string }>;
     /**
+     * The task's saved annotation draft, or null. Annotations are saved as they
+     * change so a restart or crash loses none of them. `projectId` is the
+     * TASK's project, as for the URL calls below.
+     */
+    loadAnnotations: (taskId: string, projectId?: string | null) => Promise<BrowserAnnotationDraft | null>;
+    /** Replace the task's saved draft. Captures it no longer names are deleted. */
+    saveAnnotations: (taskId: string, draft: BrowserAnnotationDraft, projectId?: string | null) => Promise<void>;
+    /** Save one capture of the visible page for the task's draft; resolves its id. */
+    saveAnnotationCapture: (taskId: string, pngBase64: string, projectId?: string | null) => Promise<string>;
+    /** Delete the task's draft and its captures (Clear, or a Send that landed). */
+    discardAnnotations: (taskId: string, projectId?: string | null) => Promise<void>;
+    /**
      * Per-task Browser pane URLs. `projectId` is the project of the TASK, not
      * the open board's: a popped-out pane outlives a project switch, so
      * resolving these against the ambient current project wrote one project's
@@ -9967,9 +10022,80 @@ export interface BrowserCaptureInput {
   cwd: string;
   url: string;
   pngBase64: string;
-  pickedElement: BrowserPickedElement | null;
+  /**
+   * The project the pane's TASK belongs to (`retainedProjectId ?? projectId`),
+   * so a pane in a backgrounded project writes its captures into its own
+   * project. Null falls back to the open project.
+   */
+  projectId?: string | null;
+  /**
+   * The user's numbered annotations, in order. Empty when nothing was marked:
+   * the prompt is then today's note, screenshot and selection.
+   */
+  annotations: BrowserAnnotationSendInput[];
+  /** The page's viewport in CSS px and its scroll offset when the screenshot was taken. */
+  viewport: BrowserAnnotationViewport | null;
   selectedText: string;
   note: string;
+}
+
+/** One point of a drawn stroke, in CSS px of the whole page (document coordinates). */
+export interface BrowserAnnotationPoint {
+  x: number;
+  y: number;
+}
+
+export type BrowserAnnotationStroke = BrowserAnnotationPoint[];
+
+/**
+ * One thing an annotation points at: an element the user selected, or a
+ * drawing (one or more strokes that touch). Element rects are page
+ * coordinates too, captured when the element was selected.
+ */
+export type BrowserAnnotationItem =
+  | { id: string; kind: 'element'; element: BrowserPickedElement }
+  | { id: string; kind: 'drawing'; strokes: BrowserAnnotationStroke[] };
+
+/** One annotation: a note and everything it points at. */
+export interface BrowserAnnotation {
+  id: string;
+  note: string;
+  /** The page the annotation's first item was made on. */
+  url: string;
+  items: BrowserAnnotationItem[];
+  /**
+   * The latest capture of the visible page taken while an item joined this
+   * annotation, sent when the annotation is out of view at Send time.
+   */
+  captureId: string | null;
+}
+
+/** An annotation session saved per task, so a restart or crash loses nothing. */
+export interface BrowserAnnotationDraft {
+  version: 1;
+  annotations: BrowserAnnotation[];
+  activeId: string | null;
+}
+
+export interface BrowserAnnotationViewport {
+  width: number;
+  height: number;
+  scrollX: number;
+  scrollY: number;
+}
+
+/** An annotation as Send hands it to main, numbered and with its page state. */
+export interface BrowserAnnotationSendInput {
+  number: number;
+  note: string;
+  url: string;
+  /** False when none of its elements could be found on the page at Send time. */
+  onPage: boolean;
+  /** True when one of its items is inside the screenshot Send takes. */
+  inViewport: boolean;
+  items: BrowserAnnotationItem[];
+  /** The capture to send for an annotation that is not in the screenshot. */
+  captureId: string | null;
 }
 
 /**

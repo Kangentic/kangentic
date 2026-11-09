@@ -288,8 +288,8 @@ msgid "Done"
 msgstr "Done"
 
 #: src/shared/keybindings.ts
-msgid "Draw / annotate"
-msgstr "Draw / annotate"
+msgid "Draw on the page"
+msgstr "Draw on the page"
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
@@ -409,16 +409,20 @@ msgid "Headers"
 msgstr "Headers"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr "Hold these keys and click a link in a terminal to open it in your default browser."
+
+#: src/shared/keybindings.ts
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Hold to dictate; release to populate the focused terminal or text field."
 
 #: src/shared/keybindings.ts
 msgid "Insert newline"
 msgstr "Insert newline"
-
-#: src/shared/keybindings.ts
-msgid "Inspect element"
-msgstr "Inspect element"
 
 #: src/shared/embedding-runtime.ts
 msgid "Intel Macs"
@@ -660,8 +664,8 @@ msgid "On task exit"
 msgstr "On task exit"
 
 #: src/shared/task-template-vars.ts
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."
@@ -691,6 +695,14 @@ msgstr "Open"
 #: src/shared/keybindings.ts
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Open in-viewer search inside the focused Conversation window."
+
+#: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr "Open link in default browser"
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr "Open link in Kangentic browser"
 
 #: src/shared/keybindings.ts
 msgid "Open or close the command terminal overlay."
@@ -829,6 +841,10 @@ msgstr "Queued..."
 msgid "Quick Find"
 msgstr "Quick Find"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr "Rebuild main and preload, then restart. Agents pause and resume."
+
 #: src/shared/relay.ts
 msgid "Relay address cannot contain a backslash."
 msgstr "Relay address cannot contain a backslash."
@@ -860,6 +876,10 @@ msgstr "Reset terminal"
 #: src/shared/keybindings.ts
 msgid "Reset zoom"
 msgstr "Reset zoom"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr "Restart Kangentic"
 
 #: src/shared/automation-manifest.ts
 msgid "Review the latest changes and fix any issues you find"
@@ -912,12 +932,20 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr "Search the focused terminal's output, taking this key from any program there that reads it."
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr "Select element"
+
+#: src/shared/keybindings.ts
 msgid "Select the next file in the Changes panel."
 msgstr "Select the next file in the Changes panel."
 
 #: src/shared/keybindings.ts
 msgid "Select the previous file in the Changes panel."
 msgstr "Select the previous file in the Changes panel."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr "Send every annotation"
 
 #: src/shared/automation-manifest.ts
 msgid "Send message to agent"
@@ -948,10 +976,6 @@ msgid "Show or hide the activity-engine debug overlay."
 msgstr "Show or hide the activity-engine debug overlay."
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "Show or hide the browser pane inside the task detail dialog."
-
-#: src/shared/keybindings.ts
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "Show or hide the changes (diff) panel inside the task detail dialog."
 
@@ -960,8 +984,12 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Show or hide the description panel inside the task detail dialog."
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr "Show or hide the focused Command Terminal's browser pane."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr "Show or hide the focused Command Terminal's Kangentic browser."
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
+msgstr "Show or hide the Kangentic browser in the task window."
 
 #: src/shared/keybindings.ts
 msgid "Show or hide the project sidebar."
@@ -1146,10 +1174,6 @@ msgid "Toggle between the board and the backlog view."
 msgstr "Toggle between the board and the backlog view."
 
 #: src/shared/keybindings.ts
-msgid "Toggle Browser pane"
-msgstr "Toggle Browser pane"
-
-#: src/shared/keybindings.ts
 msgid "Toggle Changes panel"
 msgstr "Toggle Changes panel"
 
@@ -1158,8 +1182,8 @@ msgid "Toggle Command Terminal"
 msgstr "Toggle Command Terminal"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Command Terminal Browser pane"
-msgstr "Toggle Command Terminal Browser pane"
+msgid "Toggle Command Terminal browser"
+msgstr "Toggle Command Terminal browser"
 
 #: src/shared/keybindings.ts
 msgid "Toggle debug overlay"
@@ -1168,6 +1192,10 @@ msgstr "Toggle debug overlay"
 #: src/shared/keybindings.ts
 msgid "Toggle description peek"
 msgstr "Toggle description peek"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr "Toggle Kangentic browser"
 
 #: src/shared/keybindings.ts
 msgid "Toggle Knowledge Graph"
@@ -1198,6 +1226,10 @@ msgstr "Turkish"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "Ukrainian"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr "Undo the last mark"
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

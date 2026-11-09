@@ -214,7 +214,12 @@ src/main/workflows/
     endings, three runs each on Haiku at low, it got 43 of 45 right against hand labels, and the usual
     wording got 17 of 45. A no is a real stall and gets its nudge, and so does a yes on a turn with no
     final message, which gives a person nothing to act on. A board that wants unattended merges says
-    so with a forward row.
+    so with a forward row. The workflow's planning agent learns the same fact before any task
+    exists: `describeColumnsForPlanning` runs `isSendBackOnly` over the same `columnExitRows`
+    (`workflow-step-condition.ts`), on the board's order since there is no route yet, and prints
+    "Only a person moves a card out of it." on that column's `{{columns}}` line, so a route through
+    it is a stop the planner chose. The default planning prompt has it choose each route from the
+    columns' purposes (the "Its purpose:" on a line) before the visit counts.
   - **Only the agent's own word stops a task, bar one column shape** (owner's decision, 2026-10-31). A reply whose last
     line is `Needs owner: <question>` is `waiting`, matched in code before any check runs
     (`needsOwnerQuestion`, `src/shared/workflow-needs-owner.ts`). It costs no check, and it works

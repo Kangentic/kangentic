@@ -52,6 +52,10 @@ msgstr "{queued, plural, one {# kuyrukta} other {# kuyrukta}}"
 msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
 msgstr "{unreadAnnouncements, plural, one {# okunmamış} other {# okunmamış}}"
 
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "{workingAgentCount, plural, one {# agent is working. It pauses for the restart and resumes after, but its current turn stops.} other {# agents are working. They pause for the restart and resume after, but their current turns stop.}}"
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
@@ -261,6 +265,15 @@ msgstr "Projenizin kurulumunu okur"
 #, fuzzy
 msgid "Refresh"
 msgstr "Yenile"
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "Restart Kangentic?"
+msgstr ""
 
 #: src/renderer/components/layout/TitleBar.tsx
 #, fuzzy

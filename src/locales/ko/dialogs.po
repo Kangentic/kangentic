@@ -192,6 +192,10 @@ msgstr "{oldPath}에서 {newPath}(으)로"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "{passedCount} passed"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
@@ -217,6 +221,10 @@ msgstr "{pillLabel}: {reason}"
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position}/{total}"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -707,6 +715,10 @@ msgstr "변경 사항이 별도 창에 열려 있습니다"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Checks"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
 msgstr ""
@@ -948,6 +960,14 @@ msgstr "조건: {condition}"
 msgid "Confirm"
 msgstr "확인"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with {base}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with the base branch"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Connected"
@@ -1128,6 +1148,10 @@ msgstr "프로필을 저장할 수 없음"
 #, fuzzy
 msgid "Couldn't save task"
 msgstr "작업을 저장할 수 없음"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Couldn't send the failed checks"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -1556,6 +1580,10 @@ msgstr "인계"
 #, fuzzy
 msgid "Handoff Chain"
 msgstr "핸드오프 체인"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Held for the next agent"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2199,10 +2227,18 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "열림"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open {name} in browser"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "Open {shortHash} on {providerName}"
 msgstr "{providerName}에서 {shortHash} 열기"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open all checks in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -2266,6 +2302,10 @@ msgstr "프로필을 편집하려면 해당 보드를 여세요"
 #, fuzzy
 msgid "Open the board to change this"
 msgstr "변경하려면 보드를 여세요"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open the pull request in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2744,6 +2784,11 @@ msgstr "변경 사항을 보려면 커밋을 선택하세요"
 msgid "Select a file to view changes"
 msgstr "변경 사항을 보려면 파일을 선택하세요"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Send to agent"
+msgstr "에이전트에 보내기"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Send to Backlog"
@@ -2753,6 +2798,11 @@ msgstr "백로그로 보내기"
 #, fuzzy
 msgid "Sending the original instead."
 msgstr "대신 원본을 보냅니다."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Sending..."
+msgstr "전송 중..."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -3148,6 +3198,10 @@ msgstr "<0>\"{projectName}\"</0>의 폴더가 더 이상 존재하지 않습니�
 #, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
 msgstr "새 에이전트는 작업 설명에서 시작하는 대신 이전 에이전트의 대화를 이어받습니다."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "The next agent on this task gets the failed checks in its first message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

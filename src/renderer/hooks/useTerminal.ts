@@ -12,7 +12,8 @@ import { scheduleFontApply, terminalFontMoved } from '../utils/terminal-font-app
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
 import { createTerminalLinkGesture } from '../utils/terminal-links/link-gesture';
-import { registerTerminalLinks } from '../utils/terminal-links/register-terminal-links';
+import { createTerminalLinkTargets, type TerminalLinkBrowser } from '../utils/terminal-links/link-targets';
+import { linkOpensOn, registerTerminalLinks } from '../utils/terminal-links/register-terminal-links';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { noteScrollLatencyParsed, noteScrollLatencyStage } from '../utils/scroll-latency-probe';
@@ -377,6 +378,11 @@ interface UseTerminalOptions {
    *  `terminalElement` is this terminal's xterm element, so the policy can refuse
    *  a terminal the user cannot see (covered by a dialog or an overlay). */
   mayTakeArrivalFocus?: (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => boolean;
+  /** The Kangentic browser beside this terminal, which its link hotkey opens a
+   *  link in. Absent or null where the host has none (the bottom panel, the
+   *  Workflows pane, a project with the Browser pane off): every link then opens
+   *  in the default browser. Read live via a ref. */
+  linkBrowser?: TerminalLinkBrowser | null;
 }
 
 /**
@@ -1433,9 +1439,13 @@ export function useTerminal(options: UseTerminalOptions) {
    *  single arrival-focus frame below (`focusOnArrival`, reached from all five
    *  discharge sites) asks the host's CURRENT policy. */
   const mayTakeArrivalFocusRef = useRef(options.mayTakeArrivalFocus);
+  /** Same pattern: a link click asks the host's CURRENT browser, so the pane
+   *  switching on or off shows on the next hover without rebuilding the terminal. */
+  const linkBrowserRef = useRef(options.linkBrowser ?? null);
   useLayoutEffect(() => {
     onScrollbackSettledRef.current = options.onScrollbackSettled;
     mayTakeArrivalFocusRef.current = options.mayTakeArrivalFocus;
+    linkBrowserRef.current = options.linkBrowser ?? null;
   });
 
   /** Single chokepoint for "a scrollback operation has settled". Ordering is
@@ -1711,7 +1721,11 @@ export function useTerminal(options: UseTerminalOptions) {
       family: configuredFontFamily,
       size: configuredFontSize,
     };
-    const linkGesture = createTerminalLinkGesture();
+    const linkTargets = createTerminalLinkTargets({
+      getBrowser: () => linkBrowserRef.current,
+      openExternal: (url) => { void window.electronAPI.shell.openExternal(url); },
+    });
+    const linkGesture = createTerminalLinkGesture(window, linkOpensOn(linkTargets));
     const terminal = new Terminal({
       fontFamily: configuredFontFamily,
       fontSize: configuredFontSize,
@@ -1725,7 +1739,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // "which window is selected" cue for the unfocused panes.
       cursorInactiveStyle: 'none',
       allowProposedApi: true,
-      linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url), linkGesture),
+      linkHandler: createTerminalLinkHandler(linkTargets, linkGesture),
       // No color-scheme, kitty keyboard, or win32-input replies into the PTY.
       vtExtensions: TERMINAL_VT_EXTENSIONS,
     });
@@ -1762,7 +1776,7 @@ export function useTerminal(options: UseTerminalOptions) {
 
     // Plain URLs and printed paths, behind the OSC 8 provider xterm registers
     // itself, so a link the app marked wins an overlap. Gone with the terminal.
-    registerTerminalLinks(terminal, linkGesture, options.sessionId ?? null);
+    registerTerminalLinks(terminal, linkGesture, options.sessionId ?? null, linkTargets);
 
     // Record this terminal as the last-focused one for dictation injection
     // target resolution. The textarea is xterm's focusable element, so this
@@ -1862,7 +1876,7 @@ export function useTerminal(options: UseTerminalOptions) {
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
       terminal.onData((data) => {
-        // The press and release of a Ctrl or Cmd click on a link are this
+        // The press and release of a link hotkey click (Ctrl or Cmd click by default) are this
         // terminal's, or a TUI that opens links itself opens it a second time.
         // Wheel and motion reports carry a lane and still go through.
         if (linkGesture.isClickingLink() && isMouseReport(data) && mouseReportLane(data) === undefined) return;

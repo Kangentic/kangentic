@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
 import { readPanelPlaces } from '../../shared/command-terminal-panel';
 import type { AppConfig, CommandTerminalPanelPlaces, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
 import type { CommandTerminalRailState } from '../../shared/command-terminal-rail';
@@ -9,23 +10,43 @@ import { hasModelIdShape, parseModelId } from '../../shared/model-id';
 import { invalidateAllProjects } from './project-cache';
 import { useAnnouncementsStore } from './announcements-store';
 
-/** Last-viewed settings tab, preserved across HMR (Pattern A) so the panel
- *  reopens to the same section during dogfooding instead of resetting to the
- *  first tab. Session-scoped only: intentionally not persisted across restarts. */
-// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
-let lastSettingsTabHmr: string | null = import.meta.hot?.data?.lastSettingsTab ?? null;
+/**
+ * This module's mutable state, one object every evaluation of the module shares
+ * (`sharedModuleState`). The pin refreshes the store's actions on a re-eval, so
+ * an old action still in flight and its replacement read and write the same
+ * object, never two copies of a `let`.
+ */
+interface ConfigModuleState {
+  /** Last-viewed settings tab, so the panel reopens to the same section during
+   *  dogfooding instead of resetting to the first tab. Session-scoped only:
+   *  intentionally not persisted across restarts. */
+  lastSettingsTab: string | null;
+  /** Onboarding steps ticked off this session. Session-only by design, so
+   *  Pattern B cannot rescue it: there is no main-process truth for
+   *  `loadConfig()` to re-fetch. Before the store was pinned (Pattern E, below),
+   *  a Fast Refresh rebuilt the store with an empty map and silently un-ticked
+   *  completed steps, including `taskDetailOpened`, step 5's ONLY signal. The pin
+   *  keeps that state in the instance; this copy seeds a store built cold. */
+  onboardingStepsCompleted: Record<string, OnboardingStepKey[]>;
+  /** The on-demand model rescan's throttle (`rescanModels`). */
+  modelRescanInFlight: boolean;
+  modelRescanLastAtMs: number;
+  /** The tail of the project-override write chain; see `updateProjectOverride`. */
+  projectOverrideWrites: Promise<void>;
+}
 
-/** Onboarding steps ticked off this session, preserved across HMR (Pattern A).
- *
- *  This state is session-only by design, which means Pattern B cannot rescue it: there is no
- *  main-process truth for `loadConfig()` to re-fetch. Before the store was pinned (Pattern E,
- *  below), a Fast Refresh of this module or of anything it imports rebuilt the store with an
- *  empty map and silently un-ticked completed steps - including `taskDetailOpened`, step 5's
- *  ONLY signal. The pin now keeps the instance, and this state with it. Both stashes are still
- *  written in the one dispose at the bottom of this file, but the pin makes them redundant,
- *  because a pinned store never re-runs the initializer that reads them back. */
-// @ts-expect-error -- Vite handles import.meta.hot
-let onboardingStepsCompletedHmr: Record<string, OnboardingStepKey[]> = import.meta.hot?.data?.onboardingStepsCompleted ?? {};
+const configModuleState = sharedModuleState<ConfigModuleState>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'configModuleState',
+  () => ({
+    lastSettingsTab: null,
+    onboardingStepsCompleted: {},
+    modelRescanInFlight: false,
+    modelRescanLastAtMs: 0,
+    projectOverrideWrites: Promise.resolve(),
+  }),
+);
 
 /** The OS appearance query. In Electron `prefers-color-scheme` follows the OS because
  *  `nativeTheme.themeSource` is `'system'`, so no IPC is needed; the UI tier's Chromium
@@ -41,10 +62,6 @@ const systemAppearance: MediaQueryList | null = typeof window !== 'undefined' &&
  *  again, so re-opening a dropdown within this window is a cheap no-op rather
  *  than another probe. */
 const MODEL_RESCAN_COOLDOWN_MS = 60_000;
-// hmr-safe: transient rescan throttle; resetting on HMR at worst allows one extra probe
-let modelRescanInFlight = false;
-// hmr-safe: transient rescan throttle; resetting on HMR at worst allows one extra probe
-let modelRescanLastAtMs = 0;
 
 interface ConfigStore {
   // -- App config --
@@ -233,7 +250,7 @@ async function refreshConfigs(): Promise<{ config: AppConfig; globalConfig: AppC
   return { config, globalConfig };
 }
 
-const createConfigStore = () => create<ConfigStore>((set, get) => {
+const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
   /** Overlay freshly-fetched configs, preserving the renderer-authoritative workspaceByProject
    *  after the first (seeding) fetch so a stale disk read can never revert the live layout. The
    *  renderer is the SOLE writer of workspaceByProject (saveWorkspaceForProject updates it
@@ -310,12 +327,6 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     return workspace;
   };
 
-  /** The tail of the project-override write chain; see `updateProjectOverride`. */
-  // hmr-safe: this lives in the store factory's closure, not module scope, so it rides the
-  // pinned instance (Pattern E). A Fast Refresh keeps the instance and the chain with it, so
-  // the chain and the store it writes into always come from the same generation.
-  let projectOverrideWrites: Promise<void> = Promise.resolve();
-
   return {
     config: DEFAULT_CONFIG,
     globalConfig: DEFAULT_CONFIG,
@@ -327,12 +338,12 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     workspaceSeeded: false,
     configLoaded: false,
     settingsOpen: false,
-    lastSettingsTab: lastSettingsTabHmr,
+    lastSettingsTab: configModuleState.lastSettingsTab,
     themePreview: null,
     systemPrefersDark: systemAppearance?.matches ?? false,
     onboardingChecklistOpen: false,
     walkthroughStep: null,
-    onboardingStepsCompleted: onboardingStepsCompletedHmr,
+    onboardingStepsCompleted: configModuleState.onboardingStepsCompleted,
     projectSettingsPath: null,
     projectSettingsProjectName: null,
     projectSettingsInitialTab: null,
@@ -410,7 +421,7 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
         // Dual-write the module mirror, same as markOnboardingStepCompleted: it is what
         // survives the Fast Refresh that rebuilds this store, so skipping it would let a
         // reload resurrect the steps this just cleared.
-        onboardingStepsCompletedHmr = remainingSteps;
+        configModuleState.onboardingStepsCompleted = remainingSteps;
         return { onboardingStepsCompleted: remainingSteps, walkthroughStep: null };
       });
 
@@ -563,15 +574,15 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
       // session (tabbing through a form, reopening the picker), and each forced
       // rescan re-probes every agent's CLI. Collapse those into at most one
       // probe per cooldown window.
-      if (modelRescanInFlight) return;
-      if (Date.now() - modelRescanLastAtMs < MODEL_RESCAN_COOLDOWN_MS) return;
-      modelRescanInFlight = true;
+      if (configModuleState.modelRescanInFlight) return;
+      if (Date.now() - configModuleState.modelRescanLastAtMs < MODEL_RESCAN_COOLDOWN_MS) return;
+      configModuleState.modelRescanInFlight = true;
       // Fire-and-forget: the dropdown already shows the current list and
       // re-renders via useKnownModels once loadAgentList resolves (~2s), so the
       // UI never blocks on the probe round trip.
       get().loadAgentList(true).catch(() => undefined).finally(() => {
-        modelRescanInFlight = false;
-        modelRescanLastAtMs = Date.now();
+        configModuleState.modelRescanInFlight = false;
+        configModuleState.modelRescanLastAtMs = Date.now();
       });
     },
 
@@ -594,11 +605,11 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
         if (existing.includes(step)) return state;
         // Dual-write the module mirror, same as setLastSettingsTab: it is what survives the
         // Fast Refresh that rebuilds this store.
-        onboardingStepsCompletedHmr = {
+        configModuleState.onboardingStepsCompleted = {
           ...state.onboardingStepsCompleted,
           [projectId]: [...existing, step],
         };
-        return { onboardingStepsCompleted: onboardingStepsCompletedHmr };
+        return { onboardingStepsCompleted: configModuleState.onboardingStepsCompleted };
       });
     },
 
@@ -635,7 +646,7 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     },
 
     setLastSettingsTab: (tabId) => {
-      lastSettingsTabHmr = tabId;
+      configModuleState.lastSettingsTab = tabId;
       set({ lastSettingsTab: tabId });
     },
 
@@ -742,13 +753,15 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
       };
       // The chain tail stays Promise<void> so a write's result cannot leak into the
       // NEXT write's `then`; the caller gets its own promise carrying the result.
-      const written = projectOverrideWrites.then(write, write);
-      projectOverrideWrites = written.then(() => undefined, () => undefined);
+      const written = configModuleState.projectOverrideWrites.then(write, write);
+      configModuleState.projectOverrideWrites = written.then(() => undefined, () => undefined);
       return written;
     },
 
   };
-});
+};
+
+const createConfigStore = () => create<ConfigStore>(configStoreInitializer);
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
 // module exports no React component, so it is not a React Fast Refresh
@@ -758,6 +771,7 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
 // stores that import this one kept reading the first.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedConfigStore: ReturnType<typeof createConfigStore> | undefined = import.meta.hot?.data?.configStore;
+if (preservedConfigStore) refreshPinnedStore(preservedConfigStore, configStoreInitializer);
 
 export const useConfigStore = preservedConfigStore ?? createConfigStore();
 
@@ -835,9 +849,7 @@ const unsubscribeMotionSync = useConfigStore.subscribe((state, prevState) => {
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose((data: Record<string, unknown>) => {
-    data.lastSettingsTab = lastSettingsTabHmr;
-    data.onboardingStepsCompleted = onboardingStepsCompletedHmr;
+  import.meta.hot.dispose(() => {
     systemAppearance?.removeEventListener('change', onAppearanceChange);
     unsubscribeThemeSync();
     unsubscribeMotionSync();

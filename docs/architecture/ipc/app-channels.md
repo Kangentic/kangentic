@@ -21,7 +21,7 @@ sources:
 # App IPC channels
 
 ## Dev-only (preview)
-Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in any group's channel count below.
+Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in any group's channel count below. The one exception is `app:restart`, which `src/main/index.ts` registers under the same flag and the App group counts.
 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -177,10 +177,11 @@ Detach a registered UI surface (`stats` for usage stats, `changes` for git chang
 | `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Error reporting (Sentry)](../../telemetry/error-reporting.md). |
 | `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Usage analytics](../../telemetry/usage-analytics.md). |
 
-## App (1 channel)
+## App (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `app:getVersion` | invoke | Get Electron app version string |
+| `app:restart` | invoke | Dev only: restart through the normal quit, which under `npm start` rebuilds main, preload and the workers first. Main registers it only in a dev build. Never renamed or removed, because it is called when main is older than the renderer. |
 
 ## Clipboard (3 channels)
 | Channel | Pattern | Purpose |
@@ -189,10 +190,14 @@ Detach a registered UI surface (`stats` for usage stats, `changes` for git chang
 | `clipboard:saveImage` | invoke | Save PNG bytes the renderer decoded from a dropped image (a format the agent CLI cannot attach from a path, such as bmp) into the same temp directory under the same cap and prune; returns the file path, or null when the bytes are not a decodable image or the write failed |
 | `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
-## Browser pane (26 channels)
+## Browser pane (30 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `browser:captureSend` | invoke | Composite the embedded webview frame + draw overlay + picked element into a PNG, write it to the session captures dir, and submit a structured prompt to the agent's PTY via PasteEngine |
+| `browser:captureSend` | invoke | Write the page capture to the session captures dir and submit a structured prompt to the agent's PTY via PasteEngine: the note, or the numbered `annotations` (each annotation out of the screenshot with its own capture copied beside it, and element detail moved to an XML file past 6,000 characters). Carries the TASK's `projectId` in its input |
+| `browser:annotationsLoad` | invoke | A task's saved annotation draft, or null. Takes a trailing `projectId` (the TASK's project) |
+| `browser:annotationsSave` | invoke | Replace a task's annotation draft and delete the captures it no longer names. Same trailing `projectId` |
+| `browser:annotationsSaveCapture` | invoke | Save one capture of the visible page for a task's draft; resolves its id. Same trailing `projectId` |
+| `browser:annotationsDiscard` | invoke | Delete a task's draft and its captures (Clear, or a Send that landed). Same trailing `projectId` |
 | `browser:urlGet` | invoke | Get the project default URL and per-task URL override for a given task. Takes a trailing `projectId` (the TASK's project, not the open board's) resolved via `resolveProjectContext`: a popped-out or retained pane outlives a project switch, so the ambient current project would route it to the wrong sidecar |
 | `browser:urlSetTask` | invoke | Persist a per-task URL override. Same trailing `projectId` |
 | `browser:urlClearTask` | invoke | Remove the per-task URL override (falls back to project default). Same trailing `projectId` |

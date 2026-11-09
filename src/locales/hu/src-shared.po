@@ -353,9 +353,8 @@ msgid "Done"
 msgstr "Kész"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Draw / annotate"
-msgstr "Rajzolás / jegyzetelés"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy
@@ -502,6 +501,14 @@ msgid "Headers"
 msgstr "Fejlécek"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Tartsa lenyomva a diktáláshoz; felengedéskor a szöveg a fókuszban lévő terminálba vagy szövegmezőbe kerül."
@@ -510,11 +517,6 @@ msgstr "Tartsa lenyomva a diktáláshoz; felengedéskor a szöveg a fókuszban l
 #, fuzzy
 msgid "Insert newline"
 msgstr "Új sor beszúrása"
-
-#: src/shared/keybindings.ts
-#, fuzzy
-msgid "Inspect element"
-msgstr "Elem vizsgálata"
 
 #: src/shared/embedding-runtime.ts
 #, fuzzy
@@ -813,9 +815,8 @@ msgid "On task exit"
 msgstr "Feladat távozásakor"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "Soronként egy oszlop a Teendő és a Kész között: mit futtat, és hogyan haladtak át rajta a legutóbbi feladatok."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -852,6 +853,14 @@ msgstr "Nyitott"
 #, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Keresés megnyitása a fókuszban lévő Beszélgetés ablakon belül."
+
+#: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1023,6 +1032,10 @@ msgstr "Várólistán..."
 msgid "Quick Find"
 msgstr "Gyorskeresés"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 #, fuzzy
 msgid "Relay address cannot contain a backslash."
@@ -1062,6 +1075,10 @@ msgstr "Terminál visszaállítása"
 #, fuzzy
 msgid "Reset zoom"
 msgstr "Nagyítás visszaállítása"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1125,6 +1142,10 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Select the next file in the Changes panel."
 msgstr "A következő fájl kijelölése a Módosítások panelen."
@@ -1133,6 +1154,10 @@ msgstr "A következő fájl kijelölése a Módosítások panelen."
 #, fuzzy
 msgid "Select the previous file in the Changes panel."
 msgstr "Az előző fájl kijelölése a Módosítások panelen."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1171,11 +1196,6 @@ msgstr "Az aktivitásmotor hibakereső átfedésének megjelenítése vagy elrej
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "A böngészőpanel megjelenítése vagy elrejtése a feladat részletei párbeszédpanelen."
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "A módosítások (diff) panel megjelenítése vagy elrejtése a feladat részletei párbeszédablakban."
 
@@ -1185,9 +1205,12 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "A leírás panel megjelenítése vagy elrejtése a feladat részletei párbeszédablakban."
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr "A fókuszban lévő parancsterminál böngészőpaneljének megjelenítése vagy elrejtése."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1418,11 +1441,6 @@ msgstr "Váltás a tábla és a backlog nézet között."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "Böngésző panel be/ki"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "Módosítások panel be/ki"
 
@@ -1432,9 +1450,8 @@ msgid "Toggle Command Terminal"
 msgstr "Parancsterminál be/ki"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Toggle Command Terminal Browser pane"
-msgstr "Parancsterminál böngészőpanelje be/ki"
+msgid "Toggle Command Terminal browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1445,6 +1462,10 @@ msgstr "Hibakeresési réteg be/ki"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "Leírás betekintő be/ki"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1482,6 +1503,10 @@ msgstr "török"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "ukrán"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

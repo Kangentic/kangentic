@@ -594,9 +594,32 @@
   var startTopLevelSweep = shieldDocument(document);
   document.addEventListener('DOMContentLoaded', function () { startTopLevelSweep(); }, { once: true });
 
+  /**
+   * What the guest's own main world creates is the page's, as this frame's is. The page runs no
+   * script of its own, but the renderer's scripts run there through the shim's executeJavaScript,
+   * as Electron runs them in a webview's main world: the annotation layer's host, the Inspect
+   * outline. A content script's isolated world has its own prototypes, so an extension's node
+   * still never passes through these. Each load is a new realm, so this runs per document.
+   */
+  function countGuestCreatedAsPage(guestView) {
+    var GuestDocument = guestView && guestView.Document;
+    var guestPrototype = GuestDocument && GuestDocument.prototype;
+    if (!guestPrototype || guestPrototype.__demoPageCreated) return;
+    ['createElement', 'createElementNS'].forEach(function (methodName) {
+      var original = guestPrototype[methodName];
+      guestPrototype[methodName] = function () {
+        var element = original.apply(this, arguments);
+        pageCreated.add(element);
+        return element;
+      };
+    });
+    guestPrototype.__demoPageCreated = true;
+  }
+
   /** The Browser pane's guest page: no script of its own runs there, so its children are all in place once it loads. */
   function shieldGuestDocument(guestDocument) {
     if (!guestDocument || !guestDocument.documentElement) return;
+    countGuestCreatedAsPage(guestDocument.defaultView);
     shieldDocument(guestDocument)();
   }
 

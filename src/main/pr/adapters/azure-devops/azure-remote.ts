@@ -98,6 +98,13 @@ export function buildAzureCommitWebUrl(remote: AzureRemote, sha: string): string
   return `${repositoryWebUrl(remote)}/commit/${sha}`;
 }
 
+/** The browser URL for one build's results page, which a build policy's check row opens. */
+export function buildAzureBuildResultsUrl(remote: AzureRemote, buildId: number): string {
+  const org = encodeURIComponent(remote.org);
+  const project = encodeURIComponent(remote.project);
+  return `https://dev.azure.com/${org}/${project}/_build/results?buildId=${buildId}`;
+}
+
 function repositoryWebUrl(remote: AzureRemote): string {
   const org = encodeURIComponent(remote.org);
   const project = encodeURIComponent(remote.project);

@@ -2,9 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ILink } from '@xterm/xterm';
 import { Terminal } from '@xterm/headless';
 import { activateUnicode11 } from '../../src/shared/xterm-unicode11';
+
+// link-targets reads the hotkey overrides from the config store; every test here
+// hands in its combos instead, so the store only has to import.
+vi.mock('../../src/renderer/stores/config-store', () => ({ useConfigStore: { getState: () => ({}) } }));
+
 import { createTerminalLinkGesture, isLinkOpenGesture, type TerminalLinkGesture } from '../../src/renderer/utils/terminal-links/link-gesture';
 import { EXISTING_PATH_TTL_MS, MAX_CACHED_PATHS, MISSING_PATH_TTL_MS, createLinkPathCache } from '../../src/renderer/utils/terminal-links/link-path-cache';
 import { createPathLinkProvider, createUrlLinkProvider, type LinkTerminal } from '../../src/renderer/utils/terminal-links/link-providers';
+import { createTerminalLinkTargets, type TerminalLinkBrowser } from '../../src/renderer/utils/terminal-links/link-targets';
 
 const noGesture: TerminalLinkGesture = {
   noteLinkHover: () => {},
@@ -16,6 +22,13 @@ const noGesture: TerminalLinkGesture = {
 const ctrlClick = { ctrlKey: true, metaKey: false } as MouseEvent;
 const cmdClick = { ctrlKey: false, metaKey: true } as MouseEvent;
 const plainClick = { ctrlKey: false, metaKey: false } as MouseEvent;
+const ctrlShiftClick = { ctrlKey: true, metaKey: false, shiftKey: true } as MouseEvent;
+
+const DEFAULT_COMBOS = { 'default-browser': 'Mod+Mouse:Left', 'kangentic-browser': 'Mod+Shift+Mouse:Left' };
+
+function targets(openExternal: (url: string) => void, browser: TerminalLinkBrowser | null = null) {
+  return createTerminalLinkTargets({ getBrowser: () => browser, openExternal, readCombos: () => DEFAULT_COMBOS });
+}
 
 async function terminalWith(text: string): Promise<Terminal> {
   const terminal = new Terminal({ cols: 40, rows: 6, allowProposedApi: true });
@@ -36,25 +49,35 @@ describe('createUrlLinkProvider', () => {
   it('answers in the same tick, because the Linkifier waits on every provider', async () => {
     const terminal = await terminalWith('https://example.com/a');
     const callback = vi.fn();
-    createUrlLinkProvider(asLinkTerminal(terminal), noGesture, vi.fn()).provideLinks(1, callback);
+    createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(vi.fn())).provideLinks(1, callback);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  it('opens on Ctrl or Cmd and not on a plain click', async () => {
+  it('opens on the link hotkey and not on a plain click', async () => {
     const terminal = await terminalWith('https://example.com/a');
     const openExternal = vi.fn();
-    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, openExternal), 1))!;
+    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(openExternal)), 1))!;
     link.activate(plainClick, link.text);
     expect(openExternal).not.toHaveBeenCalled();
     link.activate(ctrlClick, link.text);
-    link.activate(cmdClick, link.text);
-    expect(openExternal.mock.calls).toEqual([['https://example.com/a'], ['https://example.com/a']]);
+    expect(openExternal.mock.calls).toEqual([['https://example.com/a']]);
+  });
+
+  it('opens in the Kangentic browser on its hotkey when the terminal has one', async () => {
+    const terminal = await terminalWith('http://localhost:5173/signup');
+    const openExternal = vi.fn();
+    const browser = { open: vi.fn() };
+    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(openExternal, browser)), 1))!;
+    link.activate(ctrlShiftClick, link.text);
+    expect(browser.open).toHaveBeenCalledWith('http://localhost:5173/signup');
+    link.activate(ctrlClick, link.text);
+    expect(openExternal).toHaveBeenCalledWith('http://localhost:5173/signup');
   });
 
   it('routes through the terminal scheme allowlist', async () => {
     const terminal = await terminalWith('https://example.com/a');
     const openExternal = vi.fn();
-    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, openExternal), 1))!;
+    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(openExternal)), 1))!;
     link.activate(ctrlClick, 'javascript:alert(1)');
     expect(openExternal).not.toHaveBeenCalled();
   });
@@ -65,8 +88,7 @@ describe('createUrlLinkProvider', () => {
   ])('opens the whole URL a TUI wrapped itself on %s, from either row', async (_label, prefix) => {
     const head = `https://example.com/${'d'.repeat(20)}`;
     const terminal = await terminalWith(`${prefix}${head}\x1b[2;3Hremainder?a=1 then prose`);
-    const openExternal = vi.fn();
-    const provider = createUrlLinkProvider(asLinkTerminal(terminal), noGesture, openExternal);
+    const provider = createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(vi.fn()));
     for (const row of [1, 2]) {
       const [link] = (await linksFrom(provider, row))!;
       expect(link.text).toBe(`${head}remainder?a=1`);
@@ -78,10 +100,12 @@ describe('createUrlLinkProvider', () => {
     const terminal = await terminalWith('https://example.com/a');
     const noteLinkHover = vi.fn();
     const noteLinkLeave = vi.fn();
-    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), { ...noGesture, noteLinkHover, noteLinkLeave }, vi.fn()), 1))!;
+    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), { ...noGesture, noteLinkHover, noteLinkLeave }, targets(vi.fn())), 1))!;
     link.hover?.(plainClick, link.text);
     link.leave?.(plainClick, link.text);
     expect(noteLinkHover).toHaveBeenCalledTimes(1);
+    // The tip reads where the link is and what a click on it does. A printed URL is its own text.
+    expect(noteLinkHover).toHaveBeenCalledWith({ event: plainClick, range: link.range, kind: 'url' });
     expect(noteLinkLeave).toHaveBeenCalledTimes(1);
   });
 });
@@ -114,6 +138,7 @@ describe('createPathLinkProvider', () => {
     expect(noteLinkHover).not.toHaveBeenCalled();
     link.hover?.(plainClick, link.text);
     expect(noteLinkHover).toHaveBeenCalledTimes(1);
+    expect(noteLinkHover).toHaveBeenCalledWith({ event: plainClick, range: link.range, kind: 'path' });
     expect(noteLinkLeave).not.toHaveBeenCalled();
     link.leave?.(plainClick, link.text);
     expect(noteLinkLeave).toHaveBeenCalledTimes(1);
@@ -270,6 +295,38 @@ describe('createTerminalLinkGesture', () => {
     press({ ctrlKey: true });
     gesture.noteLinkLeave();
     press({});
+    expect(gesture.isClickingLink()).toBe(false);
+  });
+
+  it('hands a hovered link to the tip, and tells it when the pointer leaves', () => {
+    const gesture = createTerminalLinkGesture({ addEventListener: () => {} } as Pick<Window, 'addEventListener'>);
+    const tip = { show: vi.fn(), leave: vi.fn(), dispose: vi.fn() };
+    gesture.attach({ addEventListener: () => {} } as unknown as HTMLElement, tip);
+    const hover = { event: plainClick, range: { start: { x: 1, y: 1 }, end: { x: 9, y: 1 } }, kind: 'url' as const };
+    gesture.noteLinkHover(hover);
+    expect(tip.show).toHaveBeenCalledWith(hover);
+    gesture.noteLinkLeave();
+    expect(tip.leave).toHaveBeenCalledTimes(1);
+  });
+
+  it('claims the press the hovered link opens on, so a rebound link hotkey does not also reach the TUI', () => {
+    let pressListener: (event: MouseEvent) => void = () => {};
+    // A URL opens on Alt+click here, as after a rebind; a path keeps Ctrl or Cmd.
+    const opensLink = (event: Pick<MouseEvent, 'altKey' | 'ctrlKey' | 'metaKey'>, kind: 'url' | 'path') =>
+      kind === 'url' ? event.altKey === true : isLinkOpenGesture(event, false);
+    const gesture = createTerminalLinkGesture({ addEventListener: () => {} } as Pick<Window, 'addEventListener'>, opensLink);
+    gesture.attach({
+      addEventListener: (_type: string, listener: unknown) => { pressListener = listener as (event: MouseEvent) => void; },
+    } as unknown as HTMLElement);
+    const range = { start: { x: 1, y: 1 }, end: { x: 9, y: 1 } };
+    const altPress = { button: 0, altKey: true, ctrlKey: false, metaKey: false } as MouseEvent;
+
+    gesture.noteLinkHover({ event: plainClick, range, kind: 'url' });
+    pressListener(altPress);
+    expect(gesture.isClickingLink()).toBe(true);
+
+    gesture.noteLinkHover({ event: plainClick, range, kind: 'path' });
+    pressListener(altPress);
     expect(gesture.isClickingLink()).toBe(false);
   });
 });

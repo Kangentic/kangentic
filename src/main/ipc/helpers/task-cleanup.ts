@@ -23,6 +23,7 @@ import type { LeftoverSweepOptions } from '../../transition-engine/resource-clea
 import { backgroundSessionHoldingConversation } from '../../transition-engine/resume-id-reconcile';
 import { closeTaskWindows } from './task-windows';
 import { stopBeforeReap } from '../../stop-script/terminal-stop';
+import { discardAnnotationDraft } from '../../browser/annotation-drafts';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-stop';
 
@@ -553,6 +554,15 @@ export async function cleanupTaskResources(
   }
 
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
+
+  // The task's unsent Browser pane annotations go with its session: a reset,
+  // a demote and a delete all end the review they belonged to. Retired, so the
+  // last save the pane flushes as it unmounts does not bring the draft back.
+  if (resolvedProjectPath) {
+    await discardAnnotationDraft(resolvedProjectPath, task.id, { retire: true }).catch((error: Error) => {
+      console.warn(`[CLEANUP] Failed to remove annotation draft for task ${task.id.slice(0, 8)}: ${error.message}`);
+    });
+  }
 
   // Remove worktree + branch
   if (task.worktree_path && resolvedProjectPath) {

@@ -84,6 +84,12 @@ import { formatCombo, formatComboSegments } from '../utils/keybindings';
 import { isRebindCaptureActive } from '../utils/rebind-state';
 import { focusCameFromTab, installTabFocusTracker } from '../utils/tab-focus';
 import {
+  KEY_CHIP_CLASS,
+  LABEL_TIP_CLASS,
+  LABEL_TIP_ROW_CLASS,
+  LABEL_TIP_TEXT_CLASS,
+  TIP_BASE_CLASS,
+  TIP_KEYS_CLASS,
   TOOLTIP_DWELL_MS,
   claimTip,
   isTipWarm,
@@ -150,13 +156,8 @@ interface TipLayerHandle {
   hide(warm: boolean): void;
 }
 
-/** Every tip: fixed above everything, never hit by the pointer. Positioned imperatively. */
-const TIP_BASE_CLASS = 'pointer-events-none fixed left-0 top-0 z-[2147483646] rounded-md text-xs shadow-tooltip';
-/** The label shape: inverted, wrapping at 280px (or the window, if narrower). */
-const LABEL_TIP_CLASS = 'w-max max-w-[min(280px,calc(100vw-16px))] bg-fg px-2 py-1 leading-4 text-surface';
 /** The rich shape: the raised panel with a muted outline. */
 const RICH_TIP_CLASS = 'w-max max-w-[calc(100vw-16px)] overflow-hidden border border-fg-muted bg-surface-raised text-fg';
-const KEY_CHIP_CLASS = 'inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-tooltip-chip-edge bg-tooltip-chip px-1 font-sans text-[11px] font-medium leading-none text-surface';
 
 /**
  * Events an inner trigger already answered. A trigger can sit inside another (a PR state badge
@@ -468,7 +469,7 @@ export function Tooltip(props: TooltipProps): ReactElement {
 
 function TipKeys({ combo }: { combo: string }): ReactElement {
   return (
-    <span className="ml-1 flex shrink-0 items-center gap-0.5 self-center" data-tooltip-part="keys">
+    <span className={TIP_KEYS_CLASS} data-tooltip-part="keys">
       {formatComboSegments(combo).map((segment, index) => (
         <kbd key={`${index}-${segment}`} className={KEY_CHIP_CLASS}>{segment}</kbd>
       ))}
@@ -627,11 +628,11 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
           )}
         </>
       ) : (
-        <span className="flex items-start gap-1.5">
+        <span className={LABEL_TIP_ROW_CLASS}>
           {icon !== undefined && (
             <span aria-hidden="true" className="mt-0.5 flex size-3 shrink-0 items-center justify-center [&>svg]:size-3">{icon}</span>
           )}
-          <span className="min-w-0 whitespace-pre-line break-words">
+          <span className={LABEL_TIP_TEXT_CLASS}>
             {label}
             {detail !== undefined && detail !== '' && (
               <span className="block text-tooltip-muted">{detail}</span>

@@ -159,6 +159,10 @@ msgstr "{oldPath} 改為 {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "{passedCount} passed"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 msgid "{pattern}: {rule}, as in {sample}."
 msgstr "{pattern}：{rule}，例如 {sample}。"
@@ -179,6 +183,10 @@ msgstr "{pillLabel}：{reason}"
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "{position} of {total}"
 msgstr "第 {position} 個，共 {total} 個"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
@@ -583,6 +591,10 @@ msgstr "變更已在獨立視窗中開啟"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Checks"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
 msgstr ""
@@ -783,6 +795,14 @@ msgstr "條件：{condition}"
 msgid "Confirm"
 msgstr "確認"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with {base}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with the base branch"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Connected"
@@ -930,6 +950,10 @@ msgstr "無法儲存設定檔"
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Couldn't save task"
 msgstr "無法儲存任務"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Couldn't send the failed checks"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Couldn't send to backlog"
@@ -1283,6 +1307,10 @@ msgstr "交接"
 #: src/renderer/components/dialogs/task-detail/HandoffTimeline.tsx
 msgid "Handoff Chain"
 msgstr "交接鏈"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Held for the next agent"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Hex color value"
@@ -1811,9 +1839,17 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "開啟"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open {name} in browser"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "Open {shortHash} on {providerName}"
 msgstr "在 {providerName} 上開啟 {shortHash}"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open all checks in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -1866,6 +1902,10 @@ msgstr "開啟該看板以編輯其設定檔"
 #, fuzzy
 msgid "Open the board to change this"
 msgstr "開啟看板以變更此設定"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open the pull request in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Open worktree"
@@ -2258,6 +2298,10 @@ msgstr "選取提交以檢視其變更"
 msgid "Select a file to view changes"
 msgstr "選取檔案以檢視變更"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Send to agent"
+msgstr "傳送給代理"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Send to Backlog"
 msgstr "移至待辦清單"
@@ -2265,6 +2309,10 @@ msgstr "移至待辦清單"
 #: src/renderer/components/dialogs/image-compress.ts
 msgid "Sending the original instead."
 msgstr "改為傳送原始檔案。"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Sending..."
+msgstr "正在傳送..."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Sent to backlog"
@@ -2593,6 +2641,10 @@ msgstr "<0>「{projectName}」</0>的資料夾已不存在："
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
 msgstr "新的代理會接續前一個代理的對話，而不是從任務描述開始。"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "The next agent on this task gets the failed checks in its first message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The PR host returned an error."

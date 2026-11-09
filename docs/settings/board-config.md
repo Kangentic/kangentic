@@ -39,7 +39,7 @@ A **Board Profile** is a named alternate set of per-column strategy settings (ag
 permission mode, auto-command, auto-command mode, auto-spawn, handoff context, session target,
 session spawn strategy, plan-exit target). A task selects one and rides its ladder as it moves - so one task can run Planning
 in Opus xhigh and Merge in Sonnet high while another runs the same board more cheaply. Column
-*identity* (which columns exist, their name, order, role, color, icon) is singular across profiles;
+*identity* (which columns exist, their name, order, role, color, icon, description) is singular across profiles;
 only strategy is profile-scoped. Plan approval is not part of a profile either: it is the column's
 own, every profile shares it, and the Column Manager disables it while a profile is selected. The
 same goes for a column's agent limit.

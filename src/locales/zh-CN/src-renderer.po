@@ -290,6 +290,10 @@ msgstr "{worktreeCount, plural, other {# 个工作树中有 {failedCount} 个无
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} 仍保留在“待办”中。{reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 msgid "A project"
 msgstr "某个项目"
@@ -342,6 +346,10 @@ msgstr "智能体已恢复"
 msgid "Agent started"
 msgstr "智能体已启动"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Agents pause during a restart and resume after."
+msgstr ""
+
 #: src/renderer/components/ErrorBoundary.tsx
 msgid "An unexpected error occurred."
 msgstr "发生意外错误。"
@@ -383,6 +391,10 @@ msgstr "小心"
 msgid "Change not saved to disk"
 msgstr "更改未保存到磁盘"
 
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 msgid "Choose a project folder"
 msgstr "选择项目文件夹"
@@ -403,6 +415,11 @@ msgstr "清除所有筛选"
 #: src/renderer/components/ToolbarSearchFilter.tsx
 msgid "Clear search"
 msgstr "清除搜索"
+
+#: src/renderer/utils/keybindings.ts
+msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
+msgid "Click"
+msgstr ""
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 msgid "Close"
@@ -592,6 +609,10 @@ msgstr "无法重新排序列"
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "Couldn't reorder task"
 msgstr "无法重新排序任务"
+
+#: src/renderer/utils/dev-restart.ts
+msgid "Couldn't restart Kangentic"
+msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 msgid "Couldn't restore task"
@@ -883,6 +904,10 @@ msgstr "残留进程"
 msgid "Leftover processes stopped"
 msgstr "残留进程已停止"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Main process changed"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 msgid "Make a first commit so each task gets its own worktree."
 msgstr "请先创建首次提交，让每个任务拥有自己的工作树。"
@@ -892,8 +917,8 @@ msgid "Maximize"
 msgstr "最大化"
 
 #: src/renderer/lib/pr-state.ts
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "截至上次刷新拉取请求时，合并因审查、检查或分支规则而受阻"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge conflicts with the base branch as of the last PR refresh"
@@ -1036,17 +1061,25 @@ msgstr "开放"
 msgid "Open a project first."
 msgstr "请先打开一个项目。"
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutButton.tsx
 msgid "Open in new window"
 msgstr "在新窗口中打开"
 
 #: src/renderer/components/PrLink.tsx
-msgid "Open PR #{prNumber} in browser"
-msgstr "在浏览器中打开拉取请求 #{prNumber}"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-msgid "Open PR in browser"
-msgstr "在浏览器中打开拉取请求"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 msgid "Open settings"
@@ -1179,6 +1212,12 @@ msgstr "截至上次刷新拉取请求时，必需的检查或策略仍在排队
 msgid "Required checks or policies are running as of the last PR refresh"
 msgstr "截至上次刷新拉取请求时，必需的检查或策略正在运行"
 
+#: src/renderer/components/ErrorBoundary.tsx
+#: src/renderer/utils/dev-restart.ts
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
 #: src/renderer/stores/updater-store.ts
 msgid "Restart to update"
 msgstr "重启以更新"
@@ -1267,6 +1306,10 @@ msgstr "设置脚本运行失败"
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"
 msgstr "Shift+单击添加次要排序"
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Show in folder"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Show workflow"

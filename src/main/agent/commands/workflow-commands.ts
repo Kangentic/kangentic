@@ -33,6 +33,8 @@ import {
   type ReleasedWorkflowTask,
 } from '../../workflows/workflow-service';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
+import { LABELS_NOT_A_LIST, priorityScaleError, priorityScaleOf, splitLabelEntries } from './label-and-priority';
+import { HEX_LABEL_COLOR } from '../../../shared/label-palette';
 
 /**
  * The MCP workflow commands: thin shells over `workflow-service.ts`, which
@@ -193,34 +195,87 @@ function plannedTextList(record: Record<string, unknown>, field: string, label: 
   return raw as string[];
 }
 
-function plannedTasksParam(params: Record<string, unknown>): PlannedTaskInput[] {
+/**
+ * A planned task's labels: plain names or `{ name, color }`, as the task tools
+ * take them. Anything else is refused, never dropped: a dropped label would save
+ * a plan that silently lost it. The names ride the plan; the colors go back to
+ * the caller, which saves them once the plan is.
+ */
+function plannedLabels(record: Record<string, unknown>, label: string): { names: string[]; colors: Record<string, string> } | null {
+  const raw = record.labels;
+  if (raw === undefined || raw === null) return null;
+  const refusal = `${label}: ${LABELS_NOT_A_LIST}`;
+  if (!Array.isArray(raw)) throw new WorkflowRequestError(refusal);
+  for (const entry of raw) {
+    if (typeof entry === 'string') continue;
+    if (typeof entry !== 'object' || entry === null || !('name' in entry) || typeof entry.name !== 'string' || !entry.name) {
+      throw new WorkflowRequestError(refusal);
+    }
+    const color = 'color' in entry ? entry.color : undefined;
+    if (color !== undefined && (typeof color !== 'string' || !HEX_LABEL_COLOR.test(color))) {
+      throw new WorkflowRequestError(refusal);
+    }
+  }
+  return splitLabelEntries(raw);
+}
+
+type WorkflowRuntime = ReturnType<typeof requireWorkflowRuntimeContext>;
+
+/**
+ * Whether a planned task lands on the home board. A blank project is the home
+ * board, as `resolveProjectId` reads it, and so is the home project named
+ * outright. A project that does not exist throws the same refusal the plan's
+ * own validation would.
+ */
+function plannedOnHomeBoard(runtime: WorkflowRuntime, homeProjectId: string, project: string | null): boolean {
+  if (project === null || !project.trim()) return true;
+  return resolveProjectId(runtime, homeProjectId, project) === homeProjectId;
+}
+
+function plannedTasksParam(
+  params: Record<string, unknown>,
+  context: CommandContext,
+  runtime: WorkflowRuntime,
+): { tasks: PlannedTaskInput[]; labelColors: Record<string, string> } {
   const value = params.tasks;
   if (!Array.isArray(value)) throw new WorkflowRequestError('tasks must be a list.');
-  return value.map((entry, index) => {
+  const scale = priorityScaleOf(context);
+  const labelColors: Record<string, string> = {};
+  const tasks = value.map((entry, index) => {
     if (typeof entry !== 'object' || entry === null) throw new WorkflowRequestError(`Task ${index + 1} must be an object.`);
     const record = entry as Record<string, unknown>;
     const label = `Task ${index + 1}${typeof record.key === 'string' ? ` ("${record.key}")` : ''}`;
     const priority = record.priority;
-    if (priority !== undefined && priority !== null && typeof priority !== 'number') {
-      throw new WorkflowRequestError(`${label}: priority must be a number.`);
+    if (priority !== undefined && priority !== null && (typeof priority !== 'number' || !Number.isInteger(priority) || priority < 0)) {
+      throw new WorkflowRequestError(`${label}: priority must be a whole number from 0.`);
     }
+    const project = plannedText(record, 'project', label);
+    // Another project's board has its own scale, which this call does not read,
+    // so only a task on this board is held to this one.
+    if (typeof priority === 'number' && plannedOnHomeBoard(runtime, context.projectId, project)) {
+      const refusal = priorityScaleError(priority, scale);
+      if (refusal !== null) throw new WorkflowRequestError(`${label}: ${refusal}`);
+    }
+    const labels = plannedLabels(record, label);
+    if (labels) Object.assign(labelColors, labels.colors);
     return {
       // A missing or wrong-typed key or title reads as missing, which the plan's
       // own validation refuses with what to send instead.
       key: typeof record.key === 'string' ? record.key : '',
       title: typeof record.title === 'string' ? record.title : '',
       description: plannedText(record, 'description', label),
-      project: plannedText(record, 'project', label),
+      project,
       existingTask: plannedText(record, 'existingTask', label),
       routeStart: plannedText(record, 'routeStart', label),
       routeLast: plannedText(record, 'routeLast', label),
       skip: plannedTextList(record, 'skip', label),
-      labels: plannedTextList(record, 'labels', label),
+      labels: labels?.names ?? null,
       priority: typeof priority === 'number' ? priority : null,
       ...runSettingsParams(record, label),
       planApproval: planApprovalParam(record, label),
     };
   });
+  return { tasks, labelColors };
 }
 
 function linksParam(params: Record<string, unknown>): Array<{ blocker: string; blocked: string }> {
@@ -246,7 +301,7 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
     if (revisionValue !== undefined && revisionValue !== null && (typeof revisionValue !== 'number' || !Number.isInteger(revisionValue))) {
       throw new WorkflowRequestError('revision must be the whole number kangentic_get_workflow reported.');
     }
-    const tasks = plannedTasksParam(params);
+    const { tasks, labelColors } = plannedTasksParam(params, context, runtime);
     const links = linksParam(params);
     const title = stringParam(params, 'title');
     const brief = stringParam(params, 'brief');
@@ -269,6 +324,8 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
         revision: (revisionValue as number | null | undefined) ?? null,
       })
       : createWorkflowWithPlan(runtime, context.projectId, { brief }, { title, tasks, links, revision: null });
+    // Saved after the plan is: a refused save colors nothing.
+    if (Object.keys(labelColors).length > 0) context.onLabelColorsChanged(labelColors);
     const taskCount = saved.draft?.tasks.length ?? 0;
     const linkCount = saved.draft?.links.length ?? 0;
     return {

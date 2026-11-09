@@ -52,6 +52,10 @@ msgstr "{queued, plural, one {# na fila} many {# na fila} other {# na fila}}"
 msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
 msgstr "{unreadAnnouncements, plural, one {# não lido} many {# não lidos} other {# não lidos}}"
 
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "{workingAgentCount, plural, one {# agent is working. It pauses for the restart and resumes after, but its current turn stops.} other {# agents are working. They pause for the restart and resume after, but their current turns stop.}}"
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
@@ -261,6 +265,15 @@ msgstr "Lê a configuração do seu projeto"
 #, fuzzy
 msgid "Refresh"
 msgstr "Atualizar"
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "Restart Kangentic?"
+msgstr ""
 
 #: src/renderer/components/layout/TitleBar.tsx
 #, fuzzy

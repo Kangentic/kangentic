@@ -353,9 +353,8 @@ msgid "Done"
 msgstr "Hotovo"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Draw / annotate"
-msgstr "Kreslit / anotovat"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy
@@ -502,6 +501,14 @@ msgid "Headers"
 msgstr "Hlavičky"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Podržením diktujete; uvolněním vložíte text do aktivního terminálu nebo textového pole."
@@ -510,11 +517,6 @@ msgstr "Podržením diktujete; uvolněním vložíte text do aktivního terminá
 #, fuzzy
 msgid "Insert newline"
 msgstr "Vložit nový řádek"
-
-#: src/shared/keybindings.ts
-#, fuzzy
-msgid "Inspect element"
-msgstr "Prozkoumat prvek"
 
 #: src/shared/embedding-runtime.ts
 #, fuzzy
@@ -813,9 +815,8 @@ msgid "On task exit"
 msgstr "Při odchodu úkolu"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "Jeden řádek pro každý sloupec mezi To Do a Done: co spouští a jak jím prošly nedávné úlohy."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -852,6 +853,14 @@ msgstr "Otevřeno"
 #, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Otevřít vyhledávání v prohlížeči uvnitř aktivního okna konverzace."
+
+#: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1023,6 +1032,10 @@ msgstr "Ve frontě..."
 msgid "Quick Find"
 msgstr "Rychlé hledání"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 #, fuzzy
 msgid "Relay address cannot contain a backslash."
@@ -1062,6 +1075,10 @@ msgstr "Resetovat terminál"
 #, fuzzy
 msgid "Reset zoom"
 msgstr "Obnovit přiblížení"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1125,6 +1142,10 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Select the next file in the Changes panel."
 msgstr "Vybrat další soubor v panelu Změny."
@@ -1133,6 +1154,10 @@ msgstr "Vybrat další soubor v panelu Změny."
 #, fuzzy
 msgid "Select the previous file in the Changes panel."
 msgstr "Vybrat předchozí soubor v panelu Změny."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1171,11 +1196,6 @@ msgstr "Zobrazit nebo skrýt ladicí překryv modulu aktivit."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "Zobrazit nebo skrýt panel prohlížeče v dialogu podrobností úlohy."
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "Zobrazí nebo skryje panel změn (diff) v dialogu s podrobnostmi úkolu."
 
@@ -1185,9 +1205,12 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Zobrazí nebo skryje panel popisu v dialogu s podrobnostmi úkolu."
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr "Zobrazit nebo skrýt panel prohlížeče aktivního příkazového terminálu."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1418,11 +1441,6 @@ msgstr "Přepíná mezi nástěnkou a zobrazením backlogu."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "Přepnout panel prohlížeče"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "Přepnout panel změn"
 
@@ -1432,9 +1450,8 @@ msgid "Toggle Command Terminal"
 msgstr "Přepnout příkazový terminál"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Toggle Command Terminal Browser pane"
-msgstr "Přepnout panel prohlížeče příkazového terminálu"
+msgid "Toggle Command Terminal browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1445,6 +1462,10 @@ msgstr "Přepnout ladicí překryv"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "Přepnout náhled popisu"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1482,6 +1503,10 @@ msgstr "Turečtina"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "Ukrajinština"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

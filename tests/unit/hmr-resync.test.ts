@@ -261,14 +261,12 @@ describe('HMR store re-sync', () => {
   // the first. That is the agent/MCP-created-task split-brain (the card lands in
   // the store but the board never re-renders until a full reload). Each such
   // store must pin its instance - read it from import.meta.hot.data, write it
-  // back, and self-accept so editing the store's own code forces a clean reload
-  // instead of running stale closures. See .claude/rules/hmr-patterns.md.
+  // back, and self-accept, so an edit to the store's own code hands the update on
+  // to its importers. See .claude/rules/hmr-patterns.md.
   // Entries name the hot.data KEY, not just the file. A wildcard `\w+` read check
-  // passes vacuously on any store that ALSO uses Pattern A: session-store stashes
-  // `import.meta.hot?.data?.syncController` (an AbortController, nothing to do with
-  // the pin), which would satisfy a wildcard even with the instance pin deleted
-  // outright - on the one store where A and E coexist, i.e. exactly where the check
-  // needs to bite.
+  // passes vacuously on any store that ALSO reads other hot.data values: session-store
+  // reads its Pattern A stash (`import.meta.hot?.data?.spawnProgress` and others),
+  // which would satisfy a wildcard even with the instance pin deleted outright.
   //
   // `selfAccepts` is per-store, because the self-accept is UNSAFE for a store inside
   // an import cycle: Vite answers an `invalidate()` raised from a cycle with a full
@@ -276,24 +274,36 @@ describe('HMR store re-sync', () => {
   // intrinsic cycle (-> terminal-arrival-focus -> dictation-target -> back) and so
   // pins WITHOUT self-accepting. See .claude/rules/hmr-patterns.md, and
   // tests/unit/renderer-store-import-cycles.test.ts for the cycle guard itself.
+  //
+  // `refreshes` is the Pattern E refresh: on a re-eval, the pin hands the preserved
+  // instance the new initializer (`refreshPinnedStore`), so an action a merge adds
+  // reaches the live store with no reload (#1052's `requestBrowserNavigate` did
+  // not). A store that refreshes keeps its mutable module state in one shared
+  // object (`sharedModuleState`), so it may have no module-scope `let`: two
+  // evaluations would each hold their own copy, and the old action still in
+  // flight would write one while its replacement reads the other. A store that
+  // does not refresh says why.
   it('instance-pinned stores read, write, self-accept, and release their listeners in one dispose (Pattern E)', () => {
-    const PATTERN_E_STORES: ReadonlyArray<{ file: string; key: string; selfAccepts: boolean }> = [
-      { file: 'board-store.ts', key: 'boardStore', selfAccepts: true },
-      { file: 'backlog-store.ts', key: 'backlogStore', selfAccepts: true },
-      { file: 'project-store.ts', key: 'projectStore', selfAccepts: true },
-      { file: 'session-store.ts', key: 'sessionStore', selfAccepts: false },
-      { file: 'dictation-store.ts', key: 'dictationStore', selfAccepts: true },
-      { file: 'agent-drive-store.ts', key: 'agentDriveStore', selfAccepts: true },
-      { file: 'usage-dashboard-store.ts', key: 'usageDashboardStore', selfAccepts: true },
-      { file: 'pop-out-store.ts', key: 'popOutStore', selfAccepts: true },
-      { file: 'updater-store.ts', key: 'updaterStore', selfAccepts: true },
-      { file: 'monitor-store.ts', key: 'monitorStore', selfAccepts: true },
-      { file: 'announcements-store.ts', key: 'announcementsStore', selfAccepts: true },
-      { file: 'knowledge-graph-store.ts', key: 'knowledgeGraphStore', selfAccepts: true },
-      { file: 'workflow-store.ts', key: 'workflowStore', selfAccepts: true },
-      { file: 'leftover-processes-store.ts', key: 'leftoverProcessesStore', selfAccepts: true },
-      { file: 'config-store.ts', key: 'configStore', selfAccepts: true },
-      { file: 'ssh-store.ts', key: 'sshStore', selfAccepts: true },
+    type PatternEStore =
+      | { file: string; key: string; selfAccepts: boolean; refreshes: true }
+      | { file: string; key: string; selfAccepts: boolean; refreshes: false; noRefreshReason: string };
+    const PATTERN_E_STORES: ReadonlyArray<PatternEStore> = [
+      { file: 'board-store.ts', key: 'boardStore', selfAccepts: true, refreshes: true },
+      { file: 'backlog-store.ts', key: 'backlogStore', selfAccepts: true, refreshes: true },
+      { file: 'project-store.ts', key: 'projectStore', selfAccepts: true, refreshes: true },
+      { file: 'session-store.ts', key: 'sessionStore', selfAccepts: false, refreshes: true },
+      { file: 'dictation-store.ts', key: 'dictationStore', selfAccepts: true, refreshes: true },
+      { file: 'agent-drive-store.ts', key: 'agentDriveStore', selfAccepts: true, refreshes: true },
+      { file: 'usage-dashboard-store.ts', key: 'usageDashboardStore', selfAccepts: true, refreshes: true },
+      { file: 'pop-out-store.ts', key: 'popOutStore', selfAccepts: true, refreshes: true },
+      { file: 'updater-store.ts', key: 'updaterStore', selfAccepts: true, refreshes: true },
+      { file: 'monitor-store.ts', key: 'monitorStore', selfAccepts: true, refreshes: true },
+      { file: 'announcements-store.ts', key: 'announcementsStore', selfAccepts: true, refreshes: true },
+      { file: 'knowledge-graph-store.ts', key: 'knowledgeGraphStore', selfAccepts: true, refreshes: true },
+      { file: 'workflow-store.ts', key: 'workflowStore', selfAccepts: true, refreshes: true },
+      { file: 'leftover-processes-store.ts', key: 'leftoverProcessesStore', selfAccepts: true, refreshes: true },
+      { file: 'config-store.ts', key: 'configStore', selfAccepts: true, refreshes: true },
+      { file: 'ssh-store.ts', key: 'sshStore', selfAccepts: true, refreshes: false, noRefreshReason: 'Holds a module-scope request counter and does not call refreshPinnedStore, so an action a merge adds reaches it on the next reload.' },
     ];
     // Blank out comments but keep every newline, so a line number reported below
     // still matches the file and prose that mentions `hot.dispose` is never counted.
@@ -324,9 +334,62 @@ describe('HMR store re-sync', () => {
     };
 
     const violations: string[] = [];
-    for (const { file: fileName, key, selfAccepts: mustSelfAccept } of PATTERN_E_STORES) {
+    for (const store of PATTERN_E_STORES) {
+      const { file: fileName, key, selfAccepts: mustSelfAccept } = store;
       const source = fs.readFileSync(path.join(STORES_DIR, fileName), 'utf-8');
       const codeOnlySource = stripComments(source);
+
+      if (store.refreshes) {
+        // The preserved binding is the one the pin read from hot.data.<key>.
+        const preservedRead = new RegExp(`const (\\w+)[^=\\n]*=\\s*import\\.meta\\.hot\\?\\.data\\?\\.${key}\\b`).exec(codeOnlySource);
+        const preservedName = preservedRead?.[1];
+        const callsRefresh = preservedName !== undefined
+          && new RegExp(`refreshPinnedStore\\(\\s*${preservedName}\\s*,`).test(codeOnlySource);
+        if (!callsRefresh) {
+          violations.push(`${fileName} (key: ${key}) -> refreshes is true, but no refreshPinnedStore(${preservedName ?? '<preserved>'}, ...) call`);
+        }
+        // Its module state, the slice folder included, rides one shared object.
+        const sliceDirectory = path.join(STORES_DIR, fileName.replace(/\.ts$/, ''));
+        const moduleFiles = [path.join(STORES_DIR, fileName)];
+        if (fs.existsSync(sliceDirectory)) {
+          for (const sliceFile of fs.readdirSync(sliceDirectory)) {
+            if (sliceFile.endsWith('.ts')) moduleFiles.push(path.join(sliceDirectory, sliceFile));
+          }
+        }
+        for (const moduleFile of moduleFiles) {
+          const rawLines = fs.readFileSync(moduleFile, 'utf-8').split('\n');
+          // A column-0 const holding a fresh Map, Set or AbortController is module
+          // state that splits across evaluations just as a `let` does. A const
+          // destructured FROM a sharedModuleState object does not match.
+          const mutableConstPattern = /^const\s+(\w+)\s*=\s*new (Map|Set|AbortController)\(/;
+          rawLines.forEach((line, lineIndex) => {
+            const mutableConst = mutableConstPattern.exec(line);
+            if (!mutableConst) return;
+            if (hasOptOutMarker(rawLines, lineIndex, 'hmr-safe')) return;
+            const relativePath = path.relative(STORES_DIR, moduleFile).replace(/\\/g, '/');
+            violations.push(
+              `${relativePath}:${lineIndex + 1} -> module-scope const ${mutableConst[1]} = new ${mutableConst[2]}() in a refreshing store; `
+              + 'move it into the module\'s sharedModuleState object, or mark it "// hmr-safe: <reason>"',
+            );
+          });
+          const moduleCode = stripComments(fs.readFileSync(moduleFile, 'utf-8'));
+          const moduleLetPattern = /^let\s+(\w+)/gm;
+          let moduleLet: RegExpExecArray | null;
+          while ((moduleLet = moduleLetPattern.exec(moduleCode)) !== null) {
+            const lineNumber = moduleCode.slice(0, moduleLet.index).split('\n').length;
+            const relativePath = path.relative(STORES_DIR, moduleFile).replace(/\\/g, '/');
+            violations.push(
+              `${relativePath}:${lineNumber} -> module-scope let ${moduleLet[1]} in a refreshing store; `
+              + 'move it into the module\'s sharedModuleState object',
+            );
+          }
+        }
+      } else {
+        expect(store.noRefreshReason.length, `${fileName} needs a reason it does not refresh`).toBeGreaterThan(20);
+        if (/refreshPinnedStore\(/.test(codeOnlySource)) {
+          violations.push(`${fileName} -> refreshes is false, but the file calls refreshPinnedStore; update the entry`);
+        }
+      }
       const readsPreserved = new RegExp(`import\\.meta\\.hot\\?\\.data\\?\\.${key}\\b`).test(source);
       const writesPreserved = new RegExp(`import\\.meta\\.hot\\.data\\.${key}\\s*=`).test(source);
       const selfAccepts = /import\.meta\.hot\.accept\s*\(/.test(source);
@@ -399,16 +462,23 @@ describe('HMR store re-sync', () => {
     const windowStoreWritesBoard = /import\.meta\.hot\.data\.boardWindowManager\s*=/.test(windowStoreSource);
     const windowStoreWritesCommand = /import\.meta\.hot\.data\.commandWindowManager\s*=/.test(windowStoreSource);
     const windowStoreWritesMonitor = /import\.meta\.hot\.data\.monitorWindowManager\s*=/.test(windowStoreSource);
+    const windowStoreWritesKnowledgeGraph = /import\.meta\.hot\.data\.knowledgeGraphWindowManager\s*=/.test(windowStoreSource);
     const windowStoreAccepts = /import\.meta\.hot\.accept\s*\(/.test(windowStoreSource);
+    // The refresh runs per pinned layer, with that layer's own id counters, so a
+    // refreshed action never mints an id an older one already handed out.
+    const windowStoreRefreshes = /refreshPinnedStore\(\s*pinned\.store\s*,\s*windowStoreInitializer\(\s*options\s*,\s*pinned\.sequences\s*\)/
+      .test(stripComments(windowStoreSource));
     if (
       !windowStoreReads
       || !windowStoreWritesBoard
       || !windowStoreWritesCommand
       || !windowStoreWritesMonitor
+      || !windowStoreWritesKnowledgeGraph
       || !windowStoreAccepts
+      || !windowStoreRefreshes
     ) {
       violations.push(
-        `window-manager/store/window-store.ts -> reads:${windowStoreReads} writesBoard:${windowStoreWritesBoard} writesCommand:${windowStoreWritesCommand} writesMonitor:${windowStoreWritesMonitor} accepts:${windowStoreAccepts}`,
+        `window-manager/store/window-store.ts -> reads:${windowStoreReads} writesBoard:${windowStoreWritesBoard} writesCommand:${windowStoreWritesCommand} writesMonitor:${windowStoreWritesMonitor} writesKnowledgeGraph:${windowStoreWritesKnowledgeGraph} accepts:${windowStoreAccepts} refreshes:${windowStoreRefreshes}`,
       );
     }
 
@@ -418,7 +488,8 @@ describe('HMR store re-sync', () => {
       `Each must read import.meta.hot?.data?.<key>, assign import.meta.hot.data.<key> = useXStore,\n` +
       `and call import.meta.hot.accept(() => import.meta.hot.invalidate()).\n` +
       `Register at most one import.meta.hot.dispose per store, and call every captured subscribe\n` +
-      `unsubscriber in it.\n` +
+      `unsubscriber in it. A refreshing store calls refreshPinnedStore(<preserved>, <initializer>)\n` +
+      `and keeps its module state in sharedModuleState, never in a module-scope let.\n` +
       `See .claude/rules/hmr-patterns.md (Pattern E):\n` +
       violations.map((v) => `  - ${v}`).join('\n'),
     ).toHaveLength(0);

@@ -201,6 +201,33 @@ describe('handleListColumns session isolation', () => {
     expect(columns.find((column) => column.name === 'Merge')).not.toHaveProperty('sessionTarget');
   });
 
+  it('carries a column\'s description, trimmed, and only when it has one', () => {
+    mockSwimlaneRepoList.mockReturnValue([
+      TODO_LANE,
+      { ...MERGE_LANE, description: '  Merges the green PR.  ' },
+      { ...REVIEW_LANE, description: '   ' },
+    ]);
+
+    const response = handleListColumns({}, makeContext());
+
+    const columns = response.data as Array<ListedColumn & { description?: string }>;
+    expect(columns.find((column) => column.name === 'Merge')?.description).toBe('Merges the green PR.');
+    expect(columns.find((column) => column.name === 'Code Review')).not.toHaveProperty('description');
+    expect(columns.find((column) => column.name === 'To Do')).not.toHaveProperty('description');
+  });
+
+  it('collapses a multi-line description to one single-spaced line', () => {
+    mockSwimlaneRepoList.mockReturnValue([
+      TODO_LANE,
+      { ...MERGE_LANE, description: '  Merges the green PR.\nThen   pulls main.\r\n\r\nDone  ' },
+    ]);
+
+    const response = handleListColumns({}, makeContext());
+
+    const columns = response.data as Array<ListedColumn & { description?: string }>;
+    expect(columns.find((column) => column.name === 'Merge')?.description).toBe('Merges the green PR. Then pulls main. Done');
+  });
+
   it('leaves a board with no isolated column byte-for-byte unchanged', () => {
     mockSwimlaneRepoList.mockReturnValue([TODO_LANE, MERGE_LANE]);
 

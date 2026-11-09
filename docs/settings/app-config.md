@@ -43,6 +43,8 @@ sources:
 | `diffUseInlineWhenNarrow` | boolean | `true` | Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns. Turning it off forces side-by-side at any pane width. Global-only. |
 | `diffFileSort` | `'name'` \| `'status'` \| `'size'` \| `'ext'` | `'name'` | How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension. In the flat list, status sort adds section headers (status label + count) at each group boundary. Global-only. |
 | `diffFlatList` | boolean | `false` | Show changed files as a flat list of full paths instead of a nested directory tree. Global-only. |
+| `changesChecksOpen` | boolean | `false` | Whether the Changes rail's Checks section is open, one choice for every task. Written from the section header, not a Settings row. Global-only. |
+| `changesHistoryOpen` | boolean | `false` | Whether the Changes rail's History section is open, one choice for every task. Written from the section header, not a Settings row. Global-only. |
 | `monitor` | MonitorView | see below | Persisted Agent Monitor view. Global-only: the monitor spans every project, so a per-project override would be meaningless. Not surfaced in the Settings panel - these are the monitor's own toolbar controls, written debounced on every change so the view survives a quit or crash, not just an orderly close. |
 | `monitor.layout` | `'cards'` \| `'table'` \| `'list'` | `'cards'` | How sessions are arranged. `cards` reflows 1 to 5 columns by the surface's own width (a container query, so the detached pop-out lays out by its own size rather than the main window's), stepping at 850 / 1300 / 1750 / 2200px to keep a card near a board column's width; `list` is one dense line per session. A persisted `'compact'` (the old name for `list`) is migrated on read. |
 | `monitor.groupBy` | `'state'` \| `'project'` | `'project'` | Section rows by owning project or by attention bucket (Idle / Active / Paused / Recently finished). There is no "none": rows are always sectioned, and the labelled separator is what makes a card moving between sections legible rather than arbitrary. Project is the default because this view exists to span projects, so "whose agents are these" is the question a user arrives with. Attention-first ordering is a property of `state` grouping, so it applies once that is picked. An unrecognised persisted value (including the retired `'flat'`) falls back to `project`. |
@@ -248,7 +250,7 @@ All context bar settings are global-only and cannot be overridden per-project.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `backlog.priorities` | Array<{ label: string; color: string }> | See below | Priority levels for backlog items. Default: None (#6b7280), Low (#3b82f6), Medium (#eab308), High (#f97316), Urgent (#ef4444). |
+| `backlog.priorities` | Array<{ label: string; color: string }> | See below | The priority scale for backlog items and board tasks, bottom entry first (index 0 shows no pill on a card). Default: None (#6b7280), Low (#3b82f6), Medium (#eab308), High (#f97316), Urgent (#ef4444). |
 | `backlog.labelColors` | Record<string, string> | `{}` | Mapping of label names to hex colors for backlog item labels. Empty by default; colors are assigned as labels are created. |
 
 ## sidebar.*
@@ -268,7 +270,7 @@ All context bar settings are global-only and cannot be overridden per-project.
 
 ## browserAutomation.*
 
-Global-only policy (no per-project override) for whether and how an agent may drive the embedded Browser pane via the `kangentic_browser_*` MCP tools. Distinct from `browser.*` (the per-project pane settings); lives below the settings separator in its own **Agent Browser** tab and is read live on each tool call.
+Global-only policy (no per-project override) for whether and how an agent may drive the embedded Browser pane via the `kangentic_browser_*` MCP tools. Distinct from `browser.*` (the per-project pane settings); lives below the settings separator in its own **Browser automation** tab and is read live on each tool call.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -294,7 +296,7 @@ The Mobile Devices tab hosts the desktop half of the mobile companion app's pair
 
 ## Developer
 
-Power-user settings for diagnosing the activity engine and other internal subsystems. Global-only (no per-project override). Also toggleable from anywhere via Ctrl+Shift+D.
+Power-user settings for diagnosing the activity engine and other internal subsystems. Global-only (no per-project override). Also toggleable from anywhere via Ctrl+Alt+Shift+D.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

@@ -5,7 +5,7 @@ import { msg } from '@lingui/core/macro';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import type { AppConfig, MonitorSessionRow } from '../../../shared/types';
-import { LabelPills } from '../Pill';
+import { TaskPills, taskHasPills } from '../backlog/TaskPills';
 import { Tooltip } from '../Tooltip';
 import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
@@ -47,7 +47,7 @@ import { bucketOf, formatMonitorStatus, monitorActivityMark, monitorSlotKind, ne
  *
  * The board card's anatomy, piece for piece: the same title row (state mark with
  * its reason as the tip, bold title, monospace ticket number, the browser globe),
- * the same PrLink, the same slot, the same LabelPills, the same frame (the dimmed,
+ * the same PrLink, the same slot, the same TaskPills, the same frame (the dimmed,
  * pulsing border while the agent waits on you) and the same footer components
  * (`ContextUsageFooter`, `PendingFooter`), so a user arriving here recognises the
  * object rather than learning a second card. The board card and this one are one
@@ -456,8 +456,13 @@ function MonitorFullCard({
   const hasTrail = Boolean(messageTrail && messageTrail.length > 0);
   const slotKind = monitorSlotKind(row, trailMode, hasTrail);
   // The board card's rule: the agent's well closes its own edge, so the footer's
-  // rule goes when the trail sits right above it with no labels between.
-  const footerDivider = !(slotKind === 'trail' && row.labels.length === 0);
+  // rule goes when the trail sits right above it with no pill row (priority or
+  // labels) between.
+  // `?? 0`: a row built before `priority` joined the snapshot (a hand-built
+  // fixture, a mock) reads as no priority, never as a pill named "Pundefined".
+  const rowPriority = row.priority ?? 0;
+  const hasPills = taskHasPills(rowPriority, row.labels);
+  const footerDivider = !(slotKind === 'trail' && !hasPills);
 
   return (
     <div
@@ -534,9 +539,9 @@ function MonitorFullCard({
         <OutputPeek lines={row.outputPeek} rows={slotRows} />
       )}
 
-      {row.labels.length > 0 && (
+      {hasPills && (
         <div className="mt-1.5">
-          <LabelPills labels={row.labels} labelColors={labelColors} />
+          <TaskPills priority={rowPriority} labels={row.labels} labelColors={labelColors} />
         </div>
       )}
 

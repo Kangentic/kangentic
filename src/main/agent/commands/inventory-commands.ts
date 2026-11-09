@@ -18,18 +18,26 @@ export const handleListColumns: CommandHandler = (
   const hasDoneLane = allSwimlanes.some((swimlane) => swimlane.role === 'done');
   const completedCount = hasDoneLane ? taskRepo.countArchived() : 0;
 
-  const columns = allSwimlanes.map((swimlane) => ({
-    name: swimlane.name,
-    role: swimlane.role,
-    // Live cards on the board, for every lane including Done.
-    taskCount: taskRepo.list(swimlane.id).length,
-    ...(swimlane.role === 'done' ? { completedCount } : {}),
-    // Sparse on purpose, like completedCount: only the columns that run their
-    // own conversation carry it, so the common board prints unchanged. This is
-    // what lets an agent see which columns are isolated from the board survey
-    // it already makes, instead of a get_column_detail call per column.
-    ...(swimlane.session_target === 'isolated' ? { sessionTarget: 'isolated' as const } : {}),
-  }));
+  const columns = allSwimlanes.map((swimlane) => {
+    // One line, since the tool prints it on an indented line of its own. The
+    // field is a textarea, so a description can hold line breaks.
+    const description = swimlane.description?.replace(/\s+/g, ' ').trim();
+    return {
+      name: swimlane.name,
+      role: swimlane.role,
+      // Live cards on the board, for every lane including Done.
+      taskCount: taskRepo.list(swimlane.id).length,
+      ...(swimlane.role === 'done' ? { completedCount } : {}),
+      // Sparse on purpose, like completedCount: only the columns that run their
+      // own conversation carry it, so the common board prints unchanged. This is
+      // what lets an agent see which columns are isolated from the board survey
+      // it already makes, instead of a get_column_detail call per column.
+      ...(swimlane.session_target === 'isolated' ? { sessionTarget: 'isolated' as const } : {}),
+      // What the column is for, so an agent that plans a workflow task over MCP
+      // routes by purpose from the survey it already makes. Sparse, as above.
+      ...(description ? { description } : {}),
+    };
+  });
 
   return { success: true, data: columns };
 };

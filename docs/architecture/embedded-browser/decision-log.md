@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Embedded browser decision log
-description: "Decisions 1 to 44 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives, the Command Terminal's pane."
+description: "Decisions 1 to 45 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives, the Command Terminal's pane, annotations drawn into the page."
 tags: [browser, decisions, cookies, focus, lanes]
 sources:
   - resource: src/main/permission-policy.ts
@@ -27,6 +27,8 @@ sources:
   - resource: src/main/agent/mcp-http/browser-tools.ts
   - resource: src/main/dev-ports/dev-port-allocator.ts
   - resource: src/renderer/stores/agent-drive-store.ts
+  - resource: src/renderer/components/browser/annotations/annotationLayerScript.ts
+  - resource: src/main/browser/annotation-drafts.ts
   - resource: src/renderer/utils/text-target.ts
   - resource: src/renderer/window-manager/bridge/window-parking.ts
   - resource: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
@@ -322,3 +324,19 @@ A live pass with a real agent found what the probe could not. The Backlog view h
 The same pass found two things nothing had hit while the app was raised for every open. A pane reported its size from an effect a hidden page runs up to a second late, and until then the planner read the host's content size, which is 1x1 on a minimized window: a capture was planned for one pixel, then refused as tiled. The pane now reports as it registers, and a minimized host falls back to its restored bounds. A new task also reached the board 1.3 s after main knew it, so an open inside that gap found no task and nothing asked again, and the agent waited out the whole open timeout. The bridge now waits for the task, for as long as main waits on the pane.
 
 `withGuest` used to refuse every tier on a minimized host. That refusal is gone: it stopped `open_pane` itself in a minimized app, and with the raise gone nothing would have lifted it. macOS has not been measured, and its capturer path differs, so a capture there may still end in the 5 s bound. Linux has not been measured either. Every number here is Windows, including the cold `open_pane` behind a covered or minimized app, so on the other two a hidden renderer's throttling could yet push a pane's mount past the open bound. Each failure stays bounded: 5 s for a capture and 10 s for an open. A refusal kept only off Windows was rejected, since it would stop the non-pixel tools for a case nobody has seen fail.
+
+## 45. Annotations are layers drawn into the page, saved as they are made
+
+Task #1042. A user who saw five problems on a page made five round trips to the agent, because Inspect held one pick and Draw one set of strokes under one note. The design was signed off on a canvas over several rounds of review; these are the parts that constrain the code.
+
+*An annotation is a layer, not a mark.* One note owns any number of selected elements and drawings, exactly one annotation is active, and every selection and stroke joins it until the next one starts. A mark-per-row model was tried first and rejected: a single critique often points at two buttons and an arrow, and a row per mark split one request across three notes.
+
+*The marks live in the page.* A renderer overlay was what Draw used, and it fails twice: it does not scroll with the page, and it is not in a capture unless composited by hand. The layer is one host element at the document origin with a CLOSED shadow root. The page's CSS cannot restyle a badge, and no DOM lookup can see one: not the page's own, and not an agent's `kangentic_browser_query_*`, which would otherwise match a badge's "2". A press inside the guest never reaches the host window (decision 25), so a badge click is answered through a long-lived `executeJavaScript` the renderer keeps armed, the way Inspect waits for a pick. The click listener sits on the shadow root itself: a closed root hides its nodes from `composedPath()` for any listener outside it, which is how the first version missed every click.
+
+*A capture per item, not a scroll lock.* An annotation that scrolls out of the screenshot, or was made on another page, still has to reach the agent with a picture. Locking scroll while an annotation is open was rejected: long pages need several screens of review, and a lock cannot stop the page's own navigation. Each time an item joins an annotation the pane captures the visible page with its badges, through the renderer's `webview.capturePage()`. A CDP crop was rejected because it goes through `withGuest` and raises the drive veil for the user's own action (decision 19). A capture of the same view replaces the last one for every annotation that kept it, since the newer image shows everything the older one did plus the new badge.
+
+*Drafts are on disk.* The owner's bar was that losing a long review to a failed Send or a restart is not an acceptable outcome. The session is saved per task, debounced, under `.kangentic/browser-annotations/<taskId>/`, and comes back when the pane opens. A failed Send keeps everything; one that lands, Clear, and a task reset, demote or delete discard it.
+
+*Where a number goes.* An element's badge is centred on its top-left corner. A drawing's is centred on the first point drawn, with no shape recognition: centring on a shape's bounds read well for a circle and left an arrow's number floating away from its ink. Four cases move a drawing's badge and nothing else does: the page edge (pushed 9px in), another badge or the floating bar (walked forward along the stroke's own points until clear), and a mark under 24px (moved just left of it). The layout ships as source text embedded in the layer and run by its unit test through `new Function`. Reading compiled functions back with `.toString()` was rejected because vitest and the renderer build transform differently, so the test could pass on text the guest never runs.
+
+*A drawing says where, never what.* It reaches the agent as its stroke count, box and first point on the screenshot. Guessing the element under a drawing (hit-testing its box, or asking a model) was rejected: the guess is wrong often enough to mislead, a model call per stroke costs more than it saves, and a user who means an element can select it into the same annotation.

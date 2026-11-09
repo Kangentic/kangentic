@@ -353,9 +353,8 @@ msgid "Done"
 msgstr "Terminée"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Draw / annotate"
-msgstr "Dessiner / annoter"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy
@@ -502,6 +501,14 @@ msgid "Headers"
 msgstr "En-têtes"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Maintenez pour dicter ; relâchez pour remplir le terminal ou le champ de texte actif."
@@ -510,11 +517,6 @@ msgstr "Maintenez pour dicter ; relâchez pour remplir le terminal ou le champ d
 #, fuzzy
 msgid "Insert newline"
 msgstr "Insérer un saut de ligne"
-
-#: src/shared/keybindings.ts
-#, fuzzy
-msgid "Inspect element"
-msgstr "Inspecter l'élément"
 
 #: src/shared/embedding-runtime.ts
 #, fuzzy
@@ -813,9 +815,8 @@ msgid "On task exit"
 msgstr "À la sortie de la tâche"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "Une ligne par colonne entre To Do et Done : ce qu'elle exécute et comment les tâches récentes l'ont traversée."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -852,6 +853,14 @@ msgstr "Ouverte"
 #, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Ouvrir la recherche intégrée dans la fenêtre Conversation active."
+
+#: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1023,6 +1032,10 @@ msgstr "En file d'attente..."
 msgid "Quick Find"
 msgstr "Recherche rapide"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 #, fuzzy
 msgid "Relay address cannot contain a backslash."
@@ -1062,6 +1075,10 @@ msgstr "Réinitialiser le terminal"
 #, fuzzy
 msgid "Reset zoom"
 msgstr "Réinitialiser le zoom"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1125,6 +1142,10 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Select the next file in the Changes panel."
 msgstr "Sélectionner le fichier suivant dans le panneau Modifications."
@@ -1133,6 +1154,10 @@ msgstr "Sélectionner le fichier suivant dans le panneau Modifications."
 #, fuzzy
 msgid "Select the previous file in the Changes panel."
 msgstr "Sélectionner le fichier précédent dans le panneau Modifications."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1171,11 +1196,6 @@ msgstr "Afficher ou masquer la superposition de débogage du moteur d'activité.
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "Afficher ou masquer le volet du navigateur dans la boîte de dialogue de détail de la tâche."
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "Affiche ou masque le panneau des modifications (diff) dans la boîte de dialogue des détails de la tâche."
 
@@ -1185,9 +1205,12 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Affiche ou masque le panneau de description dans la boîte de dialogue des détails de la tâche."
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr "Afficher ou masquer le volet du navigateur du terminal de commandes actif."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1418,11 +1441,6 @@ msgstr "Bascule entre la vue tableau et la vue backlog."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "Afficher/masquer le volet Navigateur"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "Afficher/masquer le panneau Modifications"
 
@@ -1432,9 +1450,8 @@ msgid "Toggle Command Terminal"
 msgstr "Afficher/masquer le terminal de commandes"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Toggle Command Terminal Browser pane"
-msgstr "Afficher/masquer le volet Navigateur du terminal de commandes"
+msgid "Toggle Command Terminal browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1445,6 +1462,10 @@ msgstr "Afficher/masquer la superposition de débogage"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "Afficher/masquer l'aperçu de la description"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1482,6 +1503,10 @@ msgstr "Turc"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "Ukrainien"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

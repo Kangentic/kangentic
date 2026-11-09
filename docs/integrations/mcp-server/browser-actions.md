@@ -341,7 +341,7 @@ Enabling `Page` is only half of it. Measured on Electron 41, Electron's own dial
 
 ## kangentic_browser_eval
 
-Evaluate a JavaScript expression in the loaded page's origin and return its value. Capability tier: `eval`, which is **off by default**: turn it on at Settings > Agent Browser > Allow eval.
+Evaluate a JavaScript expression in the loaded page's origin and return its value. Capability tier: `eval`, which is **off by default**: turn it on at Settings > Browser automation > Allow eval.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -8,8 +8,8 @@ import { QueuedContextBar } from '../../terminal/QueuedContextBar';
 import { LaunchOverlay } from '../../LaunchOverlay';
 import { CompletedTaskView } from './completed/CompletedTaskView';
 import { BrowserPane } from '../../browser/BrowserPane';
-import { PriorityBadge } from '../../backlog/PriorityBadge';
-import { LabelPills } from '../../Pill';
+import type { TerminalLinkBrowser } from '../../../utils/terminal-links/link-targets';
+import { TaskPills } from '../../backlog/TaskPills';
 import { useTaskDetailHost } from './task-detail-host';
 import { taskDetailSurfaceFor } from '../../../utils/task-progress';
 import { scheduleWindowTerminalResize } from '../../../window-manager/terminal/resize-coalescer';
@@ -92,6 +92,9 @@ interface TaskDetailBodyProps {
    *  Only used to tell the pane, and through it the agent, that it is `parked`
    *  rather than merely hidden. */
   parked?: boolean;
+  /** The Kangentic browser the terminal opens a link in, or null where this
+   *  window cannot show one. Absent from a host that has no pane to offer. */
+  linkBrowser?: TerminalLinkBrowser | null;
 }
 
 export function TaskDetailBody({
@@ -122,6 +125,7 @@ export function TaskDetailBody({
   retainedProjectId,
   dormant: dormantProp,
   parked = false,
+  linkBrowser = null,
 }: TaskDetailBodyProps) {
   const { t } = useLingui();
   const retained = retainedProjectId !== undefined;
@@ -252,11 +256,9 @@ export function TaskDetailBody({
   // Single source of truth shared with canShowDescription in TaskDetailWindow.
   const hasDescriptionContent = taskHasDescriptionContent(task, savedAttachments.length);
 
+  // The board card's row, so the detail and the card cannot disagree.
   const labelsAndPriorityRow = hasLabelsOrPriority && (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <PriorityBadge priority={taskPriority} />
-      <LabelPills labels={taskLabels} labelColors={labelColors} />
-    </div>
+    <TaskPills priority={taskPriority} labels={taskLabels} labelColors={labelColors} />
   );
 
   const attachmentStrip = (
@@ -509,6 +511,7 @@ export function TaskDetailBody({
                     // The task-detail surface is window-hosted: refit immediately on
                     // the window's resize/snap/maximize/divider dispatch (no 50ms lag).
                     immediatePanelResize={true}
+                    linkBrowser={linkBrowser}
                   />
                 )}
               </div>

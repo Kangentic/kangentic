@@ -1,8 +1,9 @@
 import React from 'react';
-import { RefreshCw, RotateCcw } from 'lucide-react';
+import { Power, RefreshCw, RotateCcw } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { reportBoundaryError } from '../error-reporting';
 import { syncFocusedTerminals } from '../utils/focused-terminals';
+import { describeIpcError, asSentence } from '../lib/ipc-error';
 
 interface Props {
   children: React.ReactNode;
@@ -11,6 +12,21 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+  /** Why Restart did not go through, shown under the buttons. */
+  restartError: string | null;
+}
+
+/**
+ * Restart shows only in a dev build, and only where the running preload has the
+ * call. Under `npm start` main and preload are built once at boot, so renderer
+ * code merged later can call a preload method the running preload lacks, throw,
+ * and land here. Reload runs the same renderer against the same old preload and
+ * comes straight back. Restart rebuilds main and preload first
+ * (scripts/dev.js restartElectron), which is the one way out. A packaged build
+ * ships its renderer and preload together, so it never needs it.
+ */
+function canRestartApp(): boolean {
+  return __KANGENTIC_DEV__ && typeof window.electronAPI?.app?.restart === 'function';
 }
 
 /**
@@ -24,11 +40,11 @@ interface State {
 export class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, restartError: null };
   }
 
-  static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+  static getDerivedStateFromError(error: Error): Partial<State> {
+    return { hasError: true, error, restartError: null };
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
@@ -55,7 +71,18 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   handleRetry = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, restartError: null });
+  };
+
+  /** Restart Kangentic. The tree is already gone, so there is nothing to confirm
+   *  against; agents suspend and resume as on any restart. */
+  handleRestart = async () => {
+    this.setState({ restartError: null });
+    try {
+      await window.electronAPI.app.restart();
+    } catch (error) {
+      this.setState({ restartError: asSentence(describeIpcError(error)) });
+    }
   };
 
   /**
@@ -93,7 +120,22 @@ export class ErrorBoundary extends React.Component<Props, State> {
               <RotateCcw className="w-4 h-4" />
               <Trans>Try again</Trans>
             </button>
+            {canRestartApp() && (
+              <button
+                onClick={() => void this.handleRestart()}
+                data-testid="root-error-restart"
+                className="flex items-center gap-2 px-4 py-2 bg-surface-hover hover:bg-edge-input rounded-md text-sm text-fg-secondary transition-colors"
+              >
+                <Power className="w-4 h-4" />
+                <Trans context="Action">Restart</Trans>
+              </button>
+            )}
           </div>
+          {this.state.restartError !== null && (
+            <p className="text-sm text-fg-muted max-w-md text-center" data-testid="root-error-restart-failure">
+              {this.state.restartError}
+            </p>
+          )}
         </div>
       );
     }

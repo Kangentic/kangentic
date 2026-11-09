@@ -2,9 +2,9 @@
  * UI test for the Changes panel branch header (PR 1).
  *
  * Verifies that the header surfaces the live branch context returned by
- * git.branchSummary: the current branch name and ahead/behind counts. The last
- * commit and the linked PR are not repeated there: History lists the commits,
- * and the task header carries the PR. Uses the headless mock
+ * git.branchSummary: the current branch name and ahead/behind counts, then the
+ * linked PR's pill when the task has one. The last commit is not repeated there:
+ * History lists the commits. Uses the headless mock
  * (window.__mockBranchSummary) so no real git repo is needed.
  */
 import { test, expect } from '@playwright/test';
@@ -168,8 +168,8 @@ test.describe('Changes panel: branch header', () => {
     // stays at its default width.
     await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeLessThan(240);
 
-    // No PR is linked on this task, so the header shows no PR chip.
-    await expect(page.locator('[data-testid="changes-pr-link"]')).toHaveCount(0);
+    // No PR is linked on this task, so the header shows no PR pill.
+    await expect(page.locator('[data-testid="changes-pr-pill"]')).toHaveCount(0);
 
     // Close panel + dialog so state does not leak to other tests.
     await page.locator('[data-testid="changes-toggle"]').click();
@@ -264,7 +264,7 @@ test.describe('Changes panel: linked PR', () => {
     await prBrowser?.close();
   });
 
-  test('a linked PR is not repeated in the Changes header or the file tree', async () => {
+  test('a linked PR shows once, as the pill in the Changes header, and not in the file tree', async () => {
     const card = prPage
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=Branch Header PR Task')
@@ -282,13 +282,13 @@ test.describe('Changes panel: linked PR', () => {
     const surfaceHeader = prPage.locator('[data-testid="surface-header-changes"]');
     await surfaceHeader.waitFor({ state: 'visible', timeout: 8000 });
 
-    // The branch context has loaded, so a missing chip is a decision, not a race.
+    // The branch context has loaded, so a missing pill is a decision, not a race.
     await expect(surfaceHeader.locator('[data-testid="changes-branch-name"]')).toHaveText('feature/pr-chip', { timeout: 8000 });
-    // The task header carries the PR; the Changes panel does not repeat it,
-    // in its surface header or in the file tree's branch header.
-    await expect(surfaceHeader.locator('[data-testid="changes-pr-link"]')).toHaveCount(0);
-    await expect(fileTree.locator('[data-testid="changes-pr-link"]')).toHaveCount(0);
-    await expect(surfaceHeader).not.toContainText('PR #77');
+    // The surface header carries the PR pill after the branch context. The file
+    // tree's own branch header is suppressed in this embed, so it never repeats it.
+    await expect(surfaceHeader.locator('[data-testid="changes-pr-pill"]')).toHaveCount(1);
+    await expect(surfaceHeader.locator('[data-testid="changes-pr-pill"]')).toContainText('PR #77');
+    await expect(fileTree.locator('[data-testid="changes-pr-pill"]')).toHaveCount(0);
 
     await prPage.locator('[data-testid="changes-toggle"]').click();
     await prPage.keyboard.press('Control+Shift+W');

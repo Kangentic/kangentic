@@ -111,6 +111,33 @@ describe('kangentic_list_columns rendering', () => {
   });
 });
 
+describe('kangentic_list_columns purpose', () => {
+  it('prints a column\'s description on a Purpose line below it', async () => {
+    // An agent that adds a workflow task over MCP routes by these; before this
+    // only get_column_detail, one call per column, printed them.
+    const text = await render([
+      { name: 'To Do', role: 'todo', taskCount: 7 },
+      { name: 'Design', role: null, taskCount: 1, description: 'Draws a design canvas.' },
+      { name: 'Code Review', role: null, taskCount: 0, sessionTarget: 'isolated', description: 'Reviews the branch.' },
+    ]);
+
+    expect(text).toBe([
+      '- To Do (todo): 7 task(s)',
+      '- Design: 1 task(s)',
+      '  Purpose: Draws a design canvas.',
+      '- Code Review: 0 task(s) [isolated session]',
+      '  Purpose: Reviews the branch.',
+    ].join('\n'));
+  });
+
+  it('tells an agent in its description what the Purpose line is', async () => {
+    mockRunHandler.mockResolvedValue({ success: true, data: [] });
+    const { config } = captureTools();
+
+    expect(config.description).toContain('Purpose:');
+  });
+});
+
 describe('kangentic_list_columns isolation tag', () => {
   it('marks an isolated column so an agent can see it without a per-column call', async () => {
     const text = await render([

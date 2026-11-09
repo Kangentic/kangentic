@@ -192,6 +192,10 @@ msgstr "{oldPath} a {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "{passedCount} passed"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
@@ -217,6 +221,10 @@ msgstr "{pillLabel}: {reason}"
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position} de {total}"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -707,6 +715,10 @@ msgstr "Los cambios están abiertos en su propia ventana"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Checks"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
 msgstr ""
@@ -948,6 +960,14 @@ msgstr "Condición: {condition}"
 msgid "Confirm"
 msgstr "Confirmar"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with {base}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with the base branch"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Connected"
@@ -1128,6 +1148,10 @@ msgstr "No se pudieron guardar los perfiles"
 #, fuzzy
 msgid "Couldn't save task"
 msgstr "No se pudo guardar la tarea"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Couldn't send the failed checks"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -1556,6 +1580,10 @@ msgstr "Traspaso"
 #, fuzzy
 msgid "Handoff Chain"
 msgstr "Cadena de traspasos"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Held for the next agent"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2199,10 +2227,18 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "abierta"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open {name} in browser"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "Open {shortHash} on {providerName}"
 msgstr "Abrir {shortHash} en {providerName}"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open all checks in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -2266,6 +2302,10 @@ msgstr "Abra ese tablero para editar sus perfiles"
 #, fuzzy
 msgid "Open the board to change this"
 msgstr "Abre el tablero para cambiarlo"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open the pull request in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2744,6 +2784,11 @@ msgstr "Seleccione un commit para ver sus cambios"
 msgid "Select a file to view changes"
 msgstr "Seleccione un archivo para ver los cambios"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Send to agent"
+msgstr "Enviar al agente"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Send to Backlog"
@@ -2753,6 +2798,11 @@ msgstr "Enviar al Backlog"
 #, fuzzy
 msgid "Sending the original instead."
 msgstr "Se enviará la original en su lugar."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Sending..."
+msgstr "Enviando..."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -3148,6 +3198,10 @@ msgstr "La carpeta de <0>\"{projectName}\"</0> ya no existe:"
 #, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
 msgstr "El nuevo agente retoma la conversación del agente anterior en lugar de empezar desde la descripción de la tarea."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "The next agent on this task gets the failed checks in its first message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

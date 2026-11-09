@@ -70,7 +70,7 @@ Default scope is the current project; toggle to **All projects** to widen the se
 ### Filter Popover
 
 Click the filter icon at the top right of the board to open the filter popover. Filter by:
-- **Priority** - toggle one or more priority levels (None, Low, Medium, High, Urgent)
+- **Priority** - toggle one or more of the project's priority levels (None, Low, Medium, High and Urgent by default)
 - **Labels** - toggle one or more labels from the project's label set
 
 While filters are active, the Filter button shows how many, right after its label. Click "Clear all filters" at the bottom of the popover to reset. Priority and label filters combine with the search query - a task must match all active criteria to be visible.

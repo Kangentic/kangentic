@@ -33,6 +33,12 @@ A column that runs tasks on its own conversation is tagged `[isolated session]`.
 marked: a main-session column is the norm, and tagging every one would bury the distinction. See
 [kangentic_update_column](#kangentic_update_column) for what the tag means.
 
+A column with a description prints it on an indented `Purpose:` line below its own. The
+description says what the column does and which work needs it, so an agent adding a workflow task
+over MCP can pick a route that skips the columns its work does not need without a
+`kangentic_get_column_detail` call per column. A column with no description prints one line, as
+before.
+
 ## kangentic_get_column_detail
 
 Get detailed column configuration: description, auto-spawn, permission mode, session track, plan approval, plan exit target, and visual settings.
@@ -74,7 +80,7 @@ The role columns (To Do, Done) are editable here like any other: rename, describ
 |-----------|------|----------|-------------|
 | `column` | string | Yes | Column name to update (case-insensitive) |
 | `name` | string | No | New column name (max 100 chars) |
-| `description` | string \| null | No | Free-form column purpose shown as a header tooltip and shared via `kangentic.json` (max 1000 chars). `null` clears. |
+| `description` | string \| null | No | What the column does and which work needs it (max 1000 chars). Shown as a header tooltip, shared via `kangentic.json`, read by a workflow's planning agent as the column's purpose when it chooses a route, and printed by `kangentic_list_columns`. `null` clears. |
 | `color` | string | No | Hex color (e.g. `"#71717a"`) |
 | `icon` | string \| null | No | Lucide icon name, or `null` to clear |
 | `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. For the ACTIVE project, changing it also applies to the tasks already in the column, immediately: switching it on spawns for each task with no session (never for a user-paused one, and never in To Do or Done), switching it off suspends the live sessions there |
@@ -124,7 +130,7 @@ every lane, including the archived Done lane.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Column name, unique on this board (max 100 chars) |
-| `description` | string | No | Free-form column purpose shown as a header tooltip and shared via `kangentic.json` (max 1000 chars) |
+| `description` | string | No | What the column does and which work needs it (max 1000 chars). Shown as a header tooltip, shared via `kangentic.json`, read by a workflow's planning agent as the column's purpose when it chooses a route, and printed by `kangentic_list_columns` |
 | `color` | string | No | Hex color (e.g. `"#71717a"`). Defaults to blue. |
 | `icon` | string | No | Lucide icon name |
 | `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent. Defaults to `true`. |

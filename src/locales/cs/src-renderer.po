@@ -348,6 +348,10 @@ msgstr "{worktreeCount, plural, one {{failedCount} z # pracovního stromu se nep
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "Úloha #{displayId} zůstává ve sloupci K provedení. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -409,6 +413,10 @@ msgstr "Agent obnoven"
 msgid "Agent started"
 msgstr "Agent spuštěn"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Agents pause during a restart and resume after."
+msgstr ""
+
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
 msgid "An unexpected error occurred."
@@ -460,6 +468,10 @@ msgstr "Výstraha"
 msgid "Change not saved to disk"
 msgstr "Změna nebyla uložena na disk"
 
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Choose a project folder"
@@ -485,6 +497,11 @@ msgstr "Vymazat všechny filtry"
 #, fuzzy
 msgid "Clear search"
 msgstr "Vymazat hledání"
+
+#: src/renderer/utils/keybindings.ts
+msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
+msgid "Click"
+msgstr ""
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -720,6 +737,10 @@ msgstr "Sloupce se nepodařilo přeuspořádat"
 #, fuzzy
 msgid "Couldn't reorder task"
 msgstr "Pořadí úlohy nelze změnit"
+
+#: src/renderer/utils/dev-restart.ts
+msgid "Couldn't restart Kangentic"
+msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -1081,6 +1102,10 @@ msgstr "Zbylé procesy"
 msgid "Leftover processes stopped"
 msgstr "Zbylé procesy zastaveny"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Main process changed"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1092,9 +1117,8 @@ msgid "Maximize"
 msgstr "Maximalizovat"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Sloučení blokováno revizemi, kontrolami nebo pravidly větve podle poslední aktualizace PR"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy
@@ -1270,20 +1294,26 @@ msgstr "otevřeno"
 msgid "Open a project first."
 msgstr "Nejprve otevřete projekt."
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutButton.tsx
 #, fuzzy
 msgid "Open in new window"
 msgstr "Otevřít v novém okně"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR #{prNumber} in browser"
-msgstr "Otevřít PR #{prNumber} v prohlížeči"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR in browser"
-msgstr "Otevřít PR v prohlížeči"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1447,6 +1477,12 @@ msgstr "Povinné kontroly nebo zásady čekají ve frontě podle poslední aktua
 msgid "Required checks or policies are running as of the last PR refresh"
 msgstr "Povinné kontroly nebo zásady probíhají podle poslední aktualizace PR"
 
+#: src/renderer/components/ErrorBoundary.tsx
+#: src/renderer/utils/dev-restart.ts
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
 #: src/renderer/stores/updater-store.ts
 #, fuzzy
 msgid "Restart to update"
@@ -1553,6 +1589,10 @@ msgstr "Instalační skript selhal"
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"
 msgstr "Shift+kliknutí přidá sekundární řazení"
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Show in folder"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

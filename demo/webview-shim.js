@@ -16,9 +16,16 @@
  * desktop's URL and the pane shows that app's page. Any other URL loads nothing (about:blank),
  * stated rather than spoofed: the pane's own empty state and error paths are the renderer's.
  *
- * Inert here: capturePage (a blank image at the guest's size, so Send runs), executeJavaScript
- * (resolves undefined, so Inspect finds nothing), and history (canGoBack is always false). Each
- * is a real method that does less, never a missing one that throws.
+ * executeJavaScript runs the script in the guest's own window, as Electron runs it in the guest's
+ * main world, and answers with its completion value (a promise it returns is awaited, as
+ * Electron's is). The guest is a same-origin iframe, so the renderer's own scripts run for real:
+ * the annotation layer draws its numbered badges on the page, Inspect outlines and picks an
+ * element, and Send reads the page's selection. demo/boot.js counts what the guest's own
+ * createElement makes as the page's, so its extension sweep leaves those nodes alone.
+ *
+ * Inert here: capturePage (a blank image at the guest's size, so Send runs) and history
+ * (canGoBack is always false). Each is a real method that does less, never a missing one that
+ * throws.
  */
 (function () {
   'use strict';
@@ -55,10 +62,20 @@
       frame.style.width = (100 / zoom) + '%';
       frame.style.height = (100 / zoom) + '%';
     }
+    // Calls whose script is still running in the current document. Its realm is torn down on the
+    // next load, so a promise it returned never settles; each is answered undefined instead, the
+    // "document went away" answer the renderer's callers already read as null.
+    var pendingCalls = new Set();
+    var guestLoaded = false;
     function load(url) {
       currentUrl = url || '';
+      guestLoaded = false;
+      pendingCalls.forEach(function (settle) { settle(); });
+      pendingCalls.clear();
       var guest = guestFor(currentUrl);
       frame.onload = function () {
+        // Set before dom-ready fires: its listeners call executeJavaScript at once.
+        guestLoaded = true;
         // Extensions inject into every frame, and the guest is a document of its own, so it gets
         // the same opt-outs and sweep as the app (demo/boot.js, Browser extensions). Each load is
         // a new document, which is why this runs here and not once.
@@ -85,7 +102,28 @@
     node.goForward = function () {};
     node.setZoomFactor = function (factor) { zoom = factor; applyZoom(); };
     node.getZoomFactor = function () { return zoom; };
-    node.executeJavaScript = function () { return Promise.resolve(undefined); };
+    // An indirect eval in the guest's realm: its completion value is the answer the renderer's
+    // scripts give (a Function body would answer undefined), and a throw is a rejection. Before
+    // the page has loaded, or between a load starting and its page arriving, there is no guest
+    // document to run in, so the call answers undefined, as Electron refuses one before dom-ready.
+    node.executeJavaScript = function (code) {
+      var guestWindow = frame.contentWindow;
+      if (!guestWindow || !guestLoaded) return Promise.resolve(undefined);
+      var completion;
+      try {
+        completion = guestWindow.eval(String(code));
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      return new Promise(function (resolve, reject) {
+        function settle() { pendingCalls.delete(settle); resolve(undefined); }
+        pendingCalls.add(settle);
+        Promise.resolve(completion).then(
+          function (value) { pendingCalls.delete(settle); resolve(value); },
+          function (error) { pendingCalls.delete(settle); reject(error); },
+        );
+      });
+    };
     node.insertCSS = function () { return Promise.resolve(''); };
     // A blank image at the guest's size: Send composites it and hands it to the mock, which keeps
     // nothing. The screenshot the recorded agent reads was the page rendered by the capture rig.

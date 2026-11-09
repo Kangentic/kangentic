@@ -8,18 +8,22 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  ANNOTATIONS_INLINE_LIMIT,
+  buildAnnotationsPayload,
   buildPromptPayload,
-  formatPickedElementXml,
+  describeDrawing,
+  pngWidth,
   formatAncestors,
   formatStyles,
   isMeaningfulStyle,
   isTrivialWrapper,
   isValidSessionId,
   isCrossDrivePath,
+  validAnnotationInputs,
   SELECTION_INLINE_LIMIT,
 } from '../../src/main/ipc/handlers/browser-payload';
 import { escapeXml } from '../../src/main/agent/shared';
-import type { BrowserCaptureInput, BrowserPickedElement } from '../../src/shared/types';
+import type { BrowserAnnotationSendInput, BrowserCaptureInput, BrowserPickedElement } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -51,7 +55,8 @@ function makeInput(overrides: Partial<BrowserCaptureInput> = {}): BrowserCapture
     cwd: '/projects/myapp',
     url: 'https://example.com',
     pngBase64: 'abc123',
-    pickedElement: null,
+    annotations: [],
+    viewport: null,
     selectedText: '',
     note: '',
     ...overrides,
@@ -263,96 +268,152 @@ describe('isTrivialWrapper', () => {
 });
 
 // ---------------------------------------------------------------------------
-// formatPickedElementXml
+// buildAnnotationsPayload
 // ---------------------------------------------------------------------------
 
-describe('formatPickedElementXml', () => {
-  it('wraps output in <picked_element> tags', () => {
-    const lines = formatPickedElementXml(makeElement());
-    expect(lines[0]).toBe('<picked_element>');
-    expect(lines[lines.length - 1]).toBe('</picked_element>');
+function makeAnnotation(overrides: Partial<BrowserAnnotationSendInput> = {}): BrowserAnnotationSendInput {
+  return {
+    number: 1,
+    note: 'Make this primary',
+    url: 'https://example.com',
+    onPage: true,
+    inViewport: true,
+    items: [{ id: 'item-1', kind: 'element', element: makeElement() }],
+    captureId: null,
+    ...overrides,
+  };
+}
+
+const PATHS = {
+  screenshot: '.kangentic\\sessions\\s\\captures\\capture-1.png',
+  captures: new Map<string, string>(),
+  details: '.kangentic/sessions/s/captures/annotations-1.xml',
+};
+
+describe('buildAnnotationsPayload', () => {
+  it('opens with the instructions, then the screenshot, then one annotations block', () => {
+    const { payload, detailsXml } = buildAnnotationsPayload(
+      makeInput({ annotations: [makeAnnotation()], viewport: { width: 1280, height: 720, scrollX: 0, scrollY: 640 } }),
+      PATHS,
+    );
+    const lines = payload.split('\n');
+    expect(lines[0]).toMatch(/^The user annotated this page\./);
+    expect(payload).toContain('Screenshot: @.kangentic/sessions/s/captures/capture-1.png');
+    expect(payload).toContain('<annotations url="https://example.com" viewport="1280x720" scroll="0,640">');
+    expect(payload.indexOf('Screenshot:')).toBeLessThan(payload.indexOf('<annotations'));
+    expect(payload.trimEnd().endsWith('</annotations>')).toBe(true);
+    expect(detailsXml).toBeNull();
   });
 
-  it('always includes <selector>', () => {
-    const lines = formatPickedElementXml(makeElement({ selector: 'div.foo' }));
-    expect(lines.some((line) => line.includes('<selector>div.foo</selector>'))).toBe(true);
+  it('puts each note before what it points at, numbered as the badges are', () => {
+    const { payload } = buildAnnotationsPayload(makeInput({
+      annotations: [
+        makeAnnotation({ number: 1, note: 'First' }),
+        makeAnnotation({ number: 2, note: 'Second', items: [{ id: 'd', kind: 'drawing', strokes: [[{ x: 10, y: 20 }, { x: 40, y: 60 }]] }] }),
+      ],
+    }), PATHS);
+    expect(payload).toContain('<annotation n="1">\n    <note>First</note>\n    <element ');
+    expect(payload).toContain('<annotation n="2">\n    <note>Second</note>\n    <drawing strokes="1" box="10,20,30,40" start="10,20" />');
   });
 
-  it('emits <testid> when testId is present', () => {
-    const lines = formatPickedElementXml(makeElement({ testId: 'submit-btn' }));
-    expect(lines.some((line) => line.includes('<testid>submit-btn</testid>'))).toBe(true);
+  it('gives an element its identity as attributes and its selector as text, escaped', () => {
+    const element = makeElement({ testId: 'save', selector: 'button[data-testid="save"]', classes: ['btn', 'primary'] });
+    const { payload } = buildAnnotationsPayload(makeInput({
+      annotations: [makeAnnotation({ items: [{ id: 'e', kind: 'element', element }] })],
+    }), PATHS);
+    expect(payload).toContain('<element role="button" name="Submit" tag="button" testid="save" rect="10,20,100,40">');
+    expect(payload).toContain('<selector>button[data-testid=&quot;save&quot;]</selector>');
+    expect(payload).toContain('<classes>btn primary</classes>');
   });
 
-  it('omits <testid> when testId is absent', () => {
-    const lines = formatPickedElementXml(makeElement({ testId: undefined }));
-    expect(lines.some((line) => line.includes('<testid>'))).toBe(false);
+  it('repeats the url only for an annotation made on another page, and marks one whose element is gone', () => {
+    const { payload } = buildAnnotationsPayload(makeInput({
+      annotations: [makeAnnotation({ number: 3, url: 'https://example.com/billing', onPage: false, inViewport: false })],
+    }), PATHS);
+    expect(payload).toContain('<annotation n="3" url="https://example.com/billing" on_page="false">');
   });
 
-  it('omits <text> when text matches accessibleName', () => {
-    // makeElement defaults: accessibleName='Submit', text='Submit' - they match
-    const lines = formatPickedElementXml(makeElement());
-    expect(lines.some((line) => line.includes('<text>'))).toBe(false);
+  it('names a capture once for every annotation out of the screenshot that shares it', () => {
+    const { payload } = buildAnnotationsPayload(makeInput({
+      annotations: [
+        makeAnnotation({ number: 1, inViewport: true, captureId: 'aaaaaaaaaaaaaaaa' }),
+        makeAnnotation({ number: 2, inViewport: false, captureId: 'bbbbbbbbbbbbbbbb' }),
+        makeAnnotation({ number: 3, inViewport: false, captureId: 'bbbbbbbbbbbbbbbb' }),
+      ],
+    }), { ...PATHS, captures: new Map([['bbbbbbbbbbbbbbbb', 'caps\\annotation-2.png']]) });
+    const captureLines = payload.split('\n').filter((line) => line.includes('annotation-2.png'));
+    expect(captureLines).toEqual(['Annotations 2, 3, captured before the page scrolled: @caps/annotation-2.png']);
+    // In view: its own capture is never named.
+    expect(payload).not.toContain('Annotation 1,');
   });
 
-  it('emits <text> when it differs from accessibleName', () => {
-    const lines = formatPickedElementXml(makeElement({
-      accessibleName: 'Submit form',
-      text: 'Submit',
+  it('says a capture was taken on another page when every annotation in it was', () => {
+    const { payload } = buildAnnotationsPayload(makeInput({
+      annotations: [makeAnnotation({ number: 4, url: 'https://example.com/other', inViewport: false, captureId: 'cccccccccccccccc' })],
+    }), { ...PATHS, captures: new Map([['cccccccccccccccc', 'annotation-4.png']]) });
+    expect(payload).toContain('Annotation 4, captured on another page: @annotation-4.png');
+  });
+
+  it('keeps every element detail inline while the paste fits', () => {
+    const element = makeElement({ computedStyles: { color: 'red' }, ancestors: [{ tagName: 'FORM', classes: [] }] });
+    const { payload, detailsXml } = buildAnnotationsPayload(makeInput({
+      annotations: [makeAnnotation({ items: [{ id: 'e', kind: 'element', element }] })],
+    }), PATHS);
+    expect(payload).toContain('<styles>color: red</styles>');
+    expect(payload).toContain('<ancestors>form</ancestors>');
+    expect(detailsXml).toBeNull();
+  });
+
+  it('moves styles, ancestors and HTML to the details file past the limit, and never a note', () => {
+    const bigHtml = `<div>${'<span>x</span>'.repeat(200)}</div>`;
+    const annotations = Array.from({ length: 6 }, (_unused, index) => makeAnnotation({
+      number: index + 1,
+      note: `Note ${index + 1}`,
+      items: [{ id: `e${index}`, kind: 'element', element: makeElement({ outerHTML: bigHtml, computedStyles: { color: 'red' } }) }],
     }));
-    expect(lines.some((line) => line.includes('<text>Submit</text>'))).toBe(true);
+    const { payload, detailsXml } = buildAnnotationsPayload(makeInput({ annotations }), PATHS);
+
+    expect(payload.length).toBeLessThanOrEqual(ANNOTATIONS_INLINE_LIMIT);
+    expect(payload).toContain('Full styles and HTML for every element: .kangentic/sessions/s/captures/annotations-1.xml');
+    expect(payload).not.toContain('<outer_html>');
+    expect(payload).not.toContain('<styles>');
+    for (let index = 1; index <= 6; index += 1) expect(payload).toContain(`<note>Note ${index}</note>`);
+    expect(payload).toContain('<selector>button.primary</selector>');
+
+    expect(detailsXml).toContain('<outer_html>');
+    expect(detailsXml).toContain('<styles>color: red</styles>');
+    expect(detailsXml).toContain('<note>Note 6</note>');
   });
 
-  it('omits <text> when text is empty', () => {
-    const lines = formatPickedElementXml(makeElement({ text: '', accessibleName: '' }));
-    expect(lines.some((line) => line.includes('<text>'))).toBe(false);
+  it('reads the scale of the screenshot against the viewport from the PNG header', () => {
+    // A 1920px-wide PNG header for a 1280px viewport: scale 1.5.
+    const header = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+    header.write('IHDR', 12, 'ascii');
+    header.writeUInt32BE(1920, 16);
+    header.writeUInt32BE(1080, 20);
+    const pngBase64 = header.toString('base64');
+    expect(pngWidth(pngBase64)).toBe(1920);
+    const { payload } = buildAnnotationsPayload(makeInput({
+      pngBase64,
+      annotations: [makeAnnotation()],
+      viewport: { width: 1280, height: 720, scrollX: 0, scrollY: 0 },
+    }), PATHS);
+    expect(payload).toContain('scale="1.5"');
+  });
+});
+
+describe('describeDrawing', () => {
+  it('reports the stroke count, the box around every point, and the first point', () => {
+    expect(describeDrawing([[{ x: 470, y: 280 }, { x: 250, y: 228 }], [{ x: 260, y: 240 }]])).toEqual({
+      strokes: 2,
+      box: '250,228,220,52',
+      start: '470,280',
+    });
   });
 
-  it('emits <styles /> self-closing when computedStyles are all defaults', () => {
-    const lines = formatPickedElementXml(makeElement({ computedStyles: {} }));
-    expect(lines.some((line) => line.trim() === '<styles />')).toBe(true);
-  });
-
-  it('emits <styles> block when meaningful styles are present', () => {
-    const lines = formatPickedElementXml(makeElement({
-      computedStyles: { color: 'red' },
-    }));
-    expect(lines.some((line) => line.includes('<styles>'))).toBe(true);
-    expect(lines.some((line) => line.includes('color: red'))).toBe(true);
-  });
-
-  it('emits <outer_html> when outerHTML has nested elements', () => {
-    const lines = formatPickedElementXml(makeElement({
-      outerHTML: '<div><span>nested</span></div>',
-    }));
-    expect(lines.some((line) => line.includes('<outer_html>'))).toBe(true);
-  });
-
-  it('omits <outer_html> when outerHTML is a trivial wrapper', () => {
-    const lines = formatPickedElementXml(makeElement({
-      outerHTML: '<button>Submit</button>',
-    }));
-    expect(lines.some((line) => line.includes('<outer_html>'))).toBe(false);
-  });
-
-  it('omits <ancestors> block when ancestors array is empty', () => {
-    const lines = formatPickedElementXml(makeElement({ ancestors: [] }));
-    expect(lines.some((line) => line.includes('<ancestors>'))).toBe(false);
-  });
-
-  it('emits <ancestors> when ancestors are present', () => {
-    const lines = formatPickedElementXml(makeElement({
-      ancestors: [{ tagName: 'DIV', classes: [] }],
-    }));
-    expect(lines.some((line) => line.includes('<ancestors>'))).toBe(true);
-  });
-
-  it('escapes XML special chars in selector', () => {
-    const lines = formatPickedElementXml(makeElement({
-      selector: 'div[data-name="a&b"]',
-    }));
-    const selectorLine = lines.find((line) => line.includes('<selector>'));
-    expect(selectorLine).toContain('&amp;');
-    expect(selectorLine).toContain('&quot;');
+  it('reports nothing for a drawing with no points', () => {
+    expect(describeDrawing([])).toBeNull();
   });
 });
 
@@ -425,16 +486,6 @@ describe('buildPromptPayload', () => {
     expect(result).toContain(expectedTruncated);
   });
 
-  it('omits picked_element block when pickedElement is null', () => {
-    const result = buildPromptPayload(makeInput({ pickedElement: null }), 'p.png');
-    expect(result).not.toContain('<picked_element>');
-  });
-
-  it('includes picked_element block when pickedElement is provided', () => {
-    const result = buildPromptPayload(makeInput({ pickedElement: makeElement() }), 'p.png');
-    expect(result).toContain('<picked_element>');
-    expect(result).toContain('</picked_element>');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -506,5 +557,48 @@ describe('isCrossDrivePath', () => {
 
   it('returns false for a plain relative path', () => {
     expect(isCrossDrivePath('captures/file.png')).toBe(false);
+  });
+
+  it('returns true for a UNC path', () => {
+    expect(isCrossDrivePath('\\\\server\\share\\x')).toBe(true);
+  });
+});
+
+describe('validAnnotationInputs', () => {
+  it('keeps a well formed annotation and drops numbers that are not 1 to 100 integers', () => {
+    const good = makeAnnotation({ number: 3 });
+    const bad = [1.5, 0, -1, 101, '2', Number.NaN, Number.MAX_SAFE_INTEGER + 2].map((number) => ({ ...makeAnnotation(), number }));
+    const kept = validAnnotationInputs([...bad, good, makeAnnotation({ number: 100 })]);
+    expect(kept.map((annotation) => annotation.number)).toEqual([3, 100]);
+  });
+
+  it('drops an annotation with a malformed item or capture id, and non-array input', () => {
+    const malformedItem = { ...makeAnnotation(), items: [{ id: 'x', kind: 'element' }] };
+    const badCapture = { ...makeAnnotation(), captureId: '../x' };
+    expect(validAnnotationInputs([malformedItem, badCapture, null, 'x'])).toEqual([]);
+    expect(validAnnotationInputs('nope')).toEqual([]);
+  });
+});
+
+describe('buildAnnotationsPayload edge cases', () => {
+  it('keeps a paste that is long only for its notes whole, with no details file', () => {
+    const longNote = 'word '.repeat(ANNOTATIONS_INLINE_LIMIT);
+    const drawing = [{ id: 'd', kind: 'drawing' as const, strokes: [[{ x: 1, y: 2 }, { x: 3, y: 4 }]] }];
+    const { payload, detailsXml } = buildAnnotationsPayload(
+      makeInput({ annotations: [makeAnnotation({ note: longNote, items: drawing })] }),
+      PATHS,
+    );
+    expect(payload.length).toBeGreaterThan(ANNOTATIONS_INLINE_LIMIT);
+    expect(detailsXml).toBeNull();
+    expect(payload).not.toContain('Full styles and HTML');
+  });
+
+  it('emits the viewport but no scroll when the scroll offsets are not finite', () => {
+    const { payload } = buildAnnotationsPayload(
+      makeInput({ annotations: [makeAnnotation()], viewport: { width: 1280, height: 720, scrollX: Number.NaN, scrollY: Number.NaN } }),
+      PATHS,
+    );
+    expect(payload).toContain('viewport="1280x720"');
+    expect(payload).not.toContain('scroll=');
   });
 });

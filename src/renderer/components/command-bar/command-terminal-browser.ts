@@ -75,6 +75,19 @@ export function toggleCommandTerminalBrowser(projectId: string, slot: string): v
   toggleCommandTerminalSide(projectId, slot, 'browser');
 }
 
+/**
+ * Show the slot's pane, putting its Changes panel away, and leave a pane that is
+ * already showing alone: a link opened from the terminal into it.
+ */
+export function showCommandTerminalBrowser(projectId: string, slot: string): void {
+  const ownerKey = commandTerminalBrowserOwner(projectId, slot);
+  const changesId = commandTerminalChangesEntityId(slot);
+  const state = useSessionStore.getState();
+  if (state.browserOpenTasks.has(ownerKey)) return;
+  if (state.changesOpenTasks.has(changesId)) state.toggleChangesOpen(changesId);
+  state.setBrowserOpen(ownerKey, true);
+}
+
 /** Show or hide the slot's Changes panel, holding a live Browser pane it replaces. */
 export function toggleCommandTerminalChanges(projectId: string, slot: string): void {
   toggleCommandTerminalSide(projectId, slot, 'changes');

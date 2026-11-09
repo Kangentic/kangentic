@@ -348,6 +348,10 @@ msgstr "{worktreeCount, plural, one {Não foi possível limpar {failedCount} de 
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} permanece em A fazer. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -409,6 +413,10 @@ msgstr "Agente retomado"
 msgid "Agent started"
 msgstr "Agente iniciado"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Agents pause during a restart and resume after."
+msgstr ""
+
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
 msgid "An unexpected error occurred."
@@ -460,6 +468,10 @@ msgstr "Cuidado"
 msgid "Change not saved to disk"
 msgstr "Alteração não salva no disco"
 
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Choose a project folder"
@@ -485,6 +497,11 @@ msgstr "Limpar todos os filtros"
 #, fuzzy
 msgid "Clear search"
 msgstr "Limpar pesquisa"
+
+#: src/renderer/utils/keybindings.ts
+msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
+msgid "Click"
+msgstr ""
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -720,6 +737,10 @@ msgstr "Não foi possível reordenar as colunas"
 #, fuzzy
 msgid "Couldn't reorder task"
 msgstr "Não foi possível reordenar a tarefa"
+
+#: src/renderer/utils/dev-restart.ts
+msgid "Couldn't restart Kangentic"
+msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -1081,6 +1102,10 @@ msgstr "Processos remanescentes"
 msgid "Leftover processes stopped"
 msgstr "Processos remanescentes interrompidos"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Main process changed"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1092,9 +1117,8 @@ msgid "Maximize"
 msgstr "Maximizar"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Mesclagem bloqueada por revisões, verificações ou regras de branch, segundo a última atualização do PR"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy
@@ -1270,20 +1294,26 @@ msgstr "aberto"
 msgid "Open a project first."
 msgstr "Abra um projeto primeiro."
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutButton.tsx
 #, fuzzy
 msgid "Open in new window"
 msgstr "Abrir em nova janela"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR #{prNumber} in browser"
-msgstr "Abrir PR #{prNumber} no navegador"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR in browser"
-msgstr "Abrir PR no navegador"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1447,6 +1477,12 @@ msgstr "Verificações ou políticas obrigatórias estão na fila, segundo a úl
 msgid "Required checks or policies are running as of the last PR refresh"
 msgstr "Verificações ou políticas obrigatórias estão em execução, segundo a última atualização do PR"
 
+#: src/renderer/components/ErrorBoundary.tsx
+#: src/renderer/utils/dev-restart.ts
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
 #: src/renderer/stores/updater-store.ts
 #, fuzzy
 msgid "Restart to update"
@@ -1553,6 +1589,10 @@ msgstr "Falha no script de configuração"
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"
 msgstr "Shift+Clique adiciona uma ordenação secundária"
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Show in folder"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

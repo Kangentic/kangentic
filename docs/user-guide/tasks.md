@@ -97,6 +97,7 @@ conversation and sends the task once more.
 - **Terminal panel** at the bottom shows the active session's terminal output
 - **Activity tab** shows structured events (tool calls, idle state) instead of raw terminal output
 - **Context bar** below the terminal shows session metadata (shell, model, cost, tokens, context usage). Each element is configurable.
+- **Priority and labels** share one row of pills on the card, priority first with a flag, then the labels. The bottom entry of the priority scale ("None" unless renamed) shows nothing. The same row shows in the Done list, on a Workflows card, on an Agent Monitor card and in the task detail under the description
 - **Task card status** - each card shows a contextual status bar at the bottom:
   - A spinning indicator and model name with context percentage when the agent is actively working
   - An amber mark when the agent is waiting on you, shaped by why: an envelope when it finished its turn, a pennant when it finished and the board has stopped until you act, a speech bubble when it asked you a question (or did not say what it waits for), and a quartered shield when it wants a tool or a plan approved. Hover it for how long ("Asking you a question for 2m"); the pennant has no tip, so open the task to read why. The sidebar keeps one amber count for all four
@@ -106,7 +107,7 @@ conversation and sends the task once more.
   - "Paused" when manually suspended
   - "Didn't start" when an agent never reported that it started or its terminal could not start, in a warning color, with the reason in the hover tip. Kangentic retries a launch that never started once on its own. If the retry fails too, or the agent says it is signed out or misconfigured, the task stays paused and raises an "Agent didn't start" notice with the error, and Resume tries the launch again
   - "Worktree missing" or "Folder missing" when the folder the agent starts in is gone. Nothing starts anywhere else. Resume makes a worktree again from its branch
-  - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR connector model](../integrations/pull-requests/connector-model.md#merge-readiness) for what each value promises and which settings change it
+  - A pull request pill once the task has a linked PR: its number, one glyph for its state, and the state's tint (green ready or open, sky while checks are queued or running, with a slow pulse on its edge, amber blocked by a review, red with a failed check or a conflict, grey draft or closed, purple merged). Its tooltip names the state. The same pill appears in the Changes panel header. See [PR connector model](../integrations/pull-requests/connector-model.md#merge-readiness) for what each value promises and which settings change it
 - **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that runs the destination's automations), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the running automation's name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
 ## Move Between Active Columns

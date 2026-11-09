@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
 import { i18n, type MessageDescriptor } from '@lingui/core';
 import { msg, plural } from '@lingui/core/runtime-macro';
 import type {
@@ -179,29 +180,53 @@ interface WorkflowStore {
   pauseAgent: () => Promise<void>;
 }
 
-/** Bumped per detail request, so a slow answer cannot overwrite a newer one. */
-let detailGeneration = 0; // hmr-safe: a reset generation only discards in-flight answers, and the store reloads on HMR (App.tsx).
-/** The same, for the picker list. */
-let listGeneration = 0; // hmr-safe: as above.
-/** The same, for other projects' lists. */
-let homeGeneration = 0; // hmr-safe: as above.
-/** The same, for the supersessions. */
-let supersessionGeneration = 0; // hmr-safe: as above.
-/** The same, for the board's links overlay: a clear outranks a load still in flight. */
-let linkGeneration = 0; // hmr-safe: as above; the overlay is cleared on leaving the board.
 /**
- * Whose links the load in flight is for, and whether they land kept. The one
- * record of a load in flight: `linkFocusLoading` mirrors `pendingLinks !== null`
- * for subscribers, and the two are always written together.
+ * This module's mutable state, one object every evaluation of the module shares
+ * (`sharedModuleState`). The pin refreshes the store's actions on a re-eval, and
+ * a generation is only a guard while the old and new actions count on the same
+ * number.
  */
-let pendingLinks: { taskId: string; kept: boolean } | null = null; // hmr-safe: as above; a reset only drops a load in flight.
-/**
- * The same, per watched workflow (a task detail's panel), dropped when its last
- * watcher leaves. The numbers come from one counter, so a dropped workflow that
- * is watched again never reuses a number an older answer still carries.
- */
-let watchedGeneration = 0; // hmr-safe: as above.
-const watchedGenerations = new Map<string, number>(); // hmr-safe: as above; a reset only discards in-flight answers.
+interface WorkflowModuleState {
+  /** Bumped per detail request, so a slow answer cannot overwrite a newer one. */
+  detailGeneration: number;
+  /** The same, for the picker list. */
+  listGeneration: number;
+  /** The same, for other projects' lists. */
+  homeGeneration: number;
+  /** The same, for the supersessions. */
+  supersessionGeneration: number;
+  /** The same, for the board's links overlay: a clear outranks a load still in flight. */
+  linkGeneration: number;
+  /**
+   * Whose links the load in flight is for, and whether they land kept. The one
+   * record of a load in flight: `linkFocusLoading` mirrors `pendingLinks !== null`
+   * for subscribers, and the two are always written together.
+   */
+  pendingLinks: { taskId: string; kept: boolean } | null;
+  /**
+   * The same, per watched workflow (a task detail's panel), dropped when its last
+   * watcher leaves. The numbers come from one counter, so a dropped workflow that
+   * is watched again never reuses a number an older answer still carries.
+   */
+  watchedGeneration: number;
+  watchedGenerations: Map<string, number>;
+}
+
+const workflowModuleState = sharedModuleState<WorkflowModuleState>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'workflowModuleState',
+  () => ({
+    detailGeneration: 0,
+    listGeneration: 0,
+    homeGeneration: 0,
+    supersessionGeneration: 0,
+    linkGeneration: 0,
+    pendingLinks: null,
+    watchedGeneration: 0,
+    watchedGenerations: new Map<string, number>(),
+  }),
+);
 
 function currentProjectId(): string | null {
   return useProjectStore.getState().currentProject?.id ?? null;
@@ -320,7 +345,7 @@ export function shareSupersessions(
 
 const EMPTY_SUPERSESSIONS: Record<string, WorkflowSupersession> = {};
 
-const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
+const workflowStoreInitializer: StateCreator<WorkflowStore> = (set, get) => {
   /**
    * Run one change against the workflow on screen. `projectId` is read when the
    * user acted, never after the await, so a project switch mid-call cannot aim
@@ -348,18 +373,18 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
    * superseded it owns the flag now.
    */
   async function loadLinks(taskId: string, homeProjectId: string, workflowId: string, kept: boolean): Promise<void> {
-    const generation = ++linkGeneration;
-    pendingLinks = { taskId, kept };
+    const generation = ++workflowModuleState.linkGeneration;
+    workflowModuleState.pendingLinks = { taskId, kept };
     if (!get().linkFocusLoading) set({ linkFocusLoading: true });
     try {
       const detail = await window.electronAPI.workflows.get(homeProjectId, workflowId);
-      if (generation !== linkGeneration) return;
-      pendingLinks = null;
+      if (generation !== workflowModuleState.linkGeneration) return;
+      workflowModuleState.pendingLinks = null;
       set({ linkFocus: { taskId, homeProjectId, detail, kept }, linkFocusLoading: false });
     } catch (error) {
       console.warn('[workflow-store] Failed to load the workflow for its links:', describeIpcError(error));
-      if (generation !== linkGeneration) return;
-      pendingLinks = null;
+      if (generation !== workflowModuleState.linkGeneration) return;
+      workflowModuleState.pendingLinks = null;
       set({ linkFocus: null, linkFocusLoading: false });
     }
   }
@@ -369,15 +394,15 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     const watched = get().watchedDetails[workflowId];
     if (!watched) return;
     // Two pushes in a row can answer out of order: only the newest read lands.
-    const generation = ++watchedGeneration;
-    watchedGenerations.set(workflowId, generation);
+    const generation = ++workflowModuleState.watchedGeneration;
+    workflowModuleState.watchedGenerations.set(workflowId, generation);
     let detail: WorkflowDetail;
     try {
       detail = await window.electronAPI.workflows.get(watched.homeProjectId, workflowId);
     } catch (error) {
       const message = describeIpcError(error);
       console.warn('[workflow-store] Failed to load a task\'s workflow:', message);
-      if (watchedGenerations.get(workflowId) !== generation) return;
+      if (workflowModuleState.watchedGenerations.get(workflowId) !== generation) return;
       const current = get().watchedDetails[workflowId];
       // Only main's not-found refusal means the workflow is gone. Anything else
       // (a locked database, a home that will not open) may pass, so the panel
@@ -387,7 +412,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, readFailure } } });
       return;
     }
-    if (watchedGenerations.get(workflowId) !== generation) return;
+    if (workflowModuleState.watchedGenerations.get(workflowId) !== generation) return;
     const current = get().watchedDetails[workflowId];
     if (!current) return;
     set({ watchedDetails: { ...get().watchedDetails, [workflowId]: { ...current, detail: shareUnchanged(current.detail, detail), readFailure: null } } });
@@ -485,7 +510,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 
     loadWorkflows: async () => {
       const projectId = currentProjectId();
-      const generation = ++listGeneration;
+      const generation = ++workflowModuleState.listGeneration;
       // Alongside, not after: the Done rows' lines need no summary.
       void get().loadSupersessions();
       if (!projectId) {
@@ -500,12 +525,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         // A project switch whose read failed must not leave the old project's
         // workflow on screen under the new project's header, where its actions
         // would still reach the old project.
-        if (generation === listGeneration && get().projectId !== projectId) {
+        if (generation === workflowModuleState.listGeneration && get().projectId !== projectId) {
           set({ projectId, summaries: [], selectedWorkflowId: null, detail: null, selectedTaskKey: null });
         }
         return;
       }
-      if (generation !== listGeneration) return;
+      if (generation !== workflowModuleState.listGeneration) return;
       const previous = get();
       // An Open workflow that switched projects to get here picks its workflow
       // and task once that project's list arrives.
@@ -534,7 +559,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 
     loadSupersessions: async () => {
       const projectId = currentProjectId();
-      const generation = ++supersessionGeneration;
+      const generation = ++workflowModuleState.supersessionGeneration;
       if (!projectId) {
         set({ supersededBy: EMPTY_SUPERSESSIONS });
         return;
@@ -547,7 +572,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         return;
       }
       // A newer load, or a project switch while this one was in flight, wins.
-      if (generation !== supersessionGeneration || currentProjectId() !== projectId) return;
+      if (generation !== workflowModuleState.supersessionGeneration || currentProjectId() !== projectId) return;
       const previous = get().supersededBy;
       const next = shareSupersessions(previous, supersessions);
       if (next !== previous) set({ supersededBy: next });
@@ -556,7 +581,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     loadHomeSummaries: async (homeProjectIds) => {
       const own = currentProjectId();
       const wanted = [...new Set(homeProjectIds)].filter((id) => id && id !== own);
-      const generation = ++homeGeneration;
+      const generation = ++workflowModuleState.homeGeneration;
       const loaded: Record<string, WorkflowSummary[]> = {};
       await Promise.all(wanted.map(async (homeProjectId) => {
         try {
@@ -567,7 +592,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
           console.warn('[workflow-store] Failed to load another project\'s workflows:', describeIpcError(error));
         }
       }));
-      if (generation !== homeGeneration) return;
+      if (generation !== workflowModuleState.homeGeneration) return;
       set({ homeSummaries: loaded });
     },
 
@@ -585,14 +610,14 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 
     previewLinks: async (taskId, homeProjectId, workflowId) => {
       const { linkFocus } = get();
-      if (linkFocus?.kept || pendingLinks?.kept) return;
-      if (linkFocus?.taskId === taskId || pendingLinks?.taskId === taskId) return;
+      if (linkFocus?.kept || workflowModuleState.pendingLinks?.kept) return;
+      if (linkFocus?.taskId === taskId || workflowModuleState.pendingLinks?.taskId === taskId) return;
       await loadLinks(taskId, homeProjectId, workflowId, false);
     },
 
     endPreview: (taskId) => {
       const { linkFocus } = get();
-      if (pendingLinks?.taskId === taskId && !pendingLinks.kept) {
+      if (workflowModuleState.pendingLinks?.taskId === taskId && !workflowModuleState.pendingLinks.kept) {
         get().clearLinks();
         return;
       }
@@ -601,8 +626,8 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     },
 
     clearLinks: () => {
-      linkGeneration += 1;
-      pendingLinks = null;
+      workflowModuleState.linkGeneration += 1;
+      workflowModuleState.pendingLinks = null;
       set({ linkFocus: null, linkFocusLoading: false });
     },
 
@@ -621,7 +646,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         const current = get().watchedDetails[workflowId];
         if (!current) return;
         const { [workflowId]: _removed, ...rest } = get().watchedDetails;
-        if (current.watchers <= 1) watchedGenerations.delete(workflowId);
+        if (current.watchers <= 1) workflowModuleState.watchedGenerations.delete(workflowId);
         set({ watchedDetails: current.watchers <= 1 ? rest : { ...rest, [workflowId]: { ...current, watchers: current.watchers - 1 } } });
       };
     },
@@ -639,7 +664,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 
     loadDetail: async () => {
       const { projectId, selectedWorkflowId } = get();
-      const generation = ++detailGeneration;
+      const generation = ++workflowModuleState.detailGeneration;
       if (!projectId || !selectedWorkflowId) return;
       let detail: WorkflowDetail;
       try {
@@ -650,7 +675,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         console.warn('[workflow-store] Failed to load workflow:', describeIpcError(error));
         return;
       }
-      if (generation !== detailGeneration || get().selectedWorkflowId !== selectedWorkflowId) return;
+      if (generation !== workflowModuleState.detailGeneration || get().selectedWorkflowId !== selectedWorkflowId) return;
       const selectedTaskKey = get().selectedTaskKey;
       set({
         detail: shareUnchanged(get().detail, detail),
@@ -671,9 +696,9 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       if (linkFocus && linkFocus.detail.workflow.id === event.workflowId) {
         // Reload what is on screen, kept or previewed as it is, unless a load
         // for another card is under way: that one replaces it anyway.
-        const loadingAnother = pendingLinks !== null && pendingLinks.taskId !== linkFocus.taskId;
+        const loadingAnother = workflowModuleState.pendingLinks !== null && workflowModuleState.pendingLinks.taskId !== linkFocus.taskId;
         if (!loadingAnother) {
-          void loadLinks(linkFocus.taskId, linkFocus.homeProjectId, event.workflowId, pendingLinks?.kept ?? linkFocus.kept);
+          void loadLinks(linkFocus.taskId, linkFocus.homeProjectId, event.workflowId, workflowModuleState.pendingLinks?.kept ?? linkFocus.kept);
         }
       }
       if (get().watchedDetails[event.workflowId]) void refreshWatched(event.workflowId);
@@ -808,7 +833,9 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       return saved;
     },
   };
-});
+};
+
+const createWorkflowStore = () => create<WorkflowStore>(workflowStoreInitializer);
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
 // module's only runtime export is the non-component hook, so it is not a
@@ -816,6 +843,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
 // Fast Refresh cannot hand a second store to part of the view.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedWorkflowStore: ReturnType<typeof createWorkflowStore> | undefined = import.meta.hot?.data?.workflowStore;
+if (preservedWorkflowStore) refreshPinnedStore(preservedWorkflowStore, workflowStoreInitializer);
 
 export const useWorkflowStore = preservedWorkflowStore ?? createWorkflowStore();
 
@@ -823,9 +851,9 @@ export const useWorkflowStore = preservedWorkflowStore ?? createWorkflowStore();
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.workflowStore = useWorkflowStore;
-  // Editing this module's OWN code would leave the pinned instance running
-  // stale closures; force a clean full reload instead. Rare; prod is
-  // unaffected (import.meta.hot is undefined there, so this block is dropped).
+  // An edit to this module's own code re-runs it (the refresh above takes its
+  // new actions), then invalidate() hands the update on to the importers. It
+  // does not reload the page. Prod drops this block.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

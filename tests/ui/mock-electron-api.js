@@ -208,6 +208,17 @@
   // popped-out or backgrounded pane wrote to its OWN project's sidecar.
   let browserUrlProjects = {};
   let browserCaptureCalls = [];
+  // A message makes the next captureAndSend reject with it, as main does when
+  // the agent's terminal cannot take the paste.
+  let browserCaptureFailure = null;
+  // While set, captureAndSend logs its call and then waits, so a spec can act
+  // while a Send is in flight. See __mockBrowser.holdCaptureUntilReleased.
+  let browserCaptureHold = null;
+  let browserAnnotationDrafts = {};
+  // Tasks whose `window.__mockBrowserAnnotationDrafts` seed was already read, so a Clear or a Send
+  // that empties the draft does not bring the seed back on the next load.
+  let annotationDraftsHydrated = {};
+  let browserAnnotationCaptureCount = 0;
   let browserPaneCalls = [];
   let browserZoomSubscribers = [];
   let browserPaneOpenSubscribers = [];
@@ -331,6 +342,8 @@
     diffUseInlineWhenNarrow: true,
     diffFileSort: 'name',
     diffFlatList: false,
+    changesChecksOpen: false,
+    changesHistoryOpen: false,
     terminal: {
       shell: null,
       fontFamily: 'Consolas, "Courier New", monospace',
@@ -884,6 +897,20 @@
     return report;
   }
 
+  /**
+   * A task's annotation draft from `window.__mockBrowserAnnotationDrafts` ({ taskId: draft }), read
+   * when the pane first asks, for the load-order reason above, and only while the task has no draft
+   * of its own. Once per task: a draft the visitor cleared stays cleared.
+   */
+  function hydrateSeededAnnotationDraft(taskId) {
+    if (annotationDraftsHydrated[taskId]) return;
+    annotationDraftsHydrated[taskId] = true;
+    var seeds = window.__mockBrowserAnnotationDrafts;
+    if (!seeds || typeof seeds !== 'object' || !Object.prototype.hasOwnProperty.call(seeds, taskId)) return;
+    if (browserAnnotationDrafts[taskId]) return;
+    browserAnnotationDrafts[taskId] = JSON.parse(JSON.stringify(seeds[taskId]));
+  }
+
   // Test override conventions consumed below (set via addInitScript before this mock loads):
   //   - window.__mockBoardProfiles: pre-seeded BoardProfile[] for boardConfig.getBoardProfiles()
   //   - window.__mockAgentListOverrides: per-agent override of agents.list() entries
@@ -892,6 +919,8 @@
   //   - window.__mockTaskReports: a whole completed task report by task id, served by
   //     sessions.getTaskReport (re-anchored onto the archived row, with its summary) and, when
   //     its summary is written, by knowledgeGraph.taskSummary
+  //   - window.__mockBrowserAnnotationDrafts: a Browser pane's saved annotation draft by task id,
+  //     served once by browser.loadAnnotations while the task has none of its own
   //   - window.__mockInitialExit: one session-exit push fired when sessions.onExit registers
   //   - window.__mockBoardConfigChanged: a projectId pushed when boardConfig.onChanged registers
   //   - window.__mockFolderPath: path returned by dialog.selectFolder() (consume-once)
@@ -2155,6 +2184,34 @@
         tasks[idx] = Object.assign({}, tasks[idx], patch, { updated_at: now() });
         var mode = tasks[idx].session_id ? 'restart' : 'persisted';
         return { ok: true, mode: mode };
+      },
+      // The Changes panel's Checks section. Specs and the web demo seed
+      // `window.__mockPrChecks[taskId]` with a PRChecks object; an unseeded task
+      // has no checks (null), like a PR whose host lists none.
+      listPrChecks: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          window.__mockListPrChecksCalls = window.__mockListPrChecksCalls || [];
+          window.__mockListPrChecksCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+          var seeded = window.__mockPrChecks && window.__mockPrChecks[taskId];
+          if (seeded) return JSON.parse(JSON.stringify(seeded));
+        }
+        return null;
+      },
+      // "Send to agent". `window.__mockSendPrChecksResult` (an object, or a
+      // function of (taskId, projectId) that may throw) overrides; the default
+      // counts the seeded failed checks and reports them sent to a running agent.
+      sendPrChecks: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          window.__mockSendPrChecksCalls = window.__mockSendPrChecksCalls || [];
+          window.__mockSendPrChecksCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+          var override = window.__mockSendPrChecksResult;
+          if (typeof override === 'function') return override(taskId, projectId);
+          if (override) return override;
+          var seededChecks = window.__mockPrChecks && window.__mockPrChecks[taskId];
+          var failed = seededChecks ? seededChecks.checks.filter(function (check) { return check.status === 'failed'; }).length : 0;
+          return { outcome: 'sent', count: failed };
+        }
+        return { outcome: 'sent', count: 0 };
       },
       resolvePr: async function (taskId, projectId) {
         // Test hook: spec can override the response by setting
@@ -4431,6 +4488,11 @@
     app: {
       getVersion: async function () {
         return '0.1.0';
+      },
+      // The dev restart. A page cannot restart, so the mock counts the calls a
+      // UI test reads (`__mockAppRestartCalls`) and stays up.
+      restart: async function () {
+        window.__mockAppRestartCalls = (window.__mockAppRestartCalls || 0) + 1;
       },
     },
 
@@ -7397,7 +7459,31 @@
     browser: {
       captureAndSend: async function (input) {
         browserCaptureCalls.push(input);
+        // A held Send is still in flight: the call is logged, the answer waits.
+        if (browserCaptureHold) await browserCaptureHold.promise;
+        if (browserCaptureFailure) throw new Error(browserCaptureFailure);
         return { filePath: '/mock/captures/capture-' + Date.now() + '.png' };
+      },
+      // A task's annotation draft, held in memory per task as main holds it on
+      // disk. The images are counted, not kept.
+      loadAnnotations: async function (taskId) {
+        hydrateSeededAnnotationDraft(taskId);
+        var draft = browserAnnotationDrafts[taskId];
+        return draft ? JSON.parse(JSON.stringify(draft)) : null;
+      },
+      // A save or a discard is the task's own draft, so a seed read later never replaces it.
+      saveAnnotations: async function (taskId, draft) {
+        annotationDraftsHydrated[taskId] = true;
+        browserAnnotationDrafts[taskId] = JSON.parse(JSON.stringify(draft));
+      },
+      saveAnnotationCapture: async function () {
+        browserAnnotationCaptureCount += 1;
+        var hex = (browserAnnotationCaptureCount.toString(16) + '0000000000000000').slice(0, 16);
+        return hex;
+      },
+      discardAnnotations: async function (taskId) {
+        annotationDraftsHydrated[taskId] = true;
+        delete browserAnnotationDrafts[taskId];
       },
       // projectId is the TASK's project (a popped-out pane outlives a project
       // switch). The mock resolves the project default from it, falling back to
@@ -7613,6 +7699,12 @@
       browserUrls = {};
       browserUrlProjects = {};
       browserCaptureCalls = [];
+      browserCaptureFailure = null;
+      if (browserCaptureHold) browserCaptureHold.release();
+      browserCaptureHold = null;
+      browserAnnotationDrafts = {};
+      annotationDraftsHydrated = {};
+      browserAnnotationCaptureCount = 0;
       browserPaneCalls = [];
       browserZoomSubscribers = [];
       commandTerminalBrowserStates = {};
@@ -7634,6 +7726,31 @@
     },
     getCaptureCalls: function () {
       return browserCaptureCalls.slice();
+    },
+    /** Make every later Send reject with this message until it is set to null. */
+    failCaptureWith: function (message) {
+      browserCaptureFailure = message || null;
+    },
+    /** Make every later Send wait, after it is logged, until releaseCapture(). */
+    holdCaptureUntilReleased: function () {
+      if (browserCaptureHold) return;
+      var release;
+      var promise = new Promise(function (resolve) { release = resolve; });
+      browserCaptureHold = { promise: promise, release: release };
+    },
+    /** Let a held Send land and stop holding the next ones. */
+    releaseCapture: function () {
+      if (!browserCaptureHold) return;
+      browserCaptureHold.release();
+      browserCaptureHold = null;
+    },
+    /** The task's saved annotation draft, as main would read it back. */
+    getAnnotationDraft: function (taskId) {
+      var draft = browserAnnotationDrafts[taskId];
+      return draft ? JSON.parse(JSON.stringify(draft)) : null;
+    },
+    seedAnnotationDraft: function (taskId, draft) {
+      browserAnnotationDrafts[taskId] = JSON.parse(JSON.stringify(draft));
     },
     getPaneCalls: function () {
       return browserPaneCalls.slice();

@@ -424,7 +424,7 @@ async function handlePostRequest(
         response,
         403,
         'eval-disabled',
-        'Settings → Developer → Allow Unsafe Operations is off (gates kangentic_devtools_eval; the agent browser has its own Allow Eval under Agent Browser).',
+        'Settings → Developer → Allow Unsafe Operations is off (gates kangentic_devtools_eval; the Kangentic browser has its own Allow eval under Browser automation).',
       );
     }
     return respondEval(window, body, response);

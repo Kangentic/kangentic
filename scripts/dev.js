@@ -4,10 +4,11 @@ const fs = require('fs');
 const http = require('http');
 const { ensureNodeModules, npmCiInvocation, stopInstall } = require('./ensure-node-modules');
 const { worktreeViteCacheDir, worktreeViteConfig } = require('./worktree-vite-config');
-const { copyExternalScripts } = require('./copy-external-scripts');
+const { EXTERNAL_SCRIPTS, copyExternalScripts } = require('./copy-external-scripts');
 const { writeCursorRules } = require('./cursor-rules');
 const { compileCatalogsForMainInBackground } = require('./i18n-catalogs');
 const { writeExitRecord } = require('./preview-exit-record');
+const { createStalenessChecker, hashBundleContents, hashWrittenBundles } = require('./main-bundle-staleness');
 const {
   previewGitCeilingDirectories,
   stoppingMarkerPathFor,
@@ -99,7 +100,8 @@ stopWatcher.unref();
 // child and closes Vite when it exits, so an app.relaunch() would start an
 // Electron with no dev server behind it. Instead Electron writes this file and
 // quits normally (src/main/app-relaunch.ts), and the 'close' handler in
-// spawnElectron() launches it again with Vite still running. The path reaches
+// spawnElectron() rebuilds main, preload and the workers (restartElectron) and
+// launches it again with Vite still running. The path reaches
 // Electron as a --dev-restart-file= argument, not an env var. A stale file
 // from a crashed instance is removed so it cannot turn this instance's first
 // exit into a restart.
@@ -268,73 +270,206 @@ function runDependencyPrebundle() {
   });
 }
 
-/** Builds main, preload, the utility-process workers and the pty host with
- *  esbuild. Needs nothing from Vite, so start() runs it alongside the server. */
-function buildMainBundles() {
+/** Every bundle the Electron side runs: main, preload, the utility-process
+ *  workers and the pty host. Each worker is built next to the main bundle so it
+ *  resolves at __dirname in dev too, as in scripts/build.js. */
+const MAIN_BUNDLES = [
+  { label: 'main', entry: 'src/main/index.ts', outfile: '.vite/build/index.js' },
+  { label: 'preload', entry: 'src/preload/preload.ts', outfile: '.vite/build/preload.js' },
+  // Conversation-memory embedding worker.
+  { label: 'embed worker', entry: 'src/main/retrieval/embedder/embed-worker.ts', outfile: '.vite/build/embed-worker.js' },
+  // Untracked-file line-count worker.
+  { label: 'line-count worker', entry: 'src/main/git/line-count/line-count-worker.ts', outfile: '.vite/build/line-count-worker.js' },
+  // Worktree copy worker.
+  { label: 'worktree-copy worker', entry: 'src/main/git/worktree-copy/worktree-copy-worker.ts', outfile: '.vite/build/worktree-copy-worker.js' },
+  // Dictation (sherpa-onnx) worker, see DESKTOP-X.
+  { label: 'dictation worker', entry: 'src/main/transcription/dictation-worker.ts', outfile: '.vite/build/dictation-worker.js' },
+  // Retrieval worker.
+  { label: 'retrieval worker', entry: 'src/main/retrieval/worker/retrieval-worker.ts', outfile: '.vite/build/retrieval-worker.js' },
+  // The pty host and its spawn worker.
+  { label: 'pty host', entry: 'src/main/pty/host/pty-host-entry.ts', outfile: '.vite/build/pty-host.js' },
+  { label: 'pty host spawn worker', entry: 'src/main/pty/host/spawn-worker/spawn-worker-entry.ts', outfile: '.vite/build/pty-host-spawn-worker.js' },
+].map((bundle) => ({
+  ...bundle,
+  entry: path.join(projectDir, bundle.entry),
+  outfile: path.join(projectDir, bundle.outfile),
+}));
+
+/** The unbundled bridge and plugin scripts, by the copy Electron's agents run
+ *  (`outfile`) and the source it is copied from. They are not esbuild outputs,
+ *  so the staleness check hashes the source against the copy. */
+const EXTERNAL_SCRIPT_FILES = EXTERNAL_SCRIPTS.map((script) => ({
+  label: `${script.name} script`,
+  source: path.join(projectDir, script.src),
+  outfile: path.join(projectDir, '.vite', 'build', script.destDir, script.destFile),
+}));
+
+/** The staleness check's esbuild contexts, one per bundle, made on its first
+ *  build and reused so each check is an incremental rebuild, not a cold one. */
+let staleCheckContexts = null;
+
+function staleCheckContextsFor(esbuild) {
+  if (!staleCheckContexts) {
+    staleCheckContexts = Promise.all(MAIN_BUNDLES.map((bundle) => esbuild.context({
+      ...esbuildCommon,
+      entryPoints: [bundle.entry],
+      outfile: bundle.outfile,
+      write: false,
+      // The staleness build runs beside a live app: its errors are the source
+      // mid-edit, which the next save fixes, so it keeps them out of the log.
+      logLevel: 'silent',
+    })));
+    staleCheckContexts.catch(() => {
+      staleCheckContexts = null;
+    });
+  }
+  return staleCheckContexts;
+}
+
+function disposeStaleCheckContexts() {
+  const contexts = staleCheckContexts;
+  staleCheckContexts = null;
+  contexts?.then((contextList) => {
+    for (const context of contextList) void context.dispose();
+  }, () => {});
+}
+
+/** Builds every MAIN_BUNDLES entry with esbuild. Needs nothing from Vite, so
+ *  start() runs it alongside the server. With `write` false nothing reaches
+ *  disk and it resolves each bundle's output hash by label instead, plus each
+ *  external script's source hash: that is the staleness check's build
+ *  (scripts/main-bundle-staleness.js). Every bundle finishes before a failure
+ *  is raised, so nothing reads the build folder while a bundle is still being
+ *  written. */
+async function buildMainBundles(write = true) {
   // Required here, after start()'s dependency check, not at load. A shim loaded
   // from the tree `npm ci` then replaced would start the new esbuild binary and
   // fail its host/binary version check, and a checkout with no node_modules yet
   // would fail before the check could install one.
   const esbuild = require('esbuild');
-  return Promise.all([
-    esbuild.build({
+  const builds = write
+    ? MAIN_BUNDLES.map((bundle) => esbuild.build({
       ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/index.ts')],
-      outfile: path.join(projectDir, '.vite/build/index.js'),
-    }),
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
-      outfile: path.join(projectDir, '.vite/build/preload.js'),
-    }),
-    // Conversation-memory embedding worker (Electron utilityProcess entry),
-    // built next to the main bundle so it resolves at __dirname in dev too.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
-    }),
-    // Untracked-file line-count worker (Electron utilityProcess entry), same
-    // dev-parity reasoning as the embed worker above.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
-    }),
-    // Worktree copy worker (Electron utilityProcess entry), same dev-parity
-    // reasoning as the embed worker above.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/git/worktree-copy/worktree-copy-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/worktree-copy-worker.js'),
-    }),
-    // Dictation (sherpa-onnx) worker (Electron utilityProcess entry, see
-    // DESKTOP-X), same dev-parity reasoning as the embed worker above.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/transcription/dictation-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/dictation-worker.js'),
-    }),
-    // Retrieval worker (Electron utilityProcess entry), same dev-parity
-    // reasoning as the embed worker above.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/retrieval-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/retrieval-worker.js'),
-    }),
-    // The pty host, as in scripts/build.js.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/pty/host/pty-host-entry.ts')],
-      outfile: path.join(projectDir, '.vite/build/pty-host.js'),
-    }),
-    // The pty host's spawn worker, as in scripts/build.js.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/pty/host/spawn-worker/spawn-worker-entry.ts')],
-      outfile: path.join(projectDir, '.vite/build/pty-host-spawn-worker.js'),
-    }),
-  ]);
+      entryPoints: [bundle.entry],
+      outfile: bundle.outfile,
+    }))
+    : (await staleCheckContextsFor(esbuild)).map((context) => context.rebuild());
+  const settled = await Promise.allSettled(builds);
+  const failure = settled.find((outcome) => outcome.status === 'rejected');
+  if (failure) throw failure.reason;
+  if (write) return null;
+  const hashes = new Map();
+  MAIN_BUNDLES.forEach((bundle, bundleIndex) => {
+    const output = settled[bundleIndex].value.outputFiles.find((file) => path.resolve(file.path) === path.resolve(bundle.outfile));
+    hashes.set(bundle.label, output ? hashBundleContents(output.contents) : null);
+  });
+  const sourceHashes = hashWrittenBundles(EXTERNAL_SCRIPT_FILES.map((script) => ({ label: script.label, outfile: script.source })));
+  for (const [label, hash] of sourceHashes) hashes.set(label, hash);
+  return hashes;
+}
+
+/** Hashes of what Electron is running: the bundles and the copied external
+ *  scripts, read from disk after each build and copy. */
+let runningBundleHashes = new Map();
+
+function hashRunningBuild() {
+  return hashWrittenBundles([...MAIN_BUNDLES, ...EXTERNAL_SCRIPT_FILES]);
+}
+
+/** Source trees the Electron bundles are built from. A change in one runs the
+ *  in-memory build; only a changed OUTPUT raises the notice. */
+const MAIN_SOURCE_DIRS = ['src/main', 'src/preload', 'src/shared', 'src/devtools', 'packages/protocol/src']
+  .map((relativeDir) => path.join(projectDir, relativeDir))
+  .filter((sourceDir) => fs.existsSync(sourceDir));
+
+/** The Vite events the renderer's Restart notice listens on
+ *  (src/renderer/utils/dev-restart.ts). The query lets a window that loads
+ *  after the change ask for the current answer. */
+const MAIN_STALE_EVENT = 'kangentic:main-stale';
+const MAIN_STALE_QUERY_EVENT = 'kangentic:main-stale-query';
+
+const mainStaleness = createStalenessChecker({
+  buildFreshHashes: () => buildMainBundles(false),
+  getRunningHashes: () => runningBundleHashes,
+  onStaleChange: (staleLabels) => {
+    if (staleLabels.length > 0) {
+      console.log(`[dev] Running build is stale (${staleLabels.join(', ')}); the app offers a restart`);
+    }
+    viteServer?.ws.send(MAIN_STALE_EVENT, { bundles: staleLabels });
+  },
+});
+
+const mainSourceWatchers = [];
+
+/** Watches the main-process sources for the staleness check. Best-effort: a
+ *  watch that cannot start only means no notice. */
+function watchMainSources() {
+  viteServer.ws.on(MAIN_STALE_QUERY_EVENT, (_data, client) => {
+    client.send(MAIN_STALE_EVENT, { bundles: mainStaleness.current() });
+  });
+  for (const sourceDir of MAIN_SOURCE_DIRS) {
+    try {
+      const watcher = fs.watch(sourceDir, { recursive: true }, () => mainStaleness.noteSourceChange());
+      watcher.on('error', (watchError) => {
+        console.warn(`[dev] Stopped watching ${sourceDir} for main-process changes:`, watchError.message);
+      });
+      mainSourceWatchers.push(watcher);
+    } catch (watchError) {
+      console.warn(`[dev] Could not watch ${sourceDir} for main-process changes:`, watchError.message);
+    }
+  }
+}
+
+function stopWatchingMainSources() {
+  mainStaleness.dispose();
+  disposeStaleCheckContexts();
+  for (const watcher of mainSourceWatchers.splice(0)) {
+    try {
+      watcher.close();
+    } catch {
+      // already closed
+    }
+  }
+}
+
+/**
+ * The app asked for a restart (src/main/app-relaunch.ts). Build everything a
+ * boot builds first, so the restart runs the code on disk: without this it came
+ * back on the build from `npm start`, and a merge that touched main or preload
+ * stayed out of reach until a full stop and start. A failed build logs and
+ * restarts anyway: a bundle that failed keeps its previous output (esbuild
+ * writes nothing for it) while the rest take their new one, so a restart never
+ * ends the dev server.
+ */
+async function restartElectron(electronArgs, spawnEnv) {
+  console.log('[dev] Restart requested by the app - rebuilding main, preload and the workers');
+  console.time('[dev] esbuild (restart)');
+  let rebuilt = false;
+  try {
+    await buildMainBundles();
+    rebuilt = true;
+  } catch (buildError) {
+    console.error('[dev] Rebuild failed; a bundle that failed keeps its previous build:', buildError.message);
+  }
+  console.timeEnd('[dev] esbuild (restart)');
+  try {
+    copyExternalScripts(projectDir);
+  } catch (copyError) {
+    console.warn('[dev] Could not copy external scripts for the restart:', copyError.message);
+  }
+  // Electron runs what is on disk now, a partly failed build included.
+  runningBundleHashes = hashRunningBuild();
+  await compileCatalogsForMainInBackground(projectDir);
+  // A stop that landed during the rebuild wins: the user asked to stop.
+  if (cleaningUp || awaitingElectronExit) {
+    if (!cleaningUp) cleanup(0);
+    return;
+  }
+  // Only a build that landed is current. After a failed one Electron runs the
+  // old bundles, so the notice stays for the next restart to clear.
+  if (rebuilt) mainStaleness.markCurrent();
+  console.log('[dev] Launching Electron again');
+  spawnElectron(electronArgs, spawnEnv);
 }
 
 async function start() {
@@ -504,6 +639,7 @@ async function start() {
   // .claude/rules/external-scripts-parity.md.
   copyExternalScripts(projectDir);
   console.log('[dev] Copied external scripts (bridges + adapter plugins)');
+  runningBundleHashes = hashRunningBuild();
 
   // Cursor's copy of .claude/rules/ and .claude/agents/ (scripts/cursor-rules.js),
   // refreshed on every start so a pull that changed a rule or agent reaches
@@ -567,6 +703,7 @@ async function start() {
   await previewClonePromise;
 
   spawnElectron(electronArgs, spawnEnv);
+  watchMainSources();
 }
 
 function spawnElectron(electronArgs, spawnEnv) {
@@ -586,8 +723,7 @@ function spawnElectron(electronArgs, spawnEnv) {
     // respawn for worktree-preview.js. A Ctrl+C or closed terminal that
     // landed while the restart was pending wins: the user asked to stop.
     if (!cleaningUp && !awaitingElectronExit && consumeRestartRequest()) {
-      console.log('[dev] Restart requested by the app - launching Electron again');
-      spawnElectron(electronArgs, spawnEnv);
+      void restartElectron(electronArgs, spawnEnv);
       return;
     }
     // A near-instant code-0 exit from a NON-ephemeral launch is almost always
@@ -636,6 +772,7 @@ function cleanup(exitCode) {
   // scripts/worktree-preview.js.
   writeExitRecord(projectDir, port, { pid: process.pid, exitCode });
   markStopping();
+  stopWatchingMainSources();
 
   if (prebundleProc) {
     prebundleProc.kill();

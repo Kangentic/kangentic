@@ -291,7 +291,7 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'columns',
     chip: '{{columns}}',
-    description: msg`One line per column between To Do and Done: what it runs, and how recent tasks went through it.`,
+    description: msg`One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use.`,
     contexts: WORKFLOW_AGENT_ONLY,
   },
   {

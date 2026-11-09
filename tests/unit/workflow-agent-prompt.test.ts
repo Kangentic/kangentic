@@ -25,6 +25,15 @@ describe('workflow agent first message', () => {
     for (const name of used) expect(offered).toContain(name);
   });
 
+  // The planner routes by what each column is for. If these instructions go,
+  // the agent stops skipping Planning/Design for tasks that do not need them
+  // and stops sending a person's gate to tasks with no sign-off.
+  it('routes by column purpose and treats a person-only column as a stop', () => {
+    const text = DEFAULT_WORKFLOW_AGENT_PROMPT.replace(/\s+/g, ' ');
+    expect(text).toContain("Choose each route from the columns' purposes");
+    expect(text).toMatch(/only a person moves a card out of stops the task there until the user moves it/);
+  });
+
   // Read-only launch is an enhancement an adapter adds where it can enforce it
   // (`supportsReadOnlyLaunch`). Every agent launched without those tools is
   // held to the plan only by this paragraph, and it runs in the user's own

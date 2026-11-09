@@ -37,10 +37,23 @@
  * target is always restored under it, `--keep-edit` included, since the edit's
  * end state is the working tree's content.
  *
+ * With `--edit-with <file>` the edit writes that file's content over the
+ * target instead, which is how an edit that does not exist in any commit yet
+ * is replayed (a throwaway action added to a store slice, for one). The target
+ * is restored afterwards, as for the comment edit.
+ *
+ * With `--expect-store-key <store>.<key>` the probe also reads
+ * `window.__zustandStores[<store>].getState()[<key>]` after the update and
+ * exits 1 unless it is a function. That is the check for the Pattern E refresh
+ * (.claude/rules/hmr-patterns.md): an action an edit adds to a pinned store must
+ * be callable on the live instance with no reload.
+ *
  * Usage (from the repo root):
  *   node scripts/hmr-guest-probe.mjs
  *   node scripts/hmr-guest-probe.mjs --file src/renderer/stores/board-store/task-slice.ts
  *   node scripts/hmr-guest-probe.mjs --file src/renderer/hooks/useDictation.ts --edit-from 016dbe593~1
+ *   node scripts/hmr-guest-probe.mjs --file src/renderer/stores/session-store/task-changes-panel-slice.ts
+ *     --edit-with <edited copy> --expect-store-key session.hmrProbeAction
  *   node scripts/hmr-guest-probe.mjs --show      (leave the pane visible instead of held)
  *   node scripts/hmr-guest-probe.mjs --keep-edit (skip the file restore, for bisecting)
  *   node scripts/hmr-guest-probe.mjs --no-hook-signatures (drop scripts/vite-refresh-hook-signatures.mjs,
@@ -81,11 +94,26 @@ const keepEdit = args.includes('--keep-edit');
 const settleMs = Number(argValue('--settle', '5000'));
 const editFromRef = argValue('--edit-from', null);
 const hookSignatures = !args.includes('--no-hook-signatures');
+const editWithPath = argValue('--edit-with', null);
+const expectStoreKey = argValue('--expect-store-key', null);
 
 // A ref git would read as an option, or the next flag taken as the ref
 // (`--edit-from --keep-edit`), fails here, before the target is touched.
 if (editFromRef?.startsWith('-')) {
   console.error(`[probe] --edit-from needs a git ref, got: ${editFromRef}`);
+  process.exit(2);
+}
+if (editFromRef && editWithPath) {
+  console.error('[probe] --edit-from and --edit-with are two different edits; pass one');
+  process.exit(2);
+}
+if (editWithPath !== null && (editWithPath.startsWith('-') || !fs.existsSync(editWithPath))) {
+  console.error(`[probe] --edit-with needs an existing file, got: ${editWithPath}`);
+  process.exit(2);
+}
+const expectedStoreKeyParts = expectStoreKey?.split('.') ?? null;
+if (expectedStoreKeyParts !== null && (expectedStoreKeyParts.length !== 2 || expectedStoreKeyParts.some((part) => part.length === 0))) {
+  console.error(`[probe] --expect-store-key needs <store>.<key>, got: ${expectStoreKey}`);
   process.exit(2);
 }
 
@@ -370,6 +398,9 @@ async function main() {
     // The trigger: the commit's own change, as the hot update it caused.
     fs.writeFileSync(targetPath, originalSource, 'utf-8');
     console.log(`[probe] edit written  : ${editFromRef} -> working tree`);
+  } else if (editWithPath) {
+    fs.writeFileSync(targetPath, fs.readFileSync(editWithPath, 'utf-8'), 'utf-8');
+    console.log(`[probe] edit written  : content of ${editWithPath}`);
   } else {
     // The trigger: a comment-only edit. Nothing about the module's behavior changes.
     // A PO catalog takes a `#` comment, at the top so it cannot attach to an entry.
@@ -393,6 +424,12 @@ async function main() {
 
   const reloaded = after.sentinel !== 'alive' || navigations > navigationsBefore;
   const guestSurvived = after.guestWebContentsId === before.guestWebContentsId;
+  const expectedKeyType = expectedStoreKeyParts === null
+    ? null
+    : await page.evaluate(([storeName, key]) => {
+      const store = window.__zustandStores?.[storeName];
+      return store ? typeof store.getState()[key] : 'no such store';
+    }, expectedStoreKeyParts);
 
   const invalidations = clientConsole.filter((line) => line.includes('invalidate'));
   const hotUpdates = clientConsole.filter((line) => line.includes('hot updated')).length;
@@ -415,6 +452,9 @@ async function main() {
     console.log(`   removed <${record.removedTag}> with open=[${record.open}] held=[${record.held}] guests=[${record.guests}]`);
   }
   console.log(`modules hot updated   : ${hotUpdates}`);
+  if (expectedKeyType !== null) {
+    console.log(`store key ${expectStoreKey} : ${expectedKeyType === 'function' ? 'callable' : `NOT callable (${expectedKeyType})`}`);
+  }
   console.log('');
   console.log(`vite reload reason    : ${reloadReasons.length ? '' : '(none logged)'}`);
   for (const line of reloadReasons) console.log(`   ${line.trim()}`);
@@ -423,6 +463,7 @@ async function main() {
   for (const line of invalidations) console.log(`   ${line.replace(/\s+Learn more.*$/, '').trim()}`);
   console.log('==========================================================');
 
+  if (expectedKeyType !== null && expectedKeyType !== 'function') return 1;
   return guestSurvived ? 0 : 1;
 }
 

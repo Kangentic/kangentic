@@ -93,6 +93,8 @@ export const IPC = {
   TASK_UPDATE_FROM_BASE: 'task:updateFromBase',
   TASK_SET_RUNTIME_OVERRIDE: 'task:setRuntimeOverride',
   TASK_RESOLVE_PR: 'task:resolvePr',
+  TASK_PR_CHECKS: 'task:prChecks',
+  TASK_PR_SEND_CHECKS: 'task:prSendChecks',
   TASK_SET_DETAIL_VIEW_STATE: 'task:setDetailViewState',
 
   // Attachments
@@ -302,6 +304,11 @@ export const IPC = {
 
   // App
   APP_GET_VERSION: 'app:getVersion',
+  // Dev only: restart Kangentic under `npm start`, which rebuilds main and
+  // preload first (scripts/dev.js restartElectron). Never rename or remove it:
+  // the renderer calls it exactly when main or preload is OLDER than the
+  // renderer, so a running main has to recognise it from every earlier build.
+  APP_RESTART: 'app:restart',
 
   // Notifications
   NOTIFICATION_SHOW: 'notification:show',
@@ -497,6 +504,11 @@ export const IPC = {
 
   // Browser pane: embedded webview capture-and-send
   BROWSER_CAPTURE_SEND: 'browser:captureSend',
+  // A task's annotation draft (notes, items, page captures), saved as it changes.
+  BROWSER_ANNOTATIONS_LOAD: 'browser:annotationsLoad',
+  BROWSER_ANNOTATIONS_SAVE: 'browser:annotationsSave',
+  BROWSER_ANNOTATIONS_SAVE_CAPTURE: 'browser:annotationsSaveCapture',
+  BROWSER_ANNOTATIONS_DISCARD: 'browser:annotationsDiscard',
   BROWSER_URL_GET: 'browser:urlGet',
   BROWSER_URL_SET_TASK: 'browser:urlSetTask',
   BROWSER_URL_CLEAR_TASK: 'browser:urlClearTask',

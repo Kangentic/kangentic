@@ -78,7 +78,7 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // Animations lived under Board > Window despite toggling .no-motion on
   // <html>, and graphics acceleration (Sentry DESKTOP-18/DESKTOP-W) had
   // nowhere at all. Core rather than Advanced because Advanced is opt-in
-  // subsystems (Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile), and
+  // subsystems (Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile), and
   // because a recovery toast sends users straight here.
   { id: 'performance', label: msg`Performance`, category: 'system', tier: 'core' },
   { id: 'hotkeys', label: msg`Hotkeys`, category: 'system', tier: 'core' },
@@ -93,7 +93,7 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // and `kangentic_search`.
   { id: 'knowledgeGraph', label: msg`Knowledge Graph`, category: 'system', tier: 'advanced' },
   { id: 'mcpServer', label: msg`MCP Server`, category: 'system', tier: 'advanced' },
-  { id: 'browserAutomation', label: msg`Agent Browser`, category: 'system', tier: 'advanced' },
+  { id: 'browserAutomation', label: msg`Browser automation`, category: 'system', tier: 'advanced' },
   { id: 'mobile', label: msg`Mobile Devices`, category: 'system', tier: 'advanced' },
   // A host serves every project and must be addable with no project open, so this is a system tab (#913).
   { id: 'ssh', label: msg`SSH`, category: 'system', tier: 'advanced' },

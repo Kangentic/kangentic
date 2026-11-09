@@ -7,15 +7,22 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ja\n"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr "{strokeCount, plural, other {# ストローク}}"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "{strokeCount, plural, one {Drawing, # stroke} other {Drawing, # strokes}}"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "{viewportWidth} x {viewportHeight}"
 msgstr "{viewportWidth} x {viewportHeight}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "20 annotations is the most one send carries. Send these, then start again."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Add a note or a mark to send"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -37,6 +44,14 @@ msgstr "すでに最小ズームです"
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
 msgstr "エージェントがこのページの表示サイズを {viewportWidth} x {viewportHeight} CSS ピクセルに設定しました。リセットするとペイン本来のサイズに戻ります。"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotations"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "at {zoomPercent}%"
@@ -47,21 +62,11 @@ msgstr "{zoomPercent}%"
 msgid "Back"
 msgstr "戻る"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #, fuzzy
 msgctxt "Action"
 msgid "Clear"
 msgstr "クリア"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Clear all strokes"
-msgstr "すべてのストロークをクリア"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Click elements to capture their identity"
-msgstr "要素をクリックして識別情報を取得"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -88,25 +93,14 @@ msgstr "エージェントに送信できませんでした"
 msgid "Default URL saved"
 msgstr "既定の URL を保存しました"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 #, fuzzy
 msgid "Draw"
 msgstr "描画"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Explain what I marked\""
-msgstr "例: 「マークした箇所を説明して」"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Match the circled spacing\""
-msgstr "例: 「丸で囲んだ余白に合わせて」"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Why is this misaligned?\""
-msgstr "例: 「なぜこれがずれているの？」"
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Draw on the page"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
@@ -120,13 +114,12 @@ msgstr "メモで Enter を押しても送信されます"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
-msgid "Esc stops inspecting"
-msgstr "Esc で検査を終了"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Failed to load: {finalUrl}"
 msgstr "読み込みに失敗しました: {finalUrl}"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Failed to load: {url}"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -137,11 +130,6 @@ msgstr "進む"
 #, fuzzy
 msgid "https://example.com or localhost:5173"
 msgstr "https://example.com または localhost:5173"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Inspect"
-msgstr "検査"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -158,6 +146,18 @@ msgstr "無効な URL: {target}"
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "ローカル開発サーバー、ステージング、本番環境など、任意の http(s) ページを開けます。このタスクは表示中の場所を記憶し、他のタスクはそれぞれの場所を保持します。"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Made on {madeOn}. Still sent, with the capture taken there."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Move the annotation bar"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "New annotation"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "No earlier page"
@@ -168,10 +168,17 @@ msgstr "前のページはありません"
 msgid "No forward page"
 msgstr "次のページはありません"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Nothing drawn yet"
-msgstr "まだ何も描画されていません"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Not on page"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Note for annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Nothing marked yet"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
@@ -215,10 +222,17 @@ msgctxt "Action"
 msgid "Reload"
 msgstr "再読み込み"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "Remove from queue"
-msgstr "キューから削除"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove {itemLabel}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove this annotation"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -256,55 +270,64 @@ msgstr "プロジェクトの既定として保存"
 msgid "Save as project default for all tasks"
 msgstr "全タスク共通のプロジェクトの既定として保存"
 
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Select element"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "Send"
 msgstr "送信"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Send every annotation"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "Send to agent"
 msgstr "エージェントに送信"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Start the next annotation. Enter in a note does the same."
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "The browser pane opens it for this project."
-msgstr "このプロジェクトではブラウザー ペインでこの URL が開きます。"
+msgid "The Kangentic browser opens it for this project."
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "This URL is the project default"
 msgstr "この URL はプロジェクトの既定です"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Toggle draw mode"
-msgstr "描画モードの切り替え"
-
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 #, fuzzy
 msgid "Undo"
 msgstr "元に戻す"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Undo last stroke"
-msgstr "最後のストロークを元に戻す"
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
 msgid "Webpack, generic"
 msgstr "Webpack、汎用"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What annotation {number} holds"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What should change here?"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "What should the agent do with this?"
 msgstr "エージェントにこれをどうしてほしいですか?"
-
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "Will send:"
-msgstr "送信予定:"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy

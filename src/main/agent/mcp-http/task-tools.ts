@@ -15,6 +15,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { resolveTask } from '../commands/task-resolver';
 import type { ToolArgumentNotices } from './tool-call-logging';
 import type { CommandContext } from '../commands';
+import { LABEL_ENTRY_GUIDE, LABEL_ENTRY_SCHEMA, PRIORITY_GUIDE, PRIORITY_SCHEMA } from './label-priority-schema';
 
 /** Says how far over, so an agent can shorten a description in one more call instead of guessing. */
 function descriptionOverLimit(issue: { input?: unknown }): string {
@@ -227,14 +228,8 @@ export function registerTaskTools(
         title: z.string().max(200).describe('Task title (max 200 characters)'),
         description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH, { error: descriptionOverLimit }).optional().describe(`Task description. Supports markdown. At most ${TASK_DESCRIPTION_MAX_LENGTH} characters: it rides the agent's command line. Attach longer material as a file.`),
         column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. The done-role column is not a valid target here (creating a task there would archive it off the board immediately); create it on the board and move it with kangentic_move_task. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
-        priority: z.number().int().min(0).max(4).optional().describe('Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items.'),
-        labels: z.array(z.union([
-          z.string(),
-          z.object({
-            name: z.string(),
-            color: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe('Hex color (e.g. "#ef4444")'),
-          }),
-        ])).optional().describe('Labels for categorization. Each entry can be a plain string or an object with name and hex color (e.g. ["bug", { "name": "frontend", "color": "#3b82f6" }]). Applies to both board tasks and backlog items. Use kangentic_board_summary to see the labels this board already uses, and reuse one rather than inventing a near-duplicate. Passing an existing label as a plain string keeps the color it already has.'),
+        priority: PRIORITY_SCHEMA.optional().describe(`Priority (default 0). ${PRIORITY_GUIDE} Applies to both board tasks and backlog items.`),
+        labels: z.array(LABEL_ENTRY_SCHEMA).optional().describe(`Labels for categorization. Applies to both board tasks and backlog items. ${LABEL_ENTRY_GUIDE}`),
         branchName: z.string().optional().describe('Custom git branch name for the task (e.g. "bugfix/login-screen"). If omitted, a branch name is auto-generated from the title. Recorded on the task and checked out when its worktree is created; with `useWorktree: false` nothing is checked out, but the conflict check below still applies, since the task can gain a worktree later. Board tasks only - ignored for backlog. Git allows a branch in only one working tree at a time, so if this branch is already checked out anywhere (including the user\'s main checkout) the call is REJECTED and no task is created - the response names the path holding it.'),
         baseBranch: z.string().optional().describe('What to create the task branch from: a branch (e.g. "develop", "main"), a tag (e.g. "v2.4.0") or a commit SHA. A tag or commit needs a worktree or a branchName. Defaults to the project setting. Board tasks only - ignored for backlog.'),
         useWorktree: z.boolean().optional().describe('Whether to use a git worktree for isolation. Omit to get one whenever the project allows worktrees. Set true and the task gets its own worktree checked out on its own branch. Set false and nothing is checked out at all: no worktree is created, the user\'s working tree is untouched, and the agent runs in the project directory on whatever branch the repo currently has out. Ignored while the project has worktrees turned off in its Git settings. Board tasks only - ignored for backlog.'),
@@ -383,7 +378,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_list_columns',
     {
-      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. A column marked `[isolated session]` runs tasks on its own conversation rather than the task\'s main one. Pass `project` to list columns from a different project.',
+      description: 'List every column (swimlane) on the Kangentic board, in board order, with names, roles, and task counts. The `(done)` column is included and is where finished work goes - it reports a completed count rather than a live task count, because moving a task there archives it off the board. Never treat the last column in this list as the finish line; read the roles. A column marked `[isolated session]` runs tasks on its own conversation rather than the task\'s main one. A column with a description shows it on a `Purpose:` line below: what the column does and which work needs it, so a workflow task\'s route can skip a column its work does not need. Pass `project` to list columns from a different project.',
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -394,7 +389,7 @@ export function registerTaskTools(
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list columns: ${response.error}` }], isError: true };
       }
-      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number; sessionTarget?: 'isolated' }>;
+      const columns = response.data as Array<{ name: string; role: string | null; taskCount: number; completedCount?: number; sessionTarget?: 'isolated'; description?: string }>;
       const lines = columns.map((column) => {
         const roleTag = column.role ? ` (${column.role})` : '';
         // The done column breaks the "N task(s)" shape deliberately: its live
@@ -405,7 +400,9 @@ export function registerTaskTools(
         // Only isolated columns are marked. A main-session column is the norm
         // and tagging every one of them would bury the distinction.
         const isolationTag = column.sessionTarget === 'isolated' ? ' [isolated session]' : '';
-        return `- ${column.name}${roleTag}: ${count}${isolationTag}`;
+        // The column's purpose, on the line below so the counts stay scannable.
+        const purpose = column.description ? `\n  Purpose: ${column.description}` : '';
+        return `- ${column.name}${roleTag}: ${count}${isolationTag}${purpose}`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
     }),
@@ -611,7 +608,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_board_summary',
     {
-      description: 'Get a high-level summary of the Kangentic board: task counts per column, the board\'s label vocabulary with use counts, active sessions, completed task count, and aggregate cost/token usage across all sessions. Call this before labelling a task to see what labels the board already uses (counted across active, completed, and backlog items) instead of inventing a near-duplicate. Pass `project` to summarize a different project.',
+      description: 'Get a high-level summary of the Kangentic board: task counts per column, the board\'s label vocabulary with use counts and colors, the label palette, the project\'s priority scale, active sessions, completed task count, and aggregate cost/token usage across all sessions. Call this before labelling a task or setting its priority to see what labels the board already uses (counted across active, completed, and backlog items) instead of inventing a near-duplicate, and what each priority number means on this project. Pass `project` to summarize a different project.',
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
@@ -651,8 +648,8 @@ export function registerTaskTools(
         prUrl: z.string().url().optional().describe('Pull request URL (e.g. https://github.com/owner/repo/pull/123).'),
         prNumber: z.number().int().positive().optional().describe('Pull request number.'),
         agent: z.string().optional().describe('Agent name to assign (e.g. "claude", "codex"). Rejected if it is not a registered agent, with the valid names listed. Pass empty string to clear.'),
-        priority: z.number().int().min(0).max(4).optional().describe('Task priority 0-4 (0 = none, 4 = highest).'),
-        labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels. Use kangentic_board_summary to see the labels this board already uses. If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.'),
+        priority: PRIORITY_SCHEMA.optional().describe(`Task priority. ${PRIORITY_GUIDE}`),
+        labels: z.array(LABEL_ENTRY_SCHEMA).optional().describe(`Replace the task's label list. Pass [] to clear all labels. ${LABEL_ENTRY_GUIDE} If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.`),
         baseBranch: z.string().optional().describe('What the task\'s worktree branches from: a branch (e.g. "main"), a tag or a commit SHA.'),
         useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree. Set false and nothing is checked out: no worktree is created, the user\'s working tree is untouched, and the agent runs in the project directory on whatever branch the repo currently has out. True is ignored while the project has worktrees turned off in its Git settings.'),
         model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). A friendly versioned name is converted to the CLI id, then checked against the models the resolved agent offers; an unknown one is rejected here with the valid list. When that agent enumerates no models, the value is accepted as given. Pass empty string to clear.'),
@@ -768,7 +765,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_link_pr',
     {
-      description: 'Authoritatively resolve and link the pull request for a task through the repository\'s PR host (GitHub via gh, Azure DevOps via az), searching by the task\'s PR number, worktree branch, commit, stored branch, and pushed branch in that order. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR\'s state (open/draft/merged/closed) and merge readiness (ready/blocked/conflicting/queued/running/unknown). Use after opening a PR, or to backfill a task whose PR was never linked. A task with no worktree has nothing to search by until its push is recorded: pass `branch` (the remote branch the work was pushed to) and it is recorded first. Find the task ID first with kangentic_find_task. Pass `project` to target a different project.',
+      description: 'Authoritatively resolve and link the pull request for a task through the repository\'s PR host (GitHub via gh, Azure DevOps via az), searching by the task\'s PR number, worktree branch, commit, stored branch, and pushed branch in that order. Unlike the terminal-scraping auto-linker, this finds PRs opened by a human, the web UI, `git push`, scripts, or the host API, and works even when the task has no live session. Re-running refreshes the linked PR\'s state (open/draft/merged/closed) and merge readiness (ready/failing/blocked/conflicting/queued/running/unknown; failing is a failed check or build, which an agent can fix). Use after opening a PR, or to backfill a task whose PR was never linked. A task with no worktree has nothing to search by until its push is recorded: pass `branch` (the remote branch the work was pushed to) and it is recorded first. Find the task ID first with kangentic_find_task. Pass `project` to target a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         branch: z.string().optional().describe('The remote branch the work was pushed to (the PR source branch). Recorded on the task before resolving; needed when the task has no worktree and nothing else recorded.'),
@@ -860,7 +857,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         column: z.string().describe('Column name to update (case-insensitive, e.g. "Review"). The role columns (To Do, Done) can be renamed and restyled here like any other; their role itself is structural and not settable.'),
         name: z.string().max(100).optional().describe('New column name.'),
-        description: z.string().max(1000).nullable().optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json. Null to clear.'),
+        description: z.string().max(1000).nullable().optional().describe('What the column does and which work needs it, in a sentence or two. Shown as a header tooltip and shared with the team via kangentic.json. A workflow\'s planning agent reads it as the column\'s purpose when it chooses each task\'s route, and kangentic_list_columns prints it. Null to clear.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a").'),
         icon: z.string().nullable().optional().describe('Lucide icon name, or null to clear.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent.'),
@@ -909,7 +906,7 @@ export function registerTaskTools(
       description: 'Add a new swimlane (column) to the Kangentic board. By default it lands just before Done, which is where a new workflow stage almost always belongs. Column names must be unique (case-insensitive). Roles are structural and cannot be set: To Do and Done already exist on every board. A column that reviews, tests, or otherwise checks the work of an earlier column wants sessionTarget: "isolated", or its agent is the same one that did that work. Pass `project` to add a column to a different project.',
       inputSchema: z.object({
         name: z.string().max(100).describe('Column name, unique on this board (case-insensitive).'),
-        description: z.string().max(1000).optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json.'),
+        description: z.string().max(1000).optional().describe('What the column does and which work needs it, in a sentence or two. Shown as a header tooltip and shared with the team via kangentic.json. A workflow\'s planning agent reads it as the column\'s purpose when it chooses each task\'s route, and kangentic_list_columns prints it.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a"). Defaults to blue.'),
         icon: z.string().optional().describe('Lucide icon name.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent. Defaults to true.'),

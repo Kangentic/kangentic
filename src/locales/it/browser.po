@@ -7,15 +7,22 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: it\n"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr "{strokeCount, plural, one {# tratto} many {# di tratti} other {# tratti}}"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "{strokeCount, plural, one {Drawing, # stroke} other {Drawing, # strokes}}"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "{viewportWidth} x {viewportHeight}"
 msgstr "{viewportWidth} x {viewportHeight}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "20 annotations is the most one send carries. Send these, then start again."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Add a note or a mark to send"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -37,6 +44,14 @@ msgstr "Zoom già al minimo"
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
 msgstr "Un agente ha impostato il rendering di questa pagina a {viewportWidth} x {viewportHeight} pixel CSS. Reimposta per tornare alle dimensioni del riquadro."
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotations"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "at {zoomPercent}%"
@@ -47,21 +62,11 @@ msgstr "al {zoomPercent}%"
 msgid "Back"
 msgstr "Indietro"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #, fuzzy
 msgctxt "Action"
 msgid "Clear"
 msgstr "Cancella"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Clear all strokes"
-msgstr "Cancella tutti i tratti"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Click elements to capture their identity"
-msgstr "Fai clic sugli elementi per acquisirne l'identità"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -88,25 +93,14 @@ msgstr "Impossibile inviare all'agente"
 msgid "Default URL saved"
 msgstr "URL predefinito salvato"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 #, fuzzy
 msgid "Draw"
 msgstr "Disegna"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Explain what I marked\""
-msgstr "es. \"Spiega cosa ho segnato\""
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Match the circled spacing\""
-msgstr "es. \"Usa la spaziatura cerchiata\""
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Why is this misaligned?\""
-msgstr "es. \"Perché questo è disallineato?\""
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Draw on the page"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
@@ -120,13 +114,12 @@ msgstr "Anche Invio nella nota invia"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
-msgid "Esc stops inspecting"
-msgstr "Esc interrompe l'ispezione"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Failed to load: {finalUrl}"
 msgstr "Caricamento non riuscito: {finalUrl}"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Failed to load: {url}"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -137,11 +130,6 @@ msgstr "Avanti"
 #, fuzzy
 msgid "https://example.com or localhost:5173"
 msgstr "https://example.com o localhost:5173"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Inspect"
-msgstr "Ispeziona"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -158,6 +146,18 @@ msgstr "URL non valido: {target}"
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "Server di sviluppo locale, staging, produzione o qualsiasi pagina http(s). Questa attività ricorda dove eri; le altre attività mantengono la propria posizione."
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Made on {madeOn}. Still sent, with the capture taken there."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Move the annotation bar"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "New annotation"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "No earlier page"
@@ -168,10 +168,17 @@ msgstr "Nessuna pagina precedente"
 msgid "No forward page"
 msgstr "Nessuna pagina successiva"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Nothing drawn yet"
-msgstr "Ancora nessun disegno"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Not on page"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Note for annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Nothing marked yet"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
@@ -215,10 +222,17 @@ msgctxt "Action"
 msgid "Reload"
 msgstr "Ricarica"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "Remove from queue"
-msgstr "Rimuovi dalla coda"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove {itemLabel}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove this annotation"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -256,55 +270,64 @@ msgstr "Salva come predefinito del progetto"
 msgid "Save as project default for all tasks"
 msgstr "Salva come predefinito del progetto per tutte le attività"
 
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Select element"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "Send"
 msgstr "Invia"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Send every annotation"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "Send to agent"
 msgstr "Invia all'agente"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Start the next annotation. Enter in a note does the same."
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "The browser pane opens it for this project."
-msgstr "Il riquadro del browser lo apre per questo progetto."
+msgid "The Kangentic browser opens it for this project."
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "This URL is the project default"
 msgstr "Questo URL è il predefinito del progetto"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Toggle draw mode"
-msgstr "Attiva/disattiva modalità disegno"
-
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 #, fuzzy
 msgid "Undo"
 msgstr "Annulla"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Undo last stroke"
-msgstr "Annulla ultimo tratto"
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
 msgid "Webpack, generic"
 msgstr "Webpack, generico"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What annotation {number} holds"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What should change here?"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "What should the agent do with this?"
 msgstr "Cosa deve fare l'agente con questo?"
-
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "Will send:"
-msgstr "Verrà inviato:"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy

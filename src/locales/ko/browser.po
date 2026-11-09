@@ -7,15 +7,22 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ko\n"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr "{strokeCount, plural, other {획 #개}}"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "{strokeCount, plural, one {Drawing, # stroke} other {Drawing, # strokes}}"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "{viewportWidth} x {viewportHeight}"
 msgstr "{viewportWidth} x {viewportHeight}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "20 annotations is the most one send carries. Send these, then start again."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Add a note or a mark to send"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -37,6 +44,14 @@ msgstr "이미 최소 축소 상태입니다"
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
 msgstr "에이전트가 이 페이지를 {viewportWidth} x {viewportHeight} CSS 픽셀로 렌더링하도록 설정했습니다. 다시 창 크기를 사용하려면 재설정하세요."
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotations"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "at {zoomPercent}%"
@@ -47,21 +62,11 @@ msgstr "{zoomPercent}%"
 msgid "Back"
 msgstr "뒤로"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #, fuzzy
 msgctxt "Action"
 msgid "Clear"
 msgstr "지우기"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Clear all strokes"
-msgstr "모든 획 지우기"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Click elements to capture their identity"
-msgstr "요소를 클릭하여 식별 정보 캡처"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -88,25 +93,14 @@ msgstr "에이전트에 보낼 수 없음"
 msgid "Default URL saved"
 msgstr "기본 URL 저장됨"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 #, fuzzy
 msgid "Draw"
 msgstr "그리기"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Explain what I marked\""
-msgstr "예: \"표시한 부분 설명해 줘\""
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Match the circled spacing\""
-msgstr "예: \"동그라미 친 간격에 맞춰 줘\""
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "e.g. \"Why is this misaligned?\""
-msgstr "예: \"이게 왜 정렬이 안 맞지?\""
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Draw on the page"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
@@ -120,13 +114,12 @@ msgstr "메모에서 Enter를 눌러도 전송됩니다"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
-msgid "Esc stops inspecting"
-msgstr "Esc를 누르면 검사가 중지됩니다"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Failed to load: {finalUrl}"
 msgstr "로드 실패: {finalUrl}"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Failed to load: {url}"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -137,11 +130,6 @@ msgstr "앞으로"
 #, fuzzy
 msgid "https://example.com or localhost:5173"
 msgstr "https://example.com 또는 localhost:5173"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Inspect"
-msgstr "검사"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -158,6 +146,18 @@ msgstr "잘못된 URL: {target}"
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "로컬 개발 서버, 스테이징, 프로덕션 또는 모든 http(s) 페이지. 이 작업은 마지막 위치를 기억하며, 다른 작업은 각자의 위치를 유지합니다."
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Made on {madeOn}. Still sent, with the capture taken there."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Move the annotation bar"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "New annotation"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "No earlier page"
@@ -168,10 +168,17 @@ msgstr "이전 페이지 없음"
 msgid "No forward page"
 msgstr "다음 페이지 없음"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Nothing drawn yet"
-msgstr "아직 그린 내용 없음"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Not on page"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Note for annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Nothing marked yet"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
@@ -215,10 +222,17 @@ msgctxt "Action"
 msgid "Reload"
 msgstr "다시 로드"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "Remove from queue"
-msgstr "대기열에서 제거"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove {itemLabel}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove this annotation"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
@@ -256,55 +270,64 @@ msgstr "프로젝트 기본값으로 저장"
 msgid "Save as project default for all tasks"
 msgstr "모든 작업의 프로젝트 기본값으로 저장"
 
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Select element"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "Send"
 msgstr "보내기"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Send every annotation"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "Send to agent"
 msgstr "에이전트에 보내기"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Start the next annotation. Enter in a note does the same."
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "The browser pane opens it for this project."
-msgstr "이 프로젝트에서 브라우저 창이 이 URL을 엽니다."
+msgid "The Kangentic browser opens it for this project."
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "This URL is the project default"
 msgstr "이 URL은 프로젝트 기본값입니다"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Toggle draw mode"
-msgstr "그리기 모드 전환"
-
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 #, fuzzy
 msgid "Undo"
 msgstr "실행 취소"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "Undo last stroke"
-msgstr "마지막 획 실행 취소"
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
 msgid "Webpack, generic"
 msgstr "Webpack, 일반"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What annotation {number} holds"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What should change here?"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "What should the agent do with this?"
 msgstr "에이전트가 이것으로 무엇을 해야 하나요?"
-
-#: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
-msgid "Will send:"
-msgstr "전송 예정:"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy

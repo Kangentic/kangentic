@@ -56,6 +56,18 @@ export function buildCommandContextForProject(
     getProjectPath: () => projectPath,
     agentPaths: () => agentPaths,
     hostAccess: () => (agentPaths.hostId ? hostAccessFor(agentPaths.hostId) : null),
+    // Bound to the request's project: a cross-project create validates its
+    // priority against the board it files into. An empty or unreadable scale
+    // reads as the seeded one in `priorityScaleOf`, rather than failing the call.
+    getBacklogDisplayConfig: () => {
+      try {
+        const backlog = ipcContext.configManager.getEffectiveConfig(projectPath).backlog;
+        return { priorities: backlog?.priorities ?? [], labelColors: backlog?.labelColors ?? {} };
+      } catch (error) {
+        console.warn('[mcp] Could not read the priority scale and label colors; using the seeded scale:', error);
+        return { priorities: [], labelColors: {} };
+      }
+    },
     getDevServerPortRange: () => {
       const devServer = ipcContext.configManager.getEffectiveConfig(projectPath).devServer;
       return { rangeStart: devServer?.portRangeStart, rangeEnd: devServer?.portRangeEnd };

@@ -3,6 +3,7 @@ import { TERMINAL_LINK_SCHEMES, isAllowedExternalUrl } from '../../../shared/ext
 import { cellRangeOf, readLogicalLine, type TerminalBufferLike } from './buffer-line-text';
 import { isLinkOpenGesture, type TerminalLinkGesture } from './link-gesture';
 import type { LinkPathCache } from './link-path-cache';
+import type { TerminalLinkTargets } from './link-targets';
 import { parsePaths, parseUrls } from './parse-links';
 
 /** The part of a terminal the providers read. A live getter, because the active buffer changes. */
@@ -22,7 +23,7 @@ function touchesRow(link: ILink, bufferRow: number): boolean {
 export function createUrlLinkProvider(
   terminal: LinkTerminal,
   gesture: TerminalLinkGesture,
-  openExternal: (url: string) => void,
+  targets: TerminalLinkTargets,
 ): ILinkProvider {
   return {
     provideLinks(bufferRow, callback) {
@@ -34,11 +35,12 @@ export function createUrlLinkProvider(
         links.push({
           range,
           text: parsed.url,
-          hover: gesture.noteLinkHover,
-          leave: gesture.noteLinkLeave,
+          hover: (event) => gesture.noteLinkHover({ event, range, kind: 'url' }),
+          leave: () => gesture.noteLinkLeave(),
           activate: (event, url) => {
-            if (!isLinkOpenGesture(event)) return;
-            if (isAllowedExternalUrl(url, TERMINAL_LINK_SCHEMES)) openExternal(url);
+            const target = targets.plan().targetFor(event);
+            if (target === null) return;
+            if (isAllowedExternalUrl(url, TERMINAL_LINK_SCHEMES)) targets.open(target, url);
           },
         });
       }
@@ -77,8 +79,8 @@ export function createPathLinkProvider(
           links.push({
             range,
             text: line.text.slice(parsed.start, parsed.end),
-            hover: gesture.noteLinkHover,
-            leave: gesture.noteLinkLeave,
+            hover: (event) => gesture.noteLinkHover({ event, range, kind: 'path' }),
+            leave: () => gesture.noteLinkLeave(),
             activate: (event) => {
               if (isLinkOpenGesture(event)) revealPath(printedPath);
             },

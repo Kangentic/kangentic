@@ -348,6 +348,10 @@ msgstr "{worktreeCount, plural, other {작업 트리 #개 중 {failedCount}개�
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId}은(는) 할 일에 남아 있습니다. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -409,6 +413,10 @@ msgstr "에이전트 재개됨"
 msgid "Agent started"
 msgstr "에이전트 시작됨"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Agents pause during a restart and resume after."
+msgstr ""
+
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
 msgid "An unexpected error occurred."
@@ -460,6 +468,10 @@ msgstr "주의"
 msgid "Change not saved to disk"
 msgstr "변경 내용이 디스크에 저장되지 않음"
 
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Choose a project folder"
@@ -485,6 +497,11 @@ msgstr "모든 필터 지우기"
 #, fuzzy
 msgid "Clear search"
 msgstr "검색 지우기"
+
+#: src/renderer/utils/keybindings.ts
+msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
+msgid "Click"
+msgstr ""
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -720,6 +737,10 @@ msgstr "열 순서를 변경할 수 없음"
 #, fuzzy
 msgid "Couldn't reorder task"
 msgstr "작업 순서를 변경할 수 없음"
+
+#: src/renderer/utils/dev-restart.ts
+msgid "Couldn't restart Kangentic"
+msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -1081,6 +1102,10 @@ msgstr "남은 프로세스"
 msgid "Leftover processes stopped"
 msgstr "남은 프로세스 중지됨"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Main process changed"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1092,9 +1117,8 @@ msgid "Maximize"
 msgstr "최대화"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "마지막 PR 새로 고침 기준 검토, 검사 또는 분기 규칙으로 병합이 차단됨"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy
@@ -1270,20 +1294,26 @@ msgstr "열림"
 msgid "Open a project first."
 msgstr "먼저 프로젝트를 여세요."
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutButton.tsx
 #, fuzzy
 msgid "Open in new window"
 msgstr "새 창에서 열기"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR #{prNumber} in browser"
-msgstr "브라우저에서 PR #{prNumber} 열기"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR in browser"
-msgstr "브라우저에서 PR 열기"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1447,6 +1477,12 @@ msgstr "마지막 PR 새로 고침 기준 필수 검사 또는 정책이 대기 
 msgid "Required checks or policies are running as of the last PR refresh"
 msgstr "마지막 PR 새로 고침 기준 필수 검사 또는 정책이 실행 중임"
 
+#: src/renderer/components/ErrorBoundary.tsx
+#: src/renderer/utils/dev-restart.ts
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
 #: src/renderer/stores/updater-store.ts
 #, fuzzy
 msgid "Restart to update"
@@ -1553,6 +1589,10 @@ msgstr "설정 스크립트 실패"
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"
 msgstr "Shift+클릭으로 보조 정렬 추가"
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Show in folder"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

@@ -25,7 +25,7 @@ export { BROWSER_POLICY_REPLACEMENT_TOOL };
 
 /** What a denied call is told, inside the CLI's reply envelope. */
 export const BROWSER_POLICY_DENY_TEXT =
-  `Kangentic blocked ${BROWSER_POLICY_TOOL_PLACEHOLDER}: the Kangentic Agent Browser is the only browser in this session. `
+  `Kangentic blocked ${BROWSER_POLICY_TOOL_PLACEHOLDER}: the Kangentic browser is the only browser in this session. `
   + `Call ${BROWSER_POLICY_REPLACEMENT_TOOL} with the URL, then use the kangentic_browser_* tools. `
   + 'kangentic_browser_screenshot, _screenshot_element, _query_dom (page HTML) and _eval take saveToFile to write a large capture to a file. '
   + 'Do not switch to a Playwright, Puppeteer or Selenium script instead.';
@@ -42,7 +42,7 @@ export const BROWSER_POLICY_DENY_TEXT =
  * `tests/unit/claude-browser-policy.test.ts` pins that.
  */
 export const BROWSER_POLICY_PROMPT = [
-  'BROWSER: The Kangentic Agent Browser (the kangentic_browser_* tools) is the only browser you drive.',
+  'BROWSER: The Kangentic browser (the kangentic_browser_* tools) is the only browser you drive.',
   'That holds for any web page, whether localhost, staging, production or a third-party site, and for any purpose: verifying the app, inspecting a page, capturing screenshots or DOM for your own work or an artifact, comparing production with a local build, or scraping.',
   'Do not use mcp__playwright__* tools, mcp__claude-in-chrome__* tools, chrome-devtools or puppeteer MCP servers, a computer-use tool, or a Playwright, Puppeteer or Selenium script you write yourself.',
   'Each drives a different browser from the pane the user watches, and Kangentic blocks those MCP tools in this session.',
