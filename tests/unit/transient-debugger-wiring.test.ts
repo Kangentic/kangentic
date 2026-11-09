@@ -6,7 +6,7 @@
  * For a Command Terminal session to appear in the overlay, the spawn flow must
  * place the Session row into `state.sessions` synchronously - waiting on the
  * push-based `session-changed` event from main introduces a race where the
- * user can open Ctrl+Shift+D before the row arrives and see an empty overlay.
+ * user can open Ctrl+Alt+Shift+D before the row arrives and see an empty overlay.
  *
  * These tests lock in the contract that `spawnTransientSession` upserts the
  * session into `state.sessions` before resolving.
