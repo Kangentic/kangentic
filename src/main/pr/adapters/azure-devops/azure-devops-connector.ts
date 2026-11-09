@@ -38,8 +38,11 @@ import type {
   PRState,
   PRMergeReadiness,
   PRResolveOptions,
+  PRCheck,
+  PRChecks,
 } from '../../shared/pr-connector';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
+import { stripLogTimestamp, tailRawLog } from '../../shared/ci-log-tail';
 import {
   AzureDevOpsImporter,
   AzUnavailableError,
@@ -49,7 +52,13 @@ import {
 } from '../../../boards/adapters/azure-devops/client';
 import { readRemoteUrls } from '../../../git/git-remotes';
 import { stripAnsiControlCodes } from '../../../../shared/ansi-strip';
-import { firstAzureRemote, buildAzurePrWebUrl, buildAzureCommitWebUrl, type AzureRemote } from './azure-remote';
+import {
+  firstAzureRemote,
+  buildAzurePrWebUrl,
+  buildAzureCommitWebUrl,
+  buildAzureBuildResultsUrl,
+  type AzureRemote,
+} from './azure-remote';
 
 /**
  * Shared az client. Reuses the board importer's binary detection and error
@@ -141,6 +150,18 @@ const REVIEWER_POLICY_TYPE_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The policy types that are CI checks: "Build" (a pipeline run) and "Status"
+ * (an external service posting a status, Azure's counterpart of a GitHub
+ * status context). These are what the Checks list shows and what a rejection
+ * folds to `failing` for. Every other type (reviewers, comment resolution,
+ * linked work items, merge strategy, file size) waits on a person or a
+ * setting, never on a runner. Ids are fixed across organizations.
+ */
+const BUILD_POLICY_TYPE_ID = '0609b952-1397-4640-95ec-e00a01b2c241';
+const STATUS_POLICY_TYPE_ID = 'cbdc66da-9728-4af8-aada-9a5a32e4a226';
+const CHECK_POLICY_TYPE_IDS: ReadonlySet<string> = new Set([BUILD_POLICY_TYPE_ID, STATUS_POLICY_TYPE_ID]);
+
+/**
  * Whether the policy call can change this item's verdict at all. Only an
  * active, non-draft PR whose merge preview `succeeded` is worth the second `az`
  * call: a draft never renders readiness, a completed or abandoned PR never
@@ -163,8 +184,10 @@ function needsPolicyEvaluation(item: AzurePrItem): item is AzurePrItem & { proje
  * merge preview. Only blocking, enabled, live policies count (a non-blocking
  * policy cannot stop Complete, and a disabled or soft-deleted one is not
  * evaluated). Precedence, highest first:
- *   - any `rejected` or `broken` is `blocked`: a broken blocking policy
- *     disables Complete just as a rejection does;
+ *   - a `rejected` or `broken` build or status policy is `failing`, the
+ *     counterpart of a failed GitHub check: a broken blocking policy disables
+ *     Complete just as a rejection does, and an agent can fix either;
+ *   - a `rejected` reviewer policy is `blocked`;
  *   - any non-reviewer evaluation still in flight is `running` (if any is
  *     running) else `queued`: a check in flight, shown as such EVEN IF a review
  *     is also outstanding, so the chip tracks CI while it runs;
@@ -180,9 +203,12 @@ function foldPolicyEvaluations(evaluations: AzurePolicyEvaluation[] | null): PRM
   const blocking = evaluations.filter(
     (evaluation) => evaluation.isBlocking && evaluation.isEnabled && !evaluation.isDeleted,
   );
-  if (blocking.some((evaluation) => evaluation.status === 'rejected' || evaluation.status === 'broken')) {
-    return 'blocked';
-  }
+  const rejected = blocking.filter((evaluation) => evaluation.status === 'rejected' || evaluation.status === 'broken');
+  // A rejected build or status policy is a failed check, which an agent can
+  // fix; any other rejection (a reviewer, unresolved comments, a missing work
+  // item link) is a person's call.
+  if (rejected.some((evaluation) => CHECK_POLICY_TYPE_IDS.has(evaluation.typeId))) return 'failing';
+  if (rejected.length > 0) return 'blocked';
   const inFlight = blocking.filter(
     (evaluation) => evaluation.status === 'queued' || evaluation.status === 'running',
   );
@@ -404,4 +430,96 @@ export const azureDevOpsPRConnector: PRConnector = {
       return best ? toResolvedPR(best, remote, undefined) : null;
     });
   },
+
+  async listChecks(repoCwd: string, prNumber: number): Promise<PRChecks | null> {
+    const remote = await remoteFor(repoCwd);
+    if (!remote) return null;
+    return viaAz(async () => {
+      const projectId = await prProjectId(remote.org, prNumber);
+      if (!projectId) return null;
+      const evaluations = await azImporter.resolvePolicyEvaluations(remote.org, projectId, prNumber);
+      if (evaluations === null) return null;
+      const prUrl = buildAzurePrWebUrl(remote, prNumber);
+      return { checks: policyChecks(evaluations, remote, prUrl), checksPageUrl: prUrl };
+    });
+  },
+
+  async fetchCheckLog(repoCwd: string, prNumber: number, check: PRCheck, maxChars: number): Promise<string | null> {
+    const buildId = buildIdFromResultsUrl(check.url);
+    if (buildId === null) return null;
+    const remote = await remoteFor(repoCwd);
+    if (!remote) return null;
+    return viaAz(async () => {
+      const projectId = await prProjectId(remote.org, prNumber);
+      if (!projectId) return null;
+      const steps = await azImporter.resolveFailedBuildSteps(remote.org, projectId, buildId);
+      if (!steps || steps.length === 0) return null;
+      // The last failed step is the one the build stopped on.
+      const step = steps[steps.length - 1];
+      const raw = await azImporter.fetchBuildLog(remote.org, projectId, buildId, step.logId);
+      if (raw === null) return null;
+      return tailRawLog(raw, stripLogTimestamp, maxChars);
+    });
+  },
 };
+
+/**
+ * Each PR's project GUID, by organization and PR number. A PR never moves
+ * project, and every policy, timeline and log call needs the GUID, so a send
+ * that fetches several logs (and a pending poll) asks Azure for the PR once,
+ * not once per check: each `az` call is a cold start of about a second.
+ */
+const prProjectIds = new Map<string, string>();
+
+async function prProjectId(organization: string, prNumber: number): Promise<string | null> {
+  const key = `${organization}\u0000${prNumber}`;
+  const known = prProjectIds.get(key);
+  if (known) return known;
+  const item = await azImporter.resolvePRByNumber(organization, prNumber);
+  if (!item || typeof item.projectId !== 'string' || item.projectId.length === 0) return null;
+  prProjectIds.set(key, item.projectId);
+  return item.projectId;
+}
+
+/** The build id in a check row's results URL (`..._build/results?buildId=N`), or null. */
+function buildIdFromResultsUrl(url: string): number | null {
+  const match = /\/_build\/results\?buildId=(\d+)(?:&|$)/.exec(url);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * A PR's policy evaluations as the Checks list shows them: every enabled, live
+ * build or status policy (`CHECK_POLICY_TYPE_IDS`), blocking or optional, as
+ * GitHub lists optional checks too. A build policy links to its build and can
+ * read its log once it has queued one; a status policy links to the PR.
+ */
+export function policyChecks(evaluations: AzurePolicyEvaluation[], remote: AzureRemote, prUrl: string): PRCheck[] {
+  return evaluations
+    .filter((evaluation) => evaluation.isEnabled && !evaluation.isDeleted && CHECK_POLICY_TYPE_IDS.has(evaluation.typeId))
+    .map((evaluation, index) => {
+      const buildId = evaluation.buildId ?? null;
+      const name = evaluation.displayName
+        ?? evaluation.buildDefinitionName
+        ?? (evaluation.statusName ? [evaluation.statusGenre, evaluation.statusName].filter(Boolean).join('/') : null)
+        ?? evaluation.typeName
+        ?? 'Policy';
+      return {
+        id: evaluation.evaluationId ?? `policy-${index}`,
+        name,
+        group: null,
+        url: buildId !== null ? buildAzureBuildResultsUrl(remote, buildId) : prUrl,
+        status: policyCheckStatus(evaluation.status),
+        hasLog: buildId !== null,
+      };
+    });
+}
+
+function policyCheckStatus(status: AzurePolicyEvaluation['status']): PRCheck['status'] {
+  switch (status) {
+    case 'approved': return 'passed';
+    case 'rejected':
+    case 'broken': return 'failed';
+    case 'notApplicable': return 'skipped';
+    default: return 'pending';
+  }
+}

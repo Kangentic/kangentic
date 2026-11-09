@@ -186,6 +186,10 @@ msgstr "{oldPath} → {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "{passedCount} passed"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
@@ -211,6 +215,10 @@ msgstr "{pillLabel}: {reason}"
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position} / {total}"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -681,6 +689,10 @@ msgstr "変更は別ウィンドウで開かれています"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Checks"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Choose icon"
@@ -913,6 +925,14 @@ msgstr "条件: {condition}"
 msgid "Confirm"
 msgstr "確認"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with {base}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with the base branch"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
 msgctxt "board overview column header"
@@ -1083,6 +1103,10 @@ msgstr "プロファイルを保存できませんでした"
 #, fuzzy
 msgid "Couldn't save task"
 msgstr "タスクを保存できませんでした"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Couldn't send the failed checks"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -1507,6 +1531,10 @@ msgstr "引き継ぎ"
 #, fuzzy
 msgid "Handoff Chain"
 msgstr "引き継ぎチェーン"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Held for the next agent"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2137,10 +2165,18 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "オープン"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open {name} in browser"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "Open {shortHash} on {providerName}"
 msgstr "{providerName} で {shortHash} を開く"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open all checks in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -2204,6 +2240,10 @@ msgstr "プロファイルを編集するには、そのボードを開いてく
 #, fuzzy
 msgid "Open the board to change this"
 msgstr "変更するにはボードを開きます"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open the pull request in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2673,6 +2713,11 @@ msgstr "変更を表示するコミットを選択してください"
 msgid "Select a file to view changes"
 msgstr "変更を表示するファイルを選択してください"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Send to agent"
+msgstr "エージェントに送信"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Send to Backlog"
@@ -2682,6 +2727,11 @@ msgstr "バックログに移動"
 #, fuzzy
 msgid "Sending the original instead."
 msgstr "代わりに元の画像を送信します。"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Sending..."
+msgstr "送信中..."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -3072,6 +3122,10 @@ msgstr "<0>「{projectName}」</0>のフォルダーは存在しません:"
 #, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
 msgstr "新しいエージェントは、タスクの説明から始める代わりに、前のエージェントの会話を引き継ぎます。"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "The next agent on this task gets the failed checks in its first message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

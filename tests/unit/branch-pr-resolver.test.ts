@@ -1115,22 +1115,29 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['BLOCKED with queued and in-progress checks', 'BLOCKED', '', [checkRun('QUEUED'), checkRun('IN_PROGRESS')], 'running'],
     ['BLOCKED with a pending status context', 'BLOCKED', '', [statusContext('PENDING')], 'queued'],
     ['BLOCKED with an expected status context', 'BLOCKED', '', [statusContext('EXPECTED')], 'queued'],
-    ['BLOCKED with a failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
-    ['BLOCKED with a timed-out check beside a queued one', 'BLOCKED', '', [checkRun('COMPLETED', 'TIMED_OUT'), checkRun('QUEUED')], 'blocked'],
-    ['BLOCKED with a cancelled check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'CANCELLED'), checkRun('IN_PROGRESS')], 'blocked'],
-    ['BLOCKED with an action-required check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'ACTION_REQUIRED'), checkRun('IN_PROGRESS')], 'blocked'],
-    ['BLOCKED with a startup-failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'STARTUP_FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
-    ['BLOCKED with an errored status context beside a running check', 'BLOCKED', '', [statusContext('ERROR'), checkRun('IN_PROGRESS')], 'blocked'],
-    ['BLOCKED with a failed status context beside a running check', 'BLOCKED', '', [statusContext('FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED with a failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'failing'],
+    ['BLOCKED with a timed-out check beside a queued one', 'BLOCKED', '', [checkRun('COMPLETED', 'TIMED_OUT'), checkRun('QUEUED')], 'failing'],
+    ['BLOCKED with a cancelled check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'CANCELLED'), checkRun('IN_PROGRESS')], 'failing'],
+    ['BLOCKED with an action-required check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'ACTION_REQUIRED'), checkRun('IN_PROGRESS')], 'failing'],
+    ['BLOCKED with a startup-failed check beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'STARTUP_FAILURE'), checkRun('IN_PROGRESS')], 'failing'],
+    ['BLOCKED with an errored status context beside a running check', 'BLOCKED', '', [statusContext('ERROR'), checkRun('IN_PROGRESS')], 'failing'],
+    ['BLOCKED with a failed status context beside a running check', 'BLOCKED', '', [statusContext('FAILURE'), checkRun('IN_PROGRESS')], 'failing'],
     ['BLOCKED with skipped and neutral checks beside a running one', 'BLOCKED', '', [checkRun('COMPLETED', 'SKIPPED'), checkRun('COMPLETED', 'NEUTRAL'), checkRun('IN_PROGRESS')], 'running'],
     ['BLOCKED by a required review with a check in progress', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('IN_PROGRESS')], 'running'],
     ['BLOCKED by a required review with a queued check', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('QUEUED')], 'queued'],
     ['BLOCKED by a required review with every check green', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
-    ['BLOCKED by a required review with a failed check running again', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BLOCKED by a required review with a failed check running again', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'failing'],
     ['BLOCKED with an unrecognized check status', 'BLOCKED', '', [checkRun('SOMETHING_NEW')], 'blocked'],
     ['BLOCKED with an unrecognized conclusion', 'BLOCKED', '', [checkRun('COMPLETED', 'SOMETHING_NEW')], 'blocked'],
     ['CLEAN with a check in progress', 'CLEAN', '', [checkRun('IN_PROGRESS')], 'ready'],
     ['UNSTABLE with a queued check', 'UNSTABLE', '', [checkRun('QUEUED')], 'ready'],
+    // UNSTABLE is a failing NON-required check. GitHub would merge it, but the
+    // chip reads `failing` so the user can send the failure to the agent. With
+    // every check green there is nothing to fix, so it stays `ready`.
+    ['UNSTABLE with a failed non-required check and no required review', 'UNSTABLE', '', [checkRun('COMPLETED', 'SUCCESS'), checkRun('COMPLETED', 'FAILURE', 'Optional')], 'failing'],
+    ['UNSTABLE with a failed non-required check and a required review', 'UNSTABLE', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE', 'Optional')], 'failing'],
+    ['UNSTABLE with a failed status context', 'UNSTABLE', '', [statusContext('FAILURE')], 'failing'],
+    ['UNSTABLE with every check green', 'UNSTABLE', '', [checkRun('COMPLETED', 'SUCCESS'), checkRun('COMPLETED', 'SKIPPED', 'Docs')], 'ready'],
     ['CLEAN with a check in progress and a required review', 'CLEAN', 'REVIEW_REQUIRED', [checkRun('IN_PROGRESS')], 'blocked'],
     // BEHIND reads the rollup exactly as BLOCKED does, and this row is why:
     // GitHub reports BEHIND instead of BLOCKED once the base moves under an
@@ -1140,7 +1147,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['BEHIND with a check in progress', 'BEHIND', '', [checkRun('IN_PROGRESS')], 'running'],
     ['BEHIND with a queued check', 'BEHIND', '', [checkRun('QUEUED')], 'queued'],
     ['BEHIND with every check green', 'BEHIND', '', [checkRun('COMPLETED', 'SUCCESS')], 'blocked'],
-    ['BEHIND with a failed check beside a running one', 'BEHIND', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'blocked'],
+    ['BEHIND with a failed check beside a running one', 'BEHIND', '', [checkRun('COMPLETED', 'FAILURE'), checkRun('IN_PROGRESS')], 'failing'],
     ['DRAFT with a check in progress', 'DRAFT', '', [checkRun('IN_PROGRESS')], 'blocked'],
     ['DIRTY with a check in progress', 'DIRTY', '', [checkRun('IN_PROGRESS')], 'conflicting'],
     ['UNKNOWN with a check in progress', 'UNKNOWN', '', [checkRun('IN_PROGRESS')], 'unknown'],
@@ -1280,8 +1287,8 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['the same PR with the option off', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(), { bypassCountsAsReady: false }, 'blocked'],
     ['the same PR when the viewer cannot bypass', 'BLOCKED', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
     ['the same PR when the probe gave no answer', 'BLOCKED', 'REVIEW_REQUIRED', green, null, BYPASS_ON, 'blocked'],
-    ['BLOCKED by a required review with a FAILED check, bypass or not', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
-    ['BLOCKED by a required review with a failed status context', 'BLOCKED', 'REVIEW_REQUIRED', [statusContext('FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BLOCKED by a required review with a FAILED check, bypass or not', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'failing'],
+    ['BLOCKED by a required review with a failed status context', 'BLOCKED', 'REVIEW_REQUIRED', [statusContext('FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'failing'],
     ['BLOCKED by a required review with an empty rollup (checks about to start)', 'BLOCKED', 'REVIEW_REQUIRED', [], canBypass(), BYPASS_ON, 'blocked'],
     ['BLOCKED by a required review with no rollup key', 'BLOCKED', 'REVIEW_REQUIRED', undefined, canBypass(), BYPASS_ON, 'blocked'],
     ['BLOCKED by a required review with a stale check beside green ones', 'BLOCKED', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'STALE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
@@ -1297,7 +1304,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['CLEAN with a required review and every check green', 'CLEAN', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
     ['CLEAN with a required review and an empty rollup', 'CLEAN', 'REVIEW_REQUIRED', [], canBypass(), BYPASS_ON, 'blocked'],
     ['CLEAN with a required review when the viewer cannot bypass', 'CLEAN', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
-    ['UNSTABLE with a required review and a failed non-required check', 'UNSTABLE', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['UNSTABLE with a required review and a failed non-required check', 'UNSTABLE', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'failing'],
     // BEHIND folds exactly as BLOCKED does. It used to be excluded ("a stale
     // base never folds"), which made a green review-required PR read `ready`
     // until a sibling landed and `blocked` afterwards, with nothing about the
@@ -1308,7 +1315,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['BEHIND with a required review and every check green', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), BYPASS_ON, 'ready'],
     ['the same BEHIND PR with the option off', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(), { bypassCountsAsReady: false }, 'blocked'],
     ['the same BEHIND PR when the viewer cannot bypass', 'BEHIND', 'REVIEW_REQUIRED', green, cannotBypass, BYPASS_ON, 'blocked'],
-    ['BEHIND with a required review and a FAILED check, bypass or not', 'BEHIND', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'blocked'],
+    ['BEHIND with a required review and a FAILED check, bypass or not', 'BEHIND', 'REVIEW_REQUIRED', [checkRun('COMPLETED', 'FAILURE'), checkRun('COMPLETED', 'SUCCESS')], canBypass(), BYPASS_ON, 'failing'],
     ['BEHIND with every check green and the review approved (something else blocks)', 'BEHIND', 'APPROVED', green, canBypass(), BYPASS_ON, 'blocked'],
     ['BEHIND with a required context missing from the rollup', 'BEHIND', 'REVIEW_REQUIRED', green, canBypass(['CI', 'Lint, Typecheck, Build']), BYPASS_ON, 'blocked'],
     // DRAFT and DIRTY are what BEHIND stopped being: a draft is the author's
@@ -1539,7 +1546,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
       const rulesRead = stubRules();
       stubBypassModes({ [REVIEW_RULESET]: 'always' });
       const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
-      expect(result?.mergeReadiness).toBe('blocked');
+      expect(result?.mergeReadiness).toBe('failing');
       expect(probe).not.toHaveBeenCalled();
       expect(rulesRead).not.toHaveBeenCalled();
     });
@@ -1856,7 +1863,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['BLOCKED with a required status context reported', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla'), statusContext('SUCCESS', 'ci/legacy')], { contexts: ['cla', 'ci/legacy'] }, 'blocked'],
     ['BLOCKED with a required check present but stale', 'BLOCKED', '', [checkRun('COMPLETED', 'STALE', 'cla')], { contexts: ['cla'] }, 'blocked'],
     ['BLOCKED with every required check present and green', 'BLOCKED', '', REQUIRED.map((name) => checkRun('COMPLETED', 'SUCCESS', name)), { contexts: REQUIRED }, 'blocked'],
-    ['BLOCKED with a failed check and a required one missing', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE', 'cla')], { contexts: REQUIRED }, 'blocked'],
+    ['BLOCKED with a failed check and a required one missing', 'BLOCKED', '', [checkRun('COMPLETED', 'FAILURE', 'cla')], { contexts: REQUIRED }, 'failing'],
     ['BLOCKED with no readable rule', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: null }, 'blocked'],
     ['BLOCKED on a branch that requires no checks', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], { contexts: [] }, 'blocked'],
     ['BLOCKED when the read failed', 'BLOCKED', '', [checkRun('COMPLETED', 'SUCCESS', 'cla')], null, 'blocked'],

@@ -179,6 +179,8 @@ async function launch(changes: object | null): Promise<{ browser: Browser; page:
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
+  // History starts closed; this spec stands in for a user who opened it (the choice is remembered).
+  await page.addInitScript('window.__mockConfigOverrides = Object.assign({}, window.__mockConfigOverrides, { changesHistoryOpen: true });');
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig(changes));
   await gotoVite(page, VITE_URL);
@@ -275,6 +277,8 @@ async function launchPopOut(changes: object, descriptor: { kind: string; params:
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 800 } })).newPage();
+  // History starts closed; this spec stands in for a user who opened it (the choice is remembered).
+  await page.addInitScript('window.__mockConfigOverrides = Object.assign({}, window.__mockConfigOverrides, { changesHistoryOpen: true });');
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig(changes));
   await page.addInitScript(`

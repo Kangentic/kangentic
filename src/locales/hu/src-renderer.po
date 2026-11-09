@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, one {# worktree közül {failedCount} nem távol
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} a Teendők oszlopban marad. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "Vigyázat"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "A módosítás nincs lemezre mentve"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "Teljes méret"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "A legutóbbi PR-frissítés szerint az egyesítést véleményezések, ellenőrzések vagy ágszabályok blokkolják"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

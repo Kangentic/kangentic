@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, other {작업 트리 #개 중 {failedCount}개�
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId}은(는) 할 일에 남아 있습니다. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "주의"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "변경 내용이 디스크에 저장되지 않음"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "최대화"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "마지막 PR 새로 고침 기준 검토, 검사 또는 분기 규칙으로 병합이 차단됨"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

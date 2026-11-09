@@ -2,7 +2,7 @@
 
 ## Connector model
 
-* [PR connector model](connector-model.md) - The PRConnector contract, the DetectedPR and ResolvedPR shapes, PRResolveOptions, the viewer-relative merge readiness values, the two resolver error types, and the registry's remote-ownership dispatch that stops a missing CLI from wiping a PR link.
+* [PR connector model](connector-model.md) - The PRConnector contract, the DetectedPR and ResolvedPR shapes, PRResolveOptions, the viewer-relative merge readiness values, the CI check listing and log cut that Send to agent uses, the two resolver error types, and the registry's remote-ownership dispatch that stops a missing CLI from wiping a PR link.
 
 ## Connectors
 

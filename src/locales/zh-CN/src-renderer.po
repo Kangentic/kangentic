@@ -286,6 +286,10 @@ msgstr "{worktreeCount, plural, other {# 个工作树中有 {failedCount} 个无
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} 仍保留在“待办”中。{reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 msgid "A project"
 msgstr "某个项目"
@@ -378,6 +382,10 @@ msgstr "小心"
 #: src/renderer/App.tsx
 msgid "Change not saved to disk"
 msgstr "更改未保存到磁盘"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 msgid "Choose a project folder"
@@ -893,8 +901,8 @@ msgid "Maximize"
 msgstr "最大化"
 
 #: src/renderer/lib/pr-state.ts
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "截至上次刷新拉取请求时，合并因审查、检查或分支规则而受阻"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge conflicts with the base branch as of the last PR refresh"

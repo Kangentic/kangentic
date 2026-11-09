@@ -146,7 +146,7 @@ interface DemoTask {
   pr_number: number | null;
   pr_url: string | null;
   pr_state: 'open' | 'draft' | 'merged' | 'closed' | null;
-  pr_merge_readiness: 'ready' | 'blocked' | 'conflicting' | 'queued' | 'running' | 'unknown' | null;
+  pr_merge_readiness: 'ready' | 'failing' | 'blocked' | 'conflicting' | 'queued' | 'running' | 'unknown' | null;
   base_branch: string | null;
   labels: string[];
   priority: number;
@@ -428,7 +428,7 @@ const DEMO_BOARD_TASKS: DemoTask[] = [
   { id: TASK_API_CLIENT, projectId: PROJECT_CONTOSO, display_id: 5, title: 'Generate API client types', description: 'Request and response interfaces for every route in server/routes.ts, and apiFetch generic over them', lane: 'executing', position: 1, agent: 'claude', session_id: SESSION_API_CLIENT, worktree_folder: 'api-types-ghi789', branch_name: 'generate-api-types', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 1, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 12 },
   { id: 'task-cw-empty-states', projectId: PROJECT_CONTOSO, display_id: 8, title: 'Onboarding empty states', description: 'First-run screens for the dashboard, projects, and billing pages before any data exists', lane: 'planning', position: 1, agent: null, session_id: SESSION_EMPTY_STATES, worktree_folder: 'empty-states-stu901', branch_name: 'onboarding-empty-states', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['design'], priority: 2, attachment_count: 3, createdDaysAgo: 4, updatedMinutesAgo: 95 },
   { id: TASK_RATE_LIMIT, projectId: PROJECT_CONTOSO, display_id: 6, title: 'Add rate limiting', description: 'Implement per-user rate limiting on API endpoints', lane: 'review', position: 0, agent: 'copilot', session_id: SESSION_RATE_LIMIT, worktree_folder: 'rate-limit-jkl012', branch_name: 'add-rate-limiting', pr_number: 42, pr_url: 'https://github.com/contoso/contoso-web/pull/42', pr_state: 'open', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 3, updatedMinutesAgo: 22 },
-  { id: 'task-cw-integration', projectId: PROJECT_CONTOSO, display_id: 7, title: 'Integration test coverage', description: 'Add integration tests for auth and billing flows', lane: 'testing', position: 0, agent: 'cursor', session_id: SESSION_INTEGRATION, worktree_folder: 'integration-tests-mno345', branch_name: 'integration-tests', pr_number: 38, pr_url: 'https://github.com/contoso/contoso-web/pull/38', pr_state: 'open', pr_merge_readiness: 'blocked', base_branch: 'main', labels: ['tests'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 6 },
+  { id: 'task-cw-integration', projectId: PROJECT_CONTOSO, display_id: 7, title: 'Integration test coverage', description: 'Add integration tests for auth and billing flows', lane: 'testing', position: 0, agent: 'cursor', session_id: SESSION_INTEGRATION, worktree_folder: 'integration-tests-mno345', branch_name: 'integration-tests', pr_number: 38, pr_url: 'https://github.com/contoso/contoso-web/pull/38', pr_state: 'open', pr_merge_readiness: 'failing', base_branch: 'main', labels: ['tests'], priority: 1, attachment_count: 0, createdDaysAgo: 4, updatedMinutesAgo: 6 },
   { id: 'task-cw-vite8', projectId: PROJECT_CONTOSO, display_id: 9, title: 'Upgrade to Vite 8', description: 'Move the build to Vite 8 and drop the legacy Rollup plugins', lane: 'merge', position: 0, agent: null, session_id: SESSION_VITE8, worktree_folder: 'vite-8-pqr678', branch_name: 'upgrade-vite-8', pr_number: 45, pr_url: 'https://github.com/contoso/contoso-web/pull/45', pr_state: 'open', pr_merge_readiness: 'ready', base_branch: 'main', labels: [], priority: 1, attachment_count: 0, createdDaysAgo: 6, updatedMinutesAgo: 48 },
   { id: 'task-cw-done-deploy', projectId: PROJECT_CONTOSO, display_id: 10, title: 'Set up CI/CD pipeline', description: 'GitHub Actions for build, test, deploy', lane: 'done', position: 0, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'setup-cicd', pr_number: 31, pr_url: 'https://github.com/contoso/contoso-web/pull/31', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: [], priority: 0, attachment_count: 0, createdDaysAgo: 12, updatedMinutesAgo: 4300, archivedDaysAgo: 3 },
   { id: TASK_SCHEMA, projectId: PROJECT_CONTOSO, display_id: 11, title: 'Database schema migration', description: 'Add billing tables and indexes', lane: 'done', position: 1, agent: 'claude', session_id: null, worktree_folder: null, branch_name: 'billing-schema', pr_number: 35, pr_url: 'https://github.com/contoso/contoso-web/pull/35', pr_state: 'merged', pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 0, attachment_count: 0, createdDaysAgo: 10, updatedMinutesAgo: 2900, archivedDaysAgo: 2 },
@@ -879,6 +879,29 @@ export const DEMO_DICTATION_INFO = buildDictationInfo(
   [DEMO_DICTATION_SELECTION.liveModelId, DEMO_DICTATION_SELECTION.finalModelId]
     .filter((modelId): modelId is string => modelId !== null),
 );
+/**
+ * What `tasks.listPrChecks` answers for the sample install's PRs whose rows read `failing`:
+ * the Changes panel's Checks section and the Changes button's count read it. Task #7's
+ * integration tests broke one CI job, and coverage dropped under the patch target. Job ids
+ * are in the shape a real Actions run carries, so the GitHub connector's log path would take
+ * them.
+ */
+export const DEMO_PR_CHECKS: Record<string, { checks: Array<{ id: string; name: string; group: string | null; url: string; status: 'passed' | 'failed' | 'pending' | 'skipped'; hasLog: boolean }>; checksPageUrl: string }> = {
+  'task-cw-integration': {
+    checksPageUrl: 'https://github.com/contoso/contoso-web/pull/38/checks',
+    checks: [
+      { id: '61840239511', name: 'Lint', group: 'CI', url: 'https://github.com/contoso/contoso-web/actions/runs/22918350142/job/61840239511', status: 'passed', hasLog: true },
+      { id: '61840239587', name: 'Typecheck', group: 'CI', url: 'https://github.com/contoso/contoso-web/actions/runs/22918350142/job/61840239587', status: 'passed', hasLog: true },
+      { id: '61840239642', name: 'Unit tests', group: 'CI', url: 'https://github.com/contoso/contoso-web/actions/runs/22918350142/job/61840239642', status: 'passed', hasLog: true },
+      { id: '61840239718', name: 'Integration tests (auth)', group: 'CI', url: 'https://github.com/contoso/contoso-web/actions/runs/22918350142/job/61840239718', status: 'failed', hasLog: true },
+      { id: '61840239790', name: 'Integration tests (billing)', group: 'CI', url: 'https://github.com/contoso/contoso-web/actions/runs/22918350142/job/61840239790', status: 'passed', hasLog: true },
+      { id: '61840239866', name: 'Build', group: 'CI', url: 'https://github.com/contoso/contoso-web/actions/runs/22918350142/job/61840239866', status: 'passed', hasLog: true },
+      { id: 'status/codecov/patch', name: 'codecov/patch', group: null, url: 'https://app.codecov.io/gh/contoso/contoso-web/pull/38', status: 'failed', hasLog: false },
+      { id: 'status/codecov/project', name: 'codecov/project', group: null, url: 'https://app.codecov.io/gh/contoso/contoso-web/pull/38', status: 'passed', hasLog: false },
+    ],
+  },
+};
+
 /** The live and refinement models the default config runs on the sample install's machine. */
 export const DEMO_DICTATION_MODELS = {
   liveModelId: DEMO_DICTATION_SELECTION.liveModelId,
@@ -1232,6 +1255,7 @@ export function buildDemoPreConfig(options: {
     commandTerminalEarlier: DEMO_COMMAND_TERMINAL_EARLIER,
     labelColors: DEMO_LABEL_COLORS,
     agentOverrides: DEMO_AGENT_OVERRIDES,
+    prChecks: DEMO_PR_CHECKS,
     dictationInfo: DEMO_DICTATION_INFO,
     dictationRecording: DEMO_DICTATION_RECORDING,
     modelByAgent: MODEL_BY_AGENT,
@@ -1686,6 +1710,8 @@ export function buildDemoPreConfig(options: {
         window.electronAPI.app.getVersion = function () { return Promise.resolve(data.appVersion); };
       }
       window.__mockAgentListOverrides = data.agentOverrides;
+      // The Changes panel's Checks section, for the PRs whose rows read failing.
+      window.__mockPrChecks = data.prChecks;
 
       // Dictation runs the renderer's whole pipeline for real on a press (the hotkey, the mic
       // request the mock grants, the engine start, the audio worklet over the silent stream

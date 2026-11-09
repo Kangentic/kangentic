@@ -280,6 +280,10 @@ msgstr "{worktreeCount, plural, one {{failedCount} of # worktree could not be cl
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} stays in To Do. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr "A check or build failed as of the last PR refresh"
+
 #: src/renderer/App.tsx
 msgid "A project"
 msgstr "A project"
@@ -369,6 +373,10 @@ msgstr "Caution"
 #: src/renderer/App.tsx
 msgid "Change not saved to disk"
 msgstr "Change not saved to disk"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr "checks failing"
 
 #: src/renderer/hooks/useAddProject.ts
 msgid "Choose a project folder"
@@ -883,8 +891,8 @@ msgid "Maximize"
 msgstr "Maximize"
 
 #: src/renderer/lib/pr-state.ts
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr "Merge blocked by reviews or branch rules as of the last PR refresh"
 
 #: src/renderer/lib/pr-state.ts
 msgid "Merge conflicts with the base branch as of the last PR refresh"

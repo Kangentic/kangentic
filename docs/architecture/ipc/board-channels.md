@@ -45,7 +45,7 @@ sources:
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-## Tasks (35 channels)
+## Tasks (37 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -63,6 +63,8 @@ sources:
 | `task:updateFromBase` | invoke | One-click "Update from base": fetch the task's effective base and fast-forward its worktree from `origin/<base>`. Refuses while a session is running; returns a discriminated `TaskUpdateFromBaseResult` (updated / already-up-to-date / cannot-ff / dirty-tree / fetch-failed / no-remote / fixed-base) rather than throwing for expected outcomes. `fixed-base` is a tag or commit base, which does not move: nothing is fetched or merged |
 | `task:setRuntimeOverride` | invoke | Set per-task model/effort override; restarts a live session (suspend + `--resume` with the new flags) on a change to a concrete value, otherwise persists it for the next spawn (or because the session already runs at the pick). A queued session is not restarted: its waiting command is rebuilt with the new settings and keeps its place in line (the reply is `persisted`), and a command that cannot be rebuilt keeps its old settings until the next spawn |
 | `task:resolvePr` | invoke | Authoritatively resolve and link a task's PR through the repository's PR connector (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in [PR linking](../../integrations/pull-requests/pr-linking.md#the-confidence-ladder) (number, worktree branch, commit, stored branch, pushed branch, remote tip); refreshes `pr_state`, `pr_merge_readiness`, `pr_url`, `pr_number`. Returns `no-anchor` only when the task has nothing to search by |
+| `task:prChecks` | invoke | The linked PR's CI checks (`PRChecks`) from the owning connector's `listChecks`, for the Changes panel's Checks section and the Changes button's count. A read, so it carries the project but is not a stamped mutation. Null when the task has no PR or its host lists no checks |
+| `task:prSendChecks` | invoke | Send to agent: re-lists the checks in main, fetches each failed check's log tail (`fetchCheckLog`), and pastes one message into the task's running agent, or holds it for the next one. Returns `{ outcome: 'sent' \| 'held', count }`; throws when nothing needs fixing. Forwards the interaction-time `projectId` ([project-scoped IPC](../../../.claude/rules/project-scoped-ipc.md)) |
 | `task:autoMoved` | on | Event: task was auto-moved by transition engine. Sent once, when the move settles, with its toast. The move's commit point sends the quiet `task:sessionResync` instead |
 | `task:createdByAgent` | on | Event: task was created by an agent via MCP tool call |
 | `task:updatedByAgent` | on | Event: task was updated by an agent via MCP tool call. An agent's move sends it once, when the move settles, with its toast. The move's commit point sends the quiet `task:sessionResync` instead |

@@ -21,8 +21,11 @@ import type {
   PRState,
   PRMergeReadiness,
   PRResolveOptions,
+  PRCheck,
+  PRChecks,
 } from '../../shared/pr-connector';
 import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
+import { stripLogTimestamp, tailRawLog } from '../../shared/ci-log-tail';
 import {
   GitHubImporter,
   GhUnavailableError,
@@ -94,10 +97,12 @@ function mapState(item: GhPrListItem): PRState {
  *
  * BLOCKED is the one state the triple cannot tell apart: a required check
  * still running, a required check that failed, and a review still required all
- * report it. The check rollup splits them (see `classifyRollup`), and a check
- * in flight wins over a required review on purpose, so the chip tracks CI while
- * it runs and flips to `blocked` when only the review remains. A failed check
- * never yields to a running one, and a required check the rollup does not
+ * report it. The check rollup splits them (see `classifyRollup`): a failed
+ * check reads `failing`, and a check in flight wins over a required review on
+ * purpose, so the chip tracks CI while it runs and flips to `blocked` when only
+ * the review remains. UNSTABLE with a failed check reads `failing` too, the one
+ * departure from the literal Merge-button promise: red means "an agent can fix
+ * this" on the chip. A failed check never yields to a running one, and a required check the rollup does not
  * carry yet reads `queued` (`requiredContextMissing`). BEHIND takes the same branch, for the reason
  * `isBypassClearableMergeState` gives: it is the value GitHub reports INSTEAD
  * of BLOCKED once the base moves, so reading the rollup for one and not the
@@ -122,14 +127,20 @@ function mapMergeReadiness(
   if (item.mergeStateStatus === undefined && item.mergeable === undefined) return undefined;
   if (isBypassClearableMergeState(item.mergeStateStatus)) {
     const rollup = classifyRollup(item.statusCheckRollup);
+    // A failed check is something an agent can fix, so it reads `failing`
+    // rather than `blocked` (a review wait), and it outranks a running check:
+    // nothing still running can unblock one that already failed.
+    if (rollup === 'failed') return 'failing';
     if (rollup === 'running' || rollup === 'queued') return rollup;
     // A required check the rollup does not carry at all is one GitHub is
     // still waiting on (see `requiredContextMissing`), so the PR is queued on
-    // CI, not blocked by it. A failure still wins: nothing that has not run
-    // can unblock a check that already failed.
-    if (rollup !== 'failed' && requiredContextMissing(item.statusCheckRollup, requiredContexts)) return 'queued';
+    // CI, not blocked by it. A failure already returned above.
+    if (requiredContextMissing(item.statusCheckRollup, requiredContexts)) return 'queued';
     return bypassClearsTheBlock(item, bypass) ? 'ready' : 'blocked';
   }
+  // UNSTABLE is a failing NON-required check. GitHub would merge it, but the
+  // check still failed and an agent can still fix it, so the chip says so.
+  if (item.mergeStateStatus === 'UNSTABLE' && classifyRollup(item.statusCheckRollup) === 'failed') return 'failing';
   const verdict = mapMergeStateStatus(item.mergeStateStatus) ?? mapMergeable(item.mergeable);
   if (verdict !== 'ready' || item.reviewDecision !== 'REVIEW_REQUIRED') return verdict;
   return bypassClearsTheBlock(item, bypass) ? 'ready' : 'blocked';
@@ -876,4 +887,110 @@ export const gitHubPRConnector: PRConnector = {
       return best ? toResolvedPR(best, null, null) : null;
     });
   },
+
+  async listChecks(repoCwd: string, prNumber: number): Promise<PRChecks | null> {
+    return viaGh(async () => {
+      const pr = await ghImporter.viewPullRequestChecks(repoCwd, prNumber);
+      if (!pr) return null;
+      return { checks: normalizeRollupChecks(pr.statusCheckRollup ?? []), checksPageUrl: `${pr.url}/checks` };
+    });
+  },
+
+  async fetchCheckLog(repoCwd: string, _prNumber: number, check: PRCheck, maxChars: number): Promise<string | null> {
+    const jobId = actionsJobId(check.url);
+    if (!jobId) return null;
+    return viaGh(async () => {
+      const raw = await ghImporter.viewJobFailedLog(repoCwd, jobId);
+      if (raw === null) return null;
+      return tailRawLog(raw, stripActionsLogPrefix, maxChars);
+    });
+  },
 };
+
+/**
+ * The Actions job id in a check run's `detailsUrl`
+ * (`.../actions/runs/<run>/job/<job id>`), which is the id `gh run view --job`
+ * takes. Null for any other check app's page, which has no log gh can read.
+ */
+export function actionsJobId(detailsUrl: string): string | null {
+  const match = /\/actions\/runs\/\d+\/job\/(\d+)(?:[/?#]|$)/.exec(detailsUrl);
+  return match ? match[1] : null;
+}
+
+/**
+ * One `gh run view --log-failed` line without its columns: the job name, the
+ * step name (often `UNKNOWN STEP`), a byte-order mark on the first line of a
+ * step, and the ISO timestamp. What is left is the line the runner printed.
+ */
+export function stripActionsLogPrefix(line: string): string {
+  const columns = line.split('\t');
+  return stripLogTimestamp(columns.length >= 3 ? columns.slice(2).join('\t') : line);
+}
+
+/** The host of a check's page, which tells two check apps apart when neither has a workflow. */
+function detailsHost(detailsUrl: string | undefined): string {
+  if (!detailsUrl) return '';
+  try {
+    return new URL(detailsUrl).host;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The rollup as the Checks list shows it: one row per check, a re-run replacing
+ * the run it superseded (same app, workflow and name, the later `startedAt`
+ * kept; GitHub keeps both in the rollup), each folded into the four normalized
+ * statuses with the same conclusion sets the merge verdict uses.
+ */
+export function normalizeRollupChecks(rollup: GhStatusCheckRollupItem[]): PRCheck[] {
+  const latest = new Map<string, { item: GhStatusCheckRollupItem; startedAt: string }>();
+  for (const item of rollup) {
+    let key: string;
+    if (item.__typename === 'CheckRun') key = `run\u0000${detailsHost(item.detailsUrl)}\u0000${item.workflowName ?? ''}\u0000${item.name}`;
+    else if (item.__typename === 'StatusContext') key = `status\u0000${item.context}`;
+    else continue;
+    const startedAt = item.startedAt ?? '';
+    const seen = latest.get(key);
+    if (!seen || startedAt > seen.startedAt) latest.set(key, { item, startedAt });
+  }
+  const checks: PRCheck[] = [];
+  for (const { item } of latest.values()) {
+    if (item.__typename === 'CheckRun') {
+      const url = item.detailsUrl ?? '';
+      const jobId = actionsJobId(url);
+      checks.push({
+        id: jobId ?? `${item.workflowName ?? ''}/${item.name}`,
+        name: item.name,
+        group: item.workflowName || null,
+        url,
+        status: checkRunStatus(item.status, item.conclusion),
+        hasLog: jobId !== null,
+      });
+    } else {
+      checks.push({
+        id: `status/${item.context}`,
+        name: item.context,
+        group: null,
+        url: item.targetUrl ?? '',
+        status: statusContextStatus(item.state),
+        hasLog: false,
+      });
+    }
+  }
+  return checks;
+}
+
+function checkRunStatus(status: GhCheckRunStatus, conclusion: GhCheckRunConclusion | null): PRCheck['status'] {
+  if (status !== 'COMPLETED') return 'pending';
+  if (conclusion === null) return 'pending';
+  if (FAILED_CHECK_RUN_CONCLUSIONS.has(conclusion)) return 'failed';
+  if (conclusion === 'SKIPPED' || conclusion === 'STALE') return 'skipped';
+  return 'passed';
+}
+
+function statusContextStatus(state: GhStatusState): PRCheck['status'] {
+  if (FAILED_STATUS_STATES.has(state)) return 'failed';
+  if (state === 'SUCCESS') return 'passed';
+  return 'pending';
+}

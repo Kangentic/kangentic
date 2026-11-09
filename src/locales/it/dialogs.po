@@ -186,6 +186,10 @@ msgstr "{oldPath} in {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "{passedCount} passed"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
@@ -211,6 +215,10 @@ msgstr "{pillLabel}: {reason}"
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position} di {total}"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -681,6 +689,10 @@ msgstr "Le modifiche sono aperte in una finestra separata"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Checks"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Choose icon"
@@ -913,6 +925,14 @@ msgstr "Condizione: {condition}"
 msgid "Confirm"
 msgstr "Conferma"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with {base}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Conflicts with the base branch"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
 msgctxt "board overview column header"
@@ -1083,6 +1103,10 @@ msgstr "Impossibile salvare i profili"
 #, fuzzy
 msgid "Couldn't save task"
 msgstr "Impossibile salvare l'attività"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Couldn't send the failed checks"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -1507,6 +1531,10 @@ msgstr "Passaggio"
 #, fuzzy
 msgid "Handoff Chain"
 msgstr "Catena di passaggi di consegne"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Held for the next agent"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2137,10 +2165,18 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "aperta"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open {name} in browser"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "Open {shortHash} on {providerName}"
 msgstr "Apri {shortHash} su {providerName}"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open all checks in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
@@ -2204,6 +2240,10 @@ msgstr "Apri quella board per modificarne i profili"
 #, fuzzy
 msgid "Open the board to change this"
 msgstr "Apri la bacheca per modificarlo"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+msgid "Open the pull request in browser"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2673,6 +2713,11 @@ msgstr "Seleziona un commit per vederne le modifiche"
 msgid "Select a file to view changes"
 msgstr "Seleziona un file per visualizzare le modifiche"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Send to agent"
+msgstr "Invia all'agente"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Send to Backlog"
@@ -2682,6 +2727,11 @@ msgstr "Sposta nel Backlog"
 #, fuzzy
 msgid "Sending the original instead."
 msgstr "Verrà inviato l'originale."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#, fuzzy
+msgid "Sending..."
+msgstr "Invio..."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
@@ -3072,6 +3122,10 @@ msgstr "La cartella di <0>\"{projectName}\"</0> non esiste più:"
 #, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
 msgstr "Il nuovo agente riprende la conversazione dell'agente precedente invece di partire dalla descrizione dell'attività."
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "The next agent on this task gets the failed checks in its first message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

@@ -33,6 +33,9 @@ const ALLOWLIST_CHANNELS = new Set([
   // Drains main's in-memory expired-conversation notice queue for the project it
   // names. It already takes the project explicitly and changes no task or DB row.
   'TASK_TAKE_CONVERSATION_EXPIRED',
+  // The Changes panel's check list: a read of the PR's host, and it already
+  // takes the project explicitly.
+  'TASK_PR_CHECKS',
   // Session reads
   'SESSION_LIST',
   // By session id: a stat, and a reveal that writes nothing.

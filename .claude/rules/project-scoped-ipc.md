@@ -36,9 +36,9 @@ only for main-process internal callers (engine, auto-move, MCP command handlers)
   builds on.
 
 The mutation set today: tasks `create`/`update`/`delete`/`move`/`unarchive`/`bulkDelete`/
-`bulkUnarchive`/`switchBranch`/`updateFromBase`/`setRuntimeOverride`/`resolvePr`/
+`bulkUnarchive`/`switchBranch`/`updateFromBase`/`setRuntimeOverride`/`resolvePr`/`sendPrChecks`/
 `setDetailViewState`; backlog `demote` (it deletes a board task, and the Agent Monitor demotes a
-task of a project the board is not on); sessions `spawn`/`suspend`/`resume`/`resumeOnOpen`/`reset`/`reconcile`. Reads (`list`, `listArchived`, the `get*` probes) and
+task of a project the board is not on); sessions `spawn`/`suspend`/`resume`/`resumeOnOpen`/`reset`/`reconcile`. Reads (`list`, `listArchived`, `listPrChecks`, the `get*` probes) and
 by-session-id / project-agnostic channels (`kill`, `write`, `resize`, `resetTerminal`,
 `openHistoryView`, `closeHistoryView`, the transient session channels) are NOT stamped: a read against the wrong project shows stale data for a frame
 (reconciled by the warm cache), it does not corrupt the wrong project.

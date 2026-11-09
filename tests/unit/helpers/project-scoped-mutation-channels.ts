@@ -21,6 +21,8 @@ export const PROJECT_SCOPED_MUTATION_CHANNELS: ReadonlySet<string> = new Set([
   'TASK_UPDATE_FROM_BASE',
   'TASK_SET_RUNTIME_OVERRIDE',
   'TASK_RESOLVE_PR',
+  // Pastes into the task's agent or holds a message for its next one.
+  'TASK_PR_SEND_CHECKS',
   'TASK_SET_DETAIL_VIEW_STATE',
   // Deletes a board task as it creates the backlog item, and the Agent Monitor
   // demotes a task of a project the board is not on.

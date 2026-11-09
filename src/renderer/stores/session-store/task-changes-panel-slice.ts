@@ -149,13 +149,6 @@ export interface TaskChangesPanelSlice {
    */
   changesHistoryHeight: Record<string, number>;
   /**
-   * Task IDs whose Changes rail History section the user collapsed. Absent
-   * means open - the default: a task's commits are what the panel is for, as
-   * much as its files. Persisted (only when collapsed) in the
-   * `detail_view_state` blob.
-   */
-  changesHistoryCollapsed: Record<string, true>;
-  /**
    * Non-task sentinel ids whose dialog is maximized (persists across dialog
    * open/close). Holds only the create dialogs ('new-task-dialog',
    * 'new-backlog-task-dialog') and the Edit Columns dialog
@@ -249,7 +242,6 @@ export interface TaskChangesPanelSlice {
   /** null clears the stored height (double-click-to-reset on the resizer), so
    *  the History section returns to its default height. */
   setChangesHistoryHeight: (taskId: string, height: number | null) => void;
-  setChangesHistoryOpen: (taskId: string, open: boolean) => void;
   requestCompletedView: (request: CompletedViewRequest) => void;
   /** Clear the request, only when it is still the one for `taskId`. */
   clearCompletedViewRequest: (taskId: string) => void;
@@ -304,9 +296,6 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (selectedCommit) blob.changesSelectedCommit = selectedCommit;
   const historyHeight = state.changesHistoryHeight[taskId];
   if (historyHeight !== undefined) blob.changesHistoryHeight = historyHeight;
-  // Written only when collapsed: absent = open, the default. Mirrors changesOpen's
-  // asymmetry so reopening simply drops the key from the next blob write.
-  if (state.changesHistoryCollapsed[taskId]) blob.changesHistoryCollapsed = true;
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -407,7 +396,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   browserNavigateRequests: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
-  changesHistoryCollapsed: {},
   completedViewRequest: null,
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
@@ -543,22 +531,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     scheduleDetailViewSave(taskId, get);
   },
 
-  setChangesHistoryOpen: (taskId, open) => {
-    const current = get().changesHistoryCollapsed;
-    // The record holds collapses, so open is the absence of a key.
-    const isOpen = !current[taskId];
-    if (isOpen === open) return;
-    if (open) {
-      // Drop the key rather than storing false, so the record mirrors the blob's
-      // written-only-when-collapsed shape and stays bounded.
-      const { [taskId]: _removed, ...rest } = current;
-      set({ changesHistoryCollapsed: rest });
-    } else {
-      set({ changesHistoryCollapsed: { ...current, [taskId]: true } });
-    }
-    scheduleDetailViewSave(taskId, get);
-  },
-
   requestCompletedView: (request) => {
     set({ completedViewRequest: request });
   },
@@ -657,7 +629,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     const browserOpenTasks = new Set(get().browserOpenTasks);
     const changesSelectedCommit = { ...get().changesSelectedCommit };
     const changesHistoryHeight = { ...get().changesHistoryHeight };
-    const changesHistoryCollapsed = { ...get().changesHistoryCollapsed };
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -677,7 +648,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.browserOpen) browserOpenTasks.add(task.id);
       if (blob.changesSelectedCommit !== undefined) changesSelectedCommit[task.id] = blob.changesSelectedCommit;
       if (blob.changesHistoryHeight !== undefined) changesHistoryHeight[task.id] = blob.changesHistoryHeight;
-      if (blob.changesHistoryCollapsed) changesHistoryCollapsed[task.id] = true;
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -693,7 +663,6 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       browserOpenTasks,
       changesSelectedCommit,
       changesHistoryHeight,
-      changesHistoryCollapsed,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,

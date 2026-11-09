@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, one {{failedCount} z # pracovního stromu se nep
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "Úloha #{displayId} zůstává ve sloupci K provedení. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "Výstraha"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "Změna nebyla uložena na disk"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "Maximalizovat"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Sloučení blokováno revizemi, kontrolami nebo pravidly větve podle poslední aktualizace PR"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

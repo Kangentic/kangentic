@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, one {Échec du nettoyage de {failedCount} arbore
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} reste dans À faire. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "Attention"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "Modification non enregistrée sur le disque"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "Agrandir"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Fusion bloquée par des revues, vérifications ou règles de branche à la dernière actualisation de la PR"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

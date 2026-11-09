@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, one {Impossibile ripulire {failedCount} albero d
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} rimane in Da fare. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "Attenzione"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "Modifica non salvata su disco"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "Ingrandisci"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Merge bloccato da revisioni, controlli o regole del ramo all'ultimo aggiornamento della PR"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

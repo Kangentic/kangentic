@@ -93,6 +93,8 @@ export const IPC = {
   TASK_UPDATE_FROM_BASE: 'task:updateFromBase',
   TASK_SET_RUNTIME_OVERRIDE: 'task:setRuntimeOverride',
   TASK_RESOLVE_PR: 'task:resolvePr',
+  TASK_PR_CHECKS: 'task:prChecks',
+  TASK_PR_SEND_CHECKS: 'task:prSendChecks',
   TASK_SET_DETAIL_VIEW_STATE: 'task:setDetailViewState',
 
   // Attachments

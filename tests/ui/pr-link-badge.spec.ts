@@ -1,19 +1,21 @@
 /**
- * UI tests for the shared PR link affordance (PrLink / PrStateBadge) and its
- * detail-header counterpart (the "View PR #N" kebab entry).
+ * UI tests for the shared compact PR pill (PrLink) and its detail-header
+ * counterpart (the "View PR #N" kebab entry).
  *
  * Seeds a Code Review task with a linked, open PR and a running session (so the
  * detail dialog opens on TaskDetailHeader, not the edit form), then asserts the
- * two surfaces that let a user open the linked PR: the board card's PrLink badge
- * (PR number, an `open` state badge, a trailing external-link icon, and an "Open
- * PR #287 in browser" tooltip) and the detail header's `...` kebab "View PR #287"
- * entry (which opens the same URL). The header's compact icon bar itself has no
- * PR pill - that affordance is intentionally only on the card and in the kebab.
+ * two surfaces that let a user open the linked PR: the board card's pill (PR
+ * number, the state's tint, a trailing external-link icon, and an "Open PR #287
+ * in browser" tooltip with the state as its detail) and the detail header's `...`
+ * kebab "View PR #287" entry (which opens the same URL). The header's compact icon
+ * bar itself has no PR pill; the Changes panel header carries one
+ * (changes-checks-section.spec.ts).
  *
- * The second describe seeds five more linked tasks into the Testing lane to pin
- * how merge readiness folds into the SAME chip: `ready` keeps the open hue,
- * `blocked` is amber, `conflicts` is orange (never closed's red), a pending
- * `unknown` keeps plain `open`, and a stale verdict on a merged PR never shows.
+ * The second describe seeds more linked tasks into the Testing lane to pin how
+ * merge readiness tints the SAME pill, which draws no state word: `ready` keeps
+ * the open green, `blocked` is amber, `conflicts` is red with the conflict
+ * glyph, a pending `unknown` keeps plain open, a check in flight is sky with a
+ * pulsing edge, and a stale verdict on a merged PR never shows.
  * Each is scoped by `data-task-id`, since the first test locates the Code
  * Review card's pill with no `.first()`.
  */
@@ -125,6 +127,7 @@ const preConfig = `
       { id: 'task-readiness-stale-merged', number: 305, state: 'merged', readiness: 'ready', sessionId: null, branch: 'feature/readiness-305' },
       { id: 'task-readiness-queued', number: 306, state: 'open', readiness: 'queued', sessionId: null, branch: 'feature/readiness-306' },
       { id: 'task-readiness-running', number: 307, state: 'open', readiness: 'running', sessionId: null, branch: 'feature/readiness-307' },
+      { id: 'task-readiness-failing', number: 308, state: 'open', readiness: 'failing', sessionId: null, branch: 'feature/readiness-308' },
     ];
     readinessSeeds.forEach(function (seed, index) {
       state.tasks.push({
@@ -176,14 +179,17 @@ test.describe('PR link: state badge and clickable affordance', () => {
     // PR number renders as the link label.
     await expect(prLink).toContainText('PR #287');
 
-    // State renders as a standalone badge, not inline text.
-    await expect(prLink.locator('[data-testid="pr-state-badge"]')).toHaveText('open');
+    // No state word: the glyph and the open green carry the state.
+    await expect(prLink).toHaveText('PR #287');
+    await expect(prLink).toHaveClass(/text-emerald-400/);
+    await expect(prLink).toHaveAttribute('data-pr-state', 'open');
 
     // Trailing external-link icon signals it opens in the browser.
     await expect(prLink.locator('.lucide-external-link')).toBeVisible();
 
-    // Tooltip names the action.
-    await expect(prLink).toHaveAccessibleDescription('Open PR #287 in default browser');
+    // Tooltip names the action, and the state as its detail.
+    await expect(prLink).toHaveAccessibleDescription(/Open PR #287 in default browser/);
+    await expect(prLink).toHaveAccessibleDescription(/open/);
   });
 
   test('detail header has no PR pill; the kebab "View PR" entry opens the same URL', async () => {
@@ -233,60 +239,61 @@ test.describe('PR link: state badge and clickable affordance', () => {
   });
 });
 
-test.describe('PR merge readiness folds into the state chip', () => {
-  const chipFor = (taskId: string) =>
-    page.locator(`[data-task-id="${taskId}"] [data-testid="task-card-pr-link"] [data-testid="pr-state-badge"]`);
+test.describe('PR merge readiness tints the pill', () => {
   const pillFor = (taskId: string) =>
     page.locator(`[data-task-id="${taskId}"] [data-testid="task-card-pr-link"]`);
 
-  test('ready keeps the open hue, relabels the chip, and names the caveat in the chip tooltip', async () => {
-    const chip = chipFor('task-readiness-ready');
-    await expect(chip).toHaveText('ready');
-    await expect(chip).toHaveClass(/text-emerald-400/);
-    await expect(chip).toHaveAccessibleDescription(/last PR refresh/);
-    // The caveat lives on the chip; the pill keeps its own action tooltip.
-    await expect(pillFor('task-readiness-ready')).toHaveAccessibleDescription('Open PR #301 in default browser');
+  test('ready keeps the open green, and the tooltip names the caveat after the action', async () => {
+    const pill = pillFor('task-readiness-ready');
+    await expect(pill).toHaveText('PR #301');
+    await expect(pill).toHaveClass(/text-emerald-400/);
+    await expect(pill).toHaveAccessibleDescription(/Open PR #301 in default browser/);
+    await expect(pill).toHaveAccessibleDescription(/last PR refresh/);
   });
 
   test('blocked is amber', async () => {
-    const chip = chipFor('task-readiness-blocked');
-    await expect(chip).toHaveText('blocked');
-    await expect(chip).toHaveClass(/text-amber-400/);
-    await expect(chip).toHaveAccessibleDescription(/Merge blocked/);
+    const pill = pillFor('task-readiness-blocked');
+    await expect(pill).toHaveClass(/text-amber-400/);
+    await expect(pill).toHaveAccessibleDescription(/Merge blocked/);
   });
 
-  test('conflicts is orange, never the red that closed uses', async () => {
-    const chip = chipFor('task-readiness-conflicting');
-    await expect(chip).toHaveText('conflicts');
-    await expect(chip).toHaveClass(/text-orange-400/);
-    await expect(chip).not.toHaveClass(/text-red-400/);
-    await expect(chip).toHaveAccessibleDescription(/Merge conflicts/);
+  test('conflicts is red with the conflict glyph, not the grey closed uses', async () => {
+    const pill = pillFor('task-readiness-conflicting');
+    await expect(pill).toHaveClass(/text-red-400/);
+    await expect(pill.locator('.lucide-git-merge-conflict')).toBeVisible();
+    await expect(pill).toHaveAccessibleDescription(/Merge conflicts/);
+  });
+
+  test('failing is red, still, and its tooltip names the failed check', async () => {
+    const pill = pillFor('task-readiness-failing');
+    await expect(pill).toHaveAttribute('data-pr-readiness', 'failing');
+    await expect(pill).toHaveClass(/text-red-400/);
+    await expect(pill.locator('.kng-pr-pulse')).toHaveCount(0);
+    await expect(pill).toHaveAccessibleDescription(/A check or build failed as of the last PR refresh/);
   });
 
   test('a pending unknown verdict keeps plain open', async () => {
-    const chip = chipFor('task-readiness-unknown');
-    await expect(chip).toHaveText('open');
-    await expect(chip).toHaveAccessibleDescription('');
+    const pill = pillFor('task-readiness-unknown');
+    await expect(pill).toHaveClass(/text-emerald-400/);
+    await expect(pill).not.toHaveAccessibleDescription(/last PR refresh/);
   });
 
-  test('queued and running are sky, so a check in flight reads as progress rather than pass or fail', async () => {
-    const queued = chipFor('task-readiness-queued');
-    await expect(queued).toHaveText('queued');
-    await expect(queued).toHaveClass(/text-sky-400/);
-    await expect(queued).toHaveAccessibleDescription(/queued as of the last PR refresh/);
-
-    const running = chipFor('task-readiness-running');
-    await expect(running).toHaveText('running');
-    await expect(running).toHaveClass(/text-sky-400/);
-    await expect(running).not.toHaveClass(/text-emerald-400|text-amber-400|text-orange-400|text-fg-muted/);
-    await expect(running).toHaveAccessibleDescription(/running as of the last PR refresh/);
+  test('queued and running are sky with a pulsing edge, so a check in flight reads as progress', async () => {
+    for (const taskId of ['task-readiness-queued', 'task-readiness-running']) {
+      const pill = pillFor(taskId);
+      await expect(pill).toHaveClass(/text-sky-400/);
+      await expect(pill.locator('.kng-pr-pulse')).toHaveCount(1);
+    }
+    await expect(pillFor('task-readiness-queued')).toHaveAccessibleDescription(/queued as of the last PR refresh/);
+    await expect(pillFor('task-readiness-running')).toHaveAccessibleDescription(/running as of the last PR refresh/);
+    await expect(pillFor('task-readiness-ready').locator('.kng-pr-pulse')).toHaveCount(0);
   });
 
   test('a stale verdict on a merged PR never shows through', async () => {
-    const chip = chipFor('task-readiness-stale-merged');
-    await expect(chip).toHaveText('merged');
-    await expect(chip).toHaveClass(/text-purple-400/);
-    await expect(chip).toHaveAccessibleDescription('');
+    const pill = pillFor('task-readiness-stale-merged');
+    await expect(pill).toHaveClass(/text-purple-400/);
+    await expect(pill.locator('.lucide-git-merge')).toBeVisible();
+    await expect(pill).not.toHaveAccessibleDescription(/last PR refresh/);
   });
 
   test('the kebab offers Refresh PR for a task linked by PR number alone', async () => {
