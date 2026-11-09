@@ -335,13 +335,13 @@ function disposeStaleCheckContexts() {
 }
 
 /** Builds every MAIN_BUNDLES entry with esbuild. Needs nothing from Vite, so
- *  start() runs it alongside the server. With `write: false` nothing reaches
+ *  start() runs it alongside the server. With `write` false nothing reaches
  *  disk and it resolves each bundle's output hash by label instead, plus each
  *  external script's source hash: that is the staleness check's build
  *  (scripts/main-bundle-staleness.js). Every bundle finishes before a failure
  *  is raised, so nothing reads the build folder while a bundle is still being
  *  written. */
-async function buildMainBundles({ write = true } = {}) {
+async function buildMainBundles(write = true) {
   // Required here, after start()'s dependency check, not at load. A shim loaded
   // from the tree `npm ci` then replaced would start the new esbuild binary and
   // fail its host/binary version check, and a checkout with no node_modules yet
@@ -389,7 +389,7 @@ const MAIN_STALE_EVENT = 'kangentic:main-stale';
 const MAIN_STALE_QUERY_EVENT = 'kangentic:main-stale-query';
 
 const mainStaleness = createStalenessChecker({
-  buildFreshHashes: () => buildMainBundles({ write: false }),
+  buildFreshHashes: () => buildMainBundles(false),
   getRunningHashes: () => runningBundleHashes,
   onStaleChange: (staleLabels) => {
     if (staleLabels.length > 0) {

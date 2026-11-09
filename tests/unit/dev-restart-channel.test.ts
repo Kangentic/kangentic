@@ -101,7 +101,7 @@ describe('scripts/dev.js restart channel', () => {
   });
 
   it('checks staleness with an in-memory build, never by writing over the bundles a live app loads', () => {
-    expect(DEV_JS_CODE).toContain('buildFreshHashes: () => buildMainBundles({ write: false })');
+    expect(DEV_JS_CODE).toContain('buildFreshHashes: () => buildMainBundles(false)');
   });
 
   it('launches Electron only through spawnElectron, so every child gets the restart argument and handler', () => {

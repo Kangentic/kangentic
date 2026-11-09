@@ -225,6 +225,8 @@ describe('scripts/dev.js starts the esbuild builds ahead of Vite', () => {
 
   it('builds the main bundle, preload, embed worker and line-count worker in buildMainBundles', () => {
     // The pty host, dictation worker and retrieval worker entries are pinned by their boundary tests.
+    // The bundle list is the MAIN_BUNDLES table, which the boot build, the restart build and the
+    // staleness check all walk, so a bundle added there is built by every one of them.
     const body = extractFunctionBody(DEV_JS_CODE, 'buildMainBundles');
     const entries: Array<[string, string]> = [
       ['src/main/index.ts', '.vite/build/index.js'],
@@ -235,10 +237,14 @@ describe('scripts/dev.js starts the esbuild builds ahead of Vite', () => {
     ];
 
     for (const [entryPoint, outputFile] of entries) {
-      expect(body, `buildMainBundles must build ${entryPoint} to ${outputFile}`).toMatch(new RegExp(
-        `entryPoints:\\s*\\[path\\.join\\(projectDir, '${escapeRegExp(entryPoint)}'\\)\\],\\s*`
-          + `outfile:\\s*path\\.join\\(projectDir, '${escapeRegExp(outputFile)}'\\)`,
+      expect(DEV_JS_CODE, `MAIN_BUNDLES must list ${entryPoint} building to ${outputFile}`).toMatch(new RegExp(
+        `entry: '${escapeRegExp(entryPoint)}', outfile: '${escapeRegExp(outputFile)}'`,
       ));
     }
+    // Each entry reaches esbuild as written: its entry point to its outfile.
+    expect(body, 'buildMainBundles must build every MAIN_BUNDLES entry').toContain('MAIN_BUNDLES.map(');
+    expect(body, 'a written build must build each entry to its outfile').toMatch(
+      /esbuild\.build\(\{\s*\.\.\.esbuildCommon,\s*entryPoints: \[bundle\.entry\],\s*outfile: bundle\.outfile,/,
+    );
   });
 });
