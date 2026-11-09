@@ -13,6 +13,7 @@ import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-bra
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { doneColumn, routeCandidates } from '../../shared/workflow-route';
 import { formatWorkflow } from './workflow-format';
+import { columnExitRows, isSendBackOnly } from './workflow-step-condition';
 
 /**
  * The first message a workflow's own agent gets, resolved from its template
@@ -30,6 +31,9 @@ const TRIGGER_PHRASES: Record<AutomationTrigger, string> = {
   exit: 'when a task leaves',
 };
 
+/** `{{columns}}`'s line for a person's gate (`isSendBackOnly`). */
+export const PERSON_GATE_LINE = 'Only a person moves a card out of it.';
+
 function describeRun(lane: Swimlane): string {
   if (!lane.auto_spawn) return 'No agent starts here.';
   // Who approves the plan is what decides whether a workflow task waits here,
@@ -45,8 +49,9 @@ function describeRun(lane: Swimlane): string {
 
 /**
  * `{{columns}}`: one line per column a task can visit (those between To Do and
- * Done), in board order, with what it runs, its automations, and how many of the
- * last finished tasks went through it. The counts are left out until any task
+ * Done), in board order, with what it runs, whether only a person moves a card
+ * out of it, its purpose, its automations, and how many of the last finished
+ * tasks went through it. The counts are left out until any task
  * has finished, so a new board says nothing it cannot back.
  */
 export function describeColumnsForPlanning(projectId: string): string {
@@ -62,16 +67,22 @@ export function describeColumnsForPlanning(projectId: string): string {
   const routeLanes = routeCandidates(lanes);
   let finished = 0;
   let visits = new Map<string, number>();
-  let automationsByLane = new Map<string, string[]>();
+  const automationsByLane = new Map<string, string[]>();
+  const personGates = new Set<string>();
   try {
     const database = getProjectDb(projectId);
     if (doneLane) ({ finished, visits } = new TaskMoveRepository(database).recentFinishedColumnVisits(doneLane.id, RECENT_FINISHED_TASKS));
-    automationsByLane = new Map(routeLanes.map((lane) => [
-      lane.id,
-      new AutomationRepository(database).listForColumn(lane.id)
-        .filter((automation) => automation.enabled)
-        .map((automation) => `${escapeXml(automation.name)} (${TRIGGER_PHRASES[automation.trigger] ?? automation.trigger})`),
-    ]));
+    const automationRepository = new AutomationRepository(database);
+    for (const lane of routeLanes) {
+      const enabled = automationRepository.listForColumn(lane.id).filter((automation) => automation.enabled);
+      automationsByLane.set(lane.id, enabled.map((automation) => `${escapeXml(automation.name)} (${TRIGGER_PHRASES[automation.trigger] ?? automation.trigger})`));
+      // A column whose exit rows only send a task back is a person's gate: a
+      // workflow never moves a card out of it (`stepExitVerdict`), so a route
+      // through it stops there for the owner. Read as the step reads it, on
+      // the board's order, since no task has a route yet.
+      const turnEndRows = enabled.filter((automation) => automation.trigger === 'turn_end');
+      if (isSendBackOnly(lane, columnExitRows(turnEndRows, lanes, lane, null))) personGates.add(lane.id);
+    }
   } catch (error) {
     // A database that cannot be read leaves the lines without counts or
     // automations; said, since the agent then plans without the board's history.
@@ -79,7 +90,10 @@ export function describeColumnsForPlanning(projectId: string): string {
   }
   return routeLanes.map((lane, index) => {
     const parts = [`${index + 1}. ${escapeXml(lane.name)}: ${describeRun(lane)}`];
-    const purpose = lane.description?.trim();
+    if (personGates.has(lane.id)) parts.push(PERSON_GATE_LINE);
+    // Collapsed to one line: `{{columns}}` is one line per column, and the
+    // description field is a textarea.
+    const purpose = lane.description?.replace(/\s+/g, ' ').trim();
     if (purpose) parts.push(`Its purpose: ${escapeXml(purpose)}`);
     const automations = automationsByLane.get(lane.id) ?? [];
     if (automations.length > 0) parts.push(`Automations: ${automations.join(', ')}.`);

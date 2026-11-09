@@ -20,7 +20,8 @@ vi.mock('../../src/main/db/database', () => ({
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
-const { describeColumnsForPlanning } = await import('../../src/main/workflows/workflow-agent-prompt');
+const { AutomationRepository } = await import('../../src/main/db/repositories/automation-repository');
+const { describeColumnsForPlanning, PERSON_GATE_LINE } = await import('../../src/main/workflows/workflow-agent-prompt');
 
 import { openTestDatabase } from './helpers/test-database';
 
@@ -64,5 +65,82 @@ describe('{{columns}}', () => {
     const lines = describeColumnsForPlanning('home').split('\n');
     expect(lines.find((line) => line.startsWith('2. Executing'))).toContain('2 of the last 2 finished tasks went through it.');
     expect(lines.find((line) => line.startsWith('1. Planning'))).toContain('0 of the last 2 finished tasks went through it.');
+  });
+
+  /**
+   * A column whose only exit rows send a task back is a person's gate: the
+   * workflow step never moves a card out of it. The planner has to know that,
+   * or it puts a sign-off column on a route and the run stops there unplanned.
+   */
+  describe("a person's gate", () => {
+    function setTurnEndRows(
+      columnName: string,
+      rows: Array<{ name: string; finalLine: string; targetColumn: string; enabled?: boolean; trigger?: 'turn_end' | 'exit' }>,
+    ): void {
+      new AutomationRepository(db).replaceForColumn(lane(columnName), rows.map((row) => ({
+        name: row.name,
+        type: 'move_to_column',
+        trigger: row.trigger ?? 'turn_end',
+        enabled: row.enabled ?? true,
+        config: { targetColumn: row.targetColumn },
+        final_line: row.finalLine,
+      })));
+    }
+
+    function lineOf(columnName: string): string {
+      const line = describeColumnsForPlanning('home').split('\n').find((candidate) => candidate.includes(`. ${columnName}: `));
+      if (!line) throw new Error(`No line for ${columnName}`);
+      return line;
+    }
+
+    it('says only a person moves a card out of a column whose rows only send it back', () => {
+      setTurnEndRows('Code Review', [{ name: 'Back', finalLine: 'Verdict: Blocked', targetColumn: 'Executing' }]);
+      expect(lineOf('Code Review')).toMatch(/^3\. Code Review: An agent\. Only a person moves a card out of it\. /);
+    });
+
+    it('says nothing of the kind once a row moves the card forward', () => {
+      setTurnEndRows('Code Review', [
+        { name: 'Back', finalLine: 'Verdict: Blocked', targetColumn: 'Executing' },
+        { name: 'On', finalLine: 'Verdict: Ready', targetColumn: 'Testing' },
+      ]);
+      expect(lineOf('Code Review')).not.toContain(PERSON_GATE_LINE);
+    });
+
+    it('says nothing of the kind on a column with no exit rows', () => {
+      expect(describeColumnsForPlanning('home')).not.toContain(PERSON_GATE_LINE);
+    });
+
+    it('ignores a disabled forward row, so an enabled send-back row still makes a gate', () => {
+      setTurnEndRows('Code Review', [
+        { name: 'Back', finalLine: 'Verdict: Blocked', targetColumn: 'Executing' },
+        { name: 'On', finalLine: 'Verdict: Ready', targetColumn: 'Testing', enabled: false },
+      ]);
+      expect(lineOf('Code Review')).toContain(PERSON_GATE_LINE);
+    });
+
+    it('is not a gate when its only send-back row is disabled', () => {
+      setTurnEndRows('Code Review', [{ name: 'Back', finalLine: 'Verdict: Blocked', targetColumn: 'Executing', enabled: false }]);
+      expect(lineOf('Code Review')).not.toContain(PERSON_GATE_LINE);
+    });
+
+    it('is not a gate from a send-back row on the exit trigger', () => {
+      setTurnEndRows('Code Review', [{ name: 'Back', finalLine: 'Verdict: Blocked', targetColumn: 'Executing', trigger: 'exit' }]);
+      expect(lineOf('Code Review')).not.toContain(PERSON_GATE_LINE);
+    });
+
+    it('prints a description with line breaks as one line, adding no line to the output', () => {
+      new SwimlaneRepository(db).update({ id: lane('Code Review'), description: 'Reviews the branch.\r\nFixes what it verifies.' });
+      const lines = describeColumnsForPlanning('home').split('\n');
+      const routeColumnCount = new SwimlaneRepository(db).list()
+        .filter((candidate) => !candidate.is_ghost && !candidate.is_archived && candidate.role !== 'todo' && candidate.role !== 'done').length;
+      expect(lineOf('Code Review')).toContain('Its purpose: Reviews the branch. Fixes what it verifies.');
+      expect(lines).toHaveLength(routeColumnCount);
+    });
+
+    it('prints the column\'s purpose beside it', () => {
+      new SwimlaneRepository(db).update({ id: lane('Code Review'), description: 'Reviews the branch.' });
+      setTurnEndRows('Code Review', [{ name: 'Back', finalLine: 'Verdict: Blocked', targetColumn: 'Executing' }]);
+      expect(lineOf('Code Review')).toContain(`${PERSON_GATE_LINE} Its purpose: Reviews the branch.`);
+    });
   });
 });

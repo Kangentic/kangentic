@@ -23,7 +23,7 @@
 import type React from 'react';
 import {
   CircleCheckBig, Code, FlaskConical, FolderOpen, GitBranch, GitCommitHorizontal, GitFork, Layers,
-  Map as MapGlyph, Merge, SquareTerminal, Terminal, Zap,
+  Map as MapGlyph, Merge, PenTool, SquareTerminal, Terminal, Zap,
 } from 'lucide-react';
 
 /** Generic icon component type, not tied to any icon library. */
@@ -63,7 +63,7 @@ export function toDisplayLabel(value: string): string {
 export const CORE_ICONS: ReadonlyMap<string, IconComponent> = new Map<string, IconComponent>(
   Object.entries({
     CircleCheckBig, Code, FlaskConical, FolderOpen, GitBranch, GitCommitHorizontal, GitFork, Layers,
-    Map: MapGlyph, Merge, SquareTerminal, Terminal, Zap,
+    Map: MapGlyph, Merge, PenTool, SquareTerminal, Terminal, Zap,
   }).map(([key, component]) => [toKebabCase(key), component as IconComponent]),
 );
 
