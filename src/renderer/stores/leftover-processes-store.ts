@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore } from './hmr-store-pin';
 import type { LeftoverProcessReport, LeftoverStopOutcome } from '../../shared/types';
 import type { LeftoverStopState } from '../lib/leftover-processes';
 
@@ -47,7 +48,7 @@ interface LeftoverProcessesStore {
   releaseToast: (reportId: string) => void;
 }
 
-const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, get) => ({
+const leftoverProcessesStoreInitializer: StateCreator<LeftoverProcessesStore> = (set, get) => ({
   reports: {},
   reportToasts: {},
   openReportId: null,
@@ -141,7 +142,9 @@ const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, 
       return { reportToasts };
     });
   },
-}));
+});
+
+const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>(leftoverProcessesStoreInitializer);
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
 // module's only runtime export is the non-component hook, so it is not a
@@ -150,6 +153,7 @@ const createLeftoverProcessesStore = () => create<LeftoverProcessesStore>((set, 
 // survived the refresh still opens its Review link on the first one.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedLeftoverProcessesStore: ReturnType<typeof createLeftoverProcessesStore> | undefined = import.meta.hot?.data?.leftoverProcessesStore;
+if (preservedLeftoverProcessesStore) refreshPinnedStore(preservedLeftoverProcessesStore, leftoverProcessesStoreInitializer);
 
 export const useLeftoverProcessesStore = preservedLeftoverProcessesStore ?? createLeftoverProcessesStore();
 
@@ -157,9 +161,9 @@ export const useLeftoverProcessesStore = preservedLeftoverProcessesStore ?? crea
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.leftoverProcessesStore = useLeftoverProcessesStore;
-  // Editing this module's OWN code would leave the pinned instance running
-  // stale closures; force a clean full reload instead. Rare; prod is
-  // unaffected (import.meta.hot is undefined there, so this block is dropped).
+  // An edit to this module's own code re-runs it (the refresh above takes its
+  // new actions), then invalidate() hands the update on to the importers. It
+  // does not reload the page. Prod drops this block.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

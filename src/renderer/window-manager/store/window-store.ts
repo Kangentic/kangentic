@@ -9,13 +9,16 @@
  *
  * Renderer-only state: there is no IPC truth to re-sync, so HMR uses Pattern E
  * (pin the instance in `import.meta.hot.data` and self-accept). Pinning the
- * instance preserves the live layout AND the in-closure id counters across a Fast
- * Refresh, so an open window never vanishes or re-collides while dogfooding. The
- * settled layout is persisted by each layer's own bridge (see `persistence/`).
+ * instance preserves the live layout AND the id counters it carries
+ * (`WindowManager.sequences`) across a Fast Refresh, so an open window never
+ * vanishes or re-collides while dogfooding, and the refresh hands the pinned store
+ * each edit's new actions. The settled layout is persisted by each layer's own
+ * bridge (see `persistence/`).
  */
 
 import { create } from 'zustand';
-import type { StoreApi, UseBoundStore } from 'zustand';
+import type { StateCreator, StoreApi, UseBoundStore } from 'zustand';
+import { refreshPinnedStore } from '../../stores/hmr-store-pin';
 import { isWindowDormant } from './types';
 import type { FractionalRect, ManagedWindow, TileNode, WindowContentKind } from './types';
 import { clampGeometry, defaultWindowGeometry } from './geometry';
@@ -371,32 +374,44 @@ export interface WindowManagerStoreOptions {
   anchorToTaskId?: (anchor: string) => string;
 }
 
-/** A built window-manager instance: the bound store hook + its layer options. */
+/** One instance's monotonic id sources. Per instance, so no two layers share a
+ *  counter, and held on the instance, so the store's actions and their
+ *  replacements after an HMR refresh count on the same numbers. */
+export interface WindowManagerSequences {
+  window: number;
+  tile: number;
+}
+
+/** A built window-manager instance: the bound store hook, its layer options, and
+ *  its id counters. */
 export interface WindowManager {
   store: UseBoundStore<StoreApi<WindowStoreState>>;
   options: WindowManagerStoreOptions;
+  /** Optional only for an instance an older build pinned before the counters
+   *  moved here; every instance built now carries them. */
+  sequences?: WindowManagerSequences;
 }
 
 /**
- * Build one independent window-manager instance. Each gets its own monotonic id
- * space via closures (so no cross-layer id collision) and its own store.
+ * One instance's store initializer. A factory because every action closes over
+ * the layer's options and id counters. The pin calls it again on a re-eval
+ * (`refreshPinnedStore`, Pattern E), with the SAME counters, so a refreshed
+ * action never mints an id an older one already handed out.
  */
-export function createWindowManagerStore(options: WindowManagerStoreOptions): WindowManager {
-  // Monotonic id sources, per instance. They live in this closure (not module
-  // scope), so the two layers never share a counter and a Pattern-E instance pin
-  // preserves them across HMR for free.
-  let windowSequence = 0;
+export function windowStoreInitializer(
+  options: WindowManagerStoreOptions,
+  sequences: WindowManagerSequences,
+): StateCreator<WindowStoreState> {
   const nextWindowId = (): string => {
-    windowSequence += 1;
-    return `${options.idPrefix}-window-${windowSequence}`;
+    sequences.window += 1;
+    return `${options.idPrefix}-window-${sequences.window}`;
   };
-  let tileSequence = 0;
   const nextTileId = (prefix: 'split' | 'leaf'): string => {
-    tileSequence += 1;
-    return `${options.idPrefix}-${prefix}-${tileSequence}`;
+    sequences.tile += 1;
+    return `${options.idPrefix}-${prefix}-${sequences.tile}`;
   };
 
-  const store = create<WindowStoreState>((set, get) => ({
+  return (set, get) => ({
     windows: {},
     order: [],
     focusedWindowId: null,
@@ -1289,7 +1304,16 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         };
       });
     },
-  }));
+  });
+}
+
+/**
+ * Build one independent window-manager instance: its own store and its own
+ * monotonic id space (so no cross-layer id collision).
+ */
+export function createWindowManagerStore(options: WindowManagerStoreOptions): WindowManager {
+  const sequences: WindowManagerSequences = { window: 0, tile: 0 };
+  const store = create<WindowStoreState>(windowStoreInitializer(options, sequences));
 
   // Dev-only stale-leaf tripwire: after EVERY mutation, assert the tiling
   // invariant (tree membership <-> state <-> leafId). A regression then surfaces
@@ -1310,7 +1334,7 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
     });
   }
 
-  return { store, options };
+  return { store, options, sequences };
 }
 
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
@@ -1327,7 +1351,17 @@ function resolveInstance(
   key: 'boardWindowManager' | 'commandWindowManager' | 'monitorWindowManager' | 'knowledgeGraphWindowManager',
   options: WindowManagerStoreOptions,
 ): WindowManager {
-  return HMR_DATA?.[key] ?? createWindowManagerStore(options);
+  const pinned = HMR_DATA?.[key];
+  if (!pinned) return createWindowManagerStore(options);
+  // The pinned store takes this evaluation's new and changed actions (Pattern E
+  // refresh), counting on the instance's own counters. An instance an older
+  // build pinned has no counters to share: refreshing it would start the ids
+  // again at 1 and mint duplicates, so it keeps its actions until a reload.
+  if (pinned.sequences) {
+    pinned.options = options;
+    refreshPinnedStore(pinned.store, windowStoreInitializer(options, pinned.sequences));
+  }
+  return pinned;
 }
 
 /** The board task-detail window layer (the original, modeless, per-project layer). */
@@ -1406,8 +1440,9 @@ if (import.meta.hot) {
   import.meta.hot.data.monitorWindowManager = monitorWindowManager;
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.knowledgeGraphWindowManager = knowledgeGraphWindowManager;
-  // Self-accept: editing this module forces a clean reload rather than handing a
-  // second store instance to part of an already-mounted tree (Pattern E).
+  // Self-accept (Pattern E): an edit to this module re-runs it (resolveInstance
+  // refreshes each pinned layer), then invalidate() hands the update on to the
+  // importers. It does not reload the page.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

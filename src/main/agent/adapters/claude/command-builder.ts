@@ -622,8 +622,9 @@ export class CommandBuilder {
       statusLineCommand = wslStatusLineCommand(wslHooks, place, options.statusOutputPath!);
     } else {
       // Resolve bridge scripts. In production, bridge scripts are copied next
-      // to the main bundle by scripts/build.js. In dev (esbuild watch),
-      // __dirname is .vite/build/ so we fall back to the source tree.
+      // to the main bundle by scripts/build.js. In dev (the esbuild build
+      // scripts/dev.js runs at boot), __dirname is .vite/build/ so we fall
+      // back to the source tree.
       const statusBridge = toForwardSlash(resolveBridgeScript('status-bridge'));
       const statusPath = toForwardSlash(options.statusOutputPath!);
       statusLineCommand = `node ${quoteBridgePath(statusBridge, CLAUDE_BRIDGE_SHELL)} ${quoteBridgePath(statusPath, CLAUDE_BRIDGE_SHELL)}`;

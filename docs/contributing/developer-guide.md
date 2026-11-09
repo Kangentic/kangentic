@@ -1,10 +1,13 @@
 ---
 type: Guide
 title: Developer guide
-description: "How to run, build and test Kangentic from source: the dev server and esbuild watch, worktree previews and their data isolation, the production and web demo builds, the unit, UI, E2E and demo test tiers, project structure, environment variables, and packaging notes."
+description: "How to run, build and test Kangentic from source: the dev server, its esbuild boot build and the dev restart, worktree previews and their data isolation, the production and web demo builds, the unit, UI, E2E and demo test tiers, project structure, environment variables, and packaging notes."
 tags: [development, build, testing, worktrees]
 sources:
   - resource: scripts/dev.js
+  - resource: scripts/main-bundle-staleness.js
+  - resource: src/renderer/utils/dev-restart.ts
+  - resource: src/renderer/components/layout/DevRestartController.tsx
   - resource: scripts/ensure-node-modules.js
   - resource: scripts/verify-node-modules.js
   - resource: scripts/build.js
@@ -38,7 +41,8 @@ npm install
 npm run dev
 ```
 
-The dev server starts Vite (renderer HMR), esbuild (main/preload watch), and launches Electron.
+The dev server starts Vite (renderer HMR), builds main, preload and the workers once with esbuild,
+and launches Electron. A later change to those needs a restart (see below).
 
 ## Project Structure
 
@@ -197,7 +201,7 @@ scripts/
 Three parallel processes:
 
 1. **Vite dev server** -- serves renderer with HMR on port 5173 (5174+ in worktrees)
-2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the six `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/pty/host/pty-host-entry.ts` (the pty host: every PTY and its output pipeline, plus main's one-shot child processes - see `.claude/rules/pty-host-out-of-process.md`), `src/main/retrieval/embedder/embed-worker.ts`, `src/main/retrieval/worker/retrieval-worker.ts` (every read and write of the Knowledge Graph index and the agent transcript parses - see `.claude/rules/retrieval-out-of-process.md`), `src/main/git/line-count/line-count-worker.ts`, `src/main/git/worktree-copy/worktree-copy-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
+2. **esbuild build** (once at boot, again on an in-app restart, never a watch) -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the six `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/pty/host/pty-host-entry.ts` (the pty host: every PTY and its output pipeline, plus main's one-shot child processes - see `.claude/rules/pty-host-out-of-process.md`), `src/main/retrieval/embedder/embed-worker.ts`, `src/main/retrieval/worker/retrieval-worker.ts` (every read and write of the Knowledge Graph index and the agent transcript parses - see `.claude/rules/retrieval-out-of-process.md`), `src/main/git/line-count/line-count-worker.ts`, `src/main/git/worktree-copy/worktree-copy-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
 
 Every renderer dev server (`vite.config.mts`, the worktree config, the HMR probe) registers
@@ -208,9 +212,23 @@ hook AppLayout calls, that remounts the whole window. `.claude/rules/hmr-pattern
 mechanism and the cost.
 
 `dev.js` owns the Electron child and closes Vite when it exits, so the app never calls
-`app.relaunch()` under it. A restart the app asks for (changing Graphics acceleration) writes the
-file `dev.js` passes as `--dev-restart-file=`, then quits normally, and `dev.js` spawns Electron
-again with Vite still running (`src/main/app-relaunch.ts`). On Ctrl+C or a closed terminal, `dev.js`
+`app.relaunch()` under it. A restart the app asks for (changing Graphics acceleration, or the dev
+Restart below) writes the file `dev.js` passes as `--dev-restart-file=`, then quits normally, and
+`dev.js` rebuilds main, preload and the workers, copies the external scripts, compiles main's
+catalogs, and spawns Electron again with Vite still running (`src/main/app-relaunch.ts`,
+`restartElectron` in `dev.js`). A failed rebuild restarts anyway, and a bundle that failed keeps
+its previous build.
+
+Vite's HMR reaches only the renderer, so a merge that changes main, preload or a worker needs a
+restart. `dev.js` watches `src/main`, `src/preload`, `src/shared`, `src/devtools` and
+`packages/protocol/src`, rebuilds every bundle in memory (esbuild contexts with `write: false`)
+about 2 s after a change, and compares each output's hash, and each bridge or plugin script's,
+with the build Electron runs (`scripts/main-bundle-staleness.js`). It writes nothing while Electron runs, because a pop-out
+window loads `preload.js` from disk when it opens. When an output differs it sends
+`kangentic:main-stale` over Vite's websocket, and the main window shows a persistent "Main process
+changed" toast whose Restart, or `Mod+Shift+F5`, restarts through that channel. A restart while an
+agent is mid-turn asks first. The root error screen has the same Restart, for renderer code that
+already called a preload method the running preload lacks. All of it is dev only. On Ctrl+C or a closed terminal, `dev.js`
 waits up to 3 s for Electron to exit on its own before killing it, since Electron gets the same
 signal and records a clean exit itself.
 

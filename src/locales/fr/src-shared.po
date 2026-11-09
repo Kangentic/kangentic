@@ -1014,6 +1014,10 @@ msgstr "En file d'attente..."
 msgid "Quick Find"
 msgstr "Recherche rapide"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 #, fuzzy
 msgid "Relay address cannot contain a backslash."
@@ -1053,6 +1057,10 @@ msgstr "Réinitialiser le terminal"
 #, fuzzy
 msgid "Reset zoom"
 msgstr "Réinitialiser le zoom"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

@@ -133,12 +133,12 @@ function escalationReportTryBlock(): string {
 }
 
 /** How a save-and-restart handler restarts: the helper Graphics acceleration and the display language share. */
-const RELAUNCH_CALL = 'relaunchForSavedSetting()';
+const RELAUNCH_CALL = 'restartApp()';
 
-/** The body of `relaunchForSavedSetting`, which holds the one relaunchApp call both handlers reach. */
+/** The body of `restartApp`, which holds the one relaunchApp call both handlers reach. */
 function relaunchHelperBody(): string {
-  const declaration = INDEX_CODE.indexOf('function relaunchForSavedSetting(');
-  if (declaration === -1) throw new Error('src/main/index.ts no longer declares relaunchForSavedSetting');
+  const declaration = INDEX_CODE.indexOf('function restartApp(');
+  if (declaration === -1) throw new Error('src/main/index.ts no longer declares restartApp');
   return sliceBalancedBlock(INDEX_CODE, INDEX_CODE.indexOf('{', declaration));
 }
 
@@ -394,7 +394,7 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     const relaunchIndex = handlerBody.indexOf(RELAUNCH_CALL);
     expect(saveIndex, 'the handler must save the setting').toBeGreaterThan(-1);
     expect(relaunchIndex, 'the handler must restart after saving').toBeGreaterThan(saveIndex);
-    // The restart itself lives in relaunchForSavedSetting, shared with the
+    // The restart itself lives in restartApp, shared with the
     // display language's save-and-restart, so its options are pinned there.
     const relaunchBody = relaunchHelperBody();
     expect(relaunchBody).toContain('relaunchApp(');

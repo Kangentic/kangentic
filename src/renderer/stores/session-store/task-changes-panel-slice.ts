@@ -2,6 +2,7 @@ import { type StateCreator } from 'zustand';
 import { useProjectStore } from '../project-store';
 import type { ConversationTabRequest, GitDiffScope, Task, TaskDetailViewState } from '../../../shared/types';
 import type { SessionStore } from './types';
+import { sharedModuleState } from '../hmr-store-pin';
 
 /** A completed task view's tabs. */
 export type CompletedTab = 'summary' | 'changes' | 'conversation' | 'usage' | 'description';
@@ -256,19 +257,30 @@ export interface TaskChangesPanelSlice {
   hydrateDetailViewStateForTasks: (tasks: Task[]) => void;
 }
 
-// hmr-safe: only has to rise; requestBrowserNavigate takes the clock when it is higher.
-let lastBrowserNavigateRequestId = 0;
+interface TaskChangesPanelModuleState {
+  /** Only has to rise; requestBrowserNavigate takes the clock when it is higher. */
+  lastBrowserNavigateRequestId: number;
+  /**
+   * Pending debounced saves: the latest blob + the project id captured at the
+   * interaction that scheduled the save (project-scoped-ipc rule). Kept separate
+   * from the timer map so a flush always writes the most recent snapshot.
+   */
+  detailViewPendingSaves: Map<string, { state: TaskDetailViewState; projectId: string | null }>;
+  detailViewSaveTimers: Map<string, ReturnType<typeof setTimeout>>;
+}
+
+/** Shared by every evaluation of this module (see `sharedModuleState`), so a
+ *  save an old action scheduled is the one a refreshed action flushes. */
+const taskChangesPanelModuleState = sharedModuleState<TaskChangesPanelModuleState>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'taskChangesPanelModuleState',
+  () => ({ lastBrowserNavigateRequestId: 0, detailViewPendingSaves: new Map(), detailViewSaveTimers: new Map() }),
+);
+const { detailViewPendingSaves, detailViewSaveTimers } = taskChangesPanelModuleState;
 
 /** Debounce settle for persisting a task's detail-view-state blob to the DB. */
 const DETAIL_VIEW_SAVE_DEBOUNCE_MS = 500;
-
-/**
- * Pending debounced saves: the latest blob + the project id captured at the
- * interaction that scheduled the save (project-scoped-ipc rule). Kept separate
- * from the timer map so a flush always writes the most recent snapshot.
- */
-const detailViewPendingSaves = new Map<string, { state: TaskDetailViewState; projectId: string | null }>();
-const detailViewSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Write a pending blob to the DB now, clearing its timer + pending entry. */
 function flushDetailViewSave(taskId: string): void {
@@ -334,6 +346,7 @@ export function commandTerminalChangesEntityId(slot: string): string {
  * Command Terminal would otherwise emit a spurious IPC write on every Changes
  * interaction. Their state lives for the session.
  */
+// hmr-safe: a constant lookup, never written, so two evaluations' copies agree.
 const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'board-manager-dialog']);
 
 /** The prefix of a completed task's Changes tab entity id (`completed-<taskId>`). */
@@ -505,8 +518,9 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     // Never reused: a pane remembers the id it mounted on, and a later request
     // under that id would read as already loaded. The clock keeps it rising
     // across a Fast Refresh, which resets the counter.
-    lastBrowserNavigateRequestId = Math.max(Date.now(), lastBrowserNavigateRequestId + 1);
-    set({ browserNavigateRequests: { ...get().browserNavigateRequests, [ownerKey]: { url, id: lastBrowserNavigateRequestId } } });
+    const requestId = Math.max(Date.now(), taskChangesPanelModuleState.lastBrowserNavigateRequestId + 1);
+    taskChangesPanelModuleState.lastBrowserNavigateRequestId = requestId;
+    set({ browserNavigateRequests: { ...get().browserNavigateRequests, [ownerKey]: { url, id: requestId } } });
   },
 
   clearBrowserNavigate: (ownerKey, requestId) => {

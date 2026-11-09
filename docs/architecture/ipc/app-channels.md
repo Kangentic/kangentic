@@ -21,7 +21,7 @@ sources:
 # App IPC channels
 
 ## Dev-only (preview)
-Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in any group's channel count below.
+Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in any group's channel count below. The one exception is `app:restart`, which `src/main/index.ts` registers under the same flag and the App group counts.
 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -154,10 +154,11 @@ Detach a registered UI surface (`stats` for usage stats, `changes` for git chang
 | `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Error reporting (Sentry)](../../telemetry/error-reporting.md). |
 | `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Usage analytics](../../telemetry/usage-analytics.md). |
 
-## App (1 channel)
+## App (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `app:getVersion` | invoke | Get Electron app version string |
+| `app:restart` | invoke | Dev only: restart through the normal quit, which under `npm start` rebuilds main, preload and the workers first. Main registers it only in a dev build. Never renamed or removed, because it is called when main is older than the renderer. |
 
 ## Clipboard (3 channels)
 | Channel | Pattern | Purpose |

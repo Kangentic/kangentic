@@ -43,6 +43,10 @@ msgstr "{queued, plural, one {# queued} other {# queued}}"
 msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
 msgstr "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
 
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "{workingAgentCount, plural, one {# agent is working. It pauses for the restart and resumes after, but its current turn stops.} other {# agents are working. They pause for the restart and resume after, but their current turns stop.}}"
+msgstr "{workingAgentCount, plural, one {# agent is working. It pauses for the restart and resumes after, but its current turn stops.} other {# agents are working. They pause for the restart and resume after, but their current turns stop.}}"
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
 msgstr "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
@@ -210,6 +214,15 @@ msgstr "Reads your project's setup"
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "Refresh"
 msgstr "Refresh"
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgctxt "Action"
+msgid "Restart"
+msgstr "Restart"
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "Restart Kangentic?"
+msgstr "Restart Kangentic?"
 
 #: src/renderer/components/layout/TitleBar.tsx
 msgid "Resuming terminals..."

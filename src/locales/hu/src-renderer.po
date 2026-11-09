@@ -409,6 +409,10 @@ msgstr "Ágens folytatva"
 msgid "Agent started"
 msgstr "Az ügynök elindult"
 
+#: src/renderer/utils/dev-restart.ts
+msgid "Agents pause during a restart and resume after."
+msgstr ""
+
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
 msgid "An unexpected error occurred."
@@ -729,6 +733,10 @@ msgstr "Nem sikerült átrendezni az oszlopokat"
 #, fuzzy
 msgid "Couldn't reorder task"
 msgstr "Nem sikerült átrendezni a feladatot"
+
+#: src/renderer/utils/dev-restart.ts
+msgid "Couldn't restart Kangentic"
+msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -1089,6 +1097,10 @@ msgstr "Visszamaradt folyamatok"
 #, fuzzy
 msgid "Leftover processes stopped"
 msgstr "Visszamaradt folyamatok leállítva"
+
+#: src/renderer/utils/dev-restart.ts
+msgid "Main process changed"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1459,6 +1471,12 @@ msgstr "A legutóbbi PR-frissítés szerint a kötelező ellenőrzések vagy sza
 #, fuzzy
 msgid "Required checks or policies are running as of the last PR refresh"
 msgstr "A legutóbbi PR-frissítés szerint a kötelező ellenőrzések vagy szabályzatok futnak"
+
+#: src/renderer/components/ErrorBoundary.tsx
+#: src/renderer/utils/dev-restart.ts
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
 
 #: src/renderer/stores/updater-store.ts
 #, fuzzy

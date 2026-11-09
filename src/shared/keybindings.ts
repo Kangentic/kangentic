@@ -811,6 +811,16 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
     devOnly: true,
   },
+  {
+    id: 'app.restart',
+    label: msg`Restart Kangentic`,
+    description: msg`Rebuild main and preload, then restart. Agents pause and resume.`,
+    group: 'Developer',
+    scope: 'global',
+    defaultCombo: 'Mod+Shift+F5',
+    rebindable: true,
+    devOnly: true,
+  },
 ];
 
 /** O(1) lookup by id. */

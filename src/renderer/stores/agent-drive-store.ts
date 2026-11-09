@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore } from './hmr-store-pin';
 
 /**
  * Which sessions currently have an agent driving their Browser pane.
@@ -48,7 +49,7 @@ interface AgentDriveState {
   noteUserInterrupt: (sessionId: string) => void;
 }
 
-const createAgentDriveStore = () => create<AgentDriveState>((set) => ({
+const agentDriveStoreInitializer: StateCreator<AgentDriveState> = (set) => ({
   drivingSessionIds: [],
   setAgentDriving: (sessionId, driving) =>
     set((state) => {
@@ -68,7 +69,9 @@ const createAgentDriveStore = () => create<AgentDriveState>((set) => ({
         [sessionId]: (state.userInterrupts[sessionId] ?? 0) + 1,
       },
     })),
-}));
+});
+
+const createAgentDriveStore = () => create<AgentDriveState>(agentDriveStoreInitializer);
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
 // module's only runtime exports are the non-component hooks, so it is NOT a
@@ -80,6 +83,7 @@ const createAgentDriveStore = () => create<AgentDriveState>((set) => ({
 // focus move is SHOWN (.claude/rules/agent-driven-focus.md).
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedAgentDriveStore: ReturnType<typeof createAgentDriveStore> | undefined = import.meta.hot?.data?.agentDriveStore;
+if (preservedAgentDriveStore) refreshPinnedStore(preservedAgentDriveStore, agentDriveStoreInitializer);
 
 export const useAgentDriveStore = preservedAgentDriveStore ?? createAgentDriveStore();
 
@@ -87,8 +91,9 @@ export const useAgentDriveStore = preservedAgentDriveStore ?? createAgentDriveSt
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.agentDriveStore = useAgentDriveStore;
-  // Editing this module's OWN code would leave the pinned instance running stale
-  // closures; force a clean full reload instead (rare; prod drops this block).
+  // An edit to this module's own code re-runs it (the refresh above takes its
+  // new actions), then invalidate() hands the update on to the importers. It
+  // does not reload the page. Prod drops this block.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

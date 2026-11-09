@@ -618,7 +618,31 @@ function collectLeafWindowIds(tree: ReturnType<typeof useWindowStore.getState>['
 // ---------------------------------------------------------------------------
 // Factory isolation: createWindowManagerStore builds fully independent instances.
 // ---------------------------------------------------------------------------
-import { createWindowManagerStore } from '../../src/renderer/window-manager/store/window-store';
+import { createWindowManagerStore, windowStoreInitializer } from '../../src/renderer/window-manager/store/window-store';
+
+// The Pattern E refresh hands a pinned layer each edit's new and changed actions,
+// built by `windowStoreInitializer` against the live store. They mint window and
+// tile ids, so they must count on the layer's own counters: fresh ones would start
+// again at 1 and hand out an id an open window already holds.
+describe('window-manager HMR refresh', () => {
+  it('an action built by a refresh goes on numbering where the layer left off', () => {
+    const manager = createWindowManagerStore({ idPrefix: 'board', kind: 'task-detail' });
+    const firstId = manager.store.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
+    const secondId = manager.store.getState().openWindow({ anchor: 'task-b', sessionId: 'sess-b', title: 'B' });
+    expect(manager.sequences).toBeDefined();
+
+    // What `resolveInstance` installs for an edited openWindow: the new
+    // initializer's action, bound to the live store and the layer's counters.
+    const refreshedState = windowStoreInitializer(manager.options, manager.sequences!)(
+      manager.store.setState,
+      manager.store.getState,
+      manager.store,
+    );
+    const thirdId = refreshedState.openWindow({ anchor: 'task-c', sessionId: 'sess-c', title: 'C' });
+    expect(new Set([firstId, secondId, thirdId]).size).toBe(3);
+    expect(Object.keys(manager.store.getState().windows).sort()).toEqual([firstId, secondId, thirdId].sort());
+  });
+});
 
 describe('createWindowManagerStore - two-instance isolation, id namespacing, and kind-gated dedup', () => {
   it('opening a window in instance A does NOT appear in instance B (windows maps are fully disjoint)', () => {

@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
 import type {
   UsageCustomWindow,
   UsageDashboardStats,
@@ -40,12 +41,16 @@ const MAX_CACHE_ENTRIES = 20;
 /** Minimum gap between hover prefetches. */
 const PREFETCH_THROTTLE_MS = 5_000;
 
-// In-flight request dedupe, keyed like the cache. Reset on HMR is intentional:
-// a dropped dedupe entry just means one extra cheap read.
-// hmr-safe: transient in-flight promise dedupe only
-const inFlightFetches = new Map<string, Promise<void>>();
-// hmr-safe: prefetch throttle timestamp only
-let lastPrefetchAtMs = 0;
+/** Shared by every evaluation of this module (`sharedModuleState`), so the pin's
+ *  refreshed actions join a fetch the earlier ones started. `inFlightFetches` is
+ *  the in-flight request dedupe, keyed like the cache; `lastPrefetchAtMs` is the
+ *  hover prefetch throttle. */
+const usageDashboardModuleState = sharedModuleState(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'usageDashboardModuleState',
+  () => ({ inFlightFetches: new Map<string, Promise<void>>(), lastPrefetchAtMs: 0 }),
+);
 
 export interface DashboardCacheEntry {
   payload: UsageDashboardStats;
@@ -164,173 +169,175 @@ function resolveEffectiveScope(scopeKind: UsageStatsScopeKind, viewedProjectId: 
   return { effectiveKind: 'all', scope: { kind: 'all' }, projectId: null };
 }
 
-function createUsageDashboardStore() {
-  const store = create<UsageDashboardStore>()((set, get) => ({
-    statsOpen: false,
-    period: 'live',
-    scopeKind: 'project',
-    viewedProjectId: null,
-    drill: null,
-    customWindow: null,
-    metric: 'cost',
-    userTouched: false,
-    cache: {},
-    activeKey: null,
-    loading: false,
-    refreshing: false,
-    error: null,
-    indexRestarting: false,
+const usageDashboardStoreInitializer: StateCreator<UsageDashboardStore> = (set, get) => ({
+  statsOpen: false,
+  period: 'live',
+  scopeKind: 'project',
+  viewedProjectId: null,
+  drill: null,
+  customWindow: null,
+  metric: 'cost',
+  userTouched: false,
+  cache: {},
+  activeKey: null,
+  loading: false,
+  refreshing: false,
+  error: null,
+  indexRestarting: false,
 
-    open: () => {
-      if (get().statsOpen) return;
-      set({ statsOpen: true });
-      // Adoption signal; main dedups to once per day (fire-and-forget).
-      window.electronAPI?.analytics?.trackFeatureUsed('usage_dashboard');
-      // Fetch AFTER the flip so the shell paints first (never block first paint).
-      void get().loadDashboardStats();
-    },
+  open: () => {
+    if (get().statsOpen) return;
+    set({ statsOpen: true });
+    // Adoption signal; main dedups to once per day (fire-and-forget).
+    window.electronAPI?.analytics?.trackFeatureUsed('usage_dashboard');
+    // Fetch AFTER the flip so the shell paints first (never block first paint).
+    void get().loadDashboardStats();
+  },
 
-    close: () => set({ statsOpen: false }),
+  close: () => set({ statsOpen: false }),
 
-    toggle: () => {
-      if (get().statsOpen) {
-        get().close();
-      } else {
-        get().open();
-      }
-    },
+  toggle: () => {
+    if (get().statsOpen) {
+      get().close();
+    } else {
+      get().open();
+    }
+  },
 
-    setPeriod: (period) => {
-      // Same-period clicks still clear an active drill / custom window (the
-      // range pills are the natural "back to the full range" affordance).
-      if (period === get().period && get().drill === null && get().customWindow === null) return;
-      set({ period, drill: null, customWindow: null, userTouched: true });
-      window.electronAPI.config.set({ usageStatsPeriod: period });
-      void get().loadDashboardStats();
-    },
+  setPeriod: (period) => {
+    // Same-period clicks still clear an active drill / custom window (the
+    // range pills are the natural "back to the full range" affordance).
+    if (period === get().period && get().drill === null && get().customWindow === null) return;
+    set({ period, drill: null, customWindow: null, userTouched: true });
+    window.electronAPI.config.set({ usageStatsPeriod: period });
+    void get().loadDashboardStats();
+  },
 
-    setScopeKind: (kind) => {
-      if (kind === get().scopeKind) return;
-      // Deliberately KEEPS an active drill: cycling scope/projects is how one
-      // day gets compared across projects; only the period pills clear it.
-      set({ scopeKind: kind, userTouched: true });
-      window.electronAPI.config.set({ usageStatsScope: kind });
-      void get().loadDashboardStats();
-    },
+  setScopeKind: (kind) => {
+    if (kind === get().scopeKind) return;
+    // Deliberately KEEPS an active drill: cycling scope/projects is how one
+    // day gets compared across projects; only the period pills clear it.
+    set({ scopeKind: kind, userTouched: true });
+    window.electronAPI.config.set({ usageStatsScope: kind });
+    void get().loadDashboardStats();
+  },
 
-    setViewedProject: (projectId) => {
-      const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
-      set({
-        scopeKind: 'project',
-        // Normalize "picked the current project" back to follow mode. An
-        // active drill is preserved (see setScopeKind).
-        viewedProjectId: projectId === currentProjectId ? null : projectId,
-        userTouched: true,
-      });
-      // Only the KIND persists; the specific viewed project is session-only.
-      window.electronAPI.config.set({ usageStatsScope: 'project' });
-      void get().loadDashboardStats();
-    },
+  setViewedProject: (projectId) => {
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    set({
+      scopeKind: 'project',
+      // Normalize "picked the current project" back to follow mode. An
+      // active drill is preserved (see setScopeKind).
+      viewedProjectId: projectId === currentProjectId ? null : projectId,
+      userTouched: true,
+    });
+    // Only the KIND persists; the specific viewed project is session-only.
+    window.electronAPI.config.set({ usageStatsScope: 'project' });
+    void get().loadDashboardStats();
+  },
 
-    setDrill: (drill) => {
-      set({ drill });
-      void get().loadDashboardStats();
-    },
+  setDrill: (drill) => {
+    set({ drill });
+    void get().loadDashboardStats();
+  },
 
-    setCustomWindow: (customWindow) => {
-      // A new window invalidates a drill day picked inside the old one.
-      set({ customWindow, drill: null, userTouched: true });
-      void get().loadDashboardStats();
-    },
+  setCustomWindow: (customWindow) => {
+    // A new window invalidates a drill day picked inside the old one.
+    set({ customWindow, drill: null, userTouched: true });
+    void get().loadDashboardStats();
+  },
 
-    setMetric: (metric) => set({ metric }),
+  setMetric: (metric) => set({ metric }),
 
-    onProjectSwitched: () => {
-      // Transient view state follows the app: a real project switch lands you
-      // on the NEW project's stats (base range), never a stale drill or a
-      // previously-picked other project. The unconditional force refetch is
-      // the #316 fix (same-range switches must still refresh the data).
-      set({ viewedProjectId: null, drill: null, customWindow: null });
-      void get().loadDashboardStats({ force: true });
-    },
+  onProjectSwitched: () => {
+    // Transient view state follows the app: a real project switch lands you
+    // on the NEW project's stats (base range), never a stale drill or a
+    // previously-picked other project. The unconditional force refetch is
+    // the #316 fix (same-range switches must still refresh the data).
+    set({ viewedProjectId: null, drill: null, customWindow: null });
+    void get().loadDashboardStats({ force: true });
+  },
 
-    prefetch: () => {
-      const now = Date.now();
-      if (now - lastPrefetchAtMs < PREFETCH_THROTTLE_MS) return;
-      lastPrefetchAtMs = now;
-      void get().loadDashboardStats({ evenIfClosed: true });
-    },
+  prefetch: () => {
+    const now = Date.now();
+    if (now - usageDashboardModuleState.lastPrefetchAtMs < PREFETCH_THROTTLE_MS) return;
+    usageDashboardModuleState.lastPrefetchAtMs = now;
+    void get().loadDashboardStats({ evenIfClosed: true });
+  },
 
-    loadDashboardStats: async (options) => {
-      const state = get();
-      if (!state.statsOpen && !options?.evenIfClosed) return;
+  loadDashboardStats: async (options) => {
+    const state = get();
+    if (!state.statsOpen && !options?.evenIfClosed) return;
 
-      const { scope, effectiveKind, projectId } = resolveEffectiveScope(state.scopeKind, state.viewedProjectId);
-      const key = dashboardCacheKey(effectiveKind, projectId, state.period, state.drill?.dayStartMs ?? null, state.customWindow);
-      const cached = state.cache[key];
+    const { scope, effectiveKind, projectId } = resolveEffectiveScope(state.scopeKind, state.viewedProjectId);
+    const key = dashboardCacheKey(effectiveKind, projectId, state.period, state.drill?.dayStartMs ?? null, state.customWindow);
+    const cached = state.cache[key];
 
-      // Point the UI at this key immediately: a cached payload repaints in the
-      // same frame; only a truly-cold key shows a loading state. The restart
-      // notice was about the old key's figures, so a new key starts without
-      // it. A same-key poll keeps it, or the notice would blink off and on
-      // with every refetch while the worker is down.
-      set({
-        activeKey: key,
-        loading: !cached,
-        refreshing: Boolean(cached),
-        error: null,
-        ...(state.activeKey === key ? {} : { indexRestarting: false }),
-      });
+    // Point the UI at this key immediately: a cached payload repaints in the
+    // same frame; only a truly-cold key shows a loading state. The restart
+    // notice was about the old key's figures, so a new key starts without
+    // it. A same-key poll keeps it, or the notice would blink off and on
+    // with every refetch while the worker is down.
+    set({
+      activeKey: key,
+      loading: !cached,
+      refreshing: Boolean(cached),
+      error: null,
+      ...(state.activeKey === key ? {} : { indexRestarting: false }),
+    });
 
-      if (cached && !options?.force && Date.now() - cached.fetchedAt < STALE_MS) {
-        set({ loading: false, refreshing: false });
-        return;
-      }
+    if (cached && !options?.force && Date.now() - cached.fetchedAt < STALE_MS) {
+      set({ loading: false, refreshing: false });
+      return;
+    }
 
-      const existing = inFlightFetches.get(key);
-      if (existing) {
-        await existing;
-        return;
-      }
+    const existing = usageDashboardModuleState.inFlightFetches.get(key);
+    if (existing) {
+      await existing;
+      return;
+    }
 
-      const fetchPromise = (async () => {
-        try {
-          const payload = await window.electronAPI.usage.getDashboardStats(scope, state.period, state.drill, state.customWindow);
-          if (payload.indexRestarting) {
-            // Not cached: the figures are an undercount, and caching them would
-            // paint over the good ones for STALE_MS. A late answer for a key
-            // the user has left says nothing about the figures on screen.
-            set((current) =>
-              current.activeKey === key
-                ? { indexRestarting: true, loading: false, refreshing: false, error: null }
-                : {},
-            );
-            return;
-          }
-          set((current) => ({
-            cache: boundCache({
-              ...current.cache,
-              [key]: { payload, fetchedAt: Date.now() },
-            }),
-            ...(current.activeKey === key
-              ? { loading: false, refreshing: false, error: null, indexRestarting: false }
-              : {}),
-          }));
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+    const fetchPromise = (async () => {
+      try {
+        const payload = await window.electronAPI.usage.getDashboardStats(scope, state.period, state.drill, state.customWindow);
+        if (payload.indexRestarting) {
+          // Not cached: the figures are an undercount, and caching them would
+          // paint over the good ones for STALE_MS. A late answer for a key
+          // the user has left says nothing about the figures on screen.
           set((current) =>
             current.activeKey === key
-              ? { loading: false, refreshing: false, error: message, indexRestarting: false }
+              ? { indexRestarting: true, loading: false, refreshing: false, error: null }
               : {},
           );
-        } finally {
-          inFlightFetches.delete(key);
+          return;
         }
-      })();
-      inFlightFetches.set(key, fetchPromise);
-      await fetchPromise;
-    },
-  }));
+        set((current) => ({
+          cache: boundCache({
+            ...current.cache,
+            [key]: { payload, fetchedAt: Date.now() },
+          }),
+          ...(current.activeKey === key
+            ? { loading: false, refreshing: false, error: null, indexRestarting: false }
+            : {}),
+        }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        set((current) =>
+          current.activeKey === key
+            ? { loading: false, refreshing: false, error: message, indexRestarting: false }
+            : {},
+        );
+      } finally {
+        usageDashboardModuleState.inFlightFetches.delete(key);
+      }
+    })();
+    usageDashboardModuleState.inFlightFetches.set(key, fetchPromise);
+    await fetchPromise;
+  },
+});
+
+function createUsageDashboardStore() {
+  const store = create<UsageDashboardStore>()(usageDashboardStoreInitializer);
 
   // Adopt the persisted range/scope from config until the user interacts.
   // Runs once per pinned store instance; closes the cold-load ordering race
@@ -357,6 +364,7 @@ function createUsageDashboardStore() {
 // a second config subscription) to part of the tree.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedUsageDashboardStore: ReturnType<typeof createUsageDashboardStore> | undefined = import.meta.hot?.data?.usageDashboardStore;
+if (preservedUsageDashboardStore) refreshPinnedStore(preservedUsageDashboardStore, usageDashboardStoreInitializer);
 
 export const useUsageDashboardStore = preservedUsageDashboardStore ?? createUsageDashboardStore();
 
@@ -364,8 +372,9 @@ export const useUsageDashboardStore = preservedUsageDashboardStore ?? createUsag
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.usageDashboardStore = useUsageDashboardStore;
-  // Editing this module's OWN code would leave the pinned instance running stale
-  // closures; force a clean full reload instead (prod drops this whole block).
+  // An edit to this module's own code re-runs it (the refresh above takes its
+  // new actions), then invalidate() hands the update on to the importers. It
+  // does not reload the page. Prod drops this block.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

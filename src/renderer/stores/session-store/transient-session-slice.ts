@@ -9,6 +9,15 @@ import { useToastStore } from '../toast-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import type { SessionStore } from './types';
 import { withoutSessionsIndexed } from './session-index';
+import { sharedModuleState } from '../hmr-store-pin';
+
+/** Shared by every evaluation of this module (see `sharedModuleState`). */
+const transientSessionModuleState = sharedModuleState(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'transientSessionModuleState',
+  () => ({ headRefreshRerun: new Map<string, boolean>() }),
+);
 
 /**
  * One transient (Command Terminal) session, owned by a single command-terminal
@@ -276,9 +285,10 @@ export function createTransientSessionSlice(preserved: {
 } | undefined): StateCreator<SessionStore, [], [], TransientSessionSlice> {
   // In-flight HEAD refreshes by project id; the value records whether a fire
   // arrived mid-read, so the read repeats once more instead of running twice
-  // at once. Function-scoped, not module-scoped: it belongs to this store
-  // instance, which is pinned across HMR with the rest of the session store.
-  const headRefreshRerun = new Map<string, boolean>();
+  // at once. Shared by every evaluation of this module, because the pin's
+  // refresh re-runs this creator and a refresh still in flight from the old
+  // actions must see the new ones' fires.
+  const headRefreshRerun = transientSessionModuleState.headRefreshRerun;
 
   return (set, get) => ({
     commandBarVisible: false,

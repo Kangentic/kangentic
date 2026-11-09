@@ -2,7 +2,7 @@
 
 ## Working in the repo
 
-* [Developer guide](developer-guide.md) - How to run, build and test Kangentic from source: the dev server and esbuild watch, worktree previews and their data isolation, the production and web demo builds, the unit, UI, E2E and demo test tiers, project structure, environment variables, and packaging notes.
+* [Developer guide](developer-guide.md) - How to run, build and test Kangentic from source: the dev server, its esbuild boot build and the dev restart, worktree previews and their data isolation, the production and web demo builds, the unit, UI, E2E and demo test tiers, project structure, environment variables, and packaging notes.
 * [Board test gate](board-test-gate.md) - How the Code Review, Testing and Merge columns gate a change on this repo's own board, what each column's skill runs, how a red check in Merge sends the task back to Testing and the cap on that loop, why a review pass commits in the task's own worktree, and the Ready or Blocked verdict and ledger it leaves.
 * [Dependency upgrades](dependency-upgrades.md) - How /upgrade-deps finds what can move, researches it, skips research already done so it can run as often as you like, and keeps one rolling board task, why following npm's latest would downgrade a crash fix, how the supply chain signals work, why green tests do not finish a migration, and what a run costs.
 * [Translations](translations.md) - How Kangentic's translations are drafted and reviewed: the translation harness that fills the PO catalogs with Claude or a local model, the fuzzy review mark, refining a translation by hand, running a refill after rewording, the glossary, the local model bake-off, and the translated READMEs with their stamp and release refresh.

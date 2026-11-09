@@ -12,6 +12,7 @@ import { openTaskFromNotification } from '../../utils/open-task-from-notificatio
 import { applyStructuralSharing } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
 import type { BoardStore } from './types';
+import { sharedModuleState } from '../hmr-store-pin';
 
 // agent-focus-ok: the only task this file opens is through a restore toast's
 // card click, which is the user asking for that task. The one push it takes,
@@ -36,8 +37,14 @@ export const ARCHIVED_PREVIEW_LIMIT = 15;
  * never joins it and a result that resolves after a project switch is dropped
  * rather than applied to (and latched onto) the wrong project.
  */
-// hmr-safe: transient in-flight guard; a reset-on-HMR just permits a fresh fetch.
-let archivedFullLoad: { projectId: string | null; promise: Promise<void> } | null = null;
+const archivedTasksModuleState = sharedModuleState<{
+  archivedFullLoad: { projectId: string | null; promise: Promise<void> } | null;
+}>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'archivedTasksModuleState',
+  () => ({ archivedFullLoad: null }),
+);
 
 /**
  * Fetch the archived data appropriate to the current load state. When the full
@@ -114,7 +121,8 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
     const projectId = useProjectStore.getState().currentProject?.id ?? null;
     // Join an in-flight fetch for the SAME project instead of starting a
     // redundant one (see archivedFullLoad).
-    if (archivedFullLoad && archivedFullLoad.projectId === projectId) return archivedFullLoad.promise;
+    const inFlightLoad = archivedTasksModuleState.archivedFullLoad;
+    if (inFlightLoad && inFlightLoad.projectId === projectId) return inFlightLoad.promise;
     const promise = window.electronAPI.tasks.listArchived()
       .then((fullList) => {
         // Drop a result that resolved after a project switch: applying project
@@ -132,9 +140,9 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       .finally(() => {
         // Clear the marker only if it is still ours (a project switch mid-flight
         // may have replaced it).
-        if (archivedFullLoad?.promise === promise) archivedFullLoad = null;
+        if (archivedTasksModuleState.archivedFullLoad?.promise === promise) archivedTasksModuleState.archivedFullLoad = null;
       });
-    archivedFullLoad = { projectId, promise };
+    archivedTasksModuleState.archivedFullLoad = { projectId, promise };
     return promise;
   },
 

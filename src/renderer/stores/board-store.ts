@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore } from './hmr-store-pin';
 import type { BoardStore } from './board-store/types';
 import { createTaskSlice } from './board-store/task-slice';
 import { createSwimlaneSlice } from './board-store/swimlane-slice';
@@ -37,28 +38,33 @@ import { createLanePinSlice } from './board-store/lane-pin-slice';
  * module (a slice edit, or an edit to a store it imports) would otherwise
  * construct a SECOND store instance while the mounted board stays subscribed to
  * the first, stranding agent/MCP-created tasks until a full reload. Pinning the
- * instance in `import.meta.hot.data` guarantees a single store across HMR cycles.
+ * instance in `import.meta.hot.data` guarantees a single store across HMR cycles,
+ * and the refresh below gives that instance each re-eval's new and changed
+ * actions.
  */
+const boardStoreInitializer: StateCreator<BoardStore> = (...args) => ({
+  ...createTaskSlice(...args),
+  ...createSwimlaneSlice(...args),
+  ...createArchivedTasksSlice(...args),
+  ...createTaskCompletionSlice(...args),
+  ...createBoardConfigSlice(...args),
+  ...createBoardHydrationSlice(...args),
+  ...createTaskMoveConfirmSlice(...args),
+  ...createDoneDropConfirmSlice(...args),
+  ...createActiveViewSlice(...args),
+  ...createBoardManagerSlice(...args),
+  ...createBoardFilterSlice(...args),
+  ...createLanePinSlice(...args),
+  ...createAutomationsSlice(...args),
+});
+
 export function createBoardStore() {
-  return create<BoardStore>((...args) => ({
-    ...createTaskSlice(...args),
-    ...createSwimlaneSlice(...args),
-    ...createArchivedTasksSlice(...args),
-    ...createTaskCompletionSlice(...args),
-    ...createBoardConfigSlice(...args),
-    ...createBoardHydrationSlice(...args),
-    ...createTaskMoveConfirmSlice(...args),
-    ...createDoneDropConfirmSlice(...args),
-    ...createActiveViewSlice(...args),
-    ...createBoardManagerSlice(...args),
-    ...createBoardFilterSlice(...args),
-    ...createLanePinSlice(...args),
-    ...createAutomationsSlice(...args),
-  }));
+  return create<BoardStore>(boardStoreInitializer);
 }
 
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedBoardStore: ReturnType<typeof createBoardStore> | undefined = import.meta.hot?.data?.boardStore;
+if (preservedBoardStore) refreshPinnedStore(preservedBoardStore, boardStoreInitializer);
 
 export const useBoardStore = preservedBoardStore ?? createBoardStore();
 
@@ -66,9 +72,10 @@ export const useBoardStore = preservedBoardStore ?? createBoardStore();
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.boardStore = useBoardStore;
-  // Editing this module's OWN code would leave the pinned instance running stale
-  // slice closures; force a clean full reload instead. Rare; prod is unaffected
-  // (import.meta.hot is undefined there, so this whole block is dropped).
+  // An edit to this module's own code re-runs it (the refresh above takes its
+  // new actions), then invalidate() hands the update on to the importers, so
+  // they re-bind to the new exports. It does not reload the page. Prod is
+  // unaffected (import.meta.hot is undefined there, so this block is dropped).
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

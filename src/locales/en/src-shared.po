@@ -837,6 +837,10 @@ msgstr "Queued..."
 msgid "Quick Find"
 msgstr "Quick Find"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr "Rebuild main and preload, then restart. Agents pause and resume."
+
 #: src/shared/relay.ts
 msgid "Relay address cannot contain a backslash."
 msgstr "Relay address cannot contain a backslash."
@@ -868,6 +872,10 @@ msgstr "Reset terminal"
 #: src/shared/keybindings.ts
 msgid "Reset zoom"
 msgstr "Reset zoom"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr "Restart Kangentic"
 
 #: src/shared/automation-manifest.ts
 msgid "Review the latest changes and fix any issues you find"

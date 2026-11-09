@@ -303,6 +303,11 @@ export const IPC = {
 
   // App
   APP_GET_VERSION: 'app:getVersion',
+  // Dev only: restart Kangentic under `npm start`, which rebuilds main and
+  // preload first (scripts/dev.js restartElectron). Never rename or remove it:
+  // the renderer calls it exactly when main or preload is OLDER than the
+  // renderer, so a running main has to recognise it from every earlier build.
+  APP_RESTART: 'app:restart',
 
   // Notifications
   NOTIFICATION_SHOW: 'notification:show',

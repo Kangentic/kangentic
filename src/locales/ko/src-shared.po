@@ -1014,6 +1014,10 @@ msgstr "대기 중..."
 msgid "Quick Find"
 msgstr "빠른 찾기"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 #, fuzzy
 msgid "Relay address cannot contain a backslash."
@@ -1053,6 +1057,10 @@ msgstr "터미널 재설정"
 #, fuzzy
 msgid "Reset zoom"
 msgstr "확대/축소 초기화"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
