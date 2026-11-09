@@ -12,7 +12,7 @@
     {
       "id": "3c7e9a52-1f4b-4d8e-9a6c-5b2d0e8f7a14",
       "name": "Design",
-      "icon": "pen-tool",
+      "icon": "brush",
       "color": "#ec4899",
       "description": "Draws a design canvas and revises it until the owner signs it off. For work whose result someone looks at: app UI, a demo frame, a docs figure. Only a person moves a card out of it.",
       "autoSpawn": true,
