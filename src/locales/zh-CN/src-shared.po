@@ -661,8 +661,8 @@ msgid "On task exit"
 msgstr "任务退出时"
 
 #: src/shared/task-template-vars.ts
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "待办与已完成之间的每列各占一行：该列运行的内容，以及近期任务经过该列的情况。"
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."

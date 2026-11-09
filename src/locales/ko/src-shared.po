@@ -802,9 +802,8 @@ msgid "On task exit"
 msgstr "작업 이탈 시"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "할 일과 완료 사이의 열마다 한 줄: 실행하는 내용과 최근 작업의 진행 결과."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

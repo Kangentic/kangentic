@@ -660,8 +660,8 @@ msgid "On task exit"
 msgstr "On task exit"
 
 #: src/shared/task-template-vars.ts
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
 
 #: src/shared/automation-manifest.ts
 msgid "One per line, as Name: Value."

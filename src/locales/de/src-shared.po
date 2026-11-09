@@ -802,9 +802,8 @@ msgid "On task exit"
 msgstr "Bei Austritt der Aufgabe"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "Eine Zeile pro Spalte zwischen To Do und Done: was sie ausführt und wie aktuelle Aufgaben sie durchlaufen haben."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
