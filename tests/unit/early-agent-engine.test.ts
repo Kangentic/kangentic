@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import type { EarlyAgentHandle } from '../../src/main/transition-engine/early-agent';
 import { assessResumeConversation } from '../../src/main/transition-engine/resume-conversation-guard';
+import { resolveShimLaunch } from '../../src/main/agent/shared/shim-launch';
 
 const mockAdapter = {
   name: 'claude',
@@ -181,6 +182,16 @@ describe('launchEarlyAgent', () => {
     await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude', startPath: 'phone' });
 
     expect((sessionManager.spawned[0] as SpawnInput & { startPath?: string }).startPath).toBe('phone');
+  });
+
+  it('records the shim-resolved CLI path on the session, for the launch report\'s command_head tag', async () => {
+    vi.mocked(resolveShimLaunch).mockResolvedValueOnce({ agentPath: '/opt/claude-shim', prompt: undefined, strategy: 'unchanged' });
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine(sessionManager, makeSessionRepo());
+
+    await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' });
+
+    expect((sessionManager.spawned[0] as SpawnInput & { agentCliPath?: string | null }).agentCliPath).toBe('/opt/claude-shim');
   });
 
   it('reads as a board start when nothing named another', async () => {

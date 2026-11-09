@@ -606,6 +606,12 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       return manager.spawn.mock.calls[0][0];
     }
 
+    it('hands the spawn the path the agent was launched from, for the launch report', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect((spawnOptions() as { agentCliPath?: string | null }).agentCliPath).toBe('/mock/bin/claude');
+    });
+
     it('on a fresh start: the agent, a new conversation id and the checkout it ran in', async () => {
       const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
 
