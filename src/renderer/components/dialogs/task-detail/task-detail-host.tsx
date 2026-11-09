@@ -44,7 +44,7 @@ import type { MoveTaskResult } from '../../../stores/board-store/task-slice';
 
 /** The per-project config values the task-detail surface actually reads. */
 export interface TaskDetailHostConfig {
-  /** Label -> color map for LabelPills. */
+  /** Label -> color map for TaskPills. */
   labelColors: Record<string, string>;
   /** Fallback base branch when the task pins none. */
   defaultBaseBranch: string;
