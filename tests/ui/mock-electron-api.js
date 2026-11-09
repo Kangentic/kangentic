@@ -215,6 +215,9 @@
   // while a Send is in flight. See __mockBrowser.holdCaptureUntilReleased.
   let browserCaptureHold = null;
   let browserAnnotationDrafts = {};
+  // Tasks whose `window.__mockBrowserAnnotationDrafts` seed was already read, so a Clear or a Send
+  // that empties the draft does not bring the seed back on the next load.
+  let annotationDraftsHydrated = {};
   let browserAnnotationCaptureCount = 0;
   let browserPaneCalls = [];
   let browserZoomSubscribers = [];
@@ -894,6 +897,20 @@
     return report;
   }
 
+  /**
+   * A task's annotation draft from `window.__mockBrowserAnnotationDrafts` ({ taskId: draft }), read
+   * when the pane first asks, for the load-order reason above, and only while the task has no draft
+   * of its own. Once per task: a draft the visitor cleared stays cleared.
+   */
+  function hydrateSeededAnnotationDraft(taskId) {
+    if (annotationDraftsHydrated[taskId]) return;
+    annotationDraftsHydrated[taskId] = true;
+    var seeds = window.__mockBrowserAnnotationDrafts;
+    if (!seeds || typeof seeds !== 'object' || !Object.prototype.hasOwnProperty.call(seeds, taskId)) return;
+    if (browserAnnotationDrafts[taskId]) return;
+    browserAnnotationDrafts[taskId] = JSON.parse(JSON.stringify(seeds[taskId]));
+  }
+
   // Test override conventions consumed below (set via addInitScript before this mock loads):
   //   - window.__mockBoardProfiles: pre-seeded BoardProfile[] for boardConfig.getBoardProfiles()
   //   - window.__mockAgentListOverrides: per-agent override of agents.list() entries
@@ -902,6 +919,8 @@
   //   - window.__mockTaskReports: a whole completed task report by task id, served by
   //     sessions.getTaskReport (re-anchored onto the archived row, with its summary) and, when
   //     its summary is written, by knowledgeGraph.taskSummary
+  //   - window.__mockBrowserAnnotationDrafts: a Browser pane's saved annotation draft by task id,
+  //     served once by browser.loadAnnotations while the task has none of its own
   //   - window.__mockInitialExit: one session-exit push fired when sessions.onExit registers
   //   - window.__mockBoardConfigChanged: a projectId pushed when boardConfig.onChanged registers
   //   - window.__mockFolderPath: path returned by dialog.selectFolder() (consume-once)
@@ -7204,10 +7223,13 @@
       // A task's annotation draft, held in memory per task as main holds it on
       // disk. The images are counted, not kept.
       loadAnnotations: async function (taskId) {
+        hydrateSeededAnnotationDraft(taskId);
         var draft = browserAnnotationDrafts[taskId];
         return draft ? JSON.parse(JSON.stringify(draft)) : null;
       },
+      // A save or a discard is the task's own draft, so a seed read later never replaces it.
       saveAnnotations: async function (taskId, draft) {
+        annotationDraftsHydrated[taskId] = true;
         browserAnnotationDrafts[taskId] = JSON.parse(JSON.stringify(draft));
       },
       saveAnnotationCapture: async function () {
@@ -7216,6 +7238,7 @@
         return hex;
       },
       discardAnnotations: async function (taskId) {
+        annotationDraftsHydrated[taskId] = true;
         delete browserAnnotationDrafts[taskId];
       },
       // projectId is the TASK's project (a popped-out pane outlives a project
@@ -7436,6 +7459,7 @@
       if (browserCaptureHold) browserCaptureHold.release();
       browserCaptureHold = null;
       browserAnnotationDrafts = {};
+      annotationDraftsHydrated = {};
       browserAnnotationCaptureCount = 0;
       browserPaneCalls = [];
       browserZoomSubscribers = [];
