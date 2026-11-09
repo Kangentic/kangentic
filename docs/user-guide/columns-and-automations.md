@@ -23,7 +23,7 @@ automations on the right.
 | Setting | Description |
 |---------|-------------|
 | **Name** | Column display name |
-| **Description** | Column header tooltip, shared via `kangentic.json`. Display only; never sent to the agent |
+| **Description** | Column header tooltip, shared via `kangentic.json`. The column's own agent never gets it. A workflow's planning agent reads it as the column's purpose when it picks each task's route, the workflow's turn-end step check puts it in its question, and `kangentic_list_columns` prints it. Say what the column does and which work needs it |
 | **Color** | Header accent color |
 | **Icon** | Lucide icon name (e.g., `square-terminal`, `code`, `flask-conical`) |
 | **Agent** | Override the project's default agent for this column (e.g., use Codex for code review) |

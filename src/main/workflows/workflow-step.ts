@@ -1,5 +1,4 @@
 import type { AutomationRunStatus, Swimlane, Task } from '../../shared/types';
-import { automationMovesTask, automationMoveTargetName, canColumnRun } from '../../shared/automation-manifest';
 import { doneColumn, nextOnRoute } from '../../shared/workflow-route';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
@@ -11,9 +10,9 @@ import { isTurnSettled } from '../pty/turn-settled';
 import type { OpenBackgroundShell } from '../activity-engine/open-work-ledger';
 import { checkAutomationConditions, type ConditionCheckCall } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput, ConditionPromptRow } from '../automations/condition-check/condition-prompt';
-import { resolveMoveTarget, routeOf } from '../automations/move-target';
-import { hasFinalLine } from '../automations/row-guards';
+import { routeOf } from '../automations/move-target';
 import {
+  columnExitRows,
   describeStepRoute,
   isSendBackOnly,
   stepExitVerdict,
@@ -256,24 +255,9 @@ export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_p
   }
 }
 
-/**
- * The column's exit rows: its enabled turn-end rows that move the task behind a
- * Text match, each with the column it sends the task to, resolved as the row's
- * own move resolves it (`move-from-row.ts`). The filter is the turn-end
- * runner's own (`automation-runner.ts`: a Text match, `canColumnRun`), less
- * Frequency and Condition, which decide whether a row runs, not where it sends
- * the task. A spent forward row still says what finishes the step, and the step
- * is what moves the task on once the row no longer can.
- */
-function columnExitRows(repos: ReturnType<typeof getProjectRepos>, columns: readonly Swimlane[], column: Swimlane, task: Task): StepExitRow[] {
-  const facts = { autoSpawn: column.auto_spawn, role: column.role };
-  const exitRows: StepExitRow[] = [];
-  for (const row of repos.automations.getForTrigger(column.id, 'turn_end')) {
-    if (!hasFinalLine(row) || !automationMovesTask(row.type) || !canColumnRun(row.type, facts, 'turn_end').ok) continue;
-    const target = resolveMoveTarget(columns, column.id, automationMoveTargetName(row.type, row.config), routeOf(task));
-    exitRows.push({ finalLine: row.final_line, target: target.ok ? target.column : null });
-  }
-  return exitRows;
+/** The column's exit rows for this task, read now (`columnExitRows`). */
+function exitRowsForTask(repos: ReturnType<typeof getProjectRepos>, columns: readonly Swimlane[], column: Swimlane, task: Task): StepExitRow[] {
+  return columnExitRows(repos.automations.getForTrigger(column.id, 'turn_end'), columns, column, routeOf(task));
 }
 
 export async function runWorkflowStep(
@@ -416,7 +400,7 @@ export async function runWorkflowStep(
 
   // Read before the check, whose question it decides. The answer below reads
   // the rows again, so a column added or renamed during the check counts.
-  const sendBackOnly = isSendBackOnly(column, columnExitRows(repos, repos.swimlanes.list(), column, task));
+  const sendBackOnly = isSendBackOnly(column, exitRowsForTask(repos, repos.swimlanes.list(), column, task));
   const outcome = await checkAutomationConditions(
     deps,
     ask([{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column, route, { sendBackOnly }) }]),
@@ -450,7 +434,7 @@ export async function runWorkflowStep(
   const columns = checked.met ? repos.swimlanes.list() : [];
   // The column's own exit rows outrank the check's yes: a reply none of them
   // moves forward is not done, whatever the check made of it.
-  const exits = checked.met ? stepExitVerdict(column, columnExitRows(repos, columns, column, after.task), agentReply) : null;
+  const exits = checked.met ? stepExitVerdict(column, exitRowsForTask(repos, columns, column, after.task), agentReply) : null;
   const answer = exits && !exits.accepted ? { ...checked, met: false, reason: exits.reason } : checked;
   // The call that gave this answer: a retry's, when the first reply skipped it.
   const answerCallId = answer.callId ?? outcome.callId;

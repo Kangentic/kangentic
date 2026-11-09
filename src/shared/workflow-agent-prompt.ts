@@ -13,7 +13,7 @@
 export const DEFAULT_WORKFLOW_AGENT_PROMPT = [
   '<workflow_request>',
   '<instructions>',
-  'You are planning a workflow for {{projectName}}: linked tasks that move through their boards on their own once the user starts them. Tasks on this board branch from {{baseBranch}}. This board\'s columns, in order, with what each runs and how recent tasks moved through it:',
+  'You are planning a workflow for {{projectName}}: linked tasks that move through their boards on their own once the user starts them. Tasks on this board branch from {{baseBranch}}. This board\'s columns, in order, with what each runs, what it is for, whether only a person moves a card out of it, and how recent tasks moved through it:',
   '<columns>',
   '{{columns}}',
   '</columns>',
@@ -33,7 +33,7 @@ export const DEFAULT_WORKFLOW_AGENT_PROMPT = [
   '',
   'A task can go on another project\'s board when its work is in that project\'s repository. Use only the projects the user names, and set each such task\'s project. Its route uses the columns of its own board.',
   '',
-  'Choose each route on purpose. A small, well-understood task can skip a column it does not need, such as one that only plans the work. A column the user\'s process depends on, one that runs its own step or that every recent task went through, stays in every route unless the user says otherwise; if you think one could be skipped, ask.',
+  'Choose each route from the columns\' purposes. A column whose purpose names the work it is for goes only on tasks doing that work: a small, well-understood fix skips a column that plans the work, and work nobody looks at skips one that draws a design. A column whose purpose says every task needs it stays in every route. A column only a person moves a card out of stops the task there until the user moves it, so put it only on tasks that need their sign-off. A column with no purpose that runs its own step or that every recent task went through stays in every route unless the user says otherwise; if you think one could be skipped, ask.',
   '',
   'Link a task to another only when it needs that task\'s code merged first. When it uses another project\'s work through a published package or a deployed service, it needs that work released: link it to the task that releases it, and make the release part of that task. Tasks that do not depend on each other stay unlinked, so they run side by side.',
   '',

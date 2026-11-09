@@ -7,6 +7,8 @@
  * verdict printed above its steps again), nothing errors anywhere: the card just waits in its
  * column. So each row is held to the thing that prints its line:
  *
+ * 0. Design: the Design contract, its On task enter message, asks for exactly the Shelved line,
+ *    and Shelved is the column's only Move to column row, so Design stays a person's gate.
  * 1. Code Review: scripts/review-verdict.mjs's closing block, and the summary the skill pastes,
  *    END on exactly the Back for revisions and On to Testing lines. Exact equality is stricter than
  *    the matcher on purpose: the script is deterministic, so the matcher's leniency is never what
@@ -100,6 +102,7 @@ function lastLineOf(text: string): string {
  * producer test in a describe below, so add the two together.
  */
 const PINNED_ROWS = new Set([
+  'Design/Shelved',
   'Executing/On to Code Review',
   'Code Review/Back for revisions',
   'Code Review/On to Testing',
@@ -112,6 +115,33 @@ const READY_REPORT = { checks: { typecheck: 'pass', hmrVitest: 'pass', scopedTes
 
 // A failed check is a blocker on its own, so no finding is needed to reach Blocked.
 const BLOCKED_REPORT = { checks: { typecheck: 'fail', hmrVitest: 'pass', scopedTests: 'none' }, findings: [] };
+
+describe('board turn-end contracts: Design', () => {
+  function designRow(trigger: string, rowName: string): AutomationRow {
+    const row = board.columns.find((column) => column.name === 'Design')?.automations?.[trigger]?.find((candidate) => candidate.name === rowName);
+    if (!row) throw new Error(`kangentic.json's Design column has no "${rowName}" ${trigger} row`);
+    return row;
+  }
+
+  // The agent can only end on a line it was told about, and nothing else prints this one.
+  it('has the Design contract ask for exactly the Shelved line', () => {
+    expectTextIn(designRow('onEnter', 'Design contract').message ?? '', 'the Design contract', `"${finalLineOf('Design', 'Shelved')}"`);
+  });
+
+  // Its only Move to column row sends the card back, which is what makes Design a person's gate:
+  // a workflow never moves a card out of it, and the owner's drag to Planning is the sign-off.
+  it('sends a shelved design back to To Do, and has no row that moves a card forward', () => {
+    expect(turnEndRow('Design', 'Shelved').targetColumn).toBe('To Do');
+    const moveRows = (board.columns.find((column) => column.name === 'Design')?.automations?.onTurnEnd ?? [])
+      .filter((row) => row.type === 'move_to_column');
+    expect(moveRows.map((row) => row.name)).toEqual(['Shelved']);
+  });
+
+  // The exit row fires on every move out, and a straight drag to Executing must not enter plan mode.
+  it('names the destination in the sign-off message', () => {
+    expect(designRow('onExit', 'Signed off').message).toContain('{{toColumn}}');
+  });
+});
 
 describe('board turn-end contracts: Code Review', () => {
   it('ends a Ready pass on exactly the On to Testing line', () => {

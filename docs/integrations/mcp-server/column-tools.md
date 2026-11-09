@@ -33,6 +33,12 @@ A column that runs tasks on its own conversation is tagged `[isolated session]`.
 marked: a main-session column is the norm, and tagging every one would bury the distinction. See
 [kangentic_update_column](#kangentic_update_column) for what the tag means.
 
+A column with a description prints it on an indented `Purpose:` line below its own. The
+description says what the column does and which work needs it, so an agent adding a workflow task
+over MCP can pick a route that skips the columns its work does not need without a
+`kangentic_get_column_detail` call per column. A column with no description prints one line, as
+before.
+
 ## kangentic_get_column_detail
 
 Get detailed column configuration: description, auto-spawn, permission mode, session track, plan approval, plan exit target, and visual settings.

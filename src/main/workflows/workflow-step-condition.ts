@@ -1,10 +1,14 @@
-import type { Swimlane, Task } from '../../shared/types';
+import type { ColumnAutomation, Swimlane, Task } from '../../shared/types';
+import { automationMovesTask, automationMoveTargetName, canColumnRun } from '../../shared/automation-manifest';
 import { finalMatchLine, lineMatchesPattern, shownFinalLine, textMatchCanMatch } from '../../shared/final-line-match';
-import { doneColumn, isForwardOf, nextOnRoute, routeCandidates, routeColumns } from '../../shared/workflow-route';
+import { doneColumn, isForwardOf, nextOnRoute, routeCandidates, routeColumns, type RouteFields } from '../../shared/workflow-route';
+import { resolveMoveTarget } from '../automations/move-target';
+import { hasFinalLine } from '../automations/row-guards';
 
 /**
- * What the workflow's step check asks the Automation agent at a turn end, and
- * the route it is told. Pure: no database, no Electron, so the check's wording
+ * What the workflow's step check asks the Automation agent at a turn end, the
+ * route it is told, and which of a column's rows are its exits (read by the
+ * planner's `{{columns}}` too). Pure: no database, no Electron, so the check's wording
  * is unit tested and measured against real final messages on its own.
  *
  * - The route always wins over the task's own words (user's call, 2026-10-04).
@@ -167,6 +171,33 @@ export interface StepExitRow {
  * the task stops rather than moves.
  */
 export type StepExitVerdict = { accepted: true; stopsHere?: true } | { accepted: false; reason: string };
+
+/**
+ * The column's exit rows: those of its enabled turn-end rows (`turnEndRows`)
+ * that move the task behind a Text match, each with the column it sends the
+ * task to, resolved as the row's own move resolves it (`move-from-row.ts`). The
+ * filter is the turn-end runner's own (`automation-runner.ts`: a Text match,
+ * `canColumnRun`), less Frequency and Condition, which decide whether a row
+ * runs, not where it sends the task. A spent forward row still says what
+ * finishes the step, and the step is what moves the task on once the row no
+ * longer can. `route` is the task's route, or null for the board's own order,
+ * which is what a workflow's planner reads before any task exists.
+ */
+export function columnExitRows(
+  turnEndRows: readonly ColumnAutomation[],
+  columns: readonly Swimlane[],
+  column: Swimlane,
+  route: RouteFields | null,
+): StepExitRow[] {
+  const facts = { autoSpawn: column.auto_spawn, role: column.role };
+  const exitRows: StepExitRow[] = [];
+  for (const row of turnEndRows) {
+    if (!hasFinalLine(row) || !automationMovesTask(row.type) || !canColumnRun(row.type, facts, 'turn_end').ok) continue;
+    const target = resolveMoveTarget(columns, column.id, automationMoveTargetName(row.type, row.config), route);
+    exitRows.push({ finalLine: row.final_line, target: target.ok ? target.column : null });
+  }
+  return exitRows;
+}
 
 /** A row that can run, whose Text match can match a line. */
 function liveExitRows(exitRows: readonly StepExitRow[]): StepExitRow[] {
