@@ -18,7 +18,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -244,7 +244,7 @@ test.describe('dev restart', () => {
     await reportMainStale(page, ['main']);
     // Negative assertion: nothing to poll for, so give a latent toast a budget.
     await page.waitForTimeout(500);
-    await expect(staleToast(page)).toHaveCount(0);
+    expect(await toastCountRightNow(page, 'Main process changed')).toBe(0);
 
     // A different set raises it again.
     await reportMainStale(page, ['main', 'preload']);
@@ -254,7 +254,7 @@ test.describe('dev restart', () => {
     // The same set in another order is the same signature.
     await reportMainStale(page, ['preload', 'main']);
     await page.waitForTimeout(500);
-    await expect(staleToast(page)).toHaveCount(0);
+    expect(await toastCountRightNow(page, 'Main process changed')).toBe(0);
 
     // A fresh build clears the memory, so the next stale report shows again.
     await reportMainStale(page, []);
