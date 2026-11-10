@@ -43,6 +43,17 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 // By full path on Windows: a bare `tar` can find Git's GNU tar, which reads "C:" as a remote host.
 const tarPath = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 
+/**
+ * Node's Linux tarball and the `tar` flag that unpacks it on this computer.
+ * Windows System32 tar is bsdtar linked with zlib, not liblzma. `-J` (xz) hangs with no
+ * stderr (Windows 10, bsdtar 3.5.2). Node publishes the same tree as .tar.gz; gzip extract works.
+ */
+export function nodeDistributionKind(platform = process.platform) {
+  return platform === 'win32'
+    ? { extension: 'tar.gz', extractFlag: '-xzf' }
+    : { extension: 'tar.xz', extractFlag: '-xJf' };
+}
+
 function parseArguments(argumentList) {
   const parsed = { arches: Object.keys(ARCHES), out: path.join(repoRoot, 'dist', 'host'), urlBase: null, manifestOut: null };
   for (let index = 0; index < argumentList.length; index += 1) {
@@ -106,7 +117,7 @@ async function download(url, destination) {
 /** The pinned Node tarball for a CPU, checked against the checksum nodejs.org publishes. */
 async function fetchNode(arch, cacheDirectory) {
   fs.mkdirSync(cacheDirectory, { recursive: true });
-  const tarballName = `node-${NODE_VERSION}-linux-${arch}.tar.xz`;
+  const tarballName = `node-${NODE_VERSION}-linux-${arch}.${nodeDistributionKind().extension}`;
   const tarball = path.join(cacheDirectory, tarballName);
   const sums = path.join(cacheDirectory, `SHASUMS256-${NODE_VERSION}.txt`);
   if (!fs.existsSync(sums)) await download(`${NODE_BASE_URL}/SHASUMS256.txt`, sums);
@@ -159,7 +170,8 @@ async function buildArchive({ arch, version, outDirectory, workDirectory, nodeTa
   fs.rmSync(assetRoot, { recursive: true, force: true });
   fs.mkdirSync(path.join(assetRoot, 'node'), { recursive: true });
   const excludes = ['*/lib/node_modules', '*/bin/npm', '*/bin/npx', '*/bin/corepack', '*/include', '*/share'].flatMap((pattern) => ['--exclude', pattern]);
-  const extracted = await execute(tarPath, ['-xJf', nodeTarball, '-C', path.join(assetRoot, 'node'), '--strip-components=1', ...excludes]);
+  say(`unpacking ${path.basename(nodeTarball)}`);
+  const extracted = await execute(tarPath, [nodeDistributionKind().extractFlag, nodeTarball, '-C', path.join(assetRoot, 'node'), '--strip-components=1', ...excludes]);
   if (extracted.code !== 0) throw new Error(`could not unpack the Node tarball: ${extracted.stderr}`);
 
   const stage = path.join(workDirectory, `stage-${arch}`);

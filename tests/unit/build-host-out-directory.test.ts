@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertSafeOutDirectory } from '../../scripts/build-host.mjs';
+import { assertSafeOutDirectory, nodeDistributionKind } from '../../scripts/build-host.mjs';
 
 let outDirectory: string;
 
@@ -51,5 +51,16 @@ describe('the --out folder of the host build', () => {
   it('refuses the repository itself and a folder above it', () => {
     expect(() => assertSafeOutDirectory(path.resolve(__dirname, '..', '..'))).toThrow('the repository or a folder above it');
     expect(() => assertSafeOutDirectory(path.resolve(__dirname, '..', '..', '..'))).toThrow('the repository or a folder above it');
+  });
+});
+
+describe('the Node distribution tarball the host build unpacks', () => {
+  it('picks gzip on Windows, because System32 tar cannot unpack xz', () => {
+    expect(nodeDistributionKind('win32')).toEqual({ extension: 'tar.gz', extractFlag: '-xzf' });
+  });
+
+  it('keeps xz on macOS and Linux, where tar can unpack it', () => {
+    expect(nodeDistributionKind('linux')).toEqual({ extension: 'tar.xz', extractFlag: '-xJf' });
+    expect(nodeDistributionKind('darwin')).toEqual({ extension: 'tar.xz', extractFlag: '-xJf' });
   });
 });
