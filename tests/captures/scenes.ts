@@ -1828,20 +1828,19 @@ export const SCENES: Record<string, SceneDefinition> = {
   'changes-checks': {
     name: 'changes-checks',
     reach: 'state',
-    description: 'The Integration test coverage task, whose PR #38 reads failing, maximized with the Changes panel open and its Checks section expanded. The checks are the sample install\'s (DEMO_PR_CHECKS, served by tasks.listPrChecks): one CI job and codecov/patch failed, the rest passed. Checks opens through changesChecksOpen, the one app-wide choice the section remembers, so the frame needs no click. Send to agent is hovered and never pressed: no recording carries a checks message reaching the Cursor session.',
-    alt: 'A maximized task window with the Changes panel\'s Checks section open for its pull request: the failed Integration tests (auth) job and codecov/patch check, a Send to agent button under them, and a line for the checks that passed.',
+    description: 'The Integration test coverage task, whose PR #38 reads failing, maximized with the Changes panel open and its Pull request section expanded. The checks are the sample install\'s (DEMO_PR_CHECKS, served by tasks.listPrChecks): one CI job and codecov/patch failed, the rest passed. The section opens by itself because the PR has something to fix, and its header repeats the red count on the Changes button, so the frame needs no click and no config. Send to agent is hovered and never pressed: no recording carries a checks message reaching the Cursor session.',
+    alt: 'A maximized task window with the Changes panel\'s Pull request section open: a red count of two beside its title, the failed Integration tests (auth) job and codecov/patch check, a Send to agent button under them, and a line for the checks that passed.',
     config: {
       workspaceByProject: { [PROJECT_CONTOSO]: taskWindowWorkspace(TASK_INTEGRATION, 'Integration test coverage', 'maximized', MAXIMIZED_PLACEMENT) },
-      changesChecksOpen: true,
     },
     tasks: [{ id: TASK_INTEGRATION, detail_view_state: JSON.stringify({ changesOpen: true, changesViewMode: 'split', changesScope: 'branch', dividerRatio: 0.42 }) }],
-    ready: '[data-testid="changes-checks-toggle"][aria-expanded="true"] ~ div [data-testid="changes-checks-row"][data-check-status="failed"]',
+    ready: '[data-testid="changes-pr-toggle"][aria-expanded="true"] [data-testid="changes-pr-fix-count"]',
     // The pointer reads the failed checks, rests on Send to agent, and moves on to the passed line.
     // Every row opens its check in a browser and Send reaches the agent, so nothing is pressed.
     choreography: [
-      { hover: '[data-testid="changes-checks-row"][data-check-status="failed"]', ms: 1600 },
-      { hover: '[data-testid="changes-checks-send"]', ms: 2200 },
-      { hover: '[data-testid="changes-checks-passed"]', ms: 1400 },
+      { hover: '[data-testid="changes-pr-row"][data-check-status="failed"]', ms: 1600 },
+      { hover: '[data-testid="changes-pr-send"]', ms: 2200 },
+      { hover: '[data-testid="changes-pr-passed"]', ms: 1400 },
     ],
   },
 

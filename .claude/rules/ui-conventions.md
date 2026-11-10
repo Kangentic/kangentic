@@ -78,9 +78,11 @@ chrome unless these are stated.
   control that sets a tone (a tab, a toggle, the Filter button) let it inherit, so it follows
   hover and selection. After a plain label, pass the label's tone on the badge (`text-fg-muted`,
   `text-fg-faint`): `<body>` is `text-fg`, so an untoned pill renders bright. An overlay badge
-  is a solid `xs` circle on its icon, and two exist: the title bar's unread announcements and the
-  task window Changes button's count of what to fix on the PR. Both are `aria-hidden`, with the
-  count said in the control's tooltip. A count
+  is a solid `xs` circle on its icon, and two exist: the title bar's unread announcements (the
+  accent) and the task window Changes button's count of what to fix on the PR (`tone="danger"`).
+  Both are `aria-hidden`, with the count said in the control's tooltip. The Changes panel's Pull
+  request section repeats the Changes button's badge after its title, so the two read as one
+  count: the one place a solid badge follows a label. A count
   in parentheses ("Completed (7)") or a bare number aside stays text.
 - **Confirmations:** use `ConfirmDialog` for all yes/no prompts; set `showDontAskAgain` when the
   confirmation should be suppressible. Never build a one-off modal for a simple confirmation.

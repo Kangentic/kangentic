@@ -161,7 +161,7 @@ src/
       layout/              # App shell, sidebar, title bar, status bar
       terminal/            # xterm integration, activity log
       window-manager/      # Modeless task-detail windows: tiling, snap, drag/resize, persistence
-      CountBadge.tsx       # Count badge: the tinted pill after a label (takes its parent's tone), plus the title bar's solid overlay
+      CountBadge.tsx       # Count badge: the tinted pill after a label (takes its parent's tone), plus the solid overlay on the title bar and the Changes button
       DescriptionEditor.tsx # Markdown editor with preview toggle
       FilterPopover.tsx    # Reusable filter dropdown popover
       LabelInput.tsx       # Tag-style label input with autocomplete

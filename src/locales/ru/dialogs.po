@@ -186,7 +186,7 @@ msgstr "{oldPath} → {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "{passedCount} passed"
 msgstr ""
 
@@ -216,6 +216,7 @@ msgstr "{pillLabel}: {reason}"
 msgid "{position} of {total}"
 msgstr "{position} из {total}"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
 msgstr ""
@@ -689,10 +690,6 @@ msgstr "Изменения открыты в отдельном окне"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
-msgid "Checks"
-msgstr ""
-
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Choose icon"
@@ -925,11 +922,11 @@ msgstr "Условие: {condition}"
 msgid "Confirm"
 msgstr "Подтвердить"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with {base}"
 msgstr ""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with the base branch"
 msgstr ""
 
@@ -2165,7 +2162,7 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "открыт"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open {name} in browser"
 msgstr ""
 
@@ -2174,7 +2171,7 @@ msgstr ""
 msgid "Open {shortHash} on {providerName}"
 msgstr "Открыть {shortHash} в {providerName}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open all checks in browser"
 msgstr ""
 
@@ -2241,7 +2238,7 @@ msgstr "Откройте эту доску, чтобы изменить её п�
 msgid "Open the board to change this"
 msgstr "Откройте доску, чтобы изменить это"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open the pull request in browser"
 msgstr ""
 
@@ -2427,6 +2424,10 @@ msgstr "Папка проекта не найдена"
 #, fuzzy
 msgid "Project relocated"
 msgstr "Проект перемещён"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
+msgid "Pull request"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #, fuzzy
@@ -2713,7 +2714,7 @@ msgstr "Выберите коммит, чтобы просмотреть его 
 msgid "Select a file to view changes"
 msgstr "Выберите файл для просмотра изменений"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #, fuzzy
 msgid "Send to agent"
 msgstr "Отправить агенту"
@@ -2728,7 +2729,7 @@ msgstr "Отправить в бэклог"
 msgid "Sending the original instead."
 msgstr "Вместо него отправляется оригинал."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #, fuzzy
 msgid "Sending..."
 msgstr "Отправка..."

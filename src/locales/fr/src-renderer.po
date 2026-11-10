@@ -1311,6 +1311,10 @@ msgstr ""
 msgid "Open PR in default browser"
 msgstr ""
 
+#: src/renderer/components/PrLink.tsx
+msgid "Open pull request"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "Open settings"
