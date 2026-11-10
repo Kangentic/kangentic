@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import { getGlobalDb } from '../database';
+import { writeTransaction } from '../transaction';
 import type { AgentAccount, AgentAccountKind, AgentAccountStatus } from '../../../shared/agent-accounts';
 import type { RateLimitWindow } from '../../../shared/types';
 
@@ -149,7 +150,7 @@ export class AgentAccountRepository {
     const listedIds = new Set(listed);
     const order = [...listed, ...current.map((account) => account.id).filter((id) => !listedIds.has(id))];
     const update = database.prepare('UPDATE agent_accounts SET position = ? WHERE id = ? AND agent = ?');
-    database.transaction(() => {
+    writeTransaction(database, () => {
       order.forEach((id, index) => update.run(index + 1, id, agent));
     })();
   }
@@ -162,7 +163,8 @@ export class AgentAccountRepository {
     const database = this.database();
     const account = this.getById(id);
     if (!account) return;
-    database.transaction(() => {
+    // The reorder inside is a transaction of its own, which nests as a savepoint.
+    writeTransaction(database, () => {
       database.prepare('DELETE FROM agent_accounts WHERE id = ?').run(id);
       this.reorder(account.agent, this.listForAgent(account.agent).map((remaining) => remaining.id));
     })();
