@@ -57,7 +57,15 @@ const PROBE_SHELLS: readonly ProbeShell[] = [
   {
     program: 'zsh',
     args: ['--login'],
-    writeStartup: (root, delayMs) => fs.writeFileSync(path.join(root, '.zshrc'), `sleep ${delayMs / 1000}\n`),
+    writeStartup: (root, delayMs) => {
+      // Ubuntu's /etc/zsh/zshrc runs compinit, which stops to ask "Ignore insecure
+      // directories and continue [y] or abort compinit [n]?" when the runner's
+      // completion folders look insecure, and takes the typed line as its answer.
+      // One run of a failure case lost the first key to it. This is the package's
+      // own switch for the call, and it changes nothing a launch prints.
+      fs.writeFileSync(path.join(root, '.zshenv'), 'skip_global_compinit=1\n');
+      fs.writeFileSync(path.join(root, '.zshrc'), `sleep ${delayMs / 1000}\n`);
+    },
   },
   {
     program: 'fish',
