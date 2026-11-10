@@ -1147,7 +1147,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     }
   });
 
-  // The Changes panel's Checks section: the linked PR's CI checks, read live
+  // The Changes panel's Pull request section: the linked PR's CI checks, read live
   // from its connector. A read, so no announce.
   ipcMain.handle(IPC.TASK_PR_CHECKS, async (_event, taskId: string, projectId?: string | null): Promise<PRChecks | null> => {
     return listTaskPrChecks(context, taskId, projectId);
