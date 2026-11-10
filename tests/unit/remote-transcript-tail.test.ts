@@ -65,6 +65,23 @@ describe('the helper\'s file tail', () => {
     expect(Buffer.from(afterDetach[0].data, 'base64').toString('utf8')).toBe('one\n');
   });
 
+  it('goes on from where it stopped after resumeDetached, with no reset and nothing sent twice, for the same app coming back', async () => {
+    const file = path.join(folder, 'a.jsonl');
+    fs.writeFileSync(file, 'one\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: file }]);
+    await until(() => bytesOf(events) === 'one\n');
+
+    tail.markDetached();
+    fs.appendFileSync(file, 'two\n');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(bytesOf(events)).toBe('one\n');
+
+    tail.resumeDetached();
+    await until(() => bytesOf(events) === 'one\ntwo\n');
+    expect(events.some((event) => event.reset)).toBe(false);
+  });
+
   it('starts only the session watch names again after markDetached, and leaves another session waiting', async () => {
     const first = path.join(folder, 'a.jsonl');
     const second = path.join(folder, 'b.jsonl');

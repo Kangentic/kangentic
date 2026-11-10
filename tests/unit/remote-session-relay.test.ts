@@ -19,7 +19,7 @@ import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
 import { prepareWslHookTransport, wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import type { SshCliPlace } from '../../src/main/agent/shared/cli-target';
 import type { RemoteTranscriptFile } from '../../src/shared/types';
-import { dialHelper, makeHelperRig } from './helpers/remote-link-rig';
+import { dialHelper, makeHelperRig, type HelperRig } from './helpers/remote-link-rig';
 
 const teardown: Array<() => void> = [];
 let scratch: string;
@@ -47,12 +47,14 @@ interface Rig {
   statusPath: string;
   inbox: WslHookInbox;
   mcpCalls: string[];
+  /** The host's helper, whose connections a test can cut. */
+  helperRig: HelperRig;
 }
 
-async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean; transcriptFiles?: RemoteTranscriptFile[]; mcpAnswer?: string } = {}): Promise<Rig> {
-  const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
+async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean; transcriptFiles?: RemoteTranscriptFile[]; mcpAnswer?: string; helperRig?: HelperRig; bootId?: string; reattach?: boolean } = {}): Promise<Rig> {
+  const helperRig = options.helperRig ?? makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
   const link = new RemoteLink({
-    identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
+    identity: { installId: 'install-a', bootId: options.bootId ?? 'boot-1', label: 'a test computer' },
     connect: async () => dialHelper(helperRig),
     reconnect: { initialDelayMs: 100, maxDelayMs: 400 },
   });
@@ -126,9 +128,10 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
     statusOutputPath: statusPath,
     ...(options.declareExtra ? { extraFiles: options.declareExtra } : {}),
     ...(options.transcriptFiles ? { transcriptFiles: options.transcriptFiles } : {}),
+    ...(options.reattach ? { reattach: true } : {}),
   });
   const hostSession = path.join(hostProject, '.kangentic', 'sessions', 's1');
-  return { relay, link, place, localSession, hostSession, eventsPath, statusPath, inbox, mcpCalls };
+  return { relay, link, place, localSession, hostSession, eventsPath, statusPath, inbox, mcpCalls, helperRig };
 }
 
 beforeEach(() => {
@@ -803,6 +806,34 @@ describe('a session\'s transcript', () => {
 
     fs.appendFileSync(hostTranscript(), `${lines[1]}\n`);
     await waitFor(() => fs.readFileSync(localTranscript(), 'utf8') === `${lines.join('\n')}\n`);
+  });
+
+  it('keeps being copied after the connection drops and the same app comes back, since nothing registers it again', async () => {
+    writeOnHost('{"n":1}\n');
+    const rig = await makeRig({ transcriptFiles: [localTranscript()] });
+    await waitFor(() => fs.existsSync(localTranscript()) && fs.readFileSync(localTranscript(), 'utf8') === '{"n":1}\n');
+
+    // A dropped connection, not a quit: the link redials as the same app process.
+    rig.helperRig.linkStreams[rig.helperRig.linkStreams.length - 1].destroy();
+    await rig.link.requestHelper('hostInfo', {});
+
+    fs.appendFileSync(hostTranscript(), '{"n":2}\n');
+    await waitFor(() => fs.readFileSync(localTranscript(), 'utf8') === '{"n":1}\n{"n":2}\n');
+  });
+
+  it('is copied again from the start for a new app process that takes the session back, though the file has not grown', async () => {
+    writeOnHost('{"n":1}\n');
+    const first = await makeRig({ transcriptFiles: [localTranscript()] });
+    await waitFor(() => fs.existsSync(localTranscript()) && fs.readFileSync(localTranscript(), 'utf8') === '{"n":1}\n');
+
+    // A quit: this process goes away, and the agent and its file stay on the host. The next launch has an empty mirror.
+    first.link.stop();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    fs.rmSync(localTranscript());
+
+    await makeRig({ transcriptFiles: [localTranscript()], helperRig: first.helperRig, bootId: 'boot-2', reattach: true });
+
+    await waitFor(() => fs.existsSync(localTranscript()) && fs.readFileSync(localTranscript(), 'utf8') === '{"n":1}\n');
   });
 
   it('starts once the agent creates the file, and carries multi-byte text whole across a chunk edge', async () => {

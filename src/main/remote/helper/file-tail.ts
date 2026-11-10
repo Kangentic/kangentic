@@ -188,6 +188,17 @@ export class FileTail {
     }
   }
 
+  /**
+   * The app process that was attached when the link dropped is attached again. It kept every byte it was
+   * sent, and nothing was sent while the tails were held, so each one goes on from where it stopped, with
+   * no reset. Without this a transcript stops being copied after any dropped connection, since only a
+   * `watch` ends a hold and the same app has no reason to ask again. A different process never reaches
+   * this: it asks for its files itself, and `watch` then starts them over.
+   */
+  resumeDetached(): void {
+    for (const entry of this.tailing.values()) entry.stale = false;
+  }
+
   /** Stop tailing, after one last unpaced pass, so the end of the file is not left behind. */
   async unwatch(sessionId: string): Promise<void> {
     const entry = this.tailing.get(sessionId);

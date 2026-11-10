@@ -391,7 +391,10 @@ export class RemoteSessionRelay {
     let localHooks: ReturnType<typeof wslHookPaths>;
     const pushedPaths: string[] = [];
     const tails = new Map<string, Tail>();
-    let nextTailKey = 0;
+    // A reattach is a new app process. The helper may still hold the previous watch of this
+    // session, at the end of a file that has not grown. A key the helper has not seen makes that
+    // watch a new tail from byte 0, so an older program that does not mark a drop still copies.
+    let nextTailKey = registration.reattach ? Date.now() : 0;
     let indexBaseline: number | null = null;
     const searchWarning: SearchWarning = { warnedNoSearch: false };
     try {
@@ -430,10 +433,6 @@ export class RemoteSessionRelay {
         ...(registration.transcriptFiles ?? []).map(tailOfFile),
       ];
       const tailRequest: TailRequest = { files: [], searches: [] };
-      // A reattach is a new app process. The helper may still hold the previous watch of this
-      // session, at the end of a file that has not grown. A key the helper has not seen makes that
-      // watch a new tail from byte 0, so an older program that does not mark a drop still copies.
-      nextTailKey = registration.reattach ? Date.now() : 0;
       for (const tail of wanted) {
         const key = String(nextTailKey);
         nextTailKey += 1;

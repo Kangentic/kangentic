@@ -195,6 +195,8 @@ export class HelperServer {
   private nextStagingSuffix = 1;
   private ownerInstallId: string | null = null;
   private ownerBootId: string | null = null;
+  /** The app process that was attached when the last attached link dropped, so its return is told from another process's. */
+  private detachedFromBootId: string | null = null;
   private ownerLabel = 'unknown';
   private ownerEpoch = 0;
   private port: FramedPort | null = null;
@@ -279,6 +281,9 @@ export class HelperServer {
     this.port = new FramedPort((message) => this.sendPort(message));
     this.core.attachRendererPort(LINK_RENDERER_ID, this.port);
     this.hookWatcher.setHeld(false);
+    // The same app process back after a drop goes on from where its transcripts stopped. Another one
+    // (a quit, then a launch) never saw those bytes, and starts them over when it asks for its files.
+    if (this.ownerBootId !== null && this.ownerBootId === this.detachedFromBootId) this.fileTail.resumeDetached();
     this.log(`link attached, owner epoch ${this.ownerEpoch}`);
   }
 
@@ -288,8 +293,10 @@ export class HelperServer {
     // The agent's hook files wait on disk until a link is attached again (see HookWatcher.setHeld).
     this.hookWatcher.setHeld(true);
     // The transcript tail stops at its offset. A new app process never saw those bytes, so the next
-    // watch starts each file from byte 0 (`FileTail.markDetached`).
+    // watch starts each file from byte 0 (`FileTail.markDetached`). The same process coming back
+    // resumes instead (`onAttached`).
     this.fileTail.markDetached();
+    this.detachedFromBootId = this.ownerBootId;
     // A drop keeps every agent running. What the link had on screen is gone with it: stop sending
     // to a port nobody reads and let the PTYs run free instead of pausing on output no one acks.
     this.core.handleCommand({ type: 'forgetRenderer', rendererId: LINK_RENDERER_ID });
