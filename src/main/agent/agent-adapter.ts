@@ -1026,7 +1026,7 @@ export interface AgentAdapter {
   /**
    * Optional: prove that a conversation's history file no longer exists, so a
    * resume of it would fail ("No conversation found") and the spawn can start
-   * fresh instead (`assessResumeConversation`, resume-conversation-guard.ts).
+   * fresh instead (`assessResumeConversationWithEvidence`, resume-conversation-guard.ts).
    *
    * `reportedPaths` are transcript paths the AGENT reported for this
    * conversation's sessions (its status line, its SessionStart hook), newest

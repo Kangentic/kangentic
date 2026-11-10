@@ -92,6 +92,8 @@ describe('safeWriteJson cleanup-failure path', () => {
     expect(errorReportingMocks.reportHandledErrorSpy).toHaveBeenCalledWith(
       originalWriteError,
       { source: 'cleanup_fail_source' },
+      {},
+      expect.any(Array),
     );
     expect(notifications).toHaveLength(1);
   });
@@ -113,6 +115,8 @@ describe('safeWriteJson cleanup-failure path', () => {
     expect(errorReportingMocks.reportHandledErrorSpy).toHaveBeenCalledWith(
       originalRenameError,
       { source: 'cleanup_fail_rename_source' },
+      {},
+      expect.any(Array),
     );
   });
 
@@ -130,6 +134,8 @@ describe('safeWriteJson cleanup-failure path', () => {
     expect(errorReportingMocks.reportHandledErrorSpy).toHaveBeenCalledWith(
       originalWriteError,
       { source: 'cleanup_ok_source' },
+      {},
+      expect.any(Array),
     );
   });
 });
