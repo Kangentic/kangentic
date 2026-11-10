@@ -275,6 +275,13 @@ describe('classifyLaunchOutput', () => {
    * each shell CI runs.
    */
   it.each([
+    // Measured on a macOS runner: BSD cat leaves the path unquoted, and the long
+    // temp path wraps zsh's job line, leaving just the message once zsh's redraw
+    // is read out. The wrapped tail and the redrawn prompt sit around it.
+    ['cat: /tmp/p/project  one/.kangentic/sessions/session-1/launch.sh: No such file or directory\r\n', 'launcher_unreadable'],
+    ['runner@host ~ %\r\n%\r\nzsh: killed\r\ngl5gw3l_w0000gn/T/kng-typed-launch-v3enVY/agent dir/signal-kill\'\r\ng\r\nrunner@host ~ % cclear; \'/private/var/folders/h5/t85nd63d71x27_8\r\n', 'killed'],
+    ['runner@host ~ %\r\n%\r\nzsh: segmentation fault\r\ngl5gw3l_w0000gn/T/kng-typed-launch-7WnXYp/agent dir/signal-segv\'\r\ng\r\n', 'crashed'],
+    ['runner@host ~ %\r\n%\r\nzsh: bad CPU type in executable: /tmp/p/agent dir/wrong-cpu\r\ngl5gw3l_w0000gn/T/kng-typed-launch-lVCIBO/agent dir/wrong-cpu\'\r\n', 'bad_cpu_type'],
     ["\x1b[H\x1b[2J\x1b[3Jzsh: killed     '/tmp/p/agent dir/signal-kill'\r\n", 'killed'],
     ["\x1b[H\x1b[2J\x1b[3Jzsh: segmentation fault (core dumped)  '/tmp/p/agent dir/signal-segv'\r\n", 'crashed'],
     ['\x1b[H\x1b[2J\x1b[3Jzsh: exec format error: /tmp/p/agent dir/not-a-program\r\n', 'exec_format'],
