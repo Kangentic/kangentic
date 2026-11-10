@@ -8,6 +8,7 @@ import { toStoredCliTarget, type CliPlace } from '../agent/shared/cli-target';
 import { sessionStartOfLine } from '../agent/shared/session-start-hook';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import { sessionOutputPaths } from './session-paths';
+import { stopBackgroundSessionOnAccount } from '../accounts/account-background-stop';
 
 type StatusFileHook = NonNullable<AdapterRuntimeStrategy['statusFile']>;
 
@@ -219,8 +220,9 @@ async function settleResumeTarget(params: ReconcileParams, agentSessionId: strin
       sessionStarts,
     });
     if (!backgroundId) return agentSessionId;
-    if (cliPath) {
-      const stopRan = await adapter.stopBackgroundSession?.({ agentSessionId: backgroundId, cliPath });
+    if (cliPath && adapter.stopBackgroundSession) {
+      // The record's account is not known here, so each of the agent's accounts is tried in turn.
+      const stopRan = await stopBackgroundSessionOnAccount(adapter, { agentSessionId: backgroundId, cliPath });
       if (stopRan === false) {
         console.log(`[SESSION_LIFECYCLE] Resume target: no background session holding ${backgroundId.slice(0, 8)} was stopped. Resuming it anyway.`);
       }

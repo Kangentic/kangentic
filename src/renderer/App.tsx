@@ -20,6 +20,8 @@ import { describeLeftoverReport } from './lib/leftover-processes';
 import { showConversationExpiredNotices } from './lib/conversation-expired-toast';
 import { useUpdaterStore } from './stores/updater-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
+import { useAccountsStore } from './stores/accounts-store';
+import { describeAccountSwitched, describeAccountsAllFull } from './lib/account-toasts';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
 import { useKnowledgeGraphStore } from './stores/knowledge-graph-store';
@@ -1093,6 +1095,31 @@ export function App() {
         }
       }));
     }
+    // Agent accounts: main re-lists on any change (a usage read, a sign-in, a reorder), and the
+    // sign-in dialog learns who signed in.
+    if (window.electronAPI?.accounts?.onChanged) {
+      // Loaded at mount, not only when the tab opens: a session's context bar names its account.
+      void useAccountsStore.getState().loadAccounts();
+      cleanups.push(window.electronAPI.accounts.onChanged(() => {
+        void useAccountsStore.getState().loadAccounts();
+      }));
+      cleanups.push(window.electronAPI.accounts.onLoginEnded((ended) => {
+        useAccountsStore.getState().receiveLoginEnded(ended);
+      }));
+      // A session reached its account's usage limit. It happens out of sight (the task may be in
+      // another project), so each outcome gets a toast: where it continues, or that it waits.
+      cleanups.push(window.electronAPI.accounts.onSwitched((switched) => {
+        const toast = describeAccountSwitched(switched, useBoardStore.getState().tasks.find((task) => task.id === switched.taskId)?.title ?? null);
+        useToastStore.getState().addToast({
+          ...toast,
+          variant: 'info',
+          onOpen: () => { openTaskFromNotification(switched.projectId, switched.taskId); },
+        });
+      }));
+      cleanups.push(window.electronAPI.accounts.onAllFull((allFull) => {
+        useToastStore.getState().addToast({ ...describeAccountsAllFull(allFull, Date.now()), variant: 'warning' });
+      }));
+    }
     // A Stop main gave up waiting for reads `failed`; the host finished it
     // anyway, and its row takes the real outcome. No toast: the row was wrong.
     if (window.electronAPI?.leftoverProcesses?.onStopSettled) {
@@ -1552,6 +1579,8 @@ if (import.meta.hot) {
     // reconciliation, which a history-opened dialog is exempt from.
     void useAnnouncementsStore.getState().loadActive();
     void useAnnouncementsStore.getState().loadHistory();
+    // Accounts Pattern B: re-pull the cards from main-process truth.
+    void useAccountsStore.getState().loadAccounts();
     void useSessionStore.getState().syncQueueSnapshot();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
@@ -1588,6 +1617,7 @@ if (import.meta.env.DEV) {
     popOut: usePopOutStore,
     dictation: useDictationStore,
     announcements: useAnnouncementsStore,
+    accounts: useAccountsStore,
     // Not IPC-backed like the rest, but exposed for the same reason: without it
     // a UI test cannot raise an arbitrary toast and has to borrow whichever push
     // happens to toast verbatim (`config:writeFailed`), which drags unrelated

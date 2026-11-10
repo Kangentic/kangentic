@@ -594,6 +594,11 @@ export class PtyHostClient {
     return this.transport.request('getRawScrollback', { sessionId }, timeoutMs === undefined ? undefined : { timeoutMs });
   }
 
+  /** The bytes this session's PTY produced, without the ring a respawn carried over. */
+  getOwnRawOutput(sessionId: string): Promise<string> {
+    return this.transport.request('getRawScrollback', { sessionId, ownOutputOnly: true });
+  }
+
   getOutputPeek(sessionId: string): Promise<string[]> {
     return this.transport.request('getOutputPeek', { sessionId });
   }
@@ -608,7 +613,7 @@ export class PtyHostClient {
    * `HostUnavailableError` when the host cannot be asked, and with the spawn's
    * own error when it failed there.
    */
-  async spawnRaw(file: string, args: string[], options: OffMainPtyOptions): Promise<RemoteRawPty> {
+  async spawnRaw(file: string, args: string[] | string, options: OffMainPtyOptions): Promise<RemoteRawPty> {
     const ptyId = this.nextPtyId;
     this.nextPtyId += 1;
     let result: PtyHostRawSpawnResult;

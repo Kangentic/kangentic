@@ -812,8 +812,8 @@ export class PtyHostCore {
     };
   }
 
-  getRawScrollback(sessionId: string): string {
-    return this.bufferManager.getRawScrollback(sessionId);
+  getRawScrollback(sessionId: string, ownOutputOnly = false): string {
+    return this.bufferManager.getRawScrollback(sessionId, ownOutputOnly);
   }
 
   getOutputPeek(sessionId: string): string[] {
@@ -876,8 +876,10 @@ export class PtyHostCore {
         const { sessionId, settle, scrollbackLines } = params as PtyHostRequestMap['getSeedFrame']['params'];
         return this.getSeedFrame(sessionId, settle, scrollbackLines) as Promise<PtyHostRequestMap[M]['result']>;
       }
-      case 'getRawScrollback':
-        return this.getRawScrollback((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];
+      case 'getRawScrollback': {
+        const { sessionId, ownOutputOnly } = params as PtyHostRequestMap['getRawScrollback']['params'];
+        return this.getRawScrollback(sessionId, ownOutputOnly === true) as PtyHostRequestMap[M]['result'];
+      }
       case 'getOutputPeek':
         return this.getOutputPeek((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];
       case 'openHistoryView':
@@ -892,8 +894,7 @@ export class PtyHostCore {
       case 'exec':
         return this.spawnService.exec(params as HostExecRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'listProcesses':
-        this.processTable ??= new HostProcessTable({ createFallbackProbe: () => this.spawnService.processTableProbe() });
-        return this.processTable.list() as Promise<PtyHostRequestMap[M]['result']>;
+        return this.listProcessTable() as Promise<PtyHostRequestMap[M]['result']>;
       case 'reapTaggedProcesses':
         return this.reapTaggedProcesses(params as TaggedReapRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'stopReportedProcess':
@@ -1454,6 +1455,33 @@ export class PtyHostCore {
       timer.unref?.();
     });
     return Promise.race([listed, capped]);
+  }
+
+  /**
+   * The process table main asks for: the background-shell watcher's, and an
+   * abandoned launch's read of whether its shell still had an agent
+   * (`SessionManager.noteAgentProcessBeforeEnd`). That read is posted just
+   * ahead of its kill, and on POSIX the shell's death re-parents its children,
+   * so off Windows a listing still out is also the one a kill that lands
+   * meanwhile waits for (`listDescendantsBeforeKill`). The kill waits on one
+   * listing either way, under the same cap, so this adds no wait to it. Only
+   * where a pre-kill listing is taken at all: the utility host on POSIX.
+   */
+  private listProcessTable(): Promise<ProcessInfo[]> {
+    this.processTable ??= new HostProcessTable({
+      platform: this.deps.platform,
+      createFallbackProbe: () => this.spawnService.processTableProbe(),
+    });
+    const listing = this.processTable.list();
+    if (this.deps.listProcessesBeforeKill && !this.onWindows && !this.preKillListing && !this.shuttingDown) {
+      const shared: Promise<ProcessInfo[]> = listing.finally(() => {
+        if (this.preKillListing === shared) this.preKillListing = null;
+      });
+      // A kill may never read it; its failure is the requester's to see.
+      shared.catch(() => undefined);
+      this.preKillListing = shared;
+    }
+    return listing;
   }
 
   /** Remember a root main killed, for a reap's wait (`exited-root-wait.ts`). */

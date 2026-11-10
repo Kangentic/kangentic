@@ -32,7 +32,7 @@ The variable stays in main's `process.env`. Kangentic's renderer, GPU and utilit
 
 - `buildSpawnEnv` (`src/main/pty/spawn/pty-spawn.ts`): every session and Command Terminal PTY.
 - `spawnOffMainCli` and `execAsync` / `execFileAsync` (`src/main/utility-process/`): everything main ships to the pty host, which is every exec, every headless agent run, and git on a task's lifecycle.
-- `spawnOffMainPty` (the model-picker probe, the Antigravity print runner) and `spawnWithAbort` (the post-worktree init script, and git with or without a host) strip before they choose a route, and `off-main-exec.ts` strips on its local fallback as well.
+- `spawnOffMainPty` (the model-picker probe, the Antigravity print runner, the account sign-in terminal) and `spawnWithAbort` (the post-worktree init script, and git with or without a host) strip before they choose a route, and `off-main-exec.ts` strips on its local fallback as well.
 - The direct launches: `spawnCli`, `run_script` automations, `SHELL_EXEC` shortcuts, the non-interactive fetch env, the WSL reap, and the macOS process-tag reader's tool launches.
 - The git calls outside a lifecycle that run repository hooks, filters or merge drivers: Update from base's `merge --ff-only`, the carry of uncommitted changes into a new worktree (`apply --3way` and the reads before it), and the Command Terminal's cold-start checkout and `merge --ff-only`. They go through `gitAt` (`src/main/git/git-client.ts`, which runs on `execFileAsync`) instead of simple-git. simple-git can only set a child's env through `.env()`, and it refuses an env that carries `EDITOR`, `VISUAL`, `PAGER` or any `GIT_*` key, which many users export.
 

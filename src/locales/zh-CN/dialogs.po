@@ -159,7 +159,7 @@ msgstr "{oldPath} 到 {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr ""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "{passedCount} passed"
 msgstr ""
 
@@ -184,6 +184,7 @@ msgstr "{pillLabel}：{reason}"
 msgid "{position} of {total}"
 msgstr "第 {position} 项，共 {total} 项"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
 msgstr ""
@@ -591,10 +592,6 @@ msgstr "更改已在单独的窗口中打开"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
-msgid "Checks"
-msgstr ""
-
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
 msgstr ""
@@ -795,11 +792,11 @@ msgstr "条件：{condition}"
 msgid "Confirm"
 msgstr "确认"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with {base}"
 msgstr ""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with the base branch"
 msgstr ""
 
@@ -1839,7 +1836,7 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "开放"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open {name} in browser"
 msgstr ""
 
@@ -1847,7 +1844,7 @@ msgstr ""
 msgid "Open {shortHash} on {providerName}"
 msgstr "在 {providerName} 上打开 {shortHash}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open all checks in browser"
 msgstr ""
 
@@ -1903,7 +1900,7 @@ msgstr "打开该看板以编辑其配置方案"
 msgid "Open the board to change this"
 msgstr "打开看板以更改此设置"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open the pull request in browser"
 msgstr ""
 
@@ -2059,6 +2056,10 @@ msgstr "未找到项目文件夹"
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Project relocated"
 msgstr "项目已重新定位"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
+msgid "Pull request"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgctxt "completed task metric"
@@ -2298,7 +2299,7 @@ msgstr "选择一个提交以查看其更改"
 msgid "Select a file to view changes"
 msgstr "选择一个文件以查看更改"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Send to agent"
 msgstr "发送给智能体"
 
@@ -2310,7 +2311,7 @@ msgstr "移至待办列表"
 msgid "Sending the original instead."
 msgstr "将改为发送原图。"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Sending..."
 msgstr "正在发送..."
 

@@ -660,6 +660,31 @@ export const IPC = {
   LEFTOVER_PROCESSES_STOP_SETTLED: 'leftoverProcesses:stopSettled',
   LEFTOVER_PROCESSES_CHECK: 'leftoverProcesses:check',
 
+  // Agent accounts (task #1057, Settings > Accounts). LIST answers one card per
+  // installed agent that declares accounts. START_LOGIN runs the CLI's own
+  // sign-in in a terminal of its own (never an agent session): LOGIN_OUTPUT
+  // pushes its screen, LOGIN_INPUT and LOGIN_RESIZE reach it, CANCEL_LOGIN ends
+  // it, and LOGIN_ENDED pushes who signed in. CHANGED is a push with no payload:
+  // the tab re-lists. Global, never project-scoped.
+  ACCOUNTS_LIST: 'accounts:list',
+  ACCOUNTS_START_LOGIN: 'accounts:startLogin',
+  ACCOUNTS_LOGIN_BACKLOG: 'accounts:loginBacklog',
+  ACCOUNTS_LOGIN_INPUT: 'accounts:loginInput',
+  ACCOUNTS_LOGIN_RESIZE: 'accounts:loginResize',
+  ACCOUNTS_CANCEL_LOGIN: 'accounts:cancelLogin',
+  ACCOUNTS_LOGIN_OUTPUT: 'accounts:loginOutput',
+  ACCOUNTS_LOGIN_ENDED: 'accounts:loginEnded',
+  ACCOUNTS_ADD_KEY_FILE: 'accounts:addKeyFile',
+  ACCOUNTS_REMOVE: 'accounts:remove',
+  ACCOUNTS_REORDER: 'accounts:reorder',
+  ACCOUNTS_SWITCH_TO: 'accounts:switchTo',
+  ACCOUNTS_REFRESH_USAGE: 'accounts:refreshUsage',
+  ACCOUNTS_CHANGED: 'accounts:changed',
+  // Pushes for the continuation at a usage limit: a task's session moved to another account,
+  // or every account of an agent is full and the session waits.
+  ACCOUNTS_SWITCHED: 'accounts:switched',
+  ACCOUNTS_ALL_FULL: 'accounts:allFull',
+
   // How this launch is rendering, and whether the user still needs telling
   // (Sentry DESKTOP-18/DESKTOP-W; src/main/diagnostics/gpu-health.ts)
   //

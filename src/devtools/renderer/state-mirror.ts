@@ -1,3 +1,4 @@
+import { useAccountsStore } from '../../renderer/stores/accounts-store';
 import { useAgentDriveStore } from '../../renderer/stores/agent-drive-store';
 import { useAnnouncementsStore } from '../../renderer/stores/announcements-store';
 import { useBacklogStore } from '../../renderer/stores/backlog-store';
@@ -73,6 +74,7 @@ export function buildPreviewSnapshot(): RendererStateSnapshot {
  * fails CI instead of silently being unreadable.
  */
 const PREVIEW_STORES: Record<string, ReadableStore> = {
+  accounts: useAccountsStore,
   // Quoted because the file stem is kebab-case (agent-drive-store.ts); the
   // completeness test matches the key to the filename stem.
   'agent-drive': useAgentDriveStore,

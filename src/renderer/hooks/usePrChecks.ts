@@ -3,7 +3,7 @@ import type { PRChecks, Task } from '../../shared/types';
 
 /** While any check is pending, re-read this often (the PR refresh's own in-flight re-poll). */
 const PENDING_POLL_MS = 30_000;
-/** Two surfaces of one task window (the header count, the Checks section) share one read. */
+/** Two surfaces of one task window (the header count, the Pull request section) share one read. */
 const SHARED_READ_TTL_MS = 10_000;
 
 interface CachedRead {
@@ -48,8 +48,8 @@ export interface PrChecksState {
 }
 
 /**
- * The CI checks of `task`'s linked PR, for the Changes panel's Checks section
- * and the Changes button's count. Reads when the task window shows a task with
+ * The CI checks of `task`'s linked PR, for the Changes panel's Pull request
+ * section and the Changes button's count. Reads when the task window shows a task with
  * an open or draft PR, again when the PR's link or verdict changes (the PR
  * refresh rewrites the row, and the deps below see it), and every 30 s while a
  * check is pending. A task with no such PR reads nothing. A failed read keeps

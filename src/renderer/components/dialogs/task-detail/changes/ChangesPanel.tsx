@@ -14,10 +14,9 @@ import { DiffViewOptionsMenu } from './DiffViewOptionsMenu';
 import { DiffErrorBoundary } from './DiffErrorBoundary';
 import { ChangesHistorySection } from './ChangesHistorySection';
 import { RAIL_SECTION_HEADER_PX } from './ChangesRailSection';
-import { ChangesChecksSection, checksSectionVisible } from './ChangesChecksSection';
+import { ChangesPullRequestSection } from './ChangesPullRequestSection';
 import { asSentence, describeIpcError } from '../../../../lib/ipc-error';
-import { PrLink } from '../../../PrLink';
-import { usePrChecks } from '../../../../hooks/usePrChecks';
+import { usePrChecks, prFixCount } from '../../../../hooks/usePrChecks';
 import { useToastStore } from '../../../../stores/toast-store';
 import { CommitSelectionBar } from './CommitSelectionBar';
 import { CommitGraphPanel, type StaticCommitHistory } from '../graph/CommitGraphPanel';
@@ -845,19 +844,17 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     return () => clearTimeout(timer);
   }, [changesSelectedCommit]);
 
-  // History and Checks open state: one remembered choice each for every task
-  // (AppConfig), closed by default, because open together they push the file
-  // list out of the rail and rail height is the same on every task. A new
-  // failure never opens Checks: its badge and the Changes button's count say so.
+  // History and Pull request open state: one remembered choice each for every
+  // task (AppConfig), closed by default, because open together they push the
+  // file list out of the rail and rail height is the same on every task.
   // History's open body height stays per task and lives at the BOTTOM of the
   // rail column, so the drag math measures up from the rail's bottom edge.
   const historyOpen = useConfigStore((state) => state.config.changesHistoryOpen);
-  const checksOpen = useConfigStore((state) => state.config.changesChecksOpen);
+  // `changesChecksOpen` keeps the name it was persisted under: the section was
+  // called Checks when the key shipped.
+  const pullRequestOpenRemembered = useConfigStore((state) => state.config.changesChecksOpen);
   const handleHistoryToggle = useCallback(() => {
     void updateConfig({ changesHistoryOpen: !useConfigStore.getState().config.changesHistoryOpen });
-  }, [updateConfig]);
-  const handleChecksToggle = useCallback(() => {
-    void updateConfig({ changesChecksOpen: !useConfigStore.getState().config.changesChecksOpen });
   }, [updateConfig]);
 
   // The linked PR's checks (a live task only: a completed task's PR is done).
@@ -865,6 +862,22 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const checksProjectId = popOutParams?.projectId ?? filePopOutParams?.projectId ?? null;
   const prChecks = usePrChecks(completed ? null : task, checksProjectId);
   const refreshPrChecks = prChecks.refresh;
+  // While the PR has something to fix, the section is open without being
+  // asked, so the count on the Changes button leads to rows on screen. That is
+  // not the remembered choice and is never written to it: a collapse here lasts
+  // until the fixes are gone, and with nothing to fix the section goes back to
+  // the choice remembered for every task.
+  const hasPrFixes = prFixCount(completed ? null : task, prChecks.checks) > 0;
+  const [collapsedWhileFixes, setCollapsedWhileFixes] = useState(false);
+  if (!hasPrFixes && collapsedWhileFixes) setCollapsedWhileFixes(false);
+  const pullRequestOpen = hasPrFixes ? !collapsedWhileFixes : pullRequestOpenRemembered;
+  const handlePullRequestToggle = useCallback(() => {
+    if (hasPrFixes) {
+      setCollapsedWhileFixes((collapsed) => !collapsed);
+      return;
+    }
+    void updateConfig({ changesChecksOpen: !useConfigStore.getState().config.changesChecksOpen });
+  }, [hasPrFixes, updateConfig]);
   const [sendingChecks, setSendingChecks] = useState(false);
   const handleSendChecks = useCallback(() => {
     if (!task) return;
@@ -973,9 +986,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // first row, above the commit-history region. It also OWNS the branch context
   // (branch + base badge + ahead/behind) that the file-tree's BranchHeader shows
   // in the other embeds - the embed passes showBranchHeader=false to that so the
-  // row is not duplicated. A live task's linked PR shows as the compact PR pill
-  // after ahead/behind (the same pill as the board card), and opens the PR; no
-  // last commit, which is History's. Panel-level actions (expand-full) and the
+  // row is not duplicated. It carries no linked PR, which the rail's Pull
+  // request section owns, and no last commit, which is History's.
+  // Panel-level actions (expand-full) and the
   // pop-out control sit on the right - the one predictable home for pop-out
   // across every surface. Diff/git tools stay in the diff toolbar below.
   const fileCount = files.length;
@@ -1000,18 +1013,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       </span>
     </Tooltip>
   ) : null;
-  // The PR pill, for a live task with a linked PR. Shared by both header
-  // variants (this surface header and FileTreePanel's BranchHeader).
-  const headerPrPill = task && !completed && task.pr_url ? (
-    <PrLink
-      prUrl={task.pr_url}
-      prNumber={task.pr_number}
-      prState={task.pr_state}
-      prMergeReadiness={task.pr_merge_readiness}
-      testId="changes-pr-pill"
-      className="flex-shrink-0"
-    />
-  ) : null;
+  // Neither header variant draws a PR pill: the rail's Pull request section is
+  // where the linked PR lives in this panel, and its header opens it.
   const surfaceHeader = popOutParams ? (
     <DetachableSurfaceHeader kind="changes" params={popOutParams} actions={<>{surfaceHeaderViewed}{expandCollapseControl}</>}>
       <GitBranch size={14} className="text-fg-muted flex-shrink-0" aria-hidden />
@@ -1049,7 +1052,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           </span>
         </Tooltip>
       )}
-      {headerPrPill}
     </DetachableSurfaceHeader>
   ) : null;
 
@@ -1107,7 +1109,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     <div className="flex flex-col h-full">
       <div ref={panelRowRef} className="flex-1 min-h-0 flex">
         {/* Rail - left column (drag-resizable): commit context, file tree, and
-            the collapsible History section pinned at the bottom. */}
+            the collapsible Pull request and History sections pinned at the
+            bottom. */}
         <div ref={railRef} className="flex-shrink-0 overflow-hidden flex flex-col" style={{ width: railWidthStyle }}>
           <div className="flex-1 min-h-0">
             <FileTreePanel
@@ -1119,7 +1122,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               // The top bar does not change with the selection.
               branchSummary={headerSummary}
               showBranchHeader={!popOutParams}
-              branchHeaderAccessory={popOutParams ? undefined : headerPrPill}
               viewedFiles={viewedFiles}
               onToggleViewed={handleToggleViewed}
               // A completed task has no scope control; a live one hides it while
@@ -1140,15 +1142,16 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
             />
           </div>
 
-          {/* Checks: the linked PR's CI checks and any conflict, above History.
-              Shown for a live task whose PR has a check or a conflict; a PR
-              whose host runs no checks gets the header pill only. */}
-          {task && !completed && task.pr_url && checksSectionVisible(task, prChecks.checks) && (
-            <ChangesChecksSection
+          {/* Pull request: the linked PR, what to fix on it, and its CI checks,
+              above History. Shown for every live task with a linked PR; one
+              whose host runs no checks and has no conflict gets the header
+              alone, which still opens the PR. */}
+          {task && !completed && task.pr_url && (
+            <ChangesPullRequestSection
               task={task}
               checks={prChecks.checks}
-              open={checksOpen}
-              onToggle={handleChecksToggle}
+              open={pullRequestOpen}
+              onToggle={handlePullRequestToggle}
               sending={sendingChecks}
               onSend={handleSendChecks}
             />

@@ -183,6 +183,15 @@ describe('prepareAgentSpawn: Windows .cmd shim launch resolution wiring', () => 
     expect(buildCommandMock.mock.calls[0][0]).toMatchObject({ agentPath: PS1_SIBLING, shell: PWSH, prompt: undefined });
   });
 
+  it('carries the shim-resolved head on the success result as agentCliPath', async () => {
+    resolveShimLaunchMock.mockResolvedValueOnce({ agentPath: PS1_SIBLING, prompt: undefined, strategy: 'ps1-sibling' });
+
+    const result = await runPrepare();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.agentCliPath).toBe(PS1_SIBLING);
+  });
+
   it('resolves after ensureTrust and before buildCommand', async () => {
     await runPrepare();
 

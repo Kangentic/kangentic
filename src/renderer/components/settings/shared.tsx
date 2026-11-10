@@ -115,7 +115,10 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
     >
       <div
         ref={panelRef}
-        className={`fixed top-10 right-0 bottom-0 w-[720px] bg-surface-raised border-l border-edge shadow-2xl flex flex-col ${contentClassName}`}
+        // As wide as its tab rail plus the content column: the rail sizes to its longest label,
+        // which differs by language, and the content column keeps one width so no setting's
+        // layout depends on it. Never narrower than the 720px it was, never wider than the window.
+        className={`fixed top-10 right-0 bottom-0 w-max min-w-[720px] max-w-[100vw] bg-surface-raised border-l border-edge shadow-2xl flex flex-col ${contentClassName}`}
         onAnimationEnd={onAnimationEnd}
         onMouseDown={(event) => event.stopPropagation()}
         data-testid="settings-panel"
@@ -167,7 +170,8 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
         {tabs && activeTab && onTabChange ? (
           <div className="flex-1 flex overflow-hidden">
             {/* Tab sidebar */}
-            <div data-testid="settings-tab-list" className="w-44 flex-shrink-0 border-r border-edge py-3 space-y-0.5 overflow-y-auto">
+            {/* Sized to its longest label, so no tab name wraps in any language. */}
+            <div data-testid="settings-tab-list" className="min-w-44 flex-shrink-0 border-r border-edge py-3 space-y-0.5 overflow-y-auto">
               {tabs.map((tab, index) => {
                 const Icon = tab.icon;
                 const isActive = tab.id === activeTab;
@@ -201,7 +205,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                     <button
                       data-testid={`settings-tab-${tab.id}`}
                       onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
-                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${
+                      className={`w-full flex items-center gap-2.5 pl-4 pr-2 py-2 text-sm transition-colors ${
                         hasNoMatches
                           ? 'opacity-40 cursor-default text-fg-muted'
                           : isActive
@@ -212,14 +216,17 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                       <Icon size={16} className={isActive && !hasNoMatches ? 'text-accent' : ''} />
                       {/* The match count sits right after the label, tinted
                           from the tab's own tone so it follows hover and the
-                          selection. The pair takes the free width. */}
-                      <span className="flex flex-1 min-w-0 items-center gap-1.5 text-left">
-                        {/* Wraps, at a word or inside one too long for the rail
-                            ("Производительность"), rather than running past it. */}
-                        <span className="min-w-0 [overflow-wrap:anywhere]">{translateText(tab.label)}</span>
-                        {isSearching && matchCount !== undefined && matchCount > 0 && (
-                          <CountBadge count={matchCount} variant="tinted" size="pill" testId={`settings-search-count-${tab.id}`} />
-                        )}
+                          selection. */}
+                      <span className="flex flex-1 items-center gap-1.5 text-left">
+                        {/* One line: the rail is as wide as its longest label. */}
+                        <span className="whitespace-nowrap">{translateText(tab.label)}</span>
+                        {/* The count's room is always held, so the rail (and the
+                            panel with it) keeps its width while a search runs. */}
+                        <span className="inline-flex min-w-7 flex-shrink-0">
+                          {isSearching && matchCount !== undefined && matchCount > 0 && (
+                            <CountBadge count={matchCount} variant="tinted" size="pill" testId={`settings-search-count-${tab.id}`} />
+                          )}
+                        </span>
                       </span>
                     </button>
                   </React.Fragment>
@@ -228,7 +235,10 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
             </div>
             {/* Tab content. The scroller every tab lives in, so a tab of any
                 length scrolls at the 900x600 window floor. */}
-            <div className="flex-1 flex flex-col overflow-hidden">
+            {/* The content column's own width (720 less the 176px rail it was drawn
+                beside), which the settings cards' one-line budgets are measured
+                against. It gives way only when the window is narrower than the panel. */}
+            <div className="w-[544px] min-w-0 flex-grow flex flex-col overflow-hidden">
               <div data-testid="settings-content" className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
                 {children}
               </div>

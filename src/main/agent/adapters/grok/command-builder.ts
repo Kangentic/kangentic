@@ -82,6 +82,13 @@ export interface GrokCommandOptions {
    * transport's stdio bridge.
    */
   cliTarget?: CliTarget | null;
+  /**
+   * Run standalone, never through a leader process (`--no-leader`). Set for a session on an
+   * account of its own (task #1057): a leader is one per `GROK_HOME` and follows that home's
+   * `auth.json`, so it would put the session on the user's own login. Off by default in Grok;
+   * this holds it off when the user's config or xAI's remote setting turns it on.
+   */
+  standalone?: boolean;
 }
 
 /**
@@ -124,6 +131,10 @@ export class GrokCommandBuilder {
 
     const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.grokPath, shell)];
     const isResume = Boolean(options.resume && options.sessionId);
+
+    // A top-level flag of the TUI, so it goes ahead of everything else. Parsed on 1.0.0
+    // (`grok --no-leader --version`); a headless run starts no leader and is left as it was.
+    if (options.standalone && !options.nonInteractive) parts.push('--no-leader');
 
     if (isResume) {
       parts.push('--resume', quoteArg(options.sessionId!, shell));

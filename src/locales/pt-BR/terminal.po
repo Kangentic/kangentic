@@ -34,6 +34,11 @@ msgstr ""
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
 msgstr ""
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{minutes}m"
+msgstr "{minutes}min"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -219,6 +224,11 @@ msgstr "Nenhuma chamada de ferramenta ainda"
 msgid "Notice"
 msgstr "Aviso"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+msgctxt "when a usage window resets"
+msgid "now"
+msgstr ""
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Older match"
 msgstr ""
@@ -248,17 +258,17 @@ msgstr "Perfil indisponível"
 msgid "Rate limits"
 msgstr "Limites de taxa"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets {resetMoment}"
 msgstr "Redefine {resetMoment}"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets in {duration}"
 msgstr "Redefine em {duration}"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets now"
 msgstr "Redefine agora"

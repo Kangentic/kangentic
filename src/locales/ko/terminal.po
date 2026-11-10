@@ -34,6 +34,11 @@ msgstr ""
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
 msgstr ""
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{minutes}m"
+msgstr "{minutes}분"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -219,6 +224,11 @@ msgstr "아직 도구 호출 없음"
 msgid "Notice"
 msgstr "알림"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+msgctxt "when a usage window resets"
+msgid "now"
+msgstr ""
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Older match"
 msgstr ""
@@ -248,17 +258,17 @@ msgstr "프로필을 사용할 수 없음"
 msgid "Rate limits"
 msgstr "사용량 한도"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets {resetMoment}"
 msgstr "{resetMoment} 재설정"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets in {duration}"
 msgstr "{duration} 후 재설정"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets now"
 msgstr "지금 재설정"

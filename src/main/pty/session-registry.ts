@@ -13,7 +13,8 @@ import type {
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
 import type { LaunchStartPath, StartBlockedReason } from '../../shared/types';
-import type { LaunchOutputClass } from './agent-launch-report';
+import type { LaunchOutputClass } from './launch-output-class';
+import type { AgentProcessPresence } from './host/agent-process-presence';
 
 /** A suspended row for a task with no live session, so its Resume stays reachable. */
 export interface SuspendedPlaceholderInput {
@@ -137,6 +138,13 @@ export interface ManagedSession {
   launchFailureNoted?: boolean;
   /** What the launch report read in the output, for the retry to wait on. */
   launchOutputRead?: Promise<LaunchOutputClass>;
+  /**
+   * Whether the shell had an agent under it when Kangentic decided to end a
+   * launch that never showed it ran. Read at the decision, before the kill or
+   * the exit sequence ends the agent, and sent on the `abandoned` report the
+   * exit makes. Never rejects. Unset when no such read was posted.
+   */
+  agentProcessAtEnd?: Promise<AgentProcessPresence>;
   /** Bytes the spawn typed into the shell, its Enter included; null with no command. */
   typedLineBytes?: number | null;
   /** The typed line sourced a launcher file instead of carrying the command. */
@@ -150,6 +158,19 @@ export interface ManagedSession {
   startPath?: LaunchStartPath;
   /** The agent CLI's version as detection read it; `launchVersionTag` vets it. */
   agentCliVersion?: string | null;
+  /**
+   * The CLI path the command builder was handed, the typed command's head.
+   * Main-side only, like `launcherPath`: a report sends whether it exists, never the path.
+   */
+  agentCliPath?: string | null;
+  /**
+   * Epoch ms the output of a launch that has not shown its agent ran was found
+   * to name its cause (`isIdentifiedFailureClass`), read by
+   * `SessionManager.checkPendingLaunchOutput`. Until then, or until
+   * `AGENT_START_CEILING_MS`, the agent-absence sweep does not judge such a
+   * launch: a shell still starting it looks the same as one whose agent left.
+   */
+  launchFailureIdentifiedAt?: number | null;
   /** Epoch ms of the first output of any kind, the shell's own included. */
   firstOutputAt?: number | null;
   /**
@@ -199,6 +220,8 @@ export interface ManagedSession {
    *  "gemini"). Used for diagnostic logs - survives minification unlike
    *  `agentParser.constructor.name`. */
   agentName?: string;
+  /** The agent account the session runs on (task #1057), from `SpawnSessionInput.accountId`. */
+  accountId?: string | null;
   /** Where the agent's CLI runs when it is not this machine (a WSL distro),
    *  from `SpawnSessionInput.cliTarget`. Main-side only: its readers and its
    *  reap look here, and the renderer reads the shell. */
@@ -363,6 +386,8 @@ export function toSession(session: ManagedSession): Session {
     startBlockedReason: session.startBlockedReason ?? undefined,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,
+    // The account it runs on (task #1057), so its context bar draws that account's limits.
+    accountId: session.accountId ?? undefined,
   };
 }
 

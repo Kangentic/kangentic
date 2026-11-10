@@ -44,6 +44,12 @@ const SPAWN_READS_SETTLE_MS = 8_000;
  */
 export class CodexAdapter implements AgentAdapter {
   readonly name = 'codex';
+  // Accounts are built (`accounts.ts`, `CODEX_ACCOUNT_SUPPORT`) and not enabled: no ChatGPT login was
+  // available to run them on. This adapter declares none until they are run with two accounts.
+
+  // Codex writes its plan's usage windows on each rollout `token_count` record
+  // (`rate-limits.ts`), so the context bar shows its own limits on Codex sessions.
+  readonly reportsRateLimits = true;
   readonly displayName = 'Codex CLI';
   readonly sessionType = 'codex_agent';
   readonly supportsCallerSessionId = false;

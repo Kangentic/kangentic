@@ -157,7 +157,7 @@ msgstr "{oldPath} to {newPath}"
 msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 msgstr "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "{passedCount} passed"
 msgstr "{passedCount} passed"
 
@@ -182,6 +182,7 @@ msgstr "{pillLabel}: {reason}"
 msgid "{position} of {total}"
 msgstr "{position} of {total}"
 
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
 msgstr "{prFixes, plural, one {# thing on the PR to fix} other {# things on the PR to fix}}"
@@ -587,10 +588,6 @@ msgstr "Changes are open in their own window"
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr "Checking <0>{trimmedQuery}</0>..."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
-msgid "Checks"
-msgstr "Checks"
-
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
 msgstr "Choose"
@@ -789,11 +786,11 @@ msgstr "Condition: {condition}"
 msgid "Confirm"
 msgstr "Confirm"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with {base}"
 msgstr "Conflicts with {base}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with the base branch"
 msgstr "Conflicts with the base branch"
 
@@ -1827,7 +1824,7 @@ msgctxt "pull request state"
 msgid "open"
 msgstr "open"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open {name} in browser"
 msgstr "Open {name} in browser"
 
@@ -1835,7 +1832,7 @@ msgstr "Open {name} in browser"
 msgid "Open {shortHash} on {providerName}"
 msgstr "Open {shortHash} on {providerName}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open all checks in browser"
 msgstr "Open all checks in browser"
 
@@ -1890,7 +1887,7 @@ msgstr "Open that board to edit its profiles"
 msgid "Open the board to change this"
 msgstr "Open the board to change this"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Open the pull request in browser"
 msgstr "Open the pull request in browser"
 
@@ -2045,6 +2042,10 @@ msgstr "Project Folder Not Found"
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Project relocated"
 msgstr "Project relocated"
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
+msgid "Pull request"
+msgstr "Pull request"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgctxt "completed task metric"
@@ -2281,7 +2282,7 @@ msgstr "Select a commit to see its changes"
 msgid "Select a file to view changes"
 msgstr "Select a file to view changes"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Send to agent"
 msgstr "Send to agent"
 
@@ -2293,7 +2294,7 @@ msgstr "Send to Backlog"
 msgid "Sending the original instead."
 msgstr "Sending the original instead."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesChecksSection.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Sending..."
 msgstr "Sending..."
 

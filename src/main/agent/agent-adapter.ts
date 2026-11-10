@@ -2,6 +2,8 @@ import type { AnswerStreamEvent } from './shared/cli-answer';
 import type { CliPlace, CliTarget } from './shared/cli-target';
 import type { RemoteFileDeclaration } from './shared/remote-files';
 import type { BackgroundCommandSupport } from '../../shared/background-command-spec';
+import type { AgentAccountSupport } from '../accounts/account-support';
+import type { ResolvedAccount } from '../accounts/account-service';
 import type {
   AgentCallUsage,
   SessionRecord,
@@ -330,6 +332,12 @@ export interface CommandOptions {
    * command is exactly what it was before.
    */
   cliTarget?: CliTarget | null;
+  /**
+   * The agent account this session runs on (task #1057), resolved once per spawn by
+   * `resolveSpawnAccount`. Its env (the CLI's home variable, or a key file's keys) reaches the PTY
+   * through `buildSessionEnv`. Null or absent: the agent's own login, as before accounts.
+   */
+  account?: ResolvedAccount | null;
 }
 
 /** Agent-agnostic spawn options - renames `cliPath` to `agentPath`. */
@@ -996,9 +1004,21 @@ export interface AgentAdapter {
    * spawn's own on a resume, the project's configured one on a terminal
    * transition. Resolves true once the CLI's stop ran for a session holding the
    * conversation, false when none did. Every caller goes on either way. Never
-   * throws.
+   * throws. `env` is the agent account's env the session ran under (task #1057):
+   * a CLI lists only the background sessions of the home it is pointed at, so a
+   * caller reaches the stop through `stopBackgroundSessionOnAccount`, which
+   * supplies it.
    */
-  stopBackgroundSession?(options: { agentSessionId: string; cliPath: string }): Promise<boolean>;
+  stopBackgroundSession?(options: { agentSessionId: string; cliPath: string; env?: Record<string, string> }): Promise<boolean>;
+
+  /**
+   * Optional: answer no, ahead of time, to the CLI's question about loading instruction files a
+   * parent folder imports from outside the project (Claude Code's "Allow external CLAUDE.md file
+   * imports?"). Called only for the dev preview's throwaway projects, which sit inside a checkout
+   * whose own instructions import files above them, so no preview session opens on that prompt.
+   * Never called for a user's project: that answer is theirs.
+   */
+  declineExternalInstructionImports?(projectRoot: string): Promise<void>;
 
   /**
    * Optional: the id of the agent CLI's own background session (Claude Code's
@@ -1552,6 +1572,14 @@ export interface AgentAdapter {
    * another agent's account limits.
    */
   readonly reportsRateLimits?: boolean;
+
+  /**
+   * How this agent keeps several accounts apart (task #1057): a folder per account selected by
+   * the CLI's own home variable, or an API key per session from a key file. The generic account
+   * layer (`src/main/accounts/`) reads only this declaration. Omit for an agent whose login
+   * cannot be split; it gets no Accounts card.
+   */
+  readonly accounts?: AgentAccountSupport;
 
   /**
    * Set by adapters whose transcript reads (`transcriptToolCounts`,

@@ -40,6 +40,7 @@ import type {
   TranscriptUsage,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+import type { KeyFileAccountSupport } from '../../../accounts/account-support';
 
 /**
  * Characters /bin/sh still reads inside `"`, so an inner `"` cannot hold them.
@@ -126,6 +127,21 @@ function buildWslNotificationsCommand(eventsOutputPath: string, place: CliPlace)
  */
 export class AiderAdapter implements AgentAdapter {
   readonly name = 'aider';
+  /**
+   * Accounts (task #1057): each is an API key in a file the user owns, put in the session's env
+   * at spawn. Aider has no login: it reads its provider keys from the environment, and from the
+   * `.env` in the home folder, the git root and the cwd, each loaded with `override=True` over the
+   * environment (`load_dotenv_files` in `aider/main.py`). It loads `--env-file` last, so the
+   * account points `AIDER_ENV_FILE` (that option's variable, aider.chat/docs/config/options.html)
+   * at its key file and its keys win over a project's `.env`.
+   */
+  readonly accounts: KeyFileAccountSupport = {
+    kind: 'key-file',
+    keyEnvVars: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'DEEPSEEK_API_KEY', 'AIDER_OPENAI_API_KEY', 'AIDER_ANTHROPIC_API_KEY'],
+    envFileVar: 'AIDER_ENV_FILE',
+    // A key-file account sets these itself, over whatever Kangentic inherited.
+    overridingCredentialEnvVars: [],
+  };
   readonly displayName = 'Aider';
   readonly sessionType = 'aider_agent';
   /**

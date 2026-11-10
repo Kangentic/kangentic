@@ -205,7 +205,7 @@ export function TaskDetailHeader({
   const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
   // The Changes button's count: what an agent could fix on the PR. Shares one
-  // read with the Changes panel's Checks section (usePrChecks' cache).
+  // read with the Changes panel's Pull request section (usePrChecks' cache).
   const { checks: prChecks } = usePrChecks(task, hostProjectId ?? null);
   const prFixes = prFixCount(task, prChecks);
 
@@ -404,10 +404,15 @@ export function TaskDetailHeader({
               />
               {/* What an agent could fix on the PR (each failed check, plus a
                   conflict), so a closed panel still says there is something to
-                  look at. The title bar's solid overlay badge, hidden at zero. */}
+                  look at. The title bar's solid overlay badge, hidden at zero,
+                  in red because everything it counts is a failure. The Changes
+                  panel's Pull request section repeats this same badge. The ring
+                  is the window's own surface (WindowFrame's bg-surface-raised),
+                  so the red stands clear of the button's accent fill while the
+                  panel is open. */}
               {prFixes > 0 && (
-                <span aria-hidden="true" className="pointer-events-none absolute -top-0.5 -right-1 flex">
-                  <CountBadge count={prFixes} variant="solid" size="xs" testId="changes-toggle-fix-count" />
+                <span aria-hidden="true" className="pointer-events-none absolute -top-0.5 -right-1 flex rounded-full ring-2 ring-surface-raised">
+                  <CountBadge count={prFixes} variant="solid" size="xs" tone="danger" testId="changes-toggle-fix-count" />
                 </span>
               )}
             </div>

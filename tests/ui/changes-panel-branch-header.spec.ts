@@ -168,8 +168,8 @@ test.describe('Changes panel: branch header', () => {
     // stays at its default width.
     await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeLessThan(240);
 
-    // No PR is linked on this task, so the header shows no PR pill.
-    await expect(page.locator('[data-testid="changes-pr-pill"]')).toHaveCount(0);
+    // No PR is linked on this task, so the rail shows no Pull request section.
+    await expect(page.locator('[data-testid="changes-pr-section"]')).toHaveCount(0);
 
     // Close panel + dialog so state does not leak to other tests.
     await page.locator('[data-testid="changes-toggle"]').click();
@@ -264,7 +264,7 @@ test.describe('Changes panel: linked PR', () => {
     await prBrowser?.close();
   });
 
-  test('a linked PR shows once, as the pill in the Changes header, and not in the file tree', async () => {
+  test('a linked PR shows once, as the rail\'s Pull request section, and never as a pill in the Changes header', async () => {
     const card = prPage
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=Branch Header PR Task')
@@ -284,11 +284,13 @@ test.describe('Changes panel: linked PR', () => {
 
     // The branch context has loaded, so a missing pill is a decision, not a race.
     await expect(surfaceHeader.locator('[data-testid="changes-branch-name"]')).toHaveText('feature/pr-chip', { timeout: 8000 });
-    // The surface header carries the PR pill after the branch context. The file
-    // tree's own branch header is suppressed in this embed, so it never repeats it.
-    await expect(surfaceHeader.locator('[data-testid="changes-pr-pill"]')).toHaveCount(1);
-    await expect(surfaceHeader.locator('[data-testid="changes-pr-pill"]')).toContainText('PR #77');
-    await expect(fileTree.locator('[data-testid="changes-pr-pill"]')).toHaveCount(0);
+    // The header names the branch and stops there: the PR lives in the rail's
+    // Pull request section, whose own button opens it.
+    await expect(prPage.locator('[data-testid="changes-pr-section"]')).toHaveCount(1);
+    await expect(prPage.locator('[data-testid="changes-pr-open"]')).toBeVisible();
+    // Any PR control stamps data-pr-state (the pill and the open button both
+    // do), so this holds whatever test id a pill in the header would carry.
+    await expect(surfaceHeader.locator('[data-pr-state]')).toHaveCount(0);
 
     await prPage.locator('[data-testid="changes-toggle"]').click();
     await prPage.keyboard.press('Control+Shift+W');

@@ -196,7 +196,7 @@ Operates on a per-project DB.
 
 | Method | Description |
 |--------|-------------|
-| `insert(record)` | Insert a new session record. Caller provides the `id` (PTY session ID = DB primary key, enabling unified session identity across the in-memory PTY layer and the database). `cli_target` and `start_head_sha` are optional and default to NULL. |
+| `insert(record)` | Insert a new session record. Caller provides the `id` (PTY session ID = DB primary key, enabling unified session identity across the in-memory PTY layer and the database). `cli_target`, `start_head_sha` and `account_id` are optional and default to NULL. |
 | `updateMetrics(id, metrics)` | Save the metric columns from a session's telemetry. A null cost, token count, model or duration keeps the value the record holds (an agent taken back from an SSH host keeps its record and has no usage until it reports); the tool count, tool breakdown and compaction count are written as given |
 | `updateStatus(id, status, extra?)` | Update session status with optional `exit_code`, `suspended_at`, `exited_at`, `suspended_by` |
 | `getResumable()` | Get suspended agent sessions that can be resumed (any `session_type` except `run_script`) |
@@ -359,3 +359,23 @@ GLOBAL database while its callers are per-project TASK paths - resolving
 operation down with it. A row is advisory anyway (the bind probe is the
 authority), so "the ledger is unreachable" correctly reads as "this task holds
 no reservations".
+
+## AgentAccountRepository
+
+Operates on the global DB (`getGlobalDb()`, opened on first use), over the
+[`agent_accounts` table](storage-model.md#agent_accounts-table). The database is
+injectable, so unit tests run on an in-memory one. Unlike `DevPortRepository`, it
+does not fail soft: a failed read or write throws to its caller, the account service.
+
+| Method | Description |
+|--------|-------------|
+| `list()` | Every account, by agent and then `position` |
+| `listForAgent(agent)` | One agent's accounts in run order |
+| `getById(id)` | One account, or null |
+| `insert(input)` | Add an account at the bottom of its agent's list, `status` `ok` unless given, and return it |
+| `updateIdentity(id, identity)` | Write the `email`, `plan` and `status` the CLI reported |
+| `updateStatus(id, status)` | Write `status` alone |
+| `setHistoryPrivate(id, historyPrivate)` | Record whether the account keeps its own prompt history |
+| `updateUsage(id, windows)` | Write the account's last usage windows (`last_usage_json`) and stamp `last_usage_at` |
+| `reorder(agent, orderedIds)` | Rewrite one agent's positions to the given order, 1-based, in one transaction. Ids not listed keep their order after the listed ones |
+| `delete(id)` | Delete the row and close the gap in its agent's positions. The account's folder and login stay on disk |

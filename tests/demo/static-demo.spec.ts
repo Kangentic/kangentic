@@ -706,7 +706,19 @@ test('the webview shim runs scripts in the guest, answers a reload\'s pending ca
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await gotoScene(page, { view: 'browser-annotations', embed: '1' });
   const guestFrame = () => page.frames().find((frame) => frame.url().includes('contoso-web'));
-  await expect.poll(async () => guestFrame()?.evaluate(() => document.querySelector('[data-kangentic-annotations]') !== null) ?? false).toBe(true);
+  // A read of the guest that a document swap cannot fail. While the guest loads or reloads, its
+  // execution context is destroyed under a running evaluate, which throws; expect.poll does not
+  // retry a throw, so the read answers `whileSwapping` and the poll reads the next document.
+  const readGuest = async <Result>(read: () => Result, whileSwapping: Result): Promise<Result> => {
+    const frame = guestFrame();
+    if (!frame) return whileSwapping;
+    try {
+      return await frame.evaluate(read);
+    } catch {
+      return whileSwapping;
+    }
+  };
+  await expect.poll(() => readGuest(() => document.querySelector('[data-kangentic-annotations]') !== null, false)).toBe(true);
   // Stamp the first guest document so a reload is observable as the stamp going away.
   await guestFrame()!.evaluate(() => { (window as unknown as { __guestStamp?: boolean }).__guestStamp = true; });
 
@@ -738,13 +750,13 @@ test('the webview shim runs scripts in the guest, answers a reload\'s pending ca
   expect(results.afterReload.value).toBeUndefined();
 
   // The reload made a new guest document, and the layer drew itself into it with its host not swept.
-  await expect.poll(async () => guestFrame()?.evaluate(() => {
+  await expect.poll(() => readGuest(() => {
     const stamped = (window as unknown as { __guestStamp?: boolean }).__guestStamp === true;
     const host = document.querySelector('[data-kangentic-annotations]');
     if (stamped) return 'still the first document';
     if (!host) return 'no layer host';
     return host.hasAttribute('data-demo-foreign') ? 'layer host swept' : 'drawn';
-  }) ?? 'no guest frame').toBe('drawn');
+  }, 'guest document swapping')).toBe('drawn');
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

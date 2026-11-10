@@ -37,9 +37,6 @@ interface FileTreePanelProps {
    *  header instead, so it passes false to avoid duplicating the row. Default true
    *  (standalone dialog / command-terminal embed, which have no surface header). */
   showBranchHeader?: boolean;
-  /** Shown after ahead/behind in the built-in branch header: the task's PR
-   *  pill, in the hosts that have no surface header (pop-out, standalone). */
-  branchHeaderAccessory?: ReactNode;
   /**
    * The selected commit's bar, shown in the slot the scope control holds, in
    * its own wrapper and padding: while a commit is selected the scope control
@@ -856,13 +853,11 @@ function BranchHeader({
   baseLabel,
   baseLabelCustom,
   baseLabelKind = 'branch',
-  accessory,
 }: {
   branchSummary?: GitBranchSummaryResult | null;
   baseLabel?: string;
   baseLabelCustom?: boolean;
   baseLabelKind?: 'branch' | 'tag' | 'commit';
-  accessory?: ReactNode;
 }) {
   const { t } = useLingui();
   const branch = branchSummary?.currentBranch;
@@ -914,7 +909,6 @@ function BranchHeader({
             </span>
           </Tooltip>
         )}
-        {accessory}
       </div>
     </div>
   );
@@ -932,7 +926,6 @@ export function FileTreePanel({
   totalDeletions,
   branchSummary,
   showBranchHeader = true,
-  branchHeaderAccessory,
   viewedFiles,
   onToggleViewed,
   scope,
@@ -1035,7 +1028,7 @@ export function FileTreePanel({
       {/* Branch context + refresh. Suppressed in the task-detail embed, where the
           shared surface header owns this context (see showBranchHeader). */}
       {showBranchHeader && (
-        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} baseLabelKind={baseLabelKind} accessory={branchHeaderAccessory} />
+        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} baseLabelKind={baseLabelKind} />
       )}
 
       {/* Diff scope: working changes / staged / full branch. A segmented control

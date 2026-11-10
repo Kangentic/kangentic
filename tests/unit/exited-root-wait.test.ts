@@ -32,6 +32,8 @@ import {
 } from '../../src/main/pty/host/exited-root-wait';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
 import type { PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
+import type { HostSpawnService } from '../../src/main/pty/host/host-spawn-service';
+import type { ProcessInfo } from '../../src/main/activity-engine/background-shell/process-tree';
 
 const ROOT_PID = 500;
 const SPAWNED_AT = 10_000;
@@ -329,9 +331,12 @@ function makeCore(options: {
   platform?: NodeJS.Platform;
   withOrphanApi?: boolean;
   table: FakeProcessTable;
-  listProcessesBeforeKill?: () => Promise<Array<{ pid: number; ppid: number; comm: string }>>;
+  listProcessesBeforeKill?: () => Promise<ProcessInfo[]>;
+  /** What main's `listProcesses` request reads, through the spawn service's process-table probe. */
+  listProcessTable?: () => Promise<ProcessInfo[]>;
   isProcessAlive?: (pid: number) => boolean;
 }) {
+  const listProcessTable = options.listProcessTable;
   let clock = SPAWNED_AT;
   const fakes = new Map<number, FakePty>();
   let nextPid = ROOT_PID;
@@ -352,6 +357,13 @@ function makeCore(options: {
     ...(options.withOrphanApi === false ? {} : { loadOrphanApi }),
     ...(options.listProcessesBeforeKill ? { listProcessesBeforeKill: options.listProcessesBeforeKill } : {}),
     ...(options.isProcessAlive ? { isProcessAlive: options.isProcessAlive } : {}),
+    ...(listProcessTable ? {
+      createSpawnService: () => ({
+        processTableProbe: () => ({ listAllProcesses: listProcessTable, dispose: () => undefined }),
+        liveCliCount: 0,
+        stopAllCli: () => undefined,
+      }) as unknown as HostSpawnService,
+    } : {}),
   });
   return {
     core,
@@ -554,7 +566,7 @@ describe('PtyHostCore.awaitAgentExit', () => {
 
   it('POSIX: kills that arrive together share one listing', async () => {
     const table = new FakeProcessTable([]);
-    const listProcessesBeforeKill = vi.fn(async () => [] as Array<{ pid: number; ppid: number; comm: string }>);
+    const listProcessesBeforeKill = vi.fn(async (): Promise<ProcessInfo[]> => []);
     const rig = makeCore({ platform: 'linux', table, listProcessesBeforeKill, isProcessAlive: () => false });
     rig.core.spawn(spawnParams({ file: '/bin/bash' }));
     rig.core.spawn(spawnParams({ ptyId: 2, sessionId: 'session-2', file: '/bin/bash' }));
@@ -564,6 +576,129 @@ describe('PtyHostCore.awaitAgentExit', () => {
     expect(listProcessesBeforeKill).toHaveBeenCalledTimes(1);
     expect(rig.fakeFor(ROOT_PID).pty.kill).toHaveBeenCalledTimes(1);
     expect(rig.fakeFor(ROOT_PID + 1).pty.kill).toHaveBeenCalledTimes(1);
+  });
+
+  // Main reads whether an abandoned launch's shell still had an agent just
+  // ahead of its kill (`SessionManager.noteAgentProcessBeforeEnd`). The hangup
+  // must not land before that listing has run, or the shell's children are
+  // already re-parented and the read says `absent` for a live agent.
+  it('POSIX: a kill that lands while main\'s listing is out waits for that listing and lists from it', async () => {
+    let finishTable: () => void = () => undefined;
+    const listProcessTable = vi.fn(() => new Promise<ProcessInfo[]>((resolve) => {
+      finishTable = () => resolve([
+        { pid: ROOT_PID, ppid: 1, comm: 'zsh' },
+        { pid: 700, ppid: ROOT_PID, comm: 'claude' },
+      ]);
+    }));
+    const listProcessesBeforeKill = vi.fn(async (): Promise<ProcessInfo[]> => []);
+    const alive = new Set([700]);
+    const rig = makeCore({
+      platform: 'linux',
+      table: new FakeProcessTable([]),
+      listProcessesBeforeKill,
+      listProcessTable,
+      isProcessAlive: (pid) => alive.has(pid),
+    });
+    rig.core.spawn(spawnParams({ file: '/bin/zsh' }));
+
+    const read = rig.core.handleRequest('listProcesses', {});
+    rig.core.handleCommand({ type: 'kill', ptyId: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    const rootPty = rig.fakeFor(ROOT_PID).pty;
+    expect(rootPty.kill).not.toHaveBeenCalled();
+    finishTable();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(rootPty.kill).toHaveBeenCalledTimes(1);
+    expect(listProcessesBeforeKill).not.toHaveBeenCalled();
+    await expect(read).resolves.toHaveLength(2);
+    // The kill's own record came from the same listing: it waits for the agent it found.
+    rig.fakeFor(ROOT_PID).exit(129);
+    const wait = rig.core.awaitAgentExit([TASK]);
+    alive.clear();
+    await advance(rig, DEAD_ROOT_ORPHAN_POLL_MS * 2);
+    await expect(wait).resolves.toMatchObject({ found: ['claude'] });
+  });
+
+  it('POSIX: once main\'s listing has answered, a later kill takes its own listing', async () => {
+    const listProcessTable = vi.fn(async (): Promise<ProcessInfo[]> => [
+      { pid: ROOT_PID, ppid: 1, comm: 'zsh' },
+    ]);
+    const listProcessesBeforeKill = vi.fn(async (): Promise<ProcessInfo[]> => []);
+    const rig = makeCore({
+      platform: 'linux',
+      table: new FakeProcessTable([]),
+      listProcessesBeforeKill,
+      listProcessTable,
+      isProcessAlive: () => false,
+    });
+    rig.core.spawn(spawnParams({ file: '/bin/zsh' }));
+
+    await rig.core.handleRequest('listProcesses', {});
+    await vi.advanceTimersByTimeAsync(0);
+    rig.core.handleCommand({ type: 'kill', ptyId: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The settled listing is stale: the kill lists afresh, before the hangup.
+    expect(listProcessesBeforeKill).toHaveBeenCalledTimes(1);
+    expect(rig.fakeFor(ROOT_PID).pty.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('POSIX: a listing of main\'s that fails still lets a waiting kill land, and fails its requester', async () => {
+    let failTable: (error: Error) => void = () => undefined;
+    const listProcessTable = vi.fn(() => new Promise<ProcessInfo[]>((_resolve, reject) => {
+      failTable = reject;
+    }));
+    const listProcessesBeforeKill = vi.fn(async (): Promise<ProcessInfo[]> => []);
+    const rig = makeCore({
+      platform: 'linux',
+      table: new FakeProcessTable([]),
+      listProcessesBeforeKill,
+      listProcessTable,
+      isProcessAlive: () => false,
+    });
+    rig.core.spawn(spawnParams({ file: '/bin/zsh' }));
+
+    const read = rig.core.handleRequest('listProcesses', {});
+    const readOutcome = expect(read).rejects.toThrow('ps failed');
+    rig.core.handleCommand({ type: 'kill', ptyId: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    const rootPty = rig.fakeFor(ROOT_PID).pty;
+    expect(rootPty.kill).not.toHaveBeenCalled();
+    failTable(new Error('ps failed'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    await readOutcome;
+    expect(rootPty.kill).toHaveBeenCalledTimes(1);
+    expect(listProcessesBeforeKill).not.toHaveBeenCalled();
+  });
+
+  it('POSIX: a listing of main\'s that fails with no kill waiting leaves no unhandled rejection on the shared copy', async () => {
+    // Real timers: the check below waits a real event-loop turn for Node to report.
+    vi.useRealTimers();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const listProcessTable = vi.fn(async (): Promise<ProcessInfo[]> => {
+        throw new Error('ps failed');
+      });
+      const rig = makeCore({
+        platform: 'linux',
+        table: new FakeProcessTable([]),
+        listProcessesBeforeKill: async () => [],
+        listProcessTable,
+      });
+
+      await expect(rig.core.handleRequest('listProcesses', {})).rejects.toThrow('ps failed');
+      // unhandledRejection fires after the microtask queue drains, on a later turn.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    expect(unhandled).toEqual([]);
   });
 
   it('never waits on POSIX without a pre-kill listing, in the in-process core, during a quit, or for a PTY with no task', async () => {

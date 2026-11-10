@@ -131,7 +131,7 @@ Claude Code supports a `--mcp-config` flag that accepts a path to a JSON file co
 
 1. `CommandBuilder.createMergedSettings()` writes the kangentic MCP server config to `.kangentic/sessions/<sessionId>/mcp.json`. The entry is an HTTP MCP server pointing at the per-launch URL `http://127.0.0.1:<port>/mcp/<projectId>` with the `X-Kangentic-Token` header containing the per-launch token. In the same gated block it also appends `mcp__kangentic` to the merged settings' `permissions.allow` (append-if-absent) so the spawned agent does not prompt for kangentic tools in default mode (see Permissions).
 2. `CommandBuilder.buildClaudeCommand()` adds `--mcp-config <path>` to the CLI command
-3. `ClaudeAdapter.ensureTrust()` (`ensureClaudeSpawnConfig()`) adds "kangentic" to `enabledMcpjsonServers` in `~/.claude.json`, in the same write that trusts the working directory
+3. `ClaudeAdapter.ensureTrust()` (`ensureClaudeSpawnConfig()`) adds "kangentic" to `enabledMcpjsonServers` in Claude's state file (`~/.claude.json`, or the `.claude.json` inside `CLAUDE_CONFIG_DIR` when that is set), in the same write that trusts the working directory
 4. Claude Code starts, reads both `.mcp.json` (user servers) and the `--mcp-config` file (kangentic), and connects to the in-process HTTP MCP server over loopback. No child process is spawned for kangentic itself.
 5. Claude Code calls `tools/list` and discovers all kangentic tools
 
@@ -243,7 +243,7 @@ Dependencies (`@modelcontextprotocol/sdk`, `zod`) are bundled into the main proc
 
 1. Check the session's MCP config: `.kangentic/sessions/<sessionId>/mcp.json` should contain a `kangentic` entry under `mcpServers` with a `type: "http"`, a `url` pointing at `http://127.0.0.1:<port>/mcp/<projectId>`, and an `X-Kangentic-Token` header.
 2. Check the CLI command includes `--mcp-config` pointing to the session's `mcp.json`.
-3. Check `~/.claude.json`: the project path should have `"kangentic"` in `enabledMcpjsonServers`.
+3. Check `~/.claude.json` (or the `.claude.json` inside `CLAUDE_CONFIG_DIR` when you set that): the project path should have `"kangentic"` in `enabledMcpjsonServers`.
 4. Verify the in-process server is listening: look for `[mcp-http] Listening on http://127.0.0.1:<port>/mcp` in the Electron main console at launch.
 5. The token rotates on every launch - if you started Kangentic after the agent was spawned, the agent's `mcp.json` still references the old token. Restart the session.
 

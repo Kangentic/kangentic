@@ -26,6 +26,7 @@ import { stopBeforeReap } from '../../stop-script/terminal-stop';
 import { discardAnnotationDraft } from '../../browser/annotation-drafts';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-stop';
+import { stopBackgroundSessionOnAccount } from '../../accounts/account-background-stop';
 
 /**
  * Kill what the given tasks left running: the processes carrying their
@@ -199,7 +200,8 @@ async function stopTaskBackgroundSessions(context: IpcContext, projectPath: stri
         // conversation never stop it twice.
         stopped.add(backgroundId);
         const cliPath = await cliPathOf(adapter);
-        if (cliPath) await adapter.stopBackgroundSession({ agentSessionId: backgroundId, cliPath });
+        // On the account the record ran on: a CLI lists only its own home's background sessions.
+        if (cliPath) await stopBackgroundSessionOnAccount(adapter, { agentSessionId: backgroundId, cliPath }, record.account_id);
       } catch (error) {
         console.warn(`[TASK-REAP] could not stop a background session for record ${record.id.slice(0, 8)} before the reap (non-fatal):`, error);
       }

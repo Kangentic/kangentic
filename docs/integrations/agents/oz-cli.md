@@ -69,6 +69,10 @@ The token stays in the file, never on the command line. Nothing is written in th
 
 Oz reports no model, context, tokens, cost or rate limits to Kangentic: Warp documents no status file, hook or event stream for `oz agent run`. The adapter declares `liveTelemetryUnsupported` ("Telemetry: none"), so a card shows that label instead of a spinner that never ends.
 
+## Accounts
+
+Each extra Oz account in Settings > Accounts is a key file the user owns ([accounts](../accounts.md)). A session on one gets the file's `WARP_API_KEY` in its env, and Kangentic stores only the file's path and the names in it. The `oz login` session is the Warp app's own, one per machine, and stays account #1. A key file adds one variable to a session and moves nothing, so conversations stay where they are. Built from the documented variable and not run with a second key.
+
 ## WSL
 
 An `oz` installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`): the session starts in a `wsl -d <distro>` shell with oz's Linux path, `-C` takes the folder as the distro sees it (`/mnt/c/...`), and detection runs `dump-debug-info` inside the distro. The `--mcp` path reaches the distro in its `/mnt` form. A distro on NAT networking cannot reach this machine's loopback, so its `mcp.json` names the WSL hook transport's bridge as a stdio server (`command`, `args`, and the token in `env`); a distro on mirrored networking gets the URL. Built from Warp's CLI docs; not yet run against an `oz` installed in a distro.

@@ -1,7 +1,5 @@
 import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
-import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
+import { claudeJsonPath as claudeStatePath, isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
 
 const LOG_TAG = '[CLAUDE_DIFF_PANEL]';
@@ -46,7 +44,8 @@ export async function ensureDiffPanelClosed(): Promise<void> {
 function ensureDiffPanelClosedSync(): void {
   // Never let this block a spawn: the panel opening once is cosmetic.
   try {
-    const claudeJsonPath = path.join(os.homedir(), '.claude.json');
+    // The file this machine's Claude reads, an inherited CLAUDE_CONFIG_DIR's included.
+    const claudeJsonPath = claudeStatePath();
 
     let raw: string | null;
     try {

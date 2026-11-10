@@ -23,6 +23,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { trackEvent } from '../analytics/analytics';
 import { reportHandledError } from '../analytics/error-reporting';
 import { isShuttingDown } from '../shutdown-state';
@@ -30,10 +31,17 @@ import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
 import { redactPaths } from '../../shared/sentry-breadcrumbs';
 import { shellProgramName } from '../../shared/shell-quote';
-import { finalLinesOf } from '../agent/shared/user-setup-failure';
-import type { AgentParser, LaunchStartPath } from '../../shared/types';
+import type { LaunchStartPath } from '../../shared/types';
+import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
+import type { AgentProcessPresence } from './host/agent-process-presence';
+import { classifyLaunchOutput, type LaunchOutputClass } from './launch-output-class';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
+import { parseWslShellSpec } from './process-tag/task-process-tag';
 import type { ManagedSession } from './session-registry';
+
+// Re-exported for the callers that also read this file's report functions. A
+// module that must not reach `electron` imports `launch-output-class.ts` itself.
+export { classifyLaunchOutput, lineTooLongSentence, type LaunchOutputClass } from './launch-output-class';
 
 /** Where a launch died. */
 export type LaunchStage =
@@ -61,24 +69,6 @@ const LAUNCH_ERROR_NAMES: Readonly<Record<Exclude<LaunchStage, 'pty_spawn'>, str
   abandoned: 'AgentLaunchAbandonedError',
   pty_port: 'PtyPortDeliveryError',
 };
-
-/** What the last output said, as a fixed value. */
-export type LaunchOutputClass =
-  | 'command_not_found'
-  | 'permission_denied'
-  | 'no_such_file'
-  | 'unknown_option'
-  /** cmd refused a line past its limit. The same line gets the same answer, so it is never retried. */
-  | 'line_too_long'
-  /** The CLI said the conversation this launch resumes does not exist. */
-  | 'conversation_missing'
-  /** The adapter identified the user's own setup. These two never reach Sentry. */
-  | UserSetupFailure
-  | 'other'
-  /** The session's ring is gone, or nothing asked for it. */
-  | 'not_read'
-  /** The read failed. */
-  | 'unreadable';
 
 /** How a session ended, for a launch a person gave up on. */
 export type LaunchEndedBy = 'pause' | 'kill' | 'quit';
@@ -142,6 +132,49 @@ function launcherTag(session: ManagedSession): string {
 }
 
 /**
+ * Whether the command's head, the CLI path the builder was handed, exists now.
+ * `no_such_file` names either that path or one the CLI runs, and this tells
+ * them apart. `unknown` when there is no path to check: none was recorded, a
+ * bare name the shell looks up on its PATH, or a WSL shell, whose paths live in
+ * the distro.
+ *
+ * Off Windows the builder runs the very path detection probed:
+ * `resolveShimLaunch` changes nothing there, and detection keeps `which`'s
+ * answer without resolving links. What can differ is the moment. One shape this
+ * tag would show: a head that links to a versioned install whose target was
+ * removed after detection ran. `existsSync` follows the link, so a dangling one
+ * reads `missing`. Sentry DESKTOP-2H (zsh, `no_such_file`, seconds after
+ * detection) could not say which file was missing; this tag is what will.
+ */
+function commandHeadTag(session: ManagedSession): string {
+  const cliPath = checkableCliPathOf(session);
+  if (!cliPath) return 'unknown';
+  try {
+    return fs.existsSync(cliPath) ? 'present' : 'missing';
+  } catch {
+    return 'missing';
+  }
+}
+
+/** The command head as a path this process can check, or null: none recorded, a bare name, or a WSL shell's. */
+function checkableCliPathOf(session: ManagedSession): string | null {
+  const cliPath = session.agentCliPath;
+  if (!cliPath || !path.isAbsolute(cliPath) || parseWslShellSpec(session.shell) !== null) return null;
+  return cliPath;
+}
+
+/**
+ * Whether the command head still resolves to the file detection found
+ * (`cli-identity.ts`): `changed` is a CLI replaced, repointed or removed under a
+ * running app since detection, which the macOS install behind DESKTOP-2E and
+ * DESKTOP-2H fits. `unknown` where detection recorded nothing for this path.
+ */
+function commandHeadSinceDetectionTag(session: ManagedSession): CliIdentitySinceDetection {
+  const cliPath = checkableCliPathOf(session);
+  return cliPath ? cliIdentitySinceDetection(cliPath) : 'unknown';
+}
+
+/**
  * Whether the shell printed, and on which side of the typed line. A plain yes
  * would nearly always read yes, since the shell echoes the line it is typed.
  */
@@ -169,6 +202,8 @@ export function launchTagsOf(session: ManagedSession, now: number = Date.now()):
     shell: shellLabelOf(session.shell),
     attempt: attemptOf(session.startPath),
     launcher: launcherTag(session),
+    command_head: commandHeadTag(session),
+    command_head_since_detection: commandHeadSinceDetectionTag(session),
     shell_printed: shellPrintedTag(session),
     first_output_s: typeof firstOutputAt === 'number' ? secondsBucket(firstOutputAt - startedAtMs) : 'none',
     session_age_s: secondsBucket(now - startedAtMs),
@@ -213,104 +248,14 @@ export function launchNeverStarted(session: ManagedSession): boolean {
   return session.reportsAgentStart === true && !hasAgentRunEvidence(session);
 }
 
-const LINE_TOO_LONG_SENTENCES: readonly RegExp[] = [
-  /^The input line is too long\.$/,
-  /^The command line is too long\.$/,
-];
-
 /**
- * The shapes each class takes, anchored on how a shell words the failure so text
- * the shell merely echoed cannot match: a task titled "fix permission denied"
- * sits in the typed line when no launcher was used. Each pattern needs the
- * shell's own framing, not just the phrase.
+ * Classify a session's output the one way both readers do: the launch report,
+ * and the agent-absence sweep's check for a launch whose output already names
+ * its cause (`SessionManager.checkPendingLaunchOutput`). A resuming launch asks
+ * its adapter about the conversation it resumed.
  */
-const OUTPUT_SHAPES: ReadonlyArray<{ outputClass: LaunchOutputClass; shapes: readonly RegExp[] }> = [
-  {
-    outputClass: 'command_not_found',
-    shapes: [
-      // zsh: `zsh: command not found: claude`
-      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:\d+:\s)?command not found:/,
-      // bash, dash: `bash: claude: command not found`, `sh: 1: claude: not found`
-      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:line \d+:\s)?(?:\d+:\s)?[^:]+:\s(?:command )?not found$/,
-      // cmd
-      /^'[^']+' is not recognized as an internal or external command/,
-      // PowerShell
-      /^[^:]+\s?: The term '[^']+' is not recognized/,
-      // fish
-      /^fish: Unknown command/,
-      // nushell
-      /^Error: nu::shell::external_command/,
-    ],
-  },
-  {
-    outputClass: 'permission_denied',
-    shapes: [
-      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:\d+:\s)?permission denied:/,
-      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:line \d+:\s)?(?:\d+:\s)?[^:]+:\s(?:Permission denied|cannot execute)/,
-      /^fish: The file .* is not executable/,
-    ],
-  },
-  {
-    outputClass: 'no_such_file',
-    shapes: [
-      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:\d+:\s)?no such file or directory:/,
-      // A shebang names a second path: `bash: /opt/claude: /usr/bin/node: bad interpreter: ...`
-      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:line \d+:\s)?(?:\d+:\s)?[^:]+:\s(?:[^:]+:\s)?(?:No such file or directory|bad interpreter)/,
-      /^The system cannot find the (?:path|file) specified/,
-    ],
-  },
-  {
-    outputClass: 'unknown_option',
-    shapes: [
-      /^error: unknown (?:option|command)\b/i,
-      /^error: unexpected argument\b/i,
-      /^(?:[\w.-]+:\s)?(?:unknown|unrecognized|invalid) (?:option|argument|flag)\b/i,
-    ],
-  },
-  {
-    outputClass: 'line_too_long',
-    // cmd's two words for it: a typed line past 8190 characters, and a command
-    // line a `.cmd` runs through cmd.exe under PowerShell or Git Bash. The second
-    // is also what a spawn types for a shim it cannot get past (`typed-launch.ts`).
-    // English only, like every shape here: cmd words its own refusal in the
-    // system's language, and on another one that reads as `other` and retries.
-    shapes: LINE_TOO_LONG_SENTENCES,
-  },
-];
-
-/**
- * The shell's own refusal of a line as too long, as it printed it, for the
- * notice. Null when the last output holds none.
- */
-export function lineTooLongSentence(rawScrollback: string): string | null {
-  return finalLinesOf(rawScrollback).find((line) => LINE_TOO_LONG_SENTENCES.some((sentence) => sentence.test(line))) ?? null;
-}
-
-/**
- * Classify the last output into a fixed value. Only the class leaves this
- * process. The adapter speaks first, since only it knows its own CLI's words.
- * Then the shell's shapes, newest line first, so the failure that ended the
- * launch wins over an older line of the same session.
- *
- * `resumedAgentSessionId` is the conversation a resuming launch asked for, and
- * null for a fresh one, which has no conversation to miss.
- */
-export function classifyLaunchOutput(
-  rawScrollback: string,
-  agentParser?: AgentParser,
-  resumedAgentSessionId?: string | null,
-): LaunchOutputClass {
-  const userSetupFailure = agentParser?.identifyUserSetupFailure?.(rawScrollback);
-  if (userSetupFailure) return userSetupFailure.failure;
-  if (resumedAgentSessionId && agentParser?.namesMissingConversation?.(rawScrollback, resumedAgentSessionId)) {
-    return 'conversation_missing';
-  }
-  for (const line of finalLinesOf(rawScrollback)) {
-    for (const { outputClass, shapes } of OUTPUT_SHAPES) {
-      if (shapes.some((shape) => shape.test(line))) return outputClass;
-    }
-  }
-  return 'other';
+export function classifySessionOutput(session: ManagedSession, rawScrollback: string): LaunchOutputClass {
+  return classifyLaunchOutput(rawScrollback, session.agentParser, session.resuming ? session.agentSessionId : null);
 }
 
 /** True for a class that names a cause, which is evidence for any adapter. */
@@ -323,7 +268,12 @@ export function isUserSetupFailureClass(outputClass: LaunchOutputClass): outputC
   return outputClass === 'login_required' || outputClass === 'bad_configuration';
 }
 
-/** True for a cause a second launch of the same line cannot change. */
+/**
+ * True for a cause a second launch of the same line cannot change. The shell's
+ * own classes (`exec_format`, `killed`, `crashed`, `launcher_unreadable`) keep
+ * their retry: the file under the command can change between two launches, as
+ * a CLI update replaces it, and the CLI identity tag exists because it does.
+ */
 export function isLaunchRetryPointless(outputClass: LaunchOutputClass): boolean {
   return isUserSetupFailureClass(outputClass) || outputClass === 'line_too_long';
 }
@@ -503,6 +453,12 @@ export interface SessionLaunchFailure {
   extraTags?: LaunchTags;
   /** Report only when the output names a cause, for an adapter whose silence proves nothing. */
   onlyWhenIdentified?: boolean;
+  /**
+   * Whether the shell had an agent under it when the launch was ended, sent as
+   * `agent_process`. The report waits for it as it waits for the ring's read.
+   * Left out, the report has no such tag.
+   */
+  agentProcess?: Promise<AgentProcessPresence>;
 }
 
 /**
@@ -517,11 +473,11 @@ export interface SessionLaunchFailure {
  * `reportHandledError`, by its type. Aptabase counts it, for the volume.
  */
 export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void {
-  const { session, stage, readOutput, extraTags, onlyWhenIdentified } = failure;
+  const { session, stage, readOutput, extraTags, onlyWhenIdentified, agentProcess } = failure;
   if (session.launchFailureNoted === true) return;
   session.launchFailureNoted = true;
   const tags = { ...launchTagsOf(session), ...extraTags };
-  const send = (outputClass: LaunchOutputClass): LaunchOutputClass => {
+  const send = (outputClass: LaunchOutputClass, laterTags: LaunchTags = {}): LaunchOutputClass => {
     if (isShuttingDown()) return outputClass;
     if (onlyWhenIdentified === true && !isIdentifiedFailureClass(outputClass)) return outputClass;
     const userSetupFailure = isUserSetupFailureClass(outputClass) ? outputClass : null;
@@ -529,19 +485,26 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
     reportLaunchFailure({
       stage,
       cause: causeOf(outputClass),
-      tags: { ...tags, output_class: outputClass },
+      tags: { ...tags, ...laterTags, output_class: outputClass },
       sessionLabel: session.id.slice(0, 8),
       ...(userSetupFailure ? { error: new AgentUserSetupError(userSetupFailure) } : {}),
     });
     return outputClass;
   };
+  const sendOnceRead = (outputClass: LaunchOutputClass): LaunchOutputClass | Promise<LaunchOutputClass> => {
+    if (!agentProcess) return send(outputClass);
+    return agentProcess.then(
+      (presence) => send(outputClass, { agent_process: presence }),
+      () => send(outputClass, { agent_process: 'unknown' }),
+    );
+  };
   if (!readOutput) {
-    session.launchOutputRead = Promise.resolve(send('not_read'));
+    session.launchOutputRead = Promise.resolve(sendOnceRead('not_read'));
     return;
   }
   session.launchOutputRead = readOutput().then(
-    (rawScrollback) => send(classifyLaunchOutput(rawScrollback, session.agentParser, session.resuming ? session.agentSessionId : null)),
-    () => send('unreadable'),
+    (rawScrollback) => sendOnceRead(classifySessionOutput(session, rawScrollback)),
+    () => sendOnceRead('unreadable'),
   );
 }
 

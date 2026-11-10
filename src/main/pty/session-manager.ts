@@ -38,7 +38,7 @@ import type { CliChildProcess, OffMainCliOptions } from '../utility-process/off-
  *  for exits and exits itself, so main never stops waiting first. */
 const HOST_EXIT_MARGIN_MS = 200;
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
-import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
+import { AGENT_READY_CEILING_MS, AGENT_START_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn, type RejoinSpawn } from './lifecycle/session-spawn-flow';
@@ -98,7 +98,9 @@ import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
 import {
   LAUNCH_ABANDON_MS,
+  classifySessionOutput,
   hasAgentRunEvidence,
+  isIdentifiedFailureClass,
   isLaunchRetryPointless,
   launchNeverStarted,
   launchTagsOf,
@@ -111,6 +113,7 @@ import {
   type LaunchTags,
   type SessionLaunchFailure,
 } from './agent-launch-report';
+import { agentProcessPresenceOf, type AgentProcessPresence } from './host/agent-process-presence';
 import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
@@ -430,30 +433,48 @@ const MOBILE_USABLE_MIN_ROWS = 20;
  * behind a Windows cwd fixup - see session-spawn-flow), and the CLI process
  * still has to start; a heavy shell profile can stall even reading that stdin.
  *
- * 30s is far more than any of that needs, and it is nearly free: a session
- * whose agent dies inside its own first half-minute is retired on the next
- * sweep instead of this one. A SLOW-STARTING agent never needed this grace at
- * all - its process exists from the moment it launches, it has just not drawn
- * a frame yet, which is exactly the distinction that makes the process tree a
+ * Past this grace a launch whose agent showed it ran is judged on the process
+ * tree alone. One that never showed it is judged here only when its output
+ * already names a cause; otherwise it waits for `AGENT_START_CEILING_MS`. A
+ * shell still in its profile shows the same empty tree as an agent that left,
+ * and on one install a Windows PowerShell profile held every board launch past
+ * this grace, so each was paused and retried with its line still waiting
+ * (Sentry DESKTOP-2E). A SLOW-STARTING agent never needed this grace at all -
+ * its process exists from the moment it launches, it has just not drawn a
+ * frame yet, which is exactly the distinction that makes the process tree a
  * safer signal than a first-output timeout.
- *
- * A Command Terminal also waits for evidence its agent started (see
- * COMMAND_TERMINAL_AGENT_START_CEILING_MS): a shell slower than this grace
- * would otherwise lose the terminal outright.
  */
 const AGENT_SPAWN_GRACE_MS = 30_000;
 
 /**
- * How long the agent-absence sweep waits, past the spawn grace, before it
- * judges a Command Terminal whose agent never showed it started (no
- * SessionStart, no alt-screen entry). Without a bound, a launch that failed
- * (the CLI missing, a crash before any hook) would stay a bare shell forever;
- * with it, that shell stays reachable for up to this long plus a sweep, where
- * the plain grace allowed 30 s. A PTY-only adapter (no hooks, no alt screen)
- * always waits this long, so its agent's exit inside the first two minutes
- * ends the terminal later than the grace alone did.
+ * The shortest wait before the start bound reads a pending launch's output
+ * again (`checkPendingLaunchOutput`). The read asks the pty host for the raw
+ * ring, so output costs one read per wait, not one per chunk.
  */
-const COMMAND_TERMINAL_AGENT_START_CEILING_MS = 120_000;
+const LAUNCH_OUTPUT_CHECK_INTERVAL_MS = 2_000;
+
+/**
+ * The wait after a read, which grows to half the time spent past the grace.
+ * An agent with no hooks that streams output for the whole bound costs about
+ * ten reads, not one every 2 s. A failed launch goes quiet, so the read that
+ * follows its last output still comes, a little later.
+ */
+function launchOutputCheckIntervalMs(elapsedMs: number | null): number {
+  if (elapsedMs === null) return LAUNCH_OUTPUT_CHECK_INTERVAL_MS;
+  return Math.max(LAUNCH_OUTPUT_CHECK_INTERVAL_MS, (elapsedMs - AGENT_SPAWN_GRACE_MS) / 2);
+}
+
+/** Epoch ms a session spawned, or null when its start time does not parse. */
+function launchStartedAtMs(session: ManagedSession): number | null {
+  const startedAtMs = Date.parse(session.startedAt);
+  return Number.isFinite(startedAtMs) ? startedAtMs : null;
+}
+
+/** Milliseconds since a session spawned, or null when its start time does not parse. */
+function launchElapsedMs(session: ManagedSession): number | null {
+  const startedAtMs = launchStartedAtMs(session);
+  return startedAtMs === null ? null : Date.now() - startedAtMs;
+}
 
 /**
  * How long a Command Terminal the process tree cannot judge (a WSL shell, or
@@ -666,6 +687,13 @@ export class SessionManager extends EventEmitter {
    * noteCommandTerminalAgentEvent.
    */
   private agentEndSettleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * The start bound's output reads in progress or cooling down, keyed by
+   * session, and whether output landed since the read began. See
+   * checkPendingLaunchOutput. An entry lives at most one read plus its
+   * cooldown (launchOutputCheckIntervalMs, under 45 s inside the bound).
+   */
+  private readonly launchOutputChecks = new Map<string, { outputSinceRead: boolean }>();
   /**
    * Per-renderer sets of sessions with an xterm MOUNTED, unioned into
    * mountedSessionIds below. Broader than focus on purpose: a PARKED terminal
@@ -1086,7 +1114,11 @@ export class SessionManager extends EventEmitter {
     });
 
     this.sessionHistoryReader = new SessionHistoryReader({
-      onUsageUpdate: (sessionId, usage) => this.telemetry.setSessionUsage(sessionId, usage),
+      // Stamped like a status line's usage: a history file can carry rate limits too (Codex).
+      onUsageUpdate: (sessionId, usage) => {
+        const session = this.registry.get(sessionId);
+        this.telemetry.setSessionUsage(sessionId, withRateLimitAgent(usage, session?.agentName, session?.accountId));
+      },
       onEvents: (sessionId, events) => this.telemetry.ingestEvents(sessionId, events, {
         suppressesPtyTracker: this.historySuppressesPtyFallback(sessionId),
       }),
@@ -1109,10 +1141,13 @@ export class SessionManager extends EventEmitter {
     });
 
     this.statusFileReader = new StatusFileReader({
-      onUsageParsed: (sessionId, usage) => this.telemetry.processStatusUpdate(
-        sessionId,
-        withRateLimitAgent(this.usageOnHost(sessionId, usage), this.registry.get(sessionId)?.agentName),
-      ),
+      onUsageParsed: (sessionId, usage) => {
+        const session = this.registry.get(sessionId);
+        this.telemetry.processStatusUpdate(
+          sessionId,
+          withRateLimitAgent(this.usageOnHost(sessionId, usage), session?.agentName, session?.accountId),
+        );
+      },
       onEventsParsed: (sessionId, rawLines, events) => {
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
         // Before the events, and on every batch: a SessionStart that moves the
@@ -1219,6 +1254,10 @@ export class SessionManager extends EventEmitter {
         // for an unknown id, so it needs no registry guard.
         this.telemetry.activityEngine.markPtyOutput(event.sessionId);
         this.emit('output-seen', event.sessionId);
+        // A launch the start bound still waits on: does what the shell just
+        // printed name why its agent never ran? A cheap test first, so a
+        // running agent's output costs nothing here.
+        if (outputSession && this.awaitsLaunchStart(outputSession)) this.checkPendingLaunchOutput(event.sessionId);
         return;
       }
       // These re-create per-session state too (the first-output latch and
@@ -1298,7 +1337,10 @@ export class SessionManager extends EventEmitter {
         return;
       case 'streamTelemetry':
         if (!this.registry.has(event.sessionId)) return;
-        if (event.usage) this.telemetry.setSessionUsage(event.sessionId, event.usage);
+        if (event.usage) {
+          const session = this.registry.get(event.sessionId);
+          this.telemetry.setSessionUsage(event.sessionId, withRateLimitAgent(event.usage, session?.agentName, session?.accountId));
+        }
         if (event.events && event.events.length > 0) this.telemetry.ingestEvents(event.sessionId, event.events);
         return;
       case 'trace':
@@ -1418,7 +1460,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /** Spawn a probe's raw PTY in the pty host (`off-main-pty.ts`). */
-  spawnRawInPtyHost(file: string, args: string[], options: OffMainPtyOptions): Promise<OffMainPty> {
+  spawnRawInPtyHost(file: string, args: string[] | string, options: OffMainPtyOptions): Promise<OffMainPty> {
     return this.host.spawnRaw(file, args, options);
   }
 
@@ -1643,7 +1685,7 @@ export class SessionManager extends EventEmitter {
       if (session.status !== 'running' || session.pty === null) return;
       if (this.isHiddenUntilAdopted(sessionId) || !launchNeverStarted(session)) return;
       this.reportLaunchOf(session, 'never_started', { extraTags: { judge: 'timer' } });
-    }, COMMAND_TERMINAL_AGENT_START_CEILING_MS);
+    }, AGENT_START_CEILING_MS);
     if (typeof timer.unref === 'function') timer.unref();
   }
 
@@ -1689,13 +1731,48 @@ export class SessionManager extends EventEmitter {
   abandonedLaunchTags(now: number = Date.now()): LaunchTags[] {
     const launches: LaunchTags[] = [];
     for (const session of this.registry.values()) {
-      if (session.status !== 'running' || session.launchFailureNoted === true) continue;
-      if (this.isHiddenUntilAdopted(session.id) || !launchNeverStarted(session)) continue;
-      if (now - Date.parse(session.startedAt) < LAUNCH_ABANDON_MS) continue;
+      if (session.status !== 'running' || !this.mayReportAbandoned(session, now)) continue;
       const endedBy: LaunchEndedBy = 'quit';
-      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, output_class: 'not_read' });
+      // Nothing can read the process table inside a quit.
+      const agentProcess: AgentProcessPresence = 'unknown';
+      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, agent_process: agentProcess, output_class: 'not_read' });
     }
     return launches;
+  }
+
+  /**
+   * Whether ending this session now would make an `abandoned` report: an
+   * adapter that reports its start, a launch that never showed it ran, no
+   * report yet, past `LAUNCH_ABANDON_MS`, not an agent hidden until adopted.
+   * The quit's own check leaves out the shutdown test, since it runs inside one.
+   */
+  private mayReportAbandoned(session: ManagedSession, now: number = Date.now()): boolean {
+    if (!session.agentParser || session.launchFailureNoted === true) return false;
+    if (this.isHiddenUntilAdopted(session.id) || !launchNeverStarted(session)) return false;
+    return now - Date.parse(session.startedAt) >= LAUNCH_ABANDON_MS;
+  }
+
+  /**
+   * Post a read of whether this session's shell still has an agent under it,
+   * for the `abandoned` report its exit will make, without waiting for it.
+   * Called where Kangentic decides to end the launch, before the kill or the
+   * exit sequence reaches the agent: read at the exit, a live agent the hangup
+   * already ended would read `absent`. On POSIX the host's kill waits for a
+   * listing still out (`PtyHostCore`), so the read sees the shell's children
+   * before the hangup re-parents them. A WSL shell's agent lives in the distro,
+   * where no host listing reaches, so it reads `unknown`.
+   */
+  private noteAgentProcessBeforeEnd(session: ManagedSession, shellPid: number | null): void {
+    if (isShuttingDown() || !this.mayReportAbandoned(session)) return;
+    // A host's PTY has no pid here, so no local listing can name its agent: it reads `unknown`.
+    if (parseWslShellSpec(session.shell) !== null || shellPid === null || !(shellPid > 0)) {
+      session.agentProcessAtEnd = Promise.resolve('unknown');
+      return;
+    }
+    session.agentProcessAtEnd = this.host.listProcesses().then(
+      (rows) => agentProcessPresenceOf(rows, shellPid),
+      (): AgentProcessPresence => 'unknown',
+    );
   }
 
   /** The agent showed it ran, once. On a retry, that makes this launch a recovery. */
@@ -1715,13 +1792,13 @@ export class SessionManager extends EventEmitter {
   private reportLaunchOf(
     session: ManagedSession,
     stage: LaunchStage,
-    options: Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified'> = {},
+    options: Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified' | 'agentProcess'> = {},
   ): void {
     const ringIsThisLaunchs = this.registry.get(session.id) === session && typeof session.firstOutputAt === 'number';
     reportSessionLaunchFailure({
       session,
       stage,
-      readOutput: ringIsThisLaunchs ? () => this.getRawScrollback(session.id) : null,
+      readOutput: ringIsThisLaunchs ? () => this.getLaunchOutput(session.id) : null,
       ...options,
     });
   }
@@ -1754,10 +1831,14 @@ export class SessionManager extends EventEmitter {
       }
       return;
     }
-    if (!launchNeverStarted(session)) return;
-    if (Date.now() - Date.parse(session.startedAt) < LAUNCH_ABANDON_MS) return;
+    if (!this.mayReportAbandoned(session)) return;
     const endedBy: LaunchEndedBy = session.status === 'suspended' ? 'pause' : 'kill';
-    this.reportLaunchOf(session, 'abandoned', { extraTags: { ...exitTags, ended_by: endedBy } });
+    this.reportLaunchOf(session, 'abandoned', {
+      extraTags: { ...exitTags, ended_by: endedBy },
+      // Read when the launch was ended (`noteAgentProcessBeforeEnd`). An ending
+      // that posted none, a kill from another path, still carries the tag.
+      agentProcess: session.agentProcessAtEnd ?? Promise.resolve('unknown'),
+    });
   }
 
   /**
@@ -2936,6 +3017,7 @@ export class SessionManager extends EventEmitter {
         if (spawned) logLaunchStep(spawned, 'spawned');
         this.armAgentReadyCeiling(id);
         this.armUnjudgedLaunchCheck(id);
+        this.armLaunchStartBound(id);
       }
       if (session.status === 'running' && input.resuming && !input.transient && !rejoin) {
         this.announceResumed(id, input.agentSessionId ?? null, input.resumedBy ?? 'user');
@@ -4029,15 +4111,22 @@ export class SessionManager extends EventEmitter {
    *   can stall even that. This is the one window where "no agent yet" is
    *   genuinely expected. A SLOW-STARTING agent is not in it: its process
    *   exists, it just has not drawn its first frame.
-   * - a Command Terminal with no evidence its agent started: a shell slower
-   *   than the grace to reach the agent command shows the same empty tree as
-   *   an agent that exited, and a terminal judged then is ended outright (a
-   *   task keeps a resumable row, so it loses nothing and keeps the plain
-   *   grace). Evidence is the agent's own SessionStart or its first alt-screen
-   *   entry, which no shell emits (the first-output latch is not evidence: a
-   *   pwsh preamble trips it). The ceiling bounds the wait for an agent that
-   *   reports neither (a PTY-only adapter, a launch that failed), which would
-   *   otherwise stay a bare shell forever.
+   * - a launch with no evidence its agent ran, short of `AGENT_START_CEILING_MS`
+   *   (the start bound): a shell slower than the grace to reach the agent
+   *   command shows the same empty tree as an agent that exited. Judged then, a
+   *   Command Terminal is ended outright, and a task is paused and retried while
+   *   its typed line is still waiting to run, which is what a Windows
+   *   PowerShell profile past 30 s did on every launch (Sentry DESKTOP-2E). Evidence
+   *   is anything `hasAgentRunEvidence` reads (its SessionStart, its first
+   *   alt-screen entry, any hook, an id it reported), none of which a shell
+   *   emits (the first-output latch is not evidence: a pwsh preamble trips it).
+   *   A launch whose output already names its cause (`launchFailureIdentifiedAt`,
+   *   from `checkPendingLaunchOutput`) is judged at the grace: a missing
+   *   conversation or a line the shell refused needs no wait. The ceiling bounds
+   *   the wait for an agent that shows nothing (a PTY-only adapter, a launch that
+   *   failed in words nobody classified), which would otherwise stay a bare
+   *   shell forever. The cost is that such an adapter's agent, exiting inside
+   *   its first two minutes, is counted until the ceiling.
    */
   private isAgentAbsenceCandidate(sessionId: string): boolean {
     const session = this.registry.get(sessionId);
@@ -4062,13 +4151,113 @@ export class SessionManager extends EventEmitter {
     // exists for an agent that has not started yet, no longer applies.
     const commandTerminal = isCommandTerminalSession(session);
     if (commandTerminal && typeof session.agentEndSignaledAt === 'number') return true;
-    const startedAtMs = Date.parse(session.startedAt);
-    if (!Number.isFinite(startedAtMs)) return false;
-    const elapsedMs = Date.now() - startedAtMs;
-    if (elapsedMs < AGENT_SPAWN_GRACE_MS) return false;
-    if (!commandTerminal) return true;
-    const agentStarted = typeof session.agentStartObservedAt === 'number' || session.altScreenEnteredAt !== undefined;
-    return agentStarted || elapsedMs >= COMMAND_TERMINAL_AGENT_START_CEILING_MS;
+    const elapsedMs = launchElapsedMs(session);
+    if (elapsedMs === null || elapsedMs < AGENT_SPAWN_GRACE_MS) return false;
+    if (hasAgentRunEvidence(session) || elapsedMs >= AGENT_START_CEILING_MS) return true;
+    return typeof session.launchFailureIdentifiedAt === 'number';
+  }
+
+  /**
+   * A launch the start bound is still waiting on: one the sweep could judge,
+   * past its grace and short of the ceiling, with no sign its agent ran and no
+   * cause named yet. Only such a launch has its output read.
+   */
+  private awaitsLaunchStart(session: ManagedSession): boolean {
+    if (!session.agentParser || session.status !== 'running' || session.pty === null) return false;
+    if (hasAgentRunEvidence(session) || typeof session.launchFailureIdentifiedAt === 'number') return false;
+    const elapsedMs = launchElapsedMs(session);
+    if (elapsedMs === null || elapsedMs < AGENT_SPAWN_GRACE_MS || elapsedMs >= AGENT_START_CEILING_MS) return false;
+    return this.canTreeJudgeAgent(session);
+  }
+
+  /**
+   * Arm the start bound's two looks for a launch the sweep can judge (the
+   * unjudged-launch check covers the rest). At the grace, read its output once,
+   * since a shell that failed early may print nothing after it. At the
+   * ceiling, ask the sweep to look now, so a launch that never showed its agent
+   * is judged within seconds of the bound rather than at the 60 s cadence.
+   * Both re-check the row, which a respawn or removal may have replaced.
+   */
+  private armLaunchStartBound(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.agentParser || !this.canTreeJudgeAgent(session) || hasAgentRunEvidence(session)) return;
+    const startedAtMs = launchStartedAtMs(session);
+    if (startedAtMs === null) return;
+    // A timer can fire a few ms before `Date.now()` reaches its target (Node
+    // starts it from the loop's cached time), and the looks test the clock, so
+    // one that is early waits out the rest rather than finding nothing to do.
+    const arm = (atElapsedMs: number, look: () => void): void => {
+      const remainingMs = startedAtMs + atElapsedMs - Date.now();
+      const timer = setTimeout(() => {
+        if (this.registry.get(sessionId) !== session) return;
+        if (Date.now() < startedAtMs + atElapsedMs) {
+          arm(atElapsedMs, look);
+          return;
+        }
+        look();
+      }, Math.max(0, remainingMs));
+      if (typeof timer.unref === 'function') timer.unref();
+    };
+    arm(AGENT_SPAWN_GRACE_MS, () => this.checkPendingLaunchOutput(sessionId));
+    arm(AGENT_START_CEILING_MS, () => {
+      if (session.status !== 'running' || session.pty === null) return;
+      if (!hasAgentRunEvidence(session)) this.telemetry.requestAgentAbsenceCheck(sessionId);
+    });
+  }
+
+  /**
+   * Read a pending launch's output and stamp `launchFailureIdentifiedAt` when it
+   * names a cause, then ask the sweep to look now: a missing CLI path, a
+   * conversation the CLI could not find, or a line the shell refused is a
+   * failed launch whatever the clock says, and the person should not wait two
+   * minutes for its notice. The same classifier as the launch report
+   * (`classifySessionOutput`), so the two cannot disagree. It only looks. The
+   * sweep reports once, when it judges.
+   *
+   * Called at the grace and on new output after it. One read at a time, then a
+   * cooldown (`launchOutputCheckIntervalMs`); output that lands meanwhile is
+   * read once the cooldown ends. A read or classification that fails is logged
+   * and left to the next output, or to the ceiling.
+   *
+   * It reads `getLaunchOutput`, not the whole ring: a retry or a resume opens
+   * with its predecessor's bytes (the host's carry-over), and the last launch's
+   * failure line would otherwise judge this one at the grace.
+   */
+  private checkPendingLaunchOutput(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session || !this.awaitsLaunchStart(session) || typeof session.firstOutputAt !== 'number') {
+      this.launchOutputChecks.delete(sessionId);
+      return;
+    }
+    const existing = this.launchOutputChecks.get(sessionId);
+    if (existing) {
+      existing.outputSinceRead = true;
+      return;
+    }
+    const check = { outputSinceRead: false };
+    this.launchOutputChecks.set(sessionId, check);
+    const startCooldown = (): void => {
+      const timer = setTimeout(() => {
+        if (this.launchOutputChecks.get(sessionId) !== check) return;
+        this.launchOutputChecks.delete(sessionId);
+        if (check.outputSinceRead) this.checkPendingLaunchOutput(sessionId);
+      }, launchOutputCheckIntervalMs(launchElapsedMs(session)));
+      if (typeof timer.unref === 'function') timer.unref();
+    };
+    this.getLaunchOutput(sessionId)
+      .then((rawScrollback) => {
+        if (this.registry.get(sessionId) !== session || !this.awaitsLaunchStart(session)) return;
+        if (!isIdentifiedFailureClass(classifySessionOutput(session, rawScrollback))) return;
+        session.launchFailureIdentifiedAt = Date.now();
+        this.telemetry.requestAgentAbsenceCheck(sessionId);
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          `[START_BOUND] Launch output check failed for ${sessionId.slice(0, 8)}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+      .finally(startCooldown);
   }
 
   /**
@@ -4307,6 +4496,8 @@ export class SessionManager extends EventEmitter {
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
       // A PTY on a remote host has none: the quit drain probes local pids only.
       const childPid = ptyRef.pid ?? undefined;
+      // Posted ahead of the exit sequence and the kill, and never waited for.
+      this.noteAgentProcessBeforeEnd(session, ptyRef.pid);
       // A renderer's keystrokes stop reaching it now, and anything still
       // queued for it is dropped, as when they crossed this process and found
       // the handle nulled. The exit sequence below is written past the seal.
@@ -4517,6 +4708,8 @@ export class SessionManager extends EventEmitter {
     this.host.post({ type: 'releaseBackpressure', sessionIds: [sessionId] });
 
     if (session.pty) {
+      // Posted ahead of the exit sequence and the kill, and never waited for.
+      this.noteAgentProcessBeforeEnd(session, session.pty.pid);
       // Send exit sequence, wait up to 1500ms for natural exit, then
       // force-kill and wait another 1500ms for kill propagation so
       // callers that immediately delete the CWD (worktree removal on
@@ -4639,6 +4832,17 @@ export class SessionManager extends EventEmitter {
    */
   getRawScrollback(sessionId: string): Promise<string> {
     return this.host.getRawScrollback(sessionId);
+  }
+
+  /**
+   * What this launch's own PTY printed, without the ring a respawn carried over
+   * from the session it replaced. A retry or a resume opens with its
+   * predecessor's last lines, so reading the whole ring could take the last
+   * launch's failure for this one's. The launch report and the start bound
+   * (`checkPendingLaunchOutput`) classify this.
+   */
+  getLaunchOutput(sessionId: string): Promise<string> {
+    return this.host.getOwnRawOutput(sessionId);
   }
 
   /**

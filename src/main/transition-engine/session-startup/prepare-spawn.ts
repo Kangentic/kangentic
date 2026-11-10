@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { conversationAccountOf, resolveSpawnAccount } from '../../accounts/account-service';
+import { buildSessionEnv } from '../../accounts/account-env';
 import { agentRegistry } from '../../agent/agent-registry';
 import { trackEvent } from '../../analytics/analytics';
 import type { AgentAdapter } from '../../agent/agent-adapter';
@@ -54,6 +56,12 @@ export interface PreparedSpawn {
    */
   extraEnv: Record<string, string> | null;
   /**
+   * The agent account the session runs on (`SessionRecord.account_id`): the `default` row's id for
+   * the agent's own login. Null only when no account was resolved (an agent without accounts, a
+   * CLI in WSL).
+   */
+  accountId: string | null;
+  /**
    * The model/effort this command actually applies via `--model` / `--effort`
    * (null = agent default, no flag). The caller persists these to the session
    * record's `applied_model` / `applied_effort` so a later column transition
@@ -90,6 +98,8 @@ export interface PreparedSpawn {
   inputInAlternateScreen: boolean;
   /** The agent CLI's version as detection read it (`SpawnSessionInput.agentCliVersion`). */
   agentCliVersion: string | null;
+  /** The CLI path the command was built with (`SpawnSessionInput.agentCliPath`). */
+  agentCliPath: string;
 }
 
 export type PrepareResult =
@@ -404,13 +414,20 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
     ptySessionId: sessionRecordId,
     bypassAvailable,
     cliTarget,
+    // The account a recovered session runs on (task #1057): the top account with room, as for a
+    // board spawn. A WSL CLI keeps its single login.
+    account: cliTarget ? null : await resolveSpawnAccount(
+      agent,
+      undefined,
+      conversationAccountOf(canResume ? input.sessionRepo?.listForTaskNewestFirst?.(task.id) ?? [] : [], agentSessionId, canResume),
+    ),
   };
 
   const command = adapter.buildCommand(commandOptions);
   notePlanApprovalSpawn(sessionRecordId, { sessionDir, bypassAvailable });
   let extraEnv: Record<string, string> | null;
   try {
-    extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
+    extraEnv = buildSessionEnv(adapter, commandOptions);
   } catch (error) {
     // No caller will spawn this command, so nothing else releases its hold.
     releaseCommandHold(adapter, cwd, sessionRecordId);
@@ -443,6 +460,8 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       expiredLastActiveAt,
       inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
       agentCliVersion: spawnCli.version,
+      agentCliPath: launch.agentPath,
+      accountId: commandOptions.account?.id ?? null,
     },
   };
 }

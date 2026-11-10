@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ClaudeDetector } from './detector';
+import { CLAUDE_ACCOUNT_SUPPORT } from './accounts';
 import { CommandBuilder, claudeMcpServerEntry } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
@@ -25,7 +26,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { CLAUDE_HISTORY_VIEW } from './history-view';
-import { ensureClaudeSpawnConfig } from './trust-manager';
+import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig } from './trust-manager';
 import { ensureRemoteClaudeSpawnConfig } from './remote-trust';
 import { cliPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { resolveRunTranscriptPath, type RunTranscriptInput } from '../../shared/run-transcript-path';
@@ -362,6 +363,7 @@ export class ClaudeAdapter implements AgentAdapter {
   // ContextBar shows the rate-limit pill for any Claude session using the shared
   // global snapshot - even a freshly spawned one that has not reported its own yet.
   readonly reportsRateLimits = true;
+  readonly accounts = CLAUDE_ACCOUNT_SUPPORT;
   // Claude appends every --resume of a conversation to one transcript, and its
   // tool-call cursor filters calls by timestamp, so a read can be scoped to one
   // run with sinceMs/untilMs (transcript-parser.ts, callsInWindow).
@@ -681,7 +683,11 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   /** `/bg` moves a task's conversation into a background session its terminal does not own: background-sessions.ts. */
-  stopBackgroundSession(options: { agentSessionId: string; cliPath: string }): Promise<boolean> {
+  declineExternalInstructionImports(projectRoot: string): Promise<void> {
+    return declineExternalClaudeMdImports(projectRoot);
+  }
+
+  stopBackgroundSession(options: { agentSessionId: string; cliPath: string; env?: Record<string, string> }): Promise<boolean> {
     return stopClaudeBackgroundSession(options);
   }
 

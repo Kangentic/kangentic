@@ -10,15 +10,19 @@ chrome unless these are stated.
 
 ## The rule
 
-- **Icons:** use Lucide React icons. No inline SVGs. Exactly four files are exempt. Three
+- **Icons:** use Lucide React icons. No inline SVGs. Exactly five files are exempt. Three
   consume a shipped `@kangentic/branding` asset that cannot be a lucide glyph:
   `components/BrandMark.tsx` (the brandmark lockup), `components/ActivityMark.tsx` (the twelve
   activity marks, shared with the website and mobile app), and
   `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). The fourth,
   `components/workflows/NoWorkflowsIllustration.tsx`, is the Workflows empty state's drawing of
   four linked cards: its curves are a diagram, not an icon, so no lucide glyph can draw them. It
-  paints only theme tokens and never moves. Each exempt file carries a comment naming this rule.
-  Adding a fifth needs the same justification, not a silent inline `<svg>`.
+  paints only theme tokens and never moves. The fifth, `components/AgentLogo.tsx`, draws an agent
+  vendor's own mark on its Accounts card: no lucide glyph is a logo, and a list of logins is where
+  vendors have to be told apart. The marks are the set kangentic.com draws, all `currentColor`,
+  held as element data in `agent-marks.ts`. It never moves, and an agent with no mark there gets
+  the generic agent icon. Each exempt file carries a comment naming this rule.
+  Adding a sixth needs the same justification, not a silent inline `<svg>`.
 - **An icon stored by name resolves through the icon registry.** Column and shortcut icons are
   persisted kebab-case names, rendered with `RegistryIcon`, `ColumnGlyph` or `SwimlaneIcon`
   (`utils/swimlane-icons.tsx`). Never import lucide's `icons` map: only `utils/icon-catalog.ts`
@@ -78,9 +82,11 @@ chrome unless these are stated.
   control that sets a tone (a tab, a toggle, the Filter button) let it inherit, so it follows
   hover and selection. After a plain label, pass the label's tone on the badge (`text-fg-muted`,
   `text-fg-faint`): `<body>` is `text-fg`, so an untoned pill renders bright. An overlay badge
-  is a solid `xs` circle on its icon, and two exist: the title bar's unread announcements and the
-  task window Changes button's count of what to fix on the PR. Both are `aria-hidden`, with the
-  count said in the control's tooltip. A count
+  is a solid `xs` circle on its icon, and two exist: the title bar's unread announcements (the
+  accent) and the task window Changes button's count of what to fix on the PR (`tone="danger"`).
+  Both are `aria-hidden`, with the count said in the control's tooltip. The Changes panel's Pull
+  request section repeats the Changes button's badge after its title, so the two read as one
+  count: the one place a solid badge follows a label. A count
   in parentheses ("Completed (7)") or a bare number aside stays text.
 - **Confirmations:** use `ConfirmDialog` for all yes/no prompts; set `showDontAskAgain` when the
   confirmation should be suppressible. Never build a one-off modal for a simple confirmation.

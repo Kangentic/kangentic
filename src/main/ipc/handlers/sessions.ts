@@ -1,3 +1,4 @@
+import { noteLaunchNotSignedIn } from '../../accounts/account-service';
 import { ipcMain, MessageChannelMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -798,6 +799,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       // The class, not only the line: a resume's ring starts with the last
       // session's output, and the report does not read a ring that holds only that.
       const outputClass = fallbackReason ? await context.sessionManager.launchOutputClass(exitedSession.id) : undefined;
+      // On an account of its own, the CLI did not find the login Kangentic read there.
+      noteLaunchNotSignedIn(outputClass, exitedSession.accountId);
       const userSetupLine = outputClass && isUserSetupFailureClass(outputClass)
         ? adapter?.identifyUserSetupFailure?.(rawScrollback)?.line
         : undefined;
@@ -1147,7 +1150,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     }
   });
 
-  // The Changes panel's Checks section: the linked PR's CI checks, read live
+  // The Changes panel's Pull request section: the linked PR's CI checks, read live
   // from its connector. A read, so no announce.
   ipcMain.handle(IPC.TASK_PR_CHECKS, async (_event, taskId: string, projectId?: string | null): Promise<PRChecks | null> => {
     return listTaskPrChecks(context, taskId, projectId);

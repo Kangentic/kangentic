@@ -79,6 +79,10 @@ claude --settings <mergedSettingsPath> --resume <uuid> [-- "prompt text"]
 - A resume that carries a message (a column's message, a plan continuation, held messages) passes it after `--`, and Claude runs it as the next turn of the resumed conversation (`resumePromptDelivery: 'command-line'`). A plain resume passes no prompt and Claude comes back idle on its saved context
 - A message with lines that a `.cmd` shim launch would flatten, or one over 6,000 characters, is typed in once Claude is ready instead (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives))
 
+## Accounts
+
+Each extra Claude account in Settings > Accounts is a folder `CLAUDE_CONFIG_DIR` points at ([accounts](../accounts.md), `accounts.ts`). It holds only that account's login. Its conversation folders are links into `~/.claude`, so every transcript stays in one place and any account resumes any conversation. Add account runs `claude auth login`, and `claude auth status` says who signed in. Usage comes from the status line while a session runs and from `claude -p /usage` when none does. At a usage limit a task's session continues on the next account. Run with three real accounts on 2.1.319.
+
 ## WSL
 
 A Claude installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). Detection runs its `--version` inside the distro. The session starts Claude's Linux path in a `wsl -d <distro>` shell, and `--settings`, `--mcp-config` and each `--add-dir` name their files by the path the distro sees (`cliPathForTarget`, `/mnt/c/...`).
@@ -262,6 +266,8 @@ Safety guarantees:
 - Deletes empty settings files and `.claude/` directories
 
 ## Global Config Writes (`~/.claude.json`)
+
+`~/.claude.json` below means the state file this machine's Claude reads. For a user who runs Claude with `CLAUDE_CONFIG_DIR`, that is the `.claude.json` inside that folder, and its lock is the `.claude.json.lock` beside it (`claudeHomeDir`, `claudeJsonPath` in `claude-json-lock.ts`). Every write in this section goes there. It used to go to `~/.claude.json` whatever the variable said.
 
 `ClaudeAdapter.ensureTrust()` runs before every Claude spawn - both task chokepoints and the Command Terminal (`transient-sessions.ts`) - and makes one read-modify-write of the global `~/.claude.json` (see Trust Management below), serialized through one lock (`withClaudeJsonLock`, `src/main/agent/adapters/claude/claude-json-lock.ts`), which project relocation's key rewrite also takes. Two tests pin that, because one cannot cover both halves: `tests/unit/spawn-entry-point-parity.test.ts` scans every path that builds an agent command and proves the call appears first (line order, all paths), and `tests/unit/transient-session-spawn-ensure-trust.test.ts` drives the Command Terminal handler and proves the runtime contract there (awaited, called once, with the project root, resolving before `buildCommand`).
 

@@ -2245,6 +2245,20 @@ describe('TransitionEngine - Windows .cmd shim launch resolution wiring (execute
     expect(inserted.prompt).not.toBe('RESOLVED-PROMPT');
   });
 
+  it('spawns the PTY with the resolved head as agentCliPath, so the launch report names the path that ran', async () => {
+    resolveShimLaunchMock.mockResolvedValueOnce({
+      agentPath: PS1_SIBLING,
+      prompt: undefined,
+      strategy: 'ps1-sibling',
+    });
+    const sessionManager = makeSessionManager();
+    const { runSpawn } = makeEngine({ sessionManager });
+
+    await runSpawn(makeTask());
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentCliPath: PS1_SIBLING }));
+  });
+
   it('produces a real Codex command whose head is the .ps1 sibling', async () => {
     const task = makeTask();
     resolveShimLaunchMock.mockResolvedValueOnce({

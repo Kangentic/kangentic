@@ -96,14 +96,15 @@ const answeredSuggestion = (page: Page) => page.evaluate(async () => {
 });
 
 test.describe('Settings > Language', () => {
-  test('is the first System tab, with the Languages icon', async () => {
+  test('sits at the top of the System tabs, right under Accounts, with the Languages icon', async () => {
     const { browser, page } = await launch();
     try {
       await openLanguageTab(page);
       const tabIds = await page.getByTestId('settings-tab-list').locator('[data-testid^="settings-tab-"]')
         .evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute('data-testid')));
-      // With no project open, the list is the System group alone, and Language leads it.
-      expect(tabIds[0]).toBe('settings-tab-language');
+      // With no project open, the list is the System group alone: Accounts leads it and
+      // Language follows, ahead of every other tab.
+      expect(tabIds.slice(0, 2)).toEqual(['settings-tab-accounts', 'settings-tab-language']);
       expect(tabIds.indexOf('settings-tab-language')).toBeLessThan(tabIds.indexOf('settings-tab-board'));
       await expect(page.getByTestId('settings-tab-language').locator('svg.lucide-languages')).toHaveCount(1);
     } finally {

@@ -36,6 +36,7 @@ import type {
   StoredCliTarget,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+import type { KeyFileAccountSupport } from '../../../accounts/account-support';
 
 /**
  * `droid exec`'s model and effort flags for a headless run: `--model <id>` and
@@ -76,6 +77,17 @@ export function droidExecModelArgs(model?: string | null, effort?: string | null
  */
 export class DroidAdapter implements AgentAdapter {
   readonly name = 'droid';
+  /**
+   * Accounts (task #1057): each is an API key in a file the user owns, put in the session's env
+   * at spawn. Droid's own messages name `FACTORY_API_KEY` as the key it reads (startup-failure.ts).
+   * The CLI's browser login is one per machine and cannot be split, so it stays account #1.
+   */
+  readonly accounts: KeyFileAccountSupport = {
+    kind: 'key-file',
+    keyEnvVars: ['FACTORY_API_KEY'],
+    // A key-file account sets these itself, over whatever Kangentic inherited.
+    overridingCredentialEnvVars: [],
+  };
   readonly displayName = 'Droid';
   readonly sessionType = 'droid_agent';
   /**

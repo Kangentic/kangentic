@@ -2335,4 +2335,12 @@ function migrateWorkflows(db: Database.Database): void {
   if (!sessionHasStartBlockedReason) {
     db.exec('ALTER TABLE sessions ADD COLUMN start_blocked_reason TEXT DEFAULT NULL');
   }
+
+  // Which agent account a session ran on (task #1057): the `agent_accounts.id` in the global
+  // database. NULL = the agent's own login, which every existing row is, so no backfill.
+  const sessionHasAccountId = (db.pragma('table_info(sessions)') as Array<{ name: string }>)
+    .some((column) => column.name === 'account_id');
+  if (!sessionHasAccountId) {
+    db.exec('ALTER TABLE sessions ADD COLUMN account_id TEXT DEFAULT NULL');
+  }
 }

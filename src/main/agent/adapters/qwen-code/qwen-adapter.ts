@@ -64,6 +64,8 @@ type TranscriptWindowReadInput = RunTranscriptInput & { sinceMs?: number | null;
  */
 export class QwenAdapter implements AgentAdapter {
   readonly name = 'qwen';
+  // Accounts are built (`accounts.ts`, `QWEN_ACCOUNT_SUPPORT`, a key file per account) and not
+  // enabled: nothing was run. This adapter declares none until a session is seen using a key file.
   readonly displayName = 'Qwen Code';
   readonly sessionType = 'qwen_agent';
   readonly supportsCallerSessionId = true;

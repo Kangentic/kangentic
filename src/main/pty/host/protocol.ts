@@ -89,7 +89,8 @@ export interface PtyHostError {
 export interface PtyHostRawSpawnParams {
   ptyId: number;
   file: string;
-  args: string[];
+  /** Arguments, or on Windows one command line node-pty passes on as written. */
+  args: string[] | string;
   cwd: string;
   env: Record<string, string>;
   cols: number;
@@ -313,7 +314,8 @@ export interface PtyHostRequestMap {
    *  `scrollbackLines` caps the history rows above the grid (default
    *  SERIALIZED_SCROLLBACK_LINES); 0 serializes the grid alone. */
   getSeedFrame: { params: { sessionId: string; settle: boolean; scrollbackLines?: number }; result: SeedFrameResult };
-  getRawScrollback: { params: { sessionId: string }; result: string };
+  /** `ownOutputOnly` leaves out the ring a respawn carried over (`PtyBufferManager.getRawScrollback`). */
+  getRawScrollback: { params: { sessionId: string; ownOutputOnly?: boolean }; result: string };
   getOutputPeek: { params: { sessionId: string }; result: string[] };
   /** The find bar's history view (`HistoryViews.open`). A request, so the bar
    *  learns whether the agent wrote its conversation out. */

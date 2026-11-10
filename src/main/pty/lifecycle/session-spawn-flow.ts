@@ -695,6 +695,7 @@ export async function performSpawn(
     reportsAgentStart: input.agentParser?.reportsAgentStart === true,
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
+    accountId: input.accountId ?? null,
     permissionMode: input.permissionMode ?? null,
     // Known before launch (a caller-owned id, or a chat created for this
     // start). Capture still overwrites it when the agent reports another.
@@ -706,6 +707,7 @@ export async function performSpawn(
     launcherPath: typedLaunch?.launcher?.filePath ?? null,
     startPath: input.startPath,
     agentCliVersion: input.agentCliVersion ?? null,
+    agentCliPath: input.agentCliPath ?? null,
   };
 
   context.registry.set(id, session);

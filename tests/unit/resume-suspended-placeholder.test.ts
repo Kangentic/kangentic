@@ -841,6 +841,28 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
     expect(removeHooks).not.toHaveBeenCalled();
   });
 
+  // The launch report's command_head tag and the start bound's ownership of the
+  // typed line read the CLI path off the session row, so a recovery spawn that
+  // drops it loses both for every resume after a quit or a crash.
+  //
+  // Red-green: drop `agentCliPath: input.agentCliPath` from the spawn call in
+  // resume-suspended.ts and this fails.
+  it('hands spawn the CLI path the command was built with', async () => {
+    prepareAgentSpawnMock.mockResolvedValue({
+      ...preparedResume(),
+      data: { ...preparedResume().data, agentCliVersion: '0.1.0', agentCliPath: '/opt/bin/gemini' },
+    });
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'running' });
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      agentCliVersion: '0.1.0',
+      agentCliPath: '/opt/bin/gemini',
+    }));
+  });
+
   it('reports a spawn that failed as a startup recovery, naming the agent', async () => {
     const sessionManager = makeSessionManager();
     sessionManager.spawn.mockRejectedValue(new Error('pty host down'));

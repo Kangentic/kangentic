@@ -178,7 +178,8 @@ export interface PRConnector {
    * run of the same check dropped), each with its own web page. Run from inside
    * the repo at `repoCwd`. Returns null when the PR no longer exists; throws
    * `PRResolverUnavailableError` / `PRResolverTransientError` like the resolvers.
-   * Optional: a host without it shows no Checks section.
+   * Optional: a host without it lists no checks, and the Changes panel's Pull
+   * request section shows its header alone.
    */
   listChecks?(repoCwd: string, prNumber: number): Promise<PRChecks | null>;
 

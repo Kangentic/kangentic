@@ -92,6 +92,7 @@ import { stopEndedCommandTerminalBackgroundSession } from './helpers/command-ter
 import { CommandTerminalHistory } from './helpers/command-terminal-history';
 import { CommandTerminalHistoryRepository } from '../db/repositories/command-terminal-history-repository';
 import { agentRegistry } from '../agent/agent-registry';
+import { registerAccountHandlers } from './handlers/accounts';
 import { canResumeConversationById } from '../agent/shared/workflow-agent-capability';
 import { mayReadPlaceUnattended, placeOfRecord } from '../agent/shared/cli-target';
 import { broadcast } from '../pop-out/window-broadcast';
@@ -444,6 +445,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // every project (activateAllProjects) can run with no project open, and it
   // would otherwise start sessions under the compile-time default.
   sessionManager.setMaxConcurrent(effectiveConfig.agent.maxConcurrentSessions);
+  // Agent accounts (task #1057): every spawn chokepoint asks this service which account a
+  // session runs on, so it is set before anything can spawn.
+  registerAccountHandlers(context);
   mobileBridgeService.reconcile({
     enabled: effectiveConfig.mobileBridge?.enabled ?? false,
     relayUrl: resolveRelayUrl(effectiveConfig.mobileBridge),

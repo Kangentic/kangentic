@@ -1,19 +1,27 @@
 ---
 type: Reference
 title: Agent absence sweep
-description: How the bg-shell watcher's process-tree sweep retires a session whose agent exited under a surviving shell, why a Command Terminal ends but a task stays resumable, the WSL exclusion, and the measured Claude exit paths (console close, hangup, Esc sequence).
+description: How the bg-shell watcher's process-tree sweep retires a session whose agent exited under a surviving shell, the start bound a launch with no sign its agent ran waits for (and the slow-shell measurement behind it), why a Command Terminal ends but a task stays resumable, the WSL exclusion, and the measured Claude exit paths (console close, hangup, Esc sequence).
 tags: [sessions, agent-exit, process-tree, command-terminal, claude]
 sources:
   - resource: src/main/activity-engine/background-shell/watcher.ts
   - resource: src/main/activity-engine/background-shell/process-tree.ts
   - resource: src/main/pty/session-manager.ts
-    title: isAgentAbsenceCandidate and retireAgentlessSession
+    title: isAgentAbsenceCandidate, retireAgentlessSession, armLaunchStartBound, checkPendingLaunchOutput, getLaunchOutput and noteAgentProcessBeforeEnd
+  - resource: src/main/pty/session-registry.ts
+    title: launchFailureIdentifiedAt, agentCliPath and agentProcessAtEnd
   - resource: src/main/pty/agent-launch-report.ts
+  - resource: src/main/pty/host/agent-process-presence.ts
+  - resource: src/main/pty/lifecycle/agent-output-tracker.ts
+    title: AGENT_START_CEILING_MS
+  - resource: src/main/pty/buffer/pty-buffer-manager.ts
+    title: ownOutputStartIndex
   - resource: src/main/ipc/helpers/resume-miss.ts
   - resource: src/main/pty/host/dead-root-orphans.ts
   - resource: scripts/probe-claude-exit-paths.js
   - resource: scripts/probe-claude-exit-paths-linux.py
   - resource: scripts/probe-conpty-exit-race.js
+  - resource: scripts/probe-powershell-slow-shell-typed-line.js
 ---
 # Agent absence sweep
 
@@ -56,10 +64,69 @@ capability and no agent-name branching. Two things make it correct rather than m
 
 `SessionManager.isAgentAbsenceCandidate` owns every session-shaped arm, so the watcher needs no
 session knowledge. It requires a `running` session with a live PTY, an agent adapter, a non-WSL
-shell (`parseWslShellSpec`, the same detector the spawn uses), and an elapsed spawn grace. A
-slow-STARTING agent is not excluded by the grace and does not need to be - its process exists, it
-just has not drawn yet, which is exactly why the process tree is a safer signal than a first-output
-timeout. A slow-starting SHELL is another matter, and only a Command Terminal pays for it (below).
+shell (`parseWslShellSpec`, the same detector the spawn uses), an elapsed spawn grace, and, for a
+launch that never showed its agent ran, the start bound (below). A slow-STARTING agent is not
+excluded by the grace and does not need to be - its process exists, it just has not drawn yet,
+which is exactly why the process tree is a safer signal than a first-output timeout. A
+slow-starting SHELL is another matter: its agent has no process yet either.
+
+## A board launch's start bound
+
+A shell still in its profile, or still taking in the typed line, shows the same empty tree as an
+agent that exited. Through 0.56.0 only a Command Terminal waited for that; a task was judged at the
+30s grace. On one install (Sentry DESKTOP-2E and DESKTOP-2G) a Windows PowerShell 5.1 held every
+board launch past the grace: each was judged `never_started` about 32s after its spawn (the grace
+plus two 2s cycles, since another session's background shell kept the watcher enumerating),
+paused, and retried, and the retry got the same 30s. The task stayed paused with its prompt
+undelivered. A later retry on the same install ran its agent 14s after spawn.
+
+So every launch now waits the same way. Past the grace, a session is a candidate when it has
+evidence its agent ran (`hasAgentRunEvidence`: its SessionStart, its first alt-screen entry, any
+hook, an id it reported), or `AGENT_START_CEILING_MS` (2 minutes, declared in
+`agent-output-tracker.ts`) has passed, or its output already names a cause
+(`launchFailureIdentifiedAt`). A launch that failed in words the classifier knows is still judged at
+the grace: a conversation the CLI could not find, a line the shell refused as too long, a missing
+command path. `checkPendingLaunchOutput` reads the launch's own output once at the grace (a timer
+armed at spawn) and again on new output after it, one read at a time. After each read it waits 2s,
+or half the time the launch has spent past the grace if that is longer, so an agent with no hooks
+that streams output for the whole bound costs about ten reads. "Own" is `getLaunchOutput`: the raw
+ring without the bytes a retry or resume carried over from the session it replaced, whose boundary
+the pty host's buffer manager moves with every trim (`ownOutputStartIndex`), so the last launch's
+failure line never judges this one. The launch report reads the same. It classifies the output
+with `classifySessionOutput` (the launch report's own classifier), and on an identified class stamps
+the session and calls `requestAgentAbsenceCheck`, so the sweep looks within seconds instead of at
+its 60s cadence. That also judges a failure such as DESKTOP-2H's `no_such_file`, which sat until
+the person paused it at 47s. At the ceiling the same timer asks the sweep to look once more. The
+read reports nothing; the sweep reports once, when it judges. A retry gets the same bound.
+
+The cost is an adapter that shows nothing (no hooks, no alt screen): its agent exiting inside the
+first two minutes is counted until the ceiling, as a Command Terminal's always was. A launch that
+failed with no words the classifier knows waits the ceiling before its retry.
+
+**Measured: the line is late, never lost.** `scripts/probe-powershell-slow-shell-typed-line.js`
+spawns `powershell.exe -NoLogo` through a real ConPTY with the app's console-list patch, types a
+line built by the app's own `buildTypedLaunch` (Clear-Host prelude, `& `, PowerShell quoting) at
++100 ms, and waits for a stub agent to record when it started and the prompt it got. The prompt is
+prose from these docs, cut to length. A slow profile is approximated, never edited:
+`-NoProfile -NoExit -Command "Start-Sleep -Seconds N"` keeps the shell busy before its interactive
+loop and PSReadLine start. Windows PowerShell 5.1, Windows 11 build 26200, node-pty 1.1.0:
+
+| Shell held | Line bytes | Agent started | Prompt | Typed-line detector (15 s scan, before this fix) |
+|---|---|---|---|---|
+| this machine's profile | 7,649 | 3.1 s | whole | 2.5 s |
+| 0 s | 7,649 | 3.2 s | whole | 2.5 s |
+| 20 s | 7,649 | 23.4 s | whole | never (15 s scan) |
+| 40 s | 7,649 | 43.5 s | whole | never (15 s scan) |
+| 0 s | 1,552 | 2.3 s | whole | 2.3 s |
+| 0 s | 15,769 | 4.3 s | whole | 2.9 s |
+
+The line runs once the shell reaches it, about 3s after the profile ends for 7,649 bytes, so the
+bound was the fix and typing only at the prompt was not needed. "Whole" counts the content `"` that
+the quoting writes as `'` on purpose (`escapeForDoubleQuotedShell`). The last column is the second
+finding: `AgentOutputTracker` stopped scanning 15s after the first chunk (the overlay's
+`AGENT_READY_CEILING_MS`), so a line that ran later never set `agentOutputAt`. The launch then
+logged no `typed_line_ran` and read `shell_printed=before_launch`, which is what install A's
+retry that worked showed. The tracker now scans to `AGENT_START_CEILING_MS`.
 
 ## Command Terminals
 
@@ -75,17 +142,14 @@ after the exit. `remove()` would delete it at once through `SessionFileManager.d
 post-exit delete as the only one. A terminal has no task to resume into, so there is nothing to
 keep.
 
-Because a terminal is ended rather than kept, being judged too early costs it everything. A shell
-slower than the 30s grace to reach the agent command (a heavy profile, a cold machine) shows the
-same empty tree as an agent that exited, so a Command Terminal also waits for evidence that its
-agent started: its first SessionStart (`agentStartObservedAt`, sticky across `/clear`) or its
-first alt-screen entry (`altScreenEnteredAt`), which no shell emits. The first-output latch is not
-evidence, because a pwsh preamble trips it. With neither, the sweep judges the terminal once
-`COMMAND_TERMINAL_AGENT_START_CEILING_MS` (2 minutes) has passed. That ceiling is what still ends
-a launch that failed and an agent with no hooks and no alt screen. Either stays up to two minutes
-instead of 30 seconds. A task keeps the plain grace, since its retirement leaves a resumable row,
-and so does a workflow's own agent (transient, but no Command Terminal): its retirement keeps an
-exited row, which the Workflows pane reads to start it over.
+Because a terminal is ended rather than kept, being judged too early costs it everything. The
+start bound above is what protects it: with no evidence its agent ran (its first SessionStart,
+`agentStartObservedAt`, sticky across `/clear`, or its first alt-screen entry, which no shell
+emits) and no cause named, the sweep judges the terminal only once `AGENT_START_CEILING_MS` has
+passed. The first-output latch is not evidence, because a pwsh preamble trips it. The bound began as
+the Command Terminal's alone and now covers every launch, a task's and a workflow's own agent
+included. A workflow agent's retirement keeps an exited row, which the Workflows pane reads to
+start it over.
 
 The sweep's cadence alone would leave the shell for 1 to 2.5 minutes, so a Command Terminal has a
 fast path. The agent's SessionEnd hook (`onEvent` in `session-manager.ts`) stamps
@@ -343,8 +407,8 @@ SessionEnd signal, any other hook event, or a session id the agent gave itself (
 status line, its output or a file it wrote; an id a caller assigned at spawn proves nothing). The
 report is `stage: never_started`, one of the stages in
 [Error reporting](../../telemetry/error-reporting.md). Every session stamps
-`agentStartObservedAt` at its first SessionStart for this; only a Command Terminal's sweep gate reads
-it otherwise, so a task's plain grace does not change.
+`agentStartObservedAt` at its first SessionStart for this, and the start bound reads the same
+evidence for every launch.
 
 **Which agents can report this.** Only Claude and Droid declare `reportsAgentStart`. The flag is
 static and read at spawn, so it has to hold for every way an adapter launches, print and resume
@@ -377,7 +441,7 @@ in Aptabase ([Error reporting](../../telemetry/error-reporting.md)). A task whos
 way still pauses, so it keeps its Resume for after the user signs in.
 
 **A shell the sweep cannot judge gets a timer.** Where `canTreeJudgeAgent` is false (a WSL shell, or
-the watcher off), a one-shot timer at the Command Terminal start ceiling, 120 s, reports
+the watcher off), a one-shot timer at the start ceiling, 120 s, reports
 `never_started` with `judge: timer` for a launch with no evidence. It only reports. Nothing here saw
 the agent gone, so it pauses nothing.
 
@@ -391,6 +455,20 @@ that is a quick Stop and no failure. `ended_by` reads `pause` for a suspend (a S
 and `kill` for a kill (a move to To Do, a delete), since neither call knows which gesture asked. A
 host loss, a hidden agent and a quit are left out here; a quit goes on disk
 ([Error reporting](../../telemetry/error-reporting.md)).
+
+**An abandoned report says whether an agent process was there.** Silence alone made the report: a
+resume can take far longer than 15 s to show anything (an install on 0.55.0 logged `agent_ran` 89 s
+after its line ran), so `abandoned` mixed a slow CLI with a command that had already ended. The
+report now carries `agent_process`. It cannot be read at the exit, because by then the close or
+hangup has ended a live agent, so `kill()` and `suspend()` post a read of the host's process table
+for the shell's pid the moment they decide to end such a launch (`noteAgentProcessBeforeEnd`, gated
+by `mayReportAbandoned`, the test `noteLaunchEnded` and the quit's list share), and the exit's report
+waits for the answer. Neither waits for it. On POSIX the host already holds a task's kill until its
+pre-kill listing answers (`KILL_SNAPSHOT_CAP_MS`), and a `listProcesses` still out when the kill lands
+is that listing, so the read sees the shell's children before the hangup re-parents them. On Windows
+Toolhelp starts before the host handles the kill and never loses a parent pid. A listing that no
+longer holds the shell reads `unknown`, never `absent`. Changing the 15 s bound for a resume waits on
+what these numbers show.
 
 **A task whose launch never started is paused, not retired.** An exited row has no way forward: its
 surface is the terminal, its PTY is gone so no key lands, and `sessionToggleOffer` offers nothing

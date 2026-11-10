@@ -37,6 +37,10 @@ import {
   resetLaunchReports,
 } from '../../src/main/pty/agent-launch-report';
 import { AgentCliNotFoundError } from '../../src/main/agent/shared/agent-cli-not-found';
+import { recordDetectedCliIdentity, resetDetectedCliIdentities } from '../../src/main/agent/shared/cli-identity';
+import realFs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { AgentParser } from '../../src/shared/types';
@@ -75,6 +79,7 @@ beforeEach(() => {
   existsSync.mockReturnValue(true);
   shuttingDown.value = false;
   resetLaunchReports();
+  resetDetectedCliIdentities();
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
@@ -171,6 +176,46 @@ describe('launchTagsOf', () => {
     expect(launchTagsOf(session(), NOW).launcher).toBe('none');
   });
 
+  it('says whether the command\'s head path exists, never what it is', () => {
+    const agentCliPath = '/Users/dev/.local/bin/claude';
+    existsSync.mockReturnValue(true);
+    expect(launchTagsOf(session({ agentCliPath }), NOW).command_head).toBe('present');
+    existsSync.mockReturnValue(false);
+    expect(launchTagsOf(session({ agentCliPath }), NOW).command_head).toBe('missing');
+    expect(JSON.stringify(launchTagsOf(session({ agentCliPath }), NOW))).not.toContain('/Users/dev');
+  });
+
+  it.each([
+    { label: 'no path', overrides: {} },
+    { label: 'a bare command name the shell looks up', overrides: { agentCliPath: 'claude' } },
+    { label: 'a WSL shell, whose paths this process cannot read', overrides: { agentCliPath: '/home/dev/.local/bin/claude', shell: 'wsl -d Ubuntu' } },
+  ])('reads the head as unknown with $label', ({ overrides }) => {
+    existsSync.mockReturnValue(false);
+    expect(launchTagsOf(session(overrides), NOW).command_head).toBe('unknown');
+    expect(launchTagsOf(session(overrides), NOW).command_head_since_detection).toBe('unknown');
+  });
+
+  it('says whether the head still resolves to the file detection found, never what it is', () => {
+    const root = realFs.mkdtempSync(path.join(os.tmpdir(), 'launch-head-'));
+    try {
+      const agentCliPath = path.join(root, 'claude');
+      realFs.writeFileSync(agentCliPath, '#!/bin/sh\n', { mode: 0o755 });
+      expect(launchTagsOf(session({ agentCliPath }), NOW).command_head_since_detection).toBe('unknown');
+
+      recordDetectedCliIdentity(agentCliPath);
+      expect(launchTagsOf(session({ agentCliPath }), NOW).command_head_since_detection).toBe('same');
+
+      const replacement = path.join(root, 'claude.new');
+      realFs.writeFileSync(replacement, '#!/bin/sh\necho newer\n', { mode: 0o755 });
+      realFs.renameSync(replacement, agentCliPath);
+      const tags = launchTagsOf(session({ agentCliPath }), NOW);
+      expect(tags.command_head_since_detection).toBe('changed');
+      expect(JSON.stringify(tags)).not.toContain(root);
+    } finally {
+      realFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('marks an overlay that gave up waiting', () => {
     expect(launchTagsOf(session(), NOW).overlay_ceiling).toBe('no');
     expect(launchTagsOf(session({ readyCeilingAt: NOW }), NOW).overlay_ceiling).toBe('tripped');
@@ -203,8 +248,14 @@ describe('classifyLaunchOutput', () => {
     ['bash: /usr/local/bin/claude: Permission denied', 'permission_denied'],
     ['zsh: no such file or directory: /opt/claude', 'no_such_file'],
     ['bash: /opt/claude: No such file or directory', 'no_such_file'],
-    ['bash: /opt/claude: /usr/bin/node: bad interpreter: No such file or directory', 'no_such_file'],
+    ['/bin/bash: line 1: /opt/claude: No such file or directory', 'no_such_file'],
     ['The system cannot find the path specified.', 'no_such_file'],
+    // A shebang names a second path, and the line holds both phrases: the
+    // command exists, its interpreter does not.
+    ['bash: /opt/claude: /usr/bin/node: bad interpreter: No such file or directory', 'bad_interpreter'],
+    ['zsh: /opt/claude: bad interpreter: /usr/bin/node: no such file or directory', 'bad_interpreter'],
+    ['/bin/bash: line 1: /opt/claude: /usr/bin/node: bad interpreter: No such file or directory', 'bad_interpreter'],
+    ['bash: /opt/claude: /usr/bin/node: bad interpreter: Permission denied', 'bad_interpreter'],
     ["error: unknown option '--session-id'", 'unknown_option'],
     ["error: unexpected argument '--foo' found", 'unknown_option'],
   ])('reads %j as %s', (line, outputClass) => {
@@ -213,6 +264,86 @@ describe('classifyLaunchOutput', () => {
 
   it('reads through escape sequences', () => {
     expect(classifyLaunchOutput('\x1b[1;31mzsh: command not found: claude\x1b[0m\r\n')).toBe('command_not_found');
+  });
+
+  /**
+   * Each line as a real shell printed it on a real pty, with the bracketed-paste
+   * switches, clears and carriage returns around it: bash 5.2, dash, zsh 5.9,
+   * fish 3.7.0 and nushell 0.116.0 on Ubuntu 24.04 (typed whole and through the
+   * launcher alike), PowerShell 7. Only the temp folder is renamed, and nu's box
+   * rules are cut short. `typed-launch-round-trip.test.ts` pins them again in
+   * each shell CI runs.
+   */
+  it.each([
+    // Measured on a macOS runner: BSD cat leaves the path unquoted, and the long
+    // temp path wraps zsh's job line, leaving just the message once zsh's redraw
+    // is read out. The wrapped tail and the redrawn prompt sit around it.
+    ['cat: /tmp/p/project  one/.kangentic/sessions/session-1/launch.sh: No such file or directory\r\n', 'launcher_unreadable'],
+    ['runner@host ~ %\r\n%\r\nzsh: killed\r\ngl5gw3l_w0000gn/T/kng-typed-launch-v3enVY/agent dir/signal-kill\'\r\ng\r\nrunner@host ~ % cclear; \'/private/var/folders/h5/t85nd63d71x27_8\r\n', 'killed'],
+    ['runner@host ~ %\r\n%\r\nzsh: segmentation fault\r\ngl5gw3l_w0000gn/T/kng-typed-launch-7WnXYp/agent dir/signal-segv\'\r\ng\r\n', 'crashed'],
+    ['runner@host ~ %\r\n%\r\nzsh: bad CPU type in executable: /tmp/p/agent dir/wrong-cpu\r\ngl5gw3l_w0000gn/T/kng-typed-launch-lVCIBO/agent dir/wrong-cpu\'\r\n', 'bad_cpu_type'],
+    ["\x1b[H\x1b[2J\x1b[3Jzsh: killed     '/tmp/p/agent dir/signal-kill'\r\n", 'killed'],
+    ["\x1b[H\x1b[2J\x1b[3Jzsh: segmentation fault (core dumped)  '/tmp/p/agent dir/signal-segv'\r\n", 'crashed'],
+    ['\x1b[H\x1b[2J\x1b[3Jzsh: exec format error: /tmp/p/agent dir/not-a-program\r\n', 'exec_format'],
+    ["\rsource: Error encountered while sourcing file ''/tmp/p/project  one/.kangentic/sessions/s1/launch.fish'':\r\nsource: No such file or directory\r\n", 'launcher_unreadable'],
+    ["\x1b[H\x1b[2J\x1b[3Jfish: Job 1, ''/tmp/p/agent dir/…' terminated by signal SIGKILL (Forced quit)\r\n", 'killed'],
+    ["\x1b[H\x1b[2J\x1b[3Jfish: Job 1, ''/tmp/p/agent dir/…' terminated by signal SIGSEGV (Address boundary error)\r\n", 'crashed'],
+    ["\x1b[H\x1b[2J\x1b[3Jexec: Failed to execute process: '/tmp/p/agent dir/not-a-program' the file could not be run by the operating system.\r\n", 'exec_format'],
+    [[
+      '\x1b]2;/p> source\x07Error: \x1b[31mnu::parser::sourced_file_not_found\x1b[0m\r\n\r\n',
+      '  \x1b[31m×\x1b[0m File not found\r\n',
+      '   ╭─[repl_entry #1:1:8]\r\n',
+      " 1 │ source '/tmp/p/project  one/.kangentic/sessions/s1/launch.nu'\r\n",
+      '   ·          ──────\r\n',
+      '   ·          ╰── File not found: /tmp/p/project  one/.kangentic/sessions/s1/launch.nu\r\n',
+      '   ╰────\r\n',
+      '  help: sourced files need to be available before your script is run\r\n',
+    ].join(''), 'launcher_unreadable'],
+    [[
+      '\x1b[1;1H\x1b[2J\x1b[3JError: \x1b[31mnu::shell::terminated_by_signal\x1b[0m\r\n',
+      '  \x1b[31m×\x1b[0m External command was terminated by a signal\r\n',
+      " 1 │ clear; ^'/tmp/p/agent dir/signal-kill'\r\n",
+      '   ·                              ╰── terminated by SIGKILL (9)\r\n',
+    ].join(''), 'killed'],
+    [[
+      '\x1b[1;1H\x1b[2J\x1b[3JError: \x1b[31mnu::shell::core_dumped\x1b[0m\r\n\r\n',
+      '  \x1b[31m×\x1b[0m External command core dumped\r\n',
+      " 1 │ clear; ^'/tmp/p/agent dir/signal-segv'\r\n",
+      '   ·                                  ╰── core dumped with SIGSEGV (11)\r\n',
+      '   ╰────\r\n',
+    ].join(''), 'crashed'],
+    ["\x1b[?2004l\rcat: '/tmp/p/project  one/.kangentic/sessions/s1/launch.sh': No such file or directory\r\n", 'launcher_unreadable'],
+    ["\x1b[?2004l\rcat: '/tmp/p/project  one/.kangentic/sessions/s1/launch.sh': Permission denied\r\n", 'launcher_unreadable'],
+    ['cat: /tmp/p/project/.kangentic/sessions/s1/launch.sh: No such file or directory\r\n', 'launcher_unreadable'],
+    [".: The term 'C:\\Users\\dev\\kng probe dir\\launch.ps1' is not recognized as a name of a cmdlet, function, script file, or executable program.\r\n", 'launcher_unreadable'],
+    ['\x1b[?2004l\rKilled\r\n\x1b[?2004hbash-5.2$ ', 'killed'],
+    ['\x1b[?2004l\rSegmentation fault (core dumped)\r\n\x1b[?2004hbash-5.2$ ', 'crashed'],
+    ['\x1b[?2004l\rBus error (core dumped)\r\n', 'crashed'],
+    ['\x1b[?2004l\rAborted (core dumped)\r\n', 'crashed'],
+    ['\x1b[?2004l\rIllegal instruction (core dumped)\r\n', 'crashed'],
+    ['Segmentation fault\r\n', 'crashed'],
+    ['\x1b[?2004l\rbash: /tmp/p/agent-elf: cannot execute binary file: Exec format error\r\n', 'exec_format'],
+    ['dash: 1: /tmp/p/agent-elf: Exec format error\r\n', 'exec_format'],
+  ])('reads the real shell output %j as %s', (output, outputClass) => {
+    expect(classifyLaunchOutput(output)).toBe(outputClass);
+  });
+
+  it.each([
+    // The same words, echoed on a typed line that quotes them.
+    ["$ claude 'Killed'"],
+    ['$ claude "Segmentation fault (core dumped)"'],
+    ["bash-5.2$ claude 'cat: /p/launch.sh: No such file or directory'"],
+    ["claude 'bash: /opt/x: cannot execute binary file: Exec format error'"],
+    ["$ claude 'zsh: killed and fish: Job 1, done'"],
+    ["claude '╰── terminated by SIGKILL (9) twice'"],
+    // A `cat` failure about some other file is not the launcher's.
+    ['cat: /tmp/p/notes.txt: No such file or directory'],
+    ["The term 'launch.ps1' is not recognized"],
+    // nushell hands a file it cannot run to /bin/sh, which reads its bytes as a
+    // command: a line that names no cause, so it stays unclassified.
+    ["/tmp/p/agent dir/not-a-program: 1: \x7fELF\x02\x01\x01!!: not found"],
+  ])('does not take the quoted words %j for the new classes', (text) => {
+    expect(classifyLaunchOutput(`${text}\r\n`)).toBe('other');
   });
 
   it.each([
@@ -309,6 +440,12 @@ describe('isLaunchRetryPointless', () => {
   });
 
   it.each(['other', 'not_read', 'unreadable', 'conversation_missing', 'command_not_found'] as const)('answers no for %s', (outputClass) => {
+    expect(isLaunchRetryPointless(outputClass)).toBe(false);
+  });
+
+  // The shell classes stay retryable on purpose: a launch that died of its own
+  // accord or on a transient file state can succeed on the next try.
+  it.each(['exec_format', 'killed', 'crashed', 'launcher_unreadable', 'bad_cpu_type'] as const)('answers no for the shell class %s', (outputClass) => {
     expect(isLaunchRetryPointless(outputClass)).toBe(false);
   });
 });

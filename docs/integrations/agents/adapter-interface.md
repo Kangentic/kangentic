@@ -8,6 +8,8 @@ sources:
     title: AgentAdapter required members
   - resource: src/main/agent/agent-registry.ts
   - resource: src/main/transition-engine/agent-resolver.ts
+  - resource: src/main/pty/lifecycle/agent-output-tracker.ts
+    title: AGENT_START_CEILING_MS
 ---
 # Agent adapter interface
 
@@ -51,7 +53,7 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 
 | Agent | Adapter | CLI Binary | Session Resume | Resume Prompt | Status/Events | Settings Merge | Kangentic MCP | Trust |
 |-------|---------|-----------|----------------|---------------|---------------|----------------|---------------|-------|
-| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | `command-line` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
+| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | `command-line` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`, or the one inside an inherited `CLAUDE_CONFIG_DIR`) |
 | Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | `command-line` | Yes (events.jsonl via `-c hooks.*` overrides, rollout for usage and background commands) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
 | Gemini CLI | `gemini-adapter.ts` | `gemini` | `--session-id <uuid>` (caller-owned, 0.41.0+) / `--resume <id>` | `command-line` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.gemini/trustedFolders.json`) |
 | Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | `command-line` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
@@ -217,8 +219,10 @@ map. It fires once, on the first of:
   fits. One known case: a terminfo whose clear is `\x1b[H\x1b[J` (TERM=screen, so a dev build
   launched from GNU screen) sends neither erase the handoff test matches. That pair is left out on
   purpose: it is plain cursor-home plus erase-below, and no shell's redraws before the typed
-  command runs were measured free of it. The pty host stops scanning a session's output at the
-  same 15 s mark.
+  command runs were measured free of it. The pty host keeps scanning past it, to
+  `AGENT_START_CEILING_MS` (2 minutes), because the same `agentOutput` is how the launch report
+  knows the shell ran the typed line, and a slow Windows PowerShell profile runs it after 15 s
+  ([Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md#a-board-launchs-start-bound)).
 
 A session with no agent keeps its raw first output: its shell is the output. Usage is not
 evidence either way. The spawn seeds it with the model name from `--model`

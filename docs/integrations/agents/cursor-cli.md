@@ -77,6 +77,10 @@ A resume from Non-Interactive mode is `agent --trust --resume="<chat-id>"` and o
 
 A resume carries no prompt. Nothing Cursor documents says a prompt rides `--resume=<id>`, so the adapter declares `resumePromptDelivery: 'typed'`: Kangentic types a resume's message (a column's message, held messages) in once Cursor is ready. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
 
+## Accounts
+
+Each extra Cursor account in Settings > Accounts is a key file the user owns ([accounts](../accounts.md)). A session on one gets the file's `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN` in its env, and Kangentic stores only the file's path and the names in it. The browser login is one per machine and stays account #1. A key file adds one variable to a session and moves nothing, so conversations stay where they are. Built from the documented variable and not run with a second key.
+
 ## WSL
 
 A distro session screen's hooks run the WSL hook transport rather than the node bridge (see

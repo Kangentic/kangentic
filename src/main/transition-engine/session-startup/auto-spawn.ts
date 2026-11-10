@@ -485,11 +485,13 @@ export async function autoSpawnTasks(
           cwd: input.cwd,
           startPath: 'startup_recovery',
           agentCliVersion: input.agentCliVersion,
+          agentCliPath: input.agentCliPath,
           env: input.extraEnv ?? undefined,
           statusOutputPath: input.statusOutputPath,
           eventsOutputPath: input.eventsOutputPath,
           agentParser: input.adapter,
           agentName: input.adapter.name,
+          accountId: input.accountId ?? null,
           agentSessionId: input.agentSessionId,
           isolatedSwimlaneId: input.isolatedSwimlaneId,
           permissionMode: input.permissionMode,
@@ -523,6 +525,7 @@ export async function autoSpawnTasks(
           exited_at: null,
           suspended_by: null,
           cli_target: serializeCliTarget(input.cliTarget),
+          account_id: input.accountId ?? null,
         });
         // Record what this fresh spawn applied so a later column move diffs
         // against the session's true value, not the leaving column's config.

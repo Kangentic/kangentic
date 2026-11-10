@@ -29,6 +29,8 @@ import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../shared/task-template-vars';
 import { readWorkflowPromptFacts } from '../workflows/workflow-prompt-facts';
 import { SessionManager } from '../pty/session-manager';
 import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
+import { conversationAccountOf, resolveSpawnAccount } from '../accounts/account-service';
+import { buildSessionEnv } from '../accounts/account-env';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
@@ -106,6 +108,11 @@ interface TransitionEngineConfig {
 export interface SpawnOverrides {
   model?: string | null;
   effort?: string | null;
+  /**
+   * Run on this agent account instead of the top account with room (task #1057). Set only by the
+   * continuation at a usage limit, which moves a session to the next account.
+   */
+  accountId?: string | null;
   /** Isolated swimlane to resume/persist. Defaults to null (main session). */
   isolatedSwimlaneId?: string | null;
   /**
@@ -717,6 +724,14 @@ export class TransitionEngine {
     const launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt: input.prompt });
     const executionTarget = resolveExecutionTarget(input.agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
     const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
+    // The account this session runs on (task #1057). A WSL CLI keeps its single login: an account
+    // folder cannot link into a distro's home.
+    const account = cliTarget ? null : await resolveSpawnAccount(
+      input.agentName,
+      input.spawnOverrides?.accountId,
+      // A resume names the account its conversation was written on, for an agent that needs it.
+      conversationAccountOf(input.canResume ? this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [] : [], input.agentSessionId, input.canResume),
+    );
     const commandOptions: SpawnCommandOptions = {
       agentPath: launch.agentPath,
       taskId: task.id,
@@ -745,6 +760,7 @@ export class TransitionEngine {
       ptySessionId: input.ptySessionId,
       bypassAvailable,
       cliTarget,
+      account,
     };
     const inputInAlternateScreen = adapter.firstPromptMayBeTyped?.(commandOptions) === true;
     // Kept off the line, the prompt is handed back, and the caller types it in.
@@ -1099,12 +1115,14 @@ export class TransitionEngine {
       cwd,
       startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
       agentCliVersion: spawnCli.version,
+      agentCliPath: launch.commandOptions.agentPath,
       env: extraEnv ?? undefined,
       statusOutputPath,
       eventsOutputPath,
       resuming: canResume,
       agentParser: adapter,
       agentName: adapter.name,
+      accountId: launch.commandOptions.account?.id ?? null,
       agentSessionId,
       isolatedSwimlaneId,
       permissionMode,
@@ -1143,6 +1161,7 @@ export class TransitionEngine {
       cliTarget,
       spawnOverrides,
       startHeadSha,
+      accountId: launch.commandOptions.account?.id ?? null,
     });
 
     // Told only once the new session exists: a spawn that failed or was
@@ -1201,7 +1220,7 @@ export class TransitionEngine {
     });
     notePlanApprovalSpawn(ptySessionId, { sessionDir: launch.sessionDir, bypassAvailable: launch.bypassAvailable });
     try {
-      const extraEnv = adapter.buildEnv?.(launch.commandOptions) ?? null;
+      const extraEnv = buildSessionEnv(adapter, launch.commandOptions);
       console.log(`[spawnAgent] agent=${adapter.name} Command: ${command.slice(0, 120)}...`);
       // Last chance to abort before creating a PTY process
       signal?.throwIfAborted();
@@ -1237,6 +1256,12 @@ export class TransitionEngine {
     spawnOverrides: SpawnOverrides | undefined;
     /** Where an isolated column's pass begins (`SessionRecord.start_head_sha`); null when unread. */
     startHeadSha: string | null;
+    /**
+     * The agent account the session runs on (`SessionRecord.account_id`): the `default` row's id
+     * for the agent's own login. Null only when no account was resolved (an agent without
+     * accounts, a CLI in WSL).
+     */
+    accountId?: string | null;
   }): void {
     this.taskRepo.update({
       id: record.task.id,
@@ -1266,6 +1291,7 @@ export class TransitionEngine {
       suspended_by: null,
       cli_target: serializeCliTarget(record.cliTarget),
       start_head_sha: record.startHeadSha,
+      account_id: record.accountId ?? null,
     });
     // Record the model/effort this spawn/resume actually applied via the CLI
     // flags (the same `spawnOverrides` that fed `commandOptions`). This is the
@@ -1311,7 +1337,7 @@ export class TransitionEngine {
       console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: it is no longer running`);
       return null;
     }
-    const { launchKey } = await this.resolveLaunch(launchInput);
+    const { launchKey, commandOptions: adoptedOptions } = await this.resolveLaunch(launchInput);
     if (launchKey !== earlyAgent.launchKey) {
       console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: the spawn now launches it differently`);
       return null;
@@ -1363,6 +1389,7 @@ export class TransitionEngine {
       cliTarget: launchInput.cliTarget,
       spawnOverrides: launchInput.spawnOverrides,
       startHeadSha,
+      accountId: adoptedOptions.account?.id ?? null,
     });
     console.log(
       `[spawnAgent] task=${taskLabel} adopted the agent started during its setup script:`
@@ -1479,6 +1506,7 @@ export class TransitionEngine {
       cwd,
       startPath: input.startPath ?? 'board',
       agentCliVersion: detection.version,
+      agentCliPath: launch.commandOptions.agentPath,
       env: extraEnv ?? undefined,
       statusOutputPath: launch.statusOutputPath,
       eventsOutputPath: launch.eventsOutputPath,
@@ -1488,6 +1516,7 @@ export class TransitionEngine {
       inputInAlternateScreen: launch.inputInAlternateScreen,
       agentParser: adapter,
       agentName: adapter.name,
+      accountId: launch.commandOptions.account?.id ?? null,
       agentSessionId,
       isolatedSwimlaneId: input.spawnOverrides?.isolatedSwimlaneId ?? null,
       permissionMode,

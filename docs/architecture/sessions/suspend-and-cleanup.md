@@ -186,7 +186,9 @@ under a `.cmd` shim, a Git Bash stub) to what it started, and never what the age
 a dev server it left running never exits by itself, so watching it would hold every wait to its
 bound. Windows finds the agent by parentage and creation time. POSIX re-parents it when the shell
 dies, so the host runs one `ps` just before it sends the hangup (shared by kills that arrive
-together, the hangup held for it at most `KILL_SNAPSHOT_CAP_MS`, 250 ms) and polls those pids. For
+together, and by a process-table read main posted just ahead of the kill, such as an abandoned
+launch's `agent_process`, see [Agent absence sweep](agent-absence-sweep.md); the hangup held for it
+at most `KILL_SNAPSHOT_CAP_MS`, 250 ms) and polls those pids. For
 a Windows shell that exited on its own the wait lasts until the orphan cleanup is done instead. A
 quit's kills still take that listing, since they reach the host before its shutdown does: about
 10 ms that no reap reads, accepted rather than a quit flag on every kill.
@@ -255,6 +257,10 @@ them on exactly the slow path where the later read matters most.
 | WORKTREE_HOLDER_STOP_TIMEOUT_MS | 5000 ms | How long a worktree removal's reap waits for the host to stop one holder by pid and creation time (`src/main/pty/session-manager.ts`). The removal waits inside its project's git queue, so a hung host holds that queue this long |
 | COMMAND_TERMINAL_REAP_DELAY_MS | 5000 ms | A Command Terminal's leftover reap starts this long after it ends: the backstop for a WSL shell and the in-process core, which the agent-exit wait holds no ledger for |
 | Command inject delay | 100 ms | Wait after PTY spawn before writing command |
+| AGENT_SPAWN_GRACE_MS | 30000 ms | The agent-absence sweep judges no launch before this (`src/main/pty/session-manager.ts`). Past it, a launch with no sign its agent ran waits for `AGENT_START_CEILING_MS` unless its output names a cause (see [Agent absence sweep](agent-absence-sweep.md#a-board-launchs-start-bound)) |
+| AGENT_START_CEILING_MS | 120000 ms | How long a launch with no sign its agent ran waits, past the grace, before the sweep judges it; also how long the typed-line detector keeps scanning (`src/main/pty/lifecycle/agent-output-tracker.ts`) |
+| AGENT_READY_CEILING_MS | 15000 ms | The launch overlay's backstop when no evidence the agent is on screen arrives, and the age past which a person stopping a silent launch counts as giving up (`src/main/pty/lifecycle/agent-output-tracker.ts`) |
+| LAUNCH_OUTPUT_CHECK_INTERVAL_MS | 2000 ms | The shortest wait before the start bound reads a pending launch's own output again. The wait grows to half the time spent past the grace (`src/main/pty/session-manager.ts`) |
 | STOP_SCRIPT_PAUSE_TIMEOUT_MS | 120000 ms | A Stop script after a pause, outside the task lock (`src/main/stop-script/run-stop-script.ts`) |
 | STOP_SCRIPT_TERMINAL_TIMEOUT_MS | 30000 ms | The Stop scripts of one terminal transition, in all, ahead of the reap and often inside the task lock |
 | HELD_OFF_RECHECK_TICKS | 5 sampler ticks | How often a stop a connected client held off is tried again, about every five minutes (`src/main/stop-script/held-off-stops.ts`) |

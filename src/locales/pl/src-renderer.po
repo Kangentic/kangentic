@@ -47,6 +47,10 @@ msgstr "„{swimlaneName}”"
 msgid "\"{taskTitle}\""
 msgstr "„{taskTitle}”"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "\"{taskTitle}\" continues on {accountName}."
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "\"{taskTitle}\" did not run {command}."
@@ -178,6 +182,18 @@ msgstr "{minutes, plural, one {„{taskTitle}”: przekroczono limit czasu po # 
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "{seconds, plural, one {„{taskTitle}”: przekroczono limit czasu po # sekundzie.} few {„{taskTitle}”: przekroczono limit czasu po # sekundach.} many {„{taskTitle}”: przekroczono limit czasu po # sekundach.} other {„{taskTitle}”: przekroczono limit czasu po # sekundy.}}"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue {resetMoment}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue in {duration}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue when the first account resets."
+msgstr ""
+
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -212,6 +228,10 @@ msgstr "{count, plural, one {Nie udało się wstrzymać # agenta} few {Nie udał
 #, fuzzy
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 msgstr "{count, plural, one {Nieznana zmienna: {variableNames}. Zostanie wysłana bez zmian.} few {Nieznane zmienne: {variableNames}. Zostaną wysłane bez zmian.} many {Nieznane zmienne: {variableNames}. Zostaną wysłane bez zmian.} other {Nieznane zmienne: {variableNames}. Zostaną wysłane bez zmian.}}"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
+msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
@@ -262,6 +282,10 @@ msgstr "{keptCount, plural, one {# proces z {taskCount, plural, one {# zadania} 
 #, fuzzy
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} min {seconds} s"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
+msgstr ""
 
 #: src/renderer/components/MarkdownRenderer.tsx
 #, fuzzy
@@ -357,6 +381,10 @@ msgstr ""
 msgid "A project"
 msgstr "Projekt"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "A session continues on {accountName}."
+msgstr ""
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "A tmux server. Stopping it ends all your tmux sessions."
@@ -415,6 +443,10 @@ msgstr "Agent uruchomiony"
 
 #: src/renderer/utils/dev-restart.ts
 msgid "Agents pause during a restart and resume after."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "All accounts at their limit"
 msgstr ""
 
 #: src/renderer/components/ErrorBoundary.tsx
@@ -653,6 +685,10 @@ msgstr "Nie udało się powiązać zadań"
 msgid "Couldn't load the terminals for this window."
 msgstr "Nie udało się wczytać terminali dla tego okna."
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't move every session"
+msgstr ""
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Couldn't move project"
@@ -815,6 +851,10 @@ msgstr "Nie udało się go zatrzymać. Spróbuj ponownie lub zamknij go samodzie
 #, fuzzy
 msgid "Couldn't stop processes"
 msgstr "Nie udało się zatrzymać procesów"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't switch account"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy
@@ -1193,6 +1233,10 @@ msgstr ""
 msgid "Name a branch to start from a tag in the project folder"
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "New {agentName} sessions start on {accountName}."
+msgstr ""
+
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy
 msgid "New conversation"
@@ -1313,6 +1357,10 @@ msgstr ""
 
 #: src/renderer/components/PrLink.tsx
 msgid "Open PR in default browser"
+msgstr ""
+
+#: src/renderer/components/PrLink.tsx
+msgid "Open pull request"
 msgstr ""
 
 #: src/renderer/App.tsx
@@ -1644,6 +1692,10 @@ msgstr "Nadal w toku: {tasks}."
 msgid "Stop script failed"
 msgstr "Skrypt zatrzymania nie powiódł się"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Switched account"
+msgstr ""
+
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy
 msgid "Task completed"
@@ -1693,6 +1745,10 @@ msgstr "Zmienna szablonu"
 #, fuzzy
 msgid "Terminals restarted"
 msgstr "Terminale uruchomione ponownie"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "The account is no longer in the list."
+msgstr ""
 
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy

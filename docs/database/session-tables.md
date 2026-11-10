@@ -59,6 +59,7 @@ sources:
 | start_head_sha | TEXT | | NULL |
 | launch_failed_at | TEXT | | NULL |
 | start_blocked_reason | TEXT | | NULL |
+| account_id | TEXT | | NULL |
 
 `transcript_path` is the transcript file the agent reported, written from its status line when it changes. A new row for a conversation that already has one inherits the newest reported path of the same `agent_session_id` at insert (`SessionRepository.insert`), because a resumed Claude conversation keeps writing the file it started in.
 
@@ -89,6 +90,8 @@ Each record's `tool_call_count` and `tool_breakdown` hold its own run only, and 
 `launch_failed_at`: when a FRESH launch was found never to have started, UTC ISO, written by `SessionRepository.markLaunchFailed` under the task lock as its pause lands. The agent wrote no conversation, so `assessResumeConversation` reads the record as `never-started` when it has no turns, and a Resume replays the lineage's `prompt`, read from its oldest record, with no template over it ([A failed fresh launch keeps its prompt](../architecture/sessions/agent-absence-sweep.md)). NULL on every other record. A resume whose CLI named a missing conversation, with no turns in its lineage, is marked too (`markResumeMiss`, once its pause lands), and so is a fresh launch refused at promotion (`agent-start-refused`).
 
 `start_blocked_reason`: why this record's start never reached an agent (`StartBlockedReason`): `never-started`, `folder-missing`, `worktree-missing`, `spawn-failed` or `prompt-too-long`. Written by `SessionRepository.setStartBlockedReason` when a start fails for good, and read by startup recovery onto the suspended placeholder, so a card still says why after a restart. The registry row carries the same value as `Session.startBlockedReason`, which the card and Agent Monitor footers read: a warning-toned label in place of "Paused", with the reason in the hover tip. Each start is a new record, so a later start clears it. TEXT with no CHECK constraint. NULL for every session that started.
+
+`account_id`: the agent account the session ran on, an `agent_accounts.id` in the global database (see [Storage model](storage-model.md#agent_accounts-table) and [Agent accounts](../integrations/accounts.md)). Written at insert from the account the spawn resolved. Task cleanup reads it to stop the agent's background session under that account's home (`task-cleanup.ts`). No foreign key, since the row lives in another database. NULL means the agent's own login, which every row from before the column is.
 
 `start_head_sha`: the worktree HEAD an isolated column's session started on, read just before its spawn (`TransitionEngineServices.readStartHead`) and written at insert. When the task's main conversation resumes after such sessions, its return recap lists the first-parent commits since the earliest of them that recorded one (`SessionRepository.listIsolatedSince`, see [Resume](../architecture/sessions/resume.md#a-return-to-the-main-conversation-opens-on-a-recap)). Startup recovery copies it onto the record it writes for the same pass. NULL for a main session, when HEAD could not be read, and for rows from before migration 97; a recap then lists what a later session's anchor shows, or no commits.
 
