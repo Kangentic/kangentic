@@ -883,7 +883,7 @@ export const DEMO_DICTATION_INFO = buildDictationInfo(
 );
 /**
  * What `tasks.listPrChecks` answers for the sample install's PRs whose rows read `failing`:
- * the Changes panel's Checks section and the Changes button's count read it. Task #7's
+ * the Changes panel's Pull request section and the Changes button's count read it. Task #7's
  * integration tests broke one CI job, and coverage dropped under the patch target. Job ids
  * are in the shape a real Actions run carries, so the GitHub connector's log path would take
  * them.
@@ -1712,7 +1712,7 @@ export function buildDemoPreConfig(options: {
         window.electronAPI.app.getVersion = function () { return Promise.resolve(data.appVersion); };
       }
       window.__mockAgentListOverrides = data.agentOverrides;
-      // The Changes panel's Checks section, for the PRs whose rows read failing.
+      // The Changes panel's Pull request section, for the PRs whose rows read failing.
       window.__mockPrChecks = data.prChecks;
 
       // Dictation runs the renderer's whole pipeline for real on a press (the hotkey, the mic
