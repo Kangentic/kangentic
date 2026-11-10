@@ -600,6 +600,28 @@ describe('performSpawn - the start path on the session row', () => {
   });
 });
 
+describe('performSpawn - the resume evidence on the session row', () => {
+  // The launch report reads what the resume check saw off the row.
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('copies the evidence the caller spawned with onto the registry row', async () => {
+    const context = makeContext();
+    const resumeEvidence = { turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'same', account: 'none' } as const;
+    await performSpawn(makeInput({ id: 'session-evidence-0000-00000000000', resumeEvidence }), context);
+
+    expect(context.registry.get('session-evidence-0000-00000000000')?.resumeEvidence).toEqual(resumeEvidence);
+  });
+
+  it('holds none on a spawn that carried none', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-noevidence-0000-0000000000' }), context);
+
+    expect(context.registry.get('session-noevidence-0000-0000000000')?.resumeEvidence).toBeNull();
+  });
+});
+
 describe('performSpawn - the agent CLI path on the session row', () => {
   // The launch report and the start bound read the path off the row.
   afterEach(() => {

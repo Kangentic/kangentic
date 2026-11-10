@@ -494,7 +494,8 @@ restarts from. A session hidden until adopted retires too, since no listener may
 `resumeTaskSession` with `startPath: 'retry'` on a fresh PTY. A second launch cannot sign anyone in,
 so that cause skips straight to the notice. Neither can it shorten a line, so `line_too_long`, a
 shell's refusal of the typed line, skips it too, and the notice shows the shell's own sentence. A
-cause nobody identified retries, since it may be ours.
+resume the CLI said found no conversation, which `markResumeMiss` left unmarked, skips it as well
+(see "A failed resume is not marked" below). A cause nobody identified retries, since it may be ours.
 The answer waits for the report's read of the output (`launchOutputRead`). The evidence is read
 after the pause, because a late hook can land while the session goes down, so no prompt runs twice
 and no second paid turn starts. The notice waits for that outcome. A retry is never retried, so a second failure stays paused and raises it.
@@ -543,7 +544,10 @@ Three things keep this safe:
 
 - **The no-turns check gates the write, not only the verdict.** A moved project prints the same
   line, and a mark on a conversation that ran would replay a finished prompt into it. Such a resume
-  stays unmarked, resumes as before and gets the notice.
+  stays unmarked and resumes as before. It gets no retry: the retry would run the same `--resume`
+  and get the same answer, so `markResumeMiss` answers `left_unmarked` and the listener goes straight
+  to the notice (Sentry DESKTOP-2M). Doubt answers the same way: no adapter, no project path, or no
+  agent session id on the record.
 - **It runs after the pause,** because the report's read of the output is still pending when the
   pause is accepted. It awaits that read itself, since `mayRetryLaunch` returns ahead of it on a
   session that is already a retry, and it takes the task lock.

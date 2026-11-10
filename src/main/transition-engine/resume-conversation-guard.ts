@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
-import { isConfirmedMissing } from '../agent/shared/confirmed-missing';
+import { fileStateOf } from '../agent/shared/confirmed-missing';
 import { hostPathForTarget, isSameCliPlace, placeOfRecord, type CliPlace } from '../agent/shared/cli-target';
-import type { SessionRecord, SessionUsage } from '../../shared/types';
+import { isSamePath } from '../../shared/paths';
+import type { ResumeEvidenceSummary, SessionRecord, SessionUsage } from '../../shared/types';
 import { sessionOutputPaths } from './session-paths';
 
 /**
@@ -120,8 +121,91 @@ export function resolveResumeLineage(params: {
  * Call it AFTER the resume-time id reconcile and the cwd migration: the id is
  * the one actually being resumed, and a migrated file is where the locator and
  * the folder scan find it.
+ *
+ * This answers the verdict alone. Both spawn chokepoints call
+ * `assessResumeConversationWithEvidence`, which decides it the same way.
  */
-export async function assessResumeConversation(params: {
+export async function assessResumeConversation(params: ResumeConversationParams): Promise<ResumeConversationVerdict> {
+  return (await assessResumeConversationWithEvidence(params)).verdict;
+}
+
+/**
+ * What the check read, beside its verdict, in fixed values a launch report can
+ * send (Sentry DESKTOP-2M: a resume that found no conversation after an
+ * `unknown`, with nothing to say which of the check's two paths it took). Null
+ * when there was no project to read the lineage in.
+ */
+export interface ResumeConversationAssessment {
+  verdict: ResumeConversationVerdict;
+  evidence: ResumeEvidenceSummary | null;
+}
+
+/** `assessResumeConversation`, and what it saw. Both spawn chokepoints call this one. */
+export async function assessResumeConversationWithEvidence(params: ResumeConversationParams): Promise<ResumeConversationAssessment> {
+  const { adapter, agentSessionId, records, cwd, projectPath, place: spawnPlace } = params;
+  if (!projectPath) return { verdict: 'unknown', evidence: null };
+
+  const { hadTurns, firstAgentReport, firstAgentReportSource, reportedPaths, newestPlace } = readLineageEvidence({ adapter, agentSessionId, records, projectPath });
+  const checkedTranscript = firstAgentReport?.transcriptPath || reportedPaths[0] || null;
+  const summaryWith = (transcript: ResumeEvidenceSummary['transcript']): ResumeEvidenceSummary => ({
+    turns: hadTurns ? 'yes' : 'no',
+    agentReport: firstAgentReportSource ?? 'none',
+    transcript: checkedTranscript ? transcript : 'not_reported',
+    cwd: params.resumeFromCwd ? (isSamePath(params.resumeFromCwd, cwd) ? 'same' : 'moved') : 'unknown',
+  });
+
+  // A record read by its folder alone keeps no `cli_target`, so it decides
+  // nothing about where the conversation is. This branch always starts fresh,
+  // so its transcript is not read: a distro's path would go through its share,
+  // which can start a distro that is stopped.
+  const placeRecord = records.find((record) => record?.cli_target !== undefined);
+  if (spawnPlace !== undefined && placeRecord && !isSameCliPlace(placeRecord.cli_target, spawnPlace)) {
+    return { verdict: hadTurns ? 'expired' : 'never-started', evidence: summaryWith('unknown') };
+  }
+
+  // A conversation on a remote host (#913) is proven gone only by the host. Its transcript path is a
+  // path on the host, so a test of this computer's disk would find nothing and read as proof, and the
+  // resume would be replaced by a fresh conversation. Absence of evidence is never evidence, so
+  // anything involving a host is `unknown` here and the resume goes ahead. Whether the CLI ran on the
+  // same host (the identity check above) does not depend on any file and still decides.
+  if (spawnPlace?.kind === 'ssh' || newestPlace?.kind === 'ssh') {
+    return { verdict: 'unknown', evidence: summaryWith('unknown') };
+  }
+
+  // The transcript the CLI would look for: the agent's own report first, else
+  // the newest path any record kept. Read once, and the no-turns branch below
+  // decides on this same read.
+  const transcript = checkedTranscript ? await transcriptStateOf(checkedTranscript) : 'not_reported';
+  const evidence = summaryWith(transcript);
+  const withEvidence = (verdict: ResumeConversationVerdict): ResumeConversationAssessment => ({ verdict, evidence });
+
+  if (!hadTurns) {
+    if (records.find(Boolean)?.launch_failed_at) return withEvidence('never-started');
+    // The agent's own report says nothing ever happened, and the transcript it
+    // named is not on disk. `missing` is ENOENT and nothing else (`fileStateOf`).
+    if (firstAgentReport && firstAgentReport.transcriptPath && transcript === 'missing') {
+      return withEvidence('never-started');
+    }
+    return withEvidence('unknown');
+  }
+
+  if (!adapter.proveConversationGone || reportedPaths.length === 0) return withEvidence('unknown');
+  try {
+    const gone = await adapter.proveConversationGone({ agentSessionId, reportedPaths, cwd, place: newestPlace ?? null });
+    return withEvidence(gone ? 'expired' : 'unknown');
+  } catch (error) {
+    console.warn(`[SESSION_LIFECYCLE] Conversation-gone probe failed for ${agentSessionId.slice(0, 8)}:`, error);
+    return withEvidence('unknown');
+  }
+}
+
+/** Whether a reported transcript is on disk, by the one rule `isConfirmedMissing` holds. */
+async function transcriptStateOf(transcriptPath: string): Promise<ResumeEvidenceSummary['transcript']> {
+  const state = await fileStateOf(transcriptPath);
+  return state === 'present' ? 'on_disk' : state;
+}
+
+interface ResumeConversationParams {
   adapter: AgentAdapter;
   /** The conversation being resumed, after the reconcile. */
   agentSessionId: string;
@@ -147,43 +231,12 @@ export async function assessResumeConversation(params: {
    * between distros since then cannot resume it. Omitted: not checked.
    */
   place?: CliPlace | null;
-}): Promise<ResumeConversationVerdict> {
-  const { adapter, agentSessionId, records, cwd, projectPath, place: spawnPlace } = params;
-  if (!projectPath) return 'unknown';
-
-  const { hadTurns, firstAgentReport, reportedPaths, newestPlace } = readLineageEvidence({ adapter, agentSessionId, records, projectPath });
-
-  // A record read by its folder alone keeps no `cli_target`, so it decides
-  // nothing about where the conversation is.
-  const placeRecord = records.find((record) => record?.cli_target !== undefined);
-  if (spawnPlace !== undefined && placeRecord && !isSameCliPlace(placeRecord.cli_target, spawnPlace)) {
-    return hadTurns ? 'expired' : 'never-started';
-  }
-
-  // A conversation on a remote host (#913) is proven gone only by the host. Its transcript path is a
-  // path on the host, so a test of this computer's disk would find nothing and read as proof, and the
-  // resume would be replaced by a fresh conversation. Absence of evidence is never evidence, so
-  // anything involving a host is `unknown` here and the resume goes ahead. Whether the CLI ran on the
-  // same host (the identity check above) does not depend on any file and still decides.
-  if (spawnPlace?.kind === 'ssh' || newestPlace?.kind === 'ssh') return 'unknown';
-
-  if (!hadTurns) {
-    if (records.find(Boolean)?.launch_failed_at) return 'never-started';
-    // The agent's own report says nothing ever happened, and the transcript it
-    // named is not on disk.
-    if (firstAgentReport && firstAgentReport.transcriptPath && await isConfirmedMissing(firstAgentReport.transcriptPath)) {
-      return 'never-started';
-    }
-    return 'unknown';
-  }
-
-  if (!adapter.proveConversationGone || reportedPaths.length === 0) return 'unknown';
-  try {
-    return await adapter.proveConversationGone({ agentSessionId, reportedPaths, cwd, place: newestPlace ?? null }) ? 'expired' : 'unknown';
-  } catch (error) {
-    console.warn(`[SESSION_LIFECYCLE] Conversation-gone probe failed for ${agentSessionId.slice(0, 8)}:`, error);
-    return 'unknown';
-  }
+  /**
+   * The cwd the conversation last ran in, for the evidence summary only: the
+   * cwd migration has already run, so it decides nothing here. Omitted or null
+   * when the caller does not know it.
+   */
+  resumeFromCwd?: string | null;
 }
 
 /** What every record of a lineage says about its conversation, read once. */
@@ -191,6 +244,8 @@ interface LineageEvidence {
   hadTurns: boolean;
   /** The first record whose folder holds the agent's own report decides `never-started`. */
   firstAgentReport: ConversationEvidence | null;
+  /** Which of the agent's two reports `firstAgentReport` came from. */
+  firstAgentReportSource: Exclude<ResumeEvidenceSummary['agentReport'], 'none'> | null;
   reportedPaths: string[];
   /** Where the newest record's CLI ran, for the agent's own locator. */
   newestPlace: CliPlace | null | undefined;
@@ -209,6 +264,7 @@ function readLineageEvidence(params: {
 
   let hadTurns = false;
   let firstAgentReport: ConversationEvidence | null = null;
+  let firstAgentReportSource: LineageEvidence['firstAgentReportSource'] = null;
   const reportedPaths: string[] = [];
   const addReportedPath = (candidate: string | null | undefined): void => {
     if (candidate && !reportedPaths.includes(candidate)) reportedPaths.push(candidate);
@@ -231,17 +287,21 @@ function readLineageEvidence(params: {
       // preferred (richest usage), but it only runs once the TUI is up: a CLI
       // killed in its first second leaves none. The SessionStart hook fires
       // far earlier and carries the same `transcript_path`.
-      const reported = readStatusEvidence(sessionDir, parseStatus, agentSessionId) ?? readSessionStartEvidence(sessionDir);
+      const statusReport = readStatusEvidence(sessionDir, parseStatus, agentSessionId);
+      const reported = statusReport ?? readSessionStartEvidence(sessionDir);
       if (!reported) continue;
       const evidence = { ...reported, transcriptPath: reportedPathOnHost(reported.transcriptPath, place) ?? '' };
       if (evidence.hadTurns) hadTurns = true;
       addReportedPath(evidence.transcriptPath);
-      if (!firstAgentReport) firstAgentReport = evidence;
+      if (!firstAgentReport) {
+        firstAgentReport = evidence;
+        firstAgentReportSource = statusReport ? 'status' : 'session_start';
+      }
     } catch (error) {
       console.warn(`[SESSION_LIFECYCLE] Resume conversation probe failed for record ${record.id.slice(0, 8)}:`, error);
     }
   }
-  return { hadTurns, firstAgentReport, reportedPaths, newestPlace };
+  return { hadTurns, firstAgentReport, firstAgentReportSource, reportedPaths, newestPlace };
 }
 
 /**

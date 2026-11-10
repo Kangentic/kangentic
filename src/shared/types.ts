@@ -7912,6 +7912,31 @@ export type LaunchStartPath =
   | 'retry'
   | 'open';
 
+/**
+ * What the resume check (`src/main/transition-engine/resume-conversation-guard.ts`)
+ * read before a resume, as fixed values a launch report can send, never a path.
+ *
+ * - `turns`: whether any record of the lineage showed a turn.
+ * - `agentReport`: which agent-written report the check read first, the status
+ *   line or the SessionStart hook, or none.
+ * - `transcript`: whether the transcript the agent reported (else the newest one a
+ *   record kept) is on disk, read after the cwd migration. `unknown` is a stat that
+ *   failed with anything but ENOENT.
+ * - `cwd`: whether the spawn runs in the cwd the conversation last ran in.
+ * - `account`: whether the spawn runs on the account the conversation was written on
+ *   (`resumeAccountMatch`), added by the chokepoint once the account is resolved.
+ */
+export interface ResumeEvidenceSummary {
+  turns: 'yes' | 'no';
+  agentReport: 'status' | 'session_start' | 'none';
+  transcript: 'on_disk' | 'missing' | 'not_reported' | 'unknown';
+  cwd: 'same' | 'moved' | 'unknown';
+  account?: ResumeAccountMatch;
+}
+
+/** Whether a resume runs on the account its conversation was written on (`resumeAccountMatch`). */
+export type ResumeAccountMatch = 'same' | 'changed' | 'none';
+
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
   id?: string;
@@ -7937,6 +7962,11 @@ export interface SpawnSessionInput {
    * Main keeps it; a launch report sends only whether it exists.
    */
   agentCliPath?: string | null;
+  /**
+   * What the resume check read before this resume (`assessResumeConversationWithEvidence`).
+   * Null or omitted on a fresh spawn. A launch report sends it as fixed values.
+   */
+  resumeEvidence?: ResumeEvidenceSummary | null;
   env?: Record<string, string>;
   statusOutputPath?: string; // path for the status bridge JSON file
   eventsOutputPath?: string; // path for the event bridge JSONL file (activity log)

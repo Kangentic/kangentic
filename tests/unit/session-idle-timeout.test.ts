@@ -66,6 +66,7 @@ vi.mock('../../src/main/db/database', () => ({
 // which is set per-test in beforeEach. All other methods are stubs.
 const mockGetLatestForTask = vi.fn(() => null as SessionRecord | null);
 const mockMarkLaunchFailed = vi.fn();
+const mockListForTaskNewestFirst = vi.fn((_taskId?: string) => [] as SessionRecord[]);
 const mockSetStartBlockedReason = vi.fn();
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
@@ -75,6 +76,8 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
     // No own-record row, so applySuspendDbWrites falls back to getLatestForTask.
     findByAnyId = vi.fn(() => undefined);
     getLatestForTask = mockGetLatestForTask;
+    // The lineage markResumeMiss reads. Empty unless a test arranges one.
+    listForTaskNewestFirst = mockListForTaskNewestFirst;
     compareAndUpdateStatus = vi.fn(() => true);
     updateMetrics = vi.fn();
     insert = vi.fn();
@@ -192,6 +195,7 @@ import { IPC } from '../../src/shared/ipc-channels';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 import { notifySpawnBlocked } from '../../src/main/ipc/helpers';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
 import { abortInFlightResume, isResumeInFlight, registerResumeController, releaseResumeController } from '../../src/main/ipc/handlers/session-resume-controllers';
 import { forgetWorkflowRecovery, resetWorkflowRecoveryForTests, setRecoveryEntry } from '../../src/main/workflows/workflow-recovery-state';
 
@@ -469,6 +473,113 @@ describe('agent-never-started listener', () => {
     }
   });
 
+  /**
+   * A resume Claude answered with "No conversation found" (DESKTOP-2M). A lineage
+   * with no turns is marked, and the retry starts fresh with the prompt it owes. A
+   * lineage with turns stays unmarked so its conversation is never dropped, and a
+   * retry would run the same `--resume` and get the same answer, so it gets the
+   * notice instead. Drives the real `markResumeMiss` and its lineage read.
+   */
+  describe('a resume that found no conversation', () => {
+    const RESUMING_SESSION = { ...NEVER_STARTED_SESSION, resuming: true } as Session;
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      mockListForTaskNewestFirst.mockReturnValue([]);
+    });
+
+    function arrangeMiss(lineageTotals: { total_output_tokens: number }): ReturnType<typeof createMockContext> {
+      const context = registerWithLiveSession('sess-never');
+      // An adapter with no status pipeline: the row's totals alone decide turns.
+      vi.spyOn(agentRegistry, 'get').mockReturnValue({ runtime: {} } as never);
+      context.sessionManager.getSessionAgentName.mockReturnValue('test-agent');
+      context.sessionManager.launchOutputClass.mockResolvedValue('conversation_missing');
+      context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+      mockResumeTaskSession.mockResolvedValue(null);
+      mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+      const resumeRecord = {
+        id: 'sess-never', task_id: 'task-never', agent_session_id: 'agent-never', status: 'running', suspended_by: null,
+        transcript_path: null, total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0,
+      } as unknown as SessionRecord;
+      const earlierRecord = { ...resumeRecord, id: 'record-ran', status: 'suspended', ...lineageTotals } as SessionRecord;
+      mockGetLatestForTask.mockReturnValue(resumeRecord);
+      mockListForTaskNewestFirst.mockReturnValue([resumeRecord, earlierRecord]);
+      return context;
+    }
+
+    async function fireResumeMiss(): Promise<void> {
+      capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', RESUMING_SESSION);
+      await withTaskLock('task-never', async () => {});
+    }
+
+    it('raises the notice and runs no retry when the lineage had turns', async () => {
+      arrangeMiss({ total_output_tokens: 40 });
+
+      await fireResumeMiss();
+
+      await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mockResumeTaskSession).not.toHaveBeenCalled();
+      expect(mockMarkLaunchFailed).not.toHaveBeenCalled();
+    });
+
+    it('marks the record and retries fresh when the lineage had no turns', async () => {
+      arrangeMiss({ total_output_tokens: 0 });
+
+      await fireResumeMiss();
+
+      await vi.waitFor(() => expect(mockResumeTaskSession).toHaveBeenCalledTimes(1));
+      expect(mockMarkLaunchFailed).toHaveBeenCalledWith('sess-never');
+      expect(mockResumeTaskSession).toHaveBeenCalledWith(expect.anything(), 'task-never', expect.objectContaining({ startPath: 'retry' }));
+      expect(notifySpawnBlocked).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a fresh launch whose miss is left unmarked', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      mockListForTaskNewestFirst.mockReturnValue([]);
+    });
+
+    function arrangeUnmarkedMiss(): ReturnType<typeof createMockContext> {
+      const context = registerWithLiveSession('sess-never');
+      vi.spyOn(agentRegistry, 'get').mockReturnValue({ runtime: {} } as never);
+      context.sessionManager.getSessionAgentName.mockReturnValue('test-agent');
+      context.sessionManager.launchOutputClass.mockResolvedValue('conversation_missing');
+      context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+      mockResumeTaskSession.mockResolvedValue(null);
+      mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+      // No agent session id on the latest record: markResumeMiss answers left_unmarked.
+      mockGetLatestForTask.mockReturnValue({
+        id: 'sess-never', task_id: 'task-never', agent_session_id: null, status: 'running', suspended_by: null,
+      } as unknown as SessionRecord);
+      return context;
+    }
+
+    it('still retries, since a fresh launch never runs --resume', async () => {
+      arrangeUnmarkedMiss();
+
+      // NEVER_STARTED_SESSION is not resuming.
+      capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', NEVER_STARTED_SESSION);
+      await withTaskLock('task-never', async () => {});
+
+      await vi.waitFor(() => expect(mockResumeTaskSession).toHaveBeenCalledTimes(1));
+      expect(mockResumeTaskSession).toHaveBeenCalledWith(expect.anything(), 'task-never', expect.objectContaining({ startPath: 'retry' }));
+      expect(notifySpawnBlocked).not.toHaveBeenCalled();
+    });
+
+    it('gets the notice and no retry when the same unmarked miss is a resume', async () => {
+      arrangeUnmarkedMiss();
+
+      capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', { ...NEVER_STARTED_SESSION, resuming: true });
+      await withTaskLock('task-never', async () => {});
+
+      await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mockResumeTaskSession).not.toHaveBeenCalled();
+    });
+  });
+
   describe('the controller the listener registers is released', () => {
     async function fireAndExpectReleased(): Promise<void> {
       capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', NEVER_STARTED_SESSION);
@@ -711,6 +822,25 @@ describe('agent-never-started listener', () => {
 // ---------------------------------------------------------------------------
 // A queued session whose folder went while it waited stops with a visible reason
 // ---------------------------------------------------------------------------
+
+describe('SESSION_SPAWN handler', () => {
+  it('never lets the renderer supply the resume check\'s evidence', async () => {
+    vi.clearAllMocks();
+    capturedIpcHandlers.clear();
+    const context = createMockContext();
+    const spawn = vi.fn(async () => ({}));
+    (context.sessionManager as unknown as { spawn: typeof spawn }).spawn = spawn;
+    registerSessionHandlers(context as never);
+    const handler = capturedIpcHandlers.get(IPC.SESSION_SPAWN);
+    if (!handler) throw new Error('SESSION_SPAWN handler was not registered');
+
+    const forgedEvidence = { turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'same', account: null };
+    await handler({}, { id: 'sess-x', command: 'echo', cwd: '/mock/project', resumeEvidence: forgedEvidence }, 'proj-1');
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ id: 'sess-x', projectId: 'proj-1', startPath: 'board', resumeEvidence: null }));
+  });
+});
 
 describe('agent-start-refused listener', () => {
   const QUEUED_SESSION = {

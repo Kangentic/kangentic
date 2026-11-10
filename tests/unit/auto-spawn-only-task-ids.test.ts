@@ -332,6 +332,27 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
     }));
   });
 
+  // The launch report's resume tags read the evidence off the session row, so a
+  // startup respawn that drops it sends a resume failure with nothing to triage.
+  //
+  // Red-green: drop `resumeEvidence: input.resumeEvidence` from the spawn call in
+  // auto-spawn.ts and this fails.
+  it('hands spawn the evidence the resume check read', async () => {
+    const resumeEvidence = { turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'same', account: 'none' } as const;
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      const prepared = preparedSpawn('task-lost');
+      return { ...prepared, data: { ...prepared.data, resumeEvidence } } as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+      new Set(['session-lost']),
+    );
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ resumeEvidence }));
+  });
+
   it('does not spawn over a session the user started while the agent was being prepared', async () => {
     const registry: RegistryRow[] = [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
     mockPrepareAgentSpawn.mockImplementationOnce(async () => {

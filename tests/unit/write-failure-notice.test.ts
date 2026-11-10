@@ -109,7 +109,7 @@ describe('write-failure-notice', () => {
     reportSyncWriteFailure(error, 'config');
 
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config' });
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config' }, {}, expect.any(Array));
     // An error with no `code` is not a Node system error, so it goes out as the same object.
     expect(mocks.reportHandledErrorSpy.mock.calls[0][0]).toBe(error);
     expect(notifier).toHaveBeenCalledTimes(1);
@@ -184,7 +184,7 @@ describe('write-failure-notice', () => {
     expect(() => reportSyncWriteFailure(error, 'config')).not.toThrow();
 
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config' });
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config' }, {}, expect.any(Array));
     expect(throwingNotifier).toHaveBeenCalledTimes(1);
   });
 
@@ -242,7 +242,7 @@ describe('write-failure-notice', () => {
       errno: 'EIO',
       syscall: 'mkdir',
       config_dir: 'config',
-    });
+    }, {}, expect.any(Array));
   });
 });
 
@@ -259,6 +259,48 @@ function errnoError(code: string, message: string, syscall?: string): NodeJS.Err
 }
 
 const NO_CAUSE_SENTENCE = 'It may be lost on restart.';
+
+/**
+ * Sentry groups a report with no fingerprint by its stack, so every caller of
+ * `safeWriteJson` opened its own issue for one disk-full outage (DESKTOP-1C, then
+ * DESKTOP-1Y from `CONFIG_SET`, then DESKTOP-2K from `CONFIG_SET_SYNC`), and
+ * archiving one of them never stopped the next. The fingerprint is built from the
+ * source and the errno alone, so it cannot depend on the stack.
+ */
+describe('write-failure-notice grouping (DESKTOP-2K)', () => {
+  beforeEach(() => {
+    mocks.reportHandledErrorSpy.mockClear();
+    __resetForTest();
+  });
+
+  function fingerprintOfCall(callIndex: number): unknown {
+    return mocks.reportHandledErrorSpy.mock.calls[callIndex]?.[3];
+  }
+
+  it('sends the same fingerprint for two failures of one source and errno', () => {
+    reportSyncWriteFailure(errnoError('ENOSPC', 'ENOSPC: no space left on device, write', 'write'), 'config');
+    noteSyncWriteSuccess('config');
+    reportSyncWriteFailure(errnoError('ENOSPC', 'ENOSPC: no space left on device, write', 'write'), 'config');
+
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(2);
+    expect(fingerprintOfCall(0)).toEqual(['sync-write-failure', 'config', 'ENOSPC']);
+    expect(fingerprintOfCall(1)).toEqual(fingerprintOfCall(0));
+  });
+
+  it('sends another fingerprint for another errno or another source', () => {
+    reportSyncWriteFailure(errnoError('EIO', 'EIO: i/o error, write', 'write'), 'config');
+    reportSyncWriteFailure(errnoError('ENOSPC', 'ENOSPC: no space left on device, write', 'write'), 'browser_url');
+
+    expect(fingerprintOfCall(0)).toEqual(['sync-write-failure', 'config', 'EIO']);
+    expect(fingerprintOfCall(1)).toEqual(['sync-write-failure', 'browser_url', 'ENOSPC']);
+  });
+
+  it('names an error with no errno as none, so it groups apart from every errno', () => {
+    reportSyncWriteFailure(new Error('no code on this one'), 'config');
+
+    expect(fingerprintOfCall(0)).toEqual(['sync-write-failure', 'config', 'none']);
+  });
+});
 
 const originalPlatform = process.platform;
 
@@ -320,7 +362,7 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
 
     reportSyncWriteFailure(error, 'config');
 
-    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(expect.any(Error), { source: 'config', errno: 'ENOSPC' });
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(expect.any(Error), { source: 'config', errno: 'ENOSPC' }, {}, expect.any(Array));
   });
 
   it('omits the errno tag entirely when the error carries no code', () => {
@@ -330,7 +372,7 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
 
     reportSyncWriteFailure(error, 'config');
 
-    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config' });
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(error, { source: 'config' }, {}, expect.any(Array));
   });
 
   it('does NOT re-notify when the errno changes on an already-latched source', () => {

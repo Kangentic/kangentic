@@ -104,8 +104,9 @@ export function registerSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.SESSION_SPAWN, (_, input, projectId?: string | null) => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
     if (!resolvedProjectId) throw new Error('Cannot spawn session: no project is currently open');
-    // Set after the spread: the renderer's value never names a start path.
-    return context.sessionManager.spawn({ ...input, projectId: resolvedProjectId, startPath: 'board' });
+    // Set after the spread: the renderer never names a start path, and never
+    // supplies the resume check's evidence, which only a spawn chokepoint reads.
+    return context.sessionManager.spawn({ ...input, projectId: resolvedProjectId, startPath: 'board', resumeEvidence: null });
   });
   ipcMain.handle(IPC.SESSION_KILL, (_, id) => {
     // Serialize against suspend/resume/reset for the same task so KILL can't
@@ -858,6 +859,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // Resume start it fresh with its own prompt: `--resume` would find no
   // conversation. A failed resume is unmarked, and its conversation is still there,
   // unless the CLI said it is not and its lineage had no turns (`markResumeMiss`).
+  // A resume the CLI said is not there, which `markResumeMiss` left unmarked (its
+  // lineage had turns), gets no retry: the same `--resume` would get the same
+  // answer. It goes straight to the notice.
   //
   // The retry is Kangentic's own, so a person's gesture beats it. The decision
   // needs the output read and the retry takes the task lock itself, so it cannot
@@ -889,8 +893,11 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
         retire();
         return;
       }
-      await markResumeMiss(context, { sessionId, taskId: session.taskId, projectId });
-      const mayRetry = await context.sessionManager.mayRetryLaunch(sessionId);
+      const missOutcome = await markResumeMiss(context, { sessionId, taskId: session.taskId, projectId });
+      // A resume's miss left unmarked would be retried with the same `--resume`
+      // (DESKTOP-2M). A fresh launch never runs `--resume`, so it keeps its retry.
+      const unmarkedResumeMiss = session.resuming === true && missOutcome === 'left_unmarked';
+      const mayRetry = !unmarkedResumeMiss && await context.sessionManager.mayRetryLaunch(sessionId);
       releaseResumeController(session.taskId, retryWindow);
       // Another start owns the task now, so it has no failure to show, and a retry
       // would cancel that start.

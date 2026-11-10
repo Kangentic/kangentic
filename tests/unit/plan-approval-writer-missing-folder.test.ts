@@ -291,6 +291,8 @@ describe('PlanApprovalWriter, a stat that fails for another reason', () => {
     expect(hoisted.reportHandledError).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({ source: 'plan_approval' }),
+      {},
+      expect.any(Array),
     );
     expect(folderWarnings()).toEqual([]);
     expect(writer.approves('session-1')).toBe(false);
@@ -334,6 +336,8 @@ describe('PlanApprovalWriter, a write that fails for another reason', () => {
     expect(hoisted.reportHandledError).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({ source: 'plan_approval', errno: 'EBUSY', syscall: 'rename' }),
+      {},
+      expect.any(Array),
     );
     expect(notifier).toHaveBeenCalledTimes(1);
   });

@@ -863,6 +863,22 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
     }));
   });
 
+  // Red-green: drop `resumeEvidence: input.resumeEvidence` from the spawn call in
+  // resume-suspended.ts and this fails.
+  it('hands spawn the evidence the resume check read', async () => {
+    const resumeEvidence = { turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'same', account: 'none' } as const;
+    prepareAgentSpawnMock.mockResolvedValue({
+      ...preparedResume(),
+      data: { ...preparedResume().data, resumeEvidence },
+    });
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'running' });
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ resumeEvidence }));
+  });
+
   it('reports a spawn that failed as a startup recovery, naming the agent', async () => {
     const sessionManager = makeSessionManager();
     sessionManager.spawn.mockRejectedValue(new Error('pty host down'));

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { conversationAccountOf, resolveSpawnAccount } from '../../accounts/account-service';
+import { conversationAccountOf, resolveSpawnAccount, resumeAccountMatch } from '../../accounts/account-service';
 import { buildSessionEnv } from '../../accounts/account-env';
 import { agentRegistry } from '../../agent/agent-registry';
 import { trackEvent } from '../../analytics/analytics';
@@ -9,7 +9,7 @@ import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
-import type { AppConfig, BoardProfile, PermissionMode, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
+import type { AppConfig, BoardProfile, PermissionMode, ResumeEvidenceSummary, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
 import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../../remote/host-file-sync';
 import { resolveSpawnCli } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
@@ -18,7 +18,7 @@ import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { notePlanApprovalSpawn, planSpawnNeedsBypass } from '../../plan-approval/plan-approval-spawns';
 import { reconcileResumeAgentSessionId } from '../resume-id-reconcile';
-import { assessResumeConversation, owedPromptOf, resolveResumeLineage, type StartOverReason } from '../resume-conversation-guard';
+import { assessResumeConversationWithEvidence, owedPromptOf, resolveResumeLineage, type StartOverReason } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import {
   buildExpiredConversationRecap,
@@ -100,6 +100,8 @@ export interface PreparedSpawn {
   agentCliVersion: string | null;
   /** The CLI path the command was built with (`SpawnSessionInput.agentCliPath`). */
   agentCliPath: string;
+  /** What the resume check read, on a spawn that still resumes (`SpawnSessionInput.resumeEvidence`). */
+  resumeEvidence: ResumeEvidenceSummary | null;
 }
 
 export type PrepareResult =
@@ -278,6 +280,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
   let startOver: PreparedSpawn['startOver'] = null;
   let prompt: string | null = null;
   let expiredLastActiveAt: string | null = null;
+  let resumeEvidence: ResumeEvidenceSummary | null = null;
   if (input.resume && resumedAgentSessionId) {
     // With no repository to list from, the recovered record is read by its
     // folder alone (it ran until the crash, so it normally has its own status
@@ -287,14 +290,16 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       retiringRecordId: input.resume.recordId ?? null,
       resumedAgentSessionId,
     });
-    const verdict = await assessResumeConversation({
+    const { verdict, evidence } = await assessResumeConversationWithEvidence({
       adapter,
       agentSessionId: resumedAgentSessionId,
       records: lineage,
       cwd,
       projectPath,
       place: cliTarget,
+      resumeFromCwd: input.resume.recordCwd ?? null,
     });
+    resumeEvidence = evidence;
     if (verdict === 'never-started') {
       console.log(
         `[SESSION_RECOVERY] Resume downgraded to fresh for task ${task.id.slice(0, 8)}:`
@@ -374,6 +379,13 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
     taskId: task.id,
   });
 
+  // The account the resumed conversation was written on, which the spawn asks for
+  // and the launch report compares with the account it got. A WSL CLI has no accounts.
+  const conversationAccountId = cliTarget ? undefined : conversationAccountOf(
+    canResume ? input.sessionRepo?.listForTaskNewestFirst?.(task.id) ?? [] : [],
+    agentSessionId,
+    canResume,
+  );
   const commandOptions = {
     agentPath: launch.agentPath,
     taskId: task.id,
@@ -416,11 +428,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
     cliTarget,
     // The account a recovered session runs on (task #1057): the top account with room, as for a
     // board spawn. A WSL CLI keeps its single login.
-    account: cliTarget ? null : await resolveSpawnAccount(
-      agent,
-      undefined,
-      conversationAccountOf(canResume ? input.sessionRepo?.listForTaskNewestFirst?.(task.id) ?? [] : [], agentSessionId, canResume),
-    ),
+    account: cliTarget ? null : await resolveSpawnAccount(agent, undefined, conversationAccountId),
   };
 
   const command = adapter.buildCommand(commandOptions);
@@ -461,6 +469,9 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
       agentCliVersion: spawnCli.version,
       agentCliPath: launch.agentPath,
+      resumeEvidence: canResume && resumeEvidence
+        ? { ...resumeEvidence, account: resumeAccountMatch(conversationAccountId, commandOptions.account) }
+        : null,
       accountId: commandOptions.account?.id ?? null,
     },
   };
