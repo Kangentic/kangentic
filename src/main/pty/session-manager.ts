@@ -110,6 +110,7 @@ import {
   type LaunchTags,
   type SessionLaunchFailure,
 } from './agent-launch-report';
+import { agentProcessPresenceOf, type AgentProcessPresence } from './host/agent-process-presence';
 import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
@@ -1601,13 +1602,47 @@ export class SessionManager extends EventEmitter {
   abandonedLaunchTags(now: number = Date.now()): LaunchTags[] {
     const launches: LaunchTags[] = [];
     for (const session of this.registry.values()) {
-      if (session.status !== 'running' || session.launchFailureNoted === true) continue;
-      if (this.isHiddenUntilAdopted(session.id) || !launchNeverStarted(session)) continue;
-      if (now - Date.parse(session.startedAt) < LAUNCH_ABANDON_MS) continue;
+      if (session.status !== 'running' || !this.mayReportAbandoned(session, now)) continue;
       const endedBy: LaunchEndedBy = 'quit';
-      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, output_class: 'not_read' });
+      // Nothing can read the process table inside a quit.
+      const agentProcess: AgentProcessPresence = 'unknown';
+      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, agent_process: agentProcess, output_class: 'not_read' });
     }
     return launches;
+  }
+
+  /**
+   * Whether ending this session now would make an `abandoned` report: an
+   * adapter that reports its start, a launch that never showed it ran, no
+   * report yet, past `LAUNCH_ABANDON_MS`, not an agent hidden until adopted.
+   * The quit's own check leaves out the shutdown test, since it runs inside one.
+   */
+  private mayReportAbandoned(session: ManagedSession, now: number = Date.now()): boolean {
+    if (!session.agentParser || session.launchFailureNoted === true) return false;
+    if (this.isHiddenUntilAdopted(session.id) || !launchNeverStarted(session)) return false;
+    return now - Date.parse(session.startedAt) >= LAUNCH_ABANDON_MS;
+  }
+
+  /**
+   * Post a read of whether this session's shell still has an agent under it,
+   * for the `abandoned` report its exit will make, without waiting for it.
+   * Called where Kangentic decides to end the launch, before the kill or the
+   * exit sequence reaches the agent: read at the exit, a live agent the hangup
+   * already ended would read `absent`. On POSIX the host's kill waits for a
+   * listing still out (`PtyHostCore`), so the read sees the shell's children
+   * before the hangup re-parents them. A WSL shell's agent lives in the distro,
+   * where no host listing reaches, so it reads `unknown`.
+   */
+  private noteAgentProcessBeforeEnd(session: ManagedSession, shellPid: number): void {
+    if (isShuttingDown() || !this.mayReportAbandoned(session)) return;
+    if (parseWslShellSpec(session.shell) !== null || !(shellPid > 0)) {
+      session.agentProcessAtEnd = Promise.resolve('unknown');
+      return;
+    }
+    session.agentProcessAtEnd = this.host.listProcesses().then(
+      (rows) => agentProcessPresenceOf(rows, shellPid),
+      (): AgentProcessPresence => 'unknown',
+    );
   }
 
   /** The agent showed it ran, once. On a retry, that makes this launch a recovery. */
@@ -1627,7 +1662,7 @@ export class SessionManager extends EventEmitter {
   private reportLaunchOf(
     session: ManagedSession,
     stage: LaunchStage,
-    options: Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified'> = {},
+    options: Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified' | 'agentProcess'> = {},
   ): void {
     const ringIsThisLaunchs = this.registry.get(session.id) === session && typeof session.firstOutputAt === 'number';
     reportSessionLaunchFailure({
@@ -1666,10 +1701,14 @@ export class SessionManager extends EventEmitter {
       }
       return;
     }
-    if (!launchNeverStarted(session)) return;
-    if (Date.now() - Date.parse(session.startedAt) < LAUNCH_ABANDON_MS) return;
+    if (!this.mayReportAbandoned(session)) return;
     const endedBy: LaunchEndedBy = session.status === 'suspended' ? 'pause' : 'kill';
-    this.reportLaunchOf(session, 'abandoned', { extraTags: { ...exitTags, ended_by: endedBy } });
+    this.reportLaunchOf(session, 'abandoned', {
+      extraTags: { ...exitTags, ended_by: endedBy },
+      // Read when the launch was ended (`noteAgentProcessBeforeEnd`). An ending
+      // that posted none, a kill from another path, still carries the tag.
+      agentProcess: session.agentProcessAtEnd ?? Promise.resolve('unknown'),
+    });
   }
 
   /**
@@ -4248,6 +4287,8 @@ export class SessionManager extends EventEmitter {
       const ptyRef = session.pty;
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
       const childPid = ptyRef.pid;
+      // Posted ahead of the exit sequence and the kill, and never waited for.
+      this.noteAgentProcessBeforeEnd(session, childPid);
       // A renderer's keystrokes stop reaching it now, and anything still
       // queued for it is dropped, as when they crossed this process and found
       // the handle nulled. The exit sequence below is written past the seal.
@@ -4458,6 +4499,8 @@ export class SessionManager extends EventEmitter {
     this.host.post({ type: 'releaseBackpressure', sessionIds: [sessionId] });
 
     if (session.pty) {
+      // Posted ahead of the exit sequence and the kill, and never waited for.
+      this.noteAgentProcessBeforeEnd(session, session.pty.pid);
       // Send exit sequence, wait up to 1500ms for natural exit, then
       // force-kill and wait another 1500ms for kill propagation so
       // callers that immediately delete the CWD (worktree removal on

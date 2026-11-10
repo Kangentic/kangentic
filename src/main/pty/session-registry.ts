@@ -13,7 +13,8 @@ import type {
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
 import type { LaunchStartPath, StartBlockedReason } from '../../shared/types';
-import type { LaunchOutputClass } from './agent-launch-report';
+import type { LaunchOutputClass } from './launch-output-class';
+import type { AgentProcessPresence } from './host/agent-process-presence';
 
 /** A suspended row for a task with no live session, so its Resume stays reachable. */
 export interface SuspendedPlaceholderInput {
@@ -137,6 +138,13 @@ export interface ManagedSession {
   launchFailureNoted?: boolean;
   /** What the launch report read in the output, for the retry to wait on. */
   launchOutputRead?: Promise<LaunchOutputClass>;
+  /**
+   * Whether the shell had an agent under it when Kangentic decided to end a
+   * launch that never showed it ran. Read at the decision, before the kill or
+   * the exit sequence ends the agent, and sent on the `abandoned` report the
+   * exit makes. Never rejects. Unset when no such read was posted.
+   */
+  agentProcessAtEnd?: Promise<AgentProcessPresence>;
   /** Bytes the spawn typed into the shell, its Enter included; null with no command. */
   typedLineBytes?: number | null;
   /** The typed line sourced a launcher file instead of carrying the command. */

@@ -152,7 +152,8 @@ describe('what stays out of Sentry', () => {
 
 describe('what still reaches Sentry', () => {
   it.each([
-    ['an unknown failure from an installed CLI', 'Segmentation fault', 'other'],
+    ['an unknown failure from an installed CLI', 'panic: runtime error: index out of range', 'other'],
+    ['a crash of an installed CLI', 'Segmentation fault', 'crashed'],
     ['nothing at all', '', 'other'],
     // Detection found it and the shell did not, so they disagreed.
     ['an installed CLI that reads as command not found', 'zsh: command not found: claude', 'command_not_found'],
