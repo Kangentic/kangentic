@@ -478,6 +478,7 @@ export async function autoSpawnTasks(
           startPath: 'startup_recovery',
           agentCliVersion: input.agentCliVersion,
           agentCliPath: input.agentCliPath,
+          resumeEvidence: input.resumeEvidence,
           env: input.extraEnv ?? undefined,
           statusOutputPath: input.statusOutputPath,
           eventsOutputPath: input.eventsOutputPath,

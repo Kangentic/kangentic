@@ -189,6 +189,54 @@ describe('prepareAgentSpawn: the account a recovered session runs on', () => {
     expect(result.data.extraEnv).toEqual({ ADAPTER_VARIABLE: 'adapter' });
   });
 
+  /**
+   * A resume on another account than its conversation's runs in that account's
+   * config folder, where the conversation is not, and the CLI answers "No
+   * conversation found". The launch report says which it was (`resume_account`).
+   */
+  describe('the resume evidence names whether the account changed', () => {
+    async function runResume(conversationAccountId: string) {
+      const record = {
+        id: 'record-1', task_id: 'task-startup-account-001', agent_session_id: 'agent-1', account_id: conversationAccountId,
+        transcript_path: null, total_input_tokens: 900, total_output_tokens: 40, total_cost_usd: 0.1,
+      };
+      return prepareAgentSpawn({
+        task: makeTask(),
+        swimlane: makeSwimlane(),
+        cwd: '/mock/project',
+        projectId: 'proj-123',
+        projectPath: '/mock/project',
+        effectiveConfig: { agent: { permissionMode: 'acceptEdits', cliPaths: {} }, mcpServer: { enabled: false } } as unknown as AppConfig,
+        projectDefaultAgent: 'claude',
+        projectDefaultModel: null,
+        projectDefaultEffort: null,
+        resolvedShell: PWSH,
+        mcpServerHandle: null,
+        resume: { agentSessionId: 'agent-1' },
+        sessionRepo: { updateAgentSessionId: vi.fn(), listForTaskNewestFirst: () => [record] as never },
+        hasSessionRecord: true,
+        tasks: { update: vi.fn() },
+      });
+    }
+
+    it('reads same when the resume runs on the conversation\'s account', async () => {
+      const result = await runResume('account-2');
+
+      expect(result.ok && result.data.resumed).toBe(true);
+      if (!result.ok) return;
+      expect(resolveForSpawn).toHaveBeenCalledWith('claude', undefined, 'account-2');
+      expect(result.data.resumeEvidence?.account).toBe('same');
+    });
+
+    it('reads changed when the service put the resume on another account', async () => {
+      const result = await runResume('account-1');
+
+      expect(result.ok && result.data.resumed).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumeEvidence?.account).toBe('changed');
+    });
+  });
+
   it('keeps the adapter env and no account id when no service runs', async () => {
     setAccountService(null);
 

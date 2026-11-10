@@ -12,7 +12,7 @@ import type {
   StreamOutputParser,
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
-import type { LaunchStartPath, StartBlockedReason } from '../../shared/types';
+import type { LaunchStartPath, ResumeEvidenceSummary, StartBlockedReason } from '../../shared/types';
 import type { LaunchOutputClass } from './launch-output-class';
 import type { AgentProcessPresence } from './host/agent-process-presence';
 
@@ -163,6 +163,11 @@ export interface ManagedSession {
    * Main-side only, like `launcherPath`: a report sends whether it exists, never the path.
    */
   agentCliPath?: string | null;
+  /**
+   * What the resume check read before this resume (`SpawnSessionInput.resumeEvidence`).
+   * Fixed values only, so a launch report sends it as tags.
+   */
+  resumeEvidence?: ResumeEvidenceSummary | null;
   /**
    * Epoch ms the output of a launch that has not shown its agent ran was found
    * to name its cause (`isIdentifiedFailureClass`), read by

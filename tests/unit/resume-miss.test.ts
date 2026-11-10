@@ -183,8 +183,61 @@ describe('markResumeMiss', () => {
     vi.mocked(context.sessionManager.launchOutputClass).mockRejectedValue(new Error('host gone'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await expect(mark(context)).resolves.toBeUndefined();
+    await expect(markResumeMiss(context, { sessionId: 'resume-1', taskId: TASK_ID, projectId: PROJECT_ID })).resolves.toBe('not_a_miss');
 
     warn.mockRestore();
+  });
+});
+
+/**
+ * What `markResumeMiss` answers decides the listener's retry: an unmarked miss
+ * would rerun the same `--resume` and get the same answer (DESKTOP-2M).
+ */
+describe('markResumeMiss outcome', () => {
+  async function outcomeOf(context: IpcContext, sessionId = 'resume-1'): Promise<string> {
+    return markResumeMiss(context, { sessionId, taskId: TASK_ID, projectId: PROJECT_ID });
+  }
+
+  it('answers marked when it marked the record', async () => {
+    await expect(outcomeOf(fakeContext('conversation_missing'))).resolves.toBe('marked');
+  });
+
+  it('answers left_unmarked for a lineage with turns', async () => {
+    repository.insert({ ...BASE_ROW, id: 'ran', started_at: '2026-01-01T00:00:01.000Z' });
+    database.prepare('UPDATE sessions SET total_output_tokens = 40 WHERE id = ?').run('ran');
+
+    await expect(outcomeOf(fakeContext('conversation_missing'))).resolves.toBe('left_unmarked');
+  });
+
+  it.each([
+    ['no adapter', { agentName: null }],
+    ['no project path', { projectPath: null }],
+  ])('answers left_unmarked for doubt: %s', async (_label, overrides) => {
+    await expect(outcomeOf(fakeContext('conversation_missing', overrides))).resolves.toBe('left_unmarked');
+  });
+
+  it('answers left_unmarked for a latest record with no agent session id', async () => {
+    database.prepare('UPDATE sessions SET agent_session_id = NULL WHERE id = ?').run('resume-1');
+
+    await expect(outcomeOf(fakeContext('conversation_missing'))).resolves.toBe('left_unmarked');
+  });
+
+  it.each(['other', 'login_required', 'line_too_long'])('answers not_a_miss for %s', async (outputClass) => {
+    await expect(outcomeOf(fakeContext(outputClass))).resolves.toBe('not_a_miss');
+  });
+
+  it.each([
+    ['no adapter', { agentName: null }],
+    ['no project path', { projectPath: null }],
+  ])('answers not_a_miss, not left_unmarked, for a newer record even with doubt: %s', async (_label, overrides) => {
+    repository.insert({ ...BASE_ROW, id: 'resume-2', started_at: '2026-01-01T00:00:09.000Z' });
+
+    await expect(outcomeOf(fakeContext('conversation_missing', overrides))).resolves.toBe('not_a_miss');
+  });
+
+  it('answers not_a_miss when a newer record judges itself', async () => {
+    repository.insert({ ...BASE_ROW, id: 'resume-2', started_at: '2026-01-01T00:00:09.000Z' });
+
+    await expect(outcomeOf(fakeContext('conversation_missing'))).resolves.toBe('not_a_miss');
   });
 });

@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import type { EarlyAgentHandle } from '../../src/main/transition-engine/early-agent';
-import { assessResumeConversation } from '../../src/main/transition-engine/resume-conversation-guard';
+import { assessResumeConversationWithEvidence } from '../../src/main/transition-engine/resume-conversation-guard';
 import { resolveShimLaunch } from '../../src/main/agent/shared/shim-launch';
 
 const mockAdapter = {
@@ -48,7 +48,7 @@ vi.mock('../../src/main/agent/shared/shim-launch', () => ({
 // Passes through to the real check; one test makes it answer 'never-started'.
 vi.mock('../../src/main/transition-engine/resume-conversation-guard', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/main/transition-engine/resume-conversation-guard')>();
-  return { ...original, assessResumeConversation: vi.fn(original.assessResumeConversation) };
+  return { ...original, assessResumeConversationWithEvidence: vi.fn(original.assessResumeConversationWithEvidence) };
 });
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -64,6 +64,7 @@ interface SpawnInput {
   hiddenUntilAdopted?: boolean;
   seedIdle?: boolean;
   resuming?: boolean;
+  resumeEvidence?: unknown;
 }
 
 function makeSessionManager() {
@@ -512,7 +513,7 @@ describe('an early agent the spawn does not adopt', () => {
     const handle = await launchEarlyAgentFor(engine, { forceFresh: true });
     const discardSpy = vi.spyOn(handle, 'discard');
     sessionManager.spawn.mockClear();
-    vi.mocked(assessResumeConversation).mockResolvedValueOnce('never-started');
+    vi.mocked(assessResumeConversationWithEvidence).mockResolvedValueOnce({ verdict: 'never-started', evidence: null });
 
     const outcome = await engine.resumeSuspendedSession(
       makeTask({ worktree_path: WORKTREE }) as never, null, false, undefined, undefined, 'claude', undefined,
@@ -550,6 +551,48 @@ describe('an early agent the spawn does not adopt', () => {
     expect(handle.isSettled()).toBe(true);
     expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
     expect(sessionManager.spawned.at(-1)?.hiddenUntilAdopted).toBeUndefined();
+  });
+});
+
+describe('the resume evidence the spawn hands the session manager', () => {
+  const EVIDENCE = { turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'same' } as const;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.firstPromptMayBeTyped = vi.fn(() => true);
+  });
+
+  async function resumeOnce(verdict: 'unknown' | 'never-started' | 'expired') {
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue(resumableRecord());
+    const { engine } = makeEngine(sessionManager, sessionRepo);
+    vi.mocked(assessResumeConversationWithEvidence).mockResolvedValueOnce({ verdict, evidence: { ...EVIDENCE } });
+
+    await engine.resumeSuspendedSession(
+      makeTask({ worktree_path: WORKTREE }) as never, null, false, undefined, undefined, 'claude', undefined,
+    );
+    return sessionManager;
+  }
+
+  it('carries what the check read, with the account field, when the resume stays a resume', async () => {
+    const sessionManager = await resumeOnce('unknown');
+
+    expect(sessionManager.spawned.at(-1)?.resuming).toBe(true);
+    expect(sessionManager.spawned.at(-1)?.resumeEvidence).toEqual({ ...EVIDENCE, account: expect.any(String) });
+  });
+
+  it('hands the check the cwd the conversation last ran in', async () => {
+    await resumeOnce('unknown');
+
+    expect(assessResumeConversationWithEvidence).toHaveBeenCalledWith(expect.objectContaining({ resumeFromCwd: WORKTREE }));
+  });
+
+  it.each(['never-started', 'expired'] as const)('carries none when the resume starts over (%s)', async (verdict) => {
+    const sessionManager = await resumeOnce(verdict);
+
+    expect(sessionManager.spawned.at(-1)?.resuming).toBe(false);
+    expect(sessionManager.spawned.at(-1)?.resumeEvidence).toBeNull();
   });
 });
 

@@ -191,11 +191,29 @@ function attemptOf(startPath: LaunchStartPath | undefined): string {
 /** The fixed values a report carries, each a tag on the event. */
 export type LaunchTags = Readonly<Record<string, string>>;
 
+/**
+ * What the resume check read before a resume, for a resume that fails anyway:
+ * Sentry DESKTOP-2M was a `conversation_missing` after the check answered
+ * `unknown`, and could not say why. Every value is a fixed word, never a path.
+ */
+function resumeEvidenceTagsOf(session: ManagedSession): Record<string, string> {
+  const evidence = session.resuming === true ? session.resumeEvidence : null;
+  if (!evidence) return {};
+  return {
+    resume_turns: evidence.turns,
+    resume_agent_report: evidence.agentReport,
+    resume_transcript: evidence.transcript,
+    resume_cwd: evidence.cwd,
+    ...(evidence.account ? { resume_account: evidence.account } : {}),
+  };
+}
+
 /** A session's facts at this moment. Synchronous, so they survive the kill that follows. */
 export function launchTagsOf(session: ManagedSession, now: number = Date.now()): LaunchTags {
   const startedAtMs = Date.parse(session.startedAt);
   const firstOutputAt = session.firstOutputAt;
   return {
+    ...resumeEvidenceTagsOf(session),
     agent: agentTag(session.agentName),
     agent_cli_version: launchVersionTag(session.agentCliVersion),
     start_path: session.startPath ?? 'board',

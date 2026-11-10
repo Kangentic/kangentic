@@ -14,6 +14,8 @@ import type {
   ConversationExpiredNotice,
   LaunchStartPath,
   NotificationInput,
+  ResumeAccountMatch,
+  ResumeEvidenceSummary,
   SpawnSessionInput,
 } from '../../shared/types';
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
@@ -29,7 +31,7 @@ import { DEFAULT_SPAWN_PROMPT_TEMPLATE } from '../../shared/task-template-vars';
 import { readWorkflowPromptFacts } from '../workflows/workflow-prompt-facts';
 import { SessionManager } from '../pty/session-manager';
 import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
-import { conversationAccountOf, resolveSpawnAccount } from '../accounts/account-service';
+import { conversationAccountOf, resolveSpawnAccount, resumeAccountMatch } from '../accounts/account-service';
 import { buildSessionEnv } from '../accounts/account-env';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import { resolveTaskTemplateVars } from '../agent/shared';
@@ -51,7 +53,7 @@ import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { freshPromptTypedForLength, resumePromptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
-import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
+import { assessResumeConversationWithEvidence, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
 import { commandLineLength } from '../agent/shared/prompt-budget';
 import { markRecapSession } from '../automations/turn-end/recap-turns';
 import {
@@ -181,6 +183,11 @@ interface ResolvedLaunch {
    * (`SessionManager.awaitInputReady`), and an early launch is worth making.
    */
   inputInAlternateScreen: boolean;
+  /**
+   * Whether this launch runs on the account its resumed conversation was written
+   * on (`resumeAccountMatch`), for the launch report. `none` on a fresh launch.
+   */
+  resumeAccount: ResumeAccountMatch;
 }
 
 /**
@@ -708,12 +715,14 @@ export class TransitionEngine {
     const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
     // The account this session runs on (task #1057). A WSL CLI keeps its single login: an account
     // folder cannot link into a distro's home.
-    const account = cliTarget ? null : await resolveSpawnAccount(
-      input.agentName,
-      input.spawnOverrides?.accountId,
-      // A resume names the account its conversation was written on, for an agent that needs it.
-      conversationAccountOf(input.canResume ? this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [] : [], input.agentSessionId, input.canResume),
+    // A resume names the account its conversation was written on, for an agent that needs it.
+    // A WSL CLI has no accounts, so there is nothing to look up.
+    const conversationAccountId = cliTarget ? undefined : conversationAccountOf(
+      input.canResume ? this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [] : [],
+      input.agentSessionId,
+      input.canResume,
     );
+    const account = cliTarget ? null : await resolveSpawnAccount(input.agentName, input.spawnOverrides?.accountId, conversationAccountId);
     const commandOptions: SpawnCommandOptions = {
       agentPath: launch.agentPath,
       taskId: task.id,
@@ -767,6 +776,7 @@ export class TransitionEngine {
       promptKeptOff,
       launchKey: launchKeyOf(input.agentName, commandOptions),
       inputInAlternateScreen,
+      resumeAccount: resumeAccountMatch(conversationAccountId, account),
     };
   }
 
@@ -878,20 +888,24 @@ export class TransitionEngine {
     let startOver: SpawnOutcome['startOver'] = null;
     let recapOnly = false;
     let expiredNotice: ConversationExpiredNotice | null = null;
+    // What the check read, for a launch report if this resume fails anyway.
+    let resumeEvidence: ResumeEvidenceSummary | null = null;
     if (intent.mode === 'resume' && resumedAgentSessionId) {
       const { lineage, lastActiveAt } = resolveResumeLineage({
         taskRecords: this.sessionRepo?.listForTaskNewestFirst(task.id) ?? [],
         retiringRecordId: intent.retireRecordId,
         resumedAgentSessionId,
       });
-      const verdict = await assessResumeConversation({
+      const { verdict, evidence } = await assessResumeConversationWithEvidence({
         adapter,
         agentSessionId: resumedAgentSessionId,
         records: lineage,
         cwd,
         projectPath: appConfig.projectPath || cwd,
         place: cliTarget,
+        resumeFromCwd: intent.resumeFromCwd,
       });
+      resumeEvidence = evidence;
       // Either verdict below starts fresh with a prompt or a recap.
       if (spawnOverrides?.resumeOnly && verdict !== 'unknown') return DECLINED_SPAWN;
 
@@ -1077,6 +1091,7 @@ export class TransitionEngine {
       startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
       agentCliVersion: detection.version,
       agentCliPath: launch.commandOptions.agentPath,
+      resumeEvidence: canResume && resumeEvidence ? { ...resumeEvidence, account: launch.resumeAccount } : null,
       env: extraEnv ?? undefined,
       statusOutputPath,
       eventsOutputPath,
