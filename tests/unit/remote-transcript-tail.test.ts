@@ -45,6 +45,48 @@ async function until(condition: () => boolean, timeoutMs = 3000): Promise<void> 
 }
 
 describe('the helper\'s file tail', () => {
+  it('starts over from byte 0 with reset after markDetached, so a quit\'s next launch copies a file that has not grown', async () => {
+    const file = path.join(folder, 'a.jsonl');
+    fs.writeFileSync(file, 'one\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: file }]);
+    await until(() => bytesOf(events) === 'one\n');
+
+    tail.markDetached();
+    const eventsBefore = events.length;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(events.length).toBe(eventsBefore);
+
+    tail.watch('s1', [{ key: '0', path: file }]);
+    await until(() => events.some((event) => event.reset));
+
+    const afterDetach = events.slice(eventsBefore);
+    expect(afterDetach[0]).toMatchObject({ offset: 0, reset: true, key: '0' });
+    expect(Buffer.from(afterDetach[0].data, 'base64').toString('utf8')).toBe('one\n');
+  });
+
+  it('starts only the session watch names again after markDetached, and leaves another session waiting', async () => {
+    const first = path.join(folder, 'a.jsonl');
+    const second = path.join(folder, 'b.jsonl');
+    fs.writeFileSync(first, 'one\n');
+    fs.writeFileSync(second, 'two\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: first }]);
+    tail.watch('s2', [{ key: '0', path: second }]);
+    await until(() => events.filter((event) => event.sessionId === 's1').length === 1);
+    await until(() => events.filter((event) => event.sessionId === 's2').length === 1);
+
+    tail.markDetached();
+    tail.watch('s1', [{ key: '0', path: first }]);
+    await until(() => events.filter((event) => event.sessionId === 's1' && event.reset).length === 1);
+
+    const afterRestart = events.filter((event) => event.reset);
+    expect(afterRestart).toHaveLength(1);
+    expect(afterRestart[0].sessionId).toBe('s1');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(events.filter((event) => event.sessionId === 's2' && event.reset)).toHaveLength(0);
+  });
+
   it('keeps a file\'s place when a second watch names it again, so a transcript found late sends nothing twice', async () => {
     const first = path.join(folder, 'a.jsonl');
     const second = path.join(folder, 'b.jsonl');

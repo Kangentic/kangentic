@@ -15,6 +15,11 @@
  *   a session are not left behind. It is capped, so a large backfill can end short, and says so in the log.
  * - A file that shrinks or is replaced (another inode) starts over: the first chunk says `reset`, and
  *   Kangentic empties its copy before it writes. A file that is not there yet is skipped until it is.
+ * - A quit leaves the agent running. The next launch is a new process that discarded what the old one
+ *   retained. A tail that kept its byte offset would send nothing for a file that has not grown, and
+ *   the new process's empty copy would stay empty. `markDetached` makes the next `watch` of each
+ *   session start from byte 0 with reset, the same job HookWatcher's `resendUnclaimed` does for hook
+ *   records.
  * - A CLI that puts a timestamp in a file's name cannot have the file named from here, so it is searched for
  *   by a pattern, newest name first, and held once found. A walk reads a folder per day of history, so it runs
  *   on a backoff instead of every poll. The last pass looks once more, so a session that ended soon after its
@@ -96,6 +101,11 @@ interface Tailing {
   current: Promise<void> | null;
   /** `unwatch` has begun its last pass, so a `watch` of this id is a new tail, not a change to this one. */
   closing: boolean;
+  /**
+   * The link dropped. Scans skip this until `watch` starts it from byte 0. A kept offset would send
+   * nothing for a file that has not grown, and the new app process never saw the bytes already sent.
+   */
+  stale: boolean;
 }
 
 function freshFile(file: TailedFile): TailState {
@@ -142,21 +152,39 @@ export class FileTail {
    * Start tailing a session's files from their first byte. A second call names the session's whole set: a
    * file in both keeps its place, so a transcript found late (a session id that arrives after the start)
    * does not send the others again, a new one starts from byte 0, and one left out stops. `searches` are files
-   * found by a pattern, and one in both calls keeps what it found.
+   * found by a pattern, and one in both calls keeps what it found. A session marked stale by `markDetached`
+   * is a new tail, from byte 0 with reset, even when the keys and paths are the ones it had.
    */
   watch(sessionId: string, files: readonly TailedFile[], searches: readonly HostFileSearch[] = []): void {
     const existing = this.tailing.get(sessionId);
-    const held = existing && !existing.closing ? existing.files : [];
+    const restarting = !existing || existing.closing || existing.stale;
+    const held = restarting ? [] : existing.files;
     const named = files.map((file) => held.find((kept) => kept.search === null && kept.key === file.key && kept.path === file.path) ?? freshFile(file));
     const found = searches.map((search) => held.find((kept) => kept.search !== null && kept.key === search.key && isSameSearch(kept.search, search)) ?? freshSearch(search));
+    if (existing && existing.stale && !existing.closing) {
+      for (const file of [...named, ...found]) file.pendingReset = true;
+    }
     if (existing && !existing.closing) {
       existing.files = [...named, ...found];
+      existing.stale = false;
     } else {
-      this.tailing.set(sessionId, { files: [...named, ...found], current: null, closing: false });
+      this.tailing.set(sessionId, { files: [...named, ...found], current: null, closing: false, stale: false });
     }
     if (!this.timer) {
       this.timer = setInterval(() => void this.scanAll(), this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
       this.timer.unref?.();
+    }
+  }
+
+  /**
+   * The link dropped. Each live tail stops sending and keeps its files, and the next `watch` of that
+   * session starts from byte 0 with reset. Sending into a detached link would hand chunks to a connection
+   * nobody reads, and a new app process discards what the old one retained, so bytes already counted as
+   * sent would never reach the copy.
+   */
+  markDetached(): void {
+    for (const entry of this.tailing.values()) {
+      if (!entry.closing) entry.stale = true;
     }
   }
 
@@ -210,7 +238,11 @@ export class FileTail {
   }
 
   private async scanAll(): Promise<void> {
-    await Promise.all([...this.tailing].map(([sessionId, entry]) => this.scan(sessionId, entry, this.options.chunksPerScan ?? DEFAULT_CHUNKS_PER_SCAN)));
+    await Promise.all(
+      [...this.tailing]
+        .filter(([, entry]) => !entry.stale && !entry.closing)
+        .map(([sessionId, entry]) => this.scan(sessionId, entry, this.options.chunksPerScan ?? DEFAULT_CHUNKS_PER_SCAN)),
+    );
   }
 
   private scan(sessionId: string, entry: Tailing, maxChunks: number, lastPass = false): Promise<void> {

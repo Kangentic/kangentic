@@ -287,6 +287,9 @@ export class HelperServer {
     if (!wasActive) return;
     // The agent's hook files wait on disk until a link is attached again (see HookWatcher.setHeld).
     this.hookWatcher.setHeld(true);
+    // The transcript tail stops at its offset. A new app process never saw those bytes, so the next
+    // watch starts each file from byte 0 (`FileTail.markDetached`).
+    this.fileTail.markDetached();
     // A drop keeps every agent running. What the link had on screen is gone with it: stop sending
     // to a port nobody reads and let the PTYs run free instead of pausing on output no one acks.
     this.core.handleCommand({ type: 'forgetRenderer', rendererId: LINK_RENDERER_ID });
