@@ -122,6 +122,21 @@ describe('a settings file the CLI refuses', () => {
     expect(identify(agent, refused(path.join(os.tmpdir(), 'project', folder, 'settings.json')))).toBeNull();
   });
 
+  it.each([['gemini', 'GEMINI_CLI_HOME', '.gemini'], ['qwen', 'QWEN_HOME', '']])(
+    '%s: the file in the home its variable moved it to',
+    (agent, variable, subfolder) => {
+      const movedHome = path.join(os.tmpdir(), 'moved-agent-home');
+      const previous = process.env[variable];
+      process.env[variable] = movedHome;
+      try {
+        expect(identify(agent, refused(path.join(movedHome, subfolder, 'settings.json')))).toBe('bad_configuration');
+      } finally {
+        if (previous === undefined) delete process.env[variable];
+        else process.env[variable] = previous;
+      }
+    },
+  );
+
   it('needs both lines, since a lone error line can be anything', () => {
     expect(identify('gemini', `Error in ${homeSettings('.gemini')}: Unexpected token\r\n`)).toBeNull();
     expect(identify('gemini', 'Please fix the configuration file(s) and try again.\r\n')).toBeNull();

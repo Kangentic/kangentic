@@ -15,8 +15,8 @@ import { LanguageRestartDialog } from '../../language/LanguageRestartDialog';
 import { useLanguageRestart } from '../../language/useLanguageRestart';
 
 /**
- * Settings > Language: the display language, first under System so a user who
- * cannot read the rest finds it. One card, one row: the shared Combobox listing
+ * Settings > Language: the display language, second under System, right after Accounts, so a
+ * user who cannot read the rest finds it. One card, one row: the shared Combobox listing
  * every shipped language by its own name and its code. Picking another asks to
  * restart (the language loads once at startup and never switches live, since a
  * reload would destroy Browser pane guests) and saves only on Restart now.

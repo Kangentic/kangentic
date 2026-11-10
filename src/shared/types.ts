@@ -11,6 +11,18 @@ import type {
 import type { AppLocale } from './i18n/locales';
 import type { UserSetupMatch } from './user-configuration-error';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
+import {
+  DEFAULT_AGENT_ACCOUNTS_CONFIG,
+  type AgentAccountKeyFileResult,
+  type AgentAccountLoginEnded,
+  type AgentAccountLoginRequest,
+  type AgentAccountLoginStart,
+  type AgentAccountSwitched,
+  type AgentAccountSwitchResult,
+  type AgentAccountsAllFull,
+  type AgentAccountsCard,
+  type AgentAccountsConfig,
+} from './agent-accounts';
 import { COMMAND_RAIL_DEFAULT_WIDTH_PX, type CommandTerminalRailState } from './command-terminal-rail';
 
 // === Database Models ===
@@ -1452,6 +1464,9 @@ export interface Session {
    * SessionRecord.agent_session_id for the live session.
    */
   agentSessionId: string | null;
+  /** The agent account the session runs on (task #1057), so its context bar draws that
+   *  account's rate limits. Absent for an agent without accounts. */
+  accountId?: string;
 }
 
 // === Session Persistence (DB) ===
@@ -1576,6 +1591,11 @@ export interface SessionRecord {
    * there. NULL for this machine.
    */
   cli_target: string | null;
+  /**
+   * The agent account the session ran on (`AgentAccount.id`, task #1057). NULL or absent for the
+   * agent's own login, which is every session from before accounts.
+   */
+  account_id?: string | null;
 }
 
 /**
@@ -2582,6 +2602,12 @@ export interface RateLimitWindow {
    * existed and on fixtures, which every agent's pill shows.
    */
   agent?: string;
+  /**
+   * The agent account the reporting session ran on (task #1057), stamped by main beside `agent`.
+   * Limits are per account, so the ledger and the renderer key a window by its account and id
+   * (`rateLimitWindowKey`). Absent for an agent without accounts.
+   */
+  accountId?: string;
   /** Human-readable label, e.g. '5h session', '7d weekly'. Used in tooltips and aria-label. */
   label: string;
   /** Renderer maps this to a Lucide icon. Kept as a small enum so the renderer stays in charge of visual vocabulary. */
@@ -4451,6 +4477,9 @@ export interface AppConfig {
      *  Machine-scoped, mirrors cliPaths - not project-overridable. An absent entry falls back
      *  to the adapter's declared `AgentLaunchOptionInfo.default`. */
     launchOptions: Record<string, Record<string, boolean>>;
+    /** Multiple accounts per agent: the run order and the automatic switch at the usage limit.
+     *  Global-only (Settings > Accounts). The accounts themselves live in the global database. */
+    accounts: AgentAccountsConfig;
   };
 
   sidebar: {
@@ -5268,6 +5297,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     executionServers: {},
     execution: {},
     launchOptions: {},
+    accounts: { ...DEFAULT_AGENT_ACCOUNTS_CONFIG },
   },
   sidebar: {
     width: 400,
@@ -7610,6 +7640,9 @@ export interface SpawnSessionInput {
   /** Human-readable agent name for diagnostic logs (e.g. "claude", "gemini").
    *  Survives production minification unlike `agentParser.constructor.name`. */
   agentName?: string;
+  /** The agent account the session runs on (task #1057), so its usage is read as that
+   *  account's. Absent for an agent without accounts. */
+  accountId?: string | null;
   /**
    * The resolved permission mode the session spawns under, the value its
    * record's `permission_mode` gets. Carried on the session because the spawn
@@ -8860,6 +8893,45 @@ export interface ElectronAPI {
      * a process it cannot read, is left out: it is unknown, not ended.
      */
     check: (processIds: string[]) => Promise<string[]>;
+  };
+
+  // Agent accounts (Settings > Accounts, task #1057). Global, never project-scoped.
+  accounts: {
+    /** One card per installed agent that declares accounts, its accounts in run order. */
+    list: () => Promise<AgentAccountsCard[]>;
+    /**
+     * Starts the CLI's own sign-in in a terminal: for a new account of `agent`, or again for
+     * the signed-out account `accountId`. Its screen arrives on `onLoginOutput`.
+     */
+    startLogin: (request: AgentAccountLoginRequest) => Promise<AgentAccountLoginStart>;
+    /** What the sign-in printed before the terminal mounted. */
+    loginBacklog: (loginId: string) => Promise<string>;
+    /** Keys typed into the sign-in's terminal (a pasted code, Enter). */
+    loginInput: (loginId: string, data: string) => void;
+    loginResize: (loginId: string, cols: number, rows: number) => void;
+    /** Ends a sign-in the user closed. `onLoginEnded` still fires. */
+    cancelLogin: (loginId: string) => Promise<void>;
+    onLoginOutput: (callback: (loginId: string, data: string) => void) => () => void;
+    onLoginEnded: (callback: (ended: AgentAccountLoginEnded) => void) => () => void;
+    /** Asks for a key file and adds it as an account of `agent`. Null when the picker was closed. */
+    addKeyFile: (agent: string) => Promise<AgentAccountKeyFileResult | null>;
+    /** Kangentic stops using the account for new sessions. Its folder and sign-in stay. */
+    remove: (accountId: string) => Promise<boolean>;
+    /** A drag: the agent's list takes this order and the run order becomes Manual. */
+    reorder: (agent: string, orderedIds: string[]) => Promise<void>;
+    /**
+     * Moves the account to #1, the run order becomes Manual, and the agent's running task sessions
+     * on other accounts restart in place on it.
+     */
+    switchTo: (accountId: string) => Promise<AgentAccountSwitchResult>;
+    /** Reads every account's usage now (the tab opened). Resolves once the reads are done. */
+    refreshUsage: () => Promise<void>;
+    /** Something the tab shows changed; re-list. */
+    onChanged: (callback: () => void) => () => void;
+    /** A task's session reached its usage limit and continues on another account. */
+    onSwitched: (callback: (switched: AgentAccountSwitched) => void) => () => void;
+    /** Every account of an agent is at its limit; a session waits for the first reset. */
+    onAllFull: (callback: (allFull: AgentAccountsAllFull) => void) => () => void;
   };
 
   // Keybindings

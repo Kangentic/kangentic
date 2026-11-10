@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveSpawnAccount } from '../accounts/account-service';
+import { buildSessionEnv } from '../accounts/account-env';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { ActivityState, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
@@ -689,6 +691,8 @@ async function startWorkflowAgent(
     // folder-shared adapter file is held under it until the session ends.
     ptySessionId: sessionId,
     cliTarget,
+    // The agent's top account with room, like any session (task #1057).
+    account: cliTarget ? null : await resolveSpawnAccount(adapter.name),
   };
   // A message rides its command line only where it arrives whole, as the task
   // spawns decide (resume-prompt-delivery.ts). Otherwise the start carries none,
@@ -707,7 +711,7 @@ async function startWorkflowAgent(
   let extraEnv: Record<string, string> | null;
   let replacedSessionIds: string[];
   try {
-    extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
+    extraEnv = buildSessionEnv(adapter, commandOptions);
 
     // Read again after the awaits above: the workflow may have finished, or been
     // deleted with its project, while the CLI was being found.
@@ -752,6 +756,7 @@ async function startWorkflowAgent(
     agentSessionId,
     agentParser: adapter,
     agentName: adapter.name,
+    accountId: commandOptions.account?.id ?? null,
     exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
     // So a message typed in waits for the input box, past any screen before it.
     inputInAlternateScreen,

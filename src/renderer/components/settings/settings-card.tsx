@@ -116,7 +116,8 @@ function rowClickToggle(toggle: (() => void) | undefined): React.MouseEventHandl
 interface SettingsCardProps {
   icon: React.ReactNode;
   label: string;
-  description: string;
+  /** One line under the title. Omitted where the title needs none (an agent's Accounts card). */
+  description?: string;
   /** Registry id of the header's own setting (the master switch), if it has one. */
   searchId?: string;
   /** Registry ids of the rows inside, so a search hit on any of them keeps the card. */
@@ -211,7 +212,7 @@ export function SettingsCard({
               {requirement ? <SettingTag>{requirement}</SettingTag> : null}
               {tag ? <SettingTag>{tag}</SettingTag> : null}
             </div>
-            <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5 ${dimmed}`}>{description}</p>
+            {description ? <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5 ${dimmed}`}>{description}</p> : null}
           </div>
           {hasSwitch ? (
             <ToggleSwitch

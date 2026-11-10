@@ -39,6 +39,10 @@ msgstr "「{swimlaneName}」"
 msgid "\"{taskTitle}\""
 msgstr "「{taskTitle}」"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "\"{taskTitle}\" continues on {accountName}."
+msgstr ""
+
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" did not run {command}."
 msgstr "「{taskTitle}」未运行 {command}。"
@@ -147,6 +151,18 @@ msgstr ""
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue {resetMoment}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue in {duration}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue when the first account resets."
+msgstr ""
+
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{basePill} will be checked out in the project folder"
 msgstr "{basePill} 将在项目文件夹中检出"
@@ -174,6 +190,10 @@ msgstr "{count, plural, other {无法暂停 # 个智能体}}"
 #: src/renderer/components/TemplateTextField.tsx
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 msgstr "{count, plural, other {未知变量：{variableNames}。将按原样发送。}}"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
+msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
@@ -214,6 +234,10 @@ msgstr "{keptCount, plural, other {{taskCount, plural, other {# 个任务}}的 #
 #: src/renderer/utils/format-session.ts
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} 分 {seconds} 秒"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
+msgstr ""
 
 #: src/renderer/components/MarkdownRenderer.tsx
 msgid "{path} has no changes in this view"
@@ -294,6 +318,10 @@ msgstr ""
 msgid "A project"
 msgstr "某个项目"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "A session continues on {accountName}."
+msgstr ""
+
 #: src/renderer/lib/leftover-processes.ts
 msgid "A tmux server. Stopping it ends all your tmux sessions."
 msgstr "tmux 服务器。停止它会结束你的所有 tmux 会话。"
@@ -344,6 +372,10 @@ msgstr "智能体已启动"
 
 #: src/renderer/utils/dev-restart.ts
 msgid "Agents pause during a restart and resume after."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "All accounts at their limit"
 msgstr ""
 
 #: src/renderer/components/ErrorBoundary.tsx
@@ -538,6 +570,10 @@ msgstr "无法关联任务"
 msgid "Couldn't load the terminals for this window."
 msgstr "无法加载此窗口的终端。"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't move every session"
+msgstr ""
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Couldn't move project"
 msgstr "无法移动项目"
@@ -669,6 +705,10 @@ msgstr "无法停止。请重试，或自行关闭。"
 #: src/renderer/lib/leftover-processes.ts
 msgid "Couldn't stop processes"
 msgstr "无法停止进程"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't switch account"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Delete"
@@ -974,6 +1014,10 @@ msgstr ""
 
 #: src/renderer/hooks/useBranchSettings.ts
 msgid "Name a branch to start from a tag in the project folder"
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "New {agentName} sessions start on {accountName}."
 msgstr ""
 
 #: src/renderer/lib/conversation-expired-toast.ts
@@ -1350,6 +1394,10 @@ msgstr "仍在运行：{tasks}。"
 msgid "Stop script failed"
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Switched account"
+msgstr ""
+
 #: src/renderer/stores/board-store/task-completion-slice.ts
 msgid "Task completed"
 msgstr "任务已完成"
@@ -1389,6 +1437,10 @@ msgstr "模板变量"
 #: src/renderer/App.tsx
 msgid "Terminals restarted"
 msgstr "终端已重启"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "The account is no longer in the list."
+msgstr ""
 
 #: src/renderer/utils/worktree-placement.tsx
 msgid "The agent runs on a remote server"

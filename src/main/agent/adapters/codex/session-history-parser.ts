@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   EventType,
   AgentTool,
+  type RateLimitWindow,
   type SessionHistoryParseResult,
   type SessionUsage,
   type SessionEvent,
@@ -10,6 +11,7 @@ import {
 } from '../../../../shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
 import { codexHomeDir } from './config-toml';
+import { parseCodexRateLimits } from './rate-limits';
 import { cliPathForTarget, placeFromStored, type CliPlace } from '../../shared/cli-target';
 
 /**
@@ -24,7 +26,8 @@ import { cliPathForTarget, placeFromStored, type CliPlace } from '../../shared/c
  * - `session_meta`     → session UUID + cli_version + cwd (line 1)
  * - `task_started`     → `model_context_window` (context window size)
  * - `turn_context`     → `model` field, follows mid-session `/model` changes
- * - `token_count`      → `info.total_token_usage` (input/output/cached totals)
+ * - `token_count`      → `info.total_token_usage` (input/output/cached totals), and the
+ *                        plan's `rate_limits` windows (`rate-limits.ts`, task #1057)
  * - `task_complete`    → TurnFailed when it carries an `error` (no Stop hook fires then)
  * - `turn_aborted`     → Interrupted (an Esc interrupt fires no hook)
  * - `response_item`    → `function_call` / `function_call_output` → background
@@ -166,6 +169,7 @@ export class CodexSessionHistoryParser {
     let totalInputTokens: number | undefined;
     let totalOutputTokens: number | undefined;
     let cachedInputTokens: number | undefined;
+    let rateLimits: RateLimitWindow[] | undefined;
     const events: SessionEvent[] = [];
 
     // CRLF-tolerant split. Drops empty lines (final \n produces one).
@@ -240,6 +244,10 @@ export class CodexSessionHistoryParser {
         }
         // The turn's start is the UserPromptSubmit hook's (task #859).
       } else if (entryType === 'token_count' && isRecord(payload)) {
+        // The plan's usage windows ride on the same record. A null snapshot (an API key, or a
+        // record before the first reading) leaves the last windows in place.
+        const windows = parseCodexRateLimits(payload.rate_limits, timestamp);
+        if (windows) rateLimits = windows;
         const info = payload.info;
         if (isRecord(info)) {
           // IMPORTANT: use `last_token_usage`, NOT `total_token_usage`.
@@ -299,6 +307,7 @@ export class CodexSessionHistoryParser {
       totalInputTokens,
       totalOutputTokens,
       cachedInputTokens,
+      rateLimits,
     });
 
     // Activity is the hooks' (task #859): a forced idle here raced the Stop
@@ -594,6 +603,7 @@ function buildUsage(captured: {
   totalInputTokens: number | undefined;
   totalOutputTokens: number | undefined;
   cachedInputTokens: number | undefined;
+  rateLimits?: RateLimitWindow[] | undefined;
 }): SessionUsage | null {
   const {
     modelId,
@@ -602,11 +612,12 @@ function buildUsage(captured: {
     totalInputTokens,
     totalOutputTokens,
     cachedInputTokens,
+    rateLimits,
   } = captured;
 
   const hasModel = modelId !== undefined;
   const hasTokens = totalInputTokens !== undefined || totalOutputTokens !== undefined;
-  if (!hasModel && !hasTokens && contextWindowSize === undefined) {
+  if (!hasModel && !hasTokens && contextWindowSize === undefined && rateLimits === undefined) {
     return null;
   }
 
@@ -638,6 +649,9 @@ function buildUsage(captured: {
   const result: Record<string, unknown> = {};
   if (Object.keys(contextWindow).length > 0) {
     result.contextWindow = contextWindow;
+  }
+  if (rateLimits !== undefined) {
+    result.rateLimits = rateLimits;
   }
   if (hasModel) {
     // The rollout is Codex's own record of the model a turn ran on, so this

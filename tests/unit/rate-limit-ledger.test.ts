@@ -224,4 +224,24 @@ describe('withRateLimitAgent', () => {
     const stamped = withRateLimitAgent({ ...usage, rateLimits: [sevenDay(10)] }, 'claude');
     expect(new RateLimitLedger().stamp('sess-a', stamped.rateLimits ?? [])[0]).toMatchObject({ agent: 'claude', generation: 0 });
   });
+
+  it('stamps the account a session runs on, and leaves it off for an agent without accounts', () => {
+    const stamped = withRateLimitAgent({ ...usage, rateLimits: [sevenDay(10)] }, 'claude', 'account-2');
+    expect(stamped.rateLimits?.[0]).toMatchObject({ agent: 'claude', accountId: 'account-2' });
+    expect(withRateLimitAgent({ ...usage, rateLimits: [sevenDay(10)] }, 'claude', null).rateLimits?.[0]).not.toHaveProperty('accountId');
+  });
+});
+
+describe('RateLimitLedger across accounts', () => {
+  it('never reads a second account at a lower value as a reset of the first account', () => {
+    const ledger = new RateLimitLedger();
+    const onAccount = (accountId: string, usedPercentage: number): RateLimitWindow => ({ ...sevenDay(usedPercentage), accountId });
+    ledger.stamp('sess-a', [onAccount('account-1', 90)]);
+    // A session on another account, same window id and anchor, far lower: a different window.
+    expect(ledger.stamp('sess-b', [onAccount('account-2', 5)])[0].generation).toBe(0);
+    expect(ledger.currentGeneration('account-1:seven-day')).toBe(0);
+    // A real reset on account 1 still counts.
+    expect(ledger.stamp('sess-a', [onAccount('account-1', 2)])[0].generation).toBe(1);
+    expect(ledger.currentGeneration('account-2:seven-day')).toBe(0);
+  });
 });

@@ -16,6 +16,7 @@ import type {
   SubmissionVerifier,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+import type { KeyFileAccountSupport } from '../../../accounts/account-support';
 
 /**
  * Warp CLI adapter - integrates the Warp AI agent CLI (`oz`)
@@ -33,6 +34,17 @@ import { ActivityDetection } from '../../../../shared/types';
  */
 export class WarpAdapter implements AgentAdapter {
   readonly name = 'warp';
+  /**
+   * Accounts (task #1057): each is an API key in a file the user owns, put in the session's env
+   * at spawn. Warp's own messages name `WARP_API_KEY` as the key it reads (startup-failure.ts).
+   * The CLI's browser login is one per machine and cannot be split, so it stays account #1.
+   */
+  readonly accounts: KeyFileAccountSupport = {
+    kind: 'key-file',
+    keyEnvVars: ['WARP_API_KEY'],
+    // A key-file account sets these itself, over whatever Kangentic inherited.
+    overridingCredentialEnvVars: [],
+  };
   readonly displayName = 'Oz CLI';
   readonly sessionType = 'warp_agent';
   readonly supportsCallerSessionId = false;

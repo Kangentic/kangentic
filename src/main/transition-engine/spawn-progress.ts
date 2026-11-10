@@ -336,6 +336,7 @@ export type SpawnPhase =
   | 'detecting-agent'
   | 'switching-model'
   | 'switching-agent'
+  | 'switching-account'
   | 'applying-settings'
   | 'new-session'
   | 'resending-command'
@@ -364,6 +365,8 @@ const PHASE_LABELS: Record<SpawnPhase, string> = {
   // spawn.
   'switching-model': 'Switching model...',
   'switching-agent': 'Switching agent...',
+  // A session at its account's usage limit, continuing on the next account (task #1057).
+  'switching-account': 'Switching account...',
   'applying-settings': 'Applying new settings...',
   'new-session': 'Starting new session...',
   // The in-place restarts that go through restartSessionForSettingsChange

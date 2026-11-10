@@ -1,3 +1,4 @@
+import { rateLimitWindowKey } from '../../shared/agent-accounts';
 import { RATE_LIMIT_RESET_EPSILON_SECONDS, rateLimitGeneration } from '../../shared/types';
 import type { RateLimitWindow } from '../../shared/types';
 
@@ -51,6 +52,26 @@ export function rateLimitWindowsForAgent(rateLimitWindows: RateLimitWindow[], ag
 }
 
 /**
+ * The windows of `agent`'s snapshot that belong to `accountId` (task #1057). An agent's windows
+ * are per account, so a session draws only its own account's: those stamped with it, and an
+ * unstamped window (a fixture, a report from before accounts) only where its account reported no
+ * window of that id. With no account to go by, one window per id, the first held.
+ */
+export function rateLimitWindowsForAccount(rateLimitWindows: RateLimitWindow[], accountId: string | null | undefined): RateLimitWindow[] {
+  if (!rateLimitWindows.some((rateLimitWindow) => rateLimitWindow.accountId !== undefined)) return rateLimitWindows;
+  const own = accountId ? rateLimitWindows.filter((rateLimitWindow) => rateLimitWindow.accountId === accountId) : [];
+  const ownIds = new Set(own.map((rateLimitWindow) => rateLimitWindow.id));
+  const seen = new Set<string>();
+  return rateLimitWindows.filter((rateLimitWindow) => {
+    if (accountId && rateLimitWindow.accountId === accountId) return true;
+    if (accountId && rateLimitWindow.accountId !== undefined) return false;
+    if (ownIds.has(rateLimitWindow.id) || seen.has(rateLimitWindow.id)) return false;
+    seen.add(rateLimitWindow.id);
+    return true;
+  });
+}
+
+/**
  * The agent whose windows a session's pill draws: the one main stamped on the
  * session's own reports, else `fallback`. The stamp comes first because a task
  * with no agent of its own falls back to the project default, which can have
@@ -78,7 +99,8 @@ export function rateLimitWindowsShortestFirst(rateLimitWindows: RateLimitWindow[
 }
 
 /**
- * Merge an incoming rate-limit snapshot into the shared one, per window id.
+ * Merge an incoming rate-limit snapshot into the shared one, per window key
+ * (`rateLimitWindowKey`: the id, scoped by the account that reported it).
  * Rate-limit windows are FIXED windows anchored by a `resetsAt` epoch, so within
  * one window `usedPercentage` normally only rises. Each Claude CLI process
  * refreshes its rate-limit info only from its own API traffic, so a concurrently
@@ -145,17 +167,18 @@ export function mergeRateLimitSnapshot(
   const currentWindows = liveRateLimitWindows(current.rateLimits, nowMs);
   const pruned = currentWindows !== current.rateLimits;
   const incomingById = new Map<string, RateLimitWindow>(
-    incomingWindows.map((rateLimitWindow): [string, RateLimitWindow] => [rateLimitWindow.id, rateLimitWindow]),
+    incomingWindows.map((rateLimitWindow): [string, RateLimitWindow] => [rateLimitWindowKey(rateLimitWindow), rateLimitWindow]),
   );
   let changed = false;
 
   const mergedWindows = currentWindows.map((currentWindow) => {
-    const incomingWindow = incomingById.get(currentWindow.id);
+    const windowKey = rateLimitWindowKey(currentWindow);
+    const incomingWindow = incomingById.get(windowKey);
     if (incomingWindow === undefined) {
       // Window absent from the incoming report: keep the one we already hold.
       return currentWindow;
     }
-    incomingById.delete(currentWindow.id);
+    incomingById.delete(windowKey);
 
     const resetDelta = incomingWindow.resetsAt - currentWindow.resetsAt;
     if (resetDelta > RATE_LIMIT_RESET_EPSILON_SECONDS) {

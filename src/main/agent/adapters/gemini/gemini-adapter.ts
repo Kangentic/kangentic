@@ -69,6 +69,8 @@ function geminiRunTranscriptPath(input: TranscriptReadInput): string | null {
  */
 export class GeminiAdapter implements AgentAdapter {
   readonly name = 'gemini';
+  // Accounts are built (`accounts.ts`, `GEMINI_ACCOUNT_SUPPORT`) and not enabled: no second Google
+  // account was available to run them on. This adapter declares none until they are run with two.
   readonly displayName = 'Gemini CLI';
   readonly sessionType = 'gemini_agent';
   // `--session-id <uuid>` starts a session under the id Kangentic chose

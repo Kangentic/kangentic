@@ -220,6 +220,8 @@ export interface ManagedSession {
    *  "gemini"). Used for diagnostic logs - survives minification unlike
    *  `agentParser.constructor.name`. */
   agentName?: string;
+  /** The agent account the session runs on (task #1057), from `SpawnSessionInput.accountId`. */
+  accountId?: string | null;
   /** Where the agent's CLI runs when it is not this machine (a WSL distro),
    *  from `SpawnSessionInput.cliTarget`. Main-side only: its readers and its
    *  reap look here, and the renderer reads the shell. */
@@ -380,6 +382,8 @@ export function toSession(session: ManagedSession): Session {
     startBlockedReason: session.startBlockedReason ?? undefined,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,
+    // The account it runs on (task #1057), so its context bar draws that account's limits.
+    accountId: session.accountId ?? undefined,
   };
 }
 

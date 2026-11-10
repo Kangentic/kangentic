@@ -363,6 +363,7 @@
       idleTimeoutEnabled: true,
       idleTimeoutMinutes: 30,
       autoResumeSessionsOnRestart: false,
+      accounts: { orderMode: 'automatic', autoSwitchAtLimit: true },
       executionServers: {},
       execution: {},
       launchOptions: {},
@@ -3883,6 +3884,210 @@
         };
       },
     },
+
+    // Agent accounts (Settings > Accounts). One Claude card with the one login a fresh install
+    // has, unless a test or a scene seeds window.__mockAccountCards (the same card shape, with
+    // each usage window's reset given as `resetsInSeconds` from now, so a seed never goes stale).
+    // Calls are recorded in window.__mockAccountCalls. A sign-in stays open until a test ends it
+    // with window.__mockFinishAccountLogin({ email, plan }) or the dialog cancels it.
+    accounts: (function () {
+      var listeners = { changed: [], loginOutput: [], loginEnded: [], switched: [], allFull: [] };
+      var state = null;
+      var nextLogin = 1;
+      var openLogin = null;
+      function record(name, args) {
+        if (!window.__mockAccountCalls) window.__mockAccountCalls = [];
+        window.__mockAccountCalls.push({ name: name, args: args });
+      }
+      function fire(kind) {
+        var args = Array.prototype.slice.call(arguments, 1);
+        listeners[kind].slice().forEach(function (listener) { listener.apply(null, args); });
+      }
+      function subscribe(kind, callback) {
+        listeners[kind].push(callback);
+        return function () {
+          var index = listeners[kind].indexOf(callback);
+          if (index !== -1) listeners[kind].splice(index, 1);
+        };
+      }
+      function nowSeconds() { return Math.floor(Date.now() / 1000); }
+      function usageWindow(seed) {
+        return {
+          id: seed.id,
+          label: seed.label,
+          iconKind: seed.iconKind,
+          usedPercentage: seed.usedPercentage,
+          resetsAt: seed.resetsAt !== undefined ? seed.resetsAt : nowSeconds() + (seed.resetsInSeconds || 0),
+          windowDurationSeconds: seed.windowDurationSeconds,
+        };
+      }
+      function account(seed, agent, index) {
+        return {
+          id: seed.id,
+          agent: agent,
+          kind: seed.kind || (index === 0 ? 'default' : 'folder'),
+          folderPath: seed.folderPath || null,
+          keyFilePath: seed.keyFilePath || null,
+          keyNames: seed.keyNames || [],
+          email: seed.email === undefined ? null : seed.email,
+          plan: seed.plan === undefined ? null : seed.plan,
+          status: seed.status || 'ok',
+          position: index + 1,
+          historyPrivate: !!seed.historyPrivate,
+          lastUsage: seed.lastUsage ? seed.lastUsage.map(usageWindow) : null,
+          lastUsageAt: seed.lastUsage ? new Date().toISOString() : null,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        };
+      }
+      function defaultSeed() {
+        return [{
+          agent: 'claude',
+          kind: 'folder',
+          accounts: [{
+            id: 'account-claude-1',
+            email: 'dev@example.com',
+            plan: 'Max',
+            lastUsage: [
+              { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsInSeconds: 2 * 3600 + 600, windowDurationSeconds: 5 * 3600 },
+              { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 42, resetsInSeconds: 3 * 86400, windowDurationSeconds: 7 * 86400 },
+            ],
+          }],
+        }];
+      }
+      function cards() {
+        if (!state) {
+          state = (window.__mockAccountCards || defaultSeed()).map(function (card) {
+            return {
+              agent: card.agent,
+              kind: card.kind === undefined ? 'folder' : card.kind,
+              accounts: card.accounts.map(function (seed, index) { return account(seed, card.agent, index); }),
+              reportsUsage: card.reportsUsage !== false,
+              signInIsInteractive: !!card.signInIsInteractive,
+              switchMovesSessions: card.switchMovesSessions !== false,
+              overrides: card.overrides || [],
+              unsupportedTarget: !!card.unsupportedTarget,
+            };
+          });
+        }
+        return state;
+      }
+      function hasRoom(entry) {
+        if (entry.status !== 'ok') return false;
+        return !(entry.lastUsage || []).some(function (limitWindow) {
+          return limitWindow.resetsAt > nowSeconds() && limitWindow.usedPercentage >= 100;
+        });
+      }
+      function snapshot() {
+        return cards().map(function (card) {
+          var accounts = card.accounts.map(function (entry, index) { return Object.assign({}, entry, { position: index + 1 }); });
+          var active = accounts.filter(hasRoom)[0];
+          return Object.assign({}, card, { accounts: accounts, activeAccountId: active ? active.id : null });
+        });
+      }
+      function cardOf(accountId) {
+        return cards().filter(function (card) {
+          return card.accounts.some(function (entry) { return entry.id === accountId; });
+        })[0];
+      }
+      function endLogin(ended) {
+        if (!openLogin) return;
+        var loginId = openLogin.loginId;
+        openLogin = null;
+        fire('loginEnded', Object.assign({ loginId: loginId, account: null, duplicateOf: null, cancelled: false }, ended));
+        fire('changed');
+      }
+      // Ends the open sign-in as the CLI would: the account is added, or named as a duplicate.
+      window.__mockFinishAccountLogin = function (identity) {
+        if (!openLogin) return;
+        var card = cards().filter(function (candidate) { return candidate.agent === openLogin.agent; })[0];
+        if (!identity || !identity.email) { endLogin({}); return; }
+        var duplicate = card.accounts.filter(function (entry) { return entry.email === identity.email && entry.id !== openLogin.accountId; })[0];
+        if (duplicate) { endLogin({ duplicateOf: duplicate }); return; }
+        var existing = card.accounts.filter(function (entry) { return entry.id === openLogin.accountId; })[0];
+        var signedIn = existing || account({ id: openLogin.accountId, kind: 'folder' }, card.agent, card.accounts.length);
+        signedIn.email = identity.email;
+        signedIn.plan = identity.plan || null;
+        signedIn.status = 'ok';
+        if (!existing) card.accounts.push(signedIn);
+        endLogin({ account: signedIn });
+      };
+      // Sends terminal output to the open sign-in's dialog.
+      window.__mockAccountLoginOutput = function (data) {
+        if (openLogin) fire('loginOutput', openLogin.loginId, data);
+      };
+      return {
+        list: async function () { return snapshot(); },
+        startLogin: async function (request) {
+          record('startLogin', [request]);
+          if (window.__mockAccountLoginFails) return { ok: false, reason: 'failed' };
+          var agent = request.agent || (cardOf(request.accountId) || {}).agent;
+          // As main answers for an agent with no accounts: there is no card to add the account to.
+          var hasCard = cards().some(function (candidate) { return candidate.agent === agent; });
+          if (!agent || !hasCard) return { ok: false, reason: 'unsupported' };
+          openLogin = { loginId: 'login-' + nextLogin, accountId: request.accountId || 'account-' + agent + '-new-' + nextLogin, agent: agent };
+          nextLogin += 1;
+          return { ok: true, loginId: openLogin.loginId, accountId: openLogin.accountId };
+        },
+        loginBacklog: async function () {
+          return window.__mockAccountLoginBacklog || 'Opening your browser to sign in...\r\n';
+        },
+        loginInput: function (loginId, data) { record('loginInput', [loginId, data]); },
+        loginResize: function () {},
+        cancelLogin: async function (loginId) {
+          record('cancelLogin', [loginId]);
+          endLogin({ cancelled: true });
+        },
+        onLoginOutput: function (callback) { return subscribe('loginOutput', callback); },
+        onLoginEnded: function (callback) { return subscribe('loginEnded', callback); },
+        addKeyFile: async function (agent) {
+          record('addKeyFile', [agent]);
+          return window.__mockAccountKeyFileResult || null;
+        },
+        remove: async function (accountId) {
+          record('remove', [accountId]);
+          var card = cardOf(accountId);
+          if (!card) return false;
+          card.accounts = card.accounts.filter(function (entry) { return entry.id !== accountId; });
+          fire('changed');
+          return true;
+        },
+        reorder: async function (agent, orderedIds) {
+          record('reorder', [agent, orderedIds]);
+          var card = cards().filter(function (candidate) { return candidate.agent === agent; })[0];
+          if (!card) return;
+          card.accounts = orderedIds
+            .map(function (id) { return card.accounts.filter(function (entry) { return entry.id === id; })[0]; })
+            .filter(Boolean)
+            .concat(card.accounts.filter(function (entry) { return orderedIds.indexOf(entry.id) === -1; }));
+          fire('changed');
+        },
+        switchTo: async function (accountId) {
+          record('switchTo', [accountId]);
+          var card = cardOf(accountId);
+          if (!card) return { ok: false, agent: null, accountName: null, moved: 0, failed: 0 };
+          var moved = card.accounts.filter(function (entry) { return entry.id === accountId; })[0];
+          card.accounts = [moved].concat(card.accounts.filter(function (entry) { return entry.id !== accountId; }));
+          fire('changed');
+          // Main answers once the agent's running sessions have moved. A test names how that
+          // went with window.__mockAccountSwitchOutcome = { moved, failed }.
+          var outcome = window.__mockAccountSwitchOutcome || { moved: 0, failed: 0 };
+          return { ok: true, agent: card.agent, accountName: moved.email || null, moved: outcome.moved, failed: outcome.failed };
+        },
+        refreshUsage: async function () { record('refreshUsage', []); },
+        onChanged: function (callback) { return subscribe('changed', callback); },
+        // Main pushes these only when a session reaches its usage limit, so the mock never does
+        // on its own. Tests push one via window.__mockFireAccountSwitched(payload) or
+        // window.__mockFireAccountsAllFull(payload).
+        onSwitched: function (callback) {
+          window.__mockFireAccountSwitched = function (payload) { fire('switched', payload); };
+          return subscribe('switched', callback);
+        },
+        onAllFull: function (callback) {
+          window.__mockFireAccountsAllFull = function (payload) { fire('allFull', payload); };
+          return subscribe('allFull', callback);
+        },
+      };
+    })(),
 
     leftoverProcesses: {
       onReport: function (callback) {

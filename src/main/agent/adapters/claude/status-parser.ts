@@ -18,7 +18,7 @@ export interface StatusContextWindow {
 }
 
 /** Each `rate_limits` key Claude Code sends and the window it becomes, shortest window first. */
-const RATE_LIMIT_WINDOWS: ReadonlyArray<{ key: string } & Pick<RateLimitWindow, 'id' | 'label' | 'iconKind' | 'windowDurationSeconds'>> = [
+export const RATE_LIMIT_WINDOWS: ReadonlyArray<{ key: string } & Pick<RateLimitWindow, 'id' | 'label' | 'iconKind' | 'windowDurationSeconds'>> = [
   { key: 'five_hour', id: 'five-hour', label: '5h session', iconKind: 'session', windowDurationSeconds: 5 * 60 * 60 },
   { key: 'seven_day', id: 'seven-day', label: '7d weekly', iconKind: 'period', windowDurationSeconds: 7 * 24 * 60 * 60 },
 ];

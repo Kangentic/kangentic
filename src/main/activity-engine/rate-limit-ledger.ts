@@ -1,5 +1,6 @@
 import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../shared/types';
 import type { RateLimitWindow, SessionUsage } from '../../shared/types';
+import { rateLimitWindowKey } from '../../shared/agent-accounts';
 
 /**
  * A status report's usage with each rate-limit window stamped with the agent
@@ -7,9 +8,18 @@ import type { RateLimitWindow, SessionUsage } from '../../shared/types';
  * shared snapshot can show each agent only its own windows. The same usage
  * object when it carries no windows or the session's agent is unknown.
  */
-export function withRateLimitAgent(usage: SessionUsage, agentName: string | undefined): SessionUsage {
+export function withRateLimitAgent<Usage extends { rateLimits?: SessionUsage['rateLimits'] }>(usage: Usage, agentName: string | undefined, accountId?: string | null): Usage {
   if (!usage.rateLimits || !agentName) return usage;
-  return { ...usage, rateLimits: usage.rateLimits.map((rateLimitWindow) => ({ ...rateLimitWindow, agent: agentName })) };
+  return {
+    ...usage,
+    rateLimits: usage.rateLimits.map((rateLimitWindow) => ({
+      ...rateLimitWindow,
+      agent: agentName,
+      // The account the session runs on (task #1057): two accounts' `five-hour` windows are
+      // different windows, never one window reported twice.
+      ...(accountId ? { accountId } : {}),
+    })),
+  };
 }
 
 /**
@@ -96,7 +106,7 @@ export function isSameRateLimitWindow(firstResetsAt: number, secondResetsAt: num
  *   a paused session, keeps the lowered value until then.
  */
 export class RateLimitLedger {
-  /** Current generation per window id. Account-wide, so it outlives every session. */
+  /** Current generation per window key (`rateLimitWindowKey`). Account-wide, so it outlives every session. */
   private generationByWindow = new Map<string, number>();
   /**
    * Highest current-generation report per window id. Account-wide like the
@@ -123,9 +133,9 @@ export class RateLimitLedger {
     }));
   }
 
-  /** The current generation of a window id, 0 before any reset. */
-  currentGeneration(windowId: string): number {
-    return this.generationByWindow.get(windowId) ?? 0;
+  /** The current generation of a window key (`rateLimitWindowKey`), 0 before any reset. */
+  currentGeneration(windowKey: string): number {
+    return this.generationByWindow.get(windowKey) ?? 0;
   }
 
   /** Forget a session's history. Generation counters and high-water marks are kept because they are account-wide. */
@@ -138,8 +148,9 @@ export class RateLimitLedger {
     sessionReports: Map<string, SessionWindowReport>,
     rateLimitWindow: RateLimitWindow,
   ): number {
-    const currentGeneration = this.currentGeneration(rateLimitWindow.id);
-    const previousReport = sessionReports.get(rateLimitWindow.id);
+    const windowKey = rateLimitWindowKey(rateLimitWindow);
+    const currentGeneration = this.currentGeneration(windowKey);
+    const previousReport = sessionReports.get(windowKey);
 
     let generation: number;
     if (previousReport && isRepeatReport(previousReport, rateLimitWindow)) {
@@ -147,12 +158,12 @@ export class RateLimitLedger {
       generation = previousReport.generation;
     } else if (this.isResetEvidence(sessionId, previousReport, rateLimitWindow, currentGeneration)) {
       generation = currentGeneration + 1;
-      this.generationByWindow.set(rateLimitWindow.id, generation);
+      this.generationByWindow.set(windowKey, generation);
     } else {
       generation = currentGeneration;
     }
 
-    sessionReports.set(rateLimitWindow.id, {
+    sessionReports.set(windowKey, {
       usedPercentage: rateLimitWindow.usedPercentage,
       resetsAt: rateLimitWindow.resetsAt,
       generation,
@@ -168,14 +179,15 @@ export class RateLimitLedger {
    * current generation, or for an older window, never touches it.
    */
   private recordHighest(rateLimitWindow: RateLimitWindow, generation: number, openedGeneration: boolean): void {
-    if (rateLimitWindow.resetsAt <= 0 || generation !== this.currentGeneration(rateLimitWindow.id)) return;
-    const highest = this.highestByWindow.get(rateLimitWindow.id);
+    const windowKey = rateLimitWindowKey(rateLimitWindow);
+    if (rateLimitWindow.resetsAt <= 0 || generation !== this.currentGeneration(windowKey)) return;
+    const highest = this.highestByWindow.get(windowKey);
     if (
       openedGeneration
       || highest === undefined
       || rateLimitWindow.resetsAt - highest.resetsAt > RATE_LIMIT_RESET_EPSILON_SECONDS
     ) {
-      this.highestByWindow.set(rateLimitWindow.id, {
+      this.highestByWindow.set(windowKey, {
         usedPercentage: rateLimitWindow.usedPercentage,
         resetsAt: rateLimitWindow.resetsAt,
       });
@@ -186,7 +198,7 @@ export class RateLimitLedger {
       && rateLimitWindow.usedPercentage > highest.usedPercentage
     ) {
       // Keep the first anchor, as the renderer does, so it cannot drift within a window.
-      this.highestByWindow.set(rateLimitWindow.id, { usedPercentage: rateLimitWindow.usedPercentage, resetsAt: highest.resetsAt });
+      this.highestByWindow.set(windowKey, { usedPercentage: rateLimitWindow.usedPercentage, resetsAt: highest.resetsAt });
     }
   }
 
@@ -209,17 +221,18 @@ export class RateLimitLedger {
     // for the same window. Live siblings are read as well as the high-water mark,
     // because the mark follows the newest window and a sibling can still be on
     // an older one (two accounts on one machine).
+    const windowKey = rateLimitWindowKey(rateLimitWindow);
     let highestCurrent: number | null = null;
     for (const [otherSessionId, otherReports] of this.reportsBySession) {
       if (otherSessionId === sessionId) continue;
-      const otherReport = otherReports.get(rateLimitWindow.id);
+      const otherReport = otherReports.get(windowKey);
       if (!otherReport || otherReport.generation !== currentGeneration) continue;
       if (!isSameRateLimitWindow(otherReport.resetsAt, rateLimitWindow.resetsAt)) continue;
       if (highestCurrent === null || otherReport.usedPercentage > highestCurrent) {
         highestCurrent = otherReport.usedPercentage;
       }
     }
-    const highest = this.highestByWindow.get(rateLimitWindow.id);
+    const highest = this.highestByWindow.get(windowKey);
     if (
       highest
       && isSameRateLimitWindow(highest.resetsAt, rateLimitWindow.resetsAt)

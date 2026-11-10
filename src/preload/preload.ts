@@ -10,6 +10,7 @@ import { installConsoleCapture } from './diagnostics/console-capture';
 import { PtyPortClient } from './pty-port-client';
 import type { ScrollbackInvokeResult } from '../shared/pty-port-protocol';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
+import type { AgentAccountLoginEnded, AgentAccountSwitched, AgentAccountsAllFull } from '../shared/agent-accounts';
 
 // Decodes the standard base64 main writes with `Buffer.from(text, 'utf-8').toString('base64')`.
 // Web APIs only, never `Buffer`: this preload is sandboxed, and Electron 45 removes `Buffer`,
@@ -485,6 +486,45 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.LEFTOVER_PROCESSES_STOP_SETTLED, handler);
     },
     check: (processIds) => ipcRenderer.invoke(IPC.LEFTOVER_PROCESSES_CHECK, processIds),
+  },
+
+  accounts: {
+    list: () => ipcRenderer.invoke(IPC.ACCOUNTS_LIST),
+    startLogin: (request) => ipcRenderer.invoke(IPC.ACCOUNTS_START_LOGIN, request),
+    loginBacklog: (loginId) => ipcRenderer.invoke(IPC.ACCOUNTS_LOGIN_BACKLOG, loginId),
+    loginInput: (loginId, data) => ipcRenderer.send(IPC.ACCOUNTS_LOGIN_INPUT, loginId, data),
+    loginResize: (loginId, cols, rows) => ipcRenderer.send(IPC.ACCOUNTS_LOGIN_RESIZE, loginId, cols, rows),
+    cancelLogin: (loginId) => ipcRenderer.invoke(IPC.ACCOUNTS_CANCEL_LOGIN, loginId),
+    onLoginOutput: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, loginId: string, data: string) => callback(loginId, data);
+      ipcRenderer.on(IPC.ACCOUNTS_LOGIN_OUTPUT, handler);
+      return () => ipcRenderer.removeListener(IPC.ACCOUNTS_LOGIN_OUTPUT, handler);
+    },
+    onLoginEnded: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, ended: AgentAccountLoginEnded) => callback(ended);
+      ipcRenderer.on(IPC.ACCOUNTS_LOGIN_ENDED, handler);
+      return () => ipcRenderer.removeListener(IPC.ACCOUNTS_LOGIN_ENDED, handler);
+    },
+    addKeyFile: (agent) => ipcRenderer.invoke(IPC.ACCOUNTS_ADD_KEY_FILE, agent),
+    remove: (accountId) => ipcRenderer.invoke(IPC.ACCOUNTS_REMOVE, accountId),
+    reorder: (agent, orderedIds) => ipcRenderer.invoke(IPC.ACCOUNTS_REORDER, agent, orderedIds),
+    switchTo: (accountId) => ipcRenderer.invoke(IPC.ACCOUNTS_SWITCH_TO, accountId),
+    refreshUsage: () => ipcRenderer.invoke(IPC.ACCOUNTS_REFRESH_USAGE),
+    onChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.ACCOUNTS_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.ACCOUNTS_CHANGED, handler);
+    },
+    onSwitched: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, switched: AgentAccountSwitched) => callback(switched);
+      ipcRenderer.on(IPC.ACCOUNTS_SWITCHED, handler);
+      return () => ipcRenderer.removeListener(IPC.ACCOUNTS_SWITCHED, handler);
+    },
+    onAllFull: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, allFull: AgentAccountsAllFull) => callback(allFull);
+      ipcRenderer.on(IPC.ACCOUNTS_ALL_FULL, handler);
+      return () => ipcRenderer.removeListener(IPC.ACCOUNTS_ALL_FULL, handler);
+    },
   },
 
   keybindings: {

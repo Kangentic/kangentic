@@ -95,7 +95,7 @@ const ACTIVITY_MARK_CONSUMERS = [
   'src/renderer/components/monitor/MonitorCard.tsx',
   'src/renderer/components/monitor/MonitorSummaryCards.tsx',
 ];
-// `ui-conventions.md` exempts four files from "use lucide, no inline SVGs". These three are exempt
+// `ui-conventions.md` exempts five files from "use lucide, no inline SVGs". These three are exempt
 // because each consumes a shipped branding asset. Anchoring the allowlist to real imports keeps the
 // rule's list from becoming another thing that drifts.
 const INLINE_SVG_EXEMPT_FILES = [
@@ -108,6 +108,12 @@ const INLINE_SVG_EXEMPT_FILES = [
 // says about it instead: it names the rule, paints theme tokens only, and never moves.
 const DRAWN_INLINE_SVG_EXEMPT_FILES = [
   'src/renderer/components/workflows/NoWorkflowsIllustration.tsx',
+];
+// The fifth draws agent vendors' own marks (the Accounts cards), from element data in
+// `agent-marks.ts` that `agent-marks.test.ts` holds to `currentColor`. It names the rule, never
+// moves, and falls back to a lucide icon.
+const VENDOR_MARK_EXEMPT_FILES = [
+  'src/renderer/components/AgentLogo.tsx',
 ];
 const UI_CONVENTIONS_RULE = '.claude/rules/ui-conventions.md';
 
@@ -523,6 +529,16 @@ describe('activity marks', () => {
     }
   });
 
+  it('a vendor-mark exemption names the rule, never moves, and falls back to a lucide icon', () => {
+    for (const relativePath of VENDOR_MARK_EXEMPT_FILES) {
+      const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8');
+      expect(source.includes('<svg'), `${relativePath} is exempt for its inline <svg> but draws none`).toBe(true);
+      expect(source.includes('ui-conventions.md'), `${relativePath} should say in a comment why ui-conventions.md exempts it`).toBe(true);
+      expect(source.match(/animate-|transition|@keyframes|<animate/g) ?? [], `${relativePath} is meant to be static`).toEqual([]);
+      expect(source.includes("from 'lucide-react'"), `${relativePath} should fall back to a lucide icon for an agent with no mark`).toBe(true);
+    }
+  });
+
   it('the rule\'s Icons bullet names exactly the files this test exempts', () => {
     const rule = fs.readFileSync(path.join(REPO_ROOT, UI_CONVENTIONS_RULE), 'utf-8');
     const bulletStart = rule.indexOf('- **Icons:**');
@@ -530,7 +546,7 @@ describe('activity marks', () => {
     const bulletEnd = rule.indexOf('\n- **', bulletStart + 1);
     const bullet = rule.slice(bulletStart, bulletEnd < 0 ? undefined : bulletEnd);
     const named = [...bullet.matchAll(/`(components\/[^`]+\.tsx)`/g)].map((match) => `src/renderer/${match[1]}`).sort();
-    const listed = [...INLINE_SVG_EXEMPT_FILES, ...DRAWN_INLINE_SVG_EXEMPT_FILES].sort();
+    const listed = [...INLINE_SVG_EXEMPT_FILES, ...DRAWN_INLINE_SVG_EXEMPT_FILES, ...VENDOR_MARK_EXEMPT_FILES].sort();
     expect(named, `${UI_CONVENTIONS_RULE}'s Icons bullet and this test's exempt lists disagree`).toEqual(listed);
   });
 });

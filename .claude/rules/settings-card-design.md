@@ -116,8 +116,10 @@ stated here and held by the components.
 
 The character budget is a heuristic, not a pixel guarantee. The UI font is each OS's system font,
 so a pixel check on the Linux CI runner would measure a font no user sees. The budgets come from
-the widest text measured in Segoe UI (5.7px per character) against the fixed 720px panel's text
-columns, with room left for the slightly wider macOS and Linux fonts.
+the widest text measured in Segoe UI (5.7px per character) against the text columns of the
+panel's 544px content column, with room left for the slightly wider macOS and Linux fonts. That
+column is fixed: the panel is it plus a tab rail as wide as its longest label, so a longer tab
+name widens the panel, never narrows a setting.
 
 ## Scope
 

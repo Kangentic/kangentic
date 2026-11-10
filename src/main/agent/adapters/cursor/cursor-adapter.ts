@@ -50,6 +50,7 @@ import type {
   SubmissionVerifier,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+import type { KeyFileAccountSupport } from '../../../accounts/account-support';
 
 
 /** Kangentic's MCP server is wired when it is on and both its URL and token are known (the server refuses a request without the token). */
@@ -224,6 +225,17 @@ function isAboutPayload(value: unknown): value is { model: string } {
  */
 export class CursorAdapter implements AgentAdapter {
   readonly name = 'cursor';
+  /**
+   * Accounts (task #1057): each is an API key in a file the user owns, put in the session's env
+   * at spawn. Cursor's own message names both variables (startup-failure.ts). The CLI's browser
+   * login is one per machine and cannot be split, so it stays account #1.
+   */
+  readonly accounts: KeyFileAccountSupport = {
+    kind: 'key-file',
+    keyEnvVars: ['CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN'],
+    // A key-file account sets these itself, over whatever Kangentic inherited.
+    overridingCredentialEnvVars: [],
+  };
   readonly displayName = 'Cursor CLI';
   readonly sessionType = 'cursor_agent';
   readonly supportsCallerSessionId = false;

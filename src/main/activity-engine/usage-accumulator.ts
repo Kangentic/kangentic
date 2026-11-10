@@ -1,5 +1,6 @@
 import { EventType, IdleReason, rateLimitGeneration } from '../../shared/types';
 import type { SessionUsage, SessionUsagePatch, SessionEvent, PerToolStat, RateLimitWindow } from '../../shared/types';
+import { rateLimitWindowKey } from '../../shared/agent-accounts';
 import { RateLimitLedger, isSameRateLimitWindow } from './rate-limit-ledger';
 
 /**
@@ -398,7 +399,7 @@ export class UsageAccumulator {
     const generationsBefore = new Map<string, number>(
       windows.map((rateLimitWindow): [string, number] => [
         rateLimitWindow.id,
-        this.rateLimitLedger.currentGeneration(rateLimitWindow.id),
+        this.rateLimitLedger.currentGeneration(rateLimitWindowKey(rateLimitWindow)),
       ]),
     );
     const stamped = this.rateLimitLedger.stamp(sessionId, windows).map((stampedWindow) => {
@@ -423,7 +424,7 @@ export class UsageAccumulator {
       let caughtUp = false;
       const nextWindows = otherUsage.rateLimits.map((otherWindow) => {
         if (
-          otherWindow.id !== resetWindow.id
+          rateLimitWindowKey(otherWindow) !== rateLimitWindowKey(resetWindow)
           || rateLimitGeneration(otherWindow) >= resetGeneration
           || !isSameRateLimitWindow(otherWindow.resetsAt, resetWindow.resetsAt)
         ) {

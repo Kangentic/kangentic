@@ -47,6 +47,10 @@ msgstr "\"{swimlaneName}\""
 msgid "\"{taskTitle}\""
 msgstr "\"{taskTitle}\""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "\"{taskTitle}\" continues on {accountName}."
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "\"{taskTitle}\" did not run {command}."
@@ -174,6 +178,18 @@ msgstr ""
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue {resetMoment}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue in {duration}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue when the first account resets."
+msgstr ""
+
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -208,6 +224,10 @@ msgstr "{count, plural, one {# ajan duraklatılamadı} other {# ajan duraklatıl
 #, fuzzy
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 msgstr "{count, plural, one {Bilinmeyen değişken: {variableNames}. Yazıldığı gibi gönderilecek.} other {Bilinmeyen değişkenler: {variableNames}. Yazıldığı gibi gönderilecek.}}"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
+msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
@@ -258,6 +278,10 @@ msgstr "{keptCount, plural, one {{taskCount, plural, one {# göreve} other {# g�
 #, fuzzy
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} dk {seconds} sn"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
+msgstr ""
 
 #: src/renderer/components/MarkdownRenderer.tsx
 #, fuzzy
@@ -353,6 +377,10 @@ msgstr ""
 msgid "A project"
 msgstr "Bir proje"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "A session continues on {accountName}."
+msgstr ""
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "A tmux server. Stopping it ends all your tmux sessions."
@@ -411,6 +439,10 @@ msgstr "Ajan başlatıldı"
 
 #: src/renderer/utils/dev-restart.ts
 msgid "Agents pause during a restart and resume after."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "All accounts at their limit"
 msgstr ""
 
 #: src/renderer/components/ErrorBoundary.tsx
@@ -649,6 +681,10 @@ msgstr "Görevler bağlanamadı"
 msgid "Couldn't load the terminals for this window."
 msgstr "Bu pencerenin terminalleri yüklenemedi."
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't move every session"
+msgstr ""
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Couldn't move project"
@@ -811,6 +847,10 @@ msgstr "Durdurulamadı. Yeniden deneyin veya kendiniz kapatın."
 #, fuzzy
 msgid "Couldn't stop processes"
 msgstr "İşlemler durdurulamadı"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't switch account"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy
@@ -1187,6 +1227,10 @@ msgstr ""
 
 #: src/renderer/hooks/useBranchSettings.ts
 msgid "Name a branch to start from a tag in the project folder"
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "New {agentName} sessions start on {accountName}."
 msgstr ""
 
 #: src/renderer/lib/conversation-expired-toast.ts
@@ -1642,6 +1686,10 @@ msgstr "Hâlâ çalışıyor: {tasks}."
 msgid "Stop script failed"
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Switched account"
+msgstr ""
+
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy
 msgid "Task completed"
@@ -1691,6 +1739,10 @@ msgstr "Şablon değişkeni"
 #, fuzzy
 msgid "Terminals restarted"
 msgstr "Terminaller yeniden başlatıldı"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "The account is no longer in the list."
+msgstr ""
 
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy

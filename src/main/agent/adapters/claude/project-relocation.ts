@@ -1,6 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { toForwardSlash, replacePathPrefix } from '../../../../shared/paths';
 import {
   collectRelocationPairs,
@@ -9,7 +8,7 @@ import {
   type RelocationPathPair,
 } from '../../shared/relocation-utils';
 import { claudeProjectSlug } from './transcript-parser';
-import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
+import { claudeHomeDir, claudeJsonPath as claudeStatePath, isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { physicalPath } from './physical-path';
 
 /**
@@ -88,8 +87,7 @@ function migrateClaudeProjectDataSync(moves: RelocationPathPair[]): void {
  */
 function readClaudeJsonProjectKeys(): string[] {
   try {
-    const claudeJsonPath = path.join(os.homedir(), '.claude.json');
-    const data = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8')) as Record<string, unknown>;
+    const data = JSON.parse(fs.readFileSync(claudeStatePath(), 'utf-8')) as Record<string, unknown>;
     const projects = data.projects;
     if (projects && typeof projects === 'object') {
       return Object.keys(projects);
@@ -107,7 +105,7 @@ function readClaudeJsonProjectKeys(): string[] {
  * in rather than skipped, so old transcripts are never orphaned.
  */
 function migrateTranscriptDirectories(pairs: RelocationPathPair[]): void {
-  const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
+  const projectsRoot = path.join(claudeHomeDir(), 'projects');
 
   for (const pair of pairs) {
     try {
@@ -144,7 +142,7 @@ function resolveSourceTranscriptDir(projectsRoot: string, oldAbsolute: string): 
  * form (Claude's convention on all platforms) with their values carried verbatim.
  */
 function rewriteClaudeJson(moves: RelocationPathPair[]): void {
-  const claudeJsonPath = path.join(os.homedir(), '.claude.json');
+  const claudeJsonPath = claudeStatePath();
 
   let data: Record<string, unknown>;
   try {

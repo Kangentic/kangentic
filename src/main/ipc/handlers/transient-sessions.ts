@@ -3,6 +3,8 @@ import path from 'node:path';
 import { ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import { IPC } from '../../../shared/ipc-channels';
+import { resolveSpawnAccount } from '../../accounts/account-service';
+import { buildSessionEnv } from '../../accounts/account-env';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import {
@@ -429,12 +431,15 @@ export async function startCommandTerminal(
       // created for a fresh start that prints no id.
       ...(conversationCommandOptions ?? {}),
       cliTarget,
+      // A Command Terminal starts on the agent's top account with room, like any session
+      // (task #1057). A WSL CLI keeps its single login.
+      account: cliTarget ? null : await resolveSpawnAccount(agentName),
     };
     const command = adapter.buildCommand(commandOptions);
 
     let extraEnv: Record<string, string> | null;
     try {
-      extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
+      extraEnv = buildSessionEnv(adapter, commandOptions);
     } catch (error) {
       // The built command never reached spawn(), so release its hold. From the
       // spawn() call on, spawn() releases a spawn that never runs.
@@ -461,6 +466,7 @@ export async function startCommandTerminal(
       commandTerminalBranch: branch,
       agentParser: adapter,
       agentName: adapter.name,
+      accountId: commandOptions.account?.id ?? null,
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
       cols: input.cols,
       rows: input.rows,

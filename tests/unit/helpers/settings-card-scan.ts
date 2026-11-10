@@ -20,7 +20,12 @@ const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardGroupTile'
 /** Components that render their children in place, so the scan looks through them. */
 const TRANSPARENT_WRAPPERS = new Set(['Fragment', 'React.Fragment', 'DndContext', 'SortableContext']);
 /** What a tab may render at its top level besides cards. */
-const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections', 'WorkflowAgentPromptDialog', 'LanguageRestartDialog']);
+const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections', 'WorkflowAgentPromptDialog', 'LanguageRestartDialog', 'AccountLoginDialog']);
+/**
+ * Components that draw nothing in the flow they are written in, so they are no row among a
+ * body's tiles: dnd-kit's `DragOverlay` is empty at rest and a fixed-position layer during a drag.
+ */
+const OUT_OF_FLOW = new Set(['DragOverlay']);
 
 /**
  * `CardTile`'s className is for layout inside the tile. A fill or padding there
@@ -174,6 +179,7 @@ function disallowedRenders(
         current.children.forEach(visit);
         return;
       }
+      if (OUT_OF_FLOW.has(tag)) return;
       if (!allowed(tag)) bad.push(current);
       return;
     }

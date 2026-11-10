@@ -1,18 +1,16 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ArrowUp, ArrowDown, Loader2, Clock, Calendar, Wrench, Hourglass, ChevronDown, Gauge } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-import { i18n } from '@lingui/core';
-import { msg } from '@lingui/core/macro';
+import { ArrowUp, ArrowDown, Loader2, Clock, Wrench, Hourglass, ChevronDown, Gauge } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { RateLimitWindow } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
+import { accountNameFor, useAccountsStore } from '../../stores/accounts-store';
 import { getProgressColor } from '../../utils/progress-color';
-import { liveRateLimitWindows, rateLimitWindowsForAgent, rateLimitWindowsShortestFirst, sessionRateLimitAgent, windowElapsedPercentage } from '../../utils/rate-limit-window';
+import { liveRateLimitWindows, rateLimitWindowsForAccount, rateLimitWindowsForAgent, rateLimitWindowsShortestFirst, sessionRateLimitAgent } from '../../utils/rate-limit-window';
 import { formatTokenCount, isContextWindowKnown, isContextOccupancyKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
-import { formatMonthDayTime, formatTimeAgo } from '../../lib/datetime';
+import { formatTimeAgo } from '../../lib/datetime';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { useValuePulse } from '../../hooks/useValuePulse';
@@ -25,6 +23,7 @@ import { ContextBarOverflow, type ContextBarOverflowItem } from './ContextBarOve
 import { useContextBarFold } from './useContextBarFold';
 import type { ContextBarFoldId } from './context-bar-fold';
 import { Tooltip } from '../Tooltip';
+import { RATE_LIMIT_ICON, RateLimitTrack, formatResetTime } from './rate-limit-meter';
 
 /** The +N list's order: the row's own, left to right. The agent's name lists with its version. */
 const OVERFLOW_LIST_ORDER: ContextBarFoldId[] = [
@@ -70,82 +69,18 @@ function parseAgentVersion(version: string | null | undefined): string | null {
 // One row, inset 4px each side: what does not fit folds into the +N list (`useContextBarFold`).
 const containerClass = 'relative min-h-8 bg-surface/80 border-t border-edge flex flex-nowrap items-center overflow-hidden px-1 py-1.5 gap-x-2 text-xs flex-shrink-0 [transform:translateZ(0)]';
 
-function formatResetTime(epochSeconds: number): string {
-  const ms = epochSeconds * 1000 - Date.now();
-  if (ms <= 0) return i18n._(msg`Resets now`);
-  if (ms < 24 * 60 * 60 * 1000) {
-    const duration = formatDuration(ms);
-    return i18n._(msg`Resets in ${duration}`);
-  }
-  const resetMoment = formatMonthDayTime(epochSeconds * 1000);
-  return i18n._(msg`Resets ${resetMoment}`);
-}
-
-// Maps adapter-declared RateLimitWindow.iconKind to a Lucide icon. The visual
-// vocabulary lives here in the renderer so adapters declare semantics, not chrome.
-const RATE_LIMIT_ICON: Record<RateLimitWindow['iconKind'], LucideIcon> = {
-  session: Clock,
-  period: Calendar,
-};
-
 /**
- * One rate-limit window row: icon + usage track + percent. The colored fill is
- * driven by `usedPercentage` (budget spent); a caret-topped vertical tick
- * marks how far through the time window we are (elapsed time, not budget),
- * creeping right as the reset time draws nearer. `now` (epoch ms) comes from
- * the pill's tick (`RateLimitsPill`).
+ * One rate-limit window row: icon + usage track (`RateLimitTrack`) + percent.
+ * `now` (epoch ms) comes from the pill's tick (`RateLimitsPill`).
  */
 function RateLimitBar({ limitWindow, now }: { limitWindow: RateLimitWindow; now: number }) {
   const Icon = RATE_LIMIT_ICON[limitWindow.iconKind];
   const roundedUsedPercentage = Math.round(limitWindow.usedPercentage);
-  // windowDurationSeconds is optional: a window with no fixed duration draws no
-  // time marker, so only compute the position when the adapter supplied one.
-  const markerPercentage = limitWindow.windowDurationSeconds === undefined
-    ? null
-    : windowElapsedPercentage(limitWindow.resetsAt, limitWindow.windowDurationSeconds, now);
 
   return (
     <span className="flex items-center gap-1.5 flex-1 min-w-0">
       <Icon size={11} className="text-fg-faint flex-shrink-0" aria-label={limitWindow.label} />
-      {/* No overflow-hidden so the caret atop the tick marker, which extends a
-          few px above the track, is not clipped. The fill is width-capped at
-          100%, so nothing overflows horizontally and the track still reads as a
-          pill. */}
-      <span className="relative flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full" data-meter-track="">
-        {/* This one stays on `width` on purpose, unlike the context fill above and
-            ContextUsageFooter's. The `minWidth: 2px` floor below keeps a barely
-            started window visible, and that is a width-space idea with no
-            scale-space equivalent short of measuring the track and dividing - a
-            layout read on every render, to remove a transition that fires when a
-            rate-limit window ticks, which is minutes apart rather than per token.
-            The composited-transform rewrite is not worth that trade here. */}
-        <span
-          className="block h-full rounded-full transition-[width,background-color] duration-300"
-          style={{
-            width: `${Math.min(roundedUsedPercentage, 100)}%`,
-            minWidth: roundedUsedPercentage > 0 ? '2px' : undefined,
-            backgroundColor: getProgressColor(roundedUsedPercentage),
-          }}
-        />
-        {markerPercentage !== null && (
-          <span
-            data-testid="rate-limit-time-marker"
-            aria-hidden="true"
-            className="absolute inset-y-0 w-px -translate-x-1/2 bg-fg/70"
-            style={{ left: `${markerPercentage}%` }}
-          >
-            {/* Caret cap riding on the top edge of the tick, so the marker reads
-                as a deliberate playhead anchored to the bar rather than a bare
-                line. It extends upward only; the tick itself stays inside the
-                track height. */}
-            <span
-              aria-hidden="true"
-              className="absolute -top-1 left-1/2 -translate-x-1/2 w-1.5 h-1 bg-fg/70"
-              style={{ clipPath: 'polygon(50% 100%, 0 0, 100% 0)' }}
-            />
-          </span>
-        )}
-      </span>
+      <RateLimitTrack limitWindow={limitWindow} now={now} />
       <span className="flex-shrink-0">{roundedUsedPercentage}%</span>
     </span>
   );
@@ -156,9 +91,13 @@ function RateLimitBar({ limitWindow, now }: { limitWindow: RateLimitWindow; now:
  * when it resets under them. It renders when the tip opens, so each reset is
  * read then rather than at the bar's last render.
  */
-function RateLimitBlocks({ rateLimits }: { rateLimits: RateLimitWindow[] }) {
+function RateLimitBlocks({ rateLimits, accountName }: { rateLimits: RateLimitWindow[]; accountName: string | null }) {
   return (
     <div className="flex min-w-[196px] flex-col gap-2.5" data-testid="rate-limits-tip-windows">
+      {/* Whose limits these are, for an agent with more than one account. */}
+      {accountName ? (
+        <span className="whitespace-nowrap text-tooltip-rich-muted" data-testid="rate-limits-tip-account">{accountName}</span>
+      ) : null}
       {rateLimits.map((limitWindow) => {
         const Icon = RATE_LIMIT_ICON[limitWindow.iconKind];
         return (
@@ -189,6 +128,8 @@ interface RateLimitsPillProps {
   capturedAt: number;
   /** The session this ContextBar reports for, the pulse's context identity. */
   sessionId: string;
+  /** The account the session runs on, named in the tip. Null for an agent with one account. */
+  accountName: string | null;
   /**
    * The pill in the bar's row: a meter that shares the row's room and folds
    * with it. Left out, the pill is the +N list's copy: a fixed width, no pulse.
@@ -210,7 +151,7 @@ interface RateLimitsPillProps {
  * is component-local and cleared on unmount, so it needs no HMR Pattern A
  * preservation (see .claude/rules/hmr-patterns.md).
  */
-function RateLimitsPill({ rateLimits: reportedWindows, capturedAt, sessionId, rowFold }: RateLimitsPillProps) {
+function RateLimitsPill({ rateLimits: reportedWindows, capturedAt, sessionId, accountName, rowFold }: RateLimitsPillProps) {
   const { t } = useLingui();
   const [now, setNow] = useState(() => Date.now());
 
@@ -232,14 +173,15 @@ function RateLimitsPill({ rateLimits: reportedWindows, capturedAt, sessionId, ro
   }
 
   // What a screen reader hears: each window's share and reset. The tip draws the same.
-  const spoken = rateLimits
+  const spokenWindows = rateLimits
     .map((limitWindow) => `${limitWindow.label} ${Math.round(limitWindow.usedPercentage)}%. ${formatResetTime(limitWindow.resetsAt)}`)
     .join('. ');
+  const spoken = accountName ? `${accountName}. ${spokenWindows}` : spokenWindows;
   return (
     <Tooltip
       label={spoken}
       header={{ icon: <Gauge />, title: t`Rate limits` }}
-      content={<RateLimitBlocks rateLimits={rateLimits} />}
+      content={<RateLimitBlocks rateLimits={rateLimits} accountName={accountName} />}
       footer={<RateLimitsUpdated capturedAt={capturedAt} />}
       testId="rate-limits-tip"
     >
@@ -289,9 +231,16 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const taskAgent = task?.agent ?? agentFallback;
   // The shared snapshot holds every agent's windows; this agent draws its own.
   const rateLimitAgent = sessionRateLimitAgent(usage?.rateLimits, taskAgent);
+  // An agent's limits are per account, so the session draws its own account's.
+  const rateLimitAccount = session?.accountId
+    ?? usage?.rateLimits?.find((rateLimitWindow) => rateLimitWindow.accountId !== undefined)?.accountId;
+  // Named in the tip only where it tells accounts apart: an agent with more than one.
+  const rateLimitAccountName = useAccountsStore((state) => accountNameFor(state.cards, rateLimitAccount));
   const agentRateLimits = useMemo(
-    () => (latestRateLimits ? rateLimitWindowsForAgent(latestRateLimits.rateLimits, rateLimitAgent) : []),
-    [latestRateLimits, rateLimitAgent],
+    () => (latestRateLimits
+      ? rateLimitWindowsForAccount(rateLimitWindowsForAgent(latestRateLimits.rateLimits, rateLimitAgent), rateLimitAccount)
+      : []),
+    [latestRateLimits, rateLimitAgent, rateLimitAccount],
   );
   // The agent's own list entry - not agentDisplayName's separate hardcoded map - so the
   // version pill can never name one agent while showing another's version number.
@@ -518,6 +467,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       <RateLimitsPill
         rateLimits={agentRateLimits}
         capturedAt={latestRateLimits.capturedAt}
+        accountName={rateLimitAccountName}
         sessionId={sessionId}
       />
     ),
@@ -681,6 +631,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
         <RateLimitsPill
           rateLimits={agentRateLimits}
           capturedAt={latestRateLimits.capturedAt}
+          accountName={rateLimitAccountName}
           sessionId={sessionId}
           rowFold={{ className: foldClass('rate-limits'), attributes: foldAttributes('rate-limits') }}
         />

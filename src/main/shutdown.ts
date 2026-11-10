@@ -12,6 +12,7 @@ import { markRecordSuspended, settleQueuedRecord } from './transition-engine/ses
 import { captureSessionMetrics, captureWorkflowAgentUsage } from './ipc/handlers/session-metrics';
 import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
+import { stopAccounts } from './ipc/handlers/accounts';
 import { recordAbandonedLaunches } from './pty/abandoned-launches';
 import type { SessionManager } from './pty/session-manager';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
@@ -106,6 +107,8 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
   runCleanupStep('stopAnnouncementTimers', () => dependencies.stopAnnouncementTimers());
   // Stop the periodic metrics snapshot so no tick races the sync shutdown writes.
   runCleanupStep('stopMetricsSnapshotTimer', () => stopMetricsSnapshotTimer());
+  // The usage timers, and any account sign-in still open in its terminal.
+  runCleanupStep('stopAccounts', () => stopAccounts());
 
   try {
     // Detach any CDP debuggers attached to embedded Browser panes. Synchronous

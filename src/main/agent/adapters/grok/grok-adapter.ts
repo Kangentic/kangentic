@@ -103,6 +103,9 @@ const GROK_SLASH_ARGUMENT = /^[\w.:/@+-]+$/;
  */
 export class GrokAdapter implements AgentAdapter {
   readonly name = 'grok';
+  // Accounts are built (`accounts.ts`, `GROK_ACCOUNT_SUPPORT`) and not enabled: no session could be
+  // run on the installed version. This adapter declares none until `grok login` and a session have
+  // been run with `GROK_AUTH_PATH` set.
   readonly displayName = 'Grok Build';
   readonly sessionType = 'grok_agent';
   readonly supportsCallerSessionId = true;
@@ -195,7 +198,7 @@ export class GrokAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, ...rest } = options;
-    const grokOptions = { grokPath: agentPath, ...rest };
+    const grokOptions = { grokPath: agentPath, ...rest, standalone: options.account?.kind === 'folder' };
     const command = this.commandBuilder.buildGrokCommand(grokOptions);
     if (options.eventsOutputPath || grokMcpWiringEnabled(grokOptions)) {
       this.wiringHolds.retain(options.ptySessionId, options.cwd);

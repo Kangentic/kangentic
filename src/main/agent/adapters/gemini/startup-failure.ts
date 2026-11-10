@@ -1,7 +1,7 @@
-import os from 'node:os';
 import path from 'node:path';
 import { finalLinesOf, identifyLoginFailure } from '../../shared/user-setup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
+import { geminiHomeDir } from './gemini-home';
 
 /**
  * Gemini CLI's own words, read out of the 0.66.0 bundle, each printed before an
@@ -43,5 +43,6 @@ export function identifyRejectedHomeSettings(finalOutput: string, homeSettingsPa
 /** See `AgentAdapter.identifyUserSetupFailure`. */
 export function identifyGeminiUserSetupFailure(finalOutput: string): UserSetupMatch | null {
   return identifyLoginFailure(finalOutput, LOGIN_SENTENCES)
-    ?? identifyRejectedHomeSettings(finalOutput, path.join(os.homedir(), '.gemini', 'settings.json'));
+    // The home Gemini reads, `GEMINI_CLI_HOME` included: a user who moved it has their settings there.
+    ?? identifyRejectedHomeSettings(finalOutput, path.join(geminiHomeDir(), 'settings.json'));
 }
