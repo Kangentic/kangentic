@@ -237,7 +237,11 @@ describe('patchJsonFile', () => {
       let outcome: Awaited<ReturnType<typeof patchJsonFile>> | null = null;
       void patchJsonFile({ path: file, ops, lockDirectory: lock }).then((result) => { outcome = result; });
       // The delays are faked and the file system is real: give the file system a real turn, then move the clock.
-      for (let step = 0; step < 200 && outcome === null; step += 1) {
+      // The wait is bounded by real time, not a count of turns. A loaded runner needs more turns for each
+      // file call, and a count ran out with the patch still going, then the test's folder was deleted under it.
+      // `process.hrtime` is not one of the faked clocks.
+      const realDeadline = process.hrtime.bigint() + 20_000_000_000n;
+      while (outcome === null && process.hrtime.bigint() < realDeadline) {
         await new Promise<void>((resolve) => setImmediate(resolve));
         await vi.advanceTimersByTimeAsync(500);
       }
