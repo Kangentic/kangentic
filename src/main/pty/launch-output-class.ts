@@ -24,10 +24,7 @@ export type LaunchOutputClass =
   | 'launcher_unreadable'
   /** The command's file is not a program this machine can run. */
   | 'exec_format'
-  /**
-   * macOS refused the command's binary for its CPU type. No shape yet: only a
-   * Mac prints it, and it is pinned from the macOS round trip's first run.
-   */
+  /** macOS refused the command's binary for its CPU type. */
   | 'bad_cpu_type'
   /** The shell says the command was killed (SIGKILL). */
   | 'killed'
@@ -59,8 +56,8 @@ const LINE_TOO_LONG_SENTENCES: readonly RegExp[] = [
  *
  * Every line below was printed by a real shell on a real pty, never written from
  * memory: bash 5.2, dash, zsh 5.9, fish 3.7.0 and nushell 0.116.0 on Ubuntu
- * 24.04, PowerShell 7 on Windows. `typed-launch-round-trip.test.ts` pins the line
- * each shell CI runs printed.
+ * 24.04, zsh 5.9 and BSD cat on a macOS runner, PowerShell 7 on Windows.
+ * `typed-launch-round-trip.test.ts` pins the line each shell CI runs printed.
  */
 const OUTPUT_SHAPES: ReadonlyArray<{ outputClass: LaunchOutputClass; shapes: readonly RegExp[] }> = [
   {
@@ -120,6 +117,15 @@ const OUTPUT_SHAPES: ReadonlyArray<{ outputClass: LaunchOutputClass; shapes: rea
     ],
   },
   {
+    // macOS refused the command's binary for its CPU type, as it does an
+    // Intel-only CLI on an Apple silicon Mac with no Rosetta. zsh:
+    // `zsh: bad CPU type in executable: /opt/claude`, measured on a macOS runner.
+    outputClass: 'bad_cpu_type',
+    shapes: [
+      /^(?:[\w./-]*\/)?zsh:\s(?:\d+:\s)?bad CPU type in executable:\s/,
+    ],
+  },
+  {
     outputClass: 'permission_denied',
     shapes: [
       /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:\d+:\s)?permission denied:/,
@@ -151,8 +157,10 @@ const OUTPUT_SHAPES: ReadonlyArray<{ outputClass: LaunchOutputClass; shapes: rea
       // An interactive bash or dash reports a foreground job a signal ended on
       // a line of its own, so the whole line is the shape.
       /^Killed$/,
-      // zsh: `zsh: killed     '/opt/claude'`
-      /^(?:[\w./-]*\/)?zsh:\s(?:\d+:\s)?killed\s/,
+      // zsh: `zsh: killed     '/opt/claude'`. On macOS the long temp path wraps
+      // the line, and zsh's redraw leaves just `zsh: killed` once the cursor moves
+      // are read out, so the command text is optional.
+      /^(?:[\w./-]*\/)?zsh:\s(?:\d+:\s)?killed(?:\s|$)/,
       // fish: `fish: Job 1, ''/opt/cl…' terminated by signal SIGKILL (Forced quit)`
       /^fish: Job \d+, '.*' terminated by signal SIGKILL\b/,
       // nushell, inside its error box under `Error: nu::shell::terminated_by_signal`:
@@ -164,8 +172,9 @@ const OUTPUT_SHAPES: ReadonlyArray<{ outputClass: LaunchOutputClass; shapes: rea
     outputClass: 'crashed',
     shapes: [
       /^(?:Segmentation fault|Bus error|Aborted|Illegal instruction)(?: \(core dumped\))?$/,
-      // zsh: `zsh: segmentation fault (core dumped)  '/opt/claude'`
-      /^(?:[\w./-]*\/)?zsh:\s(?:\d+:\s)?segmentation fault(?: \(core dumped\))?\s/,
+      // zsh: `zsh: segmentation fault (core dumped)  '/opt/claude'`. macOS prints
+      // no `(core dumped)`, and the wrapped line ends after `segmentation fault`.
+      /^(?:[\w./-]*\/)?zsh:\s(?:\d+:\s)?segmentation fault(?: \(core dumped\))?(?:\s|$)/,
       // fish: `fish: Job 1, ''/opt/cl…' terminated by signal SIGSEGV (Address boundary error)`
       /^fish: Job \d+, '.*' terminated by signal SIG(?:SEGV|BUS|ABRT|ILL)\b/,
       // nushell: `Error: nu::shell::core_dumped`, or a crash signal in the box

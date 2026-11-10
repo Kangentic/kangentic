@@ -451,9 +451,9 @@ in one Sentry org, one triage surface.
   `bad_interpreter` (the command exists and its shebang's interpreter does not),
   `launcher_unreadable` (the shell could not read the launcher file its typed line names, such as
   `cat: <dir>/launch.sh: No such file or directory`), `exec_format` (the command's file is not a
-  program this machine runs), `bad_cpu_type` (macOS refused the binary for its CPU type; a class
-  with no shape yet, see below), `killed` (the shell reported the command killed, bash's and dash's
-  `Killed`), `crashed` (a segmentation fault, bus error, abort or illegal instruction), `unknown_option`, `line_too_long`,
+  program this machine runs), `bad_cpu_type` (macOS refused the binary for its CPU type, zsh's
+  `bad CPU type in executable:`), `killed` (the shell reported the command killed, such as bash's
+  and dash's `Killed` or zsh's `killed`), `crashed` (a segmentation fault, bus error, abort or illegal instruction), `unknown_option`, `line_too_long`,
   `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
   (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`).
   `never_started` adds `judge` (`sweep`, `timer`). A preflight report
@@ -480,10 +480,12 @@ in one Sentry org, one triage surface.
   Every output class rests on lines a real shell printed, never on wording from memory:
   `tests/unit/typed-launch-round-trip.test.ts` types each failure into each shell CI runs and pins
   the line it printed: bash 5.2, zsh 5.9, fish 3.7.0 and nushell 0.116.0, as CI's Ubuntu 24.04
-  runs them. nushell never names an exec format error: it hands such a file to `/bin/sh`, which
-  reads its first bytes as a command not found, so that case stays `other` there. Not yet pinned:
-  BSD `cat`'s line on macOS and macOS's `bad CPU type in executable` (`bad_cpu_type`, which has no
-  shape yet), both of which the macOS job prints on its first run. PowerShell's missing
+  runs them, and zsh 5.9 with BSD `cat` on a macOS runner. nushell never names an exec format
+  error: it hands such a file to `/bin/sh`, which reads its first bytes as a command not found, so
+  that case stays `other` there. macOS differs from Linux in three ways. BSD `cat` leaves the path
+  unquoted. The long `/private/var/folders/...` temp path wraps zsh's job line, so what is left
+  once zsh's redraw is read out is just `zsh: killed` or `zsh: segmentation fault`, and the shapes
+  take the command text as optional. macOS prints no `(core dumped)`. PowerShell's missing
   `launch.ps1` was measured on Windows, where no launcher is used. POSIX pwsh, the one that uses
   it, has no round trip in CI yet.
 

@@ -360,8 +360,8 @@ const FAILURE_CLASSES: Readonly<Record<ShellFailure, LaunchOutputClass>> = {
  * column, and with ` (core dumped)` dropped, since whether a crash dumps core is
  * the runner's setting. fish shortens a job's command text to a fixed length,
  * which depends on the rig's folder, so its job lines are pinned as patterns.
- * macOS ships zsh 5.9 too, and its job words are zsh's own, so darwin/zsh holds
- * the same job lines; its `cat` line comes from the first macOS run.
+ * macOS ships zsh 5.9 too, and its job words are zsh's own, but its lines were
+ * measured on a macOS runner and differ in three ways (see `darwin/zsh`).
  */
 const PRINTED_LINES: Readonly<Record<string, Partial<Record<ShellFailure, string | RegExp>>>> = {
   'linux/bash': {
@@ -376,10 +376,15 @@ const PRINTED_LINES: Readonly<Record<string, Partial<Record<ShellFailure, string
     crashed: "zsh: segmentation fault '<rig>/agent dir/signal-segv'",
     exec_format: 'zsh: exec format error: <rig>/agent dir/not-a-program',
   },
+  // Measured on a macOS runner. BSD cat leaves the path unquoted. macOS's long
+  // temp path wraps zsh's job line, and once zsh's redraw is read out only
+  // `zsh: killed` is left, so the command text is optional in the job pins.
   'darwin/zsh': {
-    killed: "zsh: killed '<rig>/agent dir/signal-kill'",
-    crashed: "zsh: segmentation fault '<rig>/agent dir/signal-segv'",
+    missing_launcher: 'cat: <rig>/project one/.kangentic/sessions/session-1/launch.sh: No such file or directory',
+    killed: /^zsh: killed(?: .*)?$/,
+    crashed: /^zsh: segmentation fault(?: .*)?$/,
     exec_format: 'zsh: exec format error: <rig>/agent dir/not-a-program',
+    bad_cpu_type: 'zsh: bad CPU type in executable: <rig>/agent dir/wrong-cpu',
   },
   'linux/fish': {
     missing_launcher: "source: Error encountered while sourcing file ''<rig>/project one/.kangentic/sessions/session-1/launch.fish'':",
