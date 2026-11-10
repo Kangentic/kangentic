@@ -163,9 +163,13 @@ reading `running` (the shell PTY outlives the CLI).
 - **The agent deleted it.** Claude Code deletes transcripts older than its `cleanupPeriodDays` (30
   by default), so any task idle that long hits this on its next resume.
 
-`assessResumeConversation` (`src/main/transition-engine/resume-conversation-guard.ts`) decides
-before the spawn, at both chokepoints (`executeSpawnAgent` and `prepareAgentSpawn`), and answers
-`never-started`, `expired`, or `unknown`. It runs AFTER the resume-time id reconcile, so it checks
+`assessResumeConversationWithEvidence` (`src/main/transition-engine/resume-conversation-guard.ts`)
+decides before the spawn, at both chokepoints (`executeSpawnAgent` and `prepareAgentSpawn`), and
+answers `{ verdict, evidence }`: the verdict is `never-started`, `expired`, or `unknown`, and the
+evidence is a summary of what the check read, in fixed values (`ResumeEvidenceSummary`). A spawn that
+still resumes carries the summary as `resumeEvidence`, and a launch report for it sends the
+`resume_*` tags ([Error reporting](../../telemetry/error-reporting.md)).
+`assessResumeConversation` is the same check returning the verdict alone. It runs AFTER the resume-time id reconcile, so it checks
 the id actually being resumed, and on the board path after the cwd migration too, so it finds a
 migrated file where it now is (startup recovery migrates nothing). Both chokepoints build the
 lineage below with one helper, `resolveResumeLineage`.

@@ -233,6 +233,37 @@ describe('launchTagsOf', () => {
   it('sends an agent name it does not recognize the shape of as other', () => {
     expect(launchTagsOf(session({ agentName: '/Users/dev/agent' }), NOW).agent).toBe('other');
   });
+
+  // DESKTOP-2M: a resume that found no conversation after the check answered
+  // `unknown`. These say which of the check's paths it took.
+  it('sends what the resume check read on a resuming session', () => {
+    const resumeEvidence = { turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'moved' } as const;
+
+    expect(launchTagsOf(session({ resuming: true, resumeEvidence }), NOW)).toMatchObject({
+      resume_turns: 'yes',
+      resume_agent_report: 'status',
+      resume_transcript: 'on_disk',
+      resume_cwd: 'moved',
+    });
+  });
+
+  it('sends resume_account only once the chokepoint compared the accounts', () => {
+    const resumeEvidence = { turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'same' } as const;
+
+    expect(launchTagsOf(session({ resumeEvidence: { ...resumeEvidence, account: 'changed' } }), NOW).resume_account).toBe('changed');
+    expect(launchTagsOf(session({ resumeEvidence }), NOW)).not.toHaveProperty('resume_account');
+  });
+
+  it('sends no resume tags on a fresh session, or a resume with no evidence', () => {
+    const resumeEvidence = { turns: 'no', agentReport: 'none', transcript: 'not_reported', cwd: 'unknown' } as const;
+
+    for (const tags of [
+      launchTagsOf(session({ resuming: false, resumeEvidence }), NOW),
+      launchTagsOf(session({ resuming: true, resumeEvidence: null }), NOW),
+    ]) {
+      expect(Object.keys(tags).filter((name) => name.startsWith('resume_'))).toEqual([]);
+    }
+  });
 });
 
 describe('classifyLaunchOutput', () => {

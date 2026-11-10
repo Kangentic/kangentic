@@ -554,7 +554,7 @@ describe('both spawn chokepoints run the check after the reconcile and the migra
     const source = read('src/main/transition-engine/transition-engine.ts');
     const reconcileAt = source.indexOf('await reconcileResumeAgentSessionId(');
     const migrateAt = source.indexOf('await migrateResumeCwdIfRenamed(');
-    const checkAt = source.indexOf('await assessResumeConversation(');
+    const checkAt = source.indexOf('await assessResumeConversationWithEvidence(');
     expect(reconcileAt).toBeGreaterThan(-1);
     expect(migrateAt).toBeGreaterThan(reconcileAt);
     expect(checkAt).toBeGreaterThan(migrateAt);
@@ -574,7 +574,7 @@ describe('both spawn chokepoints run the check after the reconcile and the migra
   it('startup recovery reconciles, checks, then resolves the shim with the recap prompt', () => {
     const source = read('src/main/transition-engine/session-startup/prepare-spawn.ts');
     const reconcileAt = source.indexOf('await reconcileResumeAgentSessionId(');
-    const checkAt = source.indexOf('await assessResumeConversation(');
+    const checkAt = source.indexOf('await assessResumeConversationWithEvidence(');
     const shimAt = source.indexOf('await resolveShimLaunch(');
     expect(reconcileAt).toBeGreaterThan(-1);
     expect(checkAt).toBeGreaterThan(reconcileAt);

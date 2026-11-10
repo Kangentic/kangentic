@@ -390,7 +390,12 @@ in one Sentry org, one triage surface.
   filtered: it is a host condition rather than a defect, but it is also the only evidence the
   user-facing toast fires at all, and the per-source latch already caps the volume at one event
   per outage. The `errno` tag is what makes muting it later a Sentry-UI change rather than a code
-  change (Sentry DESKTOP-1C). The user's notice has a latch of its own: a report made before any
+  change (Sentry DESKTOP-1C). Each report passes the fingerprint
+  `['sync-write-failure', source, errno]` (`none` for an error with no errno). Sentry's default
+  grouping is by stack, so every caller of `safeWriteJson` opened its own issue for one outage
+  (DESKTOP-1C, then 1Y from the `CONFIG_SET` handler, then 2K from `CONFIG_SET_SYNC`), and
+  archiving one never stopped the next. With the fingerprint, one source and errno is one issue.
+  The user's notice has a latch of its own: a report made before any
   window exists leaves the notice armed, so the source's next failure raises it with no second
   Sentry event. The utility-worker report also
   carries a `utility_process` context block with the last 8 KiB of the worker's stderr (home
@@ -458,6 +463,25 @@ in one Sentry org, one triage surface.
   (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`).
   `never_started` adds `judge` (`sweep`, `timer`). A preflight report
   adds `error_type` and `errno` when the error has them.
+
+  A report on a resuming session adds what the resume check read before it
+  (`assessResumeConversationWithEvidence`, `src/main/transition-engine/resume-conversation-guard.ts`),
+  because a `conversation_missing` after an `unknown` verdict could not say which of the check's
+  paths it took (Sentry DESKTOP-2M). `resume_turns` (`yes`, `no`) is whether any record of the
+  lineage showed a turn. `resume_agent_report` (`status`, `session_start`, `none`) is the
+  agent-written report the check read first. `resume_transcript` (`on_disk`, `missing`,
+  `not_reported`, `unknown`) is a stat of the transcript the agent reported, or else the newest
+  one a record kept. `unknown` there is a stat that failed with anything but ENOENT. `resume_cwd`
+  (`same`, `moved`, `unknown`) is whether the spawn runs in the cwd the conversation last ran in.
+  `resume_account` (`same`, `changed`, `none`, from `resumeAccountMatch` in
+  `src/main/accounts/account-service.ts`) is whether the spawn runs on the account the
+  conversation was written on. An override or a signed-out conversation account puts a resume on
+  another account, whose config folder holds no such conversation. `changed` says the accounts
+  differ, not that the difference lost the conversation. `none` is an agent with no accounts.
+  None of them carries a path or an account id. The stat runs after the cwd migration, so
+  `resume_cwd: moved` with `resume_transcript: missing` can be a file the migration moved, not a
+  deleted conversation. Only the two task spawn chokepoints run the check, so a workflow agent's
+  resume and a Command Terminal's Earlier conversation carry no `resume_*` tags.
 
   `command_head_since_detection` says whether the command head still resolves to the file
   detection found. `src/main/agent/shared/cli-identity.ts` compares the real path, device, inode,

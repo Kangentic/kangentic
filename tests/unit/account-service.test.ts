@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AccountService } from '../../src/main/accounts/account-service';
+import { AccountService, resumeAccountMatch } from '../../src/main/accounts/account-service';
 import { buildSessionEnv } from '../../src/main/accounts/account-env';
 import type { FolderAccountSupport, KeyFileAccountSupport } from '../../src/main/accounts/account-support';
 import type { AgentAdapter, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
@@ -13,6 +13,23 @@ import type { AgentAccountsConfig } from '../../src/shared/agent-accounts';
 
 const NOW_MS = 1_800_000_000_000;
 const NOW = NOW_MS / 1000;
+
+/**
+ * The `resume_account` tag: a resume on another account than its conversation's
+ * looks in the wrong config folder and finds no conversation (DESKTOP-2M's open cause).
+ */
+describe('resumeAccountMatch', () => {
+  it.each([
+    ['a record from before accounts on the agent\'s own login', null, { id: 'default-claude', kind: 'default' as const }, 'same'],
+    ['a record from before accounts moved onto a folder account', null, { id: 'account-2', kind: 'folder' as const }, 'changed'],
+    ['the conversation\'s own account', 'account-2', { id: 'account-2', kind: 'folder' as const }, 'same'],
+    ['another account', 'account-1', { id: 'account-2', kind: 'folder' as const }, 'changed'],
+    ['nothing resumed', undefined, { id: 'account-2', kind: 'folder' as const }, 'none'],
+    ['an agent with no accounts', 'account-1', null, 'none'],
+  ])('reads %s', (_label, conversationAccountId, resolved, expected) => {
+    expect(resumeAccountMatch(conversationAccountId, resolved)).toBe(expected);
+  });
+});
 
 let root: string;
 let home: string;

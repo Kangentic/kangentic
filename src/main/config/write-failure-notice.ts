@@ -208,6 +208,9 @@ function toPathFreeError(error: unknown, errno: string | undefined, syscall: str
  *
  * `extraTags` are fixed words a caller adds to the report, never a path. They cannot
  * replace the tags built here.
+ *
+ * The report's fingerprint is `['sync-write-failure', source, errno]` (`none` for an
+ * error with no errno), so it groups by what failed, whichever call path reached it.
  */
 export function reportSyncWriteFailure(
   error: unknown,
@@ -226,7 +229,8 @@ export function reportSyncWriteFailure(
     const tags: Record<string, string> = { ...extraTags, source };
     if (errno) tags.errno = errno;
     if (syscall) tags.syscall = syscall;
-    reportHandledError(toPathFreeError(error, errno, syscall), tags);
+    // Grouped by what failed, not by the stack, which differs per caller of `safeWriteJson`.
+    reportHandledError(toPathFreeError(error, errno, syscall), tags, {}, ['sync-write-failure', source, errno ?? 'none']);
   }
   if (!notifier || noticedSources.has(source)) return;
   noticedSources.add(source);

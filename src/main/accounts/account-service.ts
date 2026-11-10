@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import type { AgentAccount, AgentAccountStatus, AgentAccountsCard, AgentAccountsConfig } from '../../shared/agent-accounts';
-import type { RateLimitWindow } from '../../shared/types';
+import type { RateLimitWindow, ResumeAccountMatch } from '../../shared/types';
 import type { AgentAccountRepository } from '../db/repositories/agent-account-repository';
 import { provisionAccountFolder, type AccountFolderProblemCode } from './account-folder';
 import { automaticOrder, topAccountWithRoom } from './account-order';
@@ -585,6 +585,24 @@ export function conversationAccountOf(
 ): string | null | undefined {
   if (!resuming || !agentSessionId) return undefined;
   return records.find((record) => record.agent_session_id === agentSessionId)?.account_id ?? null;
+}
+
+/**
+ * Whether a resume runs on the account its conversation was written on, for the
+ * `resume_account` tag of a launch report. An override, or a conversation account
+ * that is signed out, puts the resume on another account, whose own config folder
+ * has no such conversation, and the CLI answers "No conversation found" (a cause
+ * Sentry DESKTOP-2M's event could not rule in or out). `none` when there is no
+ * account to compare: nothing resumed, or an agent with no accounts.
+ */
+export function resumeAccountMatch(
+  conversationAccountId: string | null | undefined,
+  resolved: Pick<ResolvedAccount, 'id' | 'kind'> | null | undefined,
+): ResumeAccountMatch {
+  if (!resolved || conversationAccountId === undefined) return 'none';
+  // Null is the agent's own login, which every record from before accounts ran on.
+  const same = conversationAccountId === null ? resolved.kind === 'default' : resolved.id === conversationAccountId;
+  return same ? 'same' : 'changed';
 }
 
 /**

@@ -584,6 +584,7 @@ export async function performSpawn(
     startPath: input.startPath,
     agentCliVersion: input.agentCliVersion ?? null,
     agentCliPath: input.agentCliPath ?? null,
+    resumeEvidence: input.resumeEvidence ?? null,
   };
 
   context.registry.set(id, session);

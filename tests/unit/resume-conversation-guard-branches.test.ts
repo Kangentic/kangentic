@@ -21,12 +21,14 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   assessResumeConversation,
+  assessResumeConversationWithEvidence,
   folderOnlyRecord,
   resolveResumeLineage,
   type ResumeLineageRecord,
 } from '../../src/main/transition-engine/resume-conversation-guard';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 import { makeSessionRecord } from './helpers/session-record-fixture';
 
 const RECORD_ID = '6fc5d715-77ca-47d6-9c50-8f27ad05e4a7';
@@ -181,6 +183,154 @@ describe('assessResumeConversation - what the adapter is asked about', () => {
     expect(proveConversationGone).toHaveBeenCalledTimes(1);
     const reportedPaths = [...proveConversationGone.mock.calls[0][0].reportedPaths].sort();
     expect(reportedPaths).toEqual([transcriptPath, statusFilePath].sort());
+  });
+});
+
+/**
+ * What the check saw, beside its verdict. A launch report for a resume that
+ * found no conversation sends it (DESKTOP-2M answered `unknown` and could not say
+ * whether it had no agent report to read or saw turns and a transcript it could
+ * not prove gone). Fixed values only: no path leaves the machine.
+ */
+describe('assessResumeConversationWithEvidence - the summary', () => {
+  function assessWithEvidence(
+    adapter: AgentAdapter,
+    records: ReadonlyArray<ResumeLineageRecord | null>,
+    extra: { resumeFromCwd?: string | null; place?: CliPlace | null } = {},
+  ) {
+    return assessResumeConversationWithEvidence({ adapter, agentSessionId: AGENT_SESSION_ID, records, cwd, projectPath, ...extra });
+  }
+
+  /** A row with no totals: nothing on it proves a turn. */
+  function rowWithoutTurns(overrides: Partial<ResumeLineageRecord> = {}): ResumeLineageRecord {
+    return { id: RECORD_ID, transcript_path: null, total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0, ...overrides };
+  }
+
+  function writeZeroTurnStatusFile(reportedPath: string): void {
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'status.json'), JSON.stringify({
+      session_id: AGENT_SESSION_ID,
+      transcript_path: reportedPath,
+      model: { id: 'claude-haiku-4-5-20251001', display_name: 'Haiku 4.5' },
+      cost: { total_cost_usd: 0, total_duration_ms: 0, total_api_duration_ms: 0 },
+      context_window: {
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        context_window_size: 200000,
+        current_usage: null,
+        used_percentage: null,
+      },
+    }), 'utf8');
+  }
+
+  function writeSessionStartEvent(reportedPath: string): void {
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const event = { type: 'session_start', hookContext: JSON.stringify({ transcript_path: reportedPath }) };
+    fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), `${JSON.stringify(event)}\n`, 'utf8');
+  }
+
+  function writeTranscript(): void {
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.writeFileSync(transcriptPath, '{}\n', 'utf8');
+  }
+
+  const neverAsked = (): ProveConversationGone => vi.fn<ProveConversationGone>().mockResolvedValue(false);
+
+  const UBUNTU_PLACE: CliPlace = {
+    kind: 'wsl',
+    distro: 'Ubuntu',
+    facts: {
+      distro: 'Ubuntu',
+      homeLinux: '/home/dev',
+      homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+      uncRoot: '\\\\wsl.localhost\\Ubuntu',
+      interactivePath: '/usr/bin',
+      env: {},
+      networkingMode: 'nat',
+    },
+  };
+
+  it('no agent report: no turns, no report, nothing reported', async () => {
+    const result = await assessWithEvidence(adapterWithProof(neverAsked()), [rowWithoutTurns()]);
+
+    expect(result.verdict).toBe('unknown');
+    expect(result.evidence).toEqual({ turns: 'no', agentReport: 'none', transcript: 'not_reported', cwd: 'unknown' });
+  });
+
+  it('no turns, and the status line named a transcript that is not on disk', async () => {
+    writeZeroTurnStatusFile(transcriptPath);
+
+    const result = await assessWithEvidence(adapterWithProof(neverAsked()), [rowWithoutTurns()]);
+
+    expect(result.verdict).toBe('never-started');
+    expect(result.evidence).toEqual({ turns: 'no', agentReport: 'status', transcript: 'missing', cwd: 'unknown' });
+  });
+
+  it('turns, and the transcript the agent reported is on disk', async () => {
+    writeStatusFile({ reportedPath: transcriptPath });
+    writeTranscript();
+
+    const result = await assessWithEvidence(adapterWithProof(neverAsked()), [rowWithTurns()]);
+
+    expect(result.verdict).toBe('unknown');
+    expect(result.evidence).toEqual({ turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'unknown' });
+  });
+
+  it('a transcript stat that fails for a reason other than ENOENT is unknown, and never proves a launch that never ran', async () => {
+    writeZeroTurnStatusFile(transcriptPath);
+    const realStat = fs.promises.stat.bind(fs.promises);
+    vi.spyOn(fs.promises, 'stat').mockImplementation(async (target, ...rest) => {
+      if (target === transcriptPath) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      return realStat(target, ...(rest as []));
+    });
+
+    const result = await assessWithEvidence(adapterWithProof(neverAsked()), [rowWithoutTurns()]);
+
+    // Only ENOENT is proof of absence: the same status file reads never-started when the stat says ENOENT.
+    expect(result.verdict).toBe('unknown');
+    expect(result.evidence).toEqual({ turns: 'no', agentReport: 'status', transcript: 'unknown', cwd: 'unknown' });
+  });
+
+  it('names the SessionStart hook when that is the only report', async () => {
+    writeSessionStartEvent(transcriptPath);
+
+    const result = await assessWithEvidence(adapterWithProof(neverAsked()), [rowWithoutTurns()]);
+
+    expect(result.evidence).toMatchObject({ turns: 'no', agentReport: 'session_start', transcript: 'missing' });
+  });
+
+  it('carries the summary on the branch where the CLI moved place, and reads no transcript there', async () => {
+    writeTranscript();
+
+    const result = await assessWithEvidence(
+      adapterWithProof(neverAsked()),
+      [rowWithTurns({ cli_target: null })],
+      // The record ran its CLI on this machine; this spawn's runs in a distro.
+      { place: UBUNTU_PLACE },
+    );
+
+    expect(result.verdict).toBe('expired');
+    // The transcript is on disk, and the summary says unknown: it was never read.
+    expect(result.evidence).toEqual({ turns: 'yes', agentReport: 'none', transcript: 'unknown', cwd: 'unknown' });
+  });
+
+  it.each([
+    ['same', () => cwd],
+    ['moved', () => path.join(projectPath, 'an-older-worktree-name')],
+  ])('reads the cwd the conversation last ran in as %s', async (expected, resumeFromCwd) => {
+    const result = await assessWithEvidence(adapterWithProof(neverAsked()), [rowWithoutTurns()], { resumeFromCwd: resumeFromCwd() });
+
+    expect(result.evidence?.cwd).toBe(expected);
+  });
+
+  it('gives no summary and no verdict but unknown with no project path', async () => {
+    const result = await assessResumeConversationWithEvidence({
+      adapter: adapterWithProof(neverAsked()), agentSessionId: AGENT_SESSION_ID, records: [rowWithTurns()], cwd, projectPath: null,
+    });
+
+    expect(result).toEqual({ verdict: 'unknown', evidence: null });
   });
 });
 
