@@ -96,6 +96,12 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
     removeSession(): void {}
     // SessionManager.dispose() disposes its telemetry first.
     dispose(): void {}
+    // suspend() closes the session's telemetry, and skips its scrollback scan once the id is known.
+    emitSessionEnd(): void {}
+    clearSessionTracking(): void {}
+    hasAgentSessionId(): boolean {
+      return true;
+    }
     requestAgentAbsenceCheck(sessionId: string): void {
       requestAgentAbsenceCheck(sessionId);
     }
@@ -111,6 +117,7 @@ import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { AGENT_START_CEILING_MS } from '../../src/main/pty/lifecycle/agent-output-tracker';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { AgentParser } from '../../src/shared/types';
+import type { ProcessInfo } from '../../src/main/activity-engine/background-shell/process-tree';
 
 /** Mirrors AGENT_SPAWN_GRACE_MS in session-manager.ts (module-private). */
 const SPAWN_GRACE_MS = 30_000;
@@ -279,23 +286,141 @@ describe('SessionManager agent-absence wiring', () => {
       expect(reportHandledError).not.toHaveBeenCalled();
     });
 
-    it('reports a kill past the threshold as a person giving up', () => {
+    it('reports a kill past the threshold as a person giving up', async () => {
       const session = seedSession({
         reportsAgentStart: true,
         startedAt: new Date(Date.now() - (ABANDON_MS + 1_000)).toISOString(),
       });
       ended(session, { intentional: true });
-      expect(sentTags()).toMatchObject({ stage: 'abandoned', ended_by: 'kill' });
+      await session.launchOutputRead;
+      // Ended by no path that read the process table, so nothing can say.
+      expect(sentTags()).toMatchObject({ stage: 'abandoned', ended_by: 'kill', agent_process: 'unknown' });
     });
 
-    it('reports a pause past the threshold as a person giving up', () => {
+    it('reports a pause past the threshold as a person giving up', async () => {
       const session = seedSession({
         reportsAgentStart: true,
         status: 'suspended',
         startedAt: new Date(Date.now() - (ABANDON_MS + 1_000)).toISOString(),
       });
       ended(session, { intentional: true });
+      await session.launchOutputRead;
       expect(sentTags()).toMatchObject({ stage: 'abandoned', ended_by: 'pause' });
+    });
+
+    /**
+     * `agent_process` says whether the shell still had an agent under it when
+     * the launch was ended: `present` is a CLI that ran and stayed silent,
+     * `absent` a command that already ended. It is read where the launch is
+     * ended, ahead of the kill, since the kill ends a live agent; and the kill
+     * never waits on it.
+     */
+    describe('whether an agent process existed when the launch was ended', () => {
+      const SHELL_PID = 4242;
+      let answerListing: (rows: ProcessInfo[]) => void;
+      let failListing: (error: Error) => void;
+      let listProcesses: ReturnType<typeof vi.fn>;
+
+      beforeEach(() => {
+        listProcesses = vi.fn(() => new Promise((resolve, reject) => {
+          answerListing = resolve;
+          failListing = reject;
+        }));
+        (manager as unknown as { host: { listProcesses: typeof listProcesses } }).host.listProcesses = listProcesses;
+      });
+
+      /** Past the abandon bound and the young-session window, so kill() closes at once. */
+      function seedAbandonable(overrides: Partial<ManagedSession> = {}): ManagedSession {
+        return seedSession({ reportsAgentStart: true, shell: '/bin/zsh', ...overrides });
+      }
+
+      /** The PTY's exit for a session Kangentic ended, as the spawn flow reports it. */
+      async function exitAfterEnd(session: ManagedSession): Promise<Record<string, string>> {
+        ended(session, { exitCode: 0, signal: 1, intentional: true });
+        await session.launchOutputRead;
+        return sentTags();
+      }
+
+      it.each([
+        { label: 'a CLI under the shell', rows: [{ pid: 5000, ppid: SHELL_PID, comm: 'claude' }], presence: 'present' },
+        { label: 'only a console host', rows: [{ pid: 5000, ppid: SHELL_PID, comm: 'conhost' }], presence: 'absent' },
+        { label: 'nothing', rows: [], presence: 'absent' },
+      ])('reads $presence when the shell had $label under it', async ({ rows, presence }) => {
+        const session = seedAbandonable();
+        manager.kill('session-1');
+        answerListing([{ pid: SHELL_PID, ppid: 1, comm: 'zsh' }, { pid: 77, ppid: 1, comm: 'launchd' }, ...rows]);
+
+        expect(await exitAfterEnd(session)).toMatchObject({ stage: 'abandoned', ended_by: 'kill', agent_process: presence });
+      });
+
+      it('sends the kill without waiting for the read', () => {
+        seedAbandonable();
+        manager.kill('session-1');
+
+        expect(listProcesses).toHaveBeenCalledTimes(1);
+        // The listing has not answered, and the shell was closed anyway.
+        expect(killedPtys).toEqual([SHELL_PID]);
+      });
+
+      it('reads unknown when the read fails', async () => {
+        const session = seedAbandonable();
+        manager.kill('session-1');
+        failListing(new Error('pty host timed out'));
+
+        expect(await exitAfterEnd(session)).toMatchObject({ agent_process: 'unknown' });
+      });
+
+      it('reads unknown from a listing that no longer holds the shell, which cannot see its children', async () => {
+        const session = seedAbandonable();
+        manager.kill('session-1');
+        answerListing([{ pid: 77, ppid: 1, comm: 'launchd' }]);
+
+        expect(await exitAfterEnd(session)).toMatchObject({ agent_process: 'unknown' });
+      });
+
+      it('reads unknown for a WSL shell, whose agent no host listing reaches', async () => {
+        const session = seedAbandonable({ shell: 'wsl -d Ubuntu' });
+        manager.kill('session-1');
+
+        expect(listProcesses).not.toHaveBeenCalled();
+        expect(await exitAfterEnd(session)).toMatchObject({ agent_process: 'unknown' });
+      });
+
+      it('reads it for a pause too', async () => {
+        const session = seedAbandonable({ consoleCloseIsGraceful: true });
+        const paused = manager.suspend('session-1');
+        answerListing([{ pid: SHELL_PID, ppid: 1, comm: 'zsh' }, { pid: 5000, ppid: SHELL_PID, comm: 'node' }]);
+        // The PTY's exit, which the suspend waits for after its close.
+        await vi.waitFor(() => expect(killedPtys).toEqual([SHELL_PID]));
+        manager.emit('exit', 'session-1', 0, true);
+        await paused;
+
+        expect(await exitAfterEnd(session)).toMatchObject({ stage: 'abandoned', ended_by: 'pause', agent_process: 'present' });
+      });
+
+      it('posts no read for a quick Stop, which is no failure', () => {
+        seedAbandonable({ startedAt: new Date(Date.now() - (ABANDON_MS - 1_000)).toISOString(), consoleCloseIsGraceful: true });
+        manager.kill('session-1');
+
+        expect(listProcesses).not.toHaveBeenCalled();
+      });
+
+      it('posts no read for a launch whose agent showed it ran', () => {
+        seedAbandonable({ agentStartObservedAt: 1 });
+        manager.kill('session-1');
+
+        expect(listProcesses).not.toHaveBeenCalled();
+      });
+
+      it('posts no read for a shell with no agent parser, and leaves it out of the quit list', () => {
+        seedAbandonable({ agentParser: undefined });
+
+        expect(manager.abandonedLaunchTags()).toEqual([]);
+
+        manager.kill('session-1');
+
+        expect(listProcesses).not.toHaveBeenCalled();
+      });
     });
 
     it('does not read a stop of an adapter that reports no start as anything', () => {
@@ -320,7 +445,7 @@ describe('SessionManager agent-absence wiring', () => {
       seedSession({ reportsAgentStart: false, id: 'silent' });
       const launches = manager.abandonedLaunchTags();
       expect(launches).toHaveLength(1);
-      expect(launches[0]).toMatchObject({ agent: 'claude', ended_by: 'quit', output_class: 'not_read' });
+      expect(launches[0]).toMatchObject({ agent: 'claude', ended_by: 'quit', agent_process: 'unknown', output_class: 'not_read' });
     });
   });
 

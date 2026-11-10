@@ -8,6 +8,7 @@ import { describeWslFailure, resolveWslDistroFacts, type WslDistroFacts } from '
 import { execFileAsync, type ExecOutput, type OffMainExecOptions } from '../../utility-process/off-main-exec';
 import { PtyHostExitedError, PtyHostTimeoutError } from '../../pty/host/pty-host-request-errors';
 import { childProcessEnv } from '../../shared/child-env';
+import { recordDetectedCliIdentity } from './cli-identity';
 import type { AgentInfo } from '../agent-adapter';
 import type { StoredCliTarget } from '../../../shared/types';
 
@@ -260,6 +261,7 @@ export class AgentDetector {
       const probe = await this.probeVersion(overridePath);
       if (probe.ok) {
         console.log(`[agent-detect] ${name}: found via override ${overridePath} (${probe.version})`);
+        recordDetectedCliIdentity(overridePath);
         return { found: true, path: overridePath, version: probe.version };
       }
       console.warn(
@@ -314,6 +316,7 @@ export class AgentDetector {
         const probe = await this.probeVersion(matchPath);
         if (probe.ok) {
           console.log(`[agent-detect] ${name}: found via PATH at ${matchPath} (${probe.version})`);
+          recordDetectedCliIdentity(matchPath);
           return { found: true, path: matchPath, version: probe.version };
         }
         if (probe.transient) sawTransientFailure = true;
@@ -343,6 +346,7 @@ export class AgentDetector {
       const probe = await this.probeVersion(fallbackPath);
       if (probe.ok) {
         console.log(`[agent-detect] ${name}: found via fallback ${fallbackPath} (${probe.version})`);
+        recordDetectedCliIdentity(fallbackPath);
         return { found: true, path: fallbackPath, version: probe.version };
       }
       if (probe.transient) sawTransientFailure = true;

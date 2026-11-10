@@ -1,7 +1,9 @@
 /**
  * A launch through a REAL shell on a real PTY, typed as `performSpawn` types it,
  * reaching a stub agent. Tests here read what the stub received, never the
- * scrollback: the shell's own echo of a command is not the agent getting it.
+ * scrollback: the shell's own echo of a command is not the agent getting it. The
+ * one exception is a launch that fails in the shell, where what the shell
+ * printed is the thing under test (`a launch that fails in the shell`).
  *
  * The failure depends on timing, so the startup delay is a parameter. While a
  * shell is in its startup files its tty is in canonical mode, where the kernel
@@ -24,6 +26,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildSpawnClearPrelude, adaptCommandForShell, quoteArg } from '../../src/shared/paths';
 import { buildTypedLaunch, TYPED_LINE_BYTE_BUDGET } from '../../src/main/pty/spawn/typed-launch';
+import { classifyLaunchOutput, type LaunchOutputClass } from '../../src/main/pty/launch-output-class';
+import { finalLinesOf } from '../../src/main/agent/shared/user-setup-failure';
 
 /** Past the kernel's canonical limit on each platform, as the #744 command was on macOS. */
 const OVERSIZED_BYTES = process.platform === 'darwin' ? 1_590 : 5_000;
@@ -329,6 +333,177 @@ describe.skipIf(shellsUnderTest.length === 0)('a launch typed while the shell st
       console.log(`[typed-launch hangup] ${process.platform} ${shell.program}: typed ${typedEnds ? 'ended' : 'survived'}, launcher ${launcherEnds ? 'ended' : 'survived'}`);
       expect(launcherEnds).toBe(typedEnds);
     }, 60_000);
+  });
+});
+
+/** A way a launch fails that the shell, not the agent, reports. */
+type ShellFailure = 'missing_launcher' | 'killed' | 'crashed' | 'exec_format' | 'bad_cpu_type';
+
+const FAILURE_CLASSES: Readonly<Record<ShellFailure, LaunchOutputClass>> = {
+  missing_launcher: 'launcher_unreadable',
+  killed: 'killed',
+  crashed: 'crashed',
+  exec_format: 'exec_format',
+  bad_cpu_type: 'bad_cpu_type',
+};
+
+/**
+ * What each shell printed for each failure, by `<platform>/<shell>`, with the
+ * rig's folder written `<rig>`. Read off a real run, never written from memory:
+ * the classifier's shapes are built on these lines (bash 5.2, zsh 5.9, fish
+ * 3.7.0, nushell 0.116.0, on Ubuntu 24.04 as CI runs them). GNU cat quotes a
+ * path that holds a space; BSD cat on macOS may not, which is why the platform
+ * is in the key. A shell this run needs with no line here fails and prints what
+ * it saw.
+ *
+ * Lines are compared with each run of spaces made one, since zsh pads its job
+ * column, and with ` (core dumped)` dropped, since whether a crash dumps core is
+ * the runner's setting. fish shortens a job's command text to a fixed length,
+ * which depends on the rig's folder, so its job lines are pinned as patterns.
+ * macOS ships zsh 5.9 too, and its job words are zsh's own, so darwin/zsh holds
+ * the same job lines; its `cat` line comes from the first macOS run.
+ */
+const PRINTED_LINES: Readonly<Record<string, Partial<Record<ShellFailure, string | RegExp>>>> = {
+  'linux/bash': {
+    missing_launcher: "cat: '<rig>/project one/.kangentic/sessions/session-1/launch.sh': No such file or directory",
+    killed: 'Killed',
+    crashed: 'Segmentation fault',
+    exec_format: 'bash: <rig>/agent dir/not-a-program: cannot execute binary file: Exec format error',
+  },
+  'linux/zsh': {
+    missing_launcher: "cat: '<rig>/project one/.kangentic/sessions/session-1/launch.sh': No such file or directory",
+    killed: "zsh: killed '<rig>/agent dir/signal-kill'",
+    crashed: "zsh: segmentation fault '<rig>/agent dir/signal-segv'",
+    exec_format: 'zsh: exec format error: <rig>/agent dir/not-a-program',
+  },
+  'darwin/zsh': {
+    killed: "zsh: killed '<rig>/agent dir/signal-kill'",
+    crashed: "zsh: segmentation fault '<rig>/agent dir/signal-segv'",
+    exec_format: 'zsh: exec format error: <rig>/agent dir/not-a-program',
+  },
+  'linux/fish': {
+    missing_launcher: "source: Error encountered while sourcing file ''<rig>/project one/.kangentic/sessions/session-1/launch.fish'':",
+    killed: /^fish: Job 1, '.*' terminated by signal SIGKILL \(Forced quit\)$/,
+    crashed: /^fish: Job 1, '.*' terminated by signal SIGSEGV \(Address boundary error\)$/,
+    exec_format: "exec: Failed to execute process: '<rig>/agent dir/not-a-program' the file could not be run by the operating system.",
+  },
+  'linux/nu': {
+    missing_launcher: 'Error: nu::parser::sourced_file_not_found',
+    killed: '· ╰── terminated by SIGKILL (9)',
+    // nushell said `core_dumped` with the core limit at 0 too; either header is its crash.
+    crashed: /^(?:Error: nu::shell::core_dumped|· ╰── terminated by SIGSEGV \(11\))$/,
+  },
+};
+
+/**
+ * Failures a shell reports in words that name no cause, measured, so the case
+ * is skipped with the reason rather than pinned.
+ */
+const UNCLASSIFIED: Readonly<Record<string, Partial<Record<ShellFailure, string>>>> = {
+  nu: {
+    exec_format: 'nushell hands a file it cannot run to /bin/sh, which reads its first bytes as a command not found',
+  },
+};
+
+/** An agent that ends itself with `signal`, as a CLI the OS killed or that crashed would end. */
+function signalAgent(rig: Rig, signal: 'KILL' | 'SEGV'): string {
+  const agentPath = path.join(rig.root, 'agent dir', `signal-${signal.toLowerCase()}`);
+  fs.writeFileSync(agentPath, `#!/bin/sh\nkill -${signal} $$\n`, { mode: 0o755 });
+  return agentPath;
+}
+
+/** A file marked executable that holds no program this machine runs, and no shebang. */
+function notAProgram(rig: Rig): string {
+  const agentPath = path.join(rig.root, 'agent dir', 'not-a-program');
+  fs.writeFileSync(agentPath, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x21, 0x21]), { mode: 0o755 });
+  return agentPath;
+}
+
+/**
+ * A 64-bit Mach-O header naming a CPU type no Mac runs (PowerPC, 18), so the
+ * kernel refuses it for its architecture, as it refuses an Intel-only CLI on an
+ * Apple silicon Mac without Rosetta.
+ */
+function wrongCpuBinary(rig: Rig): string {
+  const agentPath = path.join(rig.root, 'agent dir', 'wrong-cpu');
+  const header = Buffer.alloc(32);
+  header.writeUInt32LE(0xfeedfacf, 0);
+  header.writeUInt32LE(18, 4);
+  header.writeUInt32LE(2, 12);
+  fs.writeFileSync(agentPath, header, { mode: 0o755 });
+  return agentPath;
+}
+
+/** The launcher line for an oversized command, with its file never written: the launcher is gone. */
+function missingLauncherLine(shell: ProbeShell, rig: Rig): string {
+  const launch = buildTypedLaunch({
+    command: commandFor(shell, rig, ['--append-system-prompt', policyOfBytes(OVERSIZED_BYTES)]),
+    shell: shell.program,
+    sessionDirectory: rig.sessionDirectory,
+    platform: process.platform,
+    batchShimLaunch: () => null,
+  });
+  expect(launch.launcher, 'an oversized command takes the launcher').not.toBeNull();
+  return launch.typedLine;
+}
+
+/** Type `line` at a shell that has reached its prompt, and return what it printed once that names a class, or at the deadline. */
+async function printedAfter(shell: ProbeShell, rig: Rig, line: string): Promise<string> {
+  const pty = typeLine(shell, rig, line, STARTUP_DELAY_MS);
+  let output = '';
+  pty.onData((data) => { output += data; });
+  const deadline = Date.now() + STUB_DEADLINE_MS;
+  while (Date.now() < deadline && classifyLaunchOutput(output) === 'other') {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return output;
+}
+
+/**
+ * These read the shell's output, unlike the rest of this file, because the line
+ * the shell printed is the whole of what is under test: a launch that fails this
+ * way leaves no agent to report anything, and the report sends only the class.
+ */
+describe.skipIf(shellsUnderTest.length === 0)('a launch that fails in the shell', () => {
+  describe.each(shellsUnderTest.map((shell) => ({ program: shell.program, shell })))('$program', ({ shell }) => {
+    async function expectPrinted(failure: ShellFailure, rig: Rig, line: string): Promise<void> {
+      const output = await printedAfter(shell, rig, line);
+      const printed = finalLinesOf(output)
+        .map((printedLine) => printedLine.replaceAll(rig.root, '<rig>').replaceAll(' (core dumped)', '').replace(/\s+/g, ' '));
+      const pinned = PRINTED_LINES[`${process.platform}/${shell.program}`]?.[failure];
+      const seen = `it printed, newest first:\n${printed.join('\n')}`;
+      expect(pinned, `no line is pinned for ${shell.program} on ${process.platform} (${failure}); ${seen}`).toBeDefined();
+      const matches = (printedLine: string): boolean => (typeof pinned === 'string' ? printedLine === pinned : pinned?.test(printedLine) === true);
+      expect(printed.some(matches), `no line matched ${String(pinned)}; ${seen}`).toBe(true);
+      expect(classifyLaunchOutput(output)).toBe(FAILURE_CLASSES[failure]);
+    }
+
+    const unclassified = (failure: ShellFailure): boolean => UNCLASSIFIED[shell.program]?.[failure] !== undefined;
+
+    it('names a launcher file that is gone', async () => {
+      const rig = makeRig(shell, 0);
+      await expectPrinted('missing_launcher', rig, missingLauncherLine(shell, rig));
+    }, 30_000);
+
+    it('names an agent the system killed', async () => {
+      const rig = makeRig(shell, 0);
+      await expectPrinted('killed', rig, fullLine(shell, commandFor(shell, rig, [], signalAgent(rig, 'KILL'))));
+    }, 30_000);
+
+    it('names an agent that crashed', async () => {
+      const rig = makeRig(shell, 0);
+      await expectPrinted('crashed', rig, fullLine(shell, commandFor(shell, rig, [], signalAgent(rig, 'SEGV'))));
+    }, 30_000);
+
+    it.skipIf(unclassified('exec_format'))('names a file that is not a program this machine runs', async () => {
+      const rig = makeRig(shell, 0);
+      await expectPrinted('exec_format', rig, fullLine(shell, commandFor(shell, rig, [], notAProgram(rig))));
+    }, 30_000);
+
+    it.skipIf(process.platform !== 'darwin')('names a binary built for a CPU this Mac does not run', async () => {
+      const rig = makeRig(shell, 0);
+      await expectPrinted('bad_cpu_type', rig, fullLine(shell, commandFor(shell, rig, [], wrongCpuBinary(rig))));
+    }, 30_000);
   });
 });
 

@@ -7,10 +7,11 @@ sources:
   - resource: src/main/activity-engine/background-shell/watcher.ts
   - resource: src/main/activity-engine/background-shell/process-tree.ts
   - resource: src/main/pty/session-manager.ts
-    title: isAgentAbsenceCandidate, retireAgentlessSession, armLaunchStartBound, checkPendingLaunchOutput and getLaunchOutput
+    title: isAgentAbsenceCandidate, retireAgentlessSession, armLaunchStartBound, checkPendingLaunchOutput, getLaunchOutput and noteAgentProcessBeforeEnd
   - resource: src/main/pty/session-registry.ts
-    title: launchFailureIdentifiedAt and agentCliPath
+    title: launchFailureIdentifiedAt, agentCliPath and agentProcessAtEnd
   - resource: src/main/pty/agent-launch-report.ts
+  - resource: src/main/pty/host/agent-process-presence.ts
   - resource: src/main/pty/lifecycle/agent-output-tracker.ts
     title: AGENT_START_CEILING_MS
   - resource: src/main/pty/buffer/pty-buffer-manager.ts
@@ -454,6 +455,20 @@ that is a quick Stop and no failure. `ended_by` reads `pause` for a suspend (a S
 and `kill` for a kill (a move to To Do, a delete), since neither call knows which gesture asked. A
 host loss, a hidden agent and a quit are left out here; a quit goes on disk
 ([Error reporting](../../telemetry/error-reporting.md)).
+
+**An abandoned report says whether an agent process was there.** Silence alone made the report: a
+resume can take far longer than 15 s to show anything (an install on 0.55.0 logged `agent_ran` 89 s
+after its line ran), so `abandoned` mixed a slow CLI with a command that had already ended. The
+report now carries `agent_process`. It cannot be read at the exit, because by then the close or
+hangup has ended a live agent, so `kill()` and `suspend()` post a read of the host's process table
+for the shell's pid the moment they decide to end such a launch (`noteAgentProcessBeforeEnd`, gated
+by `mayReportAbandoned`, the test `noteLaunchEnded` and the quit's list share), and the exit's report
+waits for the answer. Neither waits for it. On POSIX the host already holds a task's kill until its
+pre-kill listing answers (`KILL_SNAPSHOT_CAP_MS`), and a `listProcesses` still out when the kill lands
+is that listing, so the read sees the shell's children before the hangup re-parents them. On Windows
+Toolhelp starts before the host handles the kill and never loses a parent pid. A listing that no
+longer holds the shell reads `unknown`, never `absent`. Changing the 15 s bound for a resume waits on
+what these numbers show.
 
 **A task whose launch never started is paused, not retired.** An exited row has no way forward: its
 surface is the terminal, its PTY is gone so no key lands, and `sessionToggleOffer` offers nothing
