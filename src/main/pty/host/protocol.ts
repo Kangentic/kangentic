@@ -85,7 +85,8 @@ export interface PtyHostError {
 export interface PtyHostRawSpawnParams {
   ptyId: number;
   file: string;
-  args: string[];
+  /** Arguments, or on Windows one command line node-pty passes on as written. */
+  args: string[] | string;
   cwd: string;
   env: Record<string, string>;
   cols: number;

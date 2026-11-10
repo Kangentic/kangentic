@@ -36,7 +36,7 @@ export interface OffMainPty {
 
 /** Spawns in the pty host. Rejects with `HostUnavailableError` when the host
  *  cannot be reached; a spawn that fails there rejects with that error. */
-export type OffMainPtySpawner = (file: string, args: string[], options: OffMainPtyOptions) => Promise<OffMainPty>;
+export type OffMainPtySpawner = (file: string, args: string[] | string, options: OffMainPtyOptions) => Promise<OffMainPty>;
 
 /** The host could not be asked: fall back to a local spawn. */
 export class HostUnavailableError extends Error {}
@@ -47,7 +47,11 @@ export function setOffMainPtySpawner(next: OffMainPtySpawner | null): void {
   spawner = next;
 }
 
-export async function spawnOffMainPty(file: string, args: string[], requested: OffMainPtyOptions): Promise<OffMainPty> {
+/**
+ * `args` is the argument list. On Windows it may instead be one command line, which node-pty
+ * appends to `file` as written: the one way to hand cmd.exe a line it must read unchanged.
+ */
+export async function spawnOffMainPty(file: string, args: string[] | string, requested: OffMainPtyOptions): Promise<OffMainPty> {
   // A probe drives an agent CLI, which can start anything, so its env never
   // carries Crashpad's pipe name (child-env.ts).
   const options: OffMainPtyOptions = { ...requested, env: withoutCrashpadPipeName(requested.env) };

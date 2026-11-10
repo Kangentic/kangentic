@@ -1,0 +1,27 @@
+{
+  "cachedUsageUtilization": {
+    "fetchedAtMs": 1800000000000,
+    "accountUuid": "00000000-0000-4000-8000-000000000001",
+    "utilization": {
+      "five_hour": {
+        "utilization": 37,
+        "resets_at": "2027-01-15T08:30:00.123456+00:00",
+        "limit_dollars": null,
+        "used_dollars": null,
+        "remaining_dollars": null,
+        "locked_reason": null
+      },
+      "seven_day": {
+        "utilization": 21,
+        "resets_at": "2027-01-18T00:00:00.654321+00:00",
+        "limit_dollars": null,
+        "used_dollars": null,
+        "remaining_dollars": null,
+        "locked_reason": null
+      },
+      "seven_day_oauth_apps": null,
+      "seven_day_opus": null,
+      "seven_day_sonnet": null
+    }
+  }
+}
