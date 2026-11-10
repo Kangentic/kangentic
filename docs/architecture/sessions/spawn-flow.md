@@ -55,8 +55,17 @@ module's `resolveEffectivePermissionMode` (a lane forcing `plan` always wins, el
 
 In-place restarts of an existing session (`resumeTaskSession`, which `SESSION_RESUME` and a phone
 Resume share, and `restartSessionForSettingsChange`) call the engine directly; they are not
-first-spawn entry points. Transient Command Terminal
+first-spawn entry points. A Switch to on an account, and the continuation at a usage limit,
+restart a task's session in place through `restartSessionForSettingsChange` (phase
+`switching-account`). Transient Command Terminal
 sessions bypass all of this (not task agents).
+
+Three account processes start the agent CLI without being sessions at all, so none passes a
+chokepoint: the sign-in terminal (`src/main/accounts/account-login.ts`), a raw PTY through
+`spawnOffMainPty` with no registry row, hooks or task tag; the idle usage reader
+(`readClaudeIdleUsage`), a `claude -p /usage --no-session-persistence --safe-mode` run through
+`runClaudeCli`; and the Codex signed-in check (`codexLoginStatus`), built and not enabled. See
+[Agent accounts](../../integrations/accounts.md).
 
 ## Engine spawn (board-driven path)
 

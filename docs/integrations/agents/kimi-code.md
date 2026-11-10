@@ -135,6 +135,10 @@ A live model swap has nothing to type: `/model <alias>` opens the picker rather 
 
 `probeAuth` answers `true` for a `credentials/*.json` from `/login`, or a model configured in `config.toml`, and `false` for neither. It reads a WSL install in its distro's home. A row of its `AGENT_LIST` result drives the amber "Copy `kimi login`" hint in the welcome grid and Settings > Agent.
 
+## Accounts
+
+Kimi has no accounts in Settings > Accounts yet ([accounts](../accounts.md)). `KIMI_CODE_HOME` moves everything, and by Kimi Code's source an account folder could link `sessions` back to the user's home. It was not built because nothing could be measured (no Kimi Code 2.x on the dev machine) and three parts need care first: `config.toml` holds the login's own provider and model entries beside the user's settings, so it can be neither copied nor left out; `session_index.jsonl` stores absolute paths through whichever home wrote them, which Kangentic's own index reads; and the session locks and the local database have never been run through a folder link on Windows.
+
 ## Headless runs
 
 - `summarize` runs `kimi [--model] --output-format stream-json -p <prompt>` in the answer home and reads the last `assistant` line. The prompt can only be an argument, which a title fits, and it goes on one line because an npm install runs through a `.cmd` shim. `-p` forces Never Ask, and rejects `--plan`, so the run stays out of the project, though a task's text, which can come from an imported issue, still reaches a run that asks for no approval. It saves a session in the answer home, and the CLI has no delete command.

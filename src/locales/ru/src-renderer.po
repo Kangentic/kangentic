@@ -47,6 +47,10 @@ msgstr "«{swimlaneName}»"
 msgid "\"{taskTitle}\""
 msgstr "«{taskTitle}»"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "\"{taskTitle}\" continues on {accountName}."
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "\"{taskTitle}\" did not run {command}."
@@ -174,6 +178,18 @@ msgstr ""
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue {resetMoment}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue in {duration}, when the first account resets."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue when the first account resets."
+msgstr ""
+
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -208,6 +224,10 @@ msgstr "{count, plural, one {Не удалось приостановить аг
 #, fuzzy
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 msgstr "{count, plural, one {Неизвестная переменная: {variableNames}. Она будет отправлена как есть.} few {Неизвестные переменные: {variableNames}. Они будут отправлены как есть.} many {Неизвестные переменные: {variableNames}. Они будут отправлены как есть.} other {Неизвестные переменные: {variableNames}. Они будут отправлены как есть.}}"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
+msgstr ""
 
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
@@ -258,6 +278,10 @@ msgstr "{keptCount, plural, one {# процесс из {taskCount, plural, one {
 #, fuzzy
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} мин {seconds} с"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
+msgstr ""
 
 #: src/renderer/components/MarkdownRenderer.tsx
 #, fuzzy
@@ -353,6 +377,10 @@ msgstr ""
 msgid "A project"
 msgstr "Проект"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "A session continues on {accountName}."
+msgstr ""
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "A tmux server. Stopping it ends all your tmux sessions."
@@ -411,6 +439,10 @@ msgstr "Агент запущен"
 
 #: src/renderer/utils/dev-restart.ts
 msgid "Agents pause during a restart and resume after."
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "All accounts at their limit"
 msgstr ""
 
 #: src/renderer/components/ErrorBoundary.tsx
@@ -649,6 +681,10 @@ msgstr "Не удалось связать задачи"
 msgid "Couldn't load the terminals for this window."
 msgstr "Не удалось загрузить терминалы для этого окна."
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't move every session"
+msgstr ""
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Couldn't move project"
@@ -811,6 +847,10 @@ msgstr "Не удалось остановить. Повторите попыт�
 #, fuzzy
 msgid "Couldn't stop processes"
 msgstr "Не удалось остановить процессы"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't switch account"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy
@@ -1187,6 +1227,10 @@ msgstr ""
 
 #: src/renderer/hooks/useBranchSettings.ts
 msgid "Name a branch to start from a tag in the project folder"
+msgstr ""
+
+#: src/renderer/lib/account-toasts.ts
+msgid "New {agentName} sessions start on {accountName}."
 msgstr ""
 
 #: src/renderer/lib/conversation-expired-toast.ts
@@ -1642,6 +1686,10 @@ msgstr "Ещё выполняются: {tasks}."
 msgid "Stop script failed"
 msgstr ""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Switched account"
+msgstr ""
+
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy
 msgid "Task completed"
@@ -1691,6 +1739,10 @@ msgstr "Переменная шаблона"
 #, fuzzy
 msgid "Terminals restarted"
 msgstr "Терминалы перезапущены"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "The account is no longer in the list."
+msgstr ""
 
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy

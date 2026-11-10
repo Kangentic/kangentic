@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type { ElementType } from 'react';
 import { useLingui } from '@lingui/react/macro';
-import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, Languages, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Workflow as WorkflowIcon, Zap } from 'lucide-react';
+import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, Languages, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Users, Workflow as WorkflowIcon, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
@@ -33,6 +33,7 @@ import { HotkeysTab } from './tabs/HotkeysTab';
 import { GeneralTab } from './tabs/GeneralTab';
 import { ThemeTab } from './tabs/ThemeTab';
 import { LanguageTab } from './tabs/LanguageTab';
+import { AccountsTab } from './tabs/AccountsTab';
 
 /** How long one setting stays quiet after its failed-write toast. Deliberately aligned
  *  with the cooldown on notifySpawnWarning (`src/main/ipc/helpers/task-git.ts`), which
@@ -76,6 +77,7 @@ const TAB_ICONS: Record<string, ElementType> = {
   browser: Globe,
   shortcuts: Zap,
   language: Languages,
+  accounts: Users,
   board: LayoutGrid,
   task: SquareKanban,
   changes: GitCompare,
@@ -211,6 +213,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'shortcuts': return <ShortcutsTab />;
       case 'developer': return <DeveloperTab globalConfig={globalConfig} />;
       case 'language': return <LanguageTab />;
+      case 'accounts': return <AccountsTab globalConfig={globalConfig} />;
       case 'board': return <BoardTab globalConfig={globalConfig} />;
       case 'task': return <TaskTab globalConfig={globalConfig} />;
       case 'changes': return <ChangesTab globalConfig={globalConfig} />;

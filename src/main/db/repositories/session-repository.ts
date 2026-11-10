@@ -174,8 +174,8 @@ export class SessionRepository {
       ).get(record.agent_session_id) as { transcript_path: string } | undefined)?.transcript_path ?? null
       : null;
     this.db.prepare(`
-      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target, transcript_path, start_head_sha)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target, transcript_path, start_head_sha, account_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
       record.task_id,
@@ -195,9 +195,11 @@ export class SessionRepository {
       record.cli_target ?? null,
       inheritedTranscriptPath,
       record.start_head_sha ?? null,
+      record.account_id ?? null,
     );
     return {
       ...record,
+      account_id: record.account_id ?? null,
       cli_target: record.cli_target ?? null,
       start_head_sha: record.start_head_sha ?? null,
       total_cost_usd: null,

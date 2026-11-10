@@ -108,4 +108,29 @@ export function runGlobalMigrations(db: Database.Database): void {
     db.exec('DROP INDEX idx_dev_ports_task');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_dev_ports_task ON dev_ports(task_id)');
+
+  // Migration: agent accounts (task #1057). GLOBAL because an account is a machine-wide login,
+  // shared by every project. One row per account; `position` is the run order within its agent.
+  // The `default` row is the agent's own home and has no folder of Kangentic's. Key-file rows hold
+  // the PATH of the user's key file and the variable names in it, never a key.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_accounts (
+      id TEXT PRIMARY KEY,
+      agent TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('default', 'folder', 'key-file')),
+      folder_path TEXT,
+      key_file_path TEXT,
+      key_names TEXT NOT NULL DEFAULT '[]',
+      email TEXT,
+      plan TEXT,
+      status TEXT NOT NULL DEFAULT 'ok',
+      position INTEGER NOT NULL,
+      history_private INTEGER NOT NULL DEFAULT 0,
+      last_usage_json TEXT,
+      last_usage_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_accounts_agent ON agent_accounts(agent, position);
+  `);
 }

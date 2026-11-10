@@ -4,6 +4,7 @@ import {
   isRateLimitWindowExpired,
   liveRateLimitWindows,
   mergeRateLimitSnapshot,
+  rateLimitWindowsForAccount,
   rateLimitWindowsForAgent,
   rateLimitWindowsShortestFirst,
   sessionRateLimitAgent,
@@ -11,6 +12,31 @@ import {
 } from '../../src/renderer/utils/rate-limit-window';
 import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
 import type { RateLimitWindow } from '../../src/shared/types';
+
+describe('rate limits across accounts', () => {
+  const resetsAt = 1_900_000_000;
+  const fiveHour = (usedPercentage: number, accountId?: string): RateLimitWindow => ({
+    id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage, resetsAt, agent: 'claude', ...(accountId ? { accountId } : {}),
+  });
+  const snapshot = (rateLimits: RateLimitWindow[]): RateLimitSnapshot => ({ rateLimits, sessionId: 'session', updatedAt: 0 } as unknown as RateLimitSnapshot);
+
+  it('keeps two accounts five-hour windows apart instead of one taking the other', () => {
+    const merged = mergeRateLimitSnapshot(snapshot([fiveHour(90, 'account-1')]), snapshot([fiveHour(5, 'account-2')]), 0);
+    expect(merged.rateLimits.map((window) => [window.accountId, window.usedPercentage])).toEqual([['account-1', 90], ['account-2', 5]]);
+  });
+
+  it('draws only the session account, falling back to an unstamped window its account did not report', () => {
+    const windows = [fiveHour(90, 'account-1'), fiveHour(5, 'account-2'), { ...fiveHour(30), id: 'seven-day' }];
+    expect(rateLimitWindowsForAccount(windows, 'account-2').map((window) => [window.id, window.usedPercentage]))
+      .toEqual([['five-hour', 5], ['seven-day', 30]]);
+  });
+
+  it('shows one window per id when the session account is not known yet, and everything when nothing is stamped', () => {
+    expect(rateLimitWindowsForAccount([fiveHour(90, 'account-1'), fiveHour(5, 'account-2')], undefined)).toHaveLength(1);
+    const unstamped = [fiveHour(10), { ...fiveHour(20), id: 'seven-day' }];
+    expect(rateLimitWindowsForAccount(unstamped, 'account-1')).toBe(unstamped);
+  });
+});
 
 describe('rateLimitWindowsForAgent', () => {
   const claudeWeek: RateLimitWindow = { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 40, resetsAt: 0, agent: 'claude' };

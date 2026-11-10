@@ -1,8 +1,8 @@
-import os from 'node:os';
 import path from 'node:path';
 import { identifyLoginFailure } from '../../shared/user-setup-failure';
 import { identifyRejectedHomeSettings } from '../gemini/startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
+import { qwenHomeDir } from './qwen-home';
 
 /** Qwen Code's own words, read out of the 0.26.5 bundle. */
 const LOGIN_SENTENCES: readonly RegExp[] = [
@@ -15,5 +15,6 @@ const LOGIN_SENTENCES: readonly RegExp[] = [
 /** See `AgentAdapter.identifyUserSetupFailure`. */
 export function identifyQwenUserSetupFailure(finalOutput: string): UserSetupMatch | null {
   return identifyLoginFailure(finalOutput, LOGIN_SENTENCES)
-    ?? identifyRejectedHomeSettings(finalOutput, path.join(os.homedir(), '.qwen', 'settings.json'));
+    // The home Qwen reads, `QWEN_HOME` included: a user who moved it has their settings there.
+    ?? identifyRejectedHomeSettings(finalOutput, path.join(qwenHomeDir(), 'settings.json'));
 }

@@ -84,6 +84,10 @@ Real-time thinking and idle status indicators, from each agent's hooks where it 
 
 The context bar below each terminal displays session metadata: shell, CLI version, model, cost, tokens, and context window usage. Each element can be toggled on or off in settings.
 
+### Multiple Accounts per Agent
+
+Sign in to more than one Claude Code subscription once, in Settings > Accounts, and Kangentic picks an account for each session: the one whose limit resets soonest, or your own order. A session that reaches its usage limit continues on the next account, and every conversation stays in one place whichever account wrote it. Aider, Cursor, Droid and Oz take an API key file per account.
+
 ### Settings Search
 
 A built-in search bar filters settings by keyword with multi-token matching, grouped results by tab, and match count badges. Find any setting instantly across all tabs.

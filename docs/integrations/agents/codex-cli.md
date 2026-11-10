@@ -12,6 +12,8 @@ sources:
   - resource: src/main/agent/adapters/codex/trust-manager.ts
   - resource: src/main/agent/adapters/codex/config-toml.ts
   - resource: src/main/agent/adapters/codex/session-history-parser.ts
+  - resource: src/main/agent/adapters/codex/rate-limits.ts
+  - resource: src/main/agent/adapters/codex/accounts.ts
   - resource: src/main/agent/adapters/codex/model-catalog.ts
   - resource: src/main/agent/adapters/codex/app-server-rpc.ts
   - resource: src/main/agent/adapters/codex/capability-discovery.ts
@@ -153,7 +155,7 @@ Kangentic registers its hooks as `-c hooks.<Event>=[...]` overrides in Codex's s
 
 What no hook reports comes from the rollout (`codex/session-history-parser.ts`): a command still running at its yield (`Process running with session ID N`, which fires PreToolUse but no PostToolUse) is a background start keyed by its call id, a `write_stdin` poll that finds it exited ends it, `turn_aborted` (an Esc interrupt, no hook) is an Interrupted event, and a `task_complete` that carries an `error` (a failed model request, no Stop) is a TurnFailed event. The rollout no longer forces activity or reports tool starts, and `sessionHistory.suppressesPtyFallback: false` keeps its reads from turning the PTY tracker off, so a session whose hooks Codex did not confirm keeps that tracker.
 
-The rollout also carries the live usage. `turn_context` names the model and the turn's `effort`, reported as the agent's own (`reportedByAgent`). Codex 0.163 writes a `token_usage_record` per model response (`codex-rs/history/src/rollout_payload.rs`), whose `usage` is that response's request size, read as the context in use the same way an older rollout's `token_count.last_token_usage` is; a record whose `thread_id` is not its `session_id` belongs to another thread and is skipped.
+The rollout also carries the live usage. `turn_context` names the model and the turn's `effort`, reported as the agent's own (`reportedByAgent`). Codex 0.163 writes a `token_usage_record` per model response (`codex-rs/history/src/rollout_payload.rs`), whose `usage` is that response's request size, read as the context in use the same way an older rollout's `token_count.last_token_usage` is; a record whose `thread_id` is not its `session_id` belongs to another thread and is skipped. A `token_count` record also carries the plan's `rate_limits` snapshot, read by `rate-limits.ts` into `codex-primary` and `codex-secondary` windows (`used_percent`, `window_minutes`, and `resets_at` or the older `resets_in_seconds`). Main stamps them with the session's agent and account, so the context bar shows them only on Codex sessions (`reportsRateLimits`). A session on an API key writes a null snapshot and shows none.
 
 The legacy project-local `.codex/hooks.json` from builds before Codex 0.128 is still swept of Kangentic-owned entries by `buildHooks`.
 
@@ -169,6 +171,18 @@ The rollout feeds the per-task stats as Claude's transcript does (`transcript-us
 The transcript parser (`get_transcript`, the Conversation viewer) maps `custom_tool_call` to a `tool_use` and `custom_tool_call_output` to a `tool_result`. An `apply_patch` input that names a file becomes `{ file_path, patch }` (see `fileChangeTools` below); a patch that names none, and any other freeform input, keeps its raw text. Every `apply_patch` is one ("This is a FREEFORM tool, so do not wrap the patch in JSON", `codex-rs/core/src/tools/handlers/apply_patch_spec.rs`), so before this every edit Codex made was missing from the viewer. `local_shell_call` and `web_search_call` become `tool_use` entries carrying their `action`, and an output given as content items reads as its text items joined by newlines.
 
 Codex's rollout, transcript and model-history readers resolve Codex's home through `codexHomeDir` (`config-toml.ts`), so `$CODEX_HOME` is honored there too; with `~/.codex` hard-coded, a user with `CODEX_HOME` set got no rollout telemetry at all.
+
+## Accounts
+
+**Built, not enabled.** Codex has no card in Settings > Accounts yet. Its account support was written from Codex's source with no ChatGPT login to run it on, so the adapter does not declare it. What follows describes it as built ([accounts](../accounts.md), Per agent).
+
+Each extra Codex account is a folder `CODEX_HOME` points at (task #1057, [accounts](../accounts.md), `accounts.ts`). It keeps its own login (`auth.json`) and its own SQLite files. `sessions`, `archived_sessions`, `generated_images`, `attachments` and `thread-writer-locks` are links into the user's `~/.codex`, `history.jsonl` and `session_index.jsonl` are hard links, and `config.toml` is a copy made after Kangentic's trust write. Add account runs `codex login`. Who is signed in is read from the id token's claims in `auth.json` (email and plan), or from `codex login status` when the login is kept in the keyring.
+
+The databases stay per account on purpose. Codex finds a conversation by its id in the rollout file's name when its index has no row, and a shared index was measured to break a resume once an account folder was gone. So an account spawn sets `CODEX_SQLITE_HOME` to its folder and the config copy drops a top-level `sqlite_home`.
+
+A Codex conversation resumes on the account that started it, and Switch to moves no running Codex session: rollouts hold encrypted reasoning that OpenAI's backend has refused across logins. Usage comes from the rollout while a session runs. There is no read with no session running, and no continuation on another account at a limit.
+
+Measured on 0.163.0 with no login: a second home whose `sessions` was a link read, listed and resumed the first home's conversations, and the resume grew the first home's files. Not run: a ChatGPT sign-in, a resume under a second account, and a real plan limit. A new account folder's first start is slower: Codex indexes every rollout in the shared `sessions`, clones its plugin catalog (about 25 MB), and on Windows sets up its sandbox for the new home.
 
 ## WSL
 
@@ -221,7 +235,6 @@ Each gap against the Claude adapter was checked against Codex's own documentatio
 
 **Supported, not built, by decision:**
 
-- **Rate-limit windows.** `token_count.rate_limits` carries them. But the renderer keeps one rate-limit snapshot for every agent (`latestRateLimits` in `session-store.ts`), so Codex windows would also show on Claude's pill. Parsing them in the adapter alone would do exactly that, so nothing reads them. Showing them needs a per-agent snapshot in shared renderer code.
 - **`parseTranscriptWindow`.** The format supports it, but the measured rollouts are at most 0.3 MB against the 16 MB tail cap, so the tail already indexes whole conversations.
 
 `fileChangeTools` is built inside the adapter, with no contract change. `apply_patch` input is patch text with no path field, so the transcript parser records each call's input as `{ file_path, patch }`. Its `file_path` is the first file the patch's `*** Add File:`, `*** Update File:`, `*** Delete File:` or `*** Move to:` headers name (`codex-rs/core/assets/tools/apply_patch.lark` at rust-v0.163.0). It leads the JSON, because the chunker cuts each tool input at 200 characters. A patch touching several files is recorded under its first, and the Conversation viewer shows the patch inside that object.

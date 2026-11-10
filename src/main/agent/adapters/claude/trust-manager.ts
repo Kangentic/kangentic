@@ -222,6 +222,36 @@ export async function ensureWorktreeTrust(worktreePath: string, place: CliPlace 
   await updateClaudeJson('worktree trust', (data) => applyWorktreeTrust(data, key), place);
 }
 
+/** Record the external-imports question as answered no for a project. True when it changed anything. */
+function applyExternalImportsDeclined(data: Record<string, unknown>, resolvedPath: string): boolean {
+  if (!data.projects || typeof data.projects !== 'object') {
+    data.projects = {};
+  }
+  const projects = data.projects as Record<string, Record<string, unknown>>;
+  const entry = projects[resolvedPath] ?? {};
+  if (entry.hasClaudeMdExternalIncludesWarningShown === true) return false;
+  projects[resolvedPath] = {
+    ...entry,
+    hasClaudeMdExternalIncludesApproved: entry.hasClaudeMdExternalIncludesApproved === true,
+    hasClaudeMdExternalIncludesWarningShown: true,
+  };
+  return true;
+}
+
+/**
+ * Answer Claude Code's "Allow external CLAUDE.md file imports?" with no for a project root, so
+ * no session there opens on the prompt. Claude asks it when a CLAUDE.md above the project imports
+ * a file outside it, and keeps the answer on the project's root entry (measured on 2.1.319: the
+ * flag on a worktree's own entry changed nothing, on its repository root's the prompt stayed
+ * away). Only the dev preview calls this, for the throwaway projects it makes inside a checkout
+ * whose own CLAUDE.md imports AGENTS.md: those instructions are not the sample project's, and a
+ * prompt no automated session can answer stalled every preview task.
+ */
+export async function declineExternalClaudeMdImports(projectRoot: string): Promise<void> {
+  const key = await trustKey(projectRoot, null);
+  await updateClaudeJson('external imports answer', (data) => applyExternalImportsDeclined(data, key));
+}
+
 /**
  * Ensure the "kangentic" MCP server is listed in enabledMcpjsonServers
  * for a project path so Claude Code auto-enables it without prompting.

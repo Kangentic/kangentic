@@ -212,7 +212,8 @@ at the Windows timer floor.
 Session PTYs and their output pipeline (`src/main/pty/**`), the host's fork and wiring in
 `register-all.ts`, each renderer's port (`src/preload/pty-port-client.ts` and the broker in
 `ipc/handlers/sessions.ts`), one-shot child processes on main, the probes' raw PTYs (the Claude model
-picker, the Antigravity print runner spawn through `spawnOffMainPty`, `off-main-pty.ts`), the
+picker, the Antigravity print runner and the account sign-in terminal spawn through
+`spawnOffMainPty`, `off-main-pty.ts`), the
 agent CLI runs (`spawnCli`, `off-main-cli.ts`), and the packaging.
 
 Git on a task's lifecycle runs in the host too (#732): a workflow runs up to eight lifecycles at

@@ -10,15 +10,19 @@ chrome unless these are stated.
 
 ## The rule
 
-- **Icons:** use Lucide React icons. No inline SVGs. Exactly four files are exempt. Three
+- **Icons:** use Lucide React icons. No inline SVGs. Exactly five files are exempt. Three
   consume a shipped `@kangentic/branding` asset that cannot be a lucide glyph:
   `components/BrandMark.tsx` (the brandmark lockup), `components/ActivityMark.tsx` (the twelve
   activity marks, shared with the website and mobile app), and
   `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). The fourth,
   `components/workflows/NoWorkflowsIllustration.tsx`, is the Workflows empty state's drawing of
   four linked cards: its curves are a diagram, not an icon, so no lucide glyph can draw them. It
-  paints only theme tokens and never moves. Each exempt file carries a comment naming this rule.
-  Adding a fifth needs the same justification, not a silent inline `<svg>`.
+  paints only theme tokens and never moves. The fifth, `components/AgentLogo.tsx`, draws an agent
+  vendor's own mark on its Accounts card: no lucide glyph is a logo, and a list of logins is where
+  vendors have to be told apart. The marks are the set kangentic.com draws, all `currentColor`,
+  held as element data in `agent-marks.ts`. It never moves, and an agent with no mark there gets
+  the generic agent icon. Each exempt file carries a comment naming this rule.
+  Adding a sixth needs the same justification, not a silent inline `<svg>`.
 - **An icon stored by name resolves through the icon registry.** Column and shortcut icons are
   persisted kebab-case names, rendered with `RegistryIcon`, `ColumnGlyph` or `SwimlaneIcon`
   (`utils/swimlane-icons.tsx`). Never import lucide's `icons` map: only `utils/icon-catalog.ts`

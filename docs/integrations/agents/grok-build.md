@@ -11,6 +11,7 @@ sources:
   - resource: src/main/agent/adapters/grok/mcp-config.ts
   - resource: src/main/agent/adapters/grok/trust-manager.ts
   - resource: src/main/agent/adapters/grok/session-paths.ts
+  - resource: src/main/agent/adapters/grok/accounts.ts
   - resource: src/main/agent/adapters/grok/session-history-parser.ts
   - resource: src/main/agent/adapters/grok/transcript-parser.ts
   - resource: src/main/agent/adapters/grok/command-injection-verifier.ts
@@ -241,6 +242,18 @@ grok [-s <uuid> | --resume <uuid>] --permission-mode <mode> [--allow "MCPTool(ka
 - `--allow "MCPTool(kangentic__*)"` rides along only when the Kangentic MCP server is attached, so a board-driven session never stalls on grok's interactive approval prompt for Kangentic's own tools. An explicit user deny still wins.
 - Model and effort overrides pass straight through as `--model <slug>` and `--reasoning-effort <effort>` when set.
 - The interactive prompt is delivered after `--` (end-of-options), so prompt text starting with a dash can never be parsed as a CLI option regardless of shell quoting. Non-interactive spawns (`nonInteractive` transition actions) use `-p "<prompt>" --output-format plain` instead, which prints one turn and exits. A resume passes no prompt. `grok [PROMPT]` is "Initial prompt for the interactive session", but neither `grok --help` nor its docs say it runs on a `--resume`, so the adapter declares `resumePromptDelivery: 'typed'` and Kangentic types a resume's message in once Grok is ready (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives)).
+
+## Accounts
+
+**Built, not enabled.** Grok has no card in Settings > Accounts yet. Its account support was measured as far as the installed 1.0.0 allows, which xAI's API refuses turns from, so no session was run and the adapter does not declare it. What follows describes it as built ([accounts](../accounts.md), Per agent).
+
+A Grok account is a login file (task #1057, [accounts](../accounts.md), `accounts.ts`). `GROK_AUTH_PATH` names the `auth.json` a run reads and writes, and `GROK_HOME` does not move, so sessions, config, trust and caches stay in the user's home and nothing is linked. The account folder holds only `auth.json`, its lock, and a `.corrupt` copy if Grok sets one aside. Add account runs `grok login` with the variable set. Who is signed in is read from the file's `email` field. Never copy an `auth.json` between accounts: its refresh token is single use.
+
+An account's sessions run standalone (`--no-leader`, a top-level flag the TUI takes). A leader process is one per home and reloads that home's `auth.json`, which would put every account on the user's own login. Leader mode is off unless the user's `[cli] use_leader` or xAI's remote setting turns it on.
+
+Measured on 1.0.0 with `grok models`: with `GROK_AUTH_PATH` at a missing file and the real home, Grok was not authenticated and the real login did not change; with an empty `GROK_HOME` and the variable at the real login, it was logged in. From xAI's source at 1.0.45, one resolver feeds the TUI, headless runs, `grok login`, `grok logout` and the token refresh. The variable is undocumented: its one public mention is the 1.0.19 changelog. Not run: `grok login` writing the file, and two accounts at once.
+
+Shared by the home whatever the account: `models_cache.json` (the account that wrote last decides it, and before 1.0.25 it is not scoped to an account at all), and a team's managed configuration, which applies to every session in the home. With `XAI_API_KEY` set, an account whose login is gone runs on the key. Usage with no session comes from Grok's billing answer (`_x.ai/billing` over `grok agent --no-leader stdio`, about half a second on 1.0.0, no turn and no session folder): `config.creditUsagePercent` and the period's `end`. xAI leaves a zero out, so a missing percent reads 0, which is what the one account measured answered. A Grok session whose turn fails with a limit on an account that then reads full continues on the next account. The percent on a used account and a resume under another account have not been seen; both are reported to error reporting when they go wrong.
 
 ## WSL
 

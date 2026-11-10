@@ -39,6 +39,10 @@ msgstr "\"{swimlaneName}\""
 msgid "\"{taskTitle}\""
 msgstr "\"{taskTitle}\""
 
+#: src/renderer/lib/account-toasts.ts
+msgid "\"{taskTitle}\" continues on {accountName}."
+msgstr "\"{taskTitle}\" continues on {accountName}."
+
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" did not run {command}."
 msgstr "\"{taskTitle}\" did not run {command}."
@@ -144,6 +148,18 @@ msgstr "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other 
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue {resetMoment}, when the first account resets."
+msgstr "{agentName} sessions continue {resetMoment}, when the first account resets."
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue in {duration}, when the first account resets."
+msgstr "{agentName} sessions continue in {duration}, when the first account resets."
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{agentName} sessions continue when the first account resets."
+msgstr "{agentName} sessions continue when the first account resets."
+
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{basePill} will be checked out in the project folder"
 msgstr "{basePill} will be checked out in the project folder"
@@ -171,6 +187,10 @@ msgstr "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # age
 #: src/renderer/components/TemplateTextField.tsx
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 msgstr "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
+msgstr "{failed, plural, one {# running session stays on its account.} other {# running sessions stay on their accounts.}}"
 
 #: src/renderer/lib/leftover-processes.ts
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
@@ -211,6 +231,10 @@ msgstr "{keptCount, plural, one {# process from {taskCount, plural, other {# tas
 #: src/renderer/utils/format-session.ts
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes}m {seconds}s"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
+msgstr "{moved, plural, one {# running session} other {# running sessions}} moved to {accountName}."
 
 #: src/renderer/components/MarkdownRenderer.tsx
 msgid "{path} has no changes in this view"
@@ -288,6 +312,10 @@ msgstr "A check or build failed as of the last PR refresh"
 msgid "A project"
 msgstr "A project"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "A session continues on {accountName}."
+msgstr "A session continues on {accountName}."
+
 #: src/renderer/lib/leftover-processes.ts
 msgid "A tmux server. Stopping it ends all your tmux sessions."
 msgstr "A tmux server. Stopping it ends all your tmux sessions."
@@ -336,6 +364,10 @@ msgstr "Agent started"
 #: src/renderer/utils/dev-restart.ts
 msgid "Agents pause during a restart and resume after."
 msgstr "Agents pause during a restart and resume after."
+
+#: src/renderer/lib/account-toasts.ts
+msgid "All accounts at their limit"
+msgstr "All accounts at their limit"
 
 #: src/renderer/components/ErrorBoundary.tsx
 msgid "An unexpected error occurred."
@@ -529,6 +561,10 @@ msgstr "Couldn't link the tasks"
 msgid "Couldn't load the terminals for this window."
 msgstr "Couldn't load the terminals for this window."
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't move every session"
+msgstr "Couldn't move every session"
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Couldn't move project"
 msgstr "Couldn't move project"
@@ -660,6 +696,10 @@ msgstr "Couldn't stop it. Try again, or close it yourself."
 #: src/renderer/lib/leftover-processes.ts
 msgid "Couldn't stop processes"
 msgstr "Couldn't stop processes"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "Couldn't switch account"
+msgstr "Couldn't switch account"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Delete"
@@ -965,6 +1005,10 @@ msgstr "Name a branch to start from a commit in the project folder"
 #: src/renderer/hooks/useBranchSettings.ts
 msgid "Name a branch to start from a tag in the project folder"
 msgstr "Name a branch to start from a tag in the project folder"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "New {agentName} sessions start on {accountName}."
+msgstr "New {agentName} sessions start on {accountName}."
 
 #: src/renderer/lib/conversation-expired-toast.ts
 msgid "New conversation"
@@ -1337,6 +1381,10 @@ msgstr "Still running: {tasks}."
 msgid "Stop script failed"
 msgstr "Stop script failed"
 
+#: src/renderer/lib/account-toasts.ts
+msgid "Switched account"
+msgstr "Switched account"
+
 #: src/renderer/stores/board-store/task-completion-slice.ts
 msgid "Task completed"
 msgstr "Task completed"
@@ -1376,6 +1424,10 @@ msgstr "Template variable"
 #: src/renderer/App.tsx
 msgid "Terminals restarted"
 msgstr "Terminals restarted"
+
+#: src/renderer/lib/account-toasts.ts
+msgid "The account is no longer in the list."
+msgstr "The account is no longer in the list."
 
 #: src/renderer/utils/worktree-placement.tsx
 msgid "The agent runs on a remote server"

@@ -19,7 +19,7 @@ sources:
 
 Kangentic uses a two-database design:
 
-- **Global DB** (`<configDir>/index.db`) -- stores the project list, global configuration, and dev-server port reservations.
+- **Global DB** (`<configDir>/index.db`) -- stores the project list, global configuration, dev-server port reservations, and agent accounts.
 - **Per-project DB** (`<configDir>/projects/<projectId>.db`) -- stores tasks, swimlanes, actions, and sessions for a single project.
 
 This separation keeps project data isolated. Deleting a project removes its database file. First it
@@ -199,6 +199,36 @@ which is what lets a stale reservation self-correct instead of permanently
 burning a port. Rows are released when the task is deleted
 (`TaskRepository.delete`) or its project is removed (`ProjectRepository.delete`);
 there is no background reclaim.
+
+### agent_accounts table
+
+The accounts each agent runs on. Global because an account is a machine-wide login
+that every project shares. `position` is the run order within one agent. Key-file rows hold the
+path of the user's key file and the variable names in it, never a key. See
+[Agent accounts](../integrations/accounts.md).
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| agent | TEXT | NOT NULL | |
+| kind | TEXT | NOT NULL, CHECK in (`default`, `folder`, `key-file`) | |
+| folder_path | TEXT | | NULL |
+| key_file_path | TEXT | | NULL |
+| key_names | TEXT | NOT NULL | '[]' |
+| email | TEXT | | NULL |
+| plan | TEXT | | NULL |
+| status | TEXT | NOT NULL | 'ok' |
+| position | INTEGER | NOT NULL | |
+| history_private | INTEGER | NOT NULL | 0 |
+| last_usage_json | TEXT | | NULL |
+| last_usage_at | TEXT | | NULL |
+| created_at | TEXT | NOT NULL | |
+
+Index: `idx_agent_accounts_agent` on `(agent, position)`. `status` is one of `ok`, `signed-out`,
+`no-subscription`, `not-found` or `link-failed`. `history_private` is 1 when the account folder's
+`history.jsonl` could not be hard linked to the agent's home, so that account keeps its own prompt
+history. `last_usage_json` holds the account's last usage windows, read when no session runs on it.
+Each project database's `sessions.account_id` names the row a session ran on.
 
 ## Connection Management
 

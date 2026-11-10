@@ -46,8 +46,8 @@ interface BackgroundSessionEntry {
 }
 
 /** The background sessions `claude agents --json` lists. Throws when the CLI fails or prints something else. */
-async function listBackgroundSessions(cliPath: string, timeoutMs: number): Promise<BackgroundSessionEntry[]> {
-  const stdout = await runClaudeCli(cliPath, ['agents', '--json'], timeoutMs);
+async function listBackgroundSessions(cliPath: string, timeoutMs: number, env: Record<string, string> | undefined): Promise<BackgroundSessionEntry[]> {
+  const stdout = await runClaudeCli(cliPath, ['agents', '--json'], timeoutMs, env);
   const parsed: unknown = JSON.parse(stdout);
   if (!Array.isArray(parsed)) throw new Error('claude agents --json did not print a list');
   const entries: BackgroundSessionEntry[] = [];
@@ -72,24 +72,26 @@ async function listBackgroundSessions(cliPath: string, timeoutMs: number): Promi
  * alive is logged). Resolves false when nothing held it or the stop never ran.
  * Both callers go on either way. Never throws.
  */
-export async function stopClaudeBackgroundSession(options: { agentSessionId: string; cliPath: string }): Promise<boolean> {
-  const { agentSessionId, cliPath } = options;
+export async function stopClaudeBackgroundSession(options: { agentSessionId: string; cliPath: string; env?: Record<string, string> }): Promise<boolean> {
+  // The account's home: `claude agents` lists only the background sessions of the
+  // CLAUDE_CONFIG_DIR it runs under (measured on 2.1.319, task #1057).
+  const { agentSessionId, cliPath, env } = options;
   const deadline = Date.now() + STOP_BUDGET_MS;
   /** A step's timeout: its own cap, and never past the whole stop's budget. */
   const within = (capMs: number): number => Math.max(1, Math.min(capMs, deadline - Date.now()));
   let stopRan = false;
   try {
-    const holding = (await listBackgroundSessions(cliPath, within(LIST_TIMEOUT_MS)))
+    const holding = (await listBackgroundSessions(cliPath, within(LIST_TIMEOUT_MS), env))
       .filter((entry) => entry.alive && entry.sessionId === agentSessionId && SHORT_ID.test(entry.id));
     if (holding.length === 0) return false;
     for (const entry of holding) {
-      await runClaudeCli(cliPath, ['stop', entry.id], within(STOP_TIMEOUT_MS));
+      await runClaudeCli(cliPath, ['stop', entry.id], within(STOP_TIMEOUT_MS), env);
       stopRan = true;
       console.log(`[claude] stopped background session ${entry.id} holding conversation ${agentSessionId.slice(0, 8)}`);
     }
     const stoppedIds = new Set(holding.map((entry) => entry.id));
     while (Date.now() < deadline) {
-      const stillAlive = (await listBackgroundSessions(cliPath, within(LIST_TIMEOUT_MS))).some((entry) => entry.alive && stoppedIds.has(entry.id));
+      const stillAlive = (await listBackgroundSessions(cliPath, within(LIST_TIMEOUT_MS), env)).some((entry) => entry.alive && stoppedIds.has(entry.id));
       if (!stillAlive) return true;
       await new Promise((resolve) => setTimeout(resolve, STOP_SETTLE_POLL_MS));
     }

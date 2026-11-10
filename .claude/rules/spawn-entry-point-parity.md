@@ -184,3 +184,28 @@ the adapter can enforce it), and the raw
 `SESSION_SPAWN` passthrough are not task-agent spawns; they are allowlisted with reasons in the
 test. The workflow agent still builds its command, so it runs `ensureTrust` and `resolveShimLaunch`
 first like every other builder. The renderer never spawns directly.
+
+Three agent-account processes start an agent CLI but are not agent sessions, so this
+rule does not govern them. None calls `sessionManager.spawn(` or `buildCommand(`, so the
+test's scans do not reach them either:
+
+- **The sign-in terminal** (`src/main/accounts/account-login.ts`) runs the CLI's own sign-in
+  (`claude auth login`) as a raw PTY in the pty host through `spawnOffMainPty`. It has no registry
+  row, no hooks and no `KANGENTIC_TASK_ID` tag, and takes its env from `childProcessEnv`. It runs
+  in the home folder, or in the account folder for a CLI that signs in on its own screen
+  (`loginIsInteractive`, Gemini), which would read the home folder's settings as a project's.
+  On Windows an npm install resolves to a `.cmd` shim, which runs through `cmd.exe /d /s /c` as
+  one command line with the shim's path quoted by `quoteCmdExecutable`; an `.exe` starts
+  directly. Its arguments are the adapter's fixed login words, so the multi-line prompt cut that
+  `resolveShimLaunch` exists for cannot happen.
+- **The idle usage reader** (`readClaudeIdleUsage`, `src/main/agent/adapters/claude/accounts.ts`)
+  runs `claude -p /usage --no-session-persistence --safe-mode` to completion through the adapter's
+  `runClaudeCli` (`cli-run.ts`). That helper refuses any argument that is not a plain word and
+  quotes the executable for cmd. The run builds no command, starts no session and writes no
+  transcript.
+- **The Codex signed-in check** (`codexLoginStatus`, `src/main/agent/adapters/codex/accounts.ts`,
+  built and not enabled) runs `codex login status` through the shared `spawnCli`, only when an account has no
+  `auth.json` to read, and reads its exit code. Its arguments are fixed.
+
+Every agent session, by contrast, asks `resolveSpawnAccount` for its account after `ensureTrust`
+(see `docs/integrations/accounts.md`).

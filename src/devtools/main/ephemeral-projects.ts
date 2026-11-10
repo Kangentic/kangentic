@@ -411,6 +411,9 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
   // spawn-time call.
   try {
     await agentRegistry.get(project.default_agent)?.ensureTrust(cloneDir);
+    // The clone sits inside this checkout, whose own instructions import files above it. The
+    // agent would ask whether to load them, a prompt no automated session can answer.
+    await agentRegistry.get(project.default_agent)?.declineExternalInstructionImports?.(cloneDir);
   } catch (trustError) {
     console.warn(`[DEV] Preview trust seeding failed for ${cloneDir}:`, trustError);
   }

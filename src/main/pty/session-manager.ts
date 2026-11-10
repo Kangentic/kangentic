@@ -1070,7 +1070,11 @@ export class SessionManager extends EventEmitter {
     });
 
     this.sessionHistoryReader = new SessionHistoryReader({
-      onUsageUpdate: (sessionId, usage) => this.telemetry.setSessionUsage(sessionId, usage),
+      // Stamped like a status line's usage: a history file can carry rate limits too (Codex).
+      onUsageUpdate: (sessionId, usage) => {
+        const session = this.registry.get(sessionId);
+        this.telemetry.setSessionUsage(sessionId, withRateLimitAgent(usage, session?.agentName, session?.accountId));
+      },
       onEvents: (sessionId, events) => this.telemetry.ingestEvents(sessionId, events, {
         suppressesPtyTracker: this.historySuppressesPtyFallback(sessionId),
       }),
@@ -1093,10 +1097,13 @@ export class SessionManager extends EventEmitter {
     });
 
     this.statusFileReader = new StatusFileReader({
-      onUsageParsed: (sessionId, usage) => this.telemetry.processStatusUpdate(
-        sessionId,
-        withRateLimitAgent(this.usageOnHost(sessionId, usage), this.registry.get(sessionId)?.agentName),
-      ),
+      onUsageParsed: (sessionId, usage) => {
+        const session = this.registry.get(sessionId);
+        this.telemetry.processStatusUpdate(
+          sessionId,
+          withRateLimitAgent(this.usageOnHost(sessionId, usage), session?.agentName, session?.accountId),
+        );
+      },
       onEventsParsed: (sessionId, rawLines, events) => {
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
         // Before the events, and on every batch: a SessionStart that moves the
@@ -1272,7 +1279,10 @@ export class SessionManager extends EventEmitter {
         return;
       case 'streamTelemetry':
         if (!this.registry.has(event.sessionId)) return;
-        if (event.usage) this.telemetry.setSessionUsage(event.sessionId, event.usage);
+        if (event.usage) {
+          const session = this.registry.get(event.sessionId);
+          this.telemetry.setSessionUsage(event.sessionId, withRateLimitAgent(event.usage, session?.agentName, session?.accountId));
+        }
         if (event.events && event.events.length > 0) this.telemetry.ingestEvents(event.sessionId, event.events);
         return;
       case 'trace':
@@ -1331,7 +1341,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /** Spawn a probe's raw PTY in the pty host (`off-main-pty.ts`). */
-  spawnRawInPtyHost(file: string, args: string[], options: OffMainPtyOptions): Promise<OffMainPty> {
+  spawnRawInPtyHost(file: string, args: string[] | string, options: OffMainPtyOptions): Promise<OffMainPty> {
     return this.host.spawnRaw(file, args, options);
   }
 

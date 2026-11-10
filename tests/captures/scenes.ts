@@ -900,7 +900,39 @@ const LANGUAGE_PROMPT_SHOWN = `body:not(:has(${LANGUAGE_MENU})) ${LANGUAGE_PROMP
 /** The frame switched to a language: `<html lang>` follows the switch, and the prompt has closed. */
 const switchedTo = (locale: string): string => `html[lang="${locale}"]:not(:has(${LANGUAGE_PROMPT}))`;
 
-const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?: string; config?: Record<string, unknown>; note?: string; choreography?: ChoreographyStep[] }> = {
+/**
+ * Three Claude accounts for the Accounts tab: the second at its weekly limit, so the list shows a
+ * skipped account and the first with room marked Active. Resets are seconds from now, so the
+ * figure never shows a window that has already reset.
+ */
+const ACCOUNTS_SCENE_CARDS = [{
+  agent: 'claude',
+  kind: 'folder',
+  accounts: [
+    {
+      id: 'account-claude-1', email: 'dev@example.com', plan: 'Max',
+      lastUsage: [
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 81, resetsInSeconds: 2 * 3600 + 600, windowDurationSeconds: 5 * 3600 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 64, resetsInSeconds: 26 * 3600, windowDurationSeconds: 7 * 86400 },
+      ],
+    },
+    {
+      id: 'account-claude-2', email: 'work@example.com', plan: 'Max',
+      lastUsage: [
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 100, resetsInSeconds: 3 * 86400, windowDurationSeconds: 7 * 86400 },
+      ],
+    },
+    {
+      id: 'account-claude-3', email: 'team@example.com', plan: 'Pro',
+      lastUsage: [
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 12, resetsInSeconds: 4 * 3600 + 300, windowDurationSeconds: 5 * 3600 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 9, resetsInSeconds: 6 * 86400, windowDurationSeconds: 7 * 86400 },
+      ],
+    },
+  ],
+}];
+
+const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?: string; config?: Record<string, unknown>; seeds?: Record<string, unknown>; note?: string; choreography?: ChoreographyStep[] }> = {
   general: {
     ready: '[data-testid="setting-row-project.location"]',
     alt: 'Settings on the General tab: the project\'s folder on disk, with a control to move it.',
@@ -962,6 +994,18 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
   // back to English behind the veil the same way. Every control is found by its test id, since
   // its label changes with the language. Deutsch because the site's Language page names it, and
   // a Latin script needs no CJK font on the runner that shoots the posters.
+  // Three accounts, the second at its weekly limit. Manual picked, which keeps the list as it
+  // is, then the cut, and Automatic again behind it.
+  accounts: {
+    ready: '[data-testid="settings-card-accounts-claude"] [data-testid="account-usage-line"]',
+    alt: 'Settings on the Accounts tab: the run order, and three Claude accounts in a numbered list with each one\'s plan, usage bars and reset times, the first marked Active and the second skipped at its weekly limit.',
+    seeds: { __mockAccountCards: ACCOUNTS_SCENE_CARDS },
+    choreography: [
+      pickSetting(settingRadio('accounts.orderMode', 'Manual'), 2200),
+      { cut: true },
+      pickSetting(settingRadio('accounts.orderMode', 'Automatic')),
+    ],
+  },
   language: {
     ready: '[data-testid="setting-row-displayLanguage"]',
     alt: 'Settings on the Language tab, its Display language card under a Switch to Deutsch? prompt that says Kangentic restarts to change the language, with Cancel and Restart now.',
@@ -1182,6 +1226,7 @@ function settingsScenes(): Record<string, SceneDefinition> {
       description: `The Settings dialog on the ${tab} tab, opened with the gear and the tab button.${entry.note ? ` ${entry.note}` : ''}`,
       alt: entry.alt,
       ...(entry.config ? { config: entry.config } : {}),
+      ...(entry.seeds ? { seeds: entry.seeds } : {}),
       ...(entry.choreography ? { choreography: entry.choreography } : {}),
       ready: entry.ready,
       focus: entry.focus ?? SETTINGS_PANEL,

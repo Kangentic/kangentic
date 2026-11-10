@@ -10,6 +10,7 @@ sources:
   - resource: src/main/agent/adapters/qwen-code/hook-manager.ts
   - resource: src/main/agent/adapters/qwen-code/trust-manager.ts
   - resource: src/main/agent/adapters/qwen-code/qwen-home.ts
+  - resource: src/main/agent/adapters/qwen-code/accounts.ts
   - resource: src/main/agent/adapters/qwen-code/session-history-parser.ts
   - resource: src/main/agent/adapters/qwen-code/transcript-parser.ts
   - resource: src/main/agent/adapters/qwen-code/transcript-metrics.ts
@@ -278,6 +279,14 @@ Not built from docs, because their contract asks for a measurement of the real C
 - `consoleCloseIsGraceful`
 - `describeStartupFailure` for "No saved session found with ID"
 - `firstPromptMayBeTyped`
+
+## Accounts
+
+**Built, not enabled.** Qwen has no card in Settings > Accounts yet. Its key-file accounts were written from the bundle's source and never run, so the adapter does not declare them. What follows describes it as built ([accounts](../accounts.md), Per agent).
+
+Each extra Qwen account is a key file the user owns (task #1057, [accounts](../accounts.md)). Qwen's login is an API key under the variable its chosen provider names (`modelProviders.<type>[].envKey`), and Qwen reads a variable from the process env first, then its `.env` files, then `settings.env`, each only when still unset (0.21.7 and 0.26.5 bundles). So a session on a key-file account gets the file's keys in its env and they win. The names taken are the ones Qwen's built-in providers use, plus any `QWEN_CUSTOM_API_KEY_*`, the name it generates for a custom provider. The key file must set the variable the user's selected model reads.
+
+A `QWEN_HOME` folder per account was researched and not built. An account folder still reads the user's own `~/.qwen/.env`. Chats would need `QWEN_RUNTIME_DIR` worked out per working directory. Qwen removes a linked `file-history` folder daily on Windows and refuses one elsewhere. And Qwen names no signed-in user, so two accounts could not be told apart.
 
 ## WSL
 

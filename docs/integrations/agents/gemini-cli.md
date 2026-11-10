@@ -15,6 +15,7 @@ sources:
   - resource: src/main/agent/adapters/gemini/subagent-usage.ts
   - resource: src/main/agent/adapters/gemini/trust-manager.ts
   - resource: src/main/agent/adapters/gemini/gemini-home.ts
+  - resource: src/main/agent/adapters/gemini/accounts.ts
   - resource: src/main/agent/shared/shared-folder-holds.ts
   - resource: src/main/agent/shared/git-exclude.ts
 ---
@@ -138,6 +139,16 @@ Because the file is shared, concurrent Gemini sessions in the same folder are se
 The merged settings carry an `mcpServers.kangentic` entry using the Gemini-family `httpUrl` key (not the Anthropic/fastmcp `url` used by Claude and Kimi), with `httpUrl` `${KANGENTIC_MCP_URL}` and `headers` `X-Kangentic-Token: ${KANGENTIC_MCP_TOKEN}`. Both values come from the session environment through `buildEnv` (task #859; Gemini expands `$NAME` and `${NAME}` in every settings string), so the file holds no URL and no token, and the entry is per-session. This is the same shape the Qwen fork writes. User-defined `mcpServers` are preserved, and `removeHooks` strips only our entry.
 
 The settings write is gated on hooks **or** MCP, so an MCP-only spawn (no events pipeline) still produces the file.
+
+## Accounts
+
+**Built, not enabled.** Gemini has no card in Settings > Accounts yet. Its account support was written from the bundle and docs with no second Google account to run it on, so the adapter does not declare it. What follows describes it as built ([accounts](../accounts.md), Per agent).
+
+Each extra Gemini account is a folder `GEMINI_CLI_HOME` points at, with its data in the folder's `.gemini` (task #1057, [accounts](../accounts.md), `accounts.ts`). It keeps its own Google login (`oauth_creds.json`, `google_accounts.json`). `tmp` and `history`, which hold every chat and checkpoint, are links into the user's `~/.gemini`. The project registry (`projects.json`) is copied before each spawn, `settings.json` is the user's with the account's own sign-in method, and commands, skills, agents, policies and extensions are linked. An account session reads the trust file Kangentic writes (`GEMINI_CLI_TRUSTED_FOLDERS_PATH`) and keeps its login in a file (`GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=false`).
+
+Gemini has no sign-in command, so Add account starts Gemini itself in the account folder. With no method chosen it opens its own sign-in screen. The user picks Sign in with Google, restarts when asked, and leaves with `/quit`. An account is always a Google sign-in: an API key typed into that screen goes to one keychain entry every home shares. Who is signed in is read from `google_accounts.json`. Gemini has no usage read outside its own screen, so an account shows no usage lines and is never continued at a limit.
+
+Measured on 0.67.0 with no login: a second home whose `tmp` and `history` were links listed and found the first home's session and gave a project the same storage slot. A home with an empty registry claimed the slot of a project folder that had no ownership marker, which is why the registry is copied and a failed copy blocks the account. Not run: the sign-in screen, a chat written through the link by a live session, a resume on a second Google account, and anything on macOS, where the seatbelt sandbox's `.cache/.gemini` is linked whole.
 
 ## WSL
 

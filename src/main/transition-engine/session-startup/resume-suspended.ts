@@ -625,6 +625,7 @@ export async function resumeSuspendedSessions(
           eventsOutputPath: input.eventsOutputPath,
           agentParser: input.adapter,
           agentName: input.adapter.name,
+          accountId: input.accountId ?? null,
           agentSessionId: input.agentSessionId,
           isolatedSwimlaneId: input.record.isolated_swimlane_id,
           permissionMode: input.permissionMode,
@@ -669,6 +670,7 @@ export async function resumeSuspendedSessions(
           cli_target: serializeCliTarget(input.cliTarget),
           // The same pass, recovered: it began where the record it replaces did.
           start_head_sha: input.record.start_head_sha ?? null,
+          account_id: input.accountId ?? null,
         });
         // Record what this resume applied (the `--model` / `--effort` flags land
         // on every resume) so a later column move diffs against the true value.

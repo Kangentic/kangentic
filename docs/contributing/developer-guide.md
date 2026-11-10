@@ -66,7 +66,7 @@ src/
       git-detector.ts      # Detects git installation and version
       hook-manager.ts      # Injects/strips Kangentic hooks from Claude settings
       mcp-server.ts        # Stdio MCP server for Claude Code agents
-      trust-manager.ts     # Pre-populates ~/.claude.json trust entries for worktrees
+      trust-manager.ts     # Pre-populates trust entries for worktrees in Claude's state file
       status-bridge.js     # Hook script: writes usage data to status.json
       event-bridge.js      # Hook script: appends tool events to events.jsonl
       plan-approval-bridge.js # Hook script: approves a plan, an allowed MCP tool plan mode asks about, and a built-in Artifact read, list or publish, when the session's plan-approval.json says to

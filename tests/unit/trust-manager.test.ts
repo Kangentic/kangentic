@@ -27,7 +27,45 @@ vi.mock('node:os', async () => {
 });
 
 import { ensureWorktreeTrust, ensureMcpServerTrust } from '../../src/main/agent/adapters/claude';
-import { ensureClaudeSpawnConfig } from '../../src/main/agent/adapters/claude/trust-manager';
+import { declineExternalClaudeMdImports, ensureClaudeSpawnConfig } from '../../src/main/agent/adapters/claude/trust-manager';
+
+describe('declineExternalClaudeMdImports: the dev preview answers the imports question', () => {
+  it('records the question as answered no on the project entry, keeps its trust, and writes once', async () => {
+    const project = '/projects/preview-project';
+    await ensureClaudeSpawnConfig(project);
+    await declineExternalClaudeMdImports(project);
+
+    const projects = readClaudeJson().projects as Record<string, Record<string, unknown>>;
+    const entry = Object.values(projects)[0];
+    expect(Object.keys(projects)).toHaveLength(1);
+    expect(entry.hasTrustDialogAccepted).toBe(true);
+    expect(entry.hasClaudeMdExternalIncludesWarningShown).toBe(true);
+    expect(entry.hasClaudeMdExternalIncludesApproved).toBe(false);
+
+    const renames = vi.spyOn(fs.promises, 'rename');
+    try {
+      await declineExternalClaudeMdImports(project);
+      expect(renames).not.toHaveBeenCalled();
+    } finally {
+      renames.mockRestore();
+    }
+  });
+
+  it('never withdraws an approval the user gave', async () => {
+    const project = '/projects/preview-project';
+    await ensureClaudeSpawnConfig(project);
+    const data = readClaudeJson();
+    const key = Object.keys(data.projects as Record<string, unknown>)[0];
+    (data.projects as Record<string, Record<string, unknown>>)[key].hasClaudeMdExternalIncludesApproved = true;
+    fs.writeFileSync(claudeJsonPath(), JSON.stringify(data));
+
+    await declineExternalClaudeMdImports(project);
+
+    const entry = (readClaudeJson().projects as Record<string, Record<string, unknown>>)[key];
+    expect(entry.hasClaudeMdExternalIncludesApproved).toBe(true);
+    expect(entry.hasClaudeMdExternalIncludesWarningShown).toBe(true);
+  });
+});
 
 describe('ensureClaudeSpawnConfig: a spawn\'s changes in one pass', () => {
   it('trusts the directory, enables the MCP server and closes the diff panel in one write', async () => {

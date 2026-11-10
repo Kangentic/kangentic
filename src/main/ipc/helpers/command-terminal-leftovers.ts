@@ -146,6 +146,8 @@ export class CommandTerminalLeftoverReaper {
       agentSessionId: session.agentSessionId,
       cwd: session.cwd,
       cliTarget: this.deps.sessionManager.getSessionCliTarget?.(sessionId) ?? null,
+      // Its background sessions are listed only under the account it ran on.
+      accountId: session.accountId,
     };
     // Called on a later tick, so a dep that throws never throws into the emit.
     return Promise.resolve().then(() => stopBackgroundSession(ended)).catch((error: unknown) => {

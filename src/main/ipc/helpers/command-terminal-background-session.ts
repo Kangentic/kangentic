@@ -22,6 +22,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { PLAUSIBLE_AGENT_SESSION_ID } from '../../agent/shared/agent-session-id';
 import { placeFromStored, type CliPlace } from '../../agent/shared/cli-target';
 import type { IpcContext } from '../ipc-context';
+import { stopBackgroundSessionOnAccount } from '../../accounts/account-background-stop';
 
 export interface CommandTerminalConversation {
   adapter: AgentAdapter;
@@ -38,6 +39,8 @@ export interface CommandTerminalConversation {
    * Earlier while it runs, so a resume of that row must not stop it.
    */
   isHeldLive(agentSessionId: string): boolean;
+  /** The agent account the terminal ran on, when known; otherwise every account is tried. */
+  accountId?: string | null;
 }
 
 /** Whether a live session of the context's session manager holds the conversation. */
@@ -70,7 +73,7 @@ export async function stopCommandTerminalBackgroundSession(conversation: Command
   try {
     const cliPath = await conversation.resolveCliPath();
     if (!cliPath) return backgroundId;
-    const stopRan = await adapter.stopBackgroundSession({ agentSessionId: backgroundId, cliPath });
+    const stopRan = await stopBackgroundSessionOnAccount(adapter, { agentSessionId: backgroundId, cliPath }, conversation.accountId);
     if (stopRan) console.log(`[COMMAND_TERMINAL] stopped the background session ${backgroundId.slice(0, 8)} holding ${agentSessionId.slice(0, 8)}`);
   } catch (error) {
     warn(`could not stop the background session ${backgroundId.slice(0, 8)}`, error);
@@ -117,6 +120,8 @@ export interface EndedCommandTerminal {
   agentSessionId: string | null;
   cwd: string;
   cliTarget: StoredCliTarget | null;
+  /** The agent account the terminal ran on (task #1057). */
+  accountId?: string | null;
 }
 
 /**
@@ -136,6 +141,7 @@ export async function stopEndedCommandTerminalBackgroundSession(
     agentSessionId,
     cwd,
     place: placeFromStored(ended.cliTarget),
+    accountId: ended.accountId,
     resolveCliPath: async () => {
       const cliPathOverride = context.configManager.getEffectiveConfig(cwd).agent.cliPaths[adapter.name] ?? null;
       const detection = await adapter.detect(cliPathOverride);

@@ -34,6 +34,11 @@ msgstr ""
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
 msgstr ""
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{minutes}m"
+msgstr "{minutes} p"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -219,6 +224,11 @@ msgstr "Még nincsenek eszközhívások"
 msgid "Notice"
 msgstr "Értesítés"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+msgctxt "when a usage window resets"
+msgid "now"
+msgstr ""
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Older match"
 msgstr ""
@@ -248,17 +258,17 @@ msgstr "A profil nem érhető el"
 msgid "Rate limits"
 msgstr "Sebességkorlátok"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets {resetMoment}"
 msgstr "Visszaáll: {resetMoment}"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets in {duration}"
 msgstr "Visszaáll {duration} múlva"
 
-#: src/renderer/components/terminal/ContextBar.tsx
+#: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
 msgid "Resets now"
 msgstr "Most áll vissza"

@@ -54,6 +54,51 @@ if (args.includes('--help') || args.includes('-h')) {
   process.exit(0);
 }
 
+// Agent accounts harness (tests/e2e/agent-accounts.spec.ts).
+//
+// `claude auth login` and `claude auth status` are what the account layer runs to add an
+// account and to read who is signed in. A "login" is a marker file in the home named by
+// CLAUDE_CONFIG_DIR, so a home reads as signed in exactly when it holds one. The email is
+// MOCK_CLAUDE_AUTH_EMAIL, else one derived from the home's folder name, so two homes never
+// share an address (the account list drops a second row with the same email). A run with no
+// CLAUDE_CONFIG_DIR touches nothing: the default home of a real machine is never written.
+// `-p /usage` is the usage refresher's read; it prints nothing and exits at once instead of
+// staying alive like a session. No existing spec runs any of these, so nothing else changes.
+if (args[0] === 'auth') {
+  const fs = require('node:fs');
+  const pathMod = require('node:path');
+  const home = process.env.CLAUDE_CONFIG_DIR;
+  const markerPath = home ? pathMod.join(home, '.mock-auth.json') : null;
+  if (args[1] === 'login') {
+    if (!home) {
+      console.error('MOCK_CLAUDE_AUTH_NO_CONFIG_DIR');
+      process.exit(1);
+    }
+    const email = process.env.MOCK_CLAUDE_AUTH_EMAIL || ('dev-' + pathMod.basename(home) + '@example.com');
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(markerPath, JSON.stringify({ email }));
+    console.log('MOCK_CLAUDE_AUTH_LOGIN:' + email);
+    process.exit(0);
+  }
+  if (args[1] === 'status') {
+    let signedInEmail = null;
+    try {
+      if (markerPath) signedInEmail = JSON.parse(fs.readFileSync(markerPath, 'utf8')).email;
+    } catch {
+      /* no marker: signed out */
+    }
+    if (!signedInEmail) {
+      console.log(JSON.stringify({ loggedIn: false }));
+      process.exit(1);
+    }
+    console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: signedInEmail, subscriptionType: 'max' }));
+    process.exit(0);
+  }
+}
+if (args[0] === '-p' && args[1] === '/usage') {
+  process.exit(0);
+}
+
 // Condition-check harness for the Automation agent (tests/e2e/workflow-engine.spec.ts).
 //
 // When MOCK_CLAUDE_CONDITION_ANSWER=1 is set, a --print run is a condition check:
@@ -171,6 +216,27 @@ if (prompt) {
   console.log('MOCK_CLAUDE_PROMPT:' + prompt);
 } else if (!sessionId) {
   console.log('MOCK_CLAUDE_NO_PROMPT');
+}
+
+// Account probe for tests/e2e/agent-accounts.spec.ts. When MOCK_CLAUDE_ACCOUNT_PROBE=1 and
+// CLAUDE_CONFIG_DIR is set, an interactive session records the CLAUDE_CONFIG_DIR it was handed in
+// `$CLAUDE_CONFIG_DIR/projects/mock-account-probe/<session id>.json`, the way the real CLI writes
+// its transcript under `projects`. On an account folder that path is a link into the default
+// home, so the file turns up there. Both conditions are needed, so no other spec sees a new file.
+if (process.env.MOCK_CLAUDE_ACCOUNT_PROBE === '1' && process.env.CLAUDE_CONFIG_DIR && sessionId && !args.includes('--print')) {
+  const fs = require('node:fs');
+  const pathMod = require('node:path');
+  try {
+    const probeDirectory = pathMod.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'mock-account-probe');
+    fs.mkdirSync(probeDirectory, { recursive: true });
+    fs.writeFileSync(
+      pathMod.join(probeDirectory, sessionId + '.json'),
+      JSON.stringify({ configDir: process.env.CLAUDE_CONFIG_DIR, sessionId, resumed }),
+    );
+    console.log('MOCK_CLAUDE_ACCOUNT_PROBE:' + process.env.CLAUDE_CONFIG_DIR);
+  } catch (error) {
+    console.error('MOCK_CLAUDE_ACCOUNT_PROBE_ERROR:' + error.message);
+  }
 }
 
 // Conversation harness for the Command Terminal restart guard
