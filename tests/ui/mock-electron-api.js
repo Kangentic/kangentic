@@ -2182,7 +2182,7 @@
         var mode = tasks[idx].session_id ? 'restart' : 'persisted';
         return { ok: true, mode: mode };
       },
-      // The Changes panel's Checks section. Specs and the web demo seed
+      // The Changes panel's Pull request section. Specs and the web demo seed
       // `window.__mockPrChecks[taskId]` with a PRChecks object; an unseeded task
       // has no checks (null), like a PR whose host lists none.
       listPrChecks: async function (taskId, projectId) {

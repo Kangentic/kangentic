@@ -4412,7 +4412,9 @@ export interface AppConfig {
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
   /** Changes rail sections the user opened. One choice each for every task (folding is about rail
    *  height, which every task shares), both closed by default: open together they push the file
-   *  list out of the rail. Pure UI state, written from the section toggles, not a Settings row. */
+   *  list out of the rail. Pure UI state, written from the section toggles, not a Settings row.
+   *  `changesChecksOpen` is the Pull request section's choice (it shipped as Checks, and the
+   *  persisted key keeps that name). A PR with something to fix opens the section without it. */
   changesChecksOpen: boolean;
   changesHistoryOpen: boolean;
 

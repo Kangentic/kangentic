@@ -8,8 +8,8 @@
  * number, the state's tint, a trailing external-link icon, and an "Open PR #287
  * in browser" tooltip with the state as its detail) and the detail header's `...`
  * kebab "View PR #287" entry (which opens the same URL). The header's compact icon
- * bar itself has no PR pill; the Changes panel header carries one
- * (changes-checks-section.spec.ts).
+ * bar itself has no PR pill; the Changes panel opens the PR from its Pull
+ * request section (changes-pull-request-section.spec.ts).
  *
  * The second describe seeds more linked tasks into the Testing lane to pin how
  * merge readiness tints the SAME pill, which draws no state word: `ready` keeps

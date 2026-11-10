@@ -3,6 +3,7 @@ import { TINTED_PILL_EDGE, TINTED_PILL_FILL } from './Pill';
 
 type CountBadgeVariant = 'solid' | 'tinted';
 type CountBadgeSize = 'xs' | 'pill';
+type CountBadgeTone = 'accent' | 'danger';
 
 interface CountBadgeProps {
   count: number;
@@ -11,6 +12,12 @@ interface CountBadgeProps {
    * of whatever it sits in. 'solid' is the title bar's unread overlay.
    */
   variant?: CountBadgeVariant;
+  /**
+   * The fill of a 'solid' badge. 'accent' is news to read (unread announcements).
+   * 'danger' is something to fix (a PR's failed checks and conflict). A 'tinted'
+   * badge ignores it: its tone is its parent's.
+   */
+  tone?: CountBadgeTone;
   /**
    * Size. 'pill' = the standard 18px pill that widens with each digit, its digits centered on
    * their own ink. 'xs' = 14px circle overlaid on an icon.
@@ -32,14 +39,19 @@ const SIZE_CLASSES: Record<CountBadgeSize, string> = {
   pill: 'h-[18px] min-w-[18px] px-1 text-[11px] proportional-nums',
 };
 
-const VARIANT_CLASSES: Record<CountBadgeVariant, string> = {
-  solid: 'bg-accent-emphasis text-accent-on',
-  // No text color: the count takes the tone of whatever it sits in (muted
-  // while its tab is idle, bright when selected or hovered, red in a conflict
-  // line), and its fill and edge are mixed from that same tone, so it reads on
-  // any ground behind it.
-  tinted: 'border',
+const SOLID_TONE_CLASSES: Record<CountBadgeTone, string> = {
+  accent: 'bg-accent-emphasis text-accent-on',
+  // A palette red, like the PR pill's failing and conflicting tones
+  // (FIXABLE_BADGE_CLASS in lib/pr-state.ts): white on red-600 is 4.8:1 in
+  // every theme, where the theme's danger token is too light to carry white.
+  danger: 'bg-red-600 text-white',
 };
+
+// 'tinted' sets no text color: the count takes the tone of whatever it sits in
+// (muted while its tab is idle, bright when selected or hovered, red in a
+// conflict line), and its fill and edge are mixed from that same tone, so it
+// reads on any ground behind it.
+const TINTED_CLASS = 'border';
 
 const TINTED_STYLE: React.CSSProperties = {
   backgroundColor: TINTED_PILL_FILL,
@@ -51,9 +63,11 @@ const TINTED_STYLE: React.CSSProperties = {
  * `variant="tinted" size="pill"`, placed right after the label it counts. It
  * takes its parent's text color, so a call site whose parent sets no tone gives
  * the badge one through `className` (`<body>` is `text-fg`, so an untoned badge
- * renders bright). The one other shape is a solid 'xs' circle overlaid on an
- * icon: the title bar's unread announcements, and the task window Changes
- * button's count of what to fix on the PR.
+ * renders bright). The one other shape is a solid 'xs' circle: overlaid on an
+ * icon for the title bar's unread announcements and the task window Changes
+ * button's count of what to fix on the PR, and once after a label, the Changes
+ * panel's Pull request section, which repeats the button's own red badge so the
+ * two read as one count.
  *
  * 'pill' centers the digits' INK rather than their line box. `line-height: 1`
  * centers the em box, and the system UI font's tall ascent leaves digits 0.5 to
@@ -67,17 +81,20 @@ const TINTED_STYLE: React.CSSProperties = {
  *   <CountBadge count={21} variant="tinted" size="pill" />                       // inside a toned control
  *   <CountBadge count={4} variant="tinted" size="pill" className="text-fg-muted" /> // after a label, toned
  *   <CountBadge count={12} variant="solid" size="xs" />                           // overlaid on an icon
+ *   <CountBadge count={2} variant="solid" size="xs" tone="danger" />              // something to fix
  */
 export const CountBadge = React.memo(function CountBadge({
   count,
   variant = 'tinted',
+  tone = 'accent',
   size = 'pill',
   className,
   testId,
 }: CountBadgeProps) {
+  const variantClass = variant === 'solid' ? SOLID_TONE_CLASSES[tone] : TINTED_CLASS;
   return (
     <span
-      className={`inline-flex items-center justify-center rounded-full font-semibold leading-none select-none ${SIZE_CLASSES[size]} ${VARIANT_CLASSES[variant]} ${className ?? ''}`}
+      className={`inline-flex items-center justify-center rounded-full font-semibold leading-none select-none ${SIZE_CLASSES[size]} ${variantClass} ${className ?? ''}`}
       style={variant === 'tinted' ? TINTED_STYLE : undefined}
       data-testid={testId}
     >
