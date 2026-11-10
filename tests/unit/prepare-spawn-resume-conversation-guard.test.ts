@@ -236,6 +236,8 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     boardDefaultBaseBranch?: string | null;
     taskOverrides?: Partial<Task>;
     configGit?: { defaultBaseBranch: string };
+    /** The cwd the conversation last ran in, as the recovered record kept it. */
+    recordCwd?: string;
   } = {}) {
     const taskRecords = options.taskRecords;
     const listForTaskNewestFirst = vi.fn((_taskId: string) => taskRecords ?? []);
@@ -256,7 +258,7 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
       projectDefaultEffort: null,
       resolvedShell: 'bash',
       mcpServerHandle: null,
-      resume: { agentSessionId: STORED_ID, recordId: RECORD_ID },
+      resume: { agentSessionId: STORED_ID, recordId: RECORD_ID, recordCwd: options.recordCwd },
       sessionRepo,
       recapSources: options.recapSources,
       boardDefaultBaseBranch: options.boardDefaultBaseBranch,
@@ -371,6 +373,76 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(sessionRepo.updateAgentSessionId).not.toHaveBeenCalled();
     expect(result.data.startOver).toBeNull();
     expect(result.data.prompt).toBeNull();
+  });
+
+  describe('the evidence the spawn carries for the launch report', () => {
+    it('carries what the check read when the resume stays a resume', async () => {
+      writeRealConversationStatusFile(RECORD_ID);
+
+      const { result } = await runPrepare({ recordCwd: projectPath });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumed).toBe(true);
+      expect(result.data.resumeEvidence).toMatchObject({ turns: 'yes', agentReport: 'status', transcript: 'on_disk', cwd: 'same' });
+    });
+
+    it('hands the guard the cwd the conversation last ran in, so a moved folder reads moved', async () => {
+      writeRealConversationStatusFile(RECORD_ID);
+
+      const { result } = await runPrepare({ recordCwd: path.join(projectPath, 'an-older-worktree-name') });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumeEvidence?.cwd).toBe('moved');
+    });
+
+    it('reads the cwd as unknown when the record kept none', async () => {
+      writeRealConversationStatusFile(RECORD_ID);
+
+      const { result } = await runPrepare();
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumeEvidence?.cwd).toBe('unknown');
+    });
+
+    it('carries none when a launch that never ran starts over', async () => {
+      writeEmptyStatusFile(RECORD_ID);
+
+      const { result } = await runPrepare({ recordCwd: projectPath });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.startOver).toBe('never-started');
+      expect(result.data.resumeEvidence).toBeNull();
+    });
+
+    it('carries none when a deleted conversation starts over', async () => {
+      const projectsRoot = path.join(projectPath, 'claude-projects');
+      fs.mkdirSync(projectsRoot, { recursive: true });
+      const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(path.join(sessionDir, 'status.json'), JSON.stringify({
+        session_id: STORED_ID,
+        transcript_path: path.join(projectsRoot, '-gone-project', `${STORED_ID}.jsonl`),
+        model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+        cost: { total_cost_usd: 0.9, total_duration_ms: 60000, total_api_duration_ms: 40000 },
+        context_window: { total_input_tokens: 30000, total_output_tokens: 900, context_window_size: 200000, current_usage: null, used_percentage: null },
+      }));
+      const adapterWithProof = adapter as typeof adapter & { proveConversationGone?: typeof proveClaudeConversationGone };
+      adapterWithProof.proveConversationGone = proveClaudeConversationGone;
+      try {
+        const { result } = await runPrepare({ recordCwd: projectPath });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBe('expired');
+        expect(result.data.resumeEvidence).toBeNull();
+      } finally {
+        delete adapterWithProof.proveConversationGone;
+      }
+    });
   });
 
   it('starts fresh from the recap when the agent deleted a conversation that had turns', async () => {
