@@ -1711,6 +1711,14 @@ export interface SessionRecord {
   model_id: string | null;
   model_display_name: string | null;
   /**
+   * Context occupancy the session last reported (the card's percent), captured
+   * with the other metrics. An agent a host kept running writes nothing until
+   * it next acts, so a take-back seeds the bar from this rather than 0%. Null
+   * when occupancy was never known. Distinct from `total_input_tokens`, which
+   * is a token count some CLIs never paint.
+   */
+  used_percentage: number | null;
+  /**
    * Model the session was spawned or resumed with (the `--model` flag value;
    * null = agent default / no flag). Ground truth for the column-transition
    * delta in `prepareInjectionPlan`: a move restarts the session only when this
@@ -7078,6 +7086,12 @@ export interface AgentParser {
    * `AgentAdapter.attachSession` for full contract.
    */
   attachSession?(context: SessionContext): SessionAttachment | void;
+  /**
+   * Optional: occupancy and live model from a chunk of the agent's own
+   * output (the current screen on a take-back). Returns a usage patch or
+   * null when this chunk names none. See `AgentAdapter.usageFromOutput`.
+   */
+  usageFromOutput?(data: string): SessionUsagePatch | null;
 }
 
 /**
@@ -7495,6 +7509,15 @@ export interface SessionContext {
    * produces parseable output.
    */
   applyUsage(usage: Partial<SessionUsage>): void;
+
+  /**
+   * This process is taking back an agent it did not start (a quit left it
+   * running on a host). Adapters whose `attachSession` asks this computer's
+   * CLI for a seed (`agent about`) must skip that: the answer is this
+   * account's default, not the live session, and would replace the model the
+   * record last saw.
+   */
+  readonly takingBack?: boolean;
 }
 
 /**

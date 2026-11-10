@@ -15,7 +15,7 @@ import { writeTransaction } from '../transaction';
  * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'
 > & { cli_target?: string | null; start_head_sha?: string | null };
 
 export interface SessionMetricsInput {
@@ -30,6 +30,8 @@ export interface SessionMetricsInput {
   toolBreakdown: string | null;
   /** Context compactions during this run (PreCompact hooks). Defaults to 0. */
   compactionCount: number;
+  /** Occupancy last reported (the card's percent). Null when never known. */
+  usedPercentage: number | null;
 }
 
 /**
@@ -205,6 +207,7 @@ export class SessionRepository {
       total_output_tokens: null,
       model_id: null,
       model_display_name: null,
+      used_percentage: null,
       applied_model: null,
       applied_effort: null,
       total_duration_ms: null,
@@ -555,7 +558,8 @@ export class SessionRepository {
   /**
    * Update the metric columns for a session record with what its telemetry knows. No reading of usage keeps what the record holds: an agent taken back
    * from a host (#913) keeps its record, and this process has no usage for it until the agent next reports. Its
-   * counts are restored at the take (`restoreRunTotals`), so they are written as read.
+   * counts are restored at the take (`restoreRunTotals`), so they are written as read. Occupancy (`used_percentage`)
+   * is the same: a take seeds the bar from it (`occupancySoFar`) until the agent reports again.
    */
   updateMetrics(id: string, metrics: SessionMetricsInput): void {
     this.db.prepare(`
@@ -568,7 +572,8 @@ export class SessionRepository {
         total_duration_ms = COALESCE(?, total_duration_ms),
         tool_call_count = ?,
         tool_breakdown = ?,
-        compaction_count = ?
+        compaction_count = ?,
+        used_percentage = COALESCE(?, used_percentage)
       WHERE id = ?
     `).run(
       metrics.totalCostUsd,
@@ -580,6 +585,7 @@ export class SessionRepository {
       metrics.toolCallCount,
       metrics.toolBreakdown,
       metrics.compactionCount,
+      metrics.usedPercentage,
       id,
     );
   }

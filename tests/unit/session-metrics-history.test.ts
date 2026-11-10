@@ -194,6 +194,10 @@ describe('captureSessionMetrics history write', () => {
       'claude_agent',
     );
 
+    expect(sessionRepo.updateMetrics).toHaveBeenCalledWith(
+      'record-1',
+      expect.objectContaining({ usedPercentage: 25 }),
+    );
     expect(recordSessionUsage).toHaveBeenCalledTimes(1);
     expect(recordSessionUsage).toHaveBeenCalledWith({
       sessionRecordId: 'record-1',

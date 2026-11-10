@@ -224,6 +224,8 @@ export type RemoteSessionAdoption = SpawnSessionInput & {
   runSoFar?: { toolBreakdown: PerToolStat[]; compactionCount: number };
   /** The model the record last saw the agent report, shown until the agent reports one again. */
   modelSoFar?: { id: string; displayName: string };
+  /** Occupancy the record last saw, shown until the agent reports one again. */
+  occupancySoFar?: number;
 };
 
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
@@ -2846,7 +2848,7 @@ export class SessionManager extends EventEmitter {
     return adoption;
   }
 
-  private async takeBackRemoteSession({ runSoFar, modelSoFar, ...input }: RemoteSessionAdoption): Promise<Session | null> {
+  private async takeBackRemoteSession({ runSoFar, modelSoFar, occupancySoFar, ...input }: RemoteSessionAdoption): Promise<Session | null> {
     const grid = input.restoredGrid ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS };
     const adopted = await this.host.adoptRemoteSessions(input.remote.hostId, [{ sessionId: input.id, cols: grid.cols, rows: grid.rows }]);
     const pty = adopted.get(input.id);
@@ -2855,7 +2857,13 @@ export class SessionManager extends EventEmitter {
       const session = await this.doSpawn({ ...input, command: '', resuming: true, seedIdle: true }, { pty });
       if (runSoFar) this.telemetry.restoreRunTotals(session.id, runSoFar.toolBreakdown, runSoFar.compactionCount);
       if (modelSoFar) this.telemetry.seedModelIfUnreported(session.id, modelSoFar);
+      if (occupancySoFar !== undefined) this.telemetry.seedOccupancyIfUnknown(session.id, occupancySoFar);
       this.markTakenBackAgentRunning(session.id);
+      // The screen is already up. An idle agent writes nothing, so without this
+      // the card sits at the record's seed (or 0%) until the next turn. A TUI
+      // that still holds `Auto · 9.2%` is the live figure, and it also replaces
+      // a seed that a previous `agent about` on this computer had polluted.
+      this.seedUsageFromScreen(session.id, input.agentParser);
       return session;
     } catch (error) {
       // The agent keeps running; only this handle, which nothing will use, is dropped.
@@ -2877,6 +2885,20 @@ export class SessionManager extends EventEmitter {
     if (!session) return;
     session.agentStartObservedAt ??= Date.now();
     this.markAgentReady(sessionId);
+  }
+
+  /**
+   * Read occupancy and the live model from the screen the host is already
+   * showing. Fire-and-forget: a missed read leaves the record's seed, and the
+   * agent's next paint fills in. `settle` is false because nothing is resizing.
+   */
+  private seedUsageFromScreen(sessionId: string, parser: SpawnSessionInput['agentParser'] | undefined): void {
+    if (!parser?.usageFromOutput) return;
+    void this.host.getScrollback(sessionId, false).then((screen) => {
+      if (!this.registry.has(sessionId)) return;
+      const usage = parser.usageFromOutput?.(screen ?? '');
+      if (usage) this.telemetry.setSessionUsage(sessionId, usage);
+    }).catch(() => undefined);
   }
 
   private async doSpawn(input: SpawnSessionInput, rejoin?: RejoinSpawn): Promise<Session> {

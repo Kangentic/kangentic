@@ -8,6 +8,7 @@ import type { SessionManager } from '../../pty/session-manager';
 import type { SessionRecord, Session, StoredCliTarget } from '../../../shared/types';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { workflowAgentEffort } from '../../workflows/workflow-agent-effort';
+import { isContextOccupancyKnown } from '../../../shared/context-occupancy';
 
 /**
  * Capture session metrics (cost, tokens, model, duration, tool calls,
@@ -71,6 +72,13 @@ export function captureSessionMetrics(
       toolCallCount,
       toolBreakdown: toolBreakdown.length > 0 ? JSON.stringify(toolBreakdown) : null,
       compactionCount,
+      usedPercentage: usage && isContextOccupancyKnown(
+        usage.contextWindow.contextWindowSize,
+        usage.contextWindow.usedTokens,
+        usage.contextWindow.usedPercentage,
+      )
+        ? usage.contextWindow.usedPercentage
+        : null,
     });
 
     if (usage) {

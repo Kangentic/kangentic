@@ -10,6 +10,7 @@ import type {
   AdapterRuntimeStrategy,
   SessionContext,
   SessionAttachment,
+  SessionUsagePatch,
   AgentLiveTelemetryUnsupported,
   SubmissionContextType,
   SubmissionVerifier,
@@ -1612,8 +1613,22 @@ export interface AgentAdapter {
    * specifics stay in the adapter module.
    *
    * Adapters that do not need per-session work can omit this.
+   *
+   * `context.takingBack` is set when this process is taking back an agent it
+   * did not start. A seed that asks this computer's CLI (`agent about`) must
+   * not run then: it reports this account's default, not the live session.
    */
   attachSession?(context: SessionContext): SessionAttachment | void;
+
+  /**
+   * Optional: occupancy and live model from a chunk of the agent's own output.
+   * A take-back of an agent a host kept running has a screen that is already
+   * up, and the agent writes nothing until it next acts, so the card would
+   * otherwise sit at 0% until then. Returns a usage patch (percentage-only is
+   * fine) or null when this chunk names none. Events in the chunk are ignored:
+   * they already happened.
+   */
+  usageFromOutput?(data: string): SessionUsagePatch | null;
 
   /**
    * Optional one-shot summarization. Spawns the agent CLI in its non-interactive

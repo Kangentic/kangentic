@@ -46,6 +46,7 @@ import type {
   PermissionMode,
   AdapterRuntimeStrategy,
   SessionUsage,
+  SessionUsagePatch,
   SessionContext,
   SessionAttachment,
   StoredCliTarget,
@@ -613,14 +614,18 @@ export class CursorAdapter implements AgentAdapter {
    *
    * It asks the CLI the session was started with (a project's own CLI path,
    * or a Cursor in a WSL distro, through `wsl.exe`), and falls back to the
-   * Cursor on PATH for a session whose start it did not see.
+   * Cursor on PATH for a session whose start it did not see. A take-back
+   * (`takingBack`) skips this: `about` is this computer's account default,
+   * not the live TUI, and would replace the model the record last saw.
    */
   attachSession(context: SessionContext): SessionAttachment {
     let disposed = false;
     const launch = this.sessionLaunches.get(context.sessionId) ?? null;
-    if (launch?.modelPassed) {
+    if (context.takingBack || launch?.modelPassed) {
       // `--model` already seeded the pill (`configuredModelFromCommand`), and
-      // `about` would replace it with the account's default model.
+      // `about` would replace it with the account's default model. A take-back
+      // has the same problem against this computer's `about`, plus the record's
+      // own seed (`modelSoFar`) already names what the agent last reported.
       return { dispose: () => { this.sessionLaunches.delete(context.sessionId); } };
     }
     this.fetchAboutUsage(launch)
@@ -671,6 +676,15 @@ export class CursorAdapter implements AgentAdapter {
     const mcpFolder = this.mcpHolds.release(sessionId, directory);
     if (mcpFolder) removeCursorProjectMcpConfig(mcpFolder);
     if (sessionId) this.sessionLaunches.delete(sessionId);
+  }
+
+  /**
+   * Occupancy and live model from a chunk of Cursor's own TUI. A take-back
+   * feeds the current screen, which still holds `Auto · 9.2%` while the agent
+   * is quiet. Events in the chunk are ignored: they already happened.
+   */
+  usageFromOutput(data: string): SessionUsagePatch | null {
+    return new CursorStreamParser().parseTelemetry(data)?.usage ?? null;
   }
 
   /**

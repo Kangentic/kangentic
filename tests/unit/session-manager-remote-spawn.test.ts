@@ -549,6 +549,48 @@ describe('taking back an agent a host kept running while the app was closed', ()
       expect(usages.some((entry) => entry.id === 's1' && entry.model === 'Composer 2')).toBe(true);
     });
 
+    it('opens with occupancy its record last saw, so the card bar is not 0% while the agent is quiet', async () => {
+      const { second } = await relaunch();
+      const percents: Array<{ id: string; percent: number }> = [];
+      second.manager.on('usage', (sessionId: string, usage: { contextWindow: { usedPercentage: number } }) => {
+        percents.push({ id: sessionId, percent: usage.contextWindow.usedPercentage });
+      });
+
+      await second.manager.adoptRemoteSession({ ...adoptInput(second), occupancySoFar: 9.2 });
+
+      expect(percents.some((entry) => entry.id === 's1' && entry.percent === 9.2)).toBe(true);
+    });
+
+    it('tells the adapter this process did not start the agent, so it does not ask this computer for a model', async () => {
+      const { second } = await relaunch();
+      const takingBack: boolean[] = [];
+      const agentParser = {
+        attachSession(context: { takingBack?: boolean }) {
+          takingBack.push(context.takingBack === true);
+        },
+      } as unknown as SpawnSessionInput['agentParser'];
+
+      await second.manager.adoptRemoteSession({ ...adoptInput(second), agentParser, agentName: 'stand-in' });
+
+      expect(takingBack).toEqual([true]);
+    });
+
+    it('reads occupancy from the screen that is already up, so a TUI that still holds it fills the card', async () => {
+      const { second } = await relaunch();
+      const percents: number[] = [];
+      second.manager.on('usage', (_sessionId: string, usage: { contextWindow: { usedPercentage: number } }) => {
+        percents.push(usage.contextWindow.usedPercentage);
+      });
+      const agentParser = {
+        usageFromOutput() {
+          return { contextWindow: { usedPercentage: 9.2 } };
+        },
+      } as unknown as SpawnSessionInput['agentParser'];
+
+      await second.manager.adoptRemoteSession({ ...adoptInput(second), agentParser, agentName: 'stand-in' });
+      await waitFor(() => percents.includes(9.2));
+    });
+
     it('adds no model when its record saw none', async () => {
       const { second } = await relaunch();
       const usages: string[] = [];

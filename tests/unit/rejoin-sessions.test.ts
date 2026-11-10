@@ -190,6 +190,22 @@ describe('createRecordAdopter', () => {
     expect(inputs[2]).not.toHaveProperty('modelSoFar');
   });
 
+  it('passes occupancy the record last saw, and none when it saw none', async () => {
+    setRemoteLaunchResolver({ resolve: async () => ({ place, remote }) } as never);
+    const adoptRemoteSession = vi.fn(async () => null);
+    const sessionType = agentRegistry.get('claude')!.sessionType;
+    const adopt = createRecordAdopter({ sessionManager: { adoptRemoteSession } as never, projectId: 'proj-1', projectPath: '/shell' });
+
+    await adopt(record('rec-1', { session_type: sessionType, used_percentage: 9.2 }));
+    await adopt(record('rec-2', { session_type: sessionType, used_percentage: 0 }));
+    await adopt(record('rec-3', { session_type: sessionType, used_percentage: null }));
+
+    const inputs = adoptRemoteSession.mock.calls.map((call) => (call as unknown[])[0] as Record<string, unknown>);
+    expect(inputs[0].occupancySoFar).toBe(9.2);
+    expect(inputs[1]).not.toHaveProperty('occupancySoFar');
+    expect(inputs[2]).not.toHaveProperty('occupancySoFar');
+  });
+
   it('takes nothing back for an agent this build does not know', async () => {
     setRemoteLaunchResolver({ resolve: async () => ({ place, remote }) } as never);
     const adoptRemoteSession = vi.fn();

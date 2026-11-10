@@ -374,6 +374,12 @@ export function runProjectMigrations(db: Database.Database): void {
     // lifetime rollup and the column matches its non-null `SessionRecord` type and
     // the `usage_history` sibling. Per-run; lifetime = SUM across the task's rows.
     ['compaction_count', 'INTEGER NOT NULL DEFAULT 0'],
+    // Context occupancy last reported (the card's percent). A take-back of an
+    // agent a host kept running (#913) seeds the bar from this, because the
+    // agent writes nothing until it next acts. NULL when occupancy was never
+    // known. Distinct from total_input_tokens: Cursor's TUI paints a percent
+    // and no token count.
+    ['used_percentage', 'REAL DEFAULT NULL'],
   ];
   for (const [columnName, columnDef] of metricsColumns) {
     if (!sessionColumns.has(columnName)) {

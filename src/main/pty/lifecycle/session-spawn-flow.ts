@@ -836,6 +836,9 @@ export async function performSpawn(
       if (!context.registry.has(id)) return;
       context.telemetry.setSessionUsage(id, usage);
     },
+    // A take-back did not start this agent. Cursor's `agent about` would ask
+    // this computer and replace the live model with the account default.
+    ...(rejoin ? { takingBack: true } : {}),
   };
   attachAdapter(session, adapterContext);
 

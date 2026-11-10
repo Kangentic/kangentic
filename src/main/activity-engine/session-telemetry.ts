@@ -24,6 +24,7 @@ import { UserInterruptCoordinator } from './user-interrupt-coordinator';
 import { OpenWorkLedger, type OpenWork } from './open-work-ledger';
 import { ConversationSwitchGate } from './conversation-switch-gate';
 import { sessionStartOfLine } from '../agent/shared/session-start-hook';
+import { isContextOccupancyKnown } from '../../shared/context-occupancy';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -1549,6 +1550,23 @@ export class SessionTelemetry {
   seedModelIfUnreported(sessionId: string, model: { id: string; displayName: string }): void {
     if (this.usage.getSessionUsage(sessionId)?.model.displayName) return;
     this.setSessionUsage(sessionId, { model });
+  }
+
+  /**
+   * Occupancy a run was showing before this process took it over, for a session
+   * that has reported none since. Same reason as `seedModelIfUnreported`: an
+   * idle agent on a host writes no status bar until it next acts, so the card
+   * would sit at 0%. Never replaces occupancy that is already known.
+   */
+  seedOccupancyIfUnknown(sessionId: string, usedPercentage: number): void {
+    if (!Number.isFinite(usedPercentage) || usedPercentage <= 0) return;
+    const existing = this.usage.getSessionUsage(sessionId);
+    if (existing && isContextOccupancyKnown(
+      existing.contextWindow.contextWindowSize,
+      existing.contextWindow.usedTokens,
+      existing.contextWindow.usedPercentage,
+    )) return;
+    this.setSessionUsage(sessionId, { contextWindow: { usedPercentage } });
   }
 
   /** This run's per-tool rows only, for the same reason as `getToolCallCount`. */

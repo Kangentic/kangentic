@@ -120,6 +120,10 @@ export function createRecordAdopter(context: RecordAdopterContext): (record: Ses
       runSoFar: { toolBreakdown: parseToolBreakdown(record.tool_breakdown), compactionCount: record.compaction_count ?? 0 },
       // What the agent last reported, so its card and context bar open with a model and not a spinner.
       ...(record.model_id ? { modelSoFar: { id: record.model_id, displayName: record.model_display_name || record.model_id } } : {}),
+      // Occupancy the record last saw, so the bar is not 0% until the agent next acts.
+      ...(typeof record.used_percentage === 'number' && record.used_percentage > 0
+        ? { occupancySoFar: record.used_percentage }
+        : {}),
       ...(restoredGrid ? { restoredGrid } : {}),
     };
     return context.sessionManager.adoptRemoteSession(input);

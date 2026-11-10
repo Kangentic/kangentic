@@ -113,10 +113,14 @@ process, a path tested against the wrong disk, an environment that overwrites th
   no registration has no hooks, so the agent stays and the record waits. A take goes on in the same record,
   so it restores the run's counts from that record (`restoreRunTotals`), and a capture with no usage yet
   keeps the record's. A take also marks the agent on screen and stamps that it ran
-  (`markTakenBackAgentRunning`), and shows the model the record last saw (`modelSoFar`, only when the agent
-  has reported none): an idle agent writes no output and no status, so without these the launch overlay
-  and the "Resuming agent..." label stay up for as long as it is quiet. Never clear the session's `resuming`
-  to hide the label instead, since the launch-failure paths read it. After recovery, an agent alive on
+  (`markTakenBackAgentRunning`), and shows the model and occupancy the record last saw (`modelSoFar`,
+  `occupancySoFar`, only when the agent has reported none): an idle agent writes no output and no status,
+  so without these the launch overlay, the "Resuming agent..." label and a 0% bar stay up for as long as
+  it is quiet. A take also reads the screen that is already up (`usageFromOutput`). A TUI that still
+  holds `Auto · 9.2%` fills the card even when the record has none, and replaces a seed this computer's
+  `agent about` once polluted. Never ask this computer's CLI for the live model on a take
+  (`SessionContext.takingBack`). Never clear the session's `resuming` to hide the label instead, since
+  the launch-failure paths read it. After recovery, an agent alive on
   the host for this app's projects that the app neither holds nor has a `running` record for is hung up
   (`endUnownedHostSessions`).
 - **Every hook record stays on the host until the app has stored it.** The helper keeps a record, marked

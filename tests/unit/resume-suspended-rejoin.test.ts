@@ -130,6 +130,7 @@ describe('the metrics of a record whose agent was taken back', () => {
     toolCallCount: 12,
     toolBreakdown: '[{"toolName":"Bash","callCount":12}]',
     compactionCount: 2,
+    usedPercentage: 9.2,
   };
 
   it('keeps the usage the record holds until the agent next reports, and takes what it reports then', () => {
@@ -145,6 +146,7 @@ describe('the metrics of a record whose agent was taken back', () => {
       modelId: null,
       modelDisplayName: null,
       totalDurationMs: null,
+      usedPercentage: null,
     });
 
     expect(sessionRepo.findByAnyId('rec-1')).toMatchObject({
@@ -153,6 +155,7 @@ describe('the metrics of a record whose agent was taken back', () => {
       total_output_tokens: 900,
       model_id: 'a-model',
       total_duration_ms: 60_000,
+      used_percentage: 9.2,
     });
 
     sessionRepo.updateMetrics('rec-1', { ...measured, totalCostUsd: 2.5 });

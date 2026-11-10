@@ -41,6 +41,7 @@ sources:
 | total_output_tokens | INTEGER | | NULL |
 | model_id | TEXT | | NULL |
 | model_display_name | TEXT | | NULL |
+| used_percentage | REAL | | NULL |
 | applied_model | TEXT | | NULL |
 | applied_effort | TEXT | | NULL |
 | total_duration_ms | INTEGER | | NULL |
@@ -66,6 +67,8 @@ Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_
 Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.
 
 Valid suspended_by values: `user` (an explicit pause: the desktop Pause button or a paired phone's `pause-session`), `auto` (the idle timeout paused an agent that was waiting on the user), `low_memory` (a low-memory pause an earlier version made; nothing writes it now), `system` (shutdown, task move, or a column/Board Profile edit turning `auto_spawn` off via `reconcileAutoSpawnChange`), or `NULL` (legacy records, treated as `system`). `user`, `auto` and `low_memory` are held pauses (`isHeldPause`, `src/shared/held-pause.ts`): neither a restart nor an auto-spawn column starts the task again until the user resumes it, or for `auto`, opens the task. `low_memory` stays valid so rows an earlier version wrote read correctly, and such a task waits for a person to resume it. The one exception is a task in a running workflow, which that version brought back by itself: startup recovery resumes it like a quit's suspend, so an upgrade does not stall its workflow (`isRunningWorkflowMemoryPause`, `resume-suspended.ts`). No migration touches those rows. The low-memory pause wrote `auto` before task #952, so a record from then reads as an idle-timeout pause and stays paused for the user. The column is TEXT with no CHECK constraint, so neither `auto` nor `low_memory` needed a migration.
+
+`used_percentage` is the occupancy the card's bar last showed, captured with the other metrics. An agent a host kept running writes nothing until it next acts, so a take-back seeds the bar from this rather than 0%. NULL when occupancy was never known. Distinct from `total_input_tokens`: some CLIs paint a percent and no token count.
 
 `total_cost_usd` and `total_duration_ms` are the agent's RUNNING totals for the whole conversation, and a `--resume` is a new row, so a task's rows must never be summed flat (the same trap the `usage_history` section below describes). Every summary read (`getSummaryForTask`, `listAllSummaries`, and `BOARD_TASK_FACTS_SQL` in `src/main/retrieval/board-task-facts.ts`) takes one value per conversation (`COALESCE(agent_session_id, id)`), its `MAX`, and adds the conversations: on one dogfooding task, $47.58 where the flat sum read $75.46. Tokens come from each conversation's latest costed row that reported tokens: a row with a cost and no tokens is no reading, so it never zeroes the conversation. A task with no token reading at all reads 0 in the summary and null in the board facts. Tool calls and compactions are per-run counters and sum. Churn reads every row of the task, costed or not. A run's own share (the completed task view's Runs table, `kangentic_list_sessions`) is `legDeltas` in `src/shared/leg-deltas.ts`, which skips a row with no reading as a baseline, so an empty row between two legs cannot book the next leg's whole running total.
 
