@@ -41,6 +41,11 @@ the trigger as an `aria-description`.
   (`utils/tooltip.ts`), which every `disabledReason` prop uses.
 - **A shortcut is `keys="<KEYBINDINGS id>"`, never a combo typed into the label.** The chips follow
   the user's rebind.
+- **A link's tip is `rows`, from `useLinkOpener`.** A control that opens a link (a PR pill, an
+  artifact) shows what each click does: `<Tooltip label="PR #12" rows={linkOpener.rows}>` draws
+  the stacked shape, a head line over one row per click with its chips. The clicks are not
+  keybindings, so the chips come from the opener, never from `keys` and never typed into a label.
+  The same hook opens the link, so the tip and the click cannot disagree.
 - **Tests never select by `title`.** Use role and name, `aria-label`, or a `data-testid`, and assert
   hover text with `toHaveAccessibleDescription`.
 
@@ -75,5 +80,7 @@ wrap, and xterm reports its hover from outside React. So `utils/terminal-links/l
 the tip by hand, with the classes, dwell, placement and one-tip slot from `utils/tooltip.ts`, and it
 looks the same as every other tip. One action is the label tip. A URL with two actions, or an OSC 8
 link whose text is not its address, is a stacked tip (`data-shape="stack"`): the destination line,
-a rule, then one row per action, drawn with the same tooltip color tokens.
-`tests/ui/terminal-link-click.spec.ts` pins both.
+a rule, then one row per action, drawn with the same tooltip color tokens and the same classes
+`Tooltip`'s own `rows` shape uses (`STACK_TIP_*` in `utils/tooltip.ts`).
+`tests/ui/terminal-link-click.spec.ts` pins both, and `tests/ui/pr-link-badge.spec.ts` the
+`Tooltip` one.

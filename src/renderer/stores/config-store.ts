@@ -96,6 +96,10 @@ interface ConfigStore {
    *  the blocking `config.setSync` so the final layout reaches disk before the renderer tears
    *  down (an async set() can be dropped mid-teardown). */
   flushWorkspaceForProject: (projectId: string, workspace: SerializedWorkspace) => void;
+  /** Collapse a board column to a strip for this user, or expand it again (#1056).
+   *  Per project and per machine (`collapsedColumnsByProject`), never the team's
+   *  board file. Applied to the store first, so the board reads back what it wrote. */
+  setColumnCollapsed: (projectId: string, swimlaneId: string, collapsed: boolean) => void;
   /** Persist the GLOBAL command-terminal window layout (one blob shared across all
    *  projects) into global config via `config.set`, like saveWorkspaceForProject but
    *  not keyed by project. The renderer owns this blob once seeded. */
@@ -447,6 +451,26 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
       // Quit/unload path: same optimistic update as the async save, but persisted
       // synchronously so the final layout reaches disk before the renderer tears down.
       window.electronAPI.config.setSync({ workspaceByProject: applyWorkspaceOptimistic(projectId, workspace) });
+    },
+
+    setColumnCollapsed: (projectId, swimlaneId, collapsed) => {
+      const existing = get().globalConfig.collapsedColumnsByProject ?? {};
+      const current = existing[projectId] ?? [];
+      if (current.includes(swimlaneId) === collapsed) return;
+      const columnIds = collapsed
+        ? [...current, swimlaneId]
+        : current.filter((candidateId) => candidateId !== swimlaneId);
+      // `collapsedColumnsByProject` is a CONFIG_DICTIONARY_PATH, so this write
+      // REPLACES the map: send every project's list, not just this one's. A
+      // project with no column left collapsed keeps no entry.
+      const collapsedColumnsByProject = { ...existing };
+      if (columnIds.length > 0) collapsedColumnsByProject[projectId] = columnIds;
+      else delete collapsedColumnsByProject[projectId];
+      set((state) => ({
+        config: { ...state.config, collapsedColumnsByProject },
+        globalConfig: { ...state.globalConfig, collapsedColumnsByProject },
+      }));
+      window.electronAPI.config.set({ collapsedColumnsByProject });
     },
 
     saveCommandTerminalWorkspace: (workspace) => {

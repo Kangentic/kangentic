@@ -1,10 +1,10 @@
 /**
- * The tip a terminal link shows on hover: what each link hotkey does with it, and
+ * The tip a terminal link shows on hover: what each click does with it, and
  * for an OSC 8 link whose text is not its URL, the URL it opens.
  *
  * One action is the one-row label tip every control shows. Two actions (the
- * default browser and the Kangentic browser, `link-actions.ts`) are two rows,
- * the plainer click first, each with its key chips at the right. A destination
+ * default browser and the Kangentic browser, `link-open.ts`) are two rows,
+ * the plain click first, each with its key chips at the right. A destination
  * line sits above them, muted and cut short past 480px, with a rule between.
  *
  * `Tooltip` (components/Tooltip.tsx) wraps one DOM element and places itself on that element's
@@ -17,15 +17,19 @@
  * and lets it through.
  */
 
-import { i18n, type MessageDescriptor } from '@lingui/core';
+import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import { CLICK_TOKEN } from '../../../shared/keybindings';
 import { IS_MAC, formatComboSegments } from '../keybindings';
 import {
   KEY_CHIP_CLASS,
   LABEL_TIP_CLASS,
   LABEL_TIP_ROW_CLASS,
   LABEL_TIP_TEXT_CLASS,
+  STACK_TIP_CLASS,
+  STACK_TIP_HEAD_CLASS,
+  STACK_TIP_ROWS_CLASS,
+  STACK_TIP_ROW_KEYS_CLASS,
+  STACK_TIP_RULE_CLASS,
   TIP_BASE_CLASS,
   TIP_KEYS_CLASS,
   TOOLTIP_DWELL_MS,
@@ -36,7 +40,7 @@ import {
   type TipAnchor,
 } from '../tooltip';
 import type { CellRange } from './buffer-line-text';
-import type { LinkAction, LinkTarget } from './link-actions';
+import { LINK_TARGET_LABELS, MODIFIED_CLICK_COMBO, type LinkAction, type LinkTarget } from '../link-open';
 
 /** A URL (printed or OSC 8) opens in a browser; a printed path shows in the file manager. */
 export type TerminalLinkKind = 'url' | 'path';
@@ -100,13 +104,9 @@ export function linkRowAnchor(range: CellRange, grid: CellGrid, pointerClientY: 
   };
 }
 
-const TARGET_LABELS: Record<LinkTarget, MessageDescriptor> = {
-  'default-browser': msg`Open in default browser`,
-  'kangentic-browser': msg`Open in Kangentic browser`,
-};
 const SHOW_IN_FOLDER = msg`Show in folder`;
-/** A printed path opens on Ctrl or Cmd click, whatever the link hotkeys are. */
-const PATH_COMBO = `Mod+${CLICK_TOKEN}`;
+/** A printed path shows in its folder on Ctrl or Cmd click, whatever a plain click opens. */
+const PATH_COMBO = MODIFIED_CLICK_COMBO;
 
 function withoutTrailingSlash(text: string): string {
   return text.endsWith('/') ? text.slice(0, -1) : text;
@@ -122,9 +122,8 @@ export function osc8Destination(uri: string, cellText: string): string | null {
 }
 
 /**
- * The tip's words. A path shows in its folder; a URL lists the actions its link
- * hotkeys offer, in the plan's order. Null when there is nothing to say: a URL
- * with no link hotkey bound.
+ * The tip's words. A path shows in its folder; a URL lists what a click and a
+ * Ctrl or Cmd click open, in the plan's order. Null when there is nothing to say.
  */
 export function linkTipContent(
   kind: TerminalLinkKind,
@@ -139,19 +138,19 @@ export function linkTipContent(
   return {
     destination,
     rows: actions.map((action) => ({
-      label: i18n._(TARGET_LABELS[action.target]),
+      label: i18n._(LINK_TARGET_LABELS[action.target]),
       keys: formatComboSegments(action.combo, isMac),
       target: action.target,
     })),
   };
 }
 
-/** The stacked shape: a destination line, a rule, then the rows. The rule runs edge to edge, so the padding is the parts'. */
-const STACK_TIP_CLASS = 'flex w-max max-w-[min(480px,calc(100vw-16px))] flex-col bg-fg leading-4 text-surface';
-const DESTINATION_CLASS = 'truncate px-2 py-1 text-tooltip-muted';
-const RULE_CLASS = 'h-px shrink-0 bg-tooltip-chip-edge/40';
-const ROWS_CLASS = 'grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-1 px-2 py-1';
-const ROW_KEYS_CLASS = 'flex items-center gap-0.5 justify-self-end';
+// The stacked shape (a destination line, a rule, then the rows) is shared with
+// `Tooltip`'s `rows`, so a terminal link and a PR pill draw the same tip.
+const DESTINATION_CLASS = STACK_TIP_HEAD_CLASS;
+const RULE_CLASS = STACK_TIP_RULE_CLASS;
+const ROWS_CLASS = STACK_TIP_ROWS_CLASS;
+const ROW_KEYS_CLASS = STACK_TIP_ROW_KEYS_CLASS;
 
 /** The part of an xterm `Terminal` the tip reads. */
 export interface LinkTipTerminal {

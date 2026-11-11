@@ -22,6 +22,10 @@ import { useTerminalFindControl } from '../../../utils/terminal-find-registry';
 import { openTaskConversation } from './open-task-conversation';
 import { prStatePresentation } from '../../../lib/pr-state';
 import { usePrChecks, prFixCount } from '../../../hooks/usePrChecks';
+import { useLinkOpener } from '../../../hooks/useLinkOpener';
+import { ArtifactsChip } from '../../artifacts/ArtifactsChip';
+import { ArtifactsKebabItems } from '../../artifacts/ArtifactsKebabItems';
+import { requestArtifactsFocus } from '../../artifacts/artifacts-focus';
 import { CountBadge } from '../../CountBadge';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
@@ -241,6 +245,7 @@ export function TaskDetailHeader({
   // header shortcut that is not already a menu item folds into the kebab (Commands,
   // Open folder, and View conversation all have kebab entries). Commands is
   // kebab-only (no header pill) - it is a menu, not a one-tap toggle.
+  const hasArtifacts = (task.artifacts?.length ?? 0) > 0;
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
     if (terminalFind.available) specs.push({ id: 'find', priority: 22 });
@@ -250,12 +255,14 @@ export function TaskDetailHeader({
     if (canShowWorkflow && onToggleWorkflow) specs.push({ id: 'workflow', priority: 35 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
+    // The task's artifacts: folds after Conversation, into the menu's own Artifacts item.
+    if (hasArtifacts) specs.push({ id: 'artifacts', priority: 19 });
     if (canOpenConversation) specs.push({ id: 'conversation', priority: 18 });
     for (const action of headerShortcuts) {
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [terminalFind.available, task.worktree_path, projectPath, canShowWorkflow, onToggleWorkflow, canShowChanges, canShowBrowser, canOpenConversation, headerShortcuts]);
+  }, [terminalFind.available, task.worktree_path, projectPath, canShowWorkflow, onToggleWorkflow, canShowChanges, canShowBrowser, hasArtifacts, canOpenConversation, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -449,6 +456,20 @@ export function TaskDetailHeader({
                   className="pointer-events-none absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface-raised bg-active animate-pulse"
                 />
               )}
+            </div>
+          )}
+
+          {/* Artifacts: the task's designs, diagrams and documents (#1056). One
+              opens on a click; several open a menu. Absent for a task with none.
+              No count badge: the tip gives the count. */}
+          {showPill('artifacts') && hasArtifacts && (
+            <div data-pill-id="artifacts" className="flex-shrink-0">
+              <ArtifactsChip
+                task={task}
+                variant="header"
+                onEdit={() => { requestArtifactsFocus(task.id); setIsEditing(true); }}
+                testId="artifacts-button"
+              />
             </div>
           )}
 
@@ -674,6 +695,8 @@ function TaskDetailKebabItems({
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
   const prNumber = task.pr_number;
+  // View PR opens the way the PR pill does: the chosen browser, or the other on Ctrl or Cmd.
+  const linkOpener = useLinkOpener(task.id);
   const [linkingPr, setLinkingPr] = useState(false);
   const [updatingFromBase, setUpdatingFromBase] = useState(false);
   const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
@@ -945,9 +968,12 @@ function TaskDetailKebabItems({
         <KebabMenuItem
           icon={<GitPullRequest size={14} />}
           label={t`View PR #${prNumber}`}
-          onClick={() => { closeAll(); window.electronAPI.shell.openExternal(task.pr_url!); }}
+          onClick={(event) => { closeAll(); linkOpener.open(task.pr_url!, event); }}
         />
       )}
+
+      {/* Artifacts (parity with the header button, so the overflow holds it when it folds) */}
+      <ArtifactsKebabItems task={task} close={closeAll} />
 
       {/* Link / refresh PR (authoritative branch->PR resolve; works with no live
           session). Shown for any anchor the ladder can search by, so a task with

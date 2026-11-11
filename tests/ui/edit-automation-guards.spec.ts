@@ -1397,24 +1397,22 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(name).toHaveValue('Reviewed');
   });
 
-  // 6 - The board glyph counts turn-end rows ─────────────────────────────────
+  // 6 - The board header's tip counts turn-end rows ──────────────────────────
+  // The count used to be a glyph in the header. Collapse took its place
+  // (#1056), and the sentence is read from the header's tip.
 
-  test('the header glyph shows the turn-end count for a column with one turn-end row', async () => {
+  test('the header tip gives the turn-end count for a column with one turn-end row', async () => {
     await seedColumn('Testing', [
       { name: 'Tell me', type: 'notify', trigger: 'turn_end', config: { title: 'Turn ended' } },
     ]);
     await refreshAutomationStore('Testing');
 
-    const glyph = page.locator('[data-swimlane-name="Testing"] [data-testid="column-automation-glyph"]');
-    await expect(glyph).toBeVisible();
-    await expect(glyph).toHaveAttribute('data-turn-end', '1');
-    await expect(glyph).toHaveAttribute('data-enter', '0');
-    await expect(glyph).toHaveAttribute('data-exit', '0');
-    await expect(glyph).toHaveText('1');
-    await expect(glyph).toHaveAccessibleName(/1 at a turn end/);
+    const header = page.locator('[data-swimlane-name="Testing"] [data-testid="swimlane-header"]');
+    // Only the moment with a count is named.
+    await expect(header).toHaveAccessibleDescription(/1 automation runs here: 1 at a turn end$/);
   });
 
-  test('the glyph adds turn-end rows to the other two counts, and skips a column no agent works in', async () => {
+  test('the tip adds turn-end rows to the other two counts, and skips a column no agent works in', async () => {
     await seedColumn('Merge', [
       { name: 'On the way in', type: 'notify', trigger: 'enter', config: { title: 'in' } },
       { name: 'Each turn', type: 'notify', trigger: 'turn_end', config: { title: 'turn' } },
@@ -1426,11 +1424,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     ]);
     await refreshAutomationStore('Merge');
 
-    const mergeGlyph = page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]');
-    await expect(mergeGlyph).toHaveAttribute('data-enter', '1');
-    await expect(mergeGlyph).toHaveAttribute('data-turn-end', '1');
-    await expect(mergeGlyph).toHaveAttribute('data-exit', '1');
-    await expect(mergeGlyph).toHaveText('3');
-    await expect(page.locator('[data-swimlane-name="To Do"] [data-testid="column-automation-glyph"]')).toHaveCount(0);
+    await expect(page.locator('[data-swimlane-name="Merge"] [data-testid="swimlane-header"]'))
+      .toHaveAccessibleDescription(/3 automations run here: 1 on enter, 1 at a turn end, 1 on exit/);
+    await expect(page.locator('[data-swimlane-name="To Do"] [data-testid="swimlane-header"]'))
+      .not.toHaveAccessibleDescription(/run here|runs here/);
   });
 });

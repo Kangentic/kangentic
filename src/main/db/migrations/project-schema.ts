@@ -2337,4 +2337,17 @@ function migrateWorkflows(db: Database.Database): void {
   if (!sessionHasAccountId) {
     db.exec('ALTER TABLE sessions ADD COLUMN account_id TEXT DEFAULT NULL');
   }
+
+  // A task's artifacts (task #1056): links to its designs, diagrams and documents,
+  // as a JSON array like `labels`, and the links a person took off it, so
+  // detection never puts one back. Empty for every existing row, so no backfill.
+  const taskArtifactColumns = new Set(
+    (db.pragma('table_info(tasks)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!taskArtifactColumns.has('artifacts')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN artifacts TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!taskArtifactColumns.has('dismissed_artifacts')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN dismissed_artifacts TEXT NOT NULL DEFAULT '[]'");
+  }
 }

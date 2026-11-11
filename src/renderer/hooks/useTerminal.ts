@@ -11,7 +11,7 @@ import { resolveTerminalFontSize } from '../utils/terminal-font-size';
 import { scheduleFontApply, terminalFontMoved } from '../utils/terminal-font-apply';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
-import { createTerminalLinkGesture } from '../utils/terminal-links/link-gesture';
+import { createTerminalLinkGesture, heldPressAfterReport } from '../utils/terminal-links/link-gesture';
 import { createTerminalLinkTargets, type TerminalLinkBrowser } from '../utils/terminal-links/link-targets';
 import { linkOpensOn, registerTerminalLinks } from '../utils/terminal-links/register-terminal-links';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
@@ -1875,11 +1875,30 @@ export function useTerminal(options: UseTerminalOptions) {
 
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
+      // The press report of a link click, held back until the click is decided.
+      let heldLinkPress: string | null = null;
+      // A plain press on a link that turns into a drag is the program's after
+      // all (a TUI that selects with the mouse), so its press report goes out
+      // then, ahead of the first motion report (link-gesture.ts).
+      linkGesture.onClaimReleased(() => {
+        if (heldLinkPress === null) return;
+        batcher.writePaced(heldLinkPress, undefined);
+        heldLinkPress = null;
+      });
       terminal.onData((data) => {
-        // The press and release of a link hotkey click (Ctrl or Cmd click by default) are this
+        // The press and release of a click that opens a link are this
         // terminal's, or a TUI that opens links itself opens it a second time.
+        // The press is held, not dropped: a plain press may still become a drag.
         // Wheel and motion reports carry a lane and still go through.
-        if (linkGesture.isClickingLink() && isMouseReport(data) && mouseReportLane(data) === undefined) return;
+        if (isMouseReport(data) && mouseReportLane(data) === undefined) {
+          if (linkGesture.isClickingLink()) {
+            // Both the press and the release stay here. Which of the two this
+            // report is, SGR or X10, is `heldPressAfterReport`'s to say.
+            heldLinkPress = heldPressAfterReport(data, heldLinkPress);
+            return;
+          }
+          heldLinkPress = null;
+        }
         // Arms the repaint nudge. Any REAL input counts:
         // wheel-scroll-then-stop is the primary real-world repro of the
         // missing-rows family, and the keyboard jump (Ctrl+End / Ctrl+Home) is

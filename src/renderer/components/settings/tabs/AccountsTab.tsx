@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, ListOrdered, Plus, TriangleAlert } from 'lucide-react';
-import { AgentLogo } from '../../AgentLogo';
+import { AgentLogo } from '../../VendorMark';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';

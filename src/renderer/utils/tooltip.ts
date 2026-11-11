@@ -14,6 +14,20 @@ export const LABEL_TIP_ROW_CLASS = 'flex items-start gap-1.5';
 export const LABEL_TIP_TEXT_CLASS = 'min-w-0 whitespace-pre-line break-words';
 export const TIP_KEYS_CLASS = 'ml-1 flex shrink-0 items-center gap-0.5 self-center';
 export const KEY_CHIP_CLASS = 'inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-tooltip-chip-edge bg-tooltip-chip px-1 font-sans text-[11px] font-medium leading-none text-surface';
+/**
+ * The stacked shape: an optional head line, a rule, then one row per action
+ * with its key chips at the right. A link's tip (a terminal link drawn by hand
+ * in `terminal-links/link-tip.ts`, a PR pill or an artifact through `Tooltip`'s
+ * `rows`). The rule runs edge to edge, so the padding is the parts'.
+ */
+export const STACK_TIP_CLASS = 'flex w-max max-w-[min(480px,calc(100vw-16px))] flex-col bg-fg leading-4 text-surface';
+export const STACK_TIP_HEAD_CLASS = 'truncate px-2 py-1 text-tooltip-muted';
+/** A stacked tip that names a link's destination: the name on top in the tip's own tone, the address muted under it. */
+export const STACK_TIP_TITLE_CLASS = 'truncate px-2 pt-1';
+export const STACK_TIP_DESTINATION_CLASS = 'truncate px-2 pb-1 text-tooltip-muted';
+export const STACK_TIP_RULE_CLASS = 'h-px shrink-0 bg-tooltip-chip-edge/40';
+export const STACK_TIP_ROWS_CLASS = 'grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-1 px-2 py-1';
+export const STACK_TIP_ROW_KEYS_CLASS = 'flex items-center gap-0.5 justify-self-end';
 
 /** Hover dwell before a cold tip opens. Long enough that sweeping across a row of icons shows nothing. */
 export const TOOLTIP_DWELL_MS = 400;

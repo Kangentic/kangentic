@@ -1,13 +1,23 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, MouseEvent } from 'react';
 import { Pill } from './Pill';
-import { Tooltip } from './Tooltip';
+import { Tooltip, type TooltipRow } from './Tooltip';
 import { showsDisabledReason, tipLabel } from '../utils/tooltip';
 
 interface HeaderActionButtonProps {
   /** Icon component rendered at the shared header size. Accepts Lucide icons and
    *  the shortcut icon-registry components (both take a `size` prop). */
   icon: ComponentType<{ size?: number }>;
-  onClick: () => void;
+  /** The click is passed on for a button that opens a link, which reads its modifiers. */
+  onClick: (event: MouseEvent<HTMLElement>) => void;
+  /**
+   * For a button that opens a link (the task's one artifact): what each click does, and where the
+   * link goes, drawn as the stacked tip (`useLinkOpener`).
+   */
+  linkTip?: { rows: readonly TooltipRow[]; destination: string };
+  /** Hold the tip shut, for a button whose menu is open. */
+  tipEnabled?: boolean;
+  /** Set on a button that opens a menu: whether it is open. */
+  expanded?: boolean;
   /** The tip: the action's name, which is also an icon-only button's accessible name unless
    *  `ariaLabel` says otherwise. No explanation in parentheses and no typed combo. */
   tip: string;
@@ -76,6 +86,9 @@ export function HeaderActionButton({
   testId,
   size = 'normal',
   className,
+  linkTip,
+  tipEnabled,
+  expanded,
 }: HeaderActionButtonProps) {
   // Pill's px/py pair (and, for size="md", its min-w-[40px]) is tuned for a
   // pill WITH text (wider than tall reads fine there), but most callers here
@@ -99,6 +112,9 @@ export function HeaderActionButton({
       label={tipLabel({ disabled, disabledReason, tip })}
       keys={showReason ? undefined : keys}
       detail={showReason ? undefined : detail}
+      rows={showReason ? undefined : linkTip?.rows}
+      destination={showReason ? undefined : linkTip?.destination}
+      enabled={tipEnabled}
     >
       <Pill
         shape="square"
@@ -107,6 +123,7 @@ export function HeaderActionButton({
         disabled={disabled}
         className={`flex-shrink-0 border transition-colors ${disabled ? DISABLED : active ? ACTIVE : REST} ${squareUpIconOnly} ${className ?? ''}`}
         aria-label={ariaLabel ?? (label === undefined ? tip : undefined)}
+        aria-expanded={expanded}
         data-testid={testId}
       >
         <Icon size={size === 'small' ? ICON_SIZE_SMALL : ICON_SIZE_NORMAL} />

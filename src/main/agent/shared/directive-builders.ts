@@ -174,6 +174,44 @@ export function extractHolderTimeout(
   return encodeDirective('extractHolderTimeout', payload);
 }
 
+/**
+ * A tool whose result is a published thing with a link. An adapter's hook manager names its own (Claude's `CLAUDE_ARTIFACT_PUBLISH_SPEC`).
+ * `tools` are the tool names. With `actionPath`, the call counts only when the
+ * value there is one of `actions`, or is absent and `allowNoAction` is set: a
+ * tool that also reads and lists returns links nobody published.
+ */
+export interface ToolUrlsSpec {
+  /** The top-level payload field that names the tool. */
+  toolField: string;
+  tools: string[];
+  /** Where the tool's result sits in the payload. */
+  responsePath: string[];
+  actionPath?: string[];
+  actions?: string[];
+  allowNoAction?: boolean;
+  /** Where the publish's title sits, when the tool's input carries one. */
+  titlePath?: string[];
+  /**
+   * Keep only the first this-many links. For a tool whose result names what it
+   * published first and other things after it. Absent: up to the bridge's cap.
+   */
+  limit?: number;
+}
+
+/**
+ * Set `event.urls` to the links a publish tool's result carries, and
+ * `event.urlsTitle` to its title. Main adds the recognised ones to the task's
+ * artifacts.
+ *
+ * Its own kind, so a stale `event-bridge.js` copy rejects it via `default` (a
+ * logged no-op) and the event lands without links, as before this directive.
+ */
+export function extractToolUrls(spec: ToolUrlsSpec): string {
+  if (spec.tools.length === 0) throw new Error('extractToolUrls requires at least one tool');
+  if (spec.responsePath.length === 0) throw new Error('extractToolUrls requires a response path');
+  return encodeDirective('extractToolUrls', { ...spec });
+}
+
 /** Set `event.detail` to a fixed value (no stdin lookup). */
 export function setDetail(value: string): string {
   return encodeDirective('setDetail', { value });

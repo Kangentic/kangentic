@@ -7,6 +7,8 @@ import { formatTokenCount } from '../../../../utils/format-tokens';
 import { formatDateTime, formatMonthDay, formatMonthDayTime } from '../../../../lib/datetime';
 import { prStatePresentation } from '../../../../lib/pr-state';
 import { Tooltip } from '../../../Tooltip';
+import { useLinkOpener } from '../../../../hooks/useLinkOpener';
+import { ArtifactsChip } from '../../../artifacts/ArtifactsChip';
 import type { Task, TaskReport } from '../../../../../shared/types';
 
 /**
@@ -37,6 +39,9 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
   gitTotals?: { insertions: number; deletions: number; filesChanged: number } | null;
 }) {
   const { t } = useLingui();
+  // A completed task has no session, so its links open in the default browser
+  // on either click; the tip still says where.
+  const linkOpener = useLinkOpener(task.id);
   const { summary } = report;
   const startedMs = report.startedAt ? Date.parse(report.startedAt) : Number.NaN;
   const endedMs = report.endedAt ? Date.parse(report.endedAt) : Number.NaN;
@@ -96,10 +101,10 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
       value: (
         <>
           {prUrl ? (
-            <Tooltip label={prLabel ? t`Open PR #${prNumber} (${prLabel})` : t`Open PR #${prNumber}`}>
+            <Tooltip label={prLabel ? t`PR #${prNumber} (${prLabel})` : t`PR #${prNumber}`} rows={linkOpener.rows}>
               <button
                 type="button"
-                onClick={() => { void window.electronAPI.shell.openExternal(prUrl); }}
+                onClick={(event) => linkOpener.open(prUrl, event)}
                 className="inline-flex items-center gap-[5px] rounded text-purple-400 hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <GitPullRequest size={14} />
@@ -116,6 +121,16 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
           {prLabel && <span className="hidden text-[13px] font-normal capitalize text-fg-muted @[860px]:inline">{prLabel}</span>}
         </>
       ),
+    });
+  }
+  // The task's artifacts, after its pull request: a count that opens the same
+  // menu as its card did (one artifact opens on the click). About 40px wide,
+  // so the narrowing steps above hold with it.
+  if ((task.artifacts?.length ?? 0) > 0) {
+    metrics.push({
+      key: 'artifacts',
+      label: t({ message: 'Artifacts', context: 'completed task metric' }),
+      value: <ArtifactsChip task={task} variant="metric" testId="completed-artifacts" />,
     });
   }
   if (summary && summary.totalCostUsd > 0) metrics.push({ key: 'cost', label: t({ message: 'Cost', context: 'completed task metric' }), value: formatCost(summary.totalCostUsd) });

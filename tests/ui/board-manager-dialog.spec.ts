@@ -128,6 +128,42 @@ test.describe('BoardManagerDialog', () => {
     await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 3000 });
   });
 
+  test('Description is one row for a short line, two rows once the text fills two, and never taller', async () => {
+    // The field was one fixed row, so a description that ran to a second line
+    // showed half of it under the Icon label.
+    await openManagerByHeader('Code Review');
+    const field = page.locator('[data-testid="board-manager-description"]');
+    const measure = () => field.evaluate((element: HTMLTextAreaElement) => ({
+      height: element.getBoundingClientRect().height,
+      lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+      scrolls: element.scrollHeight > element.clientHeight + 1,
+    }));
+
+    await field.fill('Reviews the diff.');
+    const oneRow = await measure();
+    expect(oneRow.scrolls).toBe(false);
+
+    // Grow the text until it wraps: the field's width is the dialog's, so the
+    // word count that fills a row is read, not assumed.
+    let wrapped = oneRow;
+    for (let words = 10; words <= 400 && wrapped.height < oneRow.height + 1; words += 10) {
+      await field.fill('word '.repeat(words).trim());
+      wrapped = await measure();
+    }
+    expect(Math.abs(wrapped.height - (oneRow.height + oneRow.lineHeight))).toBeLessThan(2);
+    expect(wrapped.scrolls).toBe(false);
+
+    // Far more than two rows of text: still two rows, and it scrolls.
+    await field.fill('word '.repeat(190).trim());
+    const full = await measure();
+    expect(Math.abs(full.height - wrapped.height)).toBeLessThan(2);
+    expect(full.scrolls).toBe(true);
+
+    await field.fill('');
+    expect(Math.abs((await measure()).height - oneRow.height)).toBeLessThan(2);
+    await closeManager();
+  });
+
   test('Description edits persist and round-trip back into the dialog', async () => {
     const description = 'Agents run /code-review here in an isolated session.';
 

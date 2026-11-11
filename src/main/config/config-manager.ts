@@ -48,6 +48,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'agent.launchOptions',
   'hotkeyOverrides',
   'workspaceByProject',
+  'collapsedColumnsByProject',
   'commandTerminalWorkspace',
   'commandTerminalPanel',
   'commandTerminalPanelByShape',

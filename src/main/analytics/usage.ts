@@ -61,7 +61,12 @@ interface UsageFlags {
   featureFirstUse: Partial<Record<AnalyticsFeature, true>>;
   /** The app version of the previous run, for update_outcome detection. */
   lastRunVersion?: string;
+  /** Hosts already reported as an unrecognised artifact domain, so each is reported once per install. */
+  reportedArtifactDomains?: string[];
 }
+
+/** How many unrecognised artifact domains one install remembers (and so reports). */
+const MAX_REPORTED_ARTIFACT_DOMAINS = 100;
 
 /**
  * Lifetime once-per-install flags, persisted beside analytics-client-id.json
@@ -136,16 +141,36 @@ export function initUsageAnalytics(flagsFilePath: string): void {
   try {
     const parsed = JSON.parse(readFileSync(flagsFilePath, 'utf-8')) as Record<string, unknown> | null;
     const lastRunVersion = parsed?.lastRunVersion;
+    const reportedDomains = parsed?.reportedArtifactDomains;
     usageFlags = {
       milestones: asFlagRecord<OnboardingMilestone>(parsed?.milestones),
       featureFirstUse: asFlagRecord<AnalyticsFeature>(parsed?.featureFirstUse),
       lastRunVersion: typeof lastRunVersion === 'string' ? lastRunVersion : undefined,
+      reportedArtifactDomains: Array.isArray(reportedDomains)
+        ? reportedDomains.filter((domain): domain is string => typeof domain === 'string')
+        : undefined,
     };
   } catch {
     // Missing or corrupt file: start fresh. Worst case is one repeated
     // lifetime event, not data loss.
     usageFlags = { milestones: {}, featureFirstUse: {} };
   }
+}
+
+/**
+ * Whether this install has yet to report `domain` as an unrecognised artifact
+ * domain, remembering it when so. False once the install has reported
+ * `MAX_REPORTED_ARTIFACT_DOMAINS` of them, and before the flags load, so the
+ * report can never repeat or run unbounded. The caller checks that error
+ * reporting is on first: a claim made with it off would be spent on nothing.
+ */
+export function claimArtifactDomainReport(domain: string): boolean {
+  if (!usageFlags) return false;
+  const reported = usageFlags.reportedArtifactDomains ?? [];
+  if (reported.includes(domain) || reported.length >= MAX_REPORTED_ARTIFACT_DOMAINS) return false;
+  usageFlags.reportedArtifactDomains = [...reported, domain];
+  persistUsageFlags();
+  return true;
 }
 
 /**

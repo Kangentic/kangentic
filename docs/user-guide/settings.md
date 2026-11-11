@@ -111,7 +111,8 @@ Applies to every project (Settings > Board, not a per-project override). Two car
 
 | Setting | Card | Description |
 |---------|------|-------------|
-| Column width | Board layout | Width of the board's columns: Narrow, Default or Wide |
+| Column width | Board layout | How wide a column with tasks is: Narrow, Default or Wide, each a fixed width, or Fill, which sizes the columns to fit the window. See [Column Widths and Collapsing](board-basics.md#column-widths-and-collapsing) |
+| Shrink empty columns | Board layout | Narrow a column with no tasks to its header (on by default) |
 | Terminal panel | Board layout | Show the terminal panel below the board (on by default) |
 | Status bar | Board layout | Show the status bar at the bottom of the window (on by default) |
 | Auto-apply board config changes | Config sync | Apply a detected `kangentic.json` change at once instead of asking you to confirm it (off by default). See [Applying Changes](board-basics.md#applying-changes) |
@@ -232,6 +233,7 @@ These are global-only settings that apply to the entire app.
 | Stop Leftover Processes | Stop what an agent left running in its folder when its task is done, moved back to To Do, or deleted, or when its Command Terminal ends. Off, nothing is stopped and the toast still lists what kept running. |
 | Close on Outside Click | Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. An edit form with unsaved changes asks to save first. Closing a window does not kill its session. |
 | Restore Window Position | Remember window size and position between launches |
+| Click opens links in | Which browser a click on a link opens: your default browser (the default) or the Kangentic browser beside the task's terminal. Ctrl click (Cmd on macOS) opens the other one. Applies to terminal links, PR pills and a task's artifacts. |
 
 The Board tab has its own Auto-apply board config changes switch. See [Board Settings](#board-settings).
 
@@ -353,7 +355,7 @@ The Mobile section closes with **How to install and pair**, which opens the [Kan
 
 ## Privacy
 
-The Privacy tab shows what anonymous telemetry Kangentic collects (app launches and the previous run's duration, crash reports, task and session counts, daily feature-usage counts, and a once-per-launch list of which global settings differ from their defaults) and how to opt out. Usage analytics are powered by Aptabase (no cookies, GDPR-compliant, plus one anonymous non-reversible install id used only to count unique installs); crash and error reports go to Sentry with the home directory and each registered project folder removed from every text field of a report. Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable all telemetry, or `KANGENTIC_ERROR_REPORTING=0` to disable only error reporting. It also lists `support@kangentic.com` for questions about what is collected. This tab is informational only - there are no configurable settings.
+The Privacy tab shows what anonymous telemetry Kangentic collects (app launches and the previous run's duration, crash reports, task and session counts, daily feature-usage counts, and a once-per-launch list of which global settings differ from their defaults) and how to opt out. Usage analytics are powered by Aptabase (no cookies, GDPR-compliant, plus one anonymous non-reversible install id used only to count unique installs); crash and error reports go to Sentry with the home directory and each registered project folder removed from every text field of a report. Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable all telemetry, or `KANGENTIC_ERROR_REPORTING=0` to disable only error reporting. When a link on a site Kangentic does not recognise is added to a task as an artifact, that site's domain is reported once per install, never for a private host and never with error reporting off (see [Error reporting](../telemetry/error-reporting.md)). It also lists `support@kangentic.com` for questions about what is collected. This tab is informational only - there are no configurable settings.
 
 ## Developer
 

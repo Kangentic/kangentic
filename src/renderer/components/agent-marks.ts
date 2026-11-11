@@ -1,5 +1,5 @@
 /**
- * The mark each agent's card draws (`AgentLogo.tsx`), keyed by adapter name.
+ * The mark each agent's card draws (`AgentLogo` in `VendorMark.tsx`), keyed by adapter name.
  *
  * These are the marks kangentic.com draws beside each agent's name, copied from its home page so
  * the app and the site show one set: every fill and stroke is `currentColor`, so the call site
@@ -20,6 +20,9 @@ export interface AgentMark {
   root: Record<string, string>;
   shapes: AgentMarkShape[];
 }
+
+/** One vendor's mark: an agent's here, an artifact platform's in `artifact-platform-marks.ts`. */
+export type VendorMark = AgentMark;
 
 export const AGENT_MARKS: Record<string, AgentMark> = {
   claude: {

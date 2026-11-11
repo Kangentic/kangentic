@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type ReactNode } from 'react';
+import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { MoreHorizontal, Check } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -118,7 +118,8 @@ const DESTRUCTIVE_CLASS = 'w-full text-left px-3 py-1.5 text-xs transition-color
 interface MenuItemProps {
   icon: ReactNode;
   label: string;
-  onClick: () => void;
+  /** The click is passed on for an item that opens a link, which reads its modifiers. */
+  onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   destructive?: boolean;
   disabled?: boolean;
   /** Why a disabled item does nothing, as its tip and its description. */

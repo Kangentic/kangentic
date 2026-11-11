@@ -478,6 +478,11 @@ msgctxt "task status"
 msgid "Archived"
 msgstr "Archiviert"
 
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Artifacts"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgctxt "plan approval"
@@ -2202,16 +2207,6 @@ msgstr "In neuem Fenster öffnen"
 msgid "Open on {providerName}"
 msgstr "Auf {providerName} öffnen"
 
-#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
-msgid "Open PR #{prNumber}"
-msgstr "PR #{prNumber} öffnen"
-
-#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
-msgid "Open PR #{prNumber} ({prLabel})"
-msgstr "PR #{prNumber} ({prLabel}) öffnen"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Open project folder"
@@ -2358,6 +2353,7 @@ msgstr "Die Plangenehmigung gilt für alle Profile. Wechseln Sie zu Standard, um
 msgid "Pop out of tiling"
 msgstr "Aus Kachelansicht lösen"
 
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "PR #{prNumber}"
@@ -2426,6 +2422,7 @@ msgid "Project relocated"
 msgstr "Projekt verschoben"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Pull request"
 msgstr ""
 
@@ -2433,11 +2430,6 @@ msgstr ""
 #, fuzzy
 msgctxt "completed task metric"
 msgid "Pull request"
-msgstr "Pull Request"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
-#, fuzzy
-msgid "Pull Request"
 msgstr "Pull Request"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx

@@ -88,6 +88,13 @@ import {
   LABEL_TIP_CLASS,
   LABEL_TIP_ROW_CLASS,
   LABEL_TIP_TEXT_CLASS,
+  STACK_TIP_CLASS,
+  STACK_TIP_DESTINATION_CLASS,
+  STACK_TIP_HEAD_CLASS,
+  STACK_TIP_TITLE_CLASS,
+  STACK_TIP_ROWS_CLASS,
+  STACK_TIP_ROW_KEYS_CLASS,
+  STACK_TIP_RULE_CLASS,
   TIP_BASE_CLASS,
   TIP_KEYS_CLASS,
   TOOLTIP_DWELL_MS,
@@ -104,12 +111,33 @@ export interface TooltipHeader {
   title: string;
 }
 
+/** One action of a stacked tip: what a click does, and the key chips that do it. */
+export interface TooltipRow {
+  label: string;
+  /** Key chips as drawn, already formatted for the platform (`formatComboSegments`). */
+  keys: readonly string[];
+  /** Stamped on the row as `data-tooltip-row`, for a test to find it. */
+  id?: string;
+}
+
 export interface TooltipProps {
   /**
    * Plain text: the label tip itself, and what a screen reader reads for a rich tip. "\n" breaks
-   * a line. An empty label with no rich part holds the tip shut.
+   * a line. An empty label with no rich part and no rows holds the tip shut.
    */
   label: string;
+  /**
+   * The stacked shape, for a control with more than one way to act on it (a link a click and a
+   * Ctrl+click open in different browsers): `label` and `detail` become a muted head line, and
+   * each row is an action with its chips. One row with no head draws as the plain label tip.
+   */
+  rows?: readonly TooltipRow[];
+  /**
+   * Where a link goes, for a stacked tip whose label names the thing and not its address (an
+   * artifact's "Board filters, Figma"): the label keeps the tip's own tone and this is the muted
+   * line under it, cut with an ellipsis. Not read aloud: an address is noise to a listener.
+   */
+  destination?: string;
   /** A muted second part under the label (a commit's author under its subject). Label shape only. */
   detail?: string;
   /** A KEYBINDINGS id. Its live combo (the user's override, or the default) is drawn as chips and read. */
@@ -203,12 +231,13 @@ function warnAboutTrigger(element: Element): void {
 }
 
 export function Tooltip(props: TooltipProps): ReactElement {
-  const { label, detail, keys, icon, content, header, footer, describe, enabled = true, testId, children } = props;
+  const { label, detail, keys, icon, content, header, footer, describe, enabled = true, testId, children, rows, destination } = props;
   const child = isValidElement(children) ? (children as ReactElement<TriggerProps>) : null;
   const childProps: TriggerProps = child?.props ?? {};
   const rich = content !== undefined || header !== undefined || footer !== undefined;
+  const hasRows = rows !== undefined && rows.length > 0;
   // Whether the tip may open at all. An empty label has nothing to show.
-  const active = enabled && (label !== '' || rich);
+  const active = enabled && (label !== '' || rich || hasRows);
   const childIsFragment = child?.type === Fragment;
 
   // The trigger element, taken from the event that opens a tip rather than through a ref, so the
@@ -377,15 +406,22 @@ export function Tooltip(props: TooltipProps): ReactElement {
   const triggerName = childProps['aria-label']
     ?? (typeof childProps.children === 'string' ? childProps.children : undefined);
   const readLabel = describe ?? !repeatsTriggerName(label, triggerName);
+  // A stacked tip reads its head, then each action with its keys.
+  const rowsRead = hasRows
+    ? rows.map((row) => (row.keys.length > 0 ? `${row.label} (${row.keys.join('+')})` : row.label)).join('\n')
+    : '';
   // A tip held shut describes nothing either: its detail or shortcut alone would be read for a
   // tip no one can open.
   const description = active
-    ? tipDescription({
-        label,
-        readLabel,
-        combo: combo === '' ? '' : formatCombo(combo),
-        detail: describe === false ? undefined : detail,
-      })
+    ? [
+        tipDescription({
+          label,
+          readLabel,
+          combo: combo === '' ? '' : formatCombo(combo),
+          detail: describe === false ? undefined : detail,
+        }),
+        rowsRead,
+      ].filter((part) => part !== '').join('\n')
     : '';
 
   if (child === null) return <>{children}</>;
@@ -456,6 +492,8 @@ export function Tooltip(props: TooltipProps): ReactElement {
         rich={rich}
         label={label}
         detail={detail}
+        rows={hasRows ? rows : undefined}
+        destination={destination}
         combo={combo}
         icon={icon}
         content={content}
@@ -468,9 +506,14 @@ export function Tooltip(props: TooltipProps): ReactElement {
 }
 
 function TipKeys({ combo }: { combo: string }): ReactElement {
+  return <TipChips segments={formatComboSegments(combo)} className={TIP_KEYS_CLASS} />;
+}
+
+/** Key chips, from segments already formatted for the platform. */
+function TipChips({ segments, className }: { segments: readonly string[]; className: string }): ReactElement {
   return (
-    <span className={TIP_KEYS_CLASS} data-tooltip-part="keys">
-      {formatComboSegments(combo).map((segment, index) => (
+    <span className={className} data-tooltip-part="keys">
+      {segments.map((segment, index) => (
         <kbd key={`${index}-${segment}`} className={KEY_CHIP_CLASS}>{segment}</kbd>
       ))}
     </span>
@@ -486,6 +529,10 @@ interface TipLayerProps {
   rich: boolean;
   label: string;
   detail?: string;
+  /** The stacked shape's actions; absent for a plain label tip. */
+  rows?: readonly TooltipRow[];
+  /** A link's address, drawn under the head of a stacked tip. */
+  destination?: string;
   /** The live combo in canonical form, or '' for no keys. */
   combo: string;
   icon?: ReactNode;
@@ -500,7 +547,12 @@ interface TipLayerProps {
  * opening a tip re-renders this layer and never the trigger's subtree.
  */
 function TipLayer(props: TipLayerProps): ReactElement | null {
-  const { handleRef, triggerRef, onHidden, rich, label, detail, combo, icon, content, header, footer, testId } = props;
+  const { handleRef, triggerRef, onHidden, rich, label, detail, rows, destination, combo, icon, content, header, footer, testId } = props;
+  // The stacked shape: a head line over the actions, or two actions and more. One
+  // action with nothing above it is the plain label tip, drawn below as one.
+  const head = [label, detail ?? ''].filter((part) => part !== '').join('. ');
+  const stacked = !rich && rows !== undefined && (rows.length > 1 || head !== '');
+  const soleRow = !rich && rows !== undefined && !stacked ? rows[0] : undefined;
   const [shown, setShown] = useState<'cold' | 'warm' | null>(null);
   const shownRef = useRef<'cold' | 'warm' | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
@@ -606,11 +658,40 @@ function TipLayer(props: TipLayerProps): ReactElement | null {
       ref={tipRef}
       role="tooltip"
       data-tooltip=""
-      data-shape={rich ? 'rich' : 'label'}
+      data-shape={rich ? 'rich' : stacked ? 'stack' : 'label'}
       data-testid={testId}
-      className={`${TIP_BASE_CLASS} ${rich ? RICH_TIP_CLASS : LABEL_TIP_CLASS}${shown === 'cold' ? ' overlay-popover-in' : ''}`}
+      className={`${TIP_BASE_CLASS} ${rich ? RICH_TIP_CLASS : stacked ? STACK_TIP_CLASS : LABEL_TIP_CLASS}${shown === 'cold' ? ' overlay-popover-in' : ''}`}
     >
-      {rich ? (
+      {stacked && rows !== undefined ? (
+        <>
+          {head !== '' && (
+            <>
+              {destination !== undefined && destination !== '' ? (
+                <>
+                  <div data-tooltip-part="head" className={STACK_TIP_TITLE_CLASS}>{head}</div>
+                  <div data-tooltip-part="destination" className={STACK_TIP_DESTINATION_CLASS}>{destination}</div>
+                </>
+              ) : (
+                <div data-tooltip-part="head" className={STACK_TIP_HEAD_CLASS}>{head}</div>
+              )}
+              <div aria-hidden="true" className={STACK_TIP_RULE_CLASS} />
+            </>
+          )}
+          <div className={STACK_TIP_ROWS_CLASS}>
+            {rows.map((row) => (
+              <Fragment key={row.id ?? row.label}>
+                <span data-tooltip-row={row.id}>{row.label}</span>
+                <TipChips segments={row.keys} className={STACK_TIP_ROW_KEYS_CLASS} />
+              </Fragment>
+            ))}
+          </div>
+        </>
+      ) : soleRow !== undefined ? (
+        <span className={LABEL_TIP_ROW_CLASS}>
+          <span className={LABEL_TIP_TEXT_CLASS} data-tooltip-row={soleRow.id}>{soleRow.label}</span>
+          {soleRow.keys.length > 0 && <TipChips segments={soleRow.keys} className={TIP_KEYS_CLASS} />}
+        </span>
+      ) : rich ? (
         <>
           {header !== undefined && (
             <div data-tooltip-part="header" className="flex items-center gap-2 border-b border-edge bg-surface-hover/40 px-3 py-2">

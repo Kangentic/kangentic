@@ -173,6 +173,10 @@ msgid "A call failed"
 msgstr "Egy hívás sikertelen volt"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Lebegő panel az egyes munkamenetek aktivitási állapotáról és utolsó átmeneteiről, a .kangentic/debug mappába is kiírva."
@@ -701,8 +705,8 @@ msgstr "CLI elérési útja"
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "Kattintson a feladatablakon kívüli üres területre a bezárásához. A vezérlők, a feladatkártyák és a futó terminálok továbbra is az első kattintásra reagálnak. Az ágens tovább fut, és újracsatlakozik, amikor újra megnyitja a feladatot."
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Click with modifiers"
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click opens links in"
 msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
@@ -1085,6 +1089,11 @@ msgstr "Alapértelmezett"
 msgid "Default base branch"
 msgstr "Alapértelmezett alapág"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Default browser"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Default diff scope"
@@ -1327,6 +1336,11 @@ msgstr "Worktree-be másolandó fájlok"
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
 msgstr ""
 
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Fill"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
@@ -1458,18 +1472,6 @@ msgstr "A nagyobb erőfeszítés lassabban válaszol, és segíthet a sok felada
 msgid "History not shared"
 msgstr ""
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold a modifier key while you click."
-msgstr ""
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-msgstr ""
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-msgstr ""
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1479,10 +1481,6 @@ msgstr "Prompt visszatartása a szkript végéig"
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "A beszédgombot tartva diktálhat terminálba vagy mezőbe."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold the modifier keys and click here. Escape to cancel."
-msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1585,6 +1583,10 @@ msgstr "Így állítja le a projekt, amit egy feladat futva hagy."
 msgid "How to install and pair"
 msgstr "Telepítés és párosítás"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How wide a column with tasks is, or Fill to share the window's width between the columns."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "How you hear about each event."
 msgstr ""
@@ -1665,6 +1667,11 @@ msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "Feltételeket és folyamatlépéseket ítél meg, feladatokat nevez el."
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic browser"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
 msgid "Kangentic browser"
 msgstr ""
 
@@ -1811,6 +1818,12 @@ msgstr ""
 #, fuzzy
 msgid "Link node_modules"
 msgstr "node_modules csatolása"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "settings card"
+msgid "Links"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -2806,6 +2819,10 @@ msgstr "A PR-t késznek jelzi, ha megkerülheted a kötelező felülvizsgálatot
 msgid "Shows how many agents need you, on the taskbar or dock."
 msgstr ""
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shrink empty columns"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
@@ -3008,6 +3025,10 @@ msgstr "Terminál"
 msgid "Terminal cursor appearance"
 msgstr "A terminál kurzorának megjelenése"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
 msgid "Terminal may intercept"
@@ -3068,6 +3089,10 @@ msgstr "Az ágens legutóbbi üzenetei, soronként egy"
 msgid "The branch new worktrees start from."
 msgstr "Az ág, amelyből az új worktree-k indulnak."
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "The browser beside the task's terminal"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
 msgid "The change was not written."
@@ -3077,6 +3102,10 @@ msgstr "A módosítás nem lett kiírva."
 #, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
 msgstr "Az alapértelmezett ág forráskódja és dokumentációja, naprakészen tartva; a tesztek, az adatfájlok és a 256 KB-nál nagyobb fájlok kimaradnak."
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "The domain of an artifact link we do not recognise, once (never the rest of the link)"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 msgid "The file could not be read."
@@ -3442,6 +3471,14 @@ msgstr "Az új munkamenetekhez használt ügynök-CLI"
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
 msgstr "Melyik ügynök tervezi a munkafolyamatokat a Munkafolyamatok nézet bal paneljén. Amíg nincs kiválasztva, nem indul munkafolyamat-ügynök."
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Cmd+Click opens the other."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Ctrl+Click opens the other."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
@@ -3462,11 +3499,6 @@ msgstr "A feladat terminálja alatti sávban megjelenő statisztikák."
 msgctxt "column width"
 msgid "Wide"
 msgstr "Széles"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Width of board columns"
-msgstr "A tábla oszlopainak szélessége"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3559,3 +3591,7 @@ msgstr "Az operációs rendszer és más alkalmazások előbb lefoglalhatnak egy
 #, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
 msgstr "A telefonod is ezt a kódot mutatja. A párosítás befejezéséhez erősítsd meg ott."
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Your system's default browser"
+msgstr ""

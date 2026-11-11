@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useLingui } from '@lingui/react/macro';
 import { Field } from '../Field';
+import { Tooltip } from '../Tooltip';
 import { BranchPicker } from './BranchPicker';
 import { WorktreePlacementControl } from './WorktreePlacementControl';
 import { describeWorktreeBlocker, type WorktreeBlocker } from '../../utils/worktree-placement';
@@ -12,6 +13,13 @@ interface TaskBranchRowProps {
    */
   customBranchName?: string;
   setCustomBranchName?: (value: string) => void;
+  /**
+   * The task's own branch, for a task past To Do. The name is fixed by then, so
+   * it shows as text in the name segment, and the field is the same shape as
+   * New Task's. Omit it for a task with no branch of its own (one that runs in
+   * the project folder), which shows the base picker alone.
+   */
+  fixedBranchName?: string | null;
   /** Resolved auto-generated name, shown as the input's placeholder. */
   branchPlaceholder?: string;
   branchNameError?: string;
@@ -69,6 +77,7 @@ interface TaskBranchRowProps {
 export function TaskBranchRow({
   customBranchName,
   setCustomBranchName,
+  fixedBranchName = null,
   branchPlaceholder,
   branchNameError,
   branchHint,
@@ -83,13 +92,15 @@ export function TaskBranchRow({
 }: TaskBranchRowProps) {
   const { t } = useLingui();
   const editableName = setCustomBranchName !== undefined;
+  const fixedName = !editableName && fixedBranchName ? fixedBranchName : null;
+  const hasNameSegment = editableName || fixedName !== null;
 
   return (
-    // Past To Do there is no branch name to edit, so the field is only choosing a
-    // base branch - which is what it says. Naming it "Branch" there would promise
-    // an editable branch name that is not on offer.
+    // With no name segment the field is only choosing a base branch, which is
+    // what it says. Naming it "Branch" there would promise a branch name that is
+    // not shown.
     <Field
-      label={editableName ? t`Branch` : t`Base branch`}
+      label={hasNameSegment ? t`Branch` : t`Base branch`}
       error={branchNameError}
       hint={branchHint}
     >
@@ -118,7 +129,7 @@ export function TaskBranchRow({
           of the Field, so the hint stays its sibling for tests. */}
       <div className="flex items-center gap-2" data-testid="task-branch-row">
       <div
-        className={`flex ${editableName ? 'flex-1' : ''} min-h-[34px] items-stretch divide-x divide-edge-input overflow-hidden rounded border bg-surface-control transition-colors ${
+        className={`flex ${hasNameSegment ? 'min-w-0 flex-1' : ''} min-h-[34px] items-stretch divide-x divide-edge-input overflow-hidden rounded border bg-surface-control transition-colors ${
           branchNameError ? 'border-danger' : 'border-edge-input'
         }`}
         data-testid="task-branch-shell"
@@ -136,6 +147,20 @@ export function TaskBranchRow({
             // should not keep a ring, which is what focus-visible gets right.
             className="min-w-0 flex-1 bg-transparent px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent"
           />
+        )}
+        {fixedName !== null && (
+          // The task's branch, fixed once it has started: text in the segment
+          // New Task types the name into, so the two forms show one field. It
+          // can be selected and copied. The tip is the whole name, for when
+          // the segment cuts it short.
+          <Tooltip label={fixedName}>
+            <span
+              className="flex min-w-0 flex-1 select-text items-center px-3 text-sm text-fg-muted"
+              data-testid="task-branch-name"
+            >
+              <span className="truncate">{fixedName}</span>
+            </span>
+          </Tooltip>
         )}
         <BranchPicker
           variant="segment"

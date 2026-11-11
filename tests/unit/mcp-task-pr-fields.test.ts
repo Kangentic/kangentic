@@ -184,9 +184,9 @@ beforeEach(() => {
   // Must resolve, not return undefined: the handlers call `.catch(...)` on it.
   mockLinkPRForTask.mockResolvedValue({ status: 'unchanged', task: null });
   mockResolveColumn.mockReturnValue({ swimlane: { id: 'lane-1', name: 'Code Review' } });
-  mockTaskRepoCreate.mockReturnValue({ id: 'task-uuid-1', display_id: 7, title: 'Review PR #98' });
+  mockTaskRepoCreate.mockReturnValue({ id: 'task-uuid-1', display_id: 7, title: 'Review PR #98', artifacts: [] });
   mockTaskRepoUpdate.mockImplementation((patch: Record<string, unknown>) => ({
-    id: 'task-uuid-1', display_id: 7, title: 'Review PR #98', ...patch,
+    id: 'task-uuid-1', display_id: 7, title: 'Review PR #98', artifacts: [], ...patch,
   }));
   mockTaskRepoGetById.mockReturnValue({
     id: 'task-uuid-1', display_id: 7, title: 'Existing', description: '', attachment_count: 0,

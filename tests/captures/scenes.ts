@@ -2207,7 +2207,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   },
   // ---------------------------------------------------------------- column workflow
   // An automation and a handed-off context are per-scene seeds, never dataset rows: an automation
-  // draws a glyph in the BOARD column header (AutomationGlyph), so seeding one into the sample
+  // adds a line to the BOARD column header's tip (column-automations.tsx), so seeding one into the sample
   // install would change every docs figure already placed and every poster in the release zip.
   // COLUMN_LADDER and REVIEW_PASS_AUTOMATION name their columns through demoLaneId, which the
   // registry test resolves against the install.

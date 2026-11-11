@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ru\n"
 
+#: src/shared/task-artifacts.ts
+msgid "{baseName}, frame {frame}"
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "{blockedLabel} already waits for {blockerLabel}."
@@ -399,6 +403,10 @@ msgid "Empty until the task has a worktree."
 msgstr "Пусто, пока у задачи нет рабочего дерева."
 
 #: src/shared/task-template-vars.ts
+msgid "Empty until the task has an artifact."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
 #, fuzzy
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "Пусто, пока задача не привязана к тикету трекера."
@@ -491,14 +499,6 @@ msgstr ""
 msgctxt "automation field"
 msgid "Headers"
 msgstr "Заголовки"
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
-msgstr ""
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in your default browser."
-msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -840,14 +840,6 @@ msgstr "Открыта"
 #, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Открыть поиск в активном окне беседы."
-
-#: src/shared/keybindings.ts
-msgid "Open link in default browser"
-msgstr ""
-
-#: src/shared/keybindings.ts
-msgid "Open link in Kangentic browser"
-msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1379,6 +1371,10 @@ msgstr "Задача в столбце «К выполнению»."
 #, fuzzy
 msgid "The task's #N, the number people say out loud."
 msgstr "Номер задачи #N, который произносят вслух."
+
+#: src/shared/task-template-vars.ts
+msgid "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
+msgstr ""
 
 #: src/shared/task-template-vars.ts
 #, fuzzy

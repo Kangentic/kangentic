@@ -300,14 +300,15 @@ function prLinkOf(page: Page, taskId: string): Locator {
   return page.locator(`[data-task-id="${taskId}"] [data-testid="task-card-pr-link"]`);
 }
 
-test('the PR pill shows one tip: the action, with the readiness caveat as its detail', async () => {
+test('the PR pill shows one tip: the PR with the readiness caveat as its detail, over the open action', async () => {
   const { browser, page } = await launchSeeded();
   try {
     const pill = prLinkOf(page, BLOCKED_TASK_ID);
     const tip = page.locator(TIP);
     await pill.hover({ position: { x: 4, y: 4 } });
     await expect(tip).toHaveCount(1);
-    await expect(tip).toContainText('Open PR #302 in default browser');
+    await expect(tip).toContainText('PR #302');
+    await expect(tip).toContainText('Open in default browser');
     await expect(tip).toContainText(/Merge blocked/);
   } finally {
     await browser.close();
@@ -321,7 +322,8 @@ test('a PR with no verdict names its state in the tip instead', async () => {
     const tip = page.locator(TIP);
     await pill.hover({ position: { x: 4, y: 4 } });
     await expect(tip).toHaveCount(1);
-    await expect(tip).toContainText('Open PR #305 in default browser');
+    await expect(tip).toContainText('PR #305');
+    await expect(tip).toContainText('Open in default browser');
     await expect(tip).toContainText('merged');
   } finally {
     await browser.close();

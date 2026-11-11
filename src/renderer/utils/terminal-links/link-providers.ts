@@ -1,7 +1,8 @@
 import type { ILink, ILinkProvider } from '@xterm/xterm';
 import { TERMINAL_LINK_SCHEMES, isAllowedExternalUrl } from '../../../shared/external-url';
 import { cellRangeOf, readLogicalLine, type TerminalBufferLike } from './buffer-line-text';
-import { isLinkOpenGesture, type TerminalLinkGesture } from './link-gesture';
+import { isLinkOpenGesture } from '../link-open';
+import type { TerminalLinkGesture } from './link-gesture';
 import type { LinkPathCache } from './link-path-cache';
 import type { TerminalLinkTargets } from './link-targets';
 import { parsePaths, parseUrls } from './parse-links';
@@ -40,6 +41,9 @@ export function createUrlLinkProvider(
           activate: (event, url) => {
             const target = targets.plan().targetFor(event);
             if (target === null) return;
+            // A plain click that turned into a drag, or that only brought the
+            // terminal forward, opens nothing (link-gesture.ts).
+            if (!gesture.opensOnRelease(event)) return;
             if (isAllowedExternalUrl(url, TERMINAL_LINK_SCHEMES)) targets.open(target, url);
           },
         });

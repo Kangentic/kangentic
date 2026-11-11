@@ -6,7 +6,7 @@
  */
 import { i18n, type MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import { CLICK_TOKEN, isModifiedClickCombo, isMouseCombo, normalizeCombo } from '../../shared/keybindings';
+import { CLICK_TOKEN, isMouseCombo, normalizeCombo } from '../../shared/keybindings';
 
 /** True on macOS, where `Mod` resolves to Cmd (metaKey) instead of Ctrl.
  *  Guard `window` so this module is safe to import in the node/unit test
@@ -191,7 +191,7 @@ function mouseComboLabel(token: string): string {
   return label ? i18n._(label) : token;
 }
 
-/** The left click of a link click combo, drawn as the chip after its modifiers. */
+/** The left click of a link click, drawn as a chip: alone, or after Ctrl or Cmd. */
 const CLICK_CHIP = msg({ message: 'Click', context: 'mouse button, drawn as a key chip after Ctrl or Cmd' });
 
 /**
@@ -203,6 +203,8 @@ const CLICK_CHIP = msg({ message: 'Click', context: 'mouse button, drawn as a ke
  */
 export function formatComboSegments(combo: string, isMac: boolean = IS_MAC): string[] {
   if (combo === '') return [];
+  // A plain click on a link: one chip.
+  if (combo === CLICK_TOKEN) return [i18n._(CLICK_CHIP)];
   // A mouse combo renders one segment per button (a chord becomes two chips).
   if (isMouseCombo(combo)) return combo.split('+').map(mouseComboLabel);
   const parts = combo.split('+');
@@ -219,48 +221,8 @@ export function formatComboSegments(combo: string, isMac: boolean = IS_MAC): str
   return [...modifierSegments, mainSegment];
 }
 
-/** The modifier keys a click carries, which is all a link click combo reads. */
+/** The modifier keys a click carries, which is all a link click reads (`link-open.ts`). */
 export type ClickModifiers = Pick<MouseEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>;
-
-/**
- * Whether a click carries exactly a link click combo's modifiers
- * (`Mod+Shift+Mouse:Left`). `Mod` is Cmd on a Mac and Ctrl elsewhere, where a
- * literal `Ctrl` is the same key. The button is the caller's to check: xterm
- * activates a link on a left mouseup only.
- */
-export function matchesClickCombo(
-  event: ClickModifiers,
-  combo: string,
-  isMac: boolean = IS_MAC,
-): boolean {
-  if (!isModifiedClickCombo(combo)) return false;
-  const modifiers = new Set(combo.split('+').slice(0, -1).map((modifier) => modifier.toLowerCase()));
-  const wantPrimary = modifiers.has('mod') || (!isMac && modifiers.has('ctrl'));
-  const primaryHeld = Boolean(isMac ? event.metaKey : event.ctrlKey);
-  if (primaryHeld !== wantPrimary) return false;
-  // The key that is not the primary one: Control on a Mac, the Windows key elsewhere.
-  const otherHeld = Boolean(isMac ? event.ctrlKey : event.metaKey);
-  if (otherHeld !== (isMac && modifiers.has('ctrl'))) return false;
-  return Boolean(event.altKey) === modifiers.has('alt') && Boolean(event.shiftKey) === modifiers.has('shift');
-}
-
-/**
- * The link click combo a captured press records: its modifiers then
- * `Mouse:Left`, or null with no modifier held, since a plain click belongs to
- * the program in the terminal. Used by the rebind field of a click hotkey.
- */
-export function clickComboFromEvent(
-  event: ClickModifiers,
-  isMac: boolean = IS_MAC,
-): string | null {
-  const modifiers: string[] = [];
-  if (isMac ? event.metaKey : event.ctrlKey) modifiers.push('Mod');
-  if (isMac && event.ctrlKey) modifiers.push('Ctrl');
-  if (event.altKey) modifiers.push('Alt');
-  if (event.shiftKey) modifiers.push('Shift');
-  if (modifiers.length === 0) return null;
-  return normalizeCombo([...modifiers, CLICK_TOKEN].join('+'));
-}
 
 /** Flat display string for a combo (e.g. tooltips, aria-labels). */
 export function formatCombo(combo: string): string {

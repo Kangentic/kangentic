@@ -106,6 +106,12 @@ interface SessionTelemetryCallbacks {
    */
   onBranchPushed?(sessionId: string, branch: string): void;
   /**
+   * Called when a publish tool's result carried links (`SessionEvent.urls`),
+   * with the title the publish was given. The listener adds the recognised
+   * ones to the task's artifacts. Optional: only the production wiring cares.
+   */
+  onArtifactPublished?(sessionId: string, urls: string[], title: string | null): void;
+  /**
    * Called when the agent reports its own session_id (from status.json, a
    * hook, or its output). `conversationMoved` is set when a SessionStart hook
    * moved the live conversation to this id with no status write behind it
@@ -1304,6 +1310,9 @@ export class SessionTelemetry {
       const pushResult = this.pushCommandDetector.detect(sessionId, event);
       if (pushResult.pushedBranch) {
         this.callbacks.onBranchPushed?.(sessionId, pushResult.pushedBranch);
+      }
+      if (Array.isArray(event.urls) && event.urls.length > 0) {
+        this.callbacks.onArtifactPublished?.(sessionId, event.urls, event.urlsTitle ?? null);
       }
 
       // Read before the engine closes the call: a start naming a call still

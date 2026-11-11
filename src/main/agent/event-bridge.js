@@ -94,6 +94,14 @@
  *                                 event. One process writes both, in order, so a CLI that
  *                                 runs hooks concurrently cannot land the wait before the
  *                                 tool's own tool_start (which would clear it).
+ *   extractToolUrls            { toolField, tools[], responsePath[], actionPath?, actions?,
+ *                                allowNoAction?, titlePath?, limit? }
+ *                              -> event.urls = the http(s) links in the value at
+ *                                 responsePath (the first `limit`, at most 10), when ctx[toolField] is one of
+ *                                 tools and, with an actionPath, the value there is one of
+ *                                 actions (or absent, with allowNoAction). event.urlsTitle =
+ *                                 the string at titlePath. For a tool that publishes
+ *                                 something with a link (Claude's Artifact tool).
  *   replyJson                  { reply }            -> the hook's answer on stdout: the
  *                                 process writes JSON(reply) before it touches the events
  *                                 file, and it is the only stdout the bridge ever writes.
@@ -144,6 +152,11 @@ function decodeDirective(directive) {
  */
 const FIELD_CAP = 2000;
 
+/** `extractToolUrls` reads this much of a tool's response, and keeps this many links of this length. */
+const URL_SCAN_CAP = 64 * 1024;
+const URL_LIMIT = 10;
+const URL_CAP = 2048;
+
 /** First non-null value of `fields` in `container`, stringified and capped. */
 function firstNonNull(container, fields) {
   if (!container || typeof container !== 'object' || !Array.isArray(fields)) return undefined;
@@ -152,6 +165,38 @@ function firstNonNull(container, fields) {
     if (value != null) return String(value).slice(0, FIELD_CAP);
   }
   return undefined;
+}
+
+const CLOSING_BRACKET_OPENERS = { ')': '(', ']': '[', '}': '{' };
+
+/**
+ * A link without the punctuation after it: a sentence's full stop, or a
+ * closing bracket the link did not open (`File_(v2)` keeps its own). The
+ * brackets are counted once and the tail trimmed in one backward pass, so a
+ * long run of punctuation in a tool's result costs its length once.
+ */
+function trimUrlTail(candidate) {
+  const counts = { '(': 0, ')': 0, '[': 0, ']': 0, '{': 0, '}': 0 };
+  for (let index = 0; index < candidate.length; index += 1) {
+    const character = candidate[index];
+    if (Object.prototype.hasOwnProperty.call(counts, character)) counts[character] += 1;
+  }
+  let end = candidate.length;
+  while (end > 0) {
+    const last = candidate[end - 1];
+    if ('.,;:!?'.includes(last)) {
+      end -= 1;
+      continue;
+    }
+    const opener = Object.prototype.hasOwnProperty.call(CLOSING_BRACKET_OPENERS, last) ? CLOSING_BRACKET_OPENERS[last] : undefined;
+    if (opener !== undefined && counts[last] > counts[opener]) {
+      counts[last] -= 1;
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+  return candidate.slice(0, end);
 }
 
 // BEGIN background-call-match
@@ -541,6 +586,42 @@ function transformHookEvent(options) {
           tool: payload.tool.slice(0, FIELD_CAP),
           waitKind: payload.waitKind,
         });
+        break;
+      }
+      case 'extractToolUrls': {
+        // The links a publish tool's result carries (`SessionEvent.urls`).
+        // Only for a tool the payload names, and, when it names an action
+        // field, only for one of its actions: a read or a list of an artifact
+        // returns links nobody published.
+        if (!ctx || typeof payload.toolField !== 'string' || !Array.isArray(payload.tools)) break;
+        if (!payload.tools.includes(ctx[payload.toolField])) break;
+        if (Array.isArray(payload.actionPath)) {
+          const action = valueAtPath(ctx, payload.actionPath);
+          const allowed = Array.isArray(payload.actions) ? payload.actions : [];
+          if (action == null ? payload.allowNoAction !== true : !allowed.includes(action)) break;
+        }
+        const response = valueAtPath(ctx, payload.responsePath);
+        if (response == null) break;
+        let text;
+        try {
+          text = typeof response === 'string' ? response : JSON.stringify(response);
+        } catch { break; }
+        // `limit` keeps the first few: a result names what it published first,
+        // and can go on to name other things (the type an artifact was made from).
+        const limit = Number.isInteger(payload.limit) && payload.limit > 0 ? Math.min(payload.limit, URL_LIMIT) : URL_LIMIT;
+        const urls = [];
+        // A backslash ends a link too: inside stringified JSON the next
+        // character after one is an escape, never part of the address.
+        for (const match of text.slice(0, URL_SCAN_CAP).matchAll(/https?:\/\/[^\s<>"'`\\]+/g)) {
+          const url = trimUrlTail(match[0]);
+          if (url.length > URL_CAP || urls.includes(url)) continue;
+          urls.push(url);
+          if (urls.length >= limit) break;
+        }
+        if (urls.length === 0) break;
+        event.urls = urls;
+        const title = valueAtPath(ctx, payload.titlePath);
+        if (typeof title === 'string' && title.trim().length > 0) event.urlsTitle = title.trim().slice(0, 200);
         break;
       }
       case 'replyJson':

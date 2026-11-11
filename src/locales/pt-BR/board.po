@@ -57,42 +57,46 @@ msgstr "{count, plural, one {# subagente ativo} many {# de subagentes ativos} ot
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# ferramenta em execução} many {# de ferramentas em execução} other {# ferramentas em execução}}"
 
+#: src/renderer/components/board/CollapsedLane.tsx
+msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
+msgstr ""
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, one {Fluxos de trabalho, # em execução} many {Fluxos de trabalho, # em execução} other {Fluxos de trabalho, # em execução}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
 msgstr "{total, plural, one {# automação é executada aqui: {enterCount} ao entrar, {exitCount} ao sair} many {# de automações são executadas aqui: {enterCount} ao entrar, {exitCount} ao sair} other {# automações são executadas aqui: {enterCount} ao entrar, {exitCount} ao sair}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {# automação é executada aqui: {enterCount} ao entrar, {turnEndCount} ao fim de um turno, {exitCount} ao sair} many {# de automações são executadas aqui: {enterCount} ao entrar, {turnEndCount} ao fim de um turno, {exitCount} ao sair} other {# automações são executadas aqui: {enterCount} ao entrar, {turnEndCount} ao fim de um turno, {exitCount} ao sair}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {# automação é executada aqui: {enterCount} ao entrar, {turnEndCount} ao fim de um turno} many {# de automações são executadas aqui: {enterCount} ao entrar, {turnEndCount} ao fim de um turno} other {# automações são executadas aqui: {enterCount} ao entrar, {turnEndCount} ao fim de um turno}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
 msgstr "{total, plural, one {# automação é executada aqui: {enterCount} ao entrar} many {# de automações são executadas aqui: {enterCount} ao entrar} other {# automações são executadas aqui: {enterCount} ao entrar}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
 msgstr "{total, plural, one {# automação é executada aqui: {exitCount} ao sair} many {# de automações são executadas aqui: {exitCount} ao sair} other {# automações são executadas aqui: {exitCount} ao sair}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {# automação é executada aqui: {turnEndCount} ao fim de um turno, {exitCount} ao sair} many {# de automações são executadas aqui: {turnEndCount} ao fim de um turno, {exitCount} ao sair} other {# automações são executadas aqui: {turnEndCount} ao fim de um turno, {exitCount} ao sair}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {# automação é executada aqui: {turnEndCount} ao fim de um turno} many {# de automações são executadas aqui: {turnEndCount} ao fim de um turno} other {# automações são executadas aqui: {turnEndCount} ao fim de um turno}}"
@@ -222,6 +226,14 @@ msgstr "Alterações detectadas no kangentic.json de \"Projeto desconhecido\". A
 #, fuzzy
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
 msgstr "Alterações detectadas no kangentic.json. Aplicar a configuração atualizada do quadro?"
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse {columnName} column"
+msgstr ""
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse column"
+msgstr ""
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy

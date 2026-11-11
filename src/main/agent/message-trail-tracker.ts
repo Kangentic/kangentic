@@ -120,6 +120,8 @@ export interface TrailRead {
   cursor: number | null;
   /** True when the adapter has no window read and re-parsed its whole tail. */
   usedFallback: boolean;
+  /** Artifact links the agent wrote in the entries read (`artifactLinksOf`). Absent means none. */
+  artifactLinks?: string[];
 }
 
 /** The slice of `SessionManager` the tracker consumes, so tests can hand it a plain EventEmitter. */
@@ -172,6 +174,8 @@ interface TrailState {
   cursor: number | null;
   usesFallback: boolean;
   trail: AssistantMessageTrailEntry[];
+  /** Artifact links already announced for this session, so a whole-tail re-read announces none twice. */
+  announcedArtifactLinks: Set<string>;
   lastReadAt: number;
   readInFlight: boolean;
   rereadRequested: boolean;
@@ -303,6 +307,7 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
       cursor: null,
       usesFallback: false,
       trail: [],
+      announcedArtifactLinks: new Set(),
       lastReadAt: Number.NEGATIVE_INFINITY,
       readInFlight: false,
       rereadRequested: false,
@@ -385,6 +390,7 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
     const agentSessionId = facts?.agentSessionId;
     if (!facts || !agentSessionId) return [];
     const read = await this.deps.readTrail({ ...facts, agentSessionId }, state.cursor);
+    this.announceArtifactLinks(sessionId, state, read.artifactLinks ?? []);
     // A read that started in a file the session has since left (a captured
     // id, a /clear fork) ends at an offset in that file, which must not become
     // the cursor into the new one.
@@ -392,6 +398,20 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
     state.cursor = read.cursor;
     state.usesFallback = read.usedFallback;
     return read.previews;
+  }
+
+  /**
+   * Announce the artifact links a read found that this session has not
+   * announced yet (`'artifact-links'`), for the listener that keeps them on the
+   * task. Only for a state still tracked: a read that outlived its session
+   * names a session that is gone.
+   */
+  private announceArtifactLinks(sessionId: string, state: TrailState, links: string[]): void {
+    if (links.length === 0 || this.states.get(sessionId) !== state) return;
+    const fresh = links.filter((link) => !state.announcedArtifactLinks.has(link));
+    if (fresh.length === 0) return;
+    for (const link of fresh) state.announcedArtifactLinks.add(link);
+    this.emit('artifact-links', sessionId, fresh, state.projectId);
   }
 
   private merge(sessionId: string, state: TrailState, previews: AssistantMessageTrailEntry[]): void {

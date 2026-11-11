@@ -110,6 +110,37 @@ conversation and sends the task once more.
   - A pull request pill once the task has a linked PR: its number, one glyph for its state, and the state's tint (green ready or open, sky while checks are queued or running, with a slow pulse on its edge, amber blocked by a review, red with a failed check or a conflict, grey draft or closed, purple merged). Its tooltip names the state. The Changes panel draws no pill: its Pull request section opens the PR and says the state in a tooltip. See [PR connector model](../integrations/pull-requests/connector-model.md#merge-readiness) for what each value promises and which settings change it
 - **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that runs the destination's automations), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the running automation's name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
+## Artifacts
+
+A task keeps links to what it is built from and what it produces: a Figma file, a requirements
+document, a diagram, a page an agent published. They show as a chip beside the PR pill on the card,
+as a button in the task window's header, and as a count on a completed task's strip.
+
+- **One artifact**: the chip shows the tool's logo and the artifact's name, and a click opens it.
+- **Several**: the chip shows a count, and a click opens a menu that lists them. Arrow keys move
+  between rows, Enter opens one, and Escape closes the menu.
+
+A click opens your default browser, and Ctrl click (Cmd on macOS) opens the Kangentic browser beside
+the task's terminal while its agent is running. Settings > Behavior > Links swaps the two.
+
+Links get onto a task three ways:
+
+- **You add them.** Open the task's edit form, click **Add artifact** under the Branch and Pull
+  request row, and paste a link. Each artifact is a row there: its name, its link, a pencil that
+  renames it in place and a remove button. The menu's **Edit artifacts** opens the form with the
+  add field ready.
+- **An agent adds them**, with the `kangentic_update_task` tool, when you ask it to or when it has
+  one to share.
+- **Kangentic finds them.** A recognised link in the task's description, a page the agent
+  publishes, and a design or diagram link in the agent's messages are added for you. Documents the
+  agent only mentions are left out, so the list does not fill with every doc it cites. A link you
+  remove is not found again.
+
+Every agent that works the task receives its artifacts in its opening message. The platforms
+Kangentic recognises, and what is detected from where, are listed in
+[Artifacts](../integrations/artifacts.md). Any other link still works: it shows a link icon and its
+site.
+
 ## Move Between Active Columns
 
 Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (the destination changes the model or effort); in that case the message rides along as the resume prompt instead. An agent whose resume takes no prompt gets it typed in once it is back. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.

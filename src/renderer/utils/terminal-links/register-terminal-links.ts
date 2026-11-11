@@ -3,7 +3,8 @@ import { msg } from '@lingui/core/runtime-macro';
 import type { Terminal } from '@xterm/xterm';
 import { useToastStore } from '../../stores/toast-store';
 import { readRangeText } from './buffer-line-text';
-import { isLinkOpenGesture, type LinkOpenPredicate, type TerminalLinkGesture } from './link-gesture';
+import { isLinkOpenGesture } from '../link-open';
+import type { LinkOpenPredicate, TerminalLinkGesture } from './link-gesture';
 import { createLinkPathCache } from './link-path-cache';
 import { createPathLinkProvider, createUrlLinkProvider } from './link-providers';
 import type { TerminalLinkTargets } from './link-targets';
@@ -18,56 +19,12 @@ function showPathGone(printedPath: string): void {
 }
 
 /**
- * Whether a press opens a link of this kind: a URL on either link hotkey, a path on
- * Ctrl or Cmd. The terminal's link gesture claims exactly these presses.
+ * Whether a press opens a link of this kind: a URL on a plain click or on Ctrl or
+ * Cmd, a path on Ctrl or Cmd. The terminal's link gesture claims exactly these
+ * presses.
  */
 export function linkOpensOn(targets: TerminalLinkTargets): LinkOpenPredicate {
   return (event, kind) => (kind === 'path' ? isLinkOpenGesture(event) : targets.plan().targetFor(event) !== null);
-}
-
-/**
- * A link click with Shift held (Ctrl+Shift+click, the Kangentic browser's default)
- * keeps the selection the user had. xterm reads Shift+click as "extend the selection
- * to here" while no program holds the mouse, so without this the click stretched a
- * selection from wherever it was down to the link. Runs after the gesture's own
- * capture listener, which `attach` registered first, so the press is already claimed
- * or not.
- *
- * xterm stretches the selection on the press and may again on the release, from
- * listeners on the terminal and on `document`. So the selection is put back in the
- * window's bubble phase of each, which runs after both, and synchronously: Chrome
- * runs queued input ahead of timers, so a restore on a timer lost to a copy pressed
- * right after the click.
- *
- * Returns what drops a pending restore. One press holds at most one: the next press
- * on the terminal drops a release that never came, so a later, unrelated release
- * cannot put an old selection back, and so does disposing the terminal.
- */
-function keepSelectionThroughLinkClick(terminal: Terminal, gesture: TerminalLinkGesture, element: HTMLElement): () => void {
-  let pendingRestore: AbortController | null = null;
-  const dropPendingRestore = (): void => {
-    pendingRestore?.abort();
-    pendingRestore = null;
-  };
-  element.addEventListener('mousedown', (event) => {
-    dropPendingRestore();
-    if (!event.shiftKey || !gesture.isClickingLink()) return;
-    const kept = terminal.getSelectionPosition();
-    if (kept === undefined) return;
-    const controller = new AbortController();
-    pendingRestore = controller;
-    const restore = (): void => {
-      const length = (kept.end.y - kept.start.y) * terminal.cols + (kept.end.x - kept.start.x);
-      terminal.select(kept.start.x, kept.start.y, length);
-    };
-    const view = element.ownerDocument.defaultView ?? window;
-    view.addEventListener('mousedown', restore, { once: true, signal: controller.signal });
-    view.addEventListener('mouseup', () => {
-      restore();
-      if (pendingRestore === controller) dropPendingRestore();
-    }, { once: true, signal: controller.signal });
-  }, { capture: true });
-  return dropPendingRestore;
 }
 
 /**
@@ -83,7 +40,7 @@ export function registerTerminalLinks(
   targets: TerminalLinkTargets,
 ): void {
   if (terminal.element) {
-    // Read at each render, so a rebind or a browser closing shows on the next hover.
+    // Read at each render, so a changed setting or a browser closing shows on the next hover.
     const describe = (hover: LinkHover): LinkTipContent | null => {
       const actions = hover.kind === 'url' ? targets.plan().actions : [];
       const destination = hover.osc8Uri !== undefined
@@ -93,10 +50,8 @@ export function registerTerminalLinks(
     };
     const tip = createTerminalLinkTip(terminal, describe);
     gesture.attach(terminal.element, tip);
-    const dropPendingRestore = keepSelectionThroughLinkClick(terminal, gesture, terminal.element);
-    // Disposed with the terminal, so a window closed under the pointer leaves no tip
-    // behind, and no restore that would select in a disposed terminal.
-    terminal.loadAddon({ activate: () => {}, dispose: () => { tip.dispose(); dropPendingRestore(); } });
+    // Disposed with the terminal, so a window closed under the pointer leaves no tip behind.
+    terminal.loadAddon({ activate: () => {}, dispose: () => { tip.dispose(); } });
   }
   terminal.registerLinkProvider(createUrlLinkProvider(terminal, gesture, targets));
   if (!sessionId) return;

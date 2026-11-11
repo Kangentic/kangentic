@@ -38,6 +38,12 @@ export interface SpawnIntent {
    * (SpawnSessionInput.restoredGrid). Absent when nothing is retired.
    */
   restoredGrid?: { cols: number; rows: number };
+  /**
+   * The permission mode recorded on the record a resume retires: what the
+   * session was last launched with. Read by `keepsSessionPermissionMode`.
+   * Absent on a fresh spawn.
+   */
+  retiredPermissionMode?: string | null;
 }
 
 export interface SpawnIntentOptions {
@@ -115,6 +121,7 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
       prompt: resumePrompt,
       retireRecordId: match!.id,
       resumeFromCwd: match!.cwd ?? null,
+      retiredPermissionMode: match!.permission_mode ?? null,
       ...(matchGrid ? { restoredGrid: matchGrid } : {}),
     };
   }

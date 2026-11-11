@@ -88,13 +88,13 @@ the same array.
     live selection - a window listener would have to re-derive all of that, and four separate
     `useKeybinding` calls would each re-enter the same handler. Registered display-only
     (`rebindable: false`) so the Hotkeys tab lists them.
-- **A link click is a rebindable entry with no `useKeybinding`.** The two terminal link hotkeys
-  (`terminal.openLinkInDefaultBrowser`, `terminal.openLinkInKangenticBrowser`) are modifiers held
-  with a left click (`Mod+Mouse:Left`, `input: 'click'`). xterm hands the click to the link's own
-  `activate`, so `terminal-links/link-actions.ts` reads the effective combos there and matches them
-  with `matchesClickCombo`; no window listener could see which link was clicked. Their rebind field
-  takes only modifiers held with a click on it, never a key or a bare click. Scope `terminal-link`,
-  which only they use, so swapping them onto one click is the conflict the tab shows.
+- **A link click is not a keybinding.** A click on a link opens the browser the "Click opens links
+  in" setting names, and Ctrl or Cmd click opens the other (`utils/link-open.ts`). The two clicks
+  are fixed and the setting swaps the browsers, so the registry holds no entry for them and the
+  Hotkeys tab lists none. The chips a link's tip draws come from `PLAIN_CLICK_COMBO` and
+  `MODIFIED_CLICK_COMBO` through `formatComboSegments`, never from a registry id. Do not add a
+  registry entry for a mouse click: nothing listens for one on a window, and a rebindable click
+  would have to be captured in a field that also takes clicks.
 - **New shortcut = one registry entry + one `useKeybinding` call.** It then auto-appears in the
   Hotkeys settings tab and conflict detection with no further wiring.
 

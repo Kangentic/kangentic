@@ -61,6 +61,8 @@ interface UseBoardDragDropParams {
   swimlanes: SwimlaneType[];
   tasks: Task[];
   archivedTasks: Task[];
+  /** The columns drawn as a collapsed strip (#1056), which take drops by the pointer alone. */
+  collapsedLaneIds: ReadonlySet<string>;
 }
 
 interface UseBoardDragDropResult {
@@ -101,7 +103,13 @@ function rectFromInitial(
   };
 }
 
-export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDragDropParams): UseBoardDragDropResult {
+/** Expand the column a card was just dropped on, when this user had collapsed it. A no-op otherwise. */
+function expandDroppedOnLane(laneId: string): void {
+  const projectId = useProjectStore.getState().currentProject?.id;
+  if (projectId) useConfigStore.getState().setColumnCollapsed(projectId, laneId, false);
+}
+
+export function useBoardDragDrop({ swimlanes, tasks, archivedTasks, collapsedLaneIds }: UseBoardDragDropParams): UseBoardDragDropResult {
   const moveTask = useBoardStore((s) => s.moveTask);
   const setCompletingTask = useBoardStore((s) => s.setCompletingTask);
   const addCompletingTaskId = useBoardStore((s) => s.addCompletingTaskId);
@@ -271,6 +279,22 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       if (doneCollisions.length > 0) return doneCollisions;
     }
 
+    // A collapsed column is a 40px strip, and takes a drop by the pointer for
+    // the same reason Done does. The tier below scores columns by how much of
+    // the dragged card overlaps them, and a card is far wider than a strip: it
+    // overlaps the full column beside it more, so a strip, and the second of
+    // two strips side by side, could never win there. A keyboard drag has no
+    // pointer and falls through to that tier.
+    if (collapsedLaneIds.size > 0) {
+      const stripCollisions = pointerWithin({
+        ...args,
+        droppableContainers: args.droppableContainers.filter(
+          (container) => collapsedLaneIds.has(String(container.id)),
+        ),
+      });
+      if (stripCollisions.length > 0) return stripCollisions;
+    }
+
     // Two-tier collision detection for task drags:
     // Tier 1: rectIntersection on column sortable containers (full visual column rects)
     // Tier 2: closestCenter scoped to the detected column (precise insertion positioning)
@@ -316,7 +340,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       return !containerId.startsWith('column:') && swimlaneIds.has(containerId) && containerId !== activeColumn;
     });
     return closestCenter({ ...args, droppableContainers: otherSwimlaneContainers });
-  }, [findSwimlane, doneLaneId, swimlaneIds]);
+  }, [findSwimlane, doneLaneId, swimlaneIds, collapsedLaneIds]);
 
   /**
    * Toggle .drop-highlight class on swimlane DOM elements without React re-render.
@@ -672,6 +696,8 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       const doneLane = swimlanes.find((swimlane) => swimlane.role === 'done');
       if (doneLane && targetSwimlaneId === doneLane.id) return;
 
+      // A drop on a collapsed column opens it, as for a move below.
+      expandDroppedOnLane(targetSwimlaneId);
       // Restored where the cards parted for it, by the same rule as a move.
       const position = getInsertionIndex(event, laneTasksForDrop(state.tasks, targetSwimlaneId, taskId));
       await state.unarchiveTask({ id: taskId, targetSwimlaneId, position });
@@ -713,6 +739,13 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // Either way the move routes to the right project even if the user switches
     // projects mid-flight. See task-slice.ts moveTask.
     const dropProjectId = useProjectStore.getState().currentProject?.id ?? null;
+
+    // The user put a card on a collapsed column, so the column opens for them
+    // to see it land (#1056). Only a drop does this: a card an agent or an
+    // automation moves in arrives through a board reload, never through here,
+    // and leaves the strip collapsed. Written before the move's own optimistic
+    // write, so the column opens in the commit the card lands in.
+    expandDroppedOnLane(targetSwimlaneId);
 
     // Done target: fly the card into the drop zone immediately, then persist.
     // Moving to Done deletes the local worktree directory, but the branch and

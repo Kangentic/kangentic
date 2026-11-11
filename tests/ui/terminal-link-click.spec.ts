@@ -1,9 +1,11 @@
 /**
- * Ctrl or Cmd click opens a link, and the click never also reaches a TUI that holds
- * the mouse. Only a browser proves this: xterm's Linkifier and its mouse reporting are
- * DOM listeners on the terminal element, and the order they run in decides it.
+ * A click on a link opens the browser the "Click opens links in" setting names, Ctrl or
+ * Cmd click opens the other, and the click never also reaches a TUI that holds the
+ * mouse. A drag across a link, and the click that only brought the terminal forward,
+ * open nothing. Only a browser proves this: xterm's Linkifier and its mouse reporting
+ * are DOM listeners on the terminal element, and the order they run in decides it.
  *
- * Claude Code opens a link itself on a Ctrl+click report, so a report that got through
+ * Claude Code opens a link itself on a click report, so a report that got through
  * would open a second browser tab. See src/renderer/utils/terminal-links/link-gesture.ts.
  */
 import { test, expect, type Locator, type Page } from '@playwright/test';
@@ -70,31 +72,41 @@ async function ctrlClick(page: Page): Promise<void> {
   await page.keyboard.up('Control');
 }
 
-async function ctrlShiftClick(page: Page): Promise<void> {
-  await page.keyboard.down('Control');
+async function shiftClick(page: Page): Promise<void> {
   await page.keyboard.down('Shift');
   await page.mouse.down();
   await page.mouse.up();
   await page.keyboard.up('Shift');
-  await page.keyboard.up('Control');
+}
+
+/** Puts the keyboard in the terminal, as a user who has already clicked into it. */
+async function focusTerminal(page: Page): Promise<void> {
+  await page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first().focus();
+}
+
+/** Takes the keyboard out of the terminal, so the next press is the one that brings it forward. */
+async function blurTerminal(page: Page): Promise<void> {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first()).not.toBeFocused();
 }
 
 function openedExternally(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []);
 }
 
-async function launch(options: { browserEnabled?: boolean } = {}): Promise<Awaited<ReturnType<typeof launchWithTransientTerminal>>> {
+async function launch(options: { browserEnabled?: boolean; linkClickTarget?: 'default' | 'kangentic' } = {}): Promise<Awaited<ReturnType<typeof launchWithTransientTerminal>>> {
   const launched = await launchWithTransientTerminal({
     projectId: 'proj-link-click',
     projectName: 'Link Click Project',
     sessionId: SESSION_ID,
     browserEnabled: options.browserEnabled,
+    linkClickTarget: options.linkClickTarget,
   });
   await openTransientCommandTerminal(launched.page, SESSION_ID);
   return launched;
 }
 
-test('a Ctrl+click on a printed URL opens it once and sends the TUI nothing', async () => {
+test('a Ctrl+click on a printed URL opens the other browser, the Kangentic one by default, and sends the TUI nothing', async () => {
   const { browser, page } = await launch();
   try {
     await drawFirstRow(page, URL_TEXT);
@@ -103,32 +115,92 @@ test('a Ctrl+click on a printed URL opens it once and sends the TUI nothing', as
 
     await ctrlClick(page);
 
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []))
-      .toEqual([URL_TEXT]);
+    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
+    expect(await openedExternally(page)).toEqual([]);
     expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
   } finally {
     await browser.close();
   }
 });
 
-test('a plain click on a printed URL opens nothing and still reaches the TUI', async () => {
+test('a plain click on a printed URL in a focused terminal opens the default browser and sends the TUI nothing', async () => {
   const { browser, page } = await launch();
   try {
     await drawFirstRow(page, URL_TEXT);
+    await focusTerminal(page);
     await pointAtFirstRow(page);
     await waitForLinkUnderPointer(page);
 
     await page.mouse.down();
     await page.mouse.up();
 
-    await expect.poll(async () => writtenToSession(page, SESSION_ID)).toMatch(SGR_PRESS);
-    expect(await page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? [])).toEqual([]);
+    await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+    expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
   } finally {
     await browser.close();
   }
 });
 
-test('a Ctrl+click on an OSC 8 link opens it once and sends the TUI nothing', async () => {
+test('a drag that starts on a printed URL opens nothing and the TUI gets the press', async () => {
+  const { browser, page } = await launch();
+  try {
+    await drawFirstRow(page, URL_TEXT);
+    await focusTerminal(page);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    // Along the link and well past the few pixels that make a click a drag, ending still on the URL.
+    const screen = (await terminalScreen(page).boundingBox())!;
+    await page.mouse.down();
+    await page.mouse.move(screen.x + 90, screen.y + 6, { steps: 8 });
+    await page.mouse.up();
+
+    // The held press goes out once the press turns into a drag.
+    await expect.poll(async () => writtenToSession(page, SESSION_ID)).toMatch(SGR_PRESS);
+    expect(await openedExternally(page)).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a click on a printed URL in a terminal that does not hold the keyboard opens nothing', async () => {
+  const { browser, page } = await launch();
+  try {
+    await drawFirstRow(page, URL_TEXT);
+    await blurTerminal(page);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    await page.mouse.down();
+    await page.mouse.up();
+
+    // Not claimed, so the click is the TUI's: its report is the sign the press was handled.
+    await expect.poll(async () => writtenToSession(page, SESSION_ID)).toMatch(SGR_PRESS);
+    expect(await openedExternally(page)).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a Shift click on a printed URL opens nothing, and a Ctrl+click after it opens it once', async () => {
+  // No Kangentic browser, so every click that opens a link goes to the default browser and shows in one list.
+  const { browser, page } = await launch({ browserEnabled: false });
+  try {
+    await drawFirstRow(page, URL_TEXT);
+    await focusTerminal(page);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    await shiftClick(page);
+    await ctrlClick(page);
+
+    await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a Ctrl+click on an OSC 8 link opens the other browser once and sends the TUI nothing', async () => {
   const { browser, page } = await launch();
   try {
     await drawFirstRow(page, `\x1b]8;;${URL_TEXT}\x1b\\open the docs\x1b]8;;\x1b\\`);
@@ -137,8 +209,8 @@ test('a Ctrl+click on an OSC 8 link opens it once and sends the TUI nothing', as
 
     await ctrlClick(page);
 
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []))
-      .toEqual([URL_TEXT]);
+    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
+    expect(await openedExternally(page)).toEqual([]);
     expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
   } finally {
     await browser.close();
@@ -163,10 +235,10 @@ test('a printed path links only when it exists, and a Ctrl+click reveals the pri
 });
 
 /**
- * A link's tip says what each link hotkey does with it. It is drawn outside React, in
+ * A link's tip says what a click and a Ctrl click do with it. It is drawn outside React, in
  * the page body, from xterm's own hover and leave, so only a browser shows it.
  */
-test('hovering a URL shows both clicks, the default browser first, and the click closes the tip', async () => {
+test('hovering a URL shows both clicks, the plain click first, and the click closes the tip', async () => {
   const { browser, page } = await launch();
   try {
     await drawFirstRow(page, URL_TEXT);
@@ -176,7 +248,7 @@ test('hovering a URL shows both clicks, the default browser first, and the click
     const tip = page.getByTestId('terminal-link-tip');
     await expect(tip).toBeVisible({ timeout: 5000 });
     await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser', 'Open in Kangentic browser']);
-    await expect(tip.locator('kbd')).toHaveText([/^(Ctrl|⌘)$/u, 'Click', /^(Ctrl|⌘)$/u, /^(Shift|⇧)$/u, 'Click']);
+    await expect(tip.locator('kbd')).toHaveText(['Click', /^(Ctrl|⌘)$/u, 'Click']);
     // It sits beside the row it points at, never over the pointer.
     const screen = (await terminalScreen(page).boundingBox())!;
     const tipBox = (await tip.boundingBox())!;
@@ -186,25 +258,24 @@ test('hovering a URL shows both clicks, the default browser first, and the click
     await ctrlClick(page);
 
     await expect(tip).toBeHidden();
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []))
-      .toEqual([URL_TEXT]);
+    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
   } finally {
     await browser.close();
   }
 });
 
 /**
- * The Kangentic browser beside the terminal: a Ctrl+Shift+click shows it and loads the
+ * The Kangentic browser beside the terminal: a Ctrl+click shows it and loads the
  * link, the default browser opens nothing, and the click never reaches the TUI.
  */
-test('a Ctrl+Shift+click opens the link in this terminal\'s Kangentic browser and sends the TUI nothing', async () => {
+test('a Ctrl+click opens the link in this terminal\'s Kangentic browser and sends the TUI nothing', async () => {
   const { browser, page } = await launch();
   try {
     await drawFirstRow(page, URL_TEXT);
     await pointAtFirstRow(page);
     await waitForLinkUnderPointer(page);
 
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
     await expect(page.getByTestId('browser-webview')).toHaveAttribute('src', URL_TEXT);
@@ -221,7 +292,7 @@ test('a click into a Kangentic browser already showing a page loads the link thr
     await drawFirstRow(page, URL_TEXT);
     await pointAtFirstRow(page);
     await waitForLinkUnderPointer(page);
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
     const webview = page.getByTestId('browser-webview');
     await expect(webview).toHaveAttribute('src', URL_TEXT, { timeout: 10000 });
 
@@ -243,50 +314,12 @@ test('a click into a Kangentic browser already showing a page loads the link thr
     await page.mouse.move(screen.x + 20, screen.y + screen.height - 10);
     await pointAtFirstRow(page);
     await waitForLinkUnderPointer(page);
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect.poll(() => page.evaluate(() => (window as unknown as { __webviewLoads: string[] }).__webviewLoads))
       .toEqual([second]);
     await expect(webview).toHaveCount(1);
     await expect(webview).toHaveAttribute('src', URL_TEXT);
-  } finally {
-    await browser.close();
-  }
-});
-
-/**
- * xterm reads Shift+click as "extend the selection to here" while no program holds the
- * mouse, so a Ctrl+Shift+click on a link stretched what the user had selected down to the
- * link. The copy is how the test reads the selection: Ctrl+Shift+C always copies it.
- */
-test('a Ctrl+Shift+click on a link keeps the selection the user had', async () => {
-  const { browser, page } = await launch();
-  try {
-    await expect.poll(async () => {
-      await fireSessionData(page, SESSION_ID, DEVICE_ATTRIBUTES_QUERY);
-      return countFences(await writtenToSession(page, SESSION_ID));
-    }, { timeout: 10000, intervals: [250] }).toBeGreaterThan(0);
-    // No mouse tracking: a plain shell, where Shift+click extends a selection.
-    await fireSessionData(page, SESSION_ID, `${CLEAR_TO_FIRST_ROW}alpha beta gamma\r\n\r\n${URL_TEXT}`);
-    const screen = (await terminalScreen(page).boundingBox())!;
-    await page.mouse.dblclick(screen.x + 12, screen.y + 6);
-    await page.keyboard.press('Control+Shift+C');
-    const copied = (): Promise<string[]> => page.evaluate(() => (window.electronAPI.clipboard as unknown as { __writeTextCalls: string[] }).__writeTextCalls.slice());
-    await expect.poll(copied).toEqual(['alpha']);
-
-    // Down the column until the pointer is on the link's row, whatever the cell height.
-    // Hover detection is async, so each step waits a moment for the link cursor.
-    let onLink = false;
-    for (let y = screen.y + 6; y < screen.y + 150 && !onLink; y += 4) {
-      await page.mouse.move(screen.x + 60, y);
-      onLink = await expect(terminalScreen(page)).toHaveClass(/xterm-cursor-pointer/u, { timeout: 250 }).then(() => true, () => false);
-    }
-    await waitForLinkUnderPointer(page);
-    await ctrlShiftClick(page);
-    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
-
-    await page.keyboard.press('Control+Shift+C');
-    await expect.poll(copied).toEqual(['alpha', 'alpha']);
   } finally {
     await browser.close();
   }
@@ -338,7 +371,7 @@ test('with the Kangentic browser off, an OSC 8 link whose text is not its URL st
   }
 });
 
-test('with the terminal\'s Kangentic browser popped out, the tip has one row and Ctrl+Shift+click opens the default browser', async () => {
+test('with the terminal\'s Kangentic browser popped out, the tip has one row and Ctrl+click opens the default browser', async () => {
   const { browser, page } = await launch();
   try {
     await page.evaluate((key) => (window as unknown as { __mockFirePopOutChanged: (keys: string[]) => void }).__mockFirePopOutChanged([key]),
@@ -351,7 +384,7 @@ test('with the terminal\'s Kangentic browser popped out, the tip has one row and
     await expect(tip).toBeVisible({ timeout: 5000 });
     await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
 
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
     await expect(page.getByTestId('browser-webview')).toHaveCount(0);
@@ -376,7 +409,7 @@ test('an OSC 8 link whose text is not its URL shows the URL above its clicks', a
   }
 });
 
-test('with the Kangentic browser off, the tip has one row and Ctrl+Shift+click opens the default browser too', async () => {
+test('with the Kangentic browser off, the tip has one row and Ctrl+click opens the default browser too', async () => {
   const { browser, page } = await launch({ browserEnabled: false });
   try {
     await drawFirstRow(page, URL_TEXT);
@@ -387,10 +420,89 @@ test('with the Kangentic browser off, the tip has one row and Ctrl+Shift+click o
     await expect(tip).toBeVisible({ timeout: 5000 });
     await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
 
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
     await expect(page.getByTestId('browser-webview')).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
+ * The setting swaps the two clicks. Where the setting names the Kangentic browser, a
+ * click loads it there and Ctrl+click goes to the default browser.
+ */
+test('with the setting on the Kangentic browser, a click loads it there and the tip lists it first', async () => {
+  const { browser, page } = await launch({ linkClickTarget: 'kangentic' });
+  try {
+    await drawFirstRow(page, URL_TEXT);
+    await focusTerminal(page);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    const tip = page.getByTestId('terminal-link-tip');
+    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in Kangentic browser', 'Open in default browser']);
+
+    await page.mouse.down();
+    await page.mouse.up();
+
+    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
+    expect(await openedExternally(page)).toEqual([]);
+    expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('with the setting on the Kangentic browser, a Ctrl+click opens the default browser', async () => {
+  const { browser, page } = await launch({ linkClickTarget: 'kangentic' });
+  try {
+    await drawFirstRow(page, URL_TEXT);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    await ctrlClick(page);
+
+    await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+    await expect(page.getByTestId('browser-webview')).toHaveCount(0);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a plain click on an OSC 8 link in a focused terminal opens it once and sends the TUI nothing', async () => {
+  const { browser, page } = await launch();
+  try {
+    await drawFirstRow(page, `\x1b]8;;${URL_TEXT}\x1b\\open the docs\x1b]8;;\x1b\\`);
+    await focusTerminal(page);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    await page.mouse.down();
+    await page.mouse.up();
+
+    await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+    expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a plain click on a printed path that exists reveals nothing and reaches the TUI', async () => {
+  const { browser, page } = await launch();
+  try {
+    await page.evaluate(() => { (window as unknown as { __mockLinkPaths: string[] }).__mockLinkPaths = ['src/app.ts']; });
+    await drawFirstRow(page, PATH_TEXT);
+    await focusTerminal(page);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    await page.mouse.down();
+    await page.mouse.up();
+
+    await expect.poll(async () => writtenToSession(page, SESSION_ID)).toMatch(SGR_PRESS);
+    expect(await page.evaluate(() => (window as unknown as { __mockRevealedLinkPaths?: unknown[] }).__mockRevealedLinkPaths ?? [])).toEqual([]);
   } finally {
     await browser.close();
   }
