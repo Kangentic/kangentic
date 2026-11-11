@@ -165,7 +165,9 @@ describe('AccountService.resolveForSpawn', () => {
 
   it('orders by the soonest reset under Automatic', async () => {
     config = { orderMode: 'automatic', autoSwitchAtLimit: true };
-    const accountService = service(adapterWith(folderSupport()));
+    // Its sessions report usage, so Automatic has resets to sort by. An agent that reports none
+    // keeps its saved order (account-service-behavior.test.ts).
+    const accountService = service({ ...adapterWith(folderSupport()), reportsRateLimits: true } as AgentAdapter);
     const later = repository.insert({ agent: 'test-agent', kind: 'folder', folderPath: accountService.nextFolderPath('test-agent') });
     const sooner = repository.insert({ agent: 'test-agent', kind: 'folder', folderPath: path.join(root, 'config', 'accounts', 'test-agent', '9') });
     repository.updateUsage(later.id, [{ id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 10, resetsAt: NOW + 5 * 86_400, windowDurationSeconds: 604_800 }]);

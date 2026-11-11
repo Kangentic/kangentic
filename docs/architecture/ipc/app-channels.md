@@ -231,8 +231,8 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 | `accounts:loginEnded` | on | Event: a sign-in ended (`AgentAccountLoginEnded`): who signed in, the existing account an email duplicates, and whether it was cancelled |
 | `accounts:addKeyFile` | invoke | Show a file picker and add the picked file as a key-file account of an agent. Resolves `AgentAccountKeyFileResult`, or null when the picker was closed |
 | `accounts:remove` | invoke | Delete an account's row. Its folder and sign-in stay on disk. Resolves false for the agent's own login (`default`), which cannot be removed |
-| `accounts:reorder` | invoke | A drag: the agent's list takes the given order and the run order becomes Manual. New sessions only |
-| `accounts:switchTo` | invoke | Move an account to #1 and set Manual order, then restart the agent's running task sessions in place on it, one at a time. Resolves an `AgentAccountSwitchResult` once they have moved (how many moved, how many could not), which the renderer turns into one toast |
+| `accounts:reorder` | invoke | A drag: the agent's list takes the given order, and for an agent that reports usage the run order becomes Manual. New sessions only |
+| `accounts:switchTo` | invoke | Move an account to the top and, for an agent that reports usage, set Manual order, then restart the agent's running task sessions in place on it, one at a time. Resolves an `AgentAccountSwitchResult` once they have moved (how many moved, how many could not), which the renderer turns into one toast |
 | `accounts:refreshUsage` | invoke | Ask the CLI who is signed in on each account that is not a key file, then read every account's usage. Resolves once the reads are done |
 | `accounts:changed` | on | Event with no payload: something the tab shows changed, so it re-lists |
 | `accounts:switched` | on | Event: a task's session reached its account's limit and continues on another account (`AgentAccountSwitched`) |
