@@ -226,7 +226,11 @@ function readFileSafe(relPath) {
   if (fileContentCache.has(relPath)) return fileContentCache.get(relPath);
   let body = null; // stays null for missing, oversized, or binary files
   const absolute = join(repoRoot, relPath);
-  if (existsSync(absolute) && statSync(absolute).size <= SINGLE_FILE_CAP_BYTES) {
+  // Only a regular file has a body. Git lists a symlink to a directory as one untracked path
+  // (`/preview` links a worktree's `node_modules` into the main checkout, and the `node_modules/`
+  // ignore pattern does not match a link), and reading it throws EISDIR.
+  const stats = existsSync(absolute) ? statSync(absolute) : null;
+  if (stats !== null && stats.isFile() && stats.size <= SINGLE_FILE_CAP_BYTES) {
     const content = readFileSync(absolute);
     if (!content.includes(0)) {
       body = content.toString('utf8').replace(/\r\n/g, '\n');

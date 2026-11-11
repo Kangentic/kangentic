@@ -163,6 +163,6 @@ Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-s
 - `src/main/activity-engine/engine/shapes.ts` - core types, `TransitionTrigger`, `CompensationCounters`, `DEFAULT_*` constants.
 - `src/main/activity-engine/engine/counter-snapshot.ts` - `formatCounterDelta` (the trace delta strings).
 - `src/main/activity-engine/background-shell/watcher.ts` - Tier A PID capture / liveness, Tier B count heuristic, named-drain deficit branch, the transcript-drain integration point in `cycleSession` (#386).
-- `src/main/agent/adapters/claude/background-shell-transcript.ts` - the transcript-drain implementation (#386): early-EOF-anchor cursor, terminal `<task-notification>` regex, id filtering to tracked shells.
+- `src/main/agent/adapters/claude/background-shell-transcript.ts` - the transcript-drain implementation (#386): a cursor whose first read looks back up to 1 MiB (#803) and then tails forward, terminal `<task-notification>` regex, id filtering to tracked shells.
 - `src/main/activity-engine/session-telemetry.ts` - feeds events into the engine, Ctrl+C interrupt synthesis.
 - `src/shared/activity-state.ts` - the idle-vs-active bucketing helpers (`requiresUserInteraction` / `isActive`) and the `ActivityDisposition` table; the `ActivityState` union itself lives in `src/shared/types.ts` (for classification questions; see `.claude/rules/activity-state-classification.md`).
