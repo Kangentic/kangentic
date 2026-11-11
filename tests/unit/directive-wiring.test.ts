@@ -36,6 +36,7 @@ const KNOWN_KINDS = new Set([
   'extractDetail',
   'extractDetailWhenTool',
   'extractHolderTimeout',
+  'extractToolUrls',
   'setDetail',
   'setTypeWhen',
   'setToolWhen',

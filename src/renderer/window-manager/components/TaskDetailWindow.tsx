@@ -32,6 +32,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { usePopOutStore } from '../../stores/pop-out-store';
 import { popOutInstanceKey } from '../../../shared/pop-out';
 import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
+import { registerTaskLinkBrowser } from '../../utils/task-link-browser';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { closeBrowserForTask } from '../../components/browser/close-browser';
 import { useConfigStore } from '../../stores/config-store';
@@ -64,7 +65,11 @@ import { registerWindowCloser, unregisterWindowCloser } from '../store/window-cl
 import { isWindowDormant } from '../store/types';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
-import type { Task, ShortcutConfig, TaskRunMode, SessionDisplayState } from '../../../shared/types';
+import type { Task, ShortcutConfig, TaskArtifactChanges, TaskRunMode, SessionDisplayState } from '../../../shared/types';
+import { hasArtifactChanges } from '../../../shared/task-artifacts';
+
+/** No unsaved artifact edits. One object, so resetting to it never reads as a change. */
+const NO_ARTIFACT_CHANGES: TaskArtifactChanges = {};
 
 interface TaskDetailWindowProps {
   task: Task;
@@ -189,6 +194,9 @@ export function TaskDetailWindow({
   const [description, setDescription] = useState(task.description);
   const [prUrl, setPrUrl] = useState(task.pr_url ?? '');
   const [labels, setLabels] = useState<string[]>(task.labels ?? []);
+  // The edit form's unsaved artifact edits: changes, not a copy of the list,
+  // since an agent can add one while the form is open (`artifact-draft.ts`).
+  const [artifactChanges, setArtifactChanges] = useState<TaskArtifactChanges>(NO_ARTIFACT_CHANGES);
   const [priority, setPriority] = useState(task.priority ?? 0);
   const [agentOverride, setAgentOverride] = useState(task.agent_override ?? '');
   const [modelOverride, setModelOverride] = useState(task.model_override ?? '');
@@ -321,6 +329,8 @@ export function TaskDetailWindow({
     description,
     prUrl,
     labels,
+    artifactChanges,
+    setArtifactChanges,
     priority,
     agentOverride,
     modelOverride,
@@ -429,10 +439,11 @@ export function TaskDetailWindow({
     || profileId !== (task.profile_id ?? null)
     || runMode !== task.run_mode
     || JSON.stringify(labels) !== JSON.stringify(task.labels ?? [])
+    || hasArtifactChanges(artifactChanges)
     || branchConfig.baseBranch !== (task.base_branch || '')
     || branchConfig.customBranchName !== (task.branch_name || '')
     || branchConfig.useWorktree !== (task.use_worktree != null ? Boolean(task.use_worktree) : null)
-  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, profileId, runMode, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
+  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, profileId, runMode, labels, artifactChanges, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
 
   // The single guarded close used by every close affordance. Guards close
   // gestures (header X, Escape, panel.close) while editing with unsaved
@@ -593,15 +604,19 @@ export function TaskDetailWindow({
     && !!sessionState.session?.id
     && taskDetailSurfaceFor(sessionState.displayState.kind, laneRole) === 'terminal';
 
-  // The Kangentic browser this window's terminal opens a link in, on its link
-  // hotkey (`terminal-links/link-actions.ts`): shown the way the Browser pill
+  // The Kangentic browser this window's terminal opens a link in, on the click
+  // the "Click opens links in" setting gives it (`utils/link-open.ts`): shown the way the Browser pill
   // shows it, with the other right-side views put away, then loaded. Null while
   // the pane cannot show, or lives in a window of its own, whose renderer keeps
   // its own store: that click opens the default browser instead.
   const browserPoppedOut = usePopOutStore((state) =>
     browserProjectId != null && state.openInstanceKeys[popOutInstanceKey('browser', { projectId: browserProjectId, taskId: task.id })] === true);
   const linkBrowser = useMemo<TerminalLinkBrowser | null>(() => {
-    if (!canShowBrowser || browserPoppedOut) return null;
+    // A parked or retained window is out of sight: a link loaded into its pane
+    // would open nowhere the user can see. With no browser offered, the link
+    // opens the task first (`task-link-browser.ts`), which brings this window
+    // back, and takes the link once it is showing.
+    if (!canShowBrowser || browserPoppedOut || dormant) return null;
     return {
       open: (url) => {
         const session = useSessionStore.getState();
@@ -612,7 +627,13 @@ export function TaskDetailWindow({
         session.requestBrowserNavigate?.(task.id, url);
       },
     };
-  }, [canShowBrowser, browserPoppedOut, handleToggleBrowser, task.id]);
+  }, [canShowBrowser, browserPoppedOut, dormant, handleToggleBrowser, task.id]);
+  // The task's other links (its PR pill, its artifacts) open in the same browser:
+  // they ask for it by task id, since nothing hands it to them (task-link-browser.ts).
+  useEffect(
+    () => (linkBrowser ? registerTaskLinkBrowser(task.id, linkBrowser) : undefined),
+    [linkBrowser, task.id],
+  );
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 
   const moveTargets = useMemo(() =>
@@ -985,6 +1006,8 @@ export function TaskDetailWindow({
                   setPrUrl={setPrUrl}
                   labels={labels}
                   setLabels={setLabels}
+                  artifactChanges={artifactChanges}
+                  setArtifactChanges={setArtifactChanges}
                   priority={priority}
                   setPriority={setPriority}
                   agentOverride={agentOverride}

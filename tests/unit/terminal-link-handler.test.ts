@@ -2,46 +2,65 @@ import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// link-targets reads the hotkey overrides from the config store; every test here
-// hands in its combos instead, so the store only has to import.
+// link-targets reads the click setting from the config store; every test here
+// hands it in instead, so the store only has to import.
 vi.mock('../../src/renderer/stores/config-store', () => ({ useConfigStore: { getState: () => ({}) } }));
 
 import { createTerminalLinkHandler } from '../../src/renderer/utils/terminal-link-handler';
 import { createTerminalLinkTargets, type TerminalLinkBrowser } from '../../src/renderer/utils/terminal-links/link-targets';
+import type { LinkClickTarget } from '../../src/shared/types';
 
-const DEFAULT_COMBOS = { 'default-browser': 'Mod+Mouse:Left', 'kangentic-browser': 'Mod+Shift+Mouse:Left' };
 const ctrlClick = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
-const ctrlShiftClick = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: true } as MouseEvent;
+const shiftClick = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: true } as MouseEvent;
+const altClick = { ctrlKey: false, metaKey: false, altKey: true, shiftKey: false } as MouseEvent;
 const plainClick = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
 const fakeRange = {} as never;
 
-function targets(openExternal: (url: string) => void, browser: TerminalLinkBrowser | null = null) {
-  return createTerminalLinkTargets({ getBrowser: () => browser, openExternal, readCombos: () => DEFAULT_COMBOS });
+function targets(openExternal: (url: string) => void, browser: TerminalLinkBrowser | null = null, clickOpens: LinkClickTarget = 'default') {
+  return createTerminalLinkTargets({ getBrowser: () => browser, openExternal, readClickTarget: () => clickOpens });
 }
 
 describe('createTerminalLinkHandler', () => {
-  it('opens on the link hotkey, and a plain click stays the TUI\'s', () => {
+  it('opens on a plain click and on Ctrl+click, and leaves Shift and Alt clicks to selection', () => {
     const openExternal = vi.fn();
     const handler = createTerminalLinkHandler(targets(openExternal));
-    handler.activate(plainClick, 'https://kangentic.com', fakeRange);
+    handler.activate(shiftClick, 'https://kangentic.com', fakeRange);
+    handler.activate(altClick, 'https://kangentic.com', fakeRange);
     expect(openExternal).not.toHaveBeenCalled();
+    handler.activate(plainClick, 'https://kangentic.com', fakeRange);
     handler.activate(ctrlClick, 'https://kangentic.com', fakeRange);
-    expect(openExternal).toHaveBeenCalledTimes(1);
+    expect(openExternal).toHaveBeenCalledTimes(2);
   });
 
-  it('opens in the Kangentic browser on its hotkey, and in the default browser where the terminal has none', () => {
+  it('opens a click in the browser the setting names and Ctrl+click in the other, and in the default browser where the terminal has none', () => {
     const openExternal = vi.fn();
     const browser = { open: vi.fn() };
-    createTerminalLinkHandler(targets(openExternal, browser)).activate(ctrlShiftClick, 'http://localhost:5173/', fakeRange);
+    createTerminalLinkHandler(targets(openExternal, browser)).activate(ctrlClick, 'http://localhost:5173/', fakeRange);
     expect(browser.open).toHaveBeenCalledWith('http://localhost:5173/');
     expect(openExternal).not.toHaveBeenCalled();
 
-    createTerminalLinkHandler(targets(openExternal)).activate(ctrlShiftClick, 'http://localhost:5173/', fakeRange);
+    createTerminalLinkHandler(targets(openExternal, browser, 'kangentic')).activate(plainClick, 'http://localhost:5173/', fakeRange);
+    expect(browser.open).toHaveBeenCalledTimes(2);
+    expect(openExternal).not.toHaveBeenCalled();
+
+    createTerminalLinkHandler(targets(openExternal, null, 'kangentic')).activate(plainClick, 'http://localhost:5173/', fakeRange);
     expect(openExternal).toHaveBeenCalledWith('http://localhost:5173/');
   });
 
+  it('opens nothing when the gesture says the click was a drag, or only brought the terminal forward', () => {
+    const openExternal = vi.fn();
+    const gesture = { noteLinkHover: vi.fn(), noteLinkLeave: vi.fn(), opensOnRelease: vi.fn(() => false) };
+    createTerminalLinkHandler(targets(openExternal), gesture).activate(plainClick, 'https://kangentic.com', fakeRange);
+    expect(gesture.opensOnRelease).toHaveBeenCalledWith(plainClick);
+    expect(openExternal).not.toHaveBeenCalled();
+
+    gesture.opensOnRelease.mockReturnValue(true);
+    createTerminalLinkHandler(targets(openExternal), gesture).activate(plainClick, 'https://kangentic.com', fakeRange);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+
   it('tells the gesture about a hover with the link\'s URI, so the tip can say where it goes', () => {
-    const gesture = { noteLinkHover: vi.fn(), noteLinkLeave: vi.fn() };
+    const gesture = { noteLinkHover: vi.fn(), noteLinkLeave: vi.fn(), opensOnRelease: vi.fn(() => true) };
     const handler = createTerminalLinkHandler(targets(vi.fn()), gesture);
     handler.hover?.(ctrlClick, 'https://kangentic.com', fakeRange);
     handler.leave?.(ctrlClick, 'https://kangentic.com', fakeRange);
@@ -71,7 +90,7 @@ describe('createTerminalLinkHandler', () => {
     const browser = { open: vi.fn() };
     const handler = createTerminalLinkHandler(targets(openExternal, browser));
     handler.activate(ctrlClick, url, fakeRange);
-    handler.activate(ctrlShiftClick, url, fakeRange);
+    handler.activate(plainClick, url, fakeRange);
     expect(openExternal).not.toHaveBeenCalled();
     expect(browser.open).not.toHaveBeenCalled();
   });

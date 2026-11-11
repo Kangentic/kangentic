@@ -18,6 +18,8 @@ import { ContextUsageFooter } from './ContextUsageFooter';
 import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } from './CardMessageTrail';
 import { TaskPills, taskHasPills } from '../backlog/TaskPills';
 import { PrLink } from '../PrLink';
+import { ArtifactsChip } from '../artifacts/ArtifactsChip';
+import { openArtifactsEditor } from '../artifacts/artifacts-focus';
 import type {
   ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, StartBlockedReason, Task,
 } from '../../../shared/types';
@@ -577,15 +579,35 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
         {view.browserAlive && <BrowserAliveGlobe testId="task-card-browser-alive" />}
       </div>
 
-      {!isCompactDensity && task.pr_url && (
-        <div className="flex items-center gap-2 mt-1.5">
-          <PrLink
-            prUrl={task.pr_url}
-            prNumber={task.pr_number}
-            prState={task.pr_state}
-            prMergeReadiness={task.pr_merge_readiness}
-            testId="task-card-pr-link"
-          />
+      {/* The task's links: its pull request, then its artifacts (#1056). Compact
+          density hides both, as it hides everything under the title. */}
+      {!isCompactDensity && (task.pr_url || (task.artifacts?.length ?? 0) > 0) && (
+        // A container, so the artifacts count can drop its word when a narrow
+        // card has no room for it beside the PR pill (`ArtifactsChip`).
+        <div className="@container flex min-w-0 items-center gap-2 mt-1.5">
+          {task.pr_url && (
+            <PrLink
+              prUrl={task.pr_url}
+              prNumber={task.pr_number}
+              prState={task.pr_state}
+              prMergeReadiness={task.pr_merge_readiness}
+              taskId={task.id}
+              testId="task-card-pr-link"
+              className="flex-shrink-0"
+            />
+          )}
+          {/* Mounted only for a task that has artifacts: the chip subscribes
+              to three stores for its link tip, and most cards with a PR pill
+              have none to show. */}
+          {(task.artifacts?.length ?? 0) > 0 && (
+            <ArtifactsChip
+              task={task}
+              variant="card"
+              onEdit={hideDisplayId ? undefined : () => openArtifactsEditor(task.id)}
+              besidePr={Boolean(task.pr_url)}
+              testId="task-card-artifacts"
+            />
+          )}
         </div>
       )}
 

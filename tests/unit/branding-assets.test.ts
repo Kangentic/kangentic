@@ -109,11 +109,12 @@ const INLINE_SVG_EXEMPT_FILES = [
 const DRAWN_INLINE_SVG_EXEMPT_FILES = [
   'src/renderer/components/workflows/NoWorkflowsIllustration.tsx',
 ];
-// The fifth draws agent vendors' own marks (the Accounts cards), from element data in
-// `agent-marks.ts` that `agent-marks.test.ts` holds to `currentColor`. It names the rule, never
-// moves, and falls back to a lucide icon.
+// The fifth draws vendors' own marks (an agent's on its Accounts card, a tool's beside an
+// artifact), from element data in `agent-marks.ts` and `artifact-platform-marks.ts` that
+// `agent-marks.test.ts` holds to `currentColor`. It names the rule, never moves, and falls back
+// to a lucide icon.
 const VENDOR_MARK_EXEMPT_FILES = [
-  'src/renderer/components/AgentLogo.tsx',
+  'src/renderer/components/VendorMark.tsx',
 ];
 const UI_CONVENTIONS_RULE = '.claude/rules/ui-conventions.md';
 

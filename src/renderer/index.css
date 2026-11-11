@@ -1098,6 +1098,11 @@
   background-color: color-mix(in srgb, var(--drop-color, var(--kng-accent)) 5%, transparent);
 }
 
+/* A collapsed column's strip has no task list to tint, so the strip takes it. */
+.drop-highlight[data-collapsed] {
+  background-color: color-mix(in srgb, var(--drop-color, var(--kng-accent)) 8%, transparent);
+}
+
 /* Cross-column drop gap (src/renderer/utils/board-drop-preview.ts). A card
    dragged in from another column parts the target lane's cards at the slot it
    will drop into, by transform only: dnd-kit measures droppables with

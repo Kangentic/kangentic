@@ -30,6 +30,7 @@ export function plannedAsTask(viewTask: WorkflowViewTask): Task {
     display_id: 0,
     title: viewTask.title,
     description: planned?.description ?? '',
+    artifacts: [],
     swimlane_id: '',
     position: 0,
     agent: null,

@@ -82,7 +82,8 @@ export const createAutomationsSlice: StateCreator<BoardStore, [], [], Automation
  * fresh object, and zustand compares snapshots with `Object.is`, so passing it
  * to `useBoardStore` directly makes every store read look like a change and
  * loops the component until React gives up. Select the two arrays and derive
- * this in a `useMemo`, as `AutomationGlyph` does.
+ * this in a `useMemo`, as `useColumnAutomationSentence` does
+ * (`components/board/column-automations.tsx`).
  */
 export function selectAutomationCounts(
   state: Pick<BoardStore, 'automations' | 'swimlanes'>,

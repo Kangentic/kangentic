@@ -17,7 +17,7 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
         icon={<LayoutGrid size={16} />}
         label={t`Board layout`}
         description={t`Column width and which panels show around the board.`}
-        searchIds={['columnWidth', 'terminalPanelVisible', 'statusBarVisible']}
+        searchIds={['columnWidth', 'shrinkEmptyColumns', 'terminalPanelVisible', 'statusBarVisible']}
       >
         <CardChoiceRow
           {...settingProps('columnWidth')}
@@ -25,10 +25,16 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
             { value: 'narrow', label: t({ message: 'Narrow', context: 'column width' }) },
             { value: 'default', label: t({ message: 'Default', context: 'column width' }) },
             { value: 'wide', label: t({ message: 'Wide', context: 'column width' }) },
+            { value: 'fill', label: t({ message: 'Fill', context: 'column width' }) },
           ]}
           value={globalConfig.columnWidth}
           onChange={(value) => updateGlobal({ columnWidth: value })}
           testId="column-width-choice"
+        />
+        <CardToggleRow
+          {...settingProps('shrinkEmptyColumns')}
+          checked={globalConfig.shrinkEmptyColumns !== false}
+          onChange={(value) => updateGlobal({ shrinkEmptyColumns: value })}
         />
         <CardToggleRow
           {...settingProps('terminalPanelVisible')}

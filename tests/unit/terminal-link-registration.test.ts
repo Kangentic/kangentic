@@ -30,14 +30,16 @@ import { createTerminalLinkTargets } from '../../src/renderer/utils/terminal-lin
 import { useToastStore } from '../../src/renderer/stores/toast-store';
 
 const SESSION_ID = 'session-under-test';
-const ctrlClick = { ctrlKey: true, metaKey: false } as MouseEvent;
-const altClick = { ctrlKey: false, metaKey: false, altKey: true } as MouseEvent;
+const plainClick = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
+const ctrlClick = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
+const altClick = { ctrlKey: false, metaKey: false, altKey: true, shiftKey: false } as MouseEvent;
+const shiftClick = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: true } as MouseEvent;
 
 /** The default browser through the shell bridge, as useTerminal wires it, with no Kangentic browser beside it. */
 const linkTargets = createTerminalLinkTargets({
   getBrowser: () => null,
   openExternal: (url) => { void window.electronAPI.shell.openExternal(url); },
-  readCombos: () => ({ 'default-browser': 'Mod+Mouse:Left', 'kangentic-browser': 'Mod+Shift+Mouse:Left' }),
+  readClickTarget: () => 'default',
 });
 
 interface Harness {
@@ -48,7 +50,7 @@ interface Harness {
   attach: ReturnType<typeof vi.fn>;
 }
 
-async function harness(text: string, element: HTMLElement | undefined): Promise<Harness> {
+async function harness(text: string, element: HTMLElement | undefined, opensOnRelease = true): Promise<Harness> {
   const headless = new Terminal({ cols: 60, rows: 6, allowProposedApi: true });
   activateUnicode11(headless);
   await new Promise<void>((resolve) => headless.write(text, resolve));
@@ -68,6 +70,8 @@ async function harness(text: string, element: HTMLElement | undefined): Promise<
     noteLinkLeave: () => {},
     attach,
     isClickingLink: () => false,
+    opensOnRelease: () => opensOnRelease,
+    onClaimReleased: () => {},
   };
   return { stub, providers, addons, gesture, attach };
 }
@@ -124,10 +128,47 @@ describe('registerTerminalLinks providers', () => {
     expect(resolveLinkPaths).not.toHaveBeenCalled();
   });
 
-  it('opens a URL link through the shell bridge', async () => {
+  it('opens a URL link through the shell bridge on a plain click and on Ctrl+click, with no Kangentic browser', async () => {
     const { stub, providers, gesture } = await harness('https://example.com/a', undefined);
     registerTerminalLinks(stub, gesture, null, linkTargets);
     const [link] = (await linksFrom(providers[0], 1))!;
+    link.activate(plainClick, link.text);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    link.activate(ctrlClick, link.text);
+    expect(openExternal).toHaveBeenCalledTimes(2);
+    expect(openExternal).toHaveBeenLastCalledWith('https://example.com/a');
+  });
+
+  it('opens nothing on a Shift or Alt click, which belong to selection', async () => {
+    const { stub, providers, gesture } = await harness('https://example.com/a', undefined);
+    registerTerminalLinks(stub, gesture, null, linkTargets);
+    const [link] = (await linksFrom(providers[0], 1))!;
+    link.activate(shiftClick, link.text);
+    link.activate(altClick, link.text);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('opens nothing when the gesture says the click was a drag or only focused the terminal', async () => {
+    const { stub, providers, gesture } = await harness('https://example.com/a', undefined, false);
+    registerTerminalLinks(stub, gesture, null, linkTargets);
+    const [link] = (await linksFrom(providers[0], 1))!;
+    link.activate(plainClick, link.text);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('sends a click to the Kangentic browser, and Ctrl+click to the default one, when the setting names it', async () => {
+    const open = vi.fn();
+    const kangenticTargets = createTerminalLinkTargets({
+      getBrowser: () => ({ open }),
+      openExternal: (url) => { void window.electronAPI.shell.openExternal(url); },
+      readClickTarget: () => 'kangentic',
+    });
+    const { stub, providers, gesture } = await harness('https://example.com/a', undefined);
+    registerTerminalLinks(stub, gesture, null, kangenticTargets);
+    const [link] = (await linksFrom(providers[0], 1))!;
+    link.activate(plainClick, link.text);
+    expect(open).toHaveBeenCalledWith('https://example.com/a');
+    expect(openExternal).not.toHaveBeenCalled();
     link.activate(ctrlClick, link.text);
     expect(openExternal).toHaveBeenCalledWith('https://example.com/a');
   });
@@ -142,16 +183,20 @@ describe('registerTerminalLinks providers', () => {
 });
 
 describe('linkOpensOn', () => {
-  it('claims a URL press on its link hotkey, and a path press on Ctrl or Cmd alone', () => {
-    const rebound = createTerminalLinkTargets({
-      getBrowser: () => null,
-      openExternal: () => {},
-      readCombos: () => ({ 'default-browser': 'Alt+Mouse:Left', 'kangentic-browser': 'Mod+Shift+Mouse:Left' }),
-    });
-    const opens = linkOpensOn(rebound);
-    expect(opens(altClick, 'url')).toBe(true);
-    expect(opens(altClick, 'path')).toBe(false);
+  it('claims a URL press on a plain click or Ctrl, and a path press on Ctrl or Cmd alone', () => {
+    const opens = linkOpensOn(linkTargets);
+    expect(opens(plainClick, 'url')).toBe(true);
+    expect(opens(ctrlClick, 'url')).toBe(true);
+    expect(opens(plainClick, 'path')).toBe(false);
     expect(opens(ctrlClick, 'path')).toBe(true);
+  });
+
+  it('claims neither kind on a Shift or Alt press', () => {
+    const opens = linkOpensOn(linkTargets);
+    for (const event of [shiftClick, altClick]) {
+      expect(opens(event, 'url')).toBe(false);
+      expect(opens(event, 'path')).toBe(false);
+    }
   });
 });
 
@@ -179,87 +224,6 @@ describe('registerTerminalLinks gesture', () => {
     registerTerminalLinks(stub, gesture, SESSION_ID, linkTargets);
     expect(attach).not.toHaveBeenCalled();
     expect(addons).toEqual([]);
-  });
-});
-
-interface Registered {
-  type: string;
-  listener: () => void;
-  once: boolean;
-  signal?: AbortSignal;
-}
-
-/** An event target that honors `once` and an abort signal, as the DOM does. */
-function fakeTarget(): { addEventListener: (type: string, listener: () => void, options?: { once?: boolean; signal?: AbortSignal }) => void; fire: (type: string, event?: object) => void; count: () => number } {
-  const registered: Registered[] = [];
-  return {
-    addEventListener: (type, listener, options) => { registered.push({ type, listener, once: options?.once === true, signal: options?.signal }); },
-    fire: (type, event = {}) => {
-      for (const entry of [...registered]) {
-        if (entry.type !== type || entry.signal?.aborted || !registered.includes(entry)) continue;
-        if (entry.once) registered.splice(registered.indexOf(entry), 1);
-        (entry.listener as (event: object) => void)(event);
-      }
-    },
-    count: () => registered.filter((entry) => !entry.signal?.aborted).length,
-  };
-}
-
-describe('registerTerminalLinks keeps the selection through a Shift link click', () => {
-  const KEPT = { start: { x: 3, y: 2 }, end: { x: 8, y: 2 } };
-
-  async function setup(clickingLink: boolean) {
-    const view = fakeTarget();
-    const element = fakeTarget();
-    const elementWithDocument = Object.assign(element, { ownerDocument: { defaultView: view } }) as unknown as HTMLElement;
-    const { stub, addons, gesture } = await harness('', elementWithDocument);
-    const select = vi.fn();
-    Object.assign(stub, { getSelectionPosition: () => KEPT, select });
-    gesture.isClickingLink = () => clickingLink;
-    registerTerminalLinks(stub, gesture, SESSION_ID, linkTargets);
-    return { view, element, addons, select };
-  }
-
-  it('puts the selection back on the release of a Shift press on a link', async () => {
-    const { view, element, select } = await setup(true);
-    element.fire('mousedown', { shiftKey: true });
-    view.fire('mouseup');
-    expect(select).toHaveBeenCalledTimes(1);
-    expect(select).toHaveBeenCalledWith(3, 2, 5);
-  });
-
-  it('arms no restore for a Shift press that is not on a link', async () => {
-    const { view, element, select } = await setup(false);
-    element.fire('mousedown', { shiftKey: true });
-    expect(view.count()).toBe(0);
-    view.fire('mouseup');
-    expect(select).not.toHaveBeenCalled();
-  });
-
-  it('arms no restore for a press on a link without Shift', async () => {
-    const { view, element, select } = await setup(true);
-    element.fire('mousedown', { shiftKey: false });
-    expect(view.count()).toBe(0);
-    view.fire('mouseup');
-    expect(select).not.toHaveBeenCalled();
-  });
-
-  it('drops a restore whose release never came when the next press lands on the terminal', async () => {
-    const { view, element, select } = await setup(true);
-    element.fire('mousedown', { shiftKey: true });
-    expect(view.count()).toBe(2);
-    element.fire('mousedown', { shiftKey: false });
-    expect(view.count()).toBe(0);
-    view.fire('mouseup');
-    expect(select).not.toHaveBeenCalled();
-  });
-
-  it('drops a pending restore when the terminal is disposed', async () => {
-    const { view, element, addons, select } = await setup(true);
-    element.fire('mousedown', { shiftKey: true });
-    addons[0].dispose();
-    view.fire('mouseup');
-    expect(select).not.toHaveBeenCalled();
   });
 });
 

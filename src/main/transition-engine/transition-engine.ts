@@ -48,7 +48,7 @@ import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
 import { getDevPortForTask } from '../dev-ports/dev-port-allocator';
 import { retireRecord } from './session-lifecycle';
-import { resolveEffectivePermissionMode } from './spawn-preamble';
+import { keepsSessionPermissionMode, resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { freshPromptTypedForLength, resumePromptRidesCommandLine } from './resume-prompt-delivery';
@@ -139,6 +139,15 @@ export interface SpawnOverrides {
    * `plainResume`).
    */
   resumeOnly?: boolean;
+  /**
+   * This start resumes the session in the column it was paused in (a Resume, a
+   * restart of the app, an in-place restart), so the agent keeps the permission
+   * mode its conversation was last in where its CLI can restore it
+   * (`keepsSessionPermissionMode`). Never set by a move into a column, or by a
+   * Resume after the task entered its column while paused: those apply the
+   * column's mode.
+   */
+  keepSessionMode?: boolean;
 }
 
 /** What a spawn passes `resolveLaunch`: its decisions so far, the ids, and the command-line prompt. */
@@ -156,6 +165,8 @@ interface LaunchInput {
   prompt: string | undefined;
   nonInteractive: boolean;
   spawnOverrides: SpawnOverrides | undefined;
+  /** The mode on the session row a resume retires (`SpawnIntent.retiredPermissionMode`). */
+  retiredPermissionMode?: string | null;
 }
 
 /** The launch a spawn makes, short of building the command and starting the PTY. */
@@ -750,6 +761,15 @@ export class TransitionEngine {
       // The session's own id, which a folder-shared adapter file is held under.
       ptySessionId: input.ptySessionId,
       bypassAvailable,
+      // A resume in the column the session was paused in keeps the mode its
+      // conversation was last in; the rule lives in keepsSessionPermissionMode.
+      keepSessionPermissionMode: keepsSessionPermissionMode({
+        isResume: input.canResume,
+        sameColumnResume: input.spawnOverrides?.keepSessionMode === true,
+        adapterRestores: adapter.restoresPermissionModeOnResume === true,
+        columnMode: permissionMode,
+        lastLaunchedMode: input.retiredPermissionMode,
+      }),
       cliTarget,
       account,
     };
@@ -1064,7 +1084,10 @@ export class TransitionEngine {
         : handoffPromptPrefix;
     }
 
-    const launch = await this.resolveLaunch({ ...launchBase, canResume, ptySessionId, agentSessionId, prompt });
+    const launch = await this.resolveLaunch({
+      ...launchBase, canResume, ptySessionId, agentSessionId, prompt,
+      retiredPermissionMode: canResume ? intent.retiredPermissionMode : null,
+    });
     const { statusOutputPath, eventsOutputPath, shell, promptKeptOff } = launch;
     const { command, extraEnv, rebuildCommand } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
 

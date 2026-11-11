@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { appendBackgroundStop, extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
+import { appendBackgroundStop, extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, extractPlanMode, extractToolUrls, markSubagentLaunch, type ToolUrlsSpec, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
 import { BROWSER_POLICY_DENY_TEXT, browserPolicySpec, type BrowserPolicyHookSpec } from '../../shared/browser-policy-hook';
@@ -15,6 +15,33 @@ import { CLAUDE_SUBAGENT_SPAWN_TOOL } from './subagent-usage-parser';
  * older `Task`, which the subagent sidecars still record.
  */
 const CLAUDE_SUBAGENT_LAUNCH_TOOLS = ['Agent', CLAUDE_SUBAGENT_SPAWN_TOOL];
+
+/** The tools whose result is something published with a link. */
+const CLAUDE_ARTIFACT_PUBLISH_TOOLS = ['Artifact'];
+
+/**
+ * Claude's Artifact tool publishes a page and answers with its link. The tool
+ * also reads, lists, deletes and pins, each naming an existing artifact in its
+ * result, so only a publish counts: `action: "publish"`, or no action, which
+ * the tool reads as one. `title` is the page's fallback title when the call
+ * gave one.
+ *
+ * Only the first link is the artifact. Captured from a live session on
+ * 2026-11-10, a publish from an Artifact type answered "Created a new Artifact
+ * at https://claude.ai/artifact/<new> (version ...) from the Artifact type
+ * https://claude.ai/artifact/<type> ...", and each later update of it named
+ * the same two in the same order. The type is not the task's artifact.
+ */
+const CLAUDE_ARTIFACT_PUBLISH_SPEC: ToolUrlsSpec = {
+  toolField: 'tool_name',
+  tools: CLAUDE_ARTIFACT_PUBLISH_TOOLS,
+  responsePath: ['tool_response'],
+  actionPath: ['tool_input', 'action'],
+  actions: ['publish'],
+  allowNoAction: true,
+  titlePath: ['tool_input', 'title'],
+  limit: 1,
+};
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -378,6 +405,8 @@ export function buildHooks(
         // response shape is a retained transcript's tool result:
         // `{"taskId":"blwse3kzw","timeoutMs":1800000,"persistent":false}`.
         extractHolderTimeout('timeoutMs', { whenTool: 'Monitor', nested: 'tool_response', unlessField: 'persistent' }),
+        // A published artifact's link, for the task's Artifacts (#1056).
+        extractToolUrls(CLAUDE_ARTIFACT_PUBLISH_SPEC),
         setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart),
         // `TaskStop` ends the shell it names, from the main agent or a subagent.
         // It leaves no `<task-notification>`, and a command Claude moved to the

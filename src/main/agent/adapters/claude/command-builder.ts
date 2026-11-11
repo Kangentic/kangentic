@@ -367,8 +367,11 @@ export class CommandBuilder {
       ? this.createMergedSettings(options)
       : null;
 
-    // Permission mode flags
-    switch (options.permissionMode) {
+    // Permission mode flags. A resume that keeps the session's own mode states
+    // none: Claude then starts in the mode the conversation was last in, where
+    // a flag would override it.
+    const keepsSessionMode = options.keepSessionPermissionMode === true && options.resume === true;
+    switch (keepsSessionMode ? 'default' : options.permissionMode) {
       case 'bypassPermissions':
         parts.push('--dangerously-skip-permissions');
         break;

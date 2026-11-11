@@ -12,21 +12,35 @@ import { TriangleExclamationPoint, X } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { Swimlane, type SwimlaneProps } from './Swimlane';
 import { DoneSwimlane } from './DoneSwimlane';
+import { CollapsedLane } from './CollapsedLane';
 import { TaskCard } from './TaskCard';
 import { BoardDialogs } from './BoardDialogs';
 import { WorkflowLinksOverlay } from './WorkflowLinksOverlay';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { useBoardStore } from '../../stores/board-store';
+import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useBoardDragDrop } from '../../hooks/useBoardDragDrop';
 import { useHmrGeneration } from '../../utils/hmr-generation';
 import { motionReduced } from '../../utils/motion-reduced';
 import { boardTaskFilter, matchesBoardTaskFilter } from '../../utils/board-task-filter';
-import type { Task } from '../../../shared/types';
+import { laneFlexStyle, laneShape, laneShapesKey, laneWidthRange, type LaneShape } from './lane-widths';
+import { LANE_WRAPPER_ATTRIBUTE, useLaneWidthMotion } from './useLaneWidthMotion';
+import type { ColumnWidth, Task } from '../../../shared/types';
+
+interface SortableSwimlaneProps extends SwimlaneProps {
+  /** Shared, shrunk to its header, or collapsed to a strip (`lane-widths.ts`). */
+  shape: LaneShape;
+  columnWidth: ColumnWidth;
+}
 
 /** Wrapper that registers a column with @dnd-kit/sortable.
  *  All columns participate so dnd-kit knows their positions,
- *  but only custom columns (role === null) get a drag handle. */
-const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks }: SwimlaneProps) {
+ *  but only custom columns (role === null) get a drag handle.
+ *
+ *  The wrapper is the lanes row's flex item, so the column's width is set here
+ *  from its shape; the lane inside fills it. */
+const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks, shape, columnWidth }: SortableSwimlaneProps) {
   const {
     attributes,
     listeners,
@@ -59,15 +73,29 @@ const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks 
   );
 
   const style: React.CSSProperties = {
+    ...laneFlexStyle(shape, laneWidthRange(columnWidth)),
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     transition: transition || undefined,
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 10 : undefined,
   };
+  const wrapperProps = { [LANE_WRAPPER_ATTRIBUTE]: swimlane.id, 'data-lane-shape': shape };
+  const isDone = swimlane.role === 'done';
+  // Done's completed tasks are archived, so its strip counts those: its lane
+  // holds a card only for the moment before one is archived.
+  const archivedTotalCount = useBoardStore((state) => (isDone ? state.archivedTotalCount : 0));
 
-  if (swimlane.role === 'done') {
+  if (shape === 'collapsed') {
     return (
-      <div ref={setNodeRef} style={style} className="h-full">
+      <div ref={setNodeRef} style={style} className="h-full" {...wrapperProps}>
+        <CollapsedLane swimlane={swimlane} count={tasks.length + archivedTotalCount} />
+      </div>
+    );
+  }
+
+  if (isDone) {
+    return (
+      <div ref={setNodeRef} style={style} className="h-full" {...wrapperProps}>
         <DoneSwimlane
           swimlane={swimlane}
           tasks={tasks}
@@ -78,7 +106,7 @@ const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks 
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="h-full">
+    <div ref={setNodeRef} style={style} className="h-full" {...wrapperProps}>
       <Swimlane
         swimlane={swimlane}
         tasks={tasks}
@@ -308,6 +336,16 @@ export function KanbanBoard() {
     );
   }, [swimlanes]);
 
+  // The columns this user collapsed in this project (#1056), and the two
+  // settings that size the rest. See lane-widths.ts.
+  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  const columnWidth = useConfigStore((state) => state.config.columnWidth);
+  const shrinkEmptyColumns = useConfigStore((state) => state.config.shrinkEmptyColumns !== false);
+  const collapsedColumnIds = useConfigStore(
+    (state) => (projectId ? state.config.collapsedColumnsByProject?.[projectId] : undefined),
+  );
+  const collapsedLaneIds = useMemo(() => new Set(collapsedColumnIds ?? []), [collapsedColumnIds]);
+
   const {
     sensors,
     collisionDetection,
@@ -321,7 +359,7 @@ export function KanbanBoard() {
     activeTask,
     sortableColumnIds,
     dropAnimation,
-  } = useBoardDragDrop({ swimlanes, tasks, archivedTasks });
+  } = useBoardDragDrop({ swimlanes, tasks, archivedTasks, collapsedLaneIds });
 
   // Re-key DndContext on HMR to remount dnd-kit with a clean manager.
   // See src/renderer/utils/hmr-generation.ts; constant 0 in production.
@@ -343,16 +381,18 @@ export function KanbanBoard() {
   const stableLanesRef = useRef<Map<string, Task[]>>(new Map());
 
   /* eslint-disable react-hooks/refs -- structural-sharing cache; see the comment above */
-  const tasksPerLane = useMemo(() => {
+  const { lanes: tasksPerLane, occupiedKey } = useMemo(() => {
     const fresh = new Map<string, Task[]>();
     for (const lane of swimlanes) fresh.set(lane.id, []);
+    // The lanes that hold a task, counted BEFORE the board filter: a column
+    // shrinks because it is empty, never because a search matched nothing in it.
+    const occupied = new Set<string>();
     for (const task of tasks) {
       // A completing task belongs to the FlyingCard, not any lane. Skipping it
       // here (the single lane-bucketing chokepoint) keeps it out of both its
       // source column and Done for the whole flight, even if a mid-flight
       // loadBoard() re-injects it at its source swimlane_id from the DB.
       if (completingTaskIds.has(task.id)) continue;
-      if (!matchesBoardTaskFilter(task, taskFilter)) continue;
       // A task whose optimistic move is still in flight renders at its pinned
       // destination, not the lane the server last reported. Without this, a
       // reload issued before the move's DB write (endBoardDrag flushes parked
@@ -362,11 +402,13 @@ export function KanbanBoard() {
       // deleted mid-move, `fresh.get(pinnedLaneId)` is undefined and the card
       // would vanish from the board entirely rather than degrade gracefully.
       const pinnedLaneId = lanePins.get(task.id)?.laneId;
-      const arr = (pinnedLaneId !== undefined ? fresh.get(pinnedLaneId) : undefined)
-        ?? fresh.get(task.swimlane_id);
-      if (arr) arr.push(task);
+      const laneId = pinnedLaneId !== undefined && fresh.has(pinnedLaneId) ? pinnedLaneId : task.swimlane_id;
+      const laneTasks = fresh.get(laneId);
+      if (!laneTasks) continue;
+      occupied.add(laneId);
+      if (matchesBoardTaskFilter(task, taskFilter)) laneTasks.push(task);
     }
-    for (const arr of fresh.values()) arr.sort((a, b) => a.position - b.position);
+    for (const laneTasks of fresh.values()) laneTasks.sort((first, second) => first.position - second.position);
 
     const stable = new Map<string, Task[]>();
     const previous = stableLanesRef.current;
@@ -383,9 +425,37 @@ export function KanbanBoard() {
       }
     }
     stableLanesRef.current = stable;
-    return stable;
+    // A string, so a reload that leaves the same lanes occupied changes nothing
+    // downstream.
+    return { lanes: stable, occupiedKey: [...occupied].sort().join(',') };
   }, [swimlanes, tasks, taskFilter, completingTaskIds, lanePins]);
   /* eslint-enable react-hooks/refs */
+
+  // Each column's shape: collapsed by the user, shrunk because it is empty, or
+  // sharing the row. One string for the row, which the width motion keys on.
+  const laneShapes = useMemo(() => {
+    const occupied = new Set(occupiedKey === '' ? [] : occupiedKey.split(','));
+    return swimlanes.map((lane) => ({
+      id: lane.id,
+      shape: laneShape({
+        collapsed: collapsedLaneIds.has(lane.id),
+        occupied: occupied.has(lane.id),
+        isDone: lane.role === 'done',
+        shrinkEmpty: shrinkEmptyColumns,
+      }),
+    }));
+  }, [swimlanes, occupiedKey, collapsedLaneIds, shrinkEmptyColumns]);
+  const shapeByLane = useMemo(() => new Map(laneShapes.map((entry) => [entry.id, entry.shape])), [laneShapes]);
+  const lanesRowRef = useRef<HTMLDivElement>(null);
+  useLaneWidthMotion({
+    rowRef: lanesRowRef,
+    shapesKey: laneShapesKey(laneShapes),
+    // The row mounts once the board has hydrated, so that is part of the key.
+    laneIdsKey: `${hydrated}:${sortableColumnIds.join(',')}`,
+    shrunkContentKey: `${columnWidth}|${swimlanes.map((lane) => lane.name).join('|')}`,
+    projectId,
+    dragging: activeTask !== null,
+  });
 
   // A cross-column drop leaves its lane's cards parted until the dropped card
   // is in that lane. This runs in the commit that puts it there, before paint,
@@ -403,7 +473,12 @@ export function KanbanBoard() {
   return (
     <div ref={boardRootRef} className="relative h-full overflow-x-auto overflow-y-hidden flex flex-col">
       <ConfigWarningBanner />
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
+      {/* No right padding: the row's own trailing spacer is the right-hand
+          gutter (a gap and 1px, 17px), whether the columns fit or scroll. A
+          scroller's end padding is not added past overflowing columns, so with
+          both, columns that fill the row (Column width: Fill) sat 33px from the
+          right edge and 16px from the left. */}
+      <div className="flex-1 overflow-x-auto overflow-y-hidden py-4 pl-4">
       <DndContext
         key={hmrGeneration}
         sensors={sensors}
@@ -417,12 +492,14 @@ export function KanbanBoard() {
       >
         <SortableContext items={sortableColumnIds} strategy={horizontalListSortingStrategy}>
           {/* Trailing pseudo-element ensures right-side scroll padding after the last column */}
-          <div className="flex gap-4 h-full after:content-[''] after:flex-shrink-0 after:w-px" data-board-lanes>
+          <div ref={lanesRowRef} className="flex gap-4 h-full after:content-[''] after:flex-shrink-0 after:w-px" data-board-lanes>
             {swimlanes.map((swimlane) => (
               <SortableSwimlane
                 key={swimlane.id}
                 swimlane={swimlane}
                 tasks={tasksPerLane.get(swimlane.id) ?? EMPTY_TASKS}
+                shape={shapeByLane.get(swimlane.id) ?? 'shared'}
+                columnWidth={columnWidth}
               />
             ))}
           </div>

@@ -117,6 +117,7 @@ describe('handleCreateTask - labels survive a large description (round-trip guar
       id: 'task-uuid-1',
       display_id: 1,
       title: input.title,
+      artifacts: [],
     }));
   });
 
@@ -235,7 +236,7 @@ describe('priority checked against the project scale', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolveColumn.mockReturnValue({ swimlane: { id: 'lane-1', name: 'To Do' } });
-    mockTaskRepoCreate.mockImplementation((input: { title: string }) => ({ id: 'task-uuid-1', display_id: 1, title: input.title }));
+    mockTaskRepoCreate.mockImplementation((input: { title: string }) => ({ id: 'task-uuid-1', display_id: 1, title: input.title, artifacts: [] }));
     mockTaskRepoGetById.mockReturnValue({ id: 'task-uuid-1', display_id: 1, title: 'Existing', labels: [] });
     mockTaskRepoUpdate.mockImplementation(() => ({ id: 'task-uuid-1', display_id: 1, title: 'Existing', labels: [] }));
   });
@@ -280,6 +281,7 @@ describe('handleCreateTask - persists the full description up to the task cap', 
       display_id: 1,
       title: input.title,
       description: input.description,
+      artifacts: [],
     }));
   });
 
@@ -366,6 +368,7 @@ describe('handleCreateTask - agent/model/effort/permissionMode/auto_command over
       id: 'task-uuid-1',
       display_id: 1,
       title: input.title,
+      artifacts: [],
     }));
   });
 

@@ -3,31 +3,33 @@ import type { ILink } from '@xterm/xterm';
 import { Terminal } from '@xterm/headless';
 import { activateUnicode11 } from '../../src/shared/xterm-unicode11';
 
-// link-targets reads the hotkey overrides from the config store; every test here
-// hands in its combos instead, so the store only has to import.
+// link-targets reads the click setting from the config store; every test here
+// hands it in instead, so the store only has to import.
 vi.mock('../../src/renderer/stores/config-store', () => ({ useConfigStore: { getState: () => ({}) } }));
 
-import { createTerminalLinkGesture, isLinkOpenGesture, type TerminalLinkGesture } from '../../src/renderer/utils/terminal-links/link-gesture';
+import { isLinkOpenGesture } from '../../src/renderer/utils/link-open';
+import { createTerminalLinkGesture, type TerminalLinkGesture } from '../../src/renderer/utils/terminal-links/link-gesture';
 import { EXISTING_PATH_TTL_MS, MAX_CACHED_PATHS, MISSING_PATH_TTL_MS, createLinkPathCache } from '../../src/renderer/utils/terminal-links/link-path-cache';
 import { createPathLinkProvider, createUrlLinkProvider, type LinkTerminal } from '../../src/renderer/utils/terminal-links/link-providers';
 import { createTerminalLinkTargets, type TerminalLinkBrowser } from '../../src/renderer/utils/terminal-links/link-targets';
+import type { LinkClickTarget } from '../../src/shared/types';
 
 const noGesture: TerminalLinkGesture = {
   noteLinkHover: () => {},
   noteLinkLeave: () => {},
   attach: () => {},
   isClickingLink: () => false,
+  opensOnRelease: () => true,
+  onClaimReleased: () => {},
 };
 
-const ctrlClick = { ctrlKey: true, metaKey: false } as MouseEvent;
-const cmdClick = { ctrlKey: false, metaKey: true } as MouseEvent;
-const plainClick = { ctrlKey: false, metaKey: false } as MouseEvent;
-const ctrlShiftClick = { ctrlKey: true, metaKey: false, shiftKey: true } as MouseEvent;
+const ctrlClick = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
+const cmdClick = { ctrlKey: false, metaKey: true, altKey: false, shiftKey: false } as MouseEvent;
+const plainClick = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
+const shiftClick = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: true } as MouseEvent;
 
-const DEFAULT_COMBOS = { 'default-browser': 'Mod+Mouse:Left', 'kangentic-browser': 'Mod+Shift+Mouse:Left' };
-
-function targets(openExternal: (url: string) => void, browser: TerminalLinkBrowser | null = null) {
-  return createTerminalLinkTargets({ getBrowser: () => browser, openExternal, readCombos: () => DEFAULT_COMBOS });
+function targets(openExternal: (url: string) => void, browser: TerminalLinkBrowser | null = null, clickOpens: LinkClickTarget = 'default') {
+  return createTerminalLinkTargets({ getBrowser: () => browser, openExternal, readClickTarget: () => clickOpens });
 }
 
 async function terminalWith(text: string): Promise<Terminal> {
@@ -53,25 +55,43 @@ describe('createUrlLinkProvider', () => {
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  it('opens on the link hotkey and not on a plain click', async () => {
+  it('opens on a plain click and on Ctrl+click, and not on a Shift click', async () => {
     const terminal = await terminalWith('https://example.com/a');
     const openExternal = vi.fn();
     const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(openExternal)), 1))!;
-    link.activate(plainClick, link.text);
+    link.activate(shiftClick, link.text);
     expect(openExternal).not.toHaveBeenCalled();
+    link.activate(plainClick, link.text);
     link.activate(ctrlClick, link.text);
-    expect(openExternal.mock.calls).toEqual([['https://example.com/a']]);
+    expect(openExternal.mock.calls).toEqual([['https://example.com/a'], ['https://example.com/a']]);
   });
 
-  it('opens in the Kangentic browser on its hotkey when the terminal has one', async () => {
+  it('opens a click in the browser the setting names and Ctrl+click in the other, when the terminal has a Kangentic browser', async () => {
     const terminal = await terminalWith('http://localhost:5173/signup');
     const openExternal = vi.fn();
     const browser = { open: vi.fn() };
     const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(openExternal, browser)), 1))!;
-    link.activate(ctrlShiftClick, link.text);
-    expect(browser.open).toHaveBeenCalledWith('http://localhost:5173/signup');
     link.activate(ctrlClick, link.text);
+    expect(browser.open).toHaveBeenCalledWith('http://localhost:5173/signup');
+    link.activate(plainClick, link.text);
     expect(openExternal).toHaveBeenCalledWith('http://localhost:5173/signup');
+
+    openExternal.mockClear();
+    browser.open.mockClear();
+    const [swapped] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), noGesture, targets(openExternal, browser, 'kangentic')), 1))!;
+    swapped.activate(plainClick, swapped.text);
+    expect(browser.open).toHaveBeenCalledTimes(1);
+    swapped.activate(ctrlClick, swapped.text);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens nothing when the gesture says the click was a drag, or only brought the terminal forward', async () => {
+    const terminal = await terminalWith('https://example.com/a');
+    const openExternal = vi.fn();
+    const refusing = { ...noGesture, opensOnRelease: () => false };
+    const [link] = (await linksFrom(createUrlLinkProvider(asLinkTerminal(terminal), refusing, targets(openExternal)), 1))!;
+    link.activate(plainClick, link.text);
+    expect(openExternal).not.toHaveBeenCalled();
   });
 
   it('routes through the terminal scheme allowlist', async () => {
@@ -234,18 +254,27 @@ describe('isLinkOpenGesture', () => {
 
 describe('createTerminalLinkGesture', () => {
   /** A stand-in element and window that hold the listeners the gesture registers. */
+  const windowStub = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  } as unknown as Pick<Window, 'addEventListener' | 'removeEventListener'>;
+  const focusedElement = (addEventListener: (type: string, listener: unknown) => void) => ({
+    addEventListener,
+    contains: () => true,
+    ownerDocument: { activeElement: {} },
+  }) as unknown as HTMLElement;
+
   function harness(): { gesture: TerminalLinkGesture; press: (init: Partial<MouseEvent>) => void; release: () => void } {
     let pressListener: (event: MouseEvent) => void = () => {};
     let releaseListener: () => void = () => {};
     const gesture = createTerminalLinkGesture({
-      addEventListener: (_type: string, listener: unknown) => { releaseListener = listener as () => void; },
-    } as Pick<Window, 'addEventListener'>);
-    gesture.attach({
-      addEventListener: (_type: string, listener: unknown) => { pressListener = listener as (event: MouseEvent) => void; },
-    } as unknown as HTMLElement);
+      addEventListener: (type: string, listener: unknown) => { if (type === 'mouseup') releaseListener = listener as () => void; },
+      removeEventListener: () => {},
+    } as unknown as Pick<Window, 'addEventListener' | 'removeEventListener'>);
+    gesture.attach(focusedElement((_type, listener) => { pressListener = listener as (event: MouseEvent) => void; }));
     return {
       gesture,
-      press: (init) => pressListener({ button: 0, ctrlKey: false, metaKey: false, ...init } as MouseEvent),
+      press: (init) => pressListener({ button: 0, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, clientX: 0, clientY: 0, ...init } as MouseEvent),
       release: () => releaseListener(),
     };
   }
@@ -271,7 +300,7 @@ describe('createTerminalLinkGesture', () => {
   });
 
   it.each([
-    ['a plain click on a link', true, {}],
+    ['a plain click on a link that only opens on Ctrl or Cmd (the default claim)', true, {}],
     ['Ctrl off any link', false, { ctrlKey: true }],
     ['a right click on a link', true, { ctrlKey: true, button: 2 }],
   ])('leaves %s to the TUI', (_label, hovering, init) => {
@@ -299,9 +328,9 @@ describe('createTerminalLinkGesture', () => {
   });
 
   it('hands a hovered link to the tip, and tells it when the pointer leaves', () => {
-    const gesture = createTerminalLinkGesture({ addEventListener: () => {} } as Pick<Window, 'addEventListener'>);
+    const gesture = createTerminalLinkGesture(windowStub);
     const tip = { show: vi.fn(), leave: vi.fn(), dispose: vi.fn() };
-    gesture.attach({ addEventListener: () => {} } as unknown as HTMLElement, tip);
+    gesture.attach(focusedElement(() => {}), tip);
     const hover = { event: plainClick, range: { start: { x: 1, y: 1 }, end: { x: 9, y: 1 } }, kind: 'url' as const };
     gesture.noteLinkHover(hover);
     expect(tip.show).toHaveBeenCalledWith(hover);
@@ -309,17 +338,15 @@ describe('createTerminalLinkGesture', () => {
     expect(tip.leave).toHaveBeenCalledTimes(1);
   });
 
-  it('claims the press the hovered link opens on, so a rebound link hotkey does not also reach the TUI', () => {
+  it('claims the press the hovered link kind opens on, and no other', () => {
     let pressListener: (event: MouseEvent) => void = () => {};
-    // A URL opens on Alt+click here, as after a rebind; a path keeps Ctrl or Cmd.
+    // A URL opens on Alt+click here; a path keeps Ctrl or Cmd.
     const opensLink = (event: Pick<MouseEvent, 'altKey' | 'ctrlKey' | 'metaKey'>, kind: 'url' | 'path') =>
       kind === 'url' ? event.altKey === true : isLinkOpenGesture(event, false);
-    const gesture = createTerminalLinkGesture({ addEventListener: () => {} } as Pick<Window, 'addEventListener'>, opensLink);
-    gesture.attach({
-      addEventListener: (_type: string, listener: unknown) => { pressListener = listener as (event: MouseEvent) => void; },
-    } as unknown as HTMLElement);
+    const gesture = createTerminalLinkGesture(windowStub, opensLink);
+    gesture.attach(focusedElement((_type, listener) => { pressListener = listener as (event: MouseEvent) => void; }));
     const range = { start: { x: 1, y: 1 }, end: { x: 9, y: 1 } };
-    const altPress = { button: 0, altKey: true, ctrlKey: false, metaKey: false } as MouseEvent;
+    const altPress = { button: 0, altKey: true, ctrlKey: false, metaKey: false, shiftKey: false } as MouseEvent;
 
     gesture.noteLinkHover({ event: plainClick, range, kind: 'url' });
     pressListener(altPress);

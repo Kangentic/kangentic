@@ -1,12 +1,10 @@
 import { useMemo } from 'react';
-import { Columns3Cog } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { selectAutomationCounts } from '../../stores/board-store/automations-slice';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import { Tooltip } from '../Tooltip';
 
 /**
  * "3 automations run here: 2 on enter, 1 on exit". One whole message per set of
@@ -58,22 +56,22 @@ function automationsRunSentence(total: number, enterCount: number, turnEndCount:
 }
 
 /**
- * The column header's automation mark: `Columns3Cog`, a column with a cog, and
- * the number of automations
- * that will RUN when a task enters this column, when its agent finishes a turn
- * here, or when the task leaves.
+ * The sentence a column header's tip gives for its automations: how many will
+ * RUN when a task enters this column, when its agent finishes a turn here, or
+ * when the task leaves. Null at zero: a column with nothing to run has nothing
+ * to say.
  *
- * Hidden at zero, with no dimmed variant. A column with nothing to run has
- * nothing to say, and a permanently-dim glyph on most columns would be noise
- * the eye has to learn to skip.
+ * The header used to draw this as a glyph with the count. The Column Manager's
+ * rail and its All columns table already show the same count, so the glyph's
+ * place went to the Collapse button (#1056) and the sentence moved into the tip.
  *
- * The count is the SAME derivation the rail and the All columns table use
+ * The count is the SAME derivation the rail and the table use
  * (`selectAutomationCounts`), so a column can never read 5 here and 3 there. A
  * switched-off or blocked row is not counted: this answers "what happens when a
  * task moves", and an off row is visible and fixable one click away in Board
  * setup.
  */
-export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
+export function useColumnAutomationSentence(swimlaneId: string): string | null {
   // The STABLE inputs are selected, and the counts are derived in a memo.
   // Passing `selectAutomationCounts` straight to the hook returns a fresh
   // object on every call, and zustand compares snapshots with `Object.is`, so
@@ -96,23 +94,16 @@ export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
   if (total === 0) return null;
 
   // Both halves agree with the count: one automation RUNS, several RUN.
-  const sentence = automationsRunSentence(total, counts.enter, counts.turn_end, counts.exit);
+  return automationsRunSentence(total, counts.enter, counts.turn_end, counts.exit);
+}
 
-  // The sentence is the glyph's name as well as its tip, so a screen reader hears it once.
-  return (
-    <Tooltip label={sentence}>
-      <span
-        role="img"
-        aria-label={sentence}
-        data-testid="column-automation-glyph"
-        data-enter={counts.enter}
-        data-turn-end={counts.turn_end}
-        data-exit={counts.exit}
-        className="flex flex-shrink-0 items-center gap-0.5 text-fg-disabled"
-      >
-        <Columns3Cog size={12} />
-        <span className="text-[11px] tabular-nums">{total}</span>
-      </span>
-    </Tooltip>
-  );
+/**
+ * A column header's tip: the column's description, with the automation sentence
+ * under it. A column with no description leads with the sentence instead,
+ * because Tooltip holds a tip with an empty label shut.
+ */
+export function columnHeaderTip(description: string | null | undefined, automationSentence: string | null): { label: string; detail?: string } {
+  const text = description ?? '';
+  if (text === '') return { label: automationSentence ?? '' };
+  return automationSentence ? { label: text, detail: automationSentence } : { label: text };
 }

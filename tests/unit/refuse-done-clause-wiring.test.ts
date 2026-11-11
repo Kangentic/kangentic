@@ -49,9 +49,11 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
 const mockTaskRepoGetById = vi.fn();
 const mockTaskRepoCreate = vi.fn();
 const mockTaskRepoDelete = vi.fn();
+const mockTaskRepoGetDismissedArtifacts = vi.fn((_taskId: string): string[] => []);
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
     getById = mockTaskRepoGetById;
+    getDismissedArtifacts = mockTaskRepoGetDismissedArtifacts;
     create = mockTaskRepoCreate;
     delete = mockTaskRepoDelete;
   },
@@ -155,6 +157,7 @@ describe('handleMoveTaskToProject refuseDone wiring', () => {
       swimlane_id: 'lane-todo-src',
       session_id: null,
       worktree_path: null,
+      artifacts: [],
     });
     source = makeContext();
     target = makeContext();
@@ -177,7 +180,7 @@ describe('handleMoveTaskToProject refuseDone wiring', () => {
   it('resolves a non-Done target (Merge) normally, completing the move', () => {
     // Proves the refusal is Done-specific, not a blanket failure that would
     // make the "refuses Done" test above pass for the wrong reason.
-    mockTaskRepoCreate.mockReturnValue({ id: 'task-2', display_id: 8, title: 'Relocate me', swimlane_id: 'lane-merge' });
+    mockTaskRepoCreate.mockReturnValue({ id: 'task-2', display_id: 8, title: 'Relocate me', swimlane_id: 'lane-merge', artifacts: [] });
 
     const response = handleMoveTaskToProject({ taskId: 'task-1', column: 'Merge' }, source, target);
 
@@ -185,6 +188,37 @@ describe('handleMoveTaskToProject refuseDone wiring', () => {
     expect(mockTaskRepoCreate).toHaveBeenCalledWith(
       expect.objectContaining({ swimlane_id: 'lane-merge' }),
     );
+  });
+
+  // The task's links and the links taken off it go with it (#1056). Without the
+  // dismissed list the new row would detect the description's own link back.
+  it('hands the target create the source task\'s artifacts (url and name) and its dismissed links', () => {
+    mockTaskRepoGetById.mockReturnValue({
+      id: 'task-1',
+      display_id: 7,
+      title: 'Relocate me',
+      description: '',
+      swimlane_id: 'lane-todo-src',
+      session_id: null,
+      worktree_path: null,
+      artifacts: [
+        { url: 'https://miro.com/app/board/uXjVabc123=/', name: 'Flow', source: 'agent', added_at: '2026-01-01T00:00:00.000Z' },
+        { url: 'https://example.org/spec', name: null, source: 'user', added_at: '2026-01-02T00:00:00.000Z' },
+      ],
+    });
+    mockTaskRepoGetDismissedArtifacts.mockReturnValue(['https://www.figma.com/design/AbC123xyz/Old']);
+    mockTaskRepoCreate.mockReturnValue({ id: 'task-2', display_id: 8, title: 'Relocate me', swimlane_id: 'lane-merge', artifacts: [] });
+
+    const response = handleMoveTaskToProject({ taskId: 'task-1', column: 'Merge' }, source, target);
+
+    expect(response.success).toBe(true);
+    expect(mockTaskRepoGetDismissedArtifacts).toHaveBeenCalledWith('task-1');
+    const createInput = mockTaskRepoCreate.mock.calls[0][0];
+    expect(createInput.artifacts).toEqual([
+      { url: 'https://miro.com/app/board/uXjVabc123=/', name: 'Flow' },
+      { url: 'https://example.org/spec', name: null },
+    ]);
+    expect(createInput.dismissedArtifacts).toEqual(['https://www.figma.com/design/AbC123xyz/Old']);
   });
 });
 
@@ -258,6 +292,7 @@ describe('handleCreateTask refuseDone wiring', () => {
       display_id: 9,
       title: 'New task',
       swimlane_id: 'lane-merge',
+      artifacts: [],
     });
 
     const response = await handleCreateTask({ title: 'New task', column: 'Merge' }, context);

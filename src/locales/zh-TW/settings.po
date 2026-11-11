@@ -163,6 +163,10 @@ msgid "A call failed"
 msgstr "呼叫失敗"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "浮動面板顯示各工作階段的活動狀態與最近轉換，也會寫入 .kangentic/debug。"
 
@@ -625,10 +629,9 @@ msgstr "CLI 路徑"
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "按一下任務視窗外的空白處即可關閉。控制項、任務卡片與執行中的終端機仍會回應第一次按一下。代理會持續執行，重新開啟任務時會重新連結。"
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Click with modifiers"
-msgstr "搭配輔助鍵點擊"
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click opens links in"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click, type and drag. Off is read-only."
@@ -948,6 +951,11 @@ msgstr "預設"
 msgid "Default base branch"
 msgstr "預設基底分支"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Default browser"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default diff scope"
 msgstr "預設差異範圍"
@@ -1154,6 +1162,11 @@ msgstr "要複製到工作樹的檔案"
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
 msgstr "在代理啟動前，複製到每個新工作樹的檔案、資料夾與 glob 模式。"
 
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Fill"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Finds your work by meaning and answers questions."
 msgstr "依語意尋找你的工作內容並回答問題。"
@@ -1265,21 +1278,6 @@ msgstr "投入程度越高回答越慢，但有助於跨多個任務的計數；
 msgid "History not shared"
 msgstr "未共用歷程記錄"
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold a modifier key while you click."
-msgstr "點擊時請按住輔助鍵。"
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-msgstr "按住 Cmd、Option 或 Shift 並點擊此方塊。按 Esc 取消。"
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-msgstr "按住 Ctrl、Alt 或 Shift 並點擊此方塊。按 Esc 取消。"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1288,11 +1286,6 @@ msgstr "等待指令碼後再送出提示"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "按住快速鍵說話，即可將語音輸入到終端機或文字欄位。"
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold the modifier keys and click here. Escape to cancel."
-msgstr "按住輔助鍵並點擊此處。按 Escape 取消。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
@@ -1380,6 +1373,10 @@ msgstr "此專案如何停止工作遺留的執行項目。"
 msgid "How to install and pair"
 msgstr "安裝與配對方式"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How wide a column with tasks is, or Fill to share the window's width between the columns."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
 msgid "How you hear about each event."
@@ -1451,6 +1448,11 @@ msgstr "判斷條件與工作流程步驟，並為任務命名。"
 #, fuzzy
 msgid "Kangentic browser"
 msgstr "Kangentic 瀏覽器"
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Kangentic browser"
+msgstr ""
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 msgid "Kangentic could not write its settings file."
@@ -1576,6 +1578,12 @@ msgstr "連結資料夾"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Link node_modules"
 msgstr "連結 node_modules"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "settings card"
+msgid "Links"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Live model"
@@ -2427,6 +2435,10 @@ msgstr "當你可略過 PR 的必要審查時，顯示為就緒；但絕不會�
 msgid "Shows how many agents need you, on the taskbar or dock."
 msgstr "在工作列或 Dock 上顯示需要你處理的代理數量。"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shrink empty columns"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"
 msgstr "並排"
@@ -2611,6 +2623,10 @@ msgstr "終端機"
 msgid "Terminal cursor appearance"
 msgstr "終端機游標外觀"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgid "Terminal may intercept"
 msgstr "終端機可能攔截"
@@ -2664,6 +2680,10 @@ msgstr "代理的近期訊息，每則一行"
 msgid "The branch new worktrees start from."
 msgstr "新工作樹的起始分支。"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "The browser beside the task's terminal"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 msgid "The change was not written."
 msgstr "變更未寫入。"
@@ -2671,6 +2691,10 @@ msgstr "變更未寫入。"
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
 msgstr "預設分支的原始碼與文件，保持最新；略過測試、資料檔及超過 256 KB 的檔案。"
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "The domain of an artifact link we do not recognise, once (never the rest of the link)"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -2981,6 +3005,14 @@ msgstr "新工作階段要使用的代理 CLI"
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
 msgstr "工作流程檢視左側窗格中，由哪個代理規劃各工作流程；未選定前不會啟動任何工作流程代理。"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Cmd+Click opens the other."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Ctrl+Click opens the other."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
 msgstr "變更面板預設顯示：工作區（未提交）、已暫存（索引）或分支與基底比較。"
@@ -2997,10 +3029,6 @@ msgstr "任務終端機下方的列要顯示哪些統計資料。"
 msgctxt "column width"
 msgid "Wide"
 msgstr "寬"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Width of board columns"
-msgstr "看板欄的寬度"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Windows"
@@ -3081,3 +3109,7 @@ msgstr "作業系統和其他應用程式可能會先佔用快速鍵。若某個
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Your phone shows this code too. Confirm there to finish pairing."
 msgstr "你的手機也會顯示此代碼。請在手機上確認以完成配對。"
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Your system's default browser"
+msgstr ""

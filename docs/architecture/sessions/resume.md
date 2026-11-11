@@ -426,12 +426,27 @@ When a suspended task moves to an active column:
 - New PTY spawned with scrollback carried over from the most recently started previous row for the task (see [Spawn flow](spawn-flow.md#engine-spawn-board-driven-path))
 - New session DB record inserted, old record marked `exited`
 - The destination column's settings are re-applied as CLI flags on the resume
-  command: `--permission-mode` (lane override, else global default), `--model`,
-  and `--effort`. A move into a column that changes the model or effort to a
+  command: `--permission-mode` (a column set to plan wins, else the task's pin,
+  then the column's mode, then the global default), `--model`, and `--effort`.
+  A resume in the same column can leave `--permission-mode` out (the next
+  bullet).
+  A move into a column that changes the model or effort to a
   concrete value forces this suspend + respawn cycle on a live session; neither
   is ever typed into the PTY as `/model` or `/effort`. A permission-mode change
   alone never restarts a live session: in the Planning -> Executing flow Claude
   already left plan mode in-session, so the recorded spawn-time mode is stale.
+- A resume in the column the session was paused in keeps the permission mode the
+  conversation was last in. The Resume button, opening a paused task, a phone
+  resume, a restart of the app and an in-place restart for a settings change all
+  pass `keepSessionMode`, and `keepsSessionPermissionMode` (`spawn-preamble.ts`)
+  then leaves `--permission-mode` off for an agent whose CLI restores the mode
+  itself (`AgentAdapter.restoresPermissionModeOnResume`, Claude). So a session
+  the user switched out of plan mode comes back in the mode it was switched to.
+  The flag is still stated when the column's mode differs from the one the
+  session was last launched with (the column was edited), when that mode is
+  bypass (Claude never restores bypass), on a move into a column, and on a Resume
+  after the task entered its column while paused. The new session row records the
+  column's mode either way.
 - A plan-exit auto-move (Planning -> Executing), triggered when the plan is
   approved, by the user or by Kangentic with the column's Plan approval set to
   Automatic (the `ExitPlanMode` tool completes, not when the agent merely

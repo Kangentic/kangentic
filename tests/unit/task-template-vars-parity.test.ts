@@ -45,6 +45,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     base_branch: null,
     use_worktree: null,
     labels: [],
+    artifacts: [],
     priority: 0,
     attachment_count: 0,
     archived_at: null,
@@ -212,6 +213,41 @@ describe('resolveTaskTemplateVars: {{port}} resolves the task\'s leased dev-serv
       devPort: null,
     });
     expect(vars.port).toBe('');
+  });
+});
+
+describe('resolveTaskTemplateVars: {{artifacts}} lists the task\'s links (red-green)', () => {
+  const FIGMA = 'https://www.figma.com/design/AbC123xyz/Checkout-flow';
+  const MIRO = 'https://miro.com/app/board/uXjVabc123=/';
+  const stamp = '2026-01-01T00:00:00.000Z';
+
+  function varsFor(artifacts: Task['artifacts']): Record<string, string> {
+    return resolveTaskTemplateVars({
+      task: makeTask({ artifacts }),
+      defaultBaseBranch: 'main',
+      attachmentPaths: [],
+    });
+  }
+
+  it('is empty for a task with no artifacts, so the placeholder drops', () => {
+    expect(varsFor([]).artifacts).toBe('');
+  });
+
+  it('is one `name: link` line each, after a leading newline, falling back to the name the link carries', () => {
+    const vars = varsFor([
+      { url: FIGMA, name: 'Checkout', source: 'user', added_at: stamp },
+      { url: MIRO, name: null, source: 'agent', added_at: stamp },
+    ]);
+    expect(vars.artifacts).toBe(`\nCheckout: ${FIGMA}\nmiro.com/app/board/uXjVabc123=/: ${MIRO}`);
+  });
+
+  it('puts the same links in {{task_xml}}, where the default prompt reads them', () => {
+    const vars = varsFor([{ url: FIGMA, name: 'Checkout', source: 'user', added_at: stamp }]);
+    expect(vars.task_xml).toContain(`<artifact name="Checkout" platform="Figma">${FIGMA}</artifact>`);
+  });
+
+  it('adds no artifacts section to {{task_xml}} for a task without any', () => {
+    expect(varsFor([]).task_xml).not.toContain('<artifacts>');
   });
 });
 

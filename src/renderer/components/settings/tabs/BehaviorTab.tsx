@@ -1,6 +1,7 @@
-import { AppWindow, Bot } from 'lucide-react';
+import { AppWindow, Bot, Link2 } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
-import type { AppConfig, WindowLightDismiss } from '../../../../shared/types';
+import type { AppConfig, LinkClickTarget, WindowLightDismiss } from '../../../../shared/types';
+import { IS_MAC } from '../../../utils/keybindings';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
@@ -66,6 +67,28 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
           {...settingProps('restoreWindowPosition')}
           checked={globalConfig.restoreWindowPosition}
           onChange={(value) => updateGlobal({ restoreWindowPosition: value })}
+        />
+      </SettingsCard>
+
+      {/* Both browsers stay one click away everywhere: this only picks which
+          one a plain click opens. No hotkey, so nothing in the Hotkeys tab. */}
+      <SettingsCard
+        icon={<Link2 size={16} />}
+        label={t({ message: 'Links', context: 'settings card' })}
+        description={IS_MAC
+          ? t`Which browser a click opens. Cmd+Click opens the other.`
+          : t`Which browser a click opens. Ctrl+Click opens the other.`}
+        searchIds={['linkClickTarget']}
+      >
+        <CardChoiceRow<LinkClickTarget>
+          {...settingProps('linkClickTarget')}
+          options={[
+            { value: 'default', label: t({ message: 'Default browser', context: 'click opens links in' }), tip: t`Your system's default browser` },
+            { value: 'kangentic', label: t({ message: 'Kangentic browser', context: 'click opens links in' }), tip: t`The browser beside the task's terminal` },
+          ]}
+          value={globalConfig.linkClickTarget ?? 'default'}
+          onChange={(value) => updateGlobal({ linkClickTarget: value })}
+          testId="link-click-target-choice"
         />
       </SettingsCard>
     </div>

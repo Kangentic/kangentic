@@ -125,6 +125,8 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and [Is
 | canvas_x | REAL | | NULL |
 | canvas_y | REAL | | NULL |
 | plan_approval | TEXT | | NULL |
+| artifacts | TEXT | NOT NULL | '[]' |
+| dismissed_artifacts | TEXT | NOT NULL | '[]' |
 | archived_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
@@ -154,6 +156,16 @@ still holds a legacy value (`workflows.plan_approval`, below), NULL would read a
 pick is stored as given and following the columns is stored as their value. A copied legacy value
 is kept as it was, so each task keeps the pick it had. Leaving the workflow clears it with the
 other workflow columns, and a value this build does not know reads as NULL.
+
+`artifacts` is the task's artifact list, a JSON array of `{ url, name, source, added_at }` in the
+order added (`TaskArtifact`; see [Artifacts](../integrations/artifacts.md)). `source` is `user`,
+`agent` or `detected`. `dismissed_artifacts` is a JSON array of the links a person or an agent took
+off the task, as `artifactKey` strings, so detection never adds one back. Neither is in `update()`'s
+column list: both are written by `writeArtifactChanges`, one read-merge-write inside the caller's
+transaction. `TaskRepository.applyArtifactChanges` (detection) leaves `updated_at` alone, so a link
+an agent publishes mid-run does not reorder the board; `update({ artifactChanges })` bumps it like
+any other edit. `rowToTask` parses `artifacts` onto the shared `Task` and strips
+`dismissed_artifacts`, which main reads through `getDismissedArtifacts`.
 
 `worktree_folder` is the DIRECTORY NAME of the task's worktree, written once and never rewritten
 (`TaskRepository.setWorktreeFolder` guards on `worktree_folder IS NULL`). New tasks get

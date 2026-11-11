@@ -223,6 +223,7 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{issueUrl}}` | The linked tracker issue's URL (empty if none) |
 | `{{labels}}` | The task's labels, comma-separated (empty if none) |
 | `{{attachments}}` | Bare file paths (one per line) when present |
+| `{{artifacts}}` | The task's artifact links, one per line as `name: link` (empty if none). `{{task_xml}}` already carries them in an `<artifacts>` section, so the default prompt needs no `{{artifacts}}`. See [Artifacts](../../integrations/artifacts.md). |
 | `{{port}}` | Lowest dev-server port this task has RESERVED (empty if none, which is the normal state) - a raw read, never falls back to another task's port |
 | `{{column}}` | The column the automation belongs to. Automations only |
 | `{{fromColumn}}` | The column the task moved out of (empty for a task born into a column). Automations only |

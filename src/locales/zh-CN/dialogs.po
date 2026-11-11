@@ -391,6 +391,11 @@ msgctxt "task status"
 msgid "Archived"
 msgstr "已归档"
 
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Artifacts"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgctxt "plan approval"
 msgid "Automatic"
@@ -1808,14 +1813,6 @@ msgstr "在新窗口中打开"
 msgid "Open on {providerName}"
 msgstr "在 {providerName} 上打开"
 
-#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-msgid "Open PR #{prNumber}"
-msgstr "打开 PR #{prNumber}"
-
-#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-msgid "Open PR #{prNumber} ({prLabel})"
-msgstr "打开 PR #{prNumber}（{prLabel}）"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Open project folder"
 msgstr "打开项目文件夹"
@@ -1937,6 +1934,7 @@ msgstr "计划审批由所有配置方案共享。切换到「默认」以更改
 msgid "Pop out of tiling"
 msgstr "退出平铺"
 
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "PR #{prNumber}"
 msgstr "PR #{prNumber}"
@@ -1992,16 +1990,13 @@ msgid "Project relocated"
 msgstr "项目已重新定位"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Pull request"
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgctxt "completed task metric"
 msgid "Pull request"
-msgstr "拉取请求"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
-msgid "Pull Request"
 msgstr "拉取请求"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx

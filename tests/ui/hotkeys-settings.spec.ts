@@ -1,5 +1,6 @@
-import { test, expect } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import path from 'node:path';
+import { test, expect, chromium } from '@playwright/test';
+import { launchPage, createProject, waitForViteReady, gotoVite } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
@@ -33,13 +34,13 @@ async function closeSettings() {
 }
 
 /** Rebind one row's shortcut by capturing the given key chord. */
-async function rebind(rowTestId: string, chord: string) {
-  const row = page.getByTestId(rowTestId);
+async function rebind(rowTestId: string, chord: string, target: Page = page) {
+  const row = target.getByTestId(rowTestId);
   await row.getByTestId('key-capture-input').click();
-  const box = page.getByTestId('key-capture-box');
+  const box = target.getByTestId('key-capture-box');
   await box.waitFor({ state: 'visible', timeout: 2000 });
   await box.focus();
-  await page.keyboard.press(chord);
+  await target.keyboard.press(chord);
 }
 
 test.describe('Hotkeys settings tab', () => {
@@ -106,76 +107,13 @@ test.describe('Hotkeys settings tab', () => {
     await closeSettings();
   });
 
-  test('a link click row records modifiers held with a click on its box, and never a key or a plain click', async () => {
+  test('lists no row for opening a link, since a click on a link is a setting and not a hotkey', async () => {
     await openHotkeys();
-    const id = 'terminal.openLinkInDefaultBrowser';
-    const row = page.getByTestId(`hotkey-row-${id}`);
-    await expect(row.getByTestId('key-combo').locator('kbd')).toHaveText(['Ctrl', 'Click']);
-    // A click is never an OS shortcut, so the availability probe flags nothing here.
-    await expect(page.getByTestId(`hotkey-taken-${id}`)).toHaveCount(0);
-
-    await row.getByTestId('key-capture-input').click();
-    const box = page.getByTestId('key-capture-box');
-    await box.waitFor({ state: 'visible', timeout: 2000 });
-    await box.focus();
-    await page.keyboard.press('G');
-    await box.click();
-    await expect(row.getByText('Hold a modifier key while you click.')).toBeVisible();
-    await expect(box).toBeVisible();
-
-    await page.keyboard.down('Control');
-    await page.keyboard.down('Alt');
-    await box.click();
-    await page.keyboard.up('Alt');
-    await page.keyboard.up('Control');
-
-    await expect(row.getByTestId('key-combo').locator('kbd')).toHaveText(['Ctrl', 'Alt', 'Click']);
-    await expect(row.getByText('Custom')).toBeVisible();
-    await page.getByTestId(`hotkey-reset-${id}`).click();
-    await expect(row.getByText('Custom')).toHaveCount(0);
-    await closeSettings();
-  });
-
-  test('a link click row\'s box ignores a middle-button press, and a bare click only asks for a modifier', async () => {
-    await openHotkeys();
-    const id = 'terminal.openLinkInDefaultBrowser';
-    const row = page.getByTestId(`hotkey-row-${id}`);
-    await row.getByTestId('key-capture-input').click();
-    const box = page.getByTestId('key-capture-box');
-    await box.waitFor({ state: 'visible', timeout: 2000 });
-
-    await box.click({ button: 'middle' });
-    // A mouse-button capture would commit on release and swap the box for the Rebind button.
-    await expect(box).toBeVisible();
-    await expect(row.getByText('Custom')).toHaveCount(0);
-
-    await box.click();
-    await expect(row.getByText('Hold a modifier key while you click.')).toBeVisible();
-    await expect(box).toBeVisible();
-    await expect(row.getByText('Custom')).toHaveCount(0);
-
-    await box.focus();
-    await page.keyboard.press('Escape');
-    await expect(row.getByTestId('key-capture-input')).toBeVisible();
-    await expect(row.getByTestId('key-combo').locator('kbd')).toHaveText(['Ctrl', 'Click']);
-    await closeSettings();
-  });
-
-  test('putting both link clicks on one click flags a conflict on both', async () => {
-    await openHotkeys();
-    const kangentic = 'terminal.openLinkInKangenticBrowser';
-    const row = page.getByTestId(`hotkey-row-${kangentic}`);
-    await row.getByTestId('key-capture-input').click();
-    const box = page.getByTestId('key-capture-box');
-    await box.waitFor({ state: 'visible', timeout: 2000 });
-    await page.keyboard.down('Control');
-    await box.click();
-    await page.keyboard.up('Control');
-
-    await expect(page.getByTestId(`hotkey-conflict-${kangentic}`)).toBeVisible();
-    await expect(page.getByTestId('hotkey-conflict-terminal.openLinkInDefaultBrowser')).toBeVisible();
-    await page.getByTestId(`hotkey-reset-${kangentic}`).click();
-    await expect(page.getByTestId(`hotkey-conflict-${kangentic}`)).toHaveCount(0);
+    const tab = page.getByTestId('hotkeys-tab');
+    // The row that does list a mouse click is there, so an empty match is not an empty tab.
+    await expect(tab.getByTestId('hotkey-row-panel.closeViaHeaderClick')).toBeVisible();
+    await expect(tab.getByText('Open link in')).toHaveCount(0);
+    await expect(tab.locator('[data-testid^="hotkey-row-terminal.openLink"]')).toHaveCount(0);
     await closeSettings();
   });
 
@@ -260,5 +198,55 @@ test.describe('Hotkeys settings tab', () => {
     await page.getByTestId('hotkey-reset-view.toggleSidebar').click();
     await expect(page.getByTestId('hotkey-conflict-view.toggleSidebar')).toHaveCount(0);
     await closeSettings();
+  });
+});
+
+test.describe('Hotkeys settings tab: an override for an action that is gone', () => {
+  const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
+  const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
+
+  test('is not a customisation: Reset to default stays disabled until a real hotkey is rebound', async () => {
+    // The two link-click hotkeys were removed, but a config saved earlier still
+    // names one. It binds nothing, so the pill must not offer a Reset for it.
+    await waitForViteReady(VITE_URL);
+    const staleBrowser = await chromium.launch({ headless: true });
+    try {
+      const context = await staleBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+      const stalePage = await context.newPage();
+      await stalePage.addInitScript({ path: MOCK_SCRIPT });
+      await stalePage.addInitScript(`
+        window.__mockPreConfigure(function (state) {
+          var timestamp = new Date().toISOString();
+          state.projects.push({
+            id: 'proj-stale-hotkey', name: 'Stale Hotkey Test', path: '/mock/stale-hotkey', github_url: null,
+            default_agent: 'claude', last_opened: timestamp, created_at: timestamp,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (lane, index) {
+            state.swimlanes.push(Object.assign({}, lane, { id: 'lane-stale-' + index, position: index, created_at: timestamp }));
+          });
+          Object.assign(state.config, { hotkeyOverrides: { 'terminal.openLinkInDefaultBrowser': 'Mod+Shift+Mouse:Left' } });
+          return { currentProjectId: 'proj-stale-hotkey' };
+        });
+      `);
+      await gotoVite(stalePage, VITE_URL);
+      await stalePage.waitForLoadState('load');
+      await stalePage.locator('[data-testid="settings-button"]').click();
+      await stalePage.getByRole('button', { name: 'Hotkeys', exact: true }).click();
+      await stalePage.getByTestId('hotkeys-tab').waitFor({ state: 'visible', timeout: 5000 });
+
+      // The stale override really is in the config the tab reads.
+      const stored = await stalePage.evaluate(async () => (await window.electronAPI.config.getGlobal()).hotkeyOverrides);
+      expect(stored).toEqual({ 'terminal.openLinkInDefaultBrowser': 'Mod+Shift+Mouse:Left' });
+
+      const resetAll = stalePage.getByTestId('hotkeys-reset-all');
+      await expect(resetAll).toBeDisabled();
+      // Not vacuous: no row is Custom, and a real rebind turns the pill on.
+      await expect(stalePage.getByTestId('hotkeys-tab').getByText('Custom')).toHaveCount(0);
+      await rebind('hotkey-row-view.toggleSidebar', 'Control+Shift+G', stalePage);
+      await expect(stalePage.getByTestId('hotkey-row-view.toggleSidebar').getByText('Custom')).toBeVisible();
+      await expect(resetAll).toBeEnabled();
+    } finally {
+      await staleBrowser.close();
+    }
   });
 });

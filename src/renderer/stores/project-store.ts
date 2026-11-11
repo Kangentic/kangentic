@@ -155,6 +155,17 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       }));
       window.electronAPI.config.set({ lastActiveTaskByProject: remaining });
     }
+    // The deleted project's collapsed columns go with it. A dictionary path, so
+    // the write replaces the map and the entry is gone from disk too.
+    const collapsedColumns = useConfigStore.getState().globalConfig.collapsedColumnsByProject ?? {};
+    if (collapsedColumns[id] !== undefined) {
+      const { [id]: _removedColumns, ...collapsedColumnsByProject } = collapsedColumns;
+      useConfigStore.setState((state) => ({
+        config: { ...state.config, collapsedColumnsByProject },
+        globalConfig: { ...state.globalConfig, collapsedColumnsByProject },
+      }));
+      window.electronAPI.config.set({ collapsedColumnsByProject });
+    }
     // Drop the warm-switch cache entry. Mirrors the main-side
     // `recoveredProjects.delete(id)` in cleanupProject so a future project
     // sharing the same id (extremely unlikely, but possible after a manual

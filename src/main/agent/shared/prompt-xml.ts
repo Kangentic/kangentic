@@ -23,6 +23,8 @@ export function escapeXml(value: string): string {
 export interface TaskXmlInput {
   title: string;
   description: string;
+  /** The task's artifacts (`Task.artifacts`): links to its designs, diagrams and documents. */
+  artifacts?: ReadonlyArray<{ url: string; name: string; platform: string | null }>;
 }
 
 // Single-line description:
@@ -50,8 +52,8 @@ export interface TaskXmlInput {
 //
 // Empty optional sections are omitted entirely (no `<description />`) so an
 // empty tag never gives the agent a "Got it - what would you like me to do?"
-// non-signal. When future fields like <labels> or <acceptance_criteria> are
-// added, follow the same omit-when-empty pattern.
+// non-signal. `<artifacts>` follows it, and so should future fields like
+// <labels> or <acceptance_criteria>.
 export function buildTaskXml(input: TaskXmlInput): string {
   const lines: string[] = ['<task>'];
   lines.push(`  <title>${escapeXml(input.title)}</title>`);
@@ -66,6 +68,16 @@ export function buildTaskXml(input: TaskXmlInput): string {
     } else {
       lines.push(`  <description>${escapeXml(body)}</description>`);
     }
+  }
+  // The links the task is built from or has produced, so an agent starting on
+  // it opens the design instead of asking for it. Omitted when there are none.
+  if (input.artifacts && input.artifacts.length > 0) {
+    lines.push('  <artifacts>');
+    for (const artifact of input.artifacts) {
+      const platform = artifact.platform ? ` platform="${escapeXml(artifact.platform)}"` : '';
+      lines.push(`    <artifact name="${escapeXml(artifact.name)}"${platform}>${escapeXml(artifact.url)}</artifact>`);
+    }
+    lines.push('  </artifacts>');
   }
   lines.push('</task>');
   return lines.join('\n');

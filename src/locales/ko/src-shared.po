@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ko\n"
 
+#: src/shared/task-artifacts.ts
+msgid "{baseName}, frame {frame}"
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "{blockedLabel} already waits for {blockerLabel}."
@@ -399,6 +403,10 @@ msgid "Empty until the task has a worktree."
 msgstr "작업에 작업 트리가 생길 때까지 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+msgid "Empty until the task has an artifact."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
 #, fuzzy
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "작업이 트래커 이슈에 연결될 때까지 비어 있습니다."
@@ -491,14 +499,6 @@ msgstr ""
 msgctxt "automation field"
 msgid "Headers"
 msgstr "헤더"
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
-msgstr ""
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in your default browser."
-msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -840,14 +840,6 @@ msgstr "열림"
 #, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "포커스된 대화 창에서 뷰어 내 검색을 엽니다."
-
-#: src/shared/keybindings.ts
-msgid "Open link in default browser"
-msgstr ""
-
-#: src/shared/keybindings.ts
-msgid "Open link in Kangentic browser"
-msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1379,6 +1371,10 @@ msgstr "작업이 할 일 열에 있습니다."
 #, fuzzy
 msgid "The task's #N, the number people say out loud."
 msgstr "작업의 #N, 사람들이 부르는 번호."
+
+#: src/shared/task-template-vars.ts
+msgid "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
+msgstr ""
 
 #: src/shared/task-template-vars.ts
 #, fuzzy

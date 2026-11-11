@@ -188,6 +188,10 @@ msgid "A call failed"
 msgstr "呼び出しが失敗しました"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "各セッションのアクティビティ状態と直近の遷移を表示するフローティングパネル。.kangentic/debug にも書き出されます。"
@@ -743,10 +747,9 @@ msgstr "CLI のパス"
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "タスクウィンドウの外側の空白部分をクリックすると閉じます。コントロール、タスクカード、実行中のターミナルは最初のクリックでも操作できます。エージェントは実行を続け、タスクを再度開くと再接続されます。"
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Click with modifiers"
-msgstr "修飾キーを押しながらクリック"
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click opens links in"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1133,6 +1136,11 @@ msgstr "標準"
 msgid "Default base branch"
 msgstr "既定のベースブランチ"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Default browser"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Default diff scope"
@@ -1380,6 +1388,11 @@ msgstr "ワークツリーにコピーするファイル"
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
 msgstr "エージェントの起動前に各新規ワークツリーへコピーするファイル、フォルダー、glob パターン。"
 
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Fill"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
@@ -1514,21 +1527,6 @@ msgstr "エフォートを高くすると回答は遅くなりますが、多数
 msgid "History not shared"
 msgstr "履歴は共有されません"
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold a modifier key while you click."
-msgstr "修飾キーを押しながらクリックしてください。"
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-msgstr "Cmd、Option、Shift のいずれかを押しながらボックスをクリックしてください。Esc でキャンセルします。"
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-msgstr "Ctrl、Alt、Shift のいずれかを押しながらボックスをクリックしてください。Esc でキャンセルします。"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1538,11 +1536,6 @@ msgstr "スクリプト完了までプロンプトを保留"
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "プッシュトゥトーク長押しでターミナルや入力欄に音声入力します"
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold the modifier keys and click here. Escape to cancel."
-msgstr "修飾キーを押しながらここをクリックしてください。Esc でキャンセルします。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1647,6 +1640,10 @@ msgstr "タスクが実行したまま残したものをプロジェクトで停
 msgid "How to install and pair"
 msgstr "インストールとペアリングの方法"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How wide a column with tasks is, or Fill to share the window's width between the columns."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
 msgid "How you hear about each event."
@@ -1732,6 +1729,11 @@ msgstr "条件とワークフローの手順を判定し、タスクに名前を
 #, fuzzy
 msgid "Kangentic browser"
 msgstr "Kangentic ブラウザー"
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Kangentic browser"
+msgstr ""
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
@@ -1880,6 +1882,12 @@ msgstr "フォルダーのリンク"
 #, fuzzy
 msgid "Link node_modules"
 msgstr "node_modules をリンク"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "settings card"
+msgid "Links"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -2901,6 +2909,10 @@ msgstr "必須レビューをバイパスできる PR を準備完了として�
 msgid "Shows how many agents need you, on the taskbar or dock."
 msgstr "対応待ちのエージェント数をタスクバーや Dock に表示します。"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shrink empty columns"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
@@ -3113,6 +3125,10 @@ msgstr "ターミナル"
 msgid "Terminal cursor appearance"
 msgstr "ターミナルのカーソルの外観"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
 msgid "Terminal may intercept"
@@ -3175,6 +3191,10 @@ msgstr "エージェントの最近のメッセージ (各 1 行)"
 msgid "The branch new worktrees start from."
 msgstr "新しいワークツリーの起点となるブランチ。"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "The browser beside the task's terminal"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
 msgid "The change was not written."
@@ -3184,6 +3204,10 @@ msgstr "変更は書き込まれませんでした。"
 #, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
 msgstr "デフォルトブランチのソースとドキュメントを常に最新の状態に保ちます。テスト、データファイル、256 KB を超えるファイルはスキップされます。"
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "The domain of an artifact link we do not recognise, once (never the rest of the link)"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -3557,6 +3581,14 @@ msgstr "新しいセッションで使用するエージェント CLI"
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
 msgstr "ワークフロービューの左ペインで各ワークフローを計画するエージェント。選択するまでワークフローエージェントは起動しません。"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Cmd+Click opens the other."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Ctrl+Click opens the other."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
@@ -3577,11 +3609,6 @@ msgstr "タスクのターミナル下のバーに表示する統計情報。"
 msgctxt "column width"
 msgid "Wide"
 msgstr "広い"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Width of board columns"
-msgstr "ボードの列の幅"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3677,3 +3704,7 @@ msgstr "OS や他のアプリがホットキーを先に使用している場合
 #, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
 msgstr "スマートフォンにも同じコードが表示されます。スマートフォンで確認してペアリングを完了してください。"
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Your system's default browser"
+msgstr ""

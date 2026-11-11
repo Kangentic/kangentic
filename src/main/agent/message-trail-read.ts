@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import type { AgentAdapter } from './agent-adapter';
 import type { AssistantMessageTrailEntry, TranscriptEntry } from '../../shared/types';
+import { findArtifactLinks } from '../../shared/artifact-platforms';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import { placeFromStored, type CliPlace } from './shared/cli-target';
 import { assistantMessagePreviews } from './shared/message-preview';
@@ -56,7 +57,7 @@ export async function readTrail(
       tailBytes: MESSAGE_TRAIL_TAIL_BYTES,
       maxWindows: MESSAGE_TRAIL_MAX_WINDOWS_PER_READ,
     });
-    return { previews: previewsOf(read.entries), cursor: read.cursor, usedFallback: false };
+    return { previews: previewsOf(read.entries), cursor: read.cursor, usedFallback: false, artifactLinks: artifactLinksOf(read.entries) };
   }
   const parseTranscript = adapter.parseTranscript;
   if (parseTranscript) {
@@ -65,9 +66,30 @@ export async function readTrail(
       facts.agentSessionId,
       () => parseTranscript.call(adapter, facts.agentSessionId, facts.cwd, place, facts.transcriptPath ?? null),
     );
-    return { previews: previewsOf(cached.entries), cursor, usedFallback: true };
+    return { previews: previewsOf(cached.entries), cursor, usedFallback: true, artifactLinks: artifactLinksOf(cached.entries) };
   }
   return { previews: [], cursor, usedFallback: false };
+}
+
+/**
+ * The artifact links the agent wrote in the entries read (#1056): designs,
+ * diagrams and generated apps, never documents, which agents cite in passing.
+ * Only the agent's own prose is read. A link in a tool result or in what the
+ * user typed is not something the agent produced for the task.
+ */
+function artifactLinksOf(entries: TranscriptEntry[]): string[] {
+  if (entries.length === 0) return [];
+  return timeSyncWork('transcript:artifact-links', () => {
+    const prose: string[] = [];
+    for (const entry of entries) {
+      if (entry.kind !== 'assistant') continue;
+      for (const block of entry.blocks) {
+        // A cheap gate: most messages hold no link at all.
+        if (block.type === 'text' && block.text.includes('://')) prose.push(block.text);
+      }
+    }
+    return prose.length === 0 ? [] : findArtifactLinks(prose.join('\n'), { documents: false });
+  });
 }
 
 /** A reader over `resolveAdapter`, for a tracker running its reads in-process (tests). */
