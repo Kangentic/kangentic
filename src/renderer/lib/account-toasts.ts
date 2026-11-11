@@ -19,7 +19,7 @@ export function describeAccountSwitched(switched: AgentAccountSwitched, taskTitl
 }
 
 /**
- * The toast for a Switch to. The row moving to #1 is on screen; what it did to the agent's
+ * The toast for a Switch to. The row moving to the top is on screen; what it did to the agent's
  * running sessions happens on the board behind the panel, so the toast says that: how many
  * moved, how many could not be, or that new sessions start on the account when none was running.
  */
