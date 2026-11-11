@@ -156,6 +156,8 @@ const FIELD_CAP = 2000;
 const URL_SCAN_CAP = 64 * 1024;
 const URL_LIMIT = 10;
 const URL_CAP = 2048;
+/** The title a publish gives its link: a name for a list row, so far shorter than a field. */
+const URL_TITLE_CAP = 200;
 
 /** First non-null value of `fields` in `container`, stringified and capped. */
 function firstNonNull(container, fields) {
@@ -621,7 +623,7 @@ function transformHookEvent(options) {
         if (urls.length === 0) break;
         event.urls = urls;
         const title = valueAtPath(ctx, payload.titlePath);
-        if (typeof title === 'string' && title.trim().length > 0) event.urlsTitle = title.trim().slice(0, 200);
+        if (typeof title === 'string' && title.trim().length > 0) event.urlsTitle = title.trim().slice(0, URL_TITLE_CAP);
         break;
       }
       case 'replyJson':

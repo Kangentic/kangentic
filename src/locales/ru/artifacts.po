@@ -42,7 +42,7 @@ msgid "Open artifact"
 msgstr ""
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx
-msgid "Paste a link"
+msgid "Paste a link to add an artifact"
 msgstr ""
 
 #: src/renderer/components/artifacts/ArtifactsField.tsx

@@ -160,9 +160,7 @@ export function ArtifactsField({ taskId, artifacts, changes, onChange }: Artifac
     setRenaming(null);
   };
 
-  return (
-    <div ref={rootRef} data-testid="artifacts-field">
-      <Field label={t`Artifacts`} error={addError ?? undefined}>
+  const list = (
         <div className="flex flex-col gap-1">
           {items.map((item) => {
             const url = item.artifact.url;
@@ -245,7 +243,7 @@ export function ArtifactsField({ taskId, artifacts, changes, onChange }: Artifac
               ref={addInputRef}
               type="url"
               value={addText}
-              placeholder={t`Paste a link`}
+              placeholder={t`Paste a link to add an artifact`}
               onChange={(event) => { setAddText(event.target.value); if (addError) setAddError(null); }}
               onKeyDown={handleAddKeyDown}
               onPaste={handleAddPaste}
@@ -268,7 +266,23 @@ export function ArtifactsField({ taskId, artifacts, changes, onChange }: Artifac
             </button>
           )}
         </div>
-      </Field>
+  );
+
+  return (
+    <div ref={rootRef} data-testid="artifacts-field">
+      {items.length > 0 ? (
+        <Field label={t`Artifacts`} error={addError ?? undefined}>{list}</Field>
+      ) : (
+        // A task with no artifacts shows the Add artifact row alone. A label
+        // over one row that names itself said "Artifacts" twice and cost a
+        // To Do task's form the height its run-mode cards need to stay on
+        // screen (`task-level-overrides.spec.ts`). The field it opens says
+        // what it adds in its own placeholder.
+        <>
+          {list}
+          {addError && <p className="mt-1 text-xs text-danger">{addError}</p>}
+        </>
+      )}
     </div>
   );
 }
