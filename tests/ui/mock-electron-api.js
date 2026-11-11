@@ -3253,6 +3253,8 @@
       waitForCommandTerminalRestore: async function () {
         var gate = typeof window !== 'undefined' && window.__mockCommandTerminalRestoreGate;
         if (gate) await gate;
+        // The restore is over, never cut off at main's ceiling.
+        return true;
       },
       listCommandTerminalHistory: async function (projectId) {
         var seeded = typeof window !== 'undefined' && window.__mockCommandTerminalHistory;

@@ -161,6 +161,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   `session-removed`, and the leftover reaper skips it (`isRestorableAfterHostLoss`); one that does
   not come back is reaped from `restoreLostCommandTerminals`. The panel
   reopens only over a terminal that came back (`reopen-panel.ts`); a detached window does not.
+  The wait answers whether the restore is over or only reached its ceiling, and the reopen keeps
+  asking past the ceiling: it forgets that the panel was open only once the restore is over with
+  nothing back. A restore slower than the ceiling used to leave the panel shut and erase the record.
 - **An ended conversation is recorded, and Earlier resumes it.** `CommandTerminalHistory`
   (`ipc/helpers/command-terminal-history.ts`, table `command_terminal_history`) writes a row when
   the agent's own session id is captured, so a `/clear` or `/resume` inside a terminal ends the

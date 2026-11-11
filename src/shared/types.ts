@@ -8874,9 +8874,10 @@ export interface ElectronAPI {
     /**
      * Resolves once this launch's restore of the project's running terminals is
      * over, or at main's ceiling. The panel and the detached window wait on it
-     * before they look for a project's terminals.
+     * before they look for a project's terminals. True means the restore is
+     * over; false means the ceiling came first and a terminal may still come back.
      */
-    waitForCommandTerminalRestore: (projectId: string) => Promise<void>;
+    waitForCommandTerminalRestore: (projectId: string) => Promise<boolean>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * Which sessions this renderer has an xterm MOUNTED for - a superset of
