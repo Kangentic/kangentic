@@ -83,6 +83,10 @@ msgstr "{displayName}, {sizeMb} MB"
 msgid "{duplicateEmail} is already in the list."
 msgstr "{duplicateEmail} is already in the list."
 
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+msgid "{elapsed}% of the window has passed."
+msgstr "{elapsed}% of the window has passed."
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "{eventName} desktop notification"
 msgstr "{eventName} desktop notification"
@@ -194,6 +198,11 @@ msgstr "Account {folderNumber}"
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 msgid "Account options"
 msgstr "Account options"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Account switching"
+msgstr "Account switching"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -373,6 +382,14 @@ msgstr "Appears in the task detail kebab menu only"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "Applies after a restart, and does not change agent output or terminal text."
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Applies to agents that report usage: {agentNames}."
+msgstr "Applies to agents that report usage: {agentNames}."
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Applies to agents that report usage."
+msgstr "Applies to agents that report usage."
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
 msgstr "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -427,8 +444,8 @@ msgid "Automatic"
 msgstr "Automatic"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order."
-msgstr "Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order."
+msgid "Automatic puts the soonest reset first."
+msgstr "Automatic puts the soonest reset first."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Automatically switch accounts at the usage limit"
@@ -1603,6 +1620,10 @@ msgstr "Model acceleration"
 msgid "Model used for new sessions when no column or task override is set"
 msgstr "Model used for new sessions when no column or task override is set"
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "More agents"
+msgstr "More agents"
+
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
 msgid "Move..."
 msgstr "Move..."
@@ -1670,10 +1691,6 @@ msgstr "No Done tasks yet"
 msgid "No key detected. It may be reserved by your OS or another app."
 msgstr "No key detected. It may be reserved by your OS or another app."
 
-#: src/renderer/components/settings/accounts/AccountRow.tsx
-msgid "No key file"
-msgstr "No key file"
-
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "No response"
 msgstr "No response"
@@ -1712,6 +1729,11 @@ msgstr "Not set"
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not signed in"
 msgstr "Not signed in"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+msgctxt "a usage window the account has not opened"
+msgid "Not started"
+msgstr "Not started"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Not yet indexed"
@@ -1792,6 +1814,10 @@ msgstr "Other"
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 msgid "Own prompt history"
 msgstr "Own prompt history"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+msgid "Own sign-in"
+msgstr "Own sign-in"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
@@ -2181,11 +2207,6 @@ msgstr "Run <0>{loginCommand}</0> in your terminal to authenticate."
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Run any JavaScript in the page, with its cookies."
 msgstr "Run any JavaScript in the page, with its cookies."
-
-#: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-msgid "Run order"
-msgstr "Run order"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Run this agent locally, or attach to a server you run elsewhere"
@@ -2651,6 +2672,10 @@ msgstr "The task's description"
 msgid "Theme"
 msgstr "Theme"
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "These use their own sign-in."
+msgstr "These use their own sign-in."
+
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 msgid "This account's folder is on another drive, so its prompt history stays its own."
 msgstr "This account's folder is on another drive, so its prompt history stays its own."
@@ -2859,10 +2884,6 @@ msgstr "Where this project lives on disk."
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
 msgstr "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
-
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-msgid "Which account new sessions start on."
-msgstr "Which account new sessions start on."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."

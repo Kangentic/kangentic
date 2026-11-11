@@ -4031,6 +4031,11 @@
         };
       }
       function nowSeconds() { return Math.floor(Date.now() / 1000); }
+      // Claude's declared windows (src/main/agent/adapters/claude/status-parser.ts RATE_LIMIT_WINDOWS).
+      var CLAUDE_USAGE_WINDOWS = [
+        { id: 'five-hour', label: '5h session', iconKind: 'session', windowDurationSeconds: 5 * 3600 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', windowDurationSeconds: 7 * 86400 },
+      ];
       function usageWindow(seed) {
         return {
           id: seed.id,
@@ -4082,6 +4087,12 @@
               kind: card.kind === undefined ? 'folder' : card.kind,
               accounts: card.accounts.map(function (seed, index) { return account(seed, card.agent, index); }),
               reportsUsage: card.reportsUsage !== false,
+              // The windows the agent always has. A Claude card gets Claude's two unless a seed
+              // says otherwise, as main's adapter declares them.
+              // A copy per card, so a test that edits one card's list leaves the others alone.
+              usageWindows: (card.usageWindows !== undefined
+                ? card.usageWindows
+                : (card.agent === 'claude' ? CLAUDE_USAGE_WINDOWS : [])).map(function (shape) { return Object.assign({}, shape); }),
               signInIsInteractive: !!card.signInIsInteractive,
               switchMovesSessions: card.switchMovesSessions !== false,
               overrides: card.overrides || [],

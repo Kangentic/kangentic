@@ -43,7 +43,11 @@ test.describe('Settings > Accounts: order and switches', () => {
     const { browser, page } = await launchPage({ beforeLoad: seedAccounts(TWO_ACCOUNTS) });
     try {
       await openAccountsTab(page);
+      // Automatic sorts by reset and offers no grip; Manual is the order a drag edits (task #1064).
+      await expect(page.getByTestId('account-row-account-1').getByLabel('Reorder')).toHaveCount(0);
+      await page.getByTestId('accounts-order-mode').getByRole('radio', { name: 'Manual' }).click();
       const firstGrip = page.getByTestId('account-row-account-1').getByLabel('Reorder');
+      await expect(firstGrip).toBeVisible();
       const secondRow = page.getByTestId('account-row-account-2');
       const gripBox = await firstGrip.boundingBox();
       const targetBox = await secondRow.boundingBox();
@@ -180,15 +184,17 @@ test.describe('Settings > Accounts: cards and rows', () => {
     }
   });
 
-  test('a key-file agent shows each key file with its key count, and "No key file" for its own row', async () => {
-    const cards = [{ agent: 'codex', kind: 'key-file', accounts: [
+  test('a key-file agent shows each key file with its key count, and "Own sign-in" for its own row', async () => {
+    const cards = [{ agent: 'codex', kind: 'key-file', reportsUsage: false, accounts: [
       { id: 'account-own' },
       { id: 'account-key', kind: 'key-file', keyFilePath: '/keys/work.env', keyNames: ['FIRST_KEY', 'SECOND_KEY'] },
     ] }];
     const { browser, page } = await launchPage({ beforeLoad: seedAccounts(cards) });
     try {
       await openAccountsTab(page);
-      await expect(page.getByTestId('account-row-account-own').getByTestId('account-name')).toHaveText('No key file');
+      await expect(page.getByTestId('account-row-account-own').getByTestId('account-name')).toHaveText('Own sign-in');
+      // Its list reports no usage, so it is always in the user's order and always takes a drag.
+      await expect(page.getByTestId('account-row-account-own').getByTestId('account-grip')).toHaveCount(1);
       const keyRow = page.getByTestId('account-row-account-key');
       await expect(keyRow.getByTestId('account-name')).toHaveText('work.env');
       await expect(keyRow).toContainText('2');

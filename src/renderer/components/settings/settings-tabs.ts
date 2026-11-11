@@ -64,9 +64,6 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   // Which login each agent's sessions run on. Global: an account is a login on this machine,
   // shared by every project (task #1057). First under System, as its design placed it.
   { id: 'accounts', label: msg`Accounts`, category: 'system', tier: 'core' },
-  // Right under it, at the top of the group and marked by the Languages icon: the one tab a
-  // user who cannot read the rest must find.
-  { id: 'language', label: msg`Language`, category: 'system', tier: 'core' },
   { id: 'board', label: msg`Board`, category: 'system', tier: 'core' },
   { id: 'task', label: msg`Task`, category: 'system', tier: 'core' },
   { id: 'changes', label: msg`Changes`, category: 'system', tier: 'core' },
@@ -87,6 +84,9 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'performance', label: msg`Performance`, category: 'system', tier: 'core' },
   { id: 'hotkeys', label: msg`Hotkeys`, category: 'system', tier: 'core' },
   { id: 'notifications', label: msg`Notifications`, category: 'system', tier: 'core' },
+  // Last in the Core group (task #1064, the owner's call): a setting people change once. Its
+  // Languages icon is the one a reader who cannot read the rest still finds at the group's foot.
+  { id: 'language', label: msg`Language`, category: 'system', tier: 'core' },
   // -- Shared settings: Advanced tier --
   // First in the tier: the opt-in subsystem most likely to be opened. Its
   // Automation agent answers every automation's Condition, so a user setting up

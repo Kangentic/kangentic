@@ -96,16 +96,18 @@ const answeredSuggestion = (page: Page) => page.evaluate(async () => {
 });
 
 test.describe('Settings > Language', () => {
-  test('sits at the top of the System tabs, right under Accounts, with the Languages icon', async () => {
+  test('sits last in the Core tier, right after Notifications, with the Languages icon', async () => {
     const { browser, page } = await launch();
     try {
       await openLanguageTab(page);
       const tabIds = await page.getByTestId('settings-tab-list').locator('[data-testid^="settings-tab-"]')
         .evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute('data-testid')));
-      // With no project open, the list is the System group alone: Accounts leads it and
-      // Language follows, ahead of every other tab.
-      expect(tabIds.slice(0, 2)).toEqual(['settings-tab-accounts', 'settings-tab-language']);
-      expect(tabIds.indexOf('settings-tab-language')).toBeLessThan(tabIds.indexOf('settings-tab-board'));
+      // With no project open, the list is the System group alone: Accounts leads it, and
+      // Language closes the Core tier, after Notifications and before Workflows opens Advanced.
+      const languageIndex = tabIds.indexOf('settings-tab-language');
+      expect(tabIds[0]).toBe('settings-tab-accounts');
+      expect(tabIds[languageIndex - 1]).toBe('settings-tab-notifications');
+      expect(tabIds[languageIndex + 1]).toBe('settings-tab-workflows');
       await expect(page.getByTestId('settings-tab-language').locator('svg.lucide-languages')).toHaveCount(1);
     } finally {
       await browser.close();

@@ -5,6 +5,7 @@
  */
 
 import type { RateLimitWindow } from '../../shared/types';
+import type { AgentUsageWindowShape } from '../../shared/agent-accounts';
 
 /**
  * How one entry of an account folder relates to the default home. `name` is the entry's path
@@ -109,6 +110,12 @@ interface AccountSupportBase {
    * captured exhausted run, never guessed.
    */
   isUsageLimitFailure?(detail: string): boolean;
+  /**
+   * The usage windows the CLI always has, shortest first, including one an account has not opened
+   * yet (Claude's 5h window, reported only once the account has run in it). Each account row draws
+   * a line per window, an unopened one as Not started. Absent: rows show only what was reported.
+   */
+  usageWindows?: readonly AgentUsageWindowShape[];
 }
 
 export interface FolderAccountSupport extends AccountSupportBase {

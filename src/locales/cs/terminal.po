@@ -22,17 +22,30 @@ msgstr "Kontextové okno {contextLabel}"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, one {Zobrazit # další} few {Zobrazit # další} many {Zobrazit # dalšího} other {Zobrazit # dalších}}"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d"
+msgstr "{days} d"
+
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d {hours}h"
+msgstr "{days} d {hours} h"
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+"
-msgstr ""
+msgstr "{limit}+"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+ on screen"
-msgstr ""
+msgstr "{limit}+ na obrazovce"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
-msgstr ""
+msgstr "{lineCount, plural, one {Žádné shody v posledním # řádku} few {Žádné shody v posledních # řádcích} many {Žádné shody v posledních # řádku} other {Žádné shody v posledních # řádcích}}"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
@@ -50,8 +63,9 @@ msgid "{position} of {total}"
 msgstr "{position} z {total}"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{position} of {total} on screen"
-msgstr ""
+msgstr "{position} z {total} na obrazovce"
 
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
@@ -64,8 +78,9 @@ msgid "{toolName} interrupted"
 msgstr "{toolName} přerušen"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{total} on screen"
-msgstr ""
+msgstr "{total} na obrazovce"
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -154,17 +169,19 @@ msgid "Expand terminal panel"
 msgstr "Rozbalit panel terminálu"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgctxt "terminal find field"
 msgid "Find"
-msgstr ""
+msgstr "Hledat"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Find in terminal"
 msgstr ""
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Find on screen"
-msgstr ""
+msgstr "Hledat na obrazovce"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
@@ -182,8 +199,9 @@ msgid "Input / output tokens"
 msgstr "Vstupní / výstupní tokeny"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Loading conversation"
-msgstr ""
+msgstr "Načítání konverzace"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
@@ -197,8 +215,9 @@ msgid "Model done"
 msgstr "Model dokončen"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Newer match"
-msgstr ""
+msgstr "Novější shoda"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
@@ -211,8 +230,9 @@ msgid "No activity yet for {filteredLabel}..."
 msgstr "Pro {filteredLabel} zatím žádná aktivita..."
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "No matches on screen"
-msgstr ""
+msgstr "Žádné shody na obrazovce"
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 #, fuzzy
@@ -225,13 +245,15 @@ msgid "Notice"
 msgstr "Oznámení"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
 msgctxt "when a usage window resets"
 msgid "now"
-msgstr ""
+msgstr "nyní"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Older match"
-msgstr ""
+msgstr "Starší shoda"
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

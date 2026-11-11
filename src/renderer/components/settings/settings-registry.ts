@@ -63,8 +63,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'theme', tabId: 'theme', label: msg`Theme`, description: msg`Hover a tile to try it on the whole app, click to keep it.`, scope: 'project', keywords: ['color', 'scheme', 'appearance', 'swatch', 'dark', 'light', 'kangentic', ...NAMED_THEMES.map((theme) => theme.label.toLowerCase())] },
 
   // ── Accounts ──
-  { id: 'accounts.orderMode', tabId: 'accounts', label: msg`Order`, description: msg`Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order.`, scope: 'global', section: msg`Run order`, keywords: ['account', 'accounts', 'order', 'automatic', 'manual', 'reset', 'subscription', 'priority', 'first'] },
-  { id: 'accounts.autoSwitchAtLimit', tabId: 'accounts', label: msg`Automatically switch accounts at the usage limit`, description: msg`Sessions at 100% continue on the next account in the list.`, scope: 'global', section: msg`Run order`, keywords: ['account', 'accounts', 'switch', 'limit', 'usage', 'rate limit', '100%', 'continue', 'subscription', 'automatic'] },
+  { id: 'accounts.orderMode', tabId: 'accounts', label: msg`Order`, description: msg`Automatic puts the soonest reset first.`, scope: 'global', section: msg`Account switching`, keywords: ['account', 'accounts', 'order', 'run order', 'automatic', 'manual', 'reset', 'subscription', 'priority', 'first'] },
+  { id: 'accounts.autoSwitchAtLimit', tabId: 'accounts', label: msg`Automatically switch accounts at the usage limit`, description: msg`Sessions at 100% continue on the next account in the list.`, scope: 'global', section: msg`Account switching`, keywords: ['account', 'accounts', 'switch', 'limit', 'usage', 'rate limit', 'run order', '100%', 'continue', 'subscription', 'automatic'] },
   { id: 'accounts.list', tabId: 'accounts', label: msg`Accounts`, description: msg`Sign in to more than one account per agent and choose the order they run in.`, scope: 'global', keywords: ['account', 'accounts', 'login', 'log in', 'sign in', 'subscription', 'plan', 'usage', 'limit', 'api key', 'claude', 'codex', 'switch', 'add account'] },
 
   // ── Language ──

@@ -8,20 +8,24 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "{agentName} does not take a key file."
-msgstr ""
+msgstr "{agentName} 不使用密钥文件。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "{agentName} runs in WSL here, where it keeps the one login it has."
-msgstr ""
+msgstr "此处 {agentName} 在 WSL 中运行，仅保留其唯一的登录。"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "{agentName} sign-in"
-msgstr ""
+msgstr "{agentName} 登录"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "{agentName} uses this variable, set where Kangentic started, ahead of any account here."
-msgstr ""
+msgstr "{agentName} 会优先使用此变量（在 Kangentic 启动环境中设置），而非此处的任何账户。"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 msgid "{blurb}. Opens the docs page."
@@ -80,20 +84,29 @@ msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}，{sizeMb} MB"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "{duplicateEmail} is already in the list."
-msgstr ""
+msgstr "{duplicateEmail} 已在列表中。"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
+msgid "{elapsed}% of the window has passed."
+msgstr "该时段已过去 {elapsed}%。"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "{eventName} desktop notification"
-msgstr ""
+msgstr "{eventName}桌面通知"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "{eventName} sound: {valueName}"
-msgstr ""
+msgstr "{eventName}提示音：{valueName}"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "{eventName} toast"
-msgstr ""
+msgstr "{eventName}提示"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -136,12 +149,14 @@ msgid "{toWrite, plural, one {# task} other {# tasks}}"
 msgstr "{toWrite, plural, other {# 个任务}}"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "<0>{variable}</0> overrides these accounts."
-msgstr ""
+msgstr "<0>{variable}</0> 会覆盖这些账户。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A browser in task windows for you and your agents."
-msgstr ""
+msgstr "任务窗口中供你和智能体使用的浏览器。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "A call failed"
@@ -180,38 +195,50 @@ msgid "A small, fast model is usually enough to read one reply and answer yes or
 msgstr "读取一条回复并回答是或否，通常一个小而快的模型就够了。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A toast with a button stays until you close it."
-msgstr ""
+msgstr "带按钮的提示会一直显示，直到你将其关闭。"
 
 #: src/renderer/components/settings/settings-card.tsx
 msgid "About {label}"
 msgstr "关于 {label}"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Account {folderNumber}"
-msgstr ""
+msgstr "账户 {folderNumber}"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Account options"
-msgstr ""
+msgstr "账户选项"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "Account switching"
+msgstr "账户切换"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Accounts"
-msgstr ""
+msgstr "账户"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgctxt "the account new sessions start on"
 msgid "Active"
-msgstr ""
+msgstr "当前"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Activity engine debug overlay"
 msgstr "活动引擎调试浮层"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Add account"
-msgstr ""
+msgstr "添加账户"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Add shortcut"
@@ -346,8 +373,9 @@ msgid "App crashes and errors (stack traces with machine-specific paths removed 
 msgstr "应用崩溃和错误（堆栈跟踪已移除应用代码中的机器路径）"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "App icon badge"
-msgstr ""
+msgstr "应用图标徽章"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "App launches, platform, and architecture"
@@ -372,6 +400,16 @@ msgstr "仅显示在任务详情更多菜单中"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "重启后生效，不会改变智能体输出或终端文本。"
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "Applies to agents that report usage: {agentNames}."
+msgstr "适用于报告用量的智能体：{agentNames}。"
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "Applies to agents that report usage."
+msgstr "适用于报告用量的智能体。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -423,16 +461,19 @@ msgid "Auto-submit"
 msgstr "自动提交"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Automatic"
-msgstr ""
+msgstr "自动"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order."
-msgstr ""
+#, fuzzy
+msgid "Automatic puts the soonest reset first."
+msgstr "自动模式会将最早重置的账户排在最前。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automatically switch accounts at the usage limit"
-msgstr ""
+msgstr "达到用量上限时自动切换账户"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way."
@@ -547,9 +588,10 @@ msgid "Checking..."
 msgstr "正在检查…"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Chime"
-msgstr ""
+msgstr "钟声"
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 msgid "Choose a model"
@@ -741,8 +783,9 @@ msgid "Conversations, tasks, commits, summaries and source code are all rebuilt,
 msgstr "所有项目中的对话、任务、提交、摘要和源代码都会重建。{rebuildAsk, plural, other {用较早模型撰写的 # 条摘要将被重写}}，后台约需 {rewriteCalls, plural, other {# 次调用}}。"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Cookies and storage the Kangentic browser keeps."
-msgstr ""
+msgstr "Kangentic 浏览器保留的 Cookie 和存储数据。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Copied"
@@ -770,8 +813,9 @@ msgid "Copy pairing link"
 msgstr "复制配对链接"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Copy, paste, interrupt and open links in a terminal."
-msgstr ""
+msgstr "在终端中复制、粘贴、中断和打开链接。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Cost"
@@ -782,8 +826,9 @@ msgid "Could not start pairing."
 msgstr "无法开始配对。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Couldn't add account"
-msgstr ""
+msgstr "无法添加账户"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
 msgid "Couldn't clear browser data"
@@ -807,8 +852,9 @@ msgid "Couldn't save Stop script"
 msgstr "无法保存停止脚本"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Couldn't start sign-in"
-msgstr ""
+msgstr "无法开始登录"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Count merge bypass as ready"
@@ -862,8 +908,9 @@ msgid "Custom commands in the task window's header and menu."
 msgstr "任务窗口标题栏和菜单中的自定义命令。"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "Custom file..."
-msgstr ""
+msgstr "自定义文件..."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Custom relay address"
@@ -914,8 +961,9 @@ msgid "Default diff scope"
 msgstr "默认差异范围"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Default Kangentic browser URL"
-msgstr ""
+msgstr "Kangentic 浏览器默认 URL"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
@@ -1038,9 +1086,10 @@ msgid "Environment variables that turn telemetry off."
 msgstr "用于关闭遥测的环境变量。"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification table column"
 msgid "Event"
-msgstr ""
+msgstr "事件"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -1078,17 +1127,19 @@ msgid "Fair accuracy"
 msgstr "一般准确度"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Fall"
-msgstr ""
+msgstr "下降"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "File list"
 msgstr "文件列表"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "File not found"
-msgstr ""
+msgstr "未找到文件"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "File paths, project names, or code"
@@ -1107,8 +1158,9 @@ msgid "Files to copy into a worktree"
 msgstr "要复制到工作树的文件"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
-msgstr ""
+msgstr "在智能体启动前复制到每个新工作树中的文件、文件夹和 glob 模式。"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
 msgctxt "column width"
@@ -1137,8 +1189,9 @@ msgid "Folder on disk this project points at. Move it to a new location; all tas
 msgstr "此项目对应的磁盘文件夹。移到新位置后，任务、历史和工作树会随之迁移。"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Folders to link into a worktree"
-msgstr ""
+msgstr "要链接到工作树的文件夹"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Follow system appearance"
@@ -1175,8 +1228,9 @@ msgid "Git changes"
 msgstr "Git 更改"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
-msgstr ""
+msgstr "各工作树通过链接共享的 Git 忽略文件夹，更改会同步到项目和所有任务。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Give agents tools to work with your board."
@@ -1220,8 +1274,9 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "推理强度越高回答越慢，有助于跨任务计数；摘要始终使用智能体的默认值。"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "History not shared"
-msgstr ""
+msgstr "不共享历史记录"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1268,16 +1323,18 @@ msgstr "智能体等待你多久后会被空闲计时器暂停。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How long toasts appear, in seconds"
-msgstr ""
+msgstr "提示显示时长（秒）"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "How many agents run at once and what happens when idle."
 msgstr "同时运行的智能体数量及空闲时的行为。"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How many show at once, and for how long."
-msgstr ""
+msgstr "同时显示的数量及显示时长。"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 msgid "How much each task card shows on the board."
@@ -1321,8 +1378,9 @@ msgid "How wide a column with tasks is, or Fill to share the window's width betw
 msgstr ""
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How you hear about each event."
-msgstr ""
+msgstr "每个事件的通知方式。"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Icon"
@@ -1374,8 +1432,9 @@ msgid "Inspection bridge"
 msgstr "检查桥接"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Install an agent that signs in, and its accounts show here."
-msgstr ""
+msgstr "安装需要登录的智能体后，其账户将显示在此处。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Installing the app, pairing a phone, and push notifications."
@@ -1386,8 +1445,9 @@ msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "判断条件和工作流步骤，并为任务命名。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Kangentic browser"
-msgstr ""
+msgstr "Kangentic 浏览器"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgctxt "click opens links in"
@@ -1411,8 +1471,9 @@ msgid "Kangentic runs {wslAgentList} from WSL."
 msgstr "Kangentic 从 WSL 运行 {wslAgentList}。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Kangentic stops using it for new sessions."
-msgstr ""
+msgstr "Kangentic 将不再在新会话中使用它。"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "Kangentic turned this off after repeated failures."
@@ -1439,8 +1500,9 @@ msgid "Keys for the Changes panel and its diff."
 msgstr "更改面板及其差异视图的快捷键。"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for the Kangentic browser."
-msgstr ""
+msgstr "Kangentic 浏览器的快捷键。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -1482,8 +1544,9 @@ msgid "Leftover processes"
 msgstr "残留进程"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Let agents drive the Kangentic browser."
-msgstr ""
+msgstr "允许智能体操控 Kangentic 浏览器。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
@@ -1508,8 +1571,9 @@ msgid "Limit how many agents can run at the same time"
 msgstr "限制同时运行的智能体数量"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Link folders"
-msgstr ""
+msgstr "链接文件夹"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Link node_modules"
@@ -1548,8 +1612,9 @@ msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on
 msgstr "把每次 IPC 调用记入 .kangentic/logs，并隐去变更类通道；仅在 /preview 默认开启。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Manual"
-msgstr ""
+msgstr "手动"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Max concurrent sessions"
@@ -1557,8 +1622,9 @@ msgstr "最大并发会话数"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Maximum toasts on screen"
-msgstr ""
+msgstr "屏幕上最多显示的提示数"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "MCP connection"
@@ -1609,6 +1675,11 @@ msgstr "模型加速"
 msgid "Model used for new sessions when no column or task override is set"
 msgstr "未设置列或任务覆盖时，新会话使用的模型"
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "More agents"
+msgstr "更多智能体"
+
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
 msgid "Move..."
 msgstr "移动..."
@@ -1618,8 +1689,9 @@ msgid "Moving between task windows and arranging them."
 msgstr "在任务窗口之间切换并排列窗口。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Mute notifications"
-msgstr ""
+msgstr "静音通知"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
@@ -1653,12 +1725,14 @@ msgid "Needs the Knowledge Graph"
 msgstr "需要知识图谱"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "New account"
-msgstr ""
+msgstr "新账户"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "No agents with accounts"
-msgstr ""
+msgstr "没有带账户的智能体"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "No camera? Copy the link and paste it into the app."
@@ -1676,10 +1750,6 @@ msgstr "暂无已完成任务"
 msgid "No key detected. It may be reserved by your OS or another app."
 msgstr "未检测到按键。该按键可能已被操作系统或其他应用占用。"
 
-#: src/renderer/components/settings/accounts/AccountRow.tsx
-msgid "No key file"
-msgstr ""
-
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "No response"
 msgstr "无响应"
@@ -1693,8 +1763,9 @@ msgid "No shortcuts configured. Add one below or choose a preset."
 msgstr "尚未配置快捷命令。在下方添加一个，或选择预设。"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "No subscription"
-msgstr ""
+msgstr "无订阅"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "No WSL support"
@@ -1719,6 +1790,12 @@ msgstr "未设置"
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not signed in"
 msgstr "未登录"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
+msgctxt "a usage window the account has not opened"
+msgid "Not started"
+msgstr "未开始"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Not yet indexed"
@@ -1788,8 +1865,9 @@ msgid "Optional startup features this agent CLI can turn off"
 msgstr "此智能体 CLI 可关闭的可选启动功能"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Order"
-msgstr ""
+msgstr "顺序"
 
 #: src/renderer/components/settings/settings-tabs.ts
 msgctxt "settings group"
@@ -1797,8 +1875,14 @@ msgid "Other"
 msgstr "其他"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Own prompt history"
-msgstr ""
+msgstr "独立的提示历史记录"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
+msgid "Own sign-in"
+msgstr "独立登录"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
@@ -1822,8 +1906,9 @@ msgid "Password"
 msgstr "密码"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Past this, the oldest timed toast makes way for a new one."
-msgstr ""
+msgstr "超出此数量时，最早的定时提示会让位给新提示。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
@@ -1883,8 +1968,9 @@ msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "为每个工作流制定计划。选定智能体前不会启动任何工作流。"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "Play {name}"
-msgstr ""
+msgstr "播放{name}"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Post-worktree script"
@@ -1937,8 +2023,9 @@ msgid "Project"
 msgstr "项目"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
-msgstr ""
+msgstr "任务未单独设置时使用的项目默认 URL。首次在 Kangentic 浏览器中导航时自动保存。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -2076,8 +2163,9 @@ msgid "Release buffer"
 msgstr "松开后缓冲"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Reload the Kangentic browser to apply."
-msgstr ""
+msgstr "重新加载 Kangentic 浏览器以应用更改。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Remember window size and position between launches"
@@ -2095,16 +2183,18 @@ msgid "Remove"
 msgstr "移除"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Remove {accountToRemoveName}?"
-msgstr ""
+msgstr "移除 {accountToRemoveName}？"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Remove a task's worktree when the task completes."
 msgstr "任务完成时删除其工作树。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Remove this account?"
-msgstr ""
+msgstr "移除此账户？"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Rename"
@@ -2119,8 +2209,9 @@ msgid "Rendering"
 msgstr "渲染"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Reorder"
-msgstr ""
+msgstr "重新排序"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Reset all"
@@ -2178,9 +2269,10 @@ msgid "Revoke device"
 msgstr "撤销设备"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Rise"
-msgstr ""
+msgstr "上升"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
@@ -2191,22 +2283,18 @@ msgid "Run any JavaScript in the page, with its cookies."
 msgstr "在页面中运行任意 JavaScript，可使用其 Cookie。"
 
 #: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-#, fuzzy
-msgid "Run order"
-msgstr "运行顺序"
-
-#: src/renderer/components/settings/settings-registry.ts
 msgid "Run this agent locally, or attach to a server you run elsewhere"
 msgstr "在本地运行此智能体，或连接到你在别处运行的服务器"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Running sessions move here too"
-msgstr ""
+msgstr "正在运行的会话也会移至此处"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Running sessions stay on their account"
-msgstr ""
+msgstr "正在运行的会话保留在原账户"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over."
@@ -2283,8 +2371,9 @@ msgid "Sessions"
 msgstr "会话"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Sessions at 100% continue on the next account in the list."
-msgstr ""
+msgstr "用量达 100% 的会话将在列表中的下一个账户上继续。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "Set <0>KANGENTIC_TELEMETRY=0</0> as an environment variable to disable all telemetry (analytics and error reporting). Set <1>KANGENTIC_ERROR_REPORTING=0</1> to disable only error reporting while keeping anonymous analytics."
@@ -2342,8 +2431,9 @@ msgid "Shows a PR as ready when you can bypass its required review, never past a
 msgstr "可绕过必需审查合并 PR 时标为就绪，检查失败时不会。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shows how many agents need you, on the taskbar or dock."
-msgstr ""
+msgstr "在任务栏或程序坞上显示需要你处理的智能体数量。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Shrink empty columns"
@@ -2354,28 +2444,34 @@ msgid "Side by side"
 msgstr "并排"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Sign in"
-msgstr ""
+msgstr "登录"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "Sign in here, then exit {agentName} to finish."
-msgstr ""
+msgstr "请在此处登录，然后退出 {agentName} 以完成。"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "Sign in to {agentName}"
-msgstr ""
+msgstr "登录 {agentName}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Sign in to more than one account per agent and choose the order they run in."
-msgstr ""
+msgstr "为每个智能体登录多个账户，并选择它们的运行顺序。"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Signed in on this machine"
-msgstr ""
+msgstr "已在此计算机上登录"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Silences all notifications on this machine until turned off."
-msgstr ""
+msgstr "在此设备上静音所有通知，直到关闭此选项。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "since {sinceTime}"
@@ -2396,13 +2492,15 @@ msgid "Soft-wrap long lines onto the next row instead of scrolling the diff hori
 msgstr "长行软换行到下一行，而不是水平滚动差异视图。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Soonest reset first"
-msgstr ""
+msgstr "最早重置优先"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification table column"
 msgid "Sound"
-msgstr ""
+msgstr "声音"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Source code"
@@ -2462,17 +2560,19 @@ msgid "Summaries written"
 msgstr "摘要已写入"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Switch to"
-msgstr ""
+msgstr "切换到"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
 msgstr "把根目录 node_modules 链接进每个工作树以跳过全新安装；工作区仓库应关闭。"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "System"
-msgstr ""
+msgstr "系统"
 
 #: src/renderer/components/settings/shared.tsx
 msgctxt "settings tab group"
@@ -2550,12 +2650,14 @@ msgid "Test connection"
 msgstr "测试连接"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "That file is already in the list."
-msgstr ""
+msgstr "该文件已在列表中。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "The {agentName} sign-in did not start."
-msgstr ""
+msgstr "{agentName} 登录未能启动。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2595,12 +2697,14 @@ msgid "The domain of an artifact link we do not recognise, once (never the rest 
 msgstr ""
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "The file could not be read."
-msgstr ""
+msgstr "无法读取该文件。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "The file sets none of the keys {agentName} reads."
-msgstr ""
+msgstr "该文件未设置 {agentName} 读取的任何密钥。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "The first message it gets for a new workflow."
@@ -2651,8 +2755,9 @@ msgid "The shell, font, cursor and colors every terminal uses."
 msgstr "所有终端使用的 Shell、字体、光标和配色。"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "The sign-in did not finish."
-msgstr ""
+msgstr "登录未完成。"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 msgid "The task's description"
@@ -2664,9 +2769,15 @@ msgstr "任务的描述"
 msgid "Theme"
 msgstr "主题"
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "These use their own sign-in."
+msgstr "这些智能体使用各自的登录。"
+
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "This account's folder is on another drive, so its prompt history stays its own."
-msgstr ""
+msgstr "此账户的文件夹位于其他驱动器上，因此其提示历史记录保持独立。"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgid "This hotkey is fixed and cannot be rebound"
@@ -2681,13 +2792,15 @@ msgid "This restores every hotkey to its default. Your custom bindings will be r
 msgstr "此操作会将所有快捷键恢复默认值，你的自定义绑定将被移除。"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
-msgstr ""
+msgstr "此操作将清除 Kangentic 浏览器在所有任务和项目中的 Cookie、localStorage、IndexedDB、Service Worker 以及 HTTP/身份验证缓存。你将退出所有网站的登录。"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Tick"
-msgstr ""
+msgstr "滴答"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Ticket numbers"
@@ -2729,8 +2842,9 @@ msgid "Try a different search term"
 msgstr "请尝试其他搜索词"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "Turn on Toast or Desktop to hear a sound"
-msgstr ""
+msgstr "开启 Toast 或桌面通知以播放提示音"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgctxt "cursor style"
@@ -2875,10 +2989,6 @@ msgstr "此项目在磁盘上的位置。"
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
 msgstr "智能体能否访问 MCP 服务器，包括本机和 CLI 路径指向的任何 WSL 发行版。"
 
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-msgid "Which account new sessions start on."
-msgstr ""
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
 msgstr "由哪个智能体判断条件并为任务和命令终端命名；选择之前不会运行任何内容。"
@@ -2931,8 +3041,9 @@ msgid "Windows"
 msgstr "窗口"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
-msgstr ""
+msgstr "清除 Kangentic 浏览器的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/身份验证缓存。已保存的 URL 会保留。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Workflow agent"
@@ -2982,12 +3093,14 @@ msgid "WSL: {0}"
 msgstr "WSL: {0}"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "Your browser signs in the account it already has open, so use its Switch account to add a different one."
-msgstr ""
+msgstr "浏览器会登录其当前已打开的账户，如需添加其他账户，请使用浏览器的“切换账户”功能。"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Your order"
-msgstr ""
+msgstr "自定义顺序"
 
 #: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
 msgid "Your OS and other apps can claim a hotkey first. If one does nothing here, try another combination."

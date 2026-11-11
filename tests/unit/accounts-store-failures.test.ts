@@ -41,6 +41,7 @@ function makeCard(ids: string[]): AgentAccountsCard {
     accounts: ids.map(makeAccount),
     activeAccountId: ids[0] ?? null,
     reportsUsage: true,
+    usageWindows: [],
     signInIsInteractive: false,
     switchMovesSessions: true,
     overrides: [],
