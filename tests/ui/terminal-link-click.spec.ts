@@ -84,10 +84,23 @@ async function focusTerminal(page: Page): Promise<void> {
   await page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first().focus();
 }
 
-/** Takes the keyboard out of the terminal, so the next press is the one that brings it forward. */
-async function blurTerminal(page: Page): Promise<void> {
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first()).not.toBeFocused();
+const findField = (page: Page) => page.getByTestId('terminal-find-input');
+
+/**
+ * Moves the keyboard out of the terminal and into its find field, so the next
+ * press on the terminal is the one that brings it forward.
+ *
+ * A bare blur does not hold. A terminal that has just mounted takes the keyboard
+ * up to three times, frames apart: at its init, after its mount replay, and
+ * after the reload the lifting launch overlay starts. A blur that landed
+ * between two of them was undone, so the press found a terminal holding the
+ * keyboard and opened the link (4 of 30 runs). An arriving terminal never takes
+ * the keyboard out of its own find field, so the keyboard stays where this
+ * puts it however late an arrival lands.
+ */
+async function moveKeyboardToFindField(page: Page): Promise<void> {
+  await page.getByTestId('command-bar-find-toggle').click();
+  await expect(findField(page)).toBeFocused();
 }
 
 function openedExternally(page: Page): Promise<string[]> {
@@ -167,10 +180,12 @@ test('a click on a printed URL in a terminal that does not hold the keyboard ope
   const { browser, page } = await launch();
   try {
     await drawFirstRow(page, URL_TEXT);
-    await blurTerminal(page);
+    await moveKeyboardToFindField(page);
     await pointAtFirstRow(page);
     await waitForLinkUnderPointer(page);
 
+    // Still out of the terminal at the press, or this would be the focused-terminal case above.
+    await expect(findField(page)).toBeFocused();
     await page.mouse.down();
     await page.mouse.up();
 
