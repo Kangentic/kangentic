@@ -111,7 +111,7 @@ describe('isWorkflowTaskStopped', () => {
     });
 
     it('a moved task\'s message is waiting for the agent where it landed', () => {
-      releases.push(trackTurnEndFollowUp(TASK.id, new AbortController()));
+      releases.push(trackTurnEndFollowUp(TASK.id, new AbortController(), { message: 'Run the tests.', report: () => undefined }));
       expect(stopped()).toBe(false);
     });
 

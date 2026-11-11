@@ -14,6 +14,7 @@ import type { InjectionReport } from '../../src/main/transition-engine/terminal-
 const turnWaits = vi.hoisted(() => [] as Array<{
   sessionId: string;
   signal: AbortSignal | undefined;
+  idleWithoutQuietMs: number | undefined;
   resolve: (result: TurnCompletionResult) => void;
 }>);
 
@@ -21,14 +22,14 @@ vi.mock('../../src/main/transition-engine/turn-completion', () => ({
   waitForTurnCompletion: vi.fn((
     _sessionManager: unknown,
     sessionId: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; idleWithoutQuietMs?: number } = {},
   ) => new Promise<TurnCompletionResult>((resolve) => {
     if (options.signal?.aborted) {
       resolve('aborted');
       return;
     }
     options.signal?.addEventListener('abort', () => resolve('aborted'), { once: true });
-    turnWaits.push({ sessionId, signal: options.signal, resolve });
+    turnWaits.push({ sessionId, signal: options.signal, idleWithoutQuietMs: options.idleWithoutQuietMs, resolve });
   })),
 }));
 
@@ -225,6 +226,10 @@ describe('deliverAgentMessageInBackground', () => {
     await settle();
     expect(turnWaits).toHaveLength(1);
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    // #804: an idle agent whose CLI keeps painting never goes quiet, and a held
+    // message for a resumed session sat out the whole wait. Red: the paste's
+    // turn wait without the paint give-up.
+    expect(turnWaits[0].idleWithoutQuietMs).toBe(120_000);
 
     turnWaits[0].resolve('completed');
     await settle();
@@ -559,5 +564,29 @@ describe('deliverAgentMessageAndWait', () => {
     runController.abort();
     await expect(delivery).rejects.toThrow('The message was not delivered before the exit budget ran out.');
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('hands a paste\'s turn wait the idle-without-quiet give-up the caller asked for', async () => {
+    const context = makeContext();
+    const delivery = deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: new AbortController().signal,
+      turnWait: 'always',
+      idleWithoutQuietMs: 120_000,
+    });
+    await settle();
+
+    // Red: dropping the option from the awaited paste's turn wait leaves a
+    // repainting CLI never going quiet, so the message waits the full hour.
+    expect(turnWaits).toHaveLength(1);
+    expect(turnWaits[0].idleWithoutQuietMs).toBe(120_000);
+
+    turnWaits[0].resolve('completed');
+    await delivery;
+    expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1);
   });
 });

@@ -571,7 +571,7 @@ describe('a move that expects the task in a column it has left changes nothing',
     const groupController = new AbortController();
     const followUpController = new AbortController();
     const releaseGroup = trackTurnEndGroup(TASK_ID, groupController);
-    const releaseFollowUp = trackTurnEndFollowUp(TASK_ID, followUpController);
+    const releaseFollowUp = trackTurnEndFollowUp(TASK_ID, followUpController, { message: 'Run the tests.', report: () => undefined });
     return {
       groupController,
       followUpController,

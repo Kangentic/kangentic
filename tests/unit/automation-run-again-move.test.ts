@@ -22,6 +22,7 @@ interface MoveInput {
   column: string | null;
   message: string | null;
   reason: string;
+  runId: string;
 }
 
 const hoisted = vi.hoisted(() => ({
@@ -110,7 +111,7 @@ describe('runAutomationAgain: a Move to column row', () => {
       if (!options.moveTask) {
         return { outcomes: [{ runId: 'run-1', name: 'On to Testing', columnName: 'Code Review', status: 'succeeded', detail: 'Sent.' }] };
       }
-      const { columnName } = await options.moveTask({ column: 'Testing', message: 'Run the tests.', reason: 'On to Testing' });
+      const { columnName } = await options.moveTask({ column: 'Testing', message: 'Run the tests.', reason: 'On to Testing', runId: 'run-1' });
       return { outcomes: [{ runId: 'run-1', name: 'On to Testing', columnName: 'Code Review', status: 'succeeded', detail: `Moved to ${columnName}.` }] };
     });
   });
@@ -133,7 +134,8 @@ describe('runAutomationAgain: a Move to column row', () => {
     );
     expect(hoisted.taskColumn).toBe('lane-testing');
     // The row's message follows the task to where it lands.
-    expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(expect.anything(), 'proj-test', TASK_ID, 'Testing', 'Run the tests.');
+    // With the re-run's own run, whose detail the delivery rewrites (#804).
+    expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(expect.anything(), 'proj-test', TASK_ID, 'Testing', 'Run the tests.', 'run-1');
   });
 
   it('refuses when the task has left the row\'s column, and runs nothing', async () => {

@@ -3,6 +3,7 @@ import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
 import { englishI18n } from '../../../../shared/i18n/english';
 import type { AutomationAdapter } from '../../shared/automation-adapter';
+import { moveMessagePendingDetail } from '../../turn-end/move-message-outcome';
 
 /**
  * Move to column: move the task when its agent finishes a turn, with a message
@@ -37,7 +38,9 @@ export const moveToColumnAdapter: AutomationAdapter = {
     // Read where the workflow step check reads it too, so the two resolve one target.
     const column = automationMoveTargetName(moveToColumnAdapter.id, config);
     const message = typeof config.message === 'string' && config.message.trim() ? config.message : null;
-    const { columnName } = await context.moveTask({ column, message, reason: context.automationName ?? 'Move to column' });
-    return { detail: message ? `Moved to ${columnName}, with a message.` : `Moved to ${columnName}.` };
+    const { columnName } = await context.moveTask({ column, message, reason: context.automationName ?? 'Move to column', runId: context.runId });
+    // The message goes once the agent there ends its turn, after this run has
+    // finished, and its delivery rewrites this detail with what became of it.
+    return { detail: message ? moveMessagePendingDetail(columnName) : `Moved to ${columnName}.` };
   },
 };

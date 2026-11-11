@@ -64,8 +64,8 @@ const TASK = { id: TASK_ID, title: 'Document the board', swimlane_id: REVIEW.id,
 
 const context = { projectRepo: {} } as never;
 
-function moveInput(overrides: Partial<{ column: string | null; message: string | null; reason: string }> = {}) {
-  return { column: 'Testing', message: null, reason: 'On to Testing', ...overrides };
+function moveInput(overrides: Partial<{ column: string | null; message: string | null; reason: string; runId: string }> = {}) {
+  return { column: 'Testing', message: null, reason: 'On to Testing', runId: 'run-move-1', ...overrides };
 }
 
 function run(input: { fromTurnEndGroup?: boolean; move?: ReturnType<typeof moveInput> } = {}) {
@@ -185,7 +185,7 @@ describe('moveTaskFromRow', () => {
     it('hands the row\'s message to the delivery as bound for Done, which drops it there', async () => {
       await runRouted(moveInput({ message: 'Open the PR.' }));
 
-      expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'Done', 'Open the PR.');
+      expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'Done', 'Open the PR.', 'run-move-1');
     });
   });
 
@@ -220,7 +220,7 @@ describe('moveTaskFromRow', () => {
       await run({ move: moveInput({ message: '  Run the tests.\n' }) });
 
       expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledTimes(1);
-      expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'Testing', 'Run the tests.');
+      expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'Testing', 'Run the tests.', 'run-move-1');
     });
 
     it('is delivered only after the move has landed', async () => {
