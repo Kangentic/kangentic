@@ -33,7 +33,7 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
         />
         <CardToggleRow
           {...settingProps('shrinkEmptyColumns')}
-          checked={globalConfig.shrinkEmptyColumns !== false}
+          checked={globalConfig.shrinkEmptyColumns === true}
           onChange={(value) => updateGlobal({ shrinkEmptyColumns: value })}
         />
         <CardToggleRow

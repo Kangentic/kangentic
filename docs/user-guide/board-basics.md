@@ -54,11 +54,13 @@ Narrow, Default and Wide are fixed widths, and a board with more columns than fi
 **Fill** sizes the columns to the window instead: they split its width evenly, so a board with many
 columns fits without scrolling until each would be narrower than 200px.
 
-A column with no tasks narrows to its header and opens again when a task arrives. Every empty
-column takes the same width, that of the widest header on the board, so the row stays even and a
-card moved between two columns never resizes a third. A filter or a
-search does not narrow a column: empty means no tasks, not no matches. The Done column never
-narrows. Turn this off with **Shrink empty columns** in Settings > Board.
+With **Shrink empty columns** on (Settings > Board, off by default), a column with no tasks
+narrows to its header and opens again when a task arrives. Every empty column takes the same
+width, that of the widest header on the board, so the row stays even and a card moved between two
+columns never resizes a third. A filter or a search does not narrow a column: empty means no
+tasks, not no matches. The Done column never narrows. It is off by default because agents and
+automations move cards on their own, and each move that empties or fills a column changes the
+row's layout.
 
 To put a column away yourself, click the **Collapse column** button in its header. The column
 becomes a narrow strip showing its icon, its name and its task count. Click the strip to open it
