@@ -58,12 +58,12 @@ import { SessionManager } from '../../src/main/pty/session-manager';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 
 const claudeAdapter = new ClaudeAdapter();
-import { EventType, IdleReason } from '../../src/shared/types';
-import type { ActivityState } from '../../src/shared/types';
+import { EventType } from '../../src/shared/types';
+import type { ActivityState, SessionEvent } from '../../src/shared/types';
 
 // Test-mode engine timings: shrink the production windows so assertions
 // don't have to wall-clock-wait. The 50ms stability window lets idle
-// transitions resolve within the existing 250ms waitForWatcher buffer.
+// transitions commit quickly once the watcher has delivered the event.
 //
 // Every watchdog hold must be kept long enough not to fire during these
 // event-driven tests (the watchdog FIRING behaviour is covered separately in
@@ -71,16 +71,23 @@ import type { ActivityState } from '../../src/shared/types';
 // the bg-shell hatch: it is also the threshold for the stuck-pending-tools and
 // stuck-subagent watchdogs (see buildWatchdogHolds). At 500ms it tripped the
 // stuck-subagent net mid-test - a nested-subagent sequence holds subagentDepth>0
-// across several 250ms waitForWatcher steps with the `signal-or-pty-output`
-// anchor frozen (SubagentStop is log-only and does not refresh lastSignalAt),
-// so the 500ms hold fired and force-idled a still-live turn. Keep it as long as
-// staleThinkingTimeoutMs so no safety net interferes; no test here waits for a
-// watchdog to fire.
+// across several steps with the `signal-or-pty-output` anchor frozen
+// (SubagentStop is log-only and does not refresh lastSignalAt), so the 500ms
+// hold fired and force-idled a still-live turn. Keep it as long as
+// staleThinkingTimeoutMs so no safety net interferes, even when a step is slow
+// on a loaded CI runner; no test here waits for a watchdog to fire.
 const TEST_ACTIVITY_ENGINE_OPTIONS = {
   bgShellEscapeHatchMs: 60_000,
   staleThinkingTimeoutMs: 60_000, // long enough not to interfere with most tests
   idleStabilityWindowMs: 50,
 };
+
+// Each wait below polls an observable condition, so a passing step returns as
+// soon as the condition holds. The timeout is only the ceiling for a step on a
+// starved runner; it stays below the describe's per-test timeout so a stuck
+// step fails as its own assertion rather than as a generic test timeout.
+const WAIT_OPTIONS = { timeout: 10_000, interval: 10 };
+const TEST_TIMEOUT_MS = 30_000;
 
 let tmpDir: string;
 
@@ -116,11 +123,59 @@ function collectActivity(manager: SessionManager, sessionId: string): ActivitySt
 }
 
 /**
- * Wait for the file watcher debounce (50ms) + activity engine
- * stability window (50ms in tests) + processing slack.
+ * Wait for a real transition: the session's cached activity becomes `expected`.
+ * Only use it when the state differs from the one before the event, otherwise
+ * the poll passes before the event was delivered. Use `settle` for those steps.
  */
-function waitForWatcher(): Promise<void> {
-  return new Promise((r) => setTimeout(r, 250));
+async function waitForActivity(
+  manager: SessionManager,
+  sessionId: string,
+  expected: ActivityState,
+): Promise<void> {
+  await vi.waitFor(
+    () => expect(manager.getActivityCache()[sessionId]).toBe(expected),
+    WAIT_OPTIONS,
+  );
+}
+
+let sentinelCounter = 0;
+
+/**
+ * Barrier for a step that must change nothing, or whose full effect must have
+ * landed before the next step. A bare sleep cannot prove an event had no effect.
+ *
+ * It appends a sentinel `notification` (log-only: it moves no counter, no state
+ * and no liveness anchor) and waits for the manager to emit that sentinel as an
+ * 'event'. The watcher reads the file in order and ingests each batch event by
+ * event, so once the sentinel is seen every earlier event has been through the
+ * activity engine. It then waits for the engine to have no idle commit armed:
+ * an idle is committed one stability window after ingest, so "sentinel seen"
+ * alone would still let a wrongly derived idle land after the caller asserted.
+ */
+async function settle(manager: SessionManager, sessionId: string, eventsPath: string): Promise<void> {
+  sentinelCounter += 1;
+  const sentinelMarker = `settle-sentinel-${sentinelCounter}`;
+  let sentinelSeen = false;
+  const onEvent = (eventSessionId: string, event: SessionEvent): void => {
+    if (
+      eventSessionId === sessionId
+      && event.type === EventType.Notification
+      && event.detail === sentinelMarker
+    ) {
+      sentinelSeen = true;
+    }
+  };
+  manager.on('event', onEvent);
+  try {
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Notification, detail: sentinelMarker });
+    await vi.waitFor(() => expect(sentinelSeen).toBe(true), WAIT_OPTIONS);
+    await vi.waitFor(
+      () => expect(manager.getActivityStatsSnapshot(sessionId)?.pendingIdleArmed).toBe(false),
+      WAIT_OPTIONS,
+    );
+  } finally {
+    manager.off('event', onEvent);
+  }
 }
 
 beforeEach(() => {
@@ -132,7 +187,7 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('Event-derived activity state (part 2)', () => {
+describe('Event-derived activity state (part 2)', { timeout: TEST_TIMEOUT_MS }, () => {
   let manager: SessionManager;
   let spawnedSessionId: string | null = null;
 
@@ -146,7 +201,7 @@ describe('Event-derived activity state (part 2)', () => {
       await manager.suspend(spawnedSessionId);
       spawnedSessionId = null;
     }
-    // Let async onExit callbacks settle
+    // Let async onExit callbacks settle (teardown, not an assertion wait)
     await new Promise((r) => setTimeout(r, 20));
   });
 
@@ -179,13 +234,16 @@ describe('Event-derived activity state (part 2)', () => {
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Prompt });
     appendEvent(eventsPath, { ts: Date.now() + 1, type: EventType.SubagentStart, detail: 'test-builder' });
     appendEvent(eventsPath, { ts: Date.now() + 2, type: EventType.SubagentStop, detail: 'test-builder' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
+    // All three events must be in before the idle hint arrives.
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // "Claude is waiting for your input" -> classified to idle_hint at the
     // source -> engine settles to idle through the stability window.
     appendEvent(eventsPath, { ts: Date.now() + 3, type: EventType.IdleHint, detail: 'Claude is waiting for your input' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'idle');
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
     expect(states).toEqual(['thinking', 'idle']);
@@ -195,13 +253,12 @@ describe('Event-derived activity state (part 2)', () => {
     const { session, eventsPath } = await spawnWithEvents();
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     const statesAfter = collectActivity(manager, session.id);
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.IdleHint, detail: 'Claude is waiting for your input' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(statesAfter).toHaveLength(0);
@@ -211,13 +268,12 @@ describe('Event-derived activity state (part 2)', () => {
     const { session, eventsPath } = await spawnWithEvents();
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     const statesAfter = collectActivity(manager, session.id);
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.TeammateIdle, detail: 'agent-2' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(statesAfter).toHaveLength(0);
@@ -227,13 +283,12 @@ describe('Event-derived activity state (part 2)', () => {
     const { session, eventsPath } = await spawnWithEvents();
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     const statesAfter = collectActivity(manager, session.id);
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.TaskCompleted, detail: 'Done' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(statesAfter).toHaveLength(0);
@@ -243,13 +298,12 @@ describe('Event-derived activity state (part 2)', () => {
     const { session, eventsPath } = await spawnWithEvents();
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     const statesAfter = collectActivity(manager, session.id);
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ConfigChange });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(statesAfter).toHaveLength(0);
@@ -259,13 +313,12 @@ describe('Event-derived activity state (part 2)', () => {
     const { session, eventsPath } = await spawnWithEvents();
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     const statesAfter = collectActivity(manager, session.id);
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.WorktreeRemove, detail: '/tmp/wt' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(statesAfter).toHaveLength(0);
@@ -279,21 +332,20 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent starts working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. Stop fires → idle suppressed (depth > 0), pending idle set
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. Subagent fires tool_start -- deduped (already thinking)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // Still thinking -- both idle and subagent tool_start were suppressed
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
@@ -306,33 +358,33 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. The subagent's inner Stop fires as Idle while it is live (depth > 0).
     //    It is the subagent's stop, not the parent's, so it does not end the
     //    parent turn: the session stays thinking.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. Subagent finishes (depth → 0). The parent turn is still active, so
     //    the session stays thinking - the parent is about to consume the result.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 5. The parent fires its OWN Stop (Idle at depth 0) → idle.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    await waitForActivity(manager, session.id, 'idle');
 
     // 6. Main agent resumes with tool_start → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Edit' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(states).toEqual(['thinking', 'idle', 'thinking']);
@@ -344,21 +396,21 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. Stop fires → idle suppressed (depth > 0), pending idle set
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. User sends a new message → prompt is thinking, but already thinking
     //    so it's deduped. However, it clears the pending idle flag.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Prompt });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(states).toEqual(['thinking']);
@@ -372,16 +424,15 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. Main agent fires Stop → idle suppressed (depth > 0)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // Card stays thinking -- subagent is still working
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
@@ -394,25 +445,26 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. The subagent's inner Stop (Idle at depth > 0) does not end the parent turn.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. Subagent finishes (depth → 0); the parent turn is still active.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 5. The parent's OWN Stop (Idle at depth 0) finally emits idle.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'idle');
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('idle');
     expect(states).toEqual(['thinking', 'idle']);
   });
@@ -423,15 +475,16 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. User presses Escape → interrupted always goes through
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Interrupted, tool: 'Bash' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'idle');
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('idle');
     expect(states).toEqual(['thinking', 'idle']);
@@ -443,24 +496,24 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. Stop fires → idle suppressed, pending flag set
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. User sends prompt → clears pending flag (already thinking, deduped)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Prompt });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 5. Subagent finishes -- but pending flag was cleared, so no deferred idle
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(states).toEqual(['thinking']);
@@ -472,34 +525,35 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. First subagent starts (depth → 1)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. Second subagent starts (depth → 2)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Plan' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 4. A subagent's inner Stop (Idle at depth 2) does not end the parent turn.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 5. First subagent finishes (depth → 1) - still > 0, stays thinking.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 6. Second subagent finishes (depth → 0); the parent turn is still active.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Plan' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 7. The parent's OWN Stop (Idle at depth 0) emits idle once all are done.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'idle');
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('idle');
     expect(states).toEqual(['thinking', 'idle']);
   });
@@ -538,18 +592,18 @@ describe('Event-derived activity state (part 2)', () => {
 
     // Agent decides to background a long-running command
     appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Bash' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     // PostToolUse fires immediately when the bash is backgrounded
     appendEvent(eventsPath, { ts: 2, type: EventType.ToolEnd, tool: 'Bash' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     // Activity stays thinking - tool_end alone does not flip state
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // Agent has nothing else to do. Stop fires.
     appendEvent(eventsPath, { ts: 3, type: EventType.Idle });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'idle');
+    await settle(manager, session.id, eventsPath);
     // Activity flips to idle even though the backgrounded process is
     // still running. This is a known UX limitation - the engine has no
     // signal that there's a background process. A fix would require
@@ -565,22 +619,22 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. tool_start → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Agent' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. subagent_start → depth 1
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. interrupted → idle (bypasses Guard 2)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Interrupted, tool: 'Bash' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    await waitForActivity(manager, session.id, 'idle');
 
     // 4. prompt → thinking (Guard 1 allows prompt at any depth)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Prompt });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
+    await settle(manager, session.id, eventsPath);
 
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(states).toEqual(['thinking', 'idle', 'thinking']);
   });
 
@@ -590,30 +644,31 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. tool_start → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. subagent_start → depth 1
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. idle at depth > 0 → does not end the parent turn (stays thinking)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. idle again at depth > 0 → idempotent (still thinking)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 5. subagent_stop → depth 0; the parent turn is still active (thinking)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 6. The parent's OWN Stop (Idle at depth 0) emits idle once.
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'idle');
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
     expect(states).toEqual(['thinking', 'idle']);
@@ -625,25 +680,24 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. tool_start → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Agent' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. subagent_start → depth 1
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. idle → suppressed (pending set)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. interrupted → idle (bypasses Guard 2, pending NOT cleared)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Interrupted, tool: 'Bash' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    await waitForActivity(manager, session.id, 'idle');
 
     // 5. subagent_stop → depth 0, pending is true, but already idle → no duplicate
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
     // Only one idle transition, not two
@@ -656,18 +710,18 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. tool_start → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. orphan subagent_stop with no prior subagent_start -- depth clamped to 0
     //    No pending idle flag was ever set, so deferred idle check is skipped
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 3. normal idle → idle (standard transition, not deferred)
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'idle');
+    await settle(manager, session.id, eventsPath);
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
     // Only two transitions: thinking from step 1, idle from step 3
@@ -683,15 +737,15 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. tool_start → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Agent' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. subagent_start → depth 1
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // 3. normal idle (no detail) → suppressed by Guard 2
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(states).toEqual(['thinking']);
@@ -703,16 +757,15 @@ describe('Event-derived activity state (part 2)', () => {
 
     // 1. Agent working → thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
-    await waitForWatcher();
+    await waitForActivity(manager, session.id, 'thinking');
 
     // 2. Permission request → idle
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
-    await waitForWatcher();
-    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    await waitForActivity(manager, session.id, 'idle');
 
     // 3. Notification fires while idle -- should NOT flip back to thinking
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Notification, detail: 'Context getting full' });
-    await waitForWatcher();
+    await settle(manager, session.id, eventsPath);
 
     // Still idle -- notification is log-only
     expect(manager.getActivityCache()[session.id]).toBe('idle');
