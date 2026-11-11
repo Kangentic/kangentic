@@ -179,6 +179,34 @@ describe('escapeXml', () => {
   });
 });
 
+describe('buildTaskXml artifacts', () => {
+  it('adds an <artifacts> section after the description, with escaped names, links and platform', () => {
+    const xml = buildTaskXml({
+      title: 'T',
+      description: 'D',
+      artifacts: [
+        { url: 'https://www.figma.com/design/AbC123xyz/File?a=1&b=2', name: 'Login <v2> & "more"', platform: 'Figma' },
+        { url: 'https://example.org/x', name: 'example.org/x', platform: null },
+      ],
+    });
+    expect(xml).toBe([
+      '<task>',
+      '  <title>T</title>',
+      '  <description>D</description>',
+      '  <artifacts>',
+      '    <artifact name="Login &lt;v2&gt; &amp; &quot;more&quot;" platform="Figma">https://www.figma.com/design/AbC123xyz/File?a=1&amp;b=2</artifact>',
+      '    <artifact name="example.org/x">https://example.org/x</artifact>',
+      '  </artifacts>',
+      '</task>',
+    ].join('\n'));
+  });
+
+  it('omits the section when there are no artifacts, empty or absent', () => {
+    expect(buildTaskXml({ title: 'T', description: 'D', artifacts: [] })).not.toContain('<artifacts>');
+    expect(buildTaskXml({ title: 'T', description: 'D' })).not.toContain('<artifacts>');
+  });
+});
+
 describe('buildTaskXml', () => {
   it('wraps title and description in a <task> envelope', () => {
     const xml = buildTaskXml({ title: 'Add login flow', description: 'Use OAuth' });

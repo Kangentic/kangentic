@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type ReactNode } from 'react';
+import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { MoreHorizontal, Check } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -22,6 +22,11 @@ interface KebabMenuProps {
   triggerTestId?: string;
   /** Test id for the portaled menu surface. */
   menuTestId?: string;
+  /**
+   * The trigger shows `label` as text (a "Add account" button), so it takes its name from that
+   * text and carries no tip, which would only repeat it (one-tooltip.md).
+   */
+  labelShown?: boolean;
 }
 
 const DEFAULT_TRIGGER_CLASS = 'p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors';
@@ -31,7 +36,7 @@ const DEFAULT_TRIGGER_CLASS = 'p-1.5 text-fg-faint hover:text-fg-tertiary hover:
  * smart popover positioning. Used by TaskDetailHeader, CommandBarOverlay, and
  * the Changes diff toolbar's view-options menu.
  */
-export function KebabMenu({ children, icon, label: labelProp, triggerClassName, triggerTestId, menuTestId }: KebabMenuProps) {
+export function KebabMenu({ children, icon, label: labelProp, triggerClassName, triggerTestId, menuTestId, labelShown }: KebabMenuProps) {
   const { t } = useLingui();
   const label = labelProp ?? t`Actions`;
   const [open, setOpen] = useState(false);
@@ -82,11 +87,11 @@ export function KebabMenu({ children, icon, label: labelProp, triggerClassName, 
   return (
     <div className="relative flex-shrink-0" ref={containerRef}>
       {/* No tip while the menu it names is open. */}
-      <Tooltip label={label} enabled={!open}>
+      <Tooltip label={labelShown ? '' : label} enabled={!open}>
         <button
           onClick={() => setOpen(!open)}
           className={triggerClassName ?? DEFAULT_TRIGGER_CLASS}
-          aria-label={label}
+          aria-label={labelShown ? undefined : label}
           aria-expanded={open}
           data-testid={triggerTestId}
         >
@@ -118,7 +123,8 @@ const DESTRUCTIVE_CLASS = 'w-full text-left px-3 py-1.5 text-xs transition-color
 interface MenuItemProps {
   icon: ReactNode;
   label: string;
-  onClick: () => void;
+  /** The click is passed on for an item that opens a link, which reads its modifiers. */
+  onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   destructive?: boolean;
   disabled?: boolean;
   /** Why a disabled item does nothing, as its tip and its description. */

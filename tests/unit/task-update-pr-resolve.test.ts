@@ -119,6 +119,13 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: vi.fn(),
 }));
 
+// The domain report is tested where it lives (artifact-detection.test.ts); here
+// only the handler's call into it is.
+const reportAddedArtifactDomainsSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/artifacts/artifact-domain-report', () => ({
+  reportAddedArtifactDomains: reportAddedArtifactDomainsSpy,
+}));
+
 // ---------------------------------------------------------------------------
 // Capture handlers registered by ipcMain.handle
 // ---------------------------------------------------------------------------
@@ -289,5 +296,48 @@ describe('TASK_UPDATE link-time PR resolve', () => {
     expect(result).toMatchObject({ pr_url: LINKED_PR_URL, pr_number: 240, pr_state: null });
     expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
     consoleError.mockRestore();
+  });
+});
+
+describe('TASK_UPDATE artifact changes', () => {
+  const HELD_ARTIFACT = { url: 'https://example.org/held', name: null, source: 'agent', added_at: '2026-01-01T00:00:00.000Z' };
+  const ADDED_ARTIFACT = { url: 'https://example.net/new', name: null, source: 'user', added_at: '2026-01-02T00:00:00.000Z' };
+  let mockTaskUpdate: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+    const existing = createExistingTask({ pr_url: null, pr_number: null, artifacts: [HELD_ARTIFACT] });
+    mockTaskUpdate = vi.fn((patch: Record<string, unknown>) => ({ ...existing, ...patch, artifacts: [HELD_ARTIFACT, ADDED_ARTIFACT] }));
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => existing), update: mockTaskUpdate },
+      swimlanes: { getById: vi.fn(() => null) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn() },
+    });
+    registerTaskCrudHandlers(createMockContext() as never);
+  });
+
+  it.each(['agent', 'detected', undefined])('writes the change as the user\'s whatever the payload says (%s)', async (claimedSource) => {
+    await callUpdateHandler({
+      id: 'task-1',
+      artifactChanges: { add: [{ url: ADDED_ARTIFACT.url }], source: claimedSource },
+    });
+
+    expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
+    expect(mockTaskUpdate.mock.calls[0][0].artifactChanges).toEqual({ add: [{ url: ADDED_ARTIFACT.url }], source: 'user' });
+  });
+
+  it('reports the domains with the artifacts before and after the write, as the user\'s', async () => {
+    await callUpdateHandler({ id: 'task-1', artifactChanges: { add: [{ url: ADDED_ARTIFACT.url }] } });
+
+    expect(reportAddedArtifactDomainsSpy).toHaveBeenCalledTimes(1);
+    expect(reportAddedArtifactDomainsSpy).toHaveBeenCalledWith([HELD_ARTIFACT], [HELD_ARTIFACT, ADDED_ARTIFACT], 'user');
+  });
+
+  it('reports nothing for an edit that carries no artifact change', async () => {
+    await callUpdateHandler({ id: 'task-1', title: 'Renamed' });
+
+    expect(reportAddedArtifactDomainsSpy).not.toHaveBeenCalled();
   });
 });

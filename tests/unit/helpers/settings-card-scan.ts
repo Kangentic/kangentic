@@ -380,7 +380,8 @@ function scanUnit(unit: SourceUnit, tileComponents: Set<string>, isTabFile: bool
           violations.push({ file: fileLabel, line: lineOf(opening), where: 'CardTile', found: `restyled tile: "${classText}"` });
         }
       }
-      if (tag === 'CardToggleRow' && attributeNamed(opening, 'inlineDescription', sourceFile)) {
+      // A choice row's shown line sits beside its segmented control, as a toggle's sits beside its switch.
+      if ((tag === 'CardToggleRow' || tag === 'CardChoiceRow') && attributeNamed(opening, 'inlineDescription', sourceFile)) {
         const description = descriptionOf(opening);
         const nested = attributeNamed(opening, 'nested', sourceFile) !== undefined;
         if (description !== undefined) {

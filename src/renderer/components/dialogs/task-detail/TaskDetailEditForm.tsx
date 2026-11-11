@@ -1,5 +1,4 @@
 import { useRef, useEffect } from 'react';
-import { GitPullRequest } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { Field, FIELD_CONTROL_CLASS } from '../../Field';
 import { TaskBranchRow } from '../TaskBranchRow';
@@ -14,7 +13,8 @@ import { isImageMediaType } from '../attachment-utils';
 import { useTaskDetailHost } from './task-detail-host';
 import type { AttachmentsState } from './useAttachments';
 import type { BranchConfigState } from './useBranchConfig';
-import type { Task, TaskRunMode } from '../../../../shared/types';
+import { ArtifactsField } from '../../artifacts/ArtifactsField';
+import type { Task, TaskArtifactChanges, TaskRunMode } from '../../../../shared/types';
 
 interface TaskDetailEditFormProps {
   task: Task;
@@ -26,6 +26,9 @@ interface TaskDetailEditFormProps {
   setPrUrl: (prUrl: string) => void;
   labels: string[];
   setLabels: (labels: string[]) => void;
+  /** The form's unsaved artifact edits (`artifact-draft.ts`), sent with Save. */
+  artifactChanges: TaskArtifactChanges;
+  setArtifactChanges: (changes: TaskArtifactChanges) => void;
   priority: number;
   setPriority: (priority: number) => void;
   agentOverride: string;
@@ -57,6 +60,8 @@ export function TaskDetailEditForm({
   setPrUrl,
   labels,
   setLabels,
+  artifactChanges,
+  setArtifactChanges,
   priority,
   setPriority,
   agentOverride,
@@ -86,6 +91,9 @@ export function TaskDetailEditForm({
   // for a project that is not the open board's
   // (`.claude/rules/pop-out-surface-registry.md`).
   const { projectPath } = useTaskDetailHost();
+
+  // The branch can be changed only while no agent runs in it and the task is not archived.
+  const showBranchRow = !isSessionActive && !isArchived;
 
   // Focus title input on mount
   useEffect(() => {
@@ -135,20 +143,13 @@ export function TaskDetailEditForm({
         setLabels={setLabels}
         testIdPrefix="task-"
       />
-      {!isInTodo && (
-        <Field label={<span className="flex items-center gap-1"><GitPullRequest size={12} /><Trans>Pull Request</Trans></span>}>
-          <input
-            type="url"
-            // i18n-ok: a URL-shaped example, not prose
-            placeholder="https://github.com/owner/repo/pull/123"
-            value={prUrl}
-            onChange={(e) => setPrUrl(e.target.value)}
-            className={FIELD_CONTROL_CLASS}
-            data-testid="pr-url-input"
-          />
-        </Field>
-      )}
-      {!isSessionActive && !isArchived && isInTodo && (
+      {/* The task's git row, where New Task has its Branch row (#1056). In To
+          Do it is that row exactly, alone: a task there has no pull request.
+          Past To Do the branch name is fixed, so the same field shows it as
+          text, and Pull request takes the right half, under Labels. The two
+          used to stack with Artifacts between them: a full-width link field,
+          then a base-branch pill alone on a row of its own. */}
+      {showBranchRow && isInTodo && (
         <TaskBranchRow
           customBranchName={branchConfig.customBranchName}
           setCustomBranchName={branchConfig.setCustomBranchName}
@@ -164,22 +165,45 @@ export function TaskDetailEditForm({
           worktreeBlocker={branchConfig.blocker}
         />
       )}
-      {!isSessionActive && !isArchived && !isInTodo && (
-        // Past To Do the branch name is fixed, so this is the same field with no
-        // name segment. It used to be a bare, unlabelled pill row - the one
-        // control in the form with nothing naming it. No hint here, matching what
-        // this cluster showed before: the hint reads "will be created from ...",
-        // which describes a decision this task has already made.
-        <TaskBranchRow
-          baseBranch={branchConfig.baseBranch}
-          setBaseBranch={branchConfig.setBaseBranch}
-          defaultBaseBranch={branchConfig.defaultBaseBranch}
-          effectiveWorktree={branchConfig.effectiveWorktree}
-          setUseWorktree={branchConfig.setUseWorktree}
-          showWorktree={branchConfig.worktreesEnabled && !task.worktree_path}
-          worktreeBlocker={branchConfig.blocker}
-        />
+      {!isInTodo && (
+        <div className="flex gap-3" data-testid="task-git-row">
+          {showBranchRow && (
+            // No hint here: it reads "will be created from ...", which
+            // describes a decision this task has already made.
+            <div className="min-w-0 flex-1">
+              <TaskBranchRow
+                fixedBranchName={task.branch_name}
+                baseBranch={branchConfig.baseBranch}
+                setBaseBranch={branchConfig.setBaseBranch}
+                defaultBaseBranch={branchConfig.defaultBaseBranch}
+                effectiveWorktree={branchConfig.effectiveWorktree}
+                setUseWorktree={branchConfig.setUseWorktree}
+                showWorktree={branchConfig.worktreesEnabled && !task.worktree_path}
+                worktreeBlocker={branchConfig.blocker}
+              />
+            </div>
+          )}
+          <Field label={t`Pull request`} className="min-w-0 flex-1">
+            <input
+              type="url"
+              // i18n-ok: a URL-shaped example, not prose
+              placeholder="https://github.com/owner/repo/pull/123"
+              value={prUrl}
+              onChange={(event) => setPrUrl(event.target.value)}
+              className={FIELD_CONTROL_CLASS}
+              data-testid="pr-url-input"
+            />
+          </Field>
+        </div>
       )}
+      {/* Shown in To Do too, where Pull request hides: requirements and designs
+          are linked before the task starts. */}
+      <ArtifactsField
+        taskId={task.id}
+        artifacts={task.artifacts ?? []}
+        changes={artifactChanges}
+        onChange={setArtifactChanges}
+      />
       {!isSessionActive && !isArchived && (
         <AdvancedOverridesSection
           swimlaneId={task.swimlane_id}

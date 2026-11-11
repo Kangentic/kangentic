@@ -66,6 +66,7 @@ export const TASK_TEMPLATE_VAR_NAMES = [
   'issueUrl',
   'labels',
   'attachments',
+  'artifacts',
   'port',
   'column',
   'fromColumn',
@@ -241,6 +242,13 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
     chip: '{{attachments}}',
     description: msg`Attached file paths, one per line (empty if none).`,
     contexts: EVERYWHERE,
+  },
+  {
+    name: 'artifacts',
+    chip: '{{artifacts}}',
+    description: msg`The task's artifact links, one per line with its name. '{{task_xml}}' already includes them.`,
+    contexts: EVERYWHERE,
+    availability: msg`Empty until the task has an artifact.`,
   },
   {
     name: 'port',

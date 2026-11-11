@@ -363,6 +363,10 @@ export function resumeTaskSession(
                 const overrides = {
                   ...resolveSpawnOverrides(current, currentLane, project),
                   forceFresh: false,
+                  // The task is still in the column its agent was paused in (an
+                  // entry while paused took the branch above), so the agent keeps
+                  // the permission mode its conversation was last in.
+                  keepSessionMode: true,
                   startPath: options.startPath,
                   // Set only for a plain resume, so a Resume's overrides stay what
                   // they were (`split-lock-cas.test.ts` pins them).

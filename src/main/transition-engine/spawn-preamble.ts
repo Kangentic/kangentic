@@ -291,3 +291,36 @@ export function resolveEffectivePermissionMode(
   if (lanePermissionMode === 'plan') return 'plan';
   return taskPermissionMode ?? lanePermissionMode ?? globalPermissionMode;
 }
+
+/**
+ * Whether a spawn leaves the permission mode to the agent CLI, so the session
+ * comes back in the mode its conversation was last in (the user may have
+ * switched a plan session to another mode before it was paused).
+ *
+ * True only when all of these hold:
+ * - the spawn resumes a conversation;
+ * - the caller says it resumes in the column the session was paused in
+ *   (`sameColumnResume`). A move into a column, and a Resume after the task
+ *   entered its column while paused, apply that column's mode;
+ * - the adapter's CLI restores the mode when resumed without a flag
+ *   (`AgentAdapter.restoresPermissionModeOnResume`);
+ * - the mode this spawn would state is the one the session was last launched
+ *   with. A column whose mode was edited since then applies the new one;
+ * - that mode is not bypass, which no CLI restores by itself.
+ *
+ * The single source of truth for this rule, beside the resolver above: the
+ * engine spawn and the startup spawn both call it.
+ */
+export function keepsSessionPermissionMode(input: {
+  isResume: boolean;
+  sameColumnResume: boolean;
+  adapterRestores: boolean;
+  /** The mode `resolveEffectivePermissionMode` gave this spawn. */
+  columnMode: PermissionMode;
+  /** The mode recorded on the session row this resume retires; null when unknown. */
+  lastLaunchedMode: string | null | undefined;
+}): boolean {
+  if (!input.isResume || !input.sameColumnResume || !input.adapterRestores) return false;
+  if (input.columnMode === 'bypassPermissions') return false;
+  return input.lastLaunchedMode === input.columnMode;
+}

@@ -2170,7 +2170,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     rows={1}
                     maxLength={1000}
                     data-testid="board-manager-description"
-                    className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent resize-y"
+                    // One row, or two when the text fills two; past that it
+                    // scrolls. `field-sizing` sizes it to its text, and the
+                    // cap is two lines plus the padding and border. No resize
+                    // handle: a dragged height would override the sizing.
+                    className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent resize-none [field-sizing:content] max-h-[calc(2lh+0.75rem+2px)]"
                   />
                 </SettingField>
 

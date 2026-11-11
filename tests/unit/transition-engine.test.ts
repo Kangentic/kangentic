@@ -184,6 +184,9 @@ const mockAdapter = {
   // Undefined by default, as on an adapter whose CLI does not run from WSL; the
   // WSL describe at the end of the file sets it and resets it.
   supportsWslCli: undefined as boolean | undefined,
+  // Undefined by default, as on an adapter whose CLI states its mode on every
+  // resume; the kept-mode describe sets it and resets it.
+  restoresPermissionModeOnResume: undefined as boolean | undefined,
   detect: vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' })),
   ensureTrust: vi.fn(async () => {}),
   buildCommand: vi.fn((options: { prompt?: string }) => {
@@ -861,6 +864,70 @@ describe('TransitionEngine - recorded grid on a resume (executeSpawnAgent chokep
     await runSpawn(makeTask());
 
     expect(sessionManager.spawn.mock.calls[0][0]).not.toHaveProperty('restoredGrid');
+  });
+});
+
+describe('TransitionEngine - a resume in the same column keeps the session permission mode', () => {
+  // #1056: a plan column paused four times resumed in plan mode four times,
+  // after the user had switched the session out of it.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+    mockAdapter.restoresPermissionModeOnResume = true;
+  });
+  afterEach(() => {
+    mockAdapter.restoresPermissionModeOnResume = undefined;
+  });
+
+  function pausedInPlan() {
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+      id: 'session-record-plan',
+      agent_session_id: 'agent-sess-uuid',
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: '/some/project',
+      permission_mode: 'plan',
+    });
+    return sessionRepo;
+  }
+
+  function builtWith(): { keepSessionPermissionMode?: boolean; permissionMode?: string } {
+    return mockAdapter.buildCommand.mock.calls[0][0] as { keepSessionPermissionMode?: boolean; permissionMode?: string };
+  }
+
+  it('a Resume leaves the mode to the CLI and still records the column mode', async () => {
+    const sessionRepo = pausedInPlan();
+    const { engine } = makeEngine({ sessionRepo });
+    await engine.resumeSuspendedSession(makeTask() as never, 'plan', true, undefined, undefined, undefined, undefined, { keepSessionMode: true });
+
+    expect(builtWith().keepSessionPermissionMode).toBe(true);
+    const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
+    expect(inserted.permission_mode).toBe('plan');
+  });
+
+  it('a move into the column states the column mode', async () => {
+    const { engine } = makeEngine({ sessionRepo: pausedInPlan() });
+    await engine.resumeSuspendedSession(makeTask() as never, 'plan', true);
+
+    expect(builtWith().keepSessionPermissionMode).toBe(false);
+    expect(builtWith().permissionMode).toBe('plan');
+  });
+
+  it('a column whose mode changed since the pause states the new mode', async () => {
+    const { engine } = makeEngine({ sessionRepo: pausedInPlan() });
+    await engine.resumeSuspendedSession(makeTask() as never, 'acceptEdits', true, undefined, undefined, undefined, undefined, { keepSessionMode: true });
+
+    expect(builtWith().keepSessionPermissionMode).toBe(false);
+    expect(builtWith().permissionMode).toBe('acceptEdits');
+  });
+
+  it('an agent whose CLI does not restore the mode states the column mode', async () => {
+    mockAdapter.restoresPermissionModeOnResume = undefined;
+    const { engine } = makeEngine({ sessionRepo: pausedInPlan() });
+    await engine.resumeSuspendedSession(makeTask() as never, 'plan', true, undefined, undefined, undefined, undefined, { keepSessionMode: true });
+
+    expect(builtWith().keepSessionPermissionMode).toBe(false);
   });
 });
 

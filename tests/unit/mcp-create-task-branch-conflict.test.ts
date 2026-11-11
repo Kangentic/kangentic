@@ -129,7 +129,7 @@ beforeEach(() => {
   mockFindWorktreeHoldingBranch.mockResolvedValue(null);
   mockResolveColumn.mockReturnValue({ swimlane: { id: 'lane-1', name: 'Planning' } });
   mockTaskRepoCreate.mockImplementation((input: { title: string }) => ({
-    id: 'task-uuid-1', display_id: 7, title: input.title,
+    id: 'task-uuid-1', display_id: 7, title: input.title, artifacts: [],
   }));
   mockBacklogRepoCreate.mockImplementation((input: { title: string }) => ({
     id: 'backlog-uuid-1', title: input.title, priority: 0,

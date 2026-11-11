@@ -26,6 +26,7 @@ import { trackEvent } from '../../analytics/analytics';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { trackMilestone } from '../../analytics/usage';
 import { linkPR } from '../../pr/pr-linking';
+import { reportAddedArtifactDomains } from '../../artifacts/artifact-domain-report';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -250,7 +251,11 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       }
     }
 
+    // An artifact edit from the window is a person's, whatever the payload says.
+    if (input.artifactChanges) input.artifactChanges = { ...input.artifactChanges, source: 'user' };
+
     const updated = timeSyncWork('ipc:task:update', () => tasks.update(input));
+    if (input.artifactChanges) reportAddedArtifactDomains(existing?.artifacts ?? [], updated.artifacts, 'user');
 
     // Announced however the rest settles: the row above is already written.
     try {

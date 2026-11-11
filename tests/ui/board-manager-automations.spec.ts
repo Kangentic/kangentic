@@ -483,18 +483,19 @@ test.describe('Column automations', () => {
     expect(await readColumnRows('Testing')).toEqual([]);
   });
 
-  // 8 ─ The board header glyph counts what RUNS ──────────────────────────────
+  // 8 ─ The board header's tip counts what RUNS ──────────────────────────────
+  // The count used to be a glyph in the header. Collapse took its place
+  // (#1056), and the sentence is read from the header's tip.
 
-  test('the header glyph counts runnable rows, and disappears when none are left', async () => {
+  test('the header tip counts runnable rows, and says nothing when none are left', async () => {
     await seedColumn('Merge', [
       { name: 'One', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
       { name: 'Two', type: 'run_script', trigger: 'exit', config: { script: 'echo 2' } },
     ]);
     await refreshAutomationStore('Merge');
 
-    const glyph = page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]');
-    await expect(glyph).toBeVisible();
-    await expect(glyph).toHaveText('2');
+    const header = page.locator('[data-swimlane-name="Merge"] [data-testid="swimlane-header"]');
+    await expect(header).toHaveAccessibleDescription(/2 automations run here: 1 on enter, 1 on exit/);
 
     // A switched-off row is not counted: this answers "what happens when a task
     // moves", not "what exists".
@@ -503,7 +504,7 @@ test.describe('Column automations', () => {
     await row('Two').locator('[data-testid="column-automation-enabled"]').click();
     await saveManager();
 
-    await expect(glyph).toHaveCount(0);
+    await expect(header).not.toHaveAccessibleDescription(/run here|runs here/);
   });
 
   // 9 ─ A copy is independent ────────────────────────────────────────────────
@@ -757,7 +758,7 @@ test.describe('Column automations', () => {
       .toHaveAttribute('aria-selected', 'true');
   });
 
-  test('the rail glyph, the overview count and the board glyph share one predicate', async () => {
+  test('the rail glyph, the overview count and the board header tip share one predicate', async () => {
     await seedColumn('Merge', [
       { name: 'Runs', type: 'run_script', trigger: 'enter', config: { script: 'echo runs' } },
       { name: 'Off', type: 'run_script', trigger: 'enter', enabled: false, config: { script: 'echo off' } },
@@ -770,12 +771,12 @@ test.describe('Column automations', () => {
     ]);
     await refreshAutomationStore('Merge');
 
-    const boardGlyph = page.locator('[data-swimlane-name="Merge"] [data-testid="column-automation-glyph"]');
-    await expect(boardGlyph).toHaveText('1');
-    // Automations draw the column-with-a-cog mark. The bolt belongs to the Edit
-    // automation dialog's Trigger card, and no two concepts share a glyph.
-    await expect(boardGlyph.locator('svg.lucide-columns-3-cog')).toHaveCount(1);
-    await expect(boardGlyph.locator('svg.lucide-zap')).toHaveCount(0);
+    // The board header says what runs, in its tip: the one row that is on.
+    await expect(page.locator('[data-swimlane-name="Merge"] [data-testid="swimlane-header"]'))
+      .toHaveAccessibleDescription(/1 automation runs here: 1 on enter/);
+    // A column whose only row is off says nothing.
+    await expect(page.locator('[data-swimlane-name="Testing"] [data-testid="swimlane-header"]'))
+      .not.toHaveAccessibleDescription(/run here|runs here/);
 
     await openColumn('Merge');
     // The rail shows PRESENCE only: a glyph, no digit. The number the two other

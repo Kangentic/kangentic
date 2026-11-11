@@ -511,7 +511,7 @@ describe('restartSessionForSettingsChange', () => {
     // never the column's raw base model ('sonnet'). Reverting the fold back to
     // `swimlanes.getById(...)` alone makes this 'sonnet' and fails the test.
     const passedSpawnOverrides = callArgs[7];
-    expect(passedSpawnOverrides).toEqual({ model: 'opus', effort: undefined, forceFresh: false });
+    expect(passedSpawnOverrides).toEqual({ model: 'opus', effort: undefined, forceFresh: false, keepSessionMode: true });
 
     // Directly confirm the LANE object handed to resolveSpawnOverrides was
     // profile-folded, not the raw column lane.
@@ -561,6 +561,7 @@ describe('restartSessionForSettingsChange', () => {
       effort: undefined,
       isolatedSwimlaneId: 'lane-executing',
       forceFresh: false,
+      keepSessionMode: true,
     });
   });
 

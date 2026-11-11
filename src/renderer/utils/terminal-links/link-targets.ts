@@ -5,9 +5,9 @@
  * the open, so the two always agree.
  */
 
-import { effectiveCombo } from '../../../shared/keybindings';
+import type { LinkClickTarget } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
-import { LINK_TARGET_KEYBINDINGS, planLinkActions, type LinkActionPlan, type LinkTarget } from './link-actions';
+import { planLinkActions, type LinkActionPlan, type LinkTarget } from '../link-open';
 
 /** The Kangentic browser beside a terminal, as its host offers it. */
 export interface TerminalLinkBrowser {
@@ -16,29 +16,25 @@ export interface TerminalLinkBrowser {
 }
 
 export interface TerminalLinkTargets {
-  /** The actions a link offers now, read live: a rebind or a browser closing shows on the next hover. */
+  /** The actions a link offers now, read live: a changed setting or a browser closing shows on the next hover. */
   plan(): LinkActionPlan;
   /** Open a URL the caller already checked is http(s). */
   open(target: LinkTarget, url: string): void;
 }
 
-/** The effective combos of the two link hotkeys, from the user's overrides. */
-export function readLinkCombos(): Record<LinkTarget, string> {
-  const overrides = useConfigStore.getState().globalConfig.hotkeyOverrides;
-  return {
-    'default-browser': effectiveCombo(LINK_TARGET_KEYBINDINGS['default-browser'], overrides),
-    'kangentic-browser': effectiveCombo(LINK_TARGET_KEYBINDINGS['kangentic-browser'], overrides),
-  };
+/** The user's "Click opens links in" setting, read live. */
+export function readLinkClickTarget(): LinkClickTarget {
+  return useConfigStore.getState().config.linkClickTarget ?? 'default';
 }
 
 export function createTerminalLinkTargets(options: {
   getBrowser: () => TerminalLinkBrowser | null;
   openExternal: (url: string) => void;
-  readCombos?: () => Record<LinkTarget, string>;
+  readClickTarget?: () => LinkClickTarget;
 }): TerminalLinkTargets {
-  const readCombos = options.readCombos ?? readLinkCombos;
+  const readClickTarget = options.readClickTarget ?? readLinkClickTarget;
   return {
-    plan: () => planLinkActions(readCombos(), options.getBrowser() !== null),
+    plan: () => planLinkActions(readClickTarget(), options.getBrowser() !== null),
     open: (target, url) => {
       const browser = target === 'kangentic-browser' ? options.getBrowser() : null;
       if (browser) browser.open(url);

@@ -301,6 +301,42 @@ describe('applyStructuralSharing', () => {
     ).toEqual([]);
   });
 
+  // An artifact write does not bump updated_at, so this comparison is the only
+  // thing that hands the board a new task object after one.
+  describe('artifacts', () => {
+    const artifact = (url: string, name: string | null = null, source: 'user' | 'agent' = 'user') => ({
+      url,
+      name,
+      source,
+      added_at: '2026-04-17T00:00:00.000Z',
+    });
+    const withArtifacts = (artifacts: Task['artifacts']): Task => makeTask({ artifacts });
+
+    it('returns a new reference when an artifact was added', () => {
+      const previous = withArtifacts([artifact('https://example.com/a')]);
+      const next = withArtifacts([artifact('https://example.com/a'), artifact('https://example.com/b')]);
+      expect(applyStructuralSharing([previous], [next])[0]).toBe(next);
+    });
+
+    it('returns a new reference when an artifact was renamed', () => {
+      const previous = withArtifacts([artifact('https://example.com/a', 'Old')]);
+      const next = withArtifacts([artifact('https://example.com/a', 'New')]);
+      expect(applyStructuralSharing([previous], [next])[0]).toBe(next);
+    });
+
+    it('returns a new reference when only an artifact source changed', () => {
+      const previous = withArtifacts([artifact('https://example.com/a', null, 'user')]);
+      const next = withArtifacts([artifact('https://example.com/a', null, 'agent')]);
+      expect(applyStructuralSharing([previous], [next])[0]).toBe(next);
+    });
+
+    it('keeps the previous reference when the artifact list is equal', () => {
+      const previous = withArtifacts([artifact('https://example.com/a', 'Same')]);
+      const next = withArtifacts([artifact('https://example.com/a', 'Same')]);
+      expect(applyStructuralSharing([previous], [next])[0]).toBe(previous);
+    });
+  });
+
   it('handles absent labels defensively', () => {
     // Legacy IPC payloads that skipped the labels column would arrive with
     // `labels === undefined`. The helper must not crash. The Task interface

@@ -57,6 +57,10 @@ msgstr "{count, plural, one {# etkin alt ajan} other {# etkin alt ajan}}"
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# araç çalışıyor} other {# araç çalışıyor}}"
 
+#: src/renderer/components/board/CollapsedLane.tsx
+msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
+msgstr ""
+
 #: src/renderer/components/board/HostDegradedStrip.tsx
 #, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
@@ -67,37 +71,37 @@ msgstr "{hostName} ana bilgisayarına erişilemiyor. Aracıları çalışmaya de
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, one {İş akışları, # çalışıyor} other {İş akışları, # çalışıyor}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
 msgstr "{total, plural, one {Burada # otomasyon çalışır: girişte {enterCount}, çıkışta {exitCount}} other {Burada # otomasyon çalışır: girişte {enterCount}, çıkışta {exitCount}}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {Burada # otomasyon çalışır: girişte {enterCount}, tur sonunda {turnEndCount}, çıkışta {exitCount}} other {Burada # otomasyon çalışır: girişte {enterCount}, tur sonunda {turnEndCount}, çıkışta {exitCount}}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {Burada # otomasyon çalışır: girişte {enterCount}, tur sonunda {turnEndCount}} other {Burada # otomasyon çalışır: girişte {enterCount}, tur sonunda {turnEndCount}}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
 msgstr "{total, plural, one {Burada # otomasyon çalışır: girişte {enterCount}} other {Burada # otomasyon çalışır: girişte {enterCount}}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
 msgstr "{total, plural, one {Burada # otomasyon çalışır: çıkışta {exitCount}} other {Burada # otomasyon çalışır: çıkışta {exitCount}}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {Burada # otomasyon çalışır: tur sonunda {turnEndCount}, çıkışta {exitCount}} other {Burada # otomasyon çalışır: tur sonunda {turnEndCount}, çıkışta {exitCount}}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {Burada # otomasyon çalışır: tur sonunda {turnEndCount}} other {Burada # otomasyon çalışır: tur sonunda {turnEndCount}}}"
@@ -227,6 +231,14 @@ msgstr "\"Bilinmeyen proje\" için kangentic.json dosyasında değişiklikler al
 #, fuzzy
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
 msgstr "kangentic.json dosyasında değişiklikler algılandı. Güncellenen pano yapılandırması uygulansın mı?"
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse {columnName} column"
+msgstr ""
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse column"
+msgstr ""
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy

@@ -146,6 +146,13 @@ vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
   readWorktreeWork: readWorktreeWorkSpy,
 }));
 
+// The domain report is tested where it lives (artifact-detection.test.ts); here
+// only which links the context hands it after an agent's write.
+const reportUnrecognisedArtifactDomainsSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/artifacts/artifact-domain-report', () => ({
+  reportUnrecognisedArtifactDomains: reportUnrecognisedArtifactDomainsSpy,
+}));
+
 // RequestResolver is imported by mcp-project-context and called with `new`.
 // Track constructor calls via a hoisted spy variable that the test body can
 // inspect after each call.
@@ -319,6 +326,49 @@ describe('buildCommandContextForProject', () => {
     expect(context!.getSessionTurnStartedAt?.('session-own')).toBe(1_700_000_000_000);
     expect(context!.getSessionTurnStartedAt?.('session-other')).toBeNull();
     expect(workTurnStartedAt).toHaveBeenCalledWith('session-own');
+  });
+});
+
+// After an agent creates or updates a task, the hosts of the links agents added
+// that Kangentic does not recognise are reported. A person's own links are not.
+describe('buildCommandContextForProject - agent artifact domain report', () => {
+  const agentArtifact = { url: 'https://example.org/spec', name: null, source: 'agent', added_at: '2026-01-01T00:00:00.000Z' };
+  const otherAgentArtifact = { url: 'https://example.net/doc', name: null, source: 'agent', added_at: '2026-01-01T00:00:00.000Z' };
+  const userArtifact = { url: 'https://example.com/mine', name: null, source: 'user', added_at: '2026-01-01T00:00:00.000Z' };
+  const detectedArtifact = { url: 'https://example.io/found', name: null, source: 'detected', added_at: '2026-01-01T00:00:00.000Z' };
+
+  function build() {
+    const ipcContext = Object.assign(makeIpcContext(makeProject({ id: DEFAULT_ID })), {
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+    });
+    return buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+  }
+
+  function taskWith(artifacts: unknown[] | undefined) {
+    return { id: 'task-1', title: 'T', artifacts } as never;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each(['onTaskUpdated', 'onTaskCreated'] as const)('%s reports only the links agents added, as the agent\'s', (callback) => {
+    const context = build();
+    const task = taskWith([agentArtifact, userArtifact, detectedArtifact, otherAgentArtifact]);
+    if (callback === 'onTaskCreated') context.onTaskCreated(task, 'To Do', 'lane-1');
+    else context.onTaskUpdated(task);
+
+    expect(reportUnrecognisedArtifactDomainsSpy).toHaveBeenCalledTimes(1);
+    expect(reportUnrecognisedArtifactDomainsSpy).toHaveBeenCalledWith([agentArtifact.url, otherAgentArtifact.url], 'agent');
+  });
+
+  it.each([
+    ['no artifacts', []],
+    ['only a person\'s and detected links', [userArtifact, detectedArtifact]],
+    ['an unset list', undefined],
+  ])('reports nothing for a task with %s', (_label, artifacts) => {
+    build().onTaskUpdated(taskWith(artifacts as unknown[] | undefined));
+    expect(reportUnrecognisedArtifactDomainsSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -22,6 +22,7 @@ import {
   trackMilestone,
   trackUpdateOutcome,
   bucketTaskCount,
+  claimArtifactDomainReport,
   resetUsageAnalyticsForTests,
   waitForUsageFlagWritesForTests,
 } from '../../src/main/analytics/usage';
@@ -327,6 +328,43 @@ describe('ONBOARDING_MILESTONES vocabulary parity', () => {
       .filter((call) => call[0] === 'onboarding_milestone')
       .map((call) => (call[1] as { step: string }).step);
     expect(milestoneSteps).toEqual([...ONBOARDING_MILESTONES]);
+  });
+});
+
+describe('claimArtifactDomainReport', () => {
+  it('refuses every claim before the flags load, so nothing is reported unbounded', () => {
+    expect(claimArtifactDomainReport('example.org')).toBe(false);
+  });
+
+  it('grants a domain once, then refuses it', () => {
+    initUsageAnalytics(flagsPath);
+    expect(claimArtifactDomainReport('example.org')).toBe(true);
+    expect(claimArtifactDomainReport('example.org')).toBe(false);
+    expect(claimArtifactDomainReport('example.net')).toBe(true);
+  });
+
+  it('stops granting after 100 domains', () => {
+    initUsageAnalytics(flagsPath);
+    for (let position = 0; position < 100; position += 1) {
+      expect(claimArtifactDomainReport(`site-${position}.example.org`)).toBe(true);
+    }
+    expect(claimArtifactDomainReport('one-too-many.example.org')).toBe(false);
+  });
+
+  it('remembers a claim across a restart', async () => {
+    initUsageAnalytics(flagsPath);
+    expect(claimArtifactDomainReport('example.org')).toBe(true);
+    await flushWrites((flags) => JSON.stringify((flags as { reportedArtifactDomains?: unknown }).reportedArtifactDomains) === '["example.org"]');
+
+    resetUsageAnalyticsForTests();
+    initUsageAnalytics(flagsPath);
+    expect(claimArtifactDomainReport('example.org')).toBe(false);
+  });
+
+  it('ignores a stored domain list of the wrong shape', () => {
+    fs.writeFileSync(flagsPath, JSON.stringify({ reportedArtifactDomains: 'example.org' }));
+    initUsageAnalytics(flagsPath);
+    expect(claimArtifactDomainReport('example.org')).toBe(true);
   });
 });
 

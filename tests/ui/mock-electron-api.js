@@ -330,6 +330,8 @@
     cardDensity: 'default',
     cardPreview: 'agent-latest-message',
     columnWidth: 'default',
+    shrinkEmptyColumns: false,
+    linkClickTarget: 'default',
     showTaskNumbers: false,
     terminalPanelVisible: true,
     animationsEnabled: true,
@@ -576,13 +578,103 @@
     return attachments.filter(function (a) { return a.task_id === taskId; }).length;
   }
 
+  // Every task row the mock hands out carries `artifacts` (an empty list unless a
+  // test seeded some), so a seeded row needs no field it does not care about.
   function withAttachmentCount(task) {
-    return Object.assign({}, task, { attachment_count: getAttachmentCount(task.id) });
+    return Object.assign({}, task, {
+      attachment_count: getAttachmentCount(task.id),
+      artifacts: task.artifacts || [],
+    });
+  }
+
+  // Artifact edits, as main applies them on tasks.update. The mock is plain JS and
+  // cannot import TypeScript, so this is a small copy of the rules. The real ones
+  // live in src/shared/task-artifacts.ts and tests/unit/task-artifacts.test.ts
+  // owns them. The key, the 50 link limit and the link length limit are main's
+  // (`artifactKey`, `MAX_TASK_ARTIFACTS`, `MAX_ARTIFACT_URL_LENGTH`). Differences
+  // kept on purpose: a removed link is remembered per task in memory so a
+  // description cannot add it back, and a changed description only detects links on
+  // the few hosts the specs use (figma.com, miro.com, docs.google.com).
+  var dismissedArtifactKeys = {};
+  var DETECTED_ARTIFACT_HOSTS = ['figma.com', 'miro.com', 'docs.google.com'];
+  var MAX_MOCK_TASK_ARTIFACTS = 50;
+  var MAX_MOCK_ARTIFACT_URL_LENGTH = 8192;
+
+  // One key per artifact, as `artifactKey` in src/shared/artifact-platforms.ts
+  // builds it: the host lowercased with no "www.", a trailing slash dropped, and
+  // the path, query and fragment as written (a Figma file key is case-sensitive).
+  function artifactKeyOf(url) {
+    var text = String(url).trim();
+    var parsed;
+    try {
+      parsed = new URL(text);
+    } catch (error) {
+      return text;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return text;
+    var host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    var path = parsed.pathname.length > 1 ? parsed.pathname.replace(/\/+$/, '') : '';
+    return 'https://' + host + (parsed.port ? ':' + parsed.port : '') + path + parsed.search + parsed.hash;
+  }
+
+  function isHttpLink(url) {
+    var text = String(url).trim();
+    // Whitespace or a control character anywhere in a link refuses it, as main does.
+    return text.length <= MAX_MOCK_ARTIFACT_URL_LENGTH && /^https?:\/\/[^\s/]+/i.test(text) && !/[\s\u0000-\u001f\u007f]/.test(text);
+  }
+
+  function cleanArtifactName(name) {
+    var trimmed = String(name == null ? '' : name).replace(/\s+/g, ' ').trim();
+    return trimmed === '' ? null : trimmed;
+  }
+
+  function applyMockArtifactChanges(task, changes, source) {
+    var artifacts = (task.artifacts || []).slice();
+    var dismissed = (dismissedArtifactKeys[task.id] || []).slice();
+    (changes.remove || []).forEach(function (url) {
+      var key = artifactKeyOf(url);
+      if (!artifacts.some(function (a) { return artifactKeyOf(a.url) === key; })) return;
+      artifacts = artifacts.filter(function (a) { return artifactKeyOf(a.url) !== key; });
+      if (dismissed.indexOf(key) === -1) dismissed.push(key);
+    });
+    (changes.rename || []).forEach(function (entry) {
+      var key = artifactKeyOf(entry.url);
+      artifacts = artifacts.map(function (a) {
+        return artifactKeyOf(a.url) === key ? Object.assign({}, a, { name: cleanArtifactName(entry.name) }) : a;
+      });
+    });
+    (changes.add || []).forEach(function (entry) {
+      var url = String(entry.url || '').trim();
+      if (!isHttpLink(url)) return;
+      var key = artifactKeyOf(url);
+      var existing = artifacts.findIndex(function (a) { return artifactKeyOf(a.url) === key; });
+      var name = cleanArtifactName(entry.name);
+      if (existing !== -1) {
+        if (name !== null && source !== 'detected') {
+          artifacts[existing] = Object.assign({}, artifacts[existing], { name: name });
+        }
+        return;
+      }
+      if (source === 'detected' && dismissed.indexOf(key) !== -1) return;
+      if (artifacts.length >= MAX_MOCK_TASK_ARTIFACTS) return;
+      artifacts.push({ url: url, name: name, source: source, added_at: now() });
+      dismissed = dismissed.filter(function (k) { return k !== key; });
+    });
+    dismissedArtifactKeys[task.id] = dismissed;
+    return artifacts;
+  }
+
+  function detectedArtifactLinks(text) {
+    var links = String(text || '').match(/https?:\/\/[^\s)>\]"']+/g) || [];
+    return links.filter(function (link) {
+      var host = link.replace(/^https?:\/\//i, '').split(/[/?#]/)[0].replace(/^www\./i, '').toLowerCase();
+      return DETECTED_ARTIFACT_HOSTS.indexOf(host) !== -1;
+    });
   }
 
   /** A new task row, as tasks.create and a workflow's Start and Add task write one. */
   function buildTaskRow(input, position) {
-    return {
+    var row = {
       id: uuid(),
       display_id: nextDisplayId++,
       title: input.title,
@@ -617,6 +709,7 @@
       automations_disabled: !!input.automations_disabled,
       auto_command: input.auto_command || null,
       attachment_count: 0,
+      artifacts: [],
       archived_at: null,
       detail_view_state: null,
       workflow_id: null,
@@ -630,6 +723,11 @@
       created_at: now(),
       updated_at: now(),
     };
+    // The artifacts a create names, as main's `TaskRepository.create` stores them.
+    if (input.artifacts && input.artifacts.length > 0) {
+      row.artifacts = applyMockArtifactChanges(row, { add: input.artifacts }, input.artifactSource || 'user');
+    }
+    return row;
   }
 
   function withAttachmentCounts(taskList) {
@@ -1488,7 +1586,27 @@
           if (holdWorkflowTitle !== null) {
             throw new Error('#' + tasks[idx].display_id + ' is in ' + holdWorkflowTitle + ', so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the "Needs owner:" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow.');
           }
-          tasks[idx] = Object.assign({}, tasks[idx], input, { updated_at: now() });
+          var previousTask = tasks[idx];
+          var taskPatch = Object.assign({}, input);
+          delete taskPatch.artifactChanges;
+          var updatedTask = Object.assign({}, previousTask, taskPatch, { updated_at: now() });
+          var nextArtifacts = previousTask.artifacts || [];
+          if (input.artifactChanges) {
+            nextArtifacts = applyMockArtifactChanges(
+              Object.assign({}, updatedTask, { artifacts: nextArtifacts }),
+              input.artifactChanges,
+              input.artifactChanges.source || 'user',
+            );
+          }
+          if (input.description !== undefined && input.description !== previousTask.description) {
+            nextArtifacts = applyMockArtifactChanges(
+              Object.assign({}, updatedTask, { artifacts: nextArtifacts }),
+              { add: detectedArtifactLinks(input.description).map(function (url) { return { url: url }; }) },
+              'detected',
+            );
+          }
+          updatedTask.artifacts = nextArtifacts;
+          tasks[idx] = updatedTask;
           return tasks[idx];
         }
         var aidx = archivedTasks.findIndex(function (t) {
@@ -3138,6 +3256,8 @@
       waitForCommandTerminalRestore: async function () {
         var gate = typeof window !== 'undefined' && window.__mockCommandTerminalRestoreGate;
         if (gate) await gate;
+        // The restore is over, never cut off at main's ceiling.
+        return true;
       },
       listCommandTerminalHistory: async function (projectId) {
         var seeded = typeof window !== 'undefined' && window.__mockCommandTerminalHistory;
@@ -3914,6 +4034,11 @@
         };
       }
       function nowSeconds() { return Math.floor(Date.now() / 1000); }
+      // Claude's declared windows (src/main/agent/adapters/claude/status-parser.ts RATE_LIMIT_WINDOWS).
+      var CLAUDE_USAGE_WINDOWS = [
+        { id: 'five-hour', label: '5h session', iconKind: 'session', windowDurationSeconds: 5 * 3600 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', windowDurationSeconds: 7 * 86400 },
+      ];
       function usageWindow(seed) {
         return {
           id: seed.id,
@@ -3965,6 +4090,12 @@
               kind: card.kind === undefined ? 'folder' : card.kind,
               accounts: card.accounts.map(function (seed, index) { return account(seed, card.agent, index); }),
               reportsUsage: card.reportsUsage !== false,
+              // The windows the agent always has. A Claude card gets Claude's two unless a seed
+              // says otherwise, as main's adapter declares them.
+              // A copy per card, so a test that edits one card's list leaves the others alone.
+              usageWindows: (card.usageWindows !== undefined
+                ? card.usageWindows
+                : (card.agent === 'claude' ? CLAUDE_USAGE_WINDOWS : [])).map(function (shape) { return Object.assign({}, shape); }),
               signInIsInteractive: !!card.signInIsInteractive,
               switchMovesSessions: card.switchMovesSessions !== false,
               overrides: card.overrides || [],

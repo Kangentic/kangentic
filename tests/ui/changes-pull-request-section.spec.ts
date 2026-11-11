@@ -413,7 +413,8 @@ test.describe('Changes panel: the pull request section', () => {
 
     // The hover text names the PR and carries its state.
     await openButton.hover();
-    await expect(openButton).toHaveAccessibleDescription(/Open PR #38 in default browser/);
+    // The task window is open, so a Kangentic browser is beside it and the tip lists both clicks.
+    await expect(openButton).toHaveAccessibleDescription(/^PR #38 .*Open in default browser \(Click\) Open in Kangentic browser \(Ctrl\+Click\)$/);
     await expect(openButton).toHaveAccessibleDescription(/A check or build failed/);
     await closeTask();
   });

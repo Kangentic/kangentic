@@ -1105,25 +1105,17 @@ msgstr "開啟"
 msgid "Open a project first."
 msgstr "請先開啟專案。"
 
-#: src/renderer/utils/terminal-links/link-tip.ts
+#: src/renderer/utils/link-open.ts
 msgid "Open in default browser"
 msgstr ""
 
-#: src/renderer/utils/terminal-links/link-tip.ts
+#: src/renderer/utils/link-open.ts
 msgid "Open in Kangentic browser"
 msgstr ""
 
 #: src/renderer/pop-out/PopOutButton.tsx
 msgid "Open in new window"
 msgstr "在新視窗中開啟"
-
-#: src/renderer/components/PrLink.tsx
-msgid "Open PR #{prNumber} in default browser"
-msgstr ""
-
-#: src/renderer/components/PrLink.tsx
-msgid "Open PR in default browser"
-msgstr ""
 
 #: src/renderer/components/PrLink.tsx
 msgid "Open pull request"
@@ -1209,6 +1201,10 @@ msgstr "已移動專案"
 #: src/renderer/stores/project-store.ts
 msgid "Project not available"
 msgstr "專案無法使用"
+
+#: src/renderer/components/PrLink.tsx
+msgid "Pull request"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 msgid "queued"

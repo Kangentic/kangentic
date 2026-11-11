@@ -87,6 +87,10 @@ msgstr "{displayName}, {sizeMb} MB"
 msgid "{duplicateEmail} is already in the list."
 msgstr "{duplicateEmail} is already in the list."
 
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+msgid "{elapsed}% of the window has passed."
+msgstr "{elapsed}% of the window has passed."
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "{eventName} desktop notification"
 msgstr "{eventName} desktop notification"
@@ -164,6 +168,10 @@ msgid "A call failed"
 msgstr "A call failed"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
+msgstr "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 
@@ -218,6 +226,11 @@ msgstr "Account {folderNumber}"
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 msgid "Account options"
 msgstr "Account options"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Account switching"
+msgstr "Account switching"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -405,6 +418,14 @@ msgstr "Appears in the task detail kebab menu only"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "Applies after a restart, and does not change agent output or terminal text."
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Applies to agents that report usage: {agentNames}."
+msgstr "Applies to agents that report usage: {agentNames}."
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "Applies to agents that report usage."
+msgstr "Applies to agents that report usage."
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
 msgstr "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -459,8 +480,8 @@ msgid "Automatic"
 msgstr "Automatic"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order."
-msgstr "Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order."
+msgid "Automatic puts the soonest reset first."
+msgstr "Automatic puts the soonest reset first."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Automatically switch accounts at the usage limit"
@@ -641,9 +662,9 @@ msgstr "CLI path"
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Click with modifiers"
-msgstr "Click with modifiers"
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click opens links in"
+msgstr "Click opens links in"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click, type and drag. Off is read-only."
@@ -962,6 +983,11 @@ msgstr "Default"
 msgid "Default base branch"
 msgstr "Default base branch"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Default browser"
+msgstr "Default browser"
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default diff scope"
 msgstr "Default diff scope"
@@ -1167,6 +1193,11 @@ msgstr "Files to copy into a worktree"
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
 msgstr "Files, folders and glob patterns copied into each new worktree before its agent starts."
 
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Fill"
+msgstr "Fill"
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Finds your work by meaning and answers questions."
 msgstr "Finds your work by meaning and answers questions."
@@ -1279,18 +1310,6 @@ msgstr "Higher effort answers slower and can help counts across many tasks; summ
 msgid "History not shared"
 msgstr "History not shared"
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold a modifier key while you click."
-msgstr "Hold a modifier key while you click."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-msgstr "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-msgstr "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold prompt for script"
 msgstr "Hold prompt for script"
@@ -1298,10 +1317,6 @@ msgstr "Hold prompt for script"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Hold push-to-talk to speak into a terminal or text field."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-msgid "Hold the modifier keys and click here. Escape to cancel."
-msgstr "Hold the modifier keys and click here. Escape to cancel."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
@@ -1394,6 +1409,10 @@ msgstr "How this project stops what a task leaves running."
 msgid "How to install and pair"
 msgstr "How to install and pair"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How wide a column with tasks is, or Fill to share the window's width between the columns."
+msgstr "How wide a column with tasks is, or Fill to share the window's width between the columns."
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "How you hear about each event."
 msgstr "How you hear about each event."
@@ -1460,6 +1479,11 @@ msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "Judges conditions and workflow steps, and names tasks."
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic browser"
+msgstr "Kangentic browser"
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
 msgid "Kangentic browser"
 msgstr "Kangentic browser"
 
@@ -1600,6 +1624,12 @@ msgid "Link node_modules"
 msgstr "Link node_modules"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "settings card"
+msgid "Links"
+msgstr "Links"
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Linux machines Kangentic runs agents on over SSH."
 msgstr "Linux machines Kangentic runs agents on over SSH."
 
@@ -1695,6 +1725,10 @@ msgstr "Model acceleration"
 msgid "Model used for new sessions when no column or task override is set"
 msgstr "Model used for new sessions when no column or task override is set"
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "More agents"
+msgstr "More agents"
+
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
 msgid "Move..."
 msgstr "Move..."
@@ -1778,10 +1812,6 @@ msgstr "No hosts yet."
 msgid "No key detected. It may be reserved by your OS or another app."
 msgstr "No key detected. It may be reserved by your OS or another app."
 
-#: src/renderer/components/settings/accounts/AccountRow.tsx
-msgid "No key file"
-msgstr "No key file"
-
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "No response"
 msgstr "No response"
@@ -1828,6 +1858,11 @@ msgstr "Not set"
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not signed in"
 msgstr "Not signed in"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+msgctxt "a usage window the account has not opened"
+msgid "Not started"
+msgstr "Not started"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Not yet indexed"
@@ -1912,6 +1947,10 @@ msgstr "Other"
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 msgid "Own prompt history"
 msgstr "Own prompt history"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+msgid "Own sign-in"
+msgstr "Own sign-in"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
@@ -2346,11 +2385,6 @@ msgid "Run any JavaScript in the page, with its cookies."
 msgstr "Run any JavaScript in the page, with its cookies."
 
 #: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-msgid "Run order"
-msgstr "Run order"
-
-#: src/renderer/components/settings/settings-registry.ts
 msgid "Run this agent locally, or attach to a server you run elsewhere"
 msgstr "Run this agent locally, or attach to a server you run elsewhere"
 
@@ -2498,6 +2532,10 @@ msgstr "Shows a PR as ready when you can bypass its required review, never past 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Shows how many agents need you, on the taskbar or dock."
 msgstr "Shows how many agents need you, on the taskbar or dock."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shrink empty columns"
+msgstr "Shrink empty columns"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"
@@ -2695,6 +2733,10 @@ msgstr "Terminal"
 msgid "Terminal cursor appearance"
 msgstr "Terminal cursor appearance"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
+msgstr "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
+
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgid "Terminal may intercept"
 msgstr "Terminal may intercept"
@@ -2745,6 +2787,10 @@ msgstr "The agent's recent messages, one line each"
 msgid "The branch new worktrees start from."
 msgstr "The branch new worktrees start from."
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "The browser beside the task's terminal"
+msgstr "The browser beside the task's terminal"
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 msgid "The change was not written."
 msgstr "The change was not written."
@@ -2752,6 +2798,10 @@ msgstr "The change was not written."
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
 msgstr "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "The domain of an artifact link we do not recognise, once (never the rest of the link)"
+msgstr "The domain of an artifact link we do not recognise, once (never the rest of the link)"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 msgid "The file could not be read."
@@ -2830,6 +2880,10 @@ msgstr "The task's description"
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
 msgid "Theme"
 msgstr "Theme"
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+msgid "These use their own sign-in."
+msgstr "These use their own sign-in."
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 msgid "This account's folder is on another drive, so its prompt history stays its own."
@@ -3083,10 +3137,6 @@ msgstr "Where this project lives on disk."
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
 msgstr "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
 
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-msgid "Which account new sessions start on."
-msgstr "Which account new sessions start on."
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
 msgstr "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
@@ -3102,6 +3152,14 @@ msgstr "Which agent CLI to use for new sessions"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
 msgstr "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Cmd+Click opens the other."
+msgstr "Which browser a click opens. Cmd+Click opens the other."
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Ctrl+Click opens the other."
+msgstr "Which browser a click opens. Ctrl+Click opens the other."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
@@ -3119,10 +3177,6 @@ msgstr "Which stats show in the bar under a task's terminal."
 msgctxt "column width"
 msgid "Wide"
 msgstr "Wide"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Width of board columns"
-msgstr "Width of board columns"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Windows"
@@ -3200,3 +3254,7 @@ msgstr "Your OS and other apps can claim a hotkey first. If one does nothing her
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Your phone shows this code too. Confirm there to finish pairing."
 msgstr "Your phone shows this code too. Confirm there to finish pairing."
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Your system's default browser"
+msgstr "Your system's default browser"

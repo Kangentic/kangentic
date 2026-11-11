@@ -47,6 +47,28 @@ Message examples in this guide, like `/code-review`, come from Kangentic's own d
 board, not from the defaults. A column's message to its agent is one kind of automation, a
 **Send message to agent** row; see [Automations](columns-and-automations.md#automations).
 
+## Column Widths and Collapsing
+
+How wide a column with tasks is comes from the **Column width** setting (Settings > Board).
+Narrow, Default and Wide are fixed widths, and a board with more columns than fit scrolls sideways.
+**Fill** sizes the columns to the window instead: they split its width evenly, so a board with many
+columns fits without scrolling until each would be narrower than 200px.
+
+With **Shrink empty columns** on (Settings > Board, off by default), a column with no tasks
+narrows to its header and opens again when a task arrives. Every empty column takes the same
+width, that of the widest header on the board, so the row stays even and a card moved between two
+columns never resizes a third. A filter or a search does not narrow a column: empty means no
+tasks, not no matches. The Done column never narrows. It is off by default because agents and
+automations move cards on their own, and each move that empties or fills a column changes the
+row's layout.
+
+To put a column away yourself, click the **Collapse column** button in its header. The column
+becomes a narrow strip showing its icon, its name and its task count. Click the strip to open it
+again. A collapsed column still takes a drop: drag a card onto the strip and the column opens with
+the card in it. A task an agent or an automation moves into a collapsed column leaves it collapsed,
+and the count on the strip goes up. Which columns are collapsed is remembered per project, on this
+machine only.
+
 ## Board Filtering
 
 The board supports filtering to help you focus on relevant tasks across all columns.

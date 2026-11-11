@@ -8,6 +8,8 @@ import * as path from 'node:path';
 const mocks = vi.hoisted(() => {
   const setTagSpy = vi.fn();
   const setContextSpy = vi.fn();
+  const setLevelSpy = vi.fn();
+  const setFingerprintSpy = vi.fn();
   // The mocked install must be native to the HOST, not always Windows.
   // resolveNativeCrashContext derives the install root with node:path, so on
   // CI's Linux runner path.dirname of a backslash path returns '.', every one
@@ -33,6 +35,8 @@ const mocks = vi.hoisted(() => {
     },
     setTagSpy,
     setContextSpy,
+    setLevelSpy,
+    setFingerprintSpy,
     sentryMock: {
       init: vi.fn(),
       setUser: vi.fn(),
@@ -41,14 +45,17 @@ const mocks = vi.hoisted(() => {
       // per-error contexts). setHostMemoryContext calls the top-level one.
       setContext: vi.fn(),
       captureException: vi.fn(),
+      captureMessage: vi.fn(),
       withScope: vi.fn(
         (
           callback: (scope: {
             setTag: (key: string, value: string) => void;
             setContext: (name: string, value: Record<string, unknown>) => void;
+            setLevel: (level: string) => void;
+            setFingerprint: (fingerprint: string[]) => void;
           }) => void
         ) => {
-          callback({ setTag: setTagSpy, setContext: setContextSpy });
+          callback({ setTag: setTagSpy, setContext: setContextSpy, setLevel: setLevelSpy, setFingerprint: setFingerprintSpy });
         }
       ),
     },
@@ -134,6 +141,10 @@ describe('error reporting runtime behavior (module-state gated)', () => {
     mocks.sentryMock.captureException.mockClear();
     mocks.sentryMock.withScope.mockClear();
     mocks.setTagSpy.mockClear();
+    mocks.setContextSpy.mockClear();
+    mocks.setLevelSpy.mockClear();
+    mocks.setFingerprintSpy.mockClear();
+    mocks.sentryMock.captureMessage.mockReset();
     mocks.electronMock.app.isPackaged = true;
     delete process.env.KANGENTIC_TELEMETRY;
     // Force the switch ON regardless of packaged state, so initErrorReporting
@@ -251,6 +262,59 @@ describe('error reporting runtime behavior (module-state gated)', () => {
 
       expect(mocks.sentryMock.captureException).toHaveBeenCalledTimes(1);
       expect(mocks.sentryMock.captureException).toHaveBeenCalledWith(error);
+    });
+  });
+
+  describe('reportHandledMessage', () => {
+    it('captures the message at level info with the given tags and fingerprint once active', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportHandledMessage(
+        'Unrecognised artifact domain',
+        { artifact_domain: 'example.org', artifact_source: 'agent' },
+        ['unrecognised-artifact-domain', 'example.org'],
+      );
+
+      expect(mocks.sentryMock.withScope).toHaveBeenCalledTimes(1);
+      expect(mocks.setLevelSpy).toHaveBeenCalledWith('info');
+      expect(mocks.setTagSpy).toHaveBeenCalledWith('artifact_domain', 'example.org');
+      expect(mocks.setTagSpy).toHaveBeenCalledWith('artifact_source', 'agent');
+      expect(mocks.setFingerprintSpy).toHaveBeenCalledWith(['unrecognised-artifact-domain', 'example.org']);
+      expect(mocks.sentryMock.captureMessage).toHaveBeenCalledTimes(1);
+      expect(mocks.sentryMock.captureMessage).toHaveBeenCalledWith('Unrecognised artifact domain');
+      expect(mocks.sentryMock.captureException).not.toHaveBeenCalled();
+    });
+
+    it('sets no fingerprint when none is given', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+
+      errorReporting.reportHandledMessage('Something happened');
+
+      expect(mocks.sentryMock.captureMessage).toHaveBeenCalledWith('Something happened');
+      expect(mocks.setFingerprintSpy).not.toHaveBeenCalled();
+    });
+
+    it('makes ZERO Sentry calls while error reporting is inactive', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      // initErrorReporting is deliberately not called: an opted-out install.
+      errorReporting.reportHandledMessage('Unrecognised artifact domain', { artifact_domain: 'example.org' }, ['x']);
+
+      expect(mocks.sentryMock.withScope).not.toHaveBeenCalled();
+      expect(mocks.sentryMock.captureMessage).not.toHaveBeenCalled();
+      expect(mocks.setTagSpy).not.toHaveBeenCalled();
+    });
+
+    it('swallows a throw from the SDK instead of cascading into the caller', async () => {
+      const errorReporting = await importFreshErrorReporting();
+      errorReporting.initErrorReporting();
+      mocks.sentryMock.captureMessage.mockImplementationOnce(() => {
+        throw new Error('sentry transport exploded');
+      });
+
+      expect(() => errorReporting.reportHandledMessage('Unrecognised artifact domain')).not.toThrow();
+      expect(mocks.sentryMock.captureMessage).toHaveBeenCalledTimes(1);
     });
   });
 

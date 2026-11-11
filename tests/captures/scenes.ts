@@ -998,7 +998,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
   // is, then the cut, and Automatic again behind it.
   accounts: {
     ready: '[data-testid="settings-card-accounts-claude"] [data-testid="account-usage-line"]',
-    alt: 'Settings on the Accounts tab: the run order, and three Claude accounts in a numbered list with each one\'s plan, usage bars and reset times, the first marked Active and the second skipped at its weekly limit.',
+    alt: 'Settings on the Accounts tab: the account switching settings, and three Claude accounts in run order with each one\'s plan, usage bars and reset countdowns, the first marked Active and the second skipped at its weekly limit.',
     seeds: { __mockAccountCards: ACCOUNTS_SCENE_CARDS },
     choreography: [
       pickSetting(settingRadio('accounts.orderMode', 'Manual'), 2200),
@@ -2216,7 +2216,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   },
   // ---------------------------------------------------------------- column workflow
   // An automation and a handed-off context are per-scene seeds, never dataset rows: an automation
-  // draws a glyph in the BOARD column header (AutomationGlyph), so seeding one into the sample
+  // adds a line to the BOARD column header's tip (column-automations.tsx), so seeding one into the sample
   // install would change every docs figure already placed and every poster in the release zip.
   // COLUMN_LADDER and REVIEW_PASS_AUTOMATION name their columns through demoLaneId, which the
   // registry test resolves against the install.

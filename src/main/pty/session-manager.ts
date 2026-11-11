@@ -910,6 +910,11 @@ export class SessionManager extends EventEmitter {
         // resolve fires here, the PR does not exist yet.
         this.emit('branch-pushed', sessionId, branch);
       },
+      onArtifactPublished: (sessionId, urls, title) => {
+        // A publish tool answered with links. The IPC listener keeps the
+        // recognised ones on the task as artifacts the agent added.
+        this.emit('artifact-links', sessionId, { urls, title, source: 'agent' });
+      },
       onAgentSessionId: (sessionId, agentReportedId, options) => {
         // Agent session ID capture covers four cases (the fourth is below):
         // 1. Fresh capture: agent_session_id was null (Codex/Gemini), now captured from hooks/PTY output.

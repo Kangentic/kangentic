@@ -37,6 +37,7 @@ import { needsRunningWorkCheck, refuseRunningWork, teardownOfColumn } from './ru
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { isLabelListOrAbsent, LABELS_NOT_A_LIST, priorityScaleError, priorityScaleOf, splitLabelEntries } from './label-and-priority';
 import { resolveProfileSelector } from './profile-commands';
+import { artifactRoomRefusal, formatArtifactLines, parseArtifactInputs, parseArtifactUrls, unknownArtifactUrls } from './artifact-params';
 import { linkPRForTask } from '../../pr/pr-linking';
 import { prReadinessNote } from '../../pr/pr-readiness-note';
 import { prNumberFromUrl } from '../../../shared/pr-url';
@@ -269,6 +270,9 @@ export const handleCreateTask: CommandHandler = async (
   const prNumber = (params.prNumber as number | null | undefined) ?? null;
   const automationsDisabled = readAutomationsDisabledParam(params.automationsDisabled);
   if (automationsDisabled === 'invalid') return { success: false, error: AUTOMATIONS_DISABLED_PARAM_ERROR };
+  // Refused before the row is written, so a bad link leaves no task behind.
+  const artifacts = parseArtifactInputs(params.artifacts, 'artifacts');
+  if (artifacts !== null && 'error' in artifacts) return { success: false, error: artifacts.error };
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). Logs what `labels` actually reached the handler. If it is
@@ -373,6 +377,7 @@ export const handleCreateTask: CommandHandler = async (
     ...(profileId ? { profile_id: profileId } : {}),
     ...(runMode ? { run_mode: runMode } : {}),
     ...(automationsDisabled === true ? { automations_disabled: true } : {}),
+    ...(artifacts !== null && artifacts.length > 0 ? { artifacts, artifactSource: 'agent' as const } : {}),
   });
 
   // A review task names the PR it is about up front, so the linker's pr_number
@@ -431,9 +436,12 @@ export const handleCreateTask: CommandHandler = async (
       title: createdTask.title,
       column: targetSwimlane.name,
       automationsDisabled: createdTask.automations_disabled,
+      ...(task.artifacts.length > 0 ? { artifacts: task.artifacts } : {}),
     },
     message: `Created task "${createdTask.title}" in ${targetSwimlane.name} column (#${createdTask.display_id}, id: ${createdTask.id})`
       + (createdTask.automations_disabled ? '. Its column automations are paused.' : '')
+      // Counted off the created row, so a link the description carried shows too.
+      + (task.artifacts.length > 0 ? `. It has ${task.artifacts.length} ${task.artifacts.length === 1 ? 'artifact' : 'artifacts'}.` : '')
       + branchNote
       + attachmentNote,
   };
@@ -487,6 +495,10 @@ function applyTaskUpdate(
     return { success: false, error: WORKFLOW_REFUSALS.planApprovalValue };
   }
   const newPlanApproval: PlanApproval | null | undefined = rawPlanApproval;
+  const addArtifacts = parseArtifactInputs(params.addArtifacts, 'addArtifacts');
+  if (addArtifacts !== null && 'error' in addArtifacts) return { success: false, error: `${addArtifacts.error} The task was not updated.` };
+  const removeArtifacts = parseArtifactUrls(params.removeArtifacts, 'removeArtifacts');
+  if (removeArtifacts !== null && 'error' in removeArtifacts) return { success: false, error: `${removeArtifacts.error} The task was not updated.` };
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). See the matching note in handleCreateTask.
@@ -612,6 +624,35 @@ function applyTaskUpdate(
   if (newRunMode !== undefined) updates.run_mode = newRunMode;
   if (newAutomationsDisabled !== null) updates.automations_disabled = newAutomationsDisabled;
 
+  // A removal that names a link the task does not hold is refused, with the
+  // links it does hold: left silent, the agent would report a removal that
+  // never happened.
+  const hasArtifactAdds = addArtifacts !== null && addArtifacts.length > 0;
+  const hasArtifactRemovals = removeArtifacts !== null && removeArtifacts.length > 0;
+  if (hasArtifactRemovals) {
+    const unknown = unknownArtifactUrls(task.artifacts, removeArtifacts);
+    if (unknown.length > 0) {
+      const held = formatArtifactLines(task.artifacts);
+      return {
+        success: false,
+        error: `removeArtifacts names ${unknown.length === 1 ? 'a link' : 'links'} this task does not have: ${unknown.join(', ')}. `
+          + (held.length > 0 ? `Its artifacts are:\n${held.join('\n')}\n` : 'It has no artifacts. ')
+          + 'The task was not updated.',
+      };
+    }
+  }
+  if (hasArtifactAdds) {
+    const roomRefusal = artifactRoomRefusal(task.artifacts, addArtifacts, removeArtifacts ?? []);
+    if (roomRefusal) return { success: false, error: `${roomRefusal} The task was not updated.` };
+  }
+  if (hasArtifactAdds || hasArtifactRemovals) {
+    updates.artifactChanges = {
+      ...(hasArtifactAdds ? { add: addArtifacts } : {}),
+      ...(hasArtifactRemovals ? { remove: removeArtifacts } : {}),
+      source: 'agent',
+    };
+  }
+
   // A workflow task's own plan approval goes through the workflow's setter, so
   // the inspector and an agent are held to one rule. Written before the other
   // fields, so its refusal (a task past its plan column) leaves the task as it was.
@@ -724,6 +765,7 @@ function applyTaskUpdate(
   if (newAutomationsDisabled !== null) changedFields.push('automationsDisabled');
   if (planApprovalChanged) changedFields.push('planApproval');
   if (attachmentsAdded > 0) changedFields.push('attachments');
+  if (hasArtifactAdds || hasArtifactRemovals) changedFields.push('artifacts');
 
   return {
     success: true,
@@ -758,6 +800,8 @@ function applyTaskUpdate(
       automationsDisabled: updated.automations_disabled,
       ...(planApprovalChanged ? { planApproval: updated.plan_approval } : {}),
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
+      // The list as it now stands, so the caller sees a link already present was not added twice.
+      ...(hasArtifactAdds || hasArtifactRemovals ? { artifacts: updated.artifacts } : {}),
     },
   };
 }
@@ -1333,6 +1377,11 @@ export function handleMoveTaskToProject(
     swimlane_id: targetSwimlane.id,
     labels: task.labels,
     priority: task.priority,
+    // The task's links go with it. Who added each is not carried: the new row
+    // records them as the user's, which is who asked for the move. The links
+    // taken off it go too, or the description's own would be detected back.
+    ...(task.artifacts.length > 0 ? { artifacts: task.artifacts.map((artifact) => ({ url: artifact.url, name: artifact.name })) } : {}),
+    dismissedArtifacts: sourceTaskRepo.getDismissedArtifacts(task.id),
     createdAt: task.created_at,
     // A user setting, like the labels: a relocated task is still held. Only a
     // To Do task moves, so this never carries a Done task's switch along.

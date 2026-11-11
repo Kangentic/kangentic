@@ -63,8 +63,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'theme', tabId: 'theme', label: msg`Theme`, description: msg`Hover a tile to try it on the whole app, click to keep it.`, scope: 'project', keywords: ['color', 'scheme', 'appearance', 'swatch', 'dark', 'light', 'kangentic', ...NAMED_THEMES.map((theme) => theme.label.toLowerCase())] },
 
   // ── Accounts ──
-  { id: 'accounts.orderMode', tabId: 'accounts', label: msg`Order`, description: msg`Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order.`, scope: 'global', section: msg`Run order`, keywords: ['account', 'accounts', 'order', 'automatic', 'manual', 'reset', 'subscription', 'priority', 'first'] },
-  { id: 'accounts.autoSwitchAtLimit', tabId: 'accounts', label: msg`Automatically switch accounts at the usage limit`, description: msg`Sessions at 100% continue on the next account in the list.`, scope: 'global', section: msg`Run order`, keywords: ['account', 'accounts', 'switch', 'limit', 'usage', 'rate limit', '100%', 'continue', 'subscription', 'automatic'] },
+  { id: 'accounts.orderMode', tabId: 'accounts', label: msg`Order`, description: msg`Automatic puts the soonest reset first.`, scope: 'global', section: msg`Account switching`, keywords: ['account', 'accounts', 'order', 'run order', 'automatic', 'manual', 'reset', 'subscription', 'priority', 'first'] },
+  { id: 'accounts.autoSwitchAtLimit', tabId: 'accounts', label: msg`Automatically switch accounts at the usage limit`, description: msg`Sessions at 100% continue on the next account in the list.`, scope: 'global', section: msg`Account switching`, keywords: ['account', 'accounts', 'switch', 'limit', 'usage', 'rate limit', 'run order', '100%', 'continue', 'subscription', 'automatic'] },
   { id: 'accounts.list', tabId: 'accounts', label: msg`Accounts`, description: msg`Sign in to more than one account per agent and choose the order they run in.`, scope: 'global', keywords: ['account', 'accounts', 'login', 'log in', 'sign in', 'subscription', 'plan', 'usage', 'limit', 'api key', 'claude', 'codex', 'switch', 'add account'] },
 
   // ── Language ──
@@ -73,7 +73,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'displayLanguage', tabId: 'language', label: msg`Language`, description: msg`Applies after a restart, and does not change agent output or terminal text.`, scope: 'global', section: msg`Display language`, keywords: ['display language', 'interface', 'translation', 'translate', 'ui language', 'menus', 'restart'] },
 
   // ── Board ──
-  { id: 'columnWidth', tabId: 'board', label: msg`Column width`, description: msg`Width of board columns`, scope: 'global', keywords: ['narrow', 'wide', 'size'] },
+  { id: 'columnWidth', tabId: 'board', label: msg`Column width`, description: msg`How wide a column with tasks is, or Fill to share the window's width between the columns.`, scope: 'global', keywords: ['narrow', 'wide', 'size', 'fill', 'stretch', 'full width'] },
+  { id: 'shrinkEmptyColumns', tabId: 'board', label: msg`Shrink empty columns`, description: msg`A column with no tasks shrinks to the width of its name and opens again when a task arrives.`, scope: 'global', section: msg`Board layout`, keywords: ['empty', 'narrow', 'collapse', 'columns', 'fit', 'width', 'scroll'] },
 
   // ── Board > Config sync ──
   { id: 'skipBoardConfigConfirm', tabId: 'board', label: msg`Auto-apply board config changes`, description: msg`Apply a detected kangentic.json change immediately instead of asking to confirm.`, scope: 'global', section: msg`Config sync`, keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
@@ -204,6 +205,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Behavior > Windows ──
   { id: 'windowLightDismiss', tabId: 'behavior', label: msg`Close on outside click`, description: msg`Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task.`, scope: 'global', section: msg`Windows`, keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
   { id: 'restoreWindowPosition', tabId: 'behavior', label: msg`Restore window position`, description: msg`Remember window size and position between launches`, scope: 'global', section: msg`Windows`, keywords: ['size', 'bounds', 'remember'] },
+  // A click and a Ctrl or Cmd click both work everywhere a link shows (terminal
+  // links, the PR pill, a task's artifacts); this swaps which browser each opens.
+  { id: 'linkClickTarget', tabId: 'behavior', label: msg`Click opens links in`, description: msg`Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser.`, scope: 'global', section: msg({ message: 'Links', context: 'settings card' }), keywords: ['link', 'url', 'browser', 'open', 'click', 'ctrl', 'cmd', 'default browser', 'kangentic browser', 'external', 'pull request', 'artifact'] },
 
   // ── Notifications > Events ──
   { id: 'notifications.onAgentIdle', tabId: 'notifications', label: msg`Agent idle`, description: msg`When an agent finishes its turn, has a question, or needs your approval`, scope: 'global', section: msg`Events`, keywords: ['desktop', 'toast', 'alert'] },

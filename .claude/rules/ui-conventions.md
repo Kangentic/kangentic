@@ -17,11 +17,13 @@ chrome unless these are stated.
   `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). The fourth,
   `components/workflows/NoWorkflowsIllustration.tsx`, is the Workflows empty state's drawing of
   four linked cards: its curves are a diagram, not an icon, so no lucide glyph can draw them. It
-  paints only theme tokens and never moves. The fifth, `components/AgentLogo.tsx`, draws an agent
-  vendor's own mark on its Accounts card: no lucide glyph is a logo, and a list of logins is where
-  vendors have to be told apart. The marks are the set kangentic.com draws, all `currentColor`,
-  held as element data in `agent-marks.ts`. It never moves, and an agent with no mark there gets
-  the generic agent icon. Each exempt file carries a comment naming this rule.
+  paints only theme tokens and never moves. The fifth, `components/VendorMark.tsx`, draws a
+  vendor's own mark: an agent's on its Accounts card (`AgentLogo`) and a tool's beside an artifact
+  that lives there (`ArtifactPlatformLogo`). No lucide glyph is a logo, and a list of logins or of
+  links is where vendors have to be told apart. The marks are all `currentColor`, held as element
+  data in `agent-marks.ts` (the set kangentic.com draws) and `artifact-platform-marks.ts`. It
+  never moves, and a vendor with no mark gets a generic lucide icon, never a guessed one. Each
+  exempt file carries a comment naming this rule.
   Adding a sixth needs the same justification, not a silent inline `<svg>`.
 - **An icon stored by name resolves through the icon registry.** Column and shortcut icons are
   persisted kebab-case names, rendered with `RegistryIcon`, `ColumnGlyph` or `SwimlaneIcon`

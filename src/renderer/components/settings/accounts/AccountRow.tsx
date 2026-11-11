@@ -2,9 +2,9 @@ import { ArrowLeftRight, Check, EllipsisVertical, GripVertical, KeyRound, LogIn,
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { AgentAccount, AgentAccountStatus } from '../../../../shared/agent-accounts';
+import type { AgentAccount, AgentAccountStatus, AgentUsageWindowShape } from '../../../../shared/agent-accounts';
 import type { RateLimitWindow } from '../../../../shared/types';
-import { liveRateLimitWindows, rateLimitWindowsShortestFirst } from '../../../utils/rate-limit-window';
+import { accountUsageLines, liveRateLimitWindows, windowElapsedPercentage, type AccountUsageLine } from '../../../utils/rate-limit-window';
 import { KebabMenu, KebabMenuItem } from '../../KebabMenu';
 import { Tooltip } from '../../Tooltip';
 import { RATE_LIMIT_ICON, RateLimitTrack, formatResetMoment, formatResetTime } from '../../terminal/rate-limit-meter';
@@ -22,24 +22,93 @@ const SWITCH_BUTTON_CLASS = `${ACTION_SLOT_CLASS} border-edge-input text-fg hove
 
 export interface AccountRowProps {
   account: AgentAccount;
-  /** 1-based place in the run order. */
-  place: number;
   /** New sessions start on this account now. */
   active: boolean;
-  /** The agent has more than one account, so order and Switch to mean something. */
+  /** The agent has more than one account, so Switch to and the row's action slot mean something. */
   reorderable: boolean;
+  /** The list is in the user's order (Manual, or an agent with no usage), so the row shows its grip. */
+  orderEditable: boolean;
   /** The agent reports usage windows. */
   reportsUsage: boolean;
+  /** The windows the agent always has; each row draws a line per window. */
+  usageWindows: AgentUsageWindowShape[];
   /** Switch to also moves the agent's running sessions. False where a conversation stays on its account. */
   switchMovesSessions: boolean;
   /** The agent's accounts are key files, so its own row is what it runs on with none. */
   keyFileAgent: boolean;
   /** Epoch ms, ticked by the tab, for the reset times and the tracks' time marks. */
   now: number;
-  /** Moves the account to #1 and its agent's running sessions onto it. */
+  /** Moves the account to the top and its agent's running sessions onto it. */
   onSwitchTo: () => void;
   onSignIn: () => void;
   onRemove: () => void;
+}
+
+/** How far through its window a live line is, for the tick's tip. Null when the window has no duration. */
+function elapsedOfWindow(limitWindow: RateLimitWindow, now: number): number | null {
+  if (limitWindow.windowDurationSeconds === undefined) return null;
+  const elapsedPercentage = windowElapsedPercentage(limitWindow.resetsAt, limitWindow.windowDurationSeconds, now);
+  return elapsedPercentage === null ? null : Math.round(elapsedPercentage);
+}
+
+/** A stable React key for a usage line: its window's id, or its place for the one unnamed line. */
+function usageLineKey(line: AccountUsageLine, index: number): string {
+  if (line.kind === 'live') return line.window.id;
+  return line.shape?.id ?? `line-${index}`;
+}
+
+/**
+ * One usage line: the window's name, the context bar's meter with the percent attached, and when
+ * it resets. Its three cells sit in the block's shared grid, so every line's bar starts together
+ * whatever the language makes of the names. A window the account has not opened reads Not started.
+ */
+function UsageLine({ line, now }: { line: AccountUsageLine; now: number }) {
+  const { t } = useLingui();
+  const shape = line.kind === 'live' ? line.window : line.shape;
+  const Icon = shape ? RATE_LIMIT_ICON[shape.iconKind] : null;
+  const live = line.kind === 'live' ? line.window : null;
+  // The percent sits beside the bar, so the bar's tip says only what the tick marks.
+  const elapsed = live ? elapsedOfWindow(live, now) : null;
+  const trackTip = elapsed === null ? '' : t`${elapsed}% of the window has passed.`;
+  let percentText = '-';
+  if (live) percentText = `${Math.round(live.usedPercentage)}%`;
+  else if (line.kind === 'not-started') percentText = '0%';
+  return (
+    <div className="contents" data-testid="account-usage-line" data-usage-state={line.kind}>
+      <span className="flex items-center gap-1.5 whitespace-nowrap">
+        {Icon ? <Icon size={11} className="flex-shrink-0 text-fg-faint" aria-hidden="true" /> : null}
+        {shape ? shape.label : t`Usage`}
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        {live ? (
+          <Tooltip label={trackTip}>
+            <span className="flex min-w-[40px] flex-1 items-center">
+              <RateLimitTrack limitWindow={live} now={now} className="w-full" />
+            </span>
+          </Tooltip>
+        ) : (
+          <RateLimitTrack limitWindow={null} now={now} className="min-w-[40px] flex-1" />
+        )}
+        <span className={`w-7 flex-shrink-0 text-right ${line.kind === 'not-started' ? 'text-fg-faint' : ''}`}>
+          {percentText}
+        </span>
+      </span>
+      <span className="flex items-center whitespace-nowrap pl-1.5">
+        {live && live.resetsAt > 0 ? (
+          <Tooltip label={formatResetTime(live.resetsAt)}>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <RotateCcw size={11} className="flex-shrink-0 text-fg-faint" aria-hidden="true" />
+              <span className="truncate">{formatResetMoment(live.resetsAt, now)}</span>
+            </span>
+          </Tooltip>
+        ) : line.kind === 'not-started' ? (
+          <span className="text-fg-faint" data-testid="account-usage-not-started">
+            <Trans context="a usage window the account has not opened">Not started</Trans>
+          </span>
+        ) : null}
+      </span>
+    </div>
+  );
 }
 
 /** An account that takes no new session now: not signed in, no plan, or a window at its limit. */
@@ -49,46 +118,12 @@ function isAccountSkipped(account: AgentAccount, now: number): boolean {
 }
 
 /**
- * One usage window: its name, the context bar's meter with the percent attached, and when it
- * resets. Its three cells sit in the block's shared grid, so every line's bar starts together
- * whatever the language makes of the names.
- */
-function UsageLine({ limitWindow, now }: { limitWindow: RateLimitWindow | null; now: number }) {
-  const { t } = useLingui();
-  const Icon = limitWindow ? RATE_LIMIT_ICON[limitWindow.iconKind] : null;
-  return (
-    <div className="contents" data-testid="account-usage-line">
-      <span className="flex items-center gap-1.5 whitespace-nowrap">
-        {Icon ? <Icon size={11} className="flex-shrink-0 text-fg-faint" aria-hidden="true" /> : null}
-        {limitWindow ? limitWindow.label : t`Usage`}
-      </span>
-      <span className="flex min-w-0 items-center gap-1.5">
-        <RateLimitTrack limitWindow={limitWindow} now={now} className="min-w-[40px] flex-1" />
-        <span className="w-7 flex-shrink-0 text-right">
-          {limitWindow ? `${Math.round(limitWindow.usedPercentage)}%` : '-'}
-        </span>
-      </span>
-      <span className="flex items-center whitespace-nowrap pl-1.5">
-        {limitWindow && limitWindow.resetsAt > 0 ? (
-          <Tooltip label={formatResetTime(limitWindow.resetsAt)}>
-            <span className="flex min-w-0 items-center gap-1.5">
-              <RotateCcw size={11} className="flex-shrink-0 text-fg-faint" aria-hidden="true" />
-              <span className="truncate">{formatResetMoment(limitWindow.resetsAt, now)}</span>
-            </span>
-          </Tooltip>
-        ) : null}
-      </span>
-    </div>
-  );
-}
-
-/**
  * What a row draws, with no drag wiring, so the list and the drag overlay share it. The top line
- * is the account (grip, place, name, plan, state, its one action, its menu). Under a hairline,
- * one line per usage window the CLI reports.
+ * is the account (grip where the order is the user's, name, plan, state, its one action, its
+ * menu). Under it, one line per usage window the agent has.
  */
 function AccountRowContent({
-  account, place, active, reorderable, reportsUsage, switchMovesSessions, keyFileAgent, now, onSwitchTo, onSignIn, onRemove, grip,
+  account, active, reorderable, reportsUsage, usageWindows, switchMovesSessions, keyFileAgent, now, onSwitchTo, onSignIn, onRemove, grip,
 }: AccountRowProps & { grip: React.ReactNode }) {
   const { t } = useLingui();
   const skipped = isAccountSkipped(account, now);
@@ -99,32 +134,27 @@ function AccountRowContent({
     'link-failed': t`History not shared`,
   };
   const keyFileName = account.keyFilePath?.split(/[\\/]/).pop() ?? null;
-  const ownName = keyFileAgent ? t`No key file` : t`Signed in on this machine`;
+  // The agent's own login, before the CLI reports an email for it. A key-file agent's own login
+  // reports none: it is whatever the CLI signs in with when no key file is set.
+  const ownName = keyFileAgent ? t`Own sign-in` : t`Signed in on this machine`;
   // A CLI that reports no email leaves a signed-in account its folder's number to go by.
   const folderNumber = account.folderPath?.split(/[\\/]/).pop() ?? null;
   const unnamed = account.status !== 'signed-out' && folderNumber ? t`Account ${folderNumber}` : t`New account`;
   const name = account.email ?? keyFileName ?? (account.kind === 'default' ? ownName : unnamed);
-  const windows = rateLimitWindowsShortestFirst(liveRateLimitWindows(account.lastUsage ?? [], now));
   const showsUsage = reportsUsage && account.kind !== 'key-file' && account.status !== 'signed-out';
+  const lines = showsUsage
+    ? accountUsageLines(usageWindows, liveRateLimitWindows(account.lastUsage ?? [], now), account.lastUsage !== null)
+    : [];
   // The agent's own login has nothing in the menu (it is signed in from the CLI, and cannot be
   // removed), so it gets none, signed out or not.
   const hasMenu = account.kind !== 'default';
 
   return (
     <>
-      <div className="flex min-h-6 items-center gap-2">
+      <div className="flex min-h-6 items-center gap-2" data-skipped={skipped ? '' : undefined}>
         {grip}
-        <span
-          className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border bg-surface text-[11px] font-semibold tabular-nums ${
-            skipped ? 'border-dashed border-edge-input text-fg-faint' : 'border-edge-input text-fg-secondary'
-          }`}
-          data-testid="account-place"
-          data-skipped={skipped ? '' : undefined}
-        >
-          {place}
-        </span>
         <Tooltip label={name}>
-          <span className="ml-0.5 min-w-0 truncate text-xs font-medium text-fg" data-testid="account-name">{name}</span>
+          <span className="min-w-0 truncate text-xs font-medium text-fg" data-testid="account-name">{name}</span>
         </Tooltip>
         {account.plan ? (
           <span className="flex-shrink-0 whitespace-nowrap rounded border border-edge px-1.5 text-[11px] leading-4 text-fg-muted">
@@ -160,12 +190,13 @@ function AccountRowContent({
           <span
             className={`${ACTION_SLOT_CLASS} font-medium text-active`}
             style={{ borderColor: tint(55), backgroundColor: tint(10) }}
+            data-testid="account-active"
           >
             <Check size={13} strokeWidth={2.5} aria-hidden="true" />
             <Trans context="the account new sessions start on">Active</Trans>
           </span>
         ) : reorderable && account.status === 'ok' ? (
-          // A deliberate switch: the account goes to #1, and running sessions move to it now
+          // A deliberate switch: the account goes to the top, and running sessions move to it now
           // unless the agent's conversations stay on their account.
           <Tooltip label={switchMovesSessions ? t`Running sessions move here too` : t`Running sessions stay on their account`}>
             <button
@@ -203,39 +234,34 @@ function AccountRowContent({
           <span className="w-6 flex-shrink-0" />
         ) : null}
       </div>
-      {showsUsage ? (
-        // The full width of the tile, under a hairline. One grid for every line, so the name
+      {lines.length > 0 ? (
+        // The full width of the tile, set off by space alone: the card's border and the tile's
+        // fill are the only layers (settings-card-design.md). One grid for every line, so the name
         // column is as wide as the longest name and the bars start together.
-        <div className="mt-3.5 grid grid-cols-[auto_1fr_124px] items-center gap-x-2.5 gap-y-3 border-t border-edge/60 pt-3.5 text-xs tabular-nums text-fg-muted">
-          {windows.length > 0
-            ? windows.map((limitWindow) => <UsageLine key={limitWindow.id} limitWindow={limitWindow} now={now} />)
-            : <UsageLine limitWindow={null} now={now} />}
+        <div className="mt-3 grid grid-cols-[auto_1fr_minmax(84px,auto)] items-center gap-x-2.5 gap-y-3 text-xs tabular-nums text-fg-muted">
+          {lines.map((line, index) => (
+            <UsageLine key={usageLineKey(line, index)} line={line} now={now} />
+          ))}
         </div>
       ) : null}
     </>
   );
 }
 
-/** The thin outline that marks the account new sessions start on. */
-function activeOutline(active: boolean): React.CSSProperties {
-  return active ? { boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--color-active) 55%, transparent)' } : {};
-}
-
-/** One account in an agent's list: a tile the user drags by its grip to reorder. */
+/** One account in an agent's list: a tile the user drags by its grip while the order is theirs. */
 export function AccountRow(props: AccountRowProps) {
   const { t } = useLingui();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.account.id,
-    disabled: !props.reorderable,
+    disabled: !props.orderEditable,
   });
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition || undefined,
     // The row left behind while its overlay follows the pointer.
     opacity: isDragging ? 0.4 : 1,
-    ...activeOutline(props.active),
   };
-  const grip = props.reorderable ? (
+  const grip = props.orderEditable ? (
     <Tooltip label={t`Drag to reorder`}>
       {/* light-dismiss-ok: the settings panel mounts as a sibling of AppLayout's marked shell
           subtree, so a click in it resolves to no `data-dismiss-layer` scope. */}
@@ -243,6 +269,7 @@ export function AccountRow(props: AccountRowProps) {
       <div
         className="flex h-6 w-5 flex-shrink-0 cursor-grab items-center justify-center text-fg-faint hover:text-fg-muted active:cursor-grabbing"
         aria-label={t`Reorder`}
+        data-testid="account-grip"
         {...attributes}
         {...listeners}
       >
@@ -261,7 +288,7 @@ export function AccountRow(props: AccountRowProps) {
 /** The row as the drag overlay draws it: the same content, no drag wiring of its own. */
 export function AccountRowOverlay(props: AccountRowProps) {
   return (
-    <CardTile className="flex flex-col" style={activeOutline(props.active)}>
+    <CardTile className="flex flex-col">
       <AccountRowContent
         {...props}
         grip={<span className="flex h-6 w-5 flex-shrink-0 items-center justify-center text-fg-muted"><GripVertical size={14} /></span>}

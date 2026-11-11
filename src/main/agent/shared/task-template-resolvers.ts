@@ -3,6 +3,21 @@ import { sanitizeForPty } from '../../../shared/paths';
 import { TASK_TEMPLATE_VAR_NAMES, type TaskTemplateVarName } from '../../../shared/task-template-vars';
 import { agentPathsForProjectPath } from '../../remote/host-paths';
 import { buildTaskXml, buildWorkflowXml, type WorkflowXmlInput } from './prompt-xml';
+import { artifactPlatformOf } from '../../../shared/artifact-platforms';
+import { artifactDisplayName } from '../../../shared/task-artifacts';
+
+/**
+ * A task's artifacts as a prompt shows them: the link, what it is called, and
+ * the platform when Kangentic recognises it. Names go through the same PTY
+ * sanitiser as the title, since they are single-line text a person typed.
+ */
+function describeArtifacts(task: Pick<Task, 'artifacts'>): Array<{ url: string; name: string; platform: string | null }> {
+  return (task.artifacts ?? []).map((artifact) => ({
+    url: artifact.url,
+    name: sanitizeForPty(artifactDisplayName(artifact)),
+    platform: artifactPlatformOf(artifact.url)?.name ?? null,
+  }));
+}
 
 /**
  * Everything a task-template resolver needs. `defaultBaseBranch` is the
@@ -92,7 +107,11 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   // survives end to end - quoteArg's `multiline: true` opt-in keeps newlines
   // through shell delivery. The legacy {{description}} prose var stays
   // sanitized so user-customized single-line templates don't break.
-  task_xml: ({ task }) => buildTaskXml({ title: sanitizeForPty(task.title), description: task.description }),
+  task_xml: ({ task }) => buildTaskXml({
+    title: sanitizeForPty(task.title),
+    description: task.description,
+    artifacts: describeArtifacts(task),
+  }),
   // A leading newline so it sits on its own line after `{{task_xml}}` in the
   // default prompt; empty (and dropped) for a task outside a workflow.
   workflow_xml: ({ workflow }) => (workflow ? `\n${buildWorkflowXml(workflow)}` : ''),
@@ -134,6 +153,12 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   // is the honest answer for a task with no labels either way.
   labels: ({ task }) => (task.labels ?? []).join(', '),
   attachments: ({ attachmentPaths }) => (attachmentPaths.length > 0 ? `\n${attachmentPaths.join('\n')}` : ''),
+  // One per line like {{attachments}}, each `name: link`. The default prompt
+  // needs no {{artifacts}}: `{{task_xml}}` already carries them.
+  artifacts: ({ task }) => {
+    const artifacts = describeArtifacts(task);
+    return artifacts.length > 0 ? `\n${artifacts.map((artifact) => `${artifact.name}: ${artifact.url}`).join('\n')}` : '';
+  },
   // The task's lowest RESERVED port, or empty when it has reserved none -
   // which is the normal state, since nothing is reserved until something asks
   // (see kangentic_reserve_dev_ports). A raw read, like {{worktreePath}} and

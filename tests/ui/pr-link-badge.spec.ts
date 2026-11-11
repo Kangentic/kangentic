@@ -5,9 +5,10 @@
  * Seeds a Code Review task with a linked, open PR and a running session (so the
  * detail dialog opens on TaskDetailHeader, not the edit form), then asserts the
  * two surfaces that let a user open the linked PR: the board card's pill (PR
- * number, the state's tint, a trailing external-link icon, and an "Open PR #287
- * in browser" tooltip with the state as its detail) and the detail header's `...`
- * kebab "View PR #287" entry (which opens the same URL). The header's compact icon
+ * number, the state's tint, a trailing external-link icon, and a "PR #287" tooltip
+ * with the state as its detail and one "Open in default browser" row, since no
+ * Kangentic browser is open for the task, which a click and a Ctrl+click both use)
+ * and the detail header's `...` kebab "View PR #287" entry (which opens the same URL). The header's compact icon
  * bar itself has no PR pill; the Changes panel opens the PR from its Pull
  * request section (changes-pull-request-section.spec.ts).
  *
@@ -187,9 +188,97 @@ test.describe('PR link: state badge and clickable affordance', () => {
     // Trailing external-link icon signals it opens in the browser.
     await expect(prLink.locator('.lucide-external-link')).toBeVisible();
 
-    // Tooltip names the action, and the state as its detail.
-    await expect(prLink).toHaveAccessibleDescription(/Open PR #287 in default browser/);
+    // Tooltip is a head line (the PR, and the state as its detail) over a row
+    // per click (the accessible description joins its lines with spaces). This
+    // task's agent is running, so its window would offer a Kangentic browser,
+    // and the card offers it too.
+    await expect(prLink).toHaveAccessibleDescription(/^PR #287 /);
     await expect(prLink).toHaveAccessibleDescription(/open/);
+    await expect(prLink).toHaveAccessibleDescription(/Open in default browser \(Click\)/);
+    // Ctrl off a Mac, Cmd on one: the chip is drawn for the platform.
+    await expect(prLink).toHaveAccessibleDescription(/Open in Kangentic browser \((Ctrl|⌘)\+Click\)/u);
+  });
+
+  test('a task with no running agent has one row, and a click and a Ctrl+click both open the default browser', async () => {
+    // Readiness "blocked" is seeded with no session, so it has no Kangentic browser to offer.
+    const prLink = page.locator('[data-task-id="task-readiness-blocked"] [data-testid="task-card-pr-link"]');
+    await page.evaluate(() => {
+      window.__openedExternalUrls = [];
+      window.electronAPI.shell.openExternal = async (url: string) => {
+        window.__openedExternalUrls?.push(url);
+      };
+    });
+    try {
+      await prLink.hover();
+      const tip = page.locator('[data-shape="stack"]').filter({ has: page.locator('[data-tooltip-row]') });
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      await expect(tip.locator('[data-tooltip-row]')).toHaveCount(1);
+      await expect(tip.locator('[data-tooltip-row]')).toHaveAttribute('data-tooltip-row', 'default-browser');
+
+      await prLink.click();
+      // The click that opens the other browser: Ctrl, or Cmd on a Mac.
+      await prLink.click({ modifiers: ['ControlOrMeta'] });
+
+      // Neither click opens the task window: the pill stops the card's own click.
+      await expect
+        .poll(() => page.evaluate(() => window.__openedExternalUrls))
+        .toEqual(['https://github.com/owner/repo/pull/302', 'https://github.com/owner/repo/pull/302']);
+      await expect(page.locator('[data-testid="task-detail-dialog"]')).toHaveCount(0);
+    } finally {
+      await page.evaluate(() => {
+        window.electronAPI.shell.openExternal = async () => {
+          return;
+        };
+      });
+    }
+  });
+
+  test('a running task: a click opens the default browser, and a Ctrl+click opens its window and loads the PR in its Kangentic browser', async () => {
+    const prLink = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('[data-testid="task-card-pr-link"]');
+    await page.evaluate(() => {
+      window.__openedExternalUrls = [];
+      window.electronAPI.shell.openExternal = async (url: string) => {
+        window.__openedExternalUrls?.push(url);
+      };
+    });
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    try {
+      await prLink.hover();
+      const tip = page.locator('[data-shape="stack"]').filter({ has: page.locator('[data-tooltip-row]') });
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      await expect(tip.locator('[data-tooltip-row]')).toHaveCount(2);
+      await expect(tip.locator('[data-tooltip-row]').first()).toHaveAttribute('data-tooltip-row', 'default-browser');
+      await expect(tip.locator('[data-tooltip-row]').last()).toHaveAttribute('data-tooltip-row', 'kangentic-browser');
+
+      // A plain click: the default browser, and the card does not open.
+      await prLink.click();
+      await expect
+        .poll(() => page.evaluate(() => window.__openedExternalUrls))
+        .toEqual(['https://github.com/owner/repo/pull/287']);
+      await expect(dialog).toHaveCount(0);
+
+      // Ctrl+click: the task's window opens, and its Browser pane takes the link.
+      await prLink.click({ modifiers: ['ControlOrMeta'] });
+      await expect(dialog).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('browser-url-input')).toHaveValue('https://github.com/owner/repo/pull/287', { timeout: 10000 });
+      // The pane took the link, so nothing more went to the default browser.
+      // That the fallback timer is cancelled with it is pinned in
+      // tests/unit/task-link-browser.test.ts, which does not wait it out.
+      expect(await page.evaluate(() => window.__openedExternalUrls)).toEqual(['https://github.com/owner/repo/pull/287']);
+    } finally {
+      await page.evaluate(() => {
+        window.electronAPI.shell.openExternal = async () => {
+          return;
+        };
+      });
+      // The page is shared: leave no window open for the next test.
+      if (await dialog.count() > 0) {
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await expect(dialog).toHaveCount(0, { timeout: 10000 });
+      }
+    }
   });
 
   test('detail header has no PR pill; the kebab "View PR" entry opens the same URL', async () => {
@@ -247,7 +336,7 @@ test.describe('PR merge readiness tints the pill', () => {
     const pill = pillFor('task-readiness-ready');
     await expect(pill).toHaveText('PR #301');
     await expect(pill).toHaveClass(/text-emerald-400/);
-    await expect(pill).toHaveAccessibleDescription(/Open PR #301 in default browser/);
+    await expect(pill).toHaveAccessibleDescription(/^PR #301 /);
     await expect(pill).toHaveAccessibleDescription(/last PR refresh/);
   });
 

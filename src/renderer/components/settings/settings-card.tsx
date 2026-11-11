@@ -751,6 +751,8 @@ interface CardChoiceRowProps<T extends string> {
   onChange: (value: T) => void;
   /** Test hook on the segmented control. */
   testId?: string;
+  /** Show the description under the label instead of behind an info icon. */
+  inlineDescription?: boolean;
   /** A status line under the row, e.g. which models a preset picked. */
   children?: React.ReactNode;
 }
@@ -762,7 +764,7 @@ interface CardChoiceRowProps<T extends string> {
  * every option shows at once and any is one click away.
  */
 export function CardChoiceRow<T extends string>({
-  label, description, searchId, options, value, onChange, testId, children,
+  label, description, searchId, options, value, onChange, testId, inlineDescription, children,
 }: CardChoiceRowProps<T>) {
   const visible = useSettingVisible(searchId);
   if (!visible) return null;
@@ -773,9 +775,12 @@ export function CardChoiceRow<T extends string>({
       data-testid={searchId ? `setting-row-${searchId}` : undefined}
     >
       <div className="flex items-center gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <span className={SETTING_LABEL_CLASS}>{label}</span>
-          <InfoTip label={label} text={description} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className={SETTING_LABEL_CLASS}>{label}</span>
+            {inlineDescription ? null : <InfoTip label={label} text={description} />}
+          </div>
+          {inlineDescription ? <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`}>{description}</p> : null}
         </div>
         <SegmentedControl options={options} value={value} onChange={onChange} ariaLabel={label} testId={testId} quiet />
       </div>

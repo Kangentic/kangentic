@@ -156,6 +156,7 @@ describe('handleCreateTask - run_mode', () => {
       id: 'task-uuid-1',
       display_id: 1,
       title: input.title,
+      artifacts: [],
     }));
   });
 

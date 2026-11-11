@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, ListOrdered, Plus, TriangleAlert } from 'lucide-react';
-import { AgentLogo } from '../../AgentLogo';
+import { ArrowLeftRight, Bot, ChevronDown, Plus, TriangleAlert } from 'lucide-react';
+import { AgentLogo } from '../../VendorMark';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -14,11 +14,13 @@ import {
 } from '../../../../shared/agent-accounts';
 import { useAccountsStore } from '../../../stores/accounts-store';
 import { useToastStore } from '../../../stores/toast-store';
+import { accountSwitchingCards, isAccountOrderEditable, partitionAccountCards } from '../../../utils/account-cards';
 import { agentDisplayName } from '../../../utils/agent-display-name';
 import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
+import { KebabMenu, KebabMenuItem } from '../../KebabMenu';
 import { AccountLoginDialog } from '../accounts/AccountLoginDialog';
 import { AccountRow, AccountRowOverlay } from '../accounts/AccountRow';
 import { useScopedUpdate } from '../shared';
@@ -28,13 +30,20 @@ import { settingProps } from '../settings-registry';
 /** How often the reset times and the tracks' time marks move. */
 const CLOCK_TICK_MS = 30_000;
 
+/** The header button that adds an account, on an agent's card and on More agents. */
+const ADD_ACCOUNT_BUTTON_CLASS = 'flex h-7 items-center gap-1.5 rounded-md border border-edge-input bg-surface-control px-2.5 text-xs text-fg hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+
+/** Past this many agents the switching card's description names none, to stay on one line. */
+const MAX_NAMED_SWITCHING_AGENTS = 2;
+
 /**
- * Settings > Accounts (task #1057): one ordered list of accounts per agent. New sessions start on
- * the first account in the list with room. Usage is read in the background and when this tab
- * opens; nothing here asks the user to refresh.
+ * Settings > Accounts (tasks #1057, #1064): one ordered list of accounts per agent. New sessions
+ * start on the first account in the list with room. Usage is read in the background and when this
+ * tab opens; nothing here asks the user to refresh. An agent with nothing beyond its own login
+ * shares the More agents card.
  */
 export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
-  const { t } = useLingui();
+  const { t, i18n } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   const cards = useAccountsStore((state) => state.cards);
   const loaded = useAccountsStore((state) => state.loaded);
@@ -56,16 +65,26 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
   }, []);
 
   const accountsConfig = globalConfig.agent.accounts;
-  const anyAgentHasTwo = cards.some((card) => card.accounts.length > 1);
+  const orderMode = accountsConfig.orderMode;
+  const { own: ownCards, more: moreCards } = partitionAccountCards(cards);
+  // Order and the switch act through usage: Automatic sorts by reset, the switch reads a full
+  // account. So the card shows once an agent that reports usage has two accounts, and names them.
+  const switchingCards = accountSwitchingCards(cards);
+  const showSwitching = switchingCards.length > 0;
+  const switchingAgentNames = switchingCards.map((card) => agentDisplayName(card.agent));
+  const agentNames = new Intl.ListFormat(i18n.locale, { type: 'conjunction' }).format(switchingAgentNames);
+  const switchingDescription = switchingAgentNames.length > 0 && switchingAgentNames.length <= MAX_NAMED_SWITCHING_AGENTS
+    ? t`Applies to agents that report usage: ${agentNames}.`
+    : t`Applies to agents that report usage.`;
   const orderOptions = useMemo(() => [
     { value: 'automatic' as const, label: t`Automatic`, tip: t`Soonest reset first` },
     { value: 'manual' as const, label: t`Manual`, tip: t`Your order` },
   ], [t]);
 
-  const accountById = (accountId: string | null): { account: AgentAccount; card: AgentAccountsCard; place: number } | null => {
+  const accountById = (accountId: string | null): { account: AgentAccount; card: AgentAccountsCard } | null => {
     for (const card of cards) {
-      const index = card.accounts.findIndex((account) => account.id === accountId);
-      if (index >= 0) return { account: card.accounts[index], card, place: index + 1 };
+      const account = card.accounts.find((candidate) => candidate.id === accountId);
+      if (account) return { account, card };
     }
     return null;
   };
@@ -119,24 +138,36 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
     void useAccountsStore.getState().reorder(card.agent, arrayMove(ids, from, to));
   };
 
+  // What every row of a card shares, the dragged copy included.
+  const rowPropsFor = (card: AgentAccountsCard) => ({
+    reorderable: card.accounts.length > 1,
+    orderEditable: isAccountOrderEditable(card, orderMode),
+    reportsUsage: card.reportsUsage,
+    usageWindows: card.usageWindows,
+    switchMovesSessions: card.switchMovesSessions,
+    keyFileAgent: card.kind === 'key-file',
+    now,
+  });
+
   return (
     <div className="space-y-4" data-testid="accounts-tab">
-      {anyAgentHasTwo ? (
+      {showSwitching ? (
         <SettingsCard
-          icon={<ListOrdered size={16} />}
-          label={t`Run order`}
-          description={t`Which account new sessions start on.`}
+          icon={<ArrowLeftRight size={16} />}
+          label={t`Account switching`}
+          description={switchingDescription}
           searchIds={['accounts.orderMode', 'accounts.autoSwitchAtLimit']}
-          testId="settings-card-accounts-run-order"
+          testId="settings-card-accounts-switching"
         >
           <CardChoiceRow<AgentAccountOrderMode>
             {...settingProps('accounts.orderMode')}
+            inlineDescription
             options={orderOptions}
-            value={accountsConfig.orderMode}
-            onChange={(orderMode) => {
-              void Promise.resolve(updateGlobal({ agent: { accounts: { orderMode } } }))
+            value={orderMode}
+            onChange={(nextOrderMode) => {
+              void Promise.resolve(updateGlobal({ agent: { accounts: { orderMode: nextOrderMode } } }))
                 .then(() => useAccountsStore.getState().loadAccounts())
-                .catch((error: unknown) => console.warn('[accounts] Could not save the run order:', error));
+                .catch((error: unknown) => console.warn('[accounts] Could not save the account order:', error));
             }}
             testId="accounts-order-mode"
           />
@@ -149,16 +180,9 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
         </SettingsCard>
       ) : null}
 
-      {cards.map((card) => {
+      {ownCards.map((card) => {
         const agentName = agentDisplayName(card.agent);
-        const reorderable = card.accounts.length > 1;
-        // What every row of this card shares, the dragged copy included.
-        const cardRowProps = {
-          reportsUsage: card.reportsUsage,
-          switchMovesSessions: card.switchMovesSessions,
-          keyFileAgent: card.kind === 'key-file',
-          now,
-        };
+        const rowProps = rowPropsFor(card);
         return (
           <SettingsCard
             key={card.agent}
@@ -170,7 +194,7 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
               <button
                 type="button"
                 onClick={() => { void addAccount(card); }}
-                className="flex h-7 items-center gap-1.5 rounded-md border border-edge-input bg-surface-control px-2.5 text-xs text-fg hover:bg-surface-hover focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className={ADD_ACCOUNT_BUTTON_CLASS}
                 data-testid={`accounts-add-${card.agent}`}
               >
                 <Plus size={13} aria-hidden="true" />
@@ -204,14 +228,12 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
               onDragCancel={() => setDraggedAccountId(null)}
             >
               <SortableContext items={card.accounts.map((account) => account.id)} strategy={verticalListSortingStrategy}>
-                {card.accounts.map((account, index) => (
+                {card.accounts.map((account) => (
                   <AccountRow
                     key={account.id}
                     account={account}
-                    place={index + 1}
-                    active={card.activeAccountId === account.id && reorderable}
-                    reorderable={reorderable}
-                    {...cardRowProps}
+                    active={card.activeAccountId === account.id && rowProps.reorderable}
+                    {...rowProps}
                     onSwitchTo={() => { void useAccountsStore.getState().switchTo(account.id); }}
                     onSignIn={() => { void signInAgain(account); }}
                     onRemove={() => setAccountToRemove(account)}
@@ -225,10 +247,8 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
                     <div className="drag-overlay-tilt">
                       <AccountRowOverlay
                         account={dragged.account}
-                        place={dragged.place}
                         active={card.activeAccountId === dragged.account.id}
-                        reorderable
-                        {...cardRowProps}
+                        {...rowProps}
                         onSwitchTo={() => undefined}
                         onSignIn={() => undefined}
                         onRemove={() => undefined}
@@ -241,6 +261,49 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
           </SettingsCard>
         );
       })}
+
+      {moreCards.length > 0 ? (
+        <SettingsCard
+          icon={<Bot size={16} />}
+          label={t`More agents`}
+          description={t`These use their own sign-in.`}
+          searchIds={['accounts.list']}
+          testId="settings-card-accounts-more"
+          headerAction={(
+            <KebabMenu
+              label={t`Add account`}
+              labelShown
+              icon={(
+                <>
+                  <Plus size={13} aria-hidden="true" />
+                  <Trans>Add account</Trans>
+                  <ChevronDown size={12} aria-hidden="true" />
+                </>
+              )}
+              triggerClassName={ADD_ACCOUNT_BUTTON_CLASS}
+              triggerTestId="accounts-add-more"
+              menuTestId="accounts-add-more-menu"
+            >
+              {(close) => moreCards.map((card) => (
+                <KebabMenuItem
+                  key={card.agent}
+                  icon={<AgentLogo agent={card.agent} size={14} />}
+                  label={agentDisplayName(card.agent)}
+                  onClick={() => { close(); void addAccount(card); }}
+                  data-testid={`accounts-add-${card.agent}`}
+                />
+              ))}
+            </KebabMenu>
+          )}
+        >
+          {moreCards.map((card) => (
+            <CardTile key={card.agent} className="flex items-center gap-2.5" testId={`accounts-more-${card.agent}`}>
+              <span className="flex flex-shrink-0 text-fg-secondary"><AgentLogo agent={card.agent} size={14} /></span>
+              <span className="min-w-0 truncate text-xs font-medium text-fg">{agentDisplayName(card.agent)}</span>
+            </CardTile>
+          ))}
+        </SettingsCard>
+      ) : null}
 
       {loaded && cards.length === 0 ? (
         <SettingsCard

@@ -36,7 +36,14 @@ export function formatResetTime(epochSeconds: number): string {
   return i18n._(msg`Resets ${resetMoment}`);
 }
 
-/** The same moment with no verb, for a column a reset icon already heads: "2h 10m", "Nov 12, 10:00 AM". */
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * How long until the moment, with no verb, for a column a reset icon already heads: "41m",
+ * "2h 10m", "1d 4h". Always a countdown (task #1064), so rows compare at a glance and, in
+ * Automatic order, rise down the list; the date is in the tip (`formatResetTime`).
+ */
 export function formatResetMoment(epochSeconds: number, nowMs: number): string {
   const ms = epochSeconds * 1000 - nowMs;
   if (ms <= 0) return i18n._(msg({ message: 'now', context: 'when a usage window resets' }));
@@ -46,8 +53,13 @@ export function formatResetMoment(epochSeconds: number, nowMs: number): string {
     const minutes = Math.max(1, Math.floor(ms / 60_000));
     return i18n._(msg`${minutes}m`);
   }
-  if (ms < 24 * 60 * 60 * 1000) return formatDuration(ms);
-  return formatMonthDayTime(epochSeconds * 1000);
+  // Whole minutes, rounded down as above: formatDuration rounds to the second, which would read
+  // the last half second before a day as "24h 0m".
+  if (ms < DAY_MS) return formatDuration(Math.floor(ms / 60_000) * 60_000);
+  // From a day up, days and whole hours: "1d 4h", or "3d" on the hour.
+  const days = Math.floor(ms / DAY_MS);
+  const hours = Math.floor((ms % DAY_MS) / HOUR_MS);
+  return hours > 0 ? i18n._(msg`${days}d ${hours}h`) : i18n._(msg`${days}d`);
 }
 
 /**

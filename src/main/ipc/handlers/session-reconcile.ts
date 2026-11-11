@@ -189,6 +189,9 @@ export async function restartSessionForSettingsChange(
           {
             ...resolveSpawnOverrides(updatedTask, updatedLane, project),
             forceFresh: false,
+            // The session restarts where it is. It keeps the permission mode its
+            // conversation was last in unless the column's own mode changed.
+            keepSessionMode: true,
             ...(options.accountId ? { accountId: options.accountId } : {}),
           },
         );

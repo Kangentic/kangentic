@@ -30,6 +30,7 @@ export function PrivacyTab() {
             <li><Trans>Task and project creation counts</Trans></li>
             <li><Trans>Agent session starts, exit codes, and duration</Trans></li>
             <li><Trans>Which features get used, as daily counts (never their content)</Trans></li>
+            <li><Trans>The domain of an artifact link we do not recognise, once (never the rest of the link)</Trans></li>
           </ul>
         </CardTile>
         <CardTile>

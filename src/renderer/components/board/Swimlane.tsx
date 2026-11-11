@@ -7,9 +7,10 @@ import { TaskCard } from './TaskCard';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { SwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
-import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
-import { AutomationGlyph } from './AutomationGlyph';
+import { columnHeaderTip, useColumnAutomationSentence } from './column-automations';
+import { CollapseColumnButton } from './CollapseColumnButton';
+import { LANE_COUNT_ATTRIBUTE, LANE_HEADER_ATTRIBUTE } from './lane-widths';
 import { Tooltip } from '../Tooltip';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
@@ -29,7 +30,9 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
     data: { type: 'swimlane' },
   });
 
-  const widthClass = useColumnWidthClass();
+  // The header's tip: the description, then what runs here. The sentence used
+  // to be a glyph in the header; Collapse took its place (#1056).
+  const headerTip = columnHeaderTip(swimlane.description, useColumnAutomationSentence(swimlane.id));
 
   // Keyed on the ids, not on `tasks`: an edit to one card hands this lane a new
   // array with the same ids, and a new `items` array changes the SortableContext
@@ -59,6 +62,10 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
   // ran square past the curve, under the drop highlight's rounded outline.
   // `clip`, not `hidden`: the lane stays no scroll container, and the
   // fixed-position New Task dialog inside it still escapes the clip.
+  //
+  // `w-full`: the column's width is its wrapper's, set by `KanbanBoard` from
+  // `lane-widths.ts`. An empty column's wrapper is as wide as this lane's
+  // content, which is the header: the task list below holds no card then.
   return (
     // A ghost column says why it is greyed out wherever the pointer rests on it.
     <Tooltip label={isGhost ? t`Removed from team config. Move tasks to continue.` : ''}>
@@ -66,7 +73,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
         data-testid="swimlane"
         data-swimlane-name={swimlane.name}
         data-swimlane-id={swimlane.id}
-        className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg overflow-clip ${
+        className={`w-full h-full flex flex-col rounded-lg overflow-clip ${
           isGhost ? 'opacity-50 border-2 border-dashed border-fg-disabled' : ''
         } ${
           isSystemColumn ? 'ring-1 ring-edge/50' : ''
@@ -84,12 +91,14 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             `cursor-pointer` (already excluded by the cursor check), but the marker is
             load-bearing for its drag-handle child, whose `cursor-grab` would otherwise
             slip past that check and let a click light-dismiss a window. The column's
-            description, when it has one, is the strip's tip. */}
-        <Tooltip label={swimlane.description ?? ''}>
+            description is the strip's tip, with what runs here under it. */}
+        <Tooltip label={headerTip.label} detail={headerTip.detail}>
           <div
             className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer select-none"
             onClick={() => openBoardManager(swimlane.id)}
             data-no-dismiss
+            data-testid="swimlane-header"
+            {...{ [LANE_HEADER_ATTRIBUTE]: '' }}
           >
             {/* Drag handle for custom columns */}
             {isDraggable && (
@@ -117,17 +126,20 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             <SwimlaneIcon swimlane={swimlane} size={16} dotClassName="w-2.5 h-2.5 rounded-full flex-shrink-0" />
 
             {/* Column name, then its task count right after it. The pair takes
-                the free width, so the glyph and edit button stay on the right. */}
+                the free width, so Collapse and the edit button stay on the right. */}
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <span className={`text-sm font-medium truncate min-w-0 ${
                 isSystemColumn ? 'text-fg' : 'text-fg-secondary'
               }`}>
                 {swimlane.name}
               </span>
-              <CountBadge count={tasks.length} variant="tinted" size="pill" className="shrink-0 text-fg-muted" testId="swimlane-task-count" />
+              {/* `contents`: the marker adds no box, so the badge is still the row's own item. */}
+              <span className="contents" {...{ [LANE_COUNT_ATTRIBUTE]: '' }}>
+                <CountBadge count={tasks.length} variant="tinted" size="pill" className="shrink-0 text-fg-muted" testId="swimlane-task-count" />
+              </span>
             </div>
 
-            <AutomationGlyph swimlaneId={swimlane.id} />
+            <CollapseColumnButton swimlaneId={swimlane.id} columnName={columnName} />
 
             <button
               type="button"

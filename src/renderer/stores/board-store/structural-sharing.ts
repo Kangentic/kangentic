@@ -169,7 +169,23 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
   ) return false;
 
   return sameStrings(previous.labels ?? [], next.labels ?? [])
-    && sameStrings(previous.skipped_swimlane_ids ?? [], next.skipped_swimlane_ids ?? []);
+    && sameStrings(previous.skipped_swimlane_ids ?? [], next.skipped_swimlane_ids ?? [])
+    && sameArtifacts(previous.artifacts ?? [], next.artifacts ?? []);
+}
+
+/**
+ * A task's artifacts, row by row. An artifact write does not bump
+ * `updated_at`, so nothing else here would notice one arriving, and the card
+ * would keep drawing the old list.
+ */
+function sameArtifacts(previous: Task['artifacts'], next: Task['artifacts']): boolean {
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    const before = previous[index];
+    const after = next[index];
+    if (before.url !== after.url || before.name !== after.name || before.source !== after.source || before.added_at !== after.added_at) return false;
+  }
+  return true;
 }
 
 function sameStrings(previous: readonly string[], next: readonly string[]): boolean {

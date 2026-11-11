@@ -47,7 +47,6 @@ export type KeyScope =
   | 'browser-pane' // BrowserPane visible inside a task dialog
   | 'terminal' // xterm-owned combos; display-only
   | 'terminal-focused' // focus inside one terminal's pane (capture phase, deliberately does NOT overlap 'global' - see terminal.find)
-  | 'terminal-link' // a modifier held with a click on a terminal link; only the link actions use it
   | 'dialog' // generic dialog-local keys (Escape dismissal, the save key)
   | 'conversation'; // a focused Conversation viewer window (capture phase, deliberately does NOT overlap 'global' - see conversation.find)
 
@@ -103,10 +102,6 @@ export interface KeybindingDefinition {
   hidden?: boolean;
   /** Only listed/active when the developer overlay flag is enabled. */
   devOnly?: boolean;
-  /** `'click'`: bound to modifiers held with a left click (`Mod+Mouse:Left`), never
-   *  to a key. The rebind field takes only that, and no `useKeybinding` listens:
-   *  the terminal's link handler reads the combo when a link is clicked. */
-  input?: 'click';
 }
 
 /**
@@ -773,31 +768,12 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Mod+F',
     rebindable: true,
   },
-  // The two ways to open a link printed in a terminal. Swapping their combos swaps
-  // which one a plain Ctrl+click does, and the link's tip lists both, the one with
-  // fewer modifiers first. A terminal with no Kangentic browser beside it (the
-  // bottom panel, a project with the Browser pane off) opens the default browser
-  // on either. Read in `terminal-links/link-actions.ts`.
-  {
-    id: 'terminal.openLinkInDefaultBrowser',
-    label: msg`Open link in default browser`,
-    description: msg`Hold these keys and click a link in a terminal to open it in your default browser.`,
-    group: 'Terminal',
-    scope: 'terminal-link',
-    defaultCombo: 'Mod+Mouse:Left',
-    rebindable: true,
-    input: 'click',
-  },
-  {
-    id: 'terminal.openLinkInKangenticBrowser',
-    label: msg`Open link in Kangentic browser`,
-    description: msg`Hold these keys and click a link in a terminal to open it in the browser beside that terminal.`,
-    group: 'Terminal',
-    scope: 'terminal-link',
-    defaultCombo: 'Mod+Shift+Mouse:Left',
-    rebindable: true,
-    input: 'click',
-  },
+  // A click on a link is not a hotkey. A plain click opens the browser the
+  // "Click opens links in" setting names and Ctrl or Cmd click opens the other
+  // (`renderer/utils/link-open.ts`), so there is nothing here to rebind. The two
+  // link hotkeys this list once held (`terminal.openLinkInDefaultBrowser`,
+  // `terminal.openLinkInKangenticBrowser`) are gone; an override saved for
+  // either names no action and is ignored.
 
   // ── Developer ──
   {
@@ -848,8 +824,8 @@ function normalizeMainKey(key: string): string {
  * or a single mouse button, written as `Mouse:<Button>`. Only the three buttons
  * a user can reasonably bind without losing primary interaction are supported:
  * the middle button and the two side buttons. Left (DOM button 0) and right
- * (DOM button 2) are deliberately never bindable here. Left takes part only with
- * a modifier held, for a terminal link click ({@link CLICK_TOKEN}).
+ * (DOM button 2) are deliberately never bindable here. Left shows only in a
+ * tip's key chips, for a click on a link ({@link CLICK_TOKEN}).
  *
  * The map values are DOM `MouseEvent.button` codes: middle = 1, back = 3,
  * forward = 4.
@@ -875,18 +851,12 @@ export function mouseComboTokens(combo: string): string[] {
 }
 
 /**
- * The left button, which a binding uses only with a modifier held
- * (`Mod+Mouse:Left`): a click on a terminal link. Never bare, and never in a
- * {@link isMouseCombo} chord, so primary clicks stay the app's.
+ * The left button, as a tip draws it: a click on a link (`Mouse:Left`), or one
+ * with Ctrl or Cmd held (`Mod+Mouse:Left`). Never a binding: no action in
+ * `KEYBINDINGS` uses it, so primary clicks stay the app's. See
+ * `renderer/utils/link-open.ts`.
  */
 export const CLICK_TOKEN = 'Mouse:Left';
-
-/** Whether a combo is one or more modifiers held with a left click (`Mod+Shift+Mouse:Left`). */
-export function isModifiedClickCombo(combo: string): boolean {
-  const parts = combo.split('+');
-  if (parts.length < 2 || parts[parts.length - 1] !== CLICK_TOKEN) return false;
-  return parts.slice(0, -1).every((part) => MODIFIER_TOKENS.some((token) => token.toLowerCase() === part.toLowerCase()));
-}
 
 /** The DOM `MouseEvent.button` code a mouse combo targets, or `null` if the combo
  *  is not a recognized mouse binding. */
@@ -1055,7 +1025,7 @@ export function detectConflicts(
  */
 export function comboToAccelerator(combo: string): string | null {
   // Mouse buttons are never OS global shortcuts; skip the accelerator probe.
-  if (combo === '' || isMouseCombo(combo) || isModifiedClickCombo(combo)) return null;
+  if (combo === '' || isMouseCombo(combo)) return null;
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1).map((modifier) => modifier.toLowerCase());

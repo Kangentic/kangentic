@@ -5,6 +5,7 @@ description: "How Sentry runs in main and the renderer: path scrubbing, ignoreEr
 tags: [sentry, crashes, breadcrumbs, scrubbing]
 sources:
   - resource: src/main/analytics/error-reporting.ts
+  - resource: src/main/artifacts/artifact-domain-report.ts
   - resource: src/renderer/error-reporting.ts
   - resource: src/shared/sentry-data-collection.ts
   - resource: src/shared/sentry-breadcrumbs.ts
@@ -337,6 +338,21 @@ in one Sentry org, one triage surface.
 
 ## Handled errors and event context
 
+- **One report is not an error: an unrecognised artifact domain** (`reportHandledMessage`, level
+  `info`). A task keeps links to its designs and documents
+  ([Artifacts](../integrations/artifacts.md)), and Kangentic recognises a fixed list of platforms.
+  When a person or an agent adds a link on any other site, main reports that site's domain so the
+  list grows from what is used (`src/main/artifacts/artifact-domain-report.ts`). The event carries
+  two tags, `artifact_domain` and `artifact_source` (`user` or `agent`), and is fingerprinted per
+  domain, so Sentry holds one issue per site. The domain is the link's whole host name, subdomains
+  included (`wiki.example.com`), without a leading `www.`. Nothing else of the link is sent: no
+  path, no query, no fragment, no name, no task. A host that only means something inside a private
+  network is never sent (`isPrivateHost`: `localhost`, a bare name, an IP address, and the `.local`,
+  `.localhost`, `.internal`, `.intranet`, `.lan`, `.home`, `.home.arpa`, `.corp`, `.test`,
+  `.example` and `.invalid` suffixes). Each install reports a
+  domain once and at most 100 domains, remembered in `analytics-usage.json`, and nothing is sent
+  while error reporting is off. A company's own public domain can still name that company, which is
+  the cost of this report, and why Settings > Privacy lists it under what is collected.
 - **Boundary-caught errors** never reach the SDK's global handlers (React swallows them), so
   all three error boundaries hand the real `Error` to `captureException` explicitly. Two of them
   also keep the existing Aptabase funnel (`ErrorBoundary` as `boundary: 'root'`,

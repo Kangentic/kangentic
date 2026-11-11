@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-TW\n"
 
+#: src/shared/task-artifacts.ts
+msgid "{baseName}, frame {frame}"
+msgstr ""
+
 #: src/shared/workflow-refusals.ts
 msgid "{blockedLabel} already waits for {blockerLabel}."
 msgstr "{blockedLabel} 已在等待 {blockerLabel}。"
@@ -330,6 +334,10 @@ msgid "Empty until the task has a worktree."
 msgstr "任務有工作樹之前為空白。"
 
 #: src/shared/task-template-vars.ts
+msgid "Empty until the task has an artifact."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "任務連結到追蹤議題之前為空白。"
 
@@ -412,14 +420,6 @@ msgstr "前往上一個執行中的代理程式或命令終端機的終端機，
 msgctxt "automation field"
 msgid "Headers"
 msgstr "標頭"
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
-msgstr ""
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in your default browser."
-msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Hold to dictate; release to populate the focused terminal or text field."
@@ -705,14 +705,6 @@ msgstr "未完成"
 #: src/shared/keybindings.ts
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "在焦點所在的對話視窗中開啟檢視器內搜尋。"
-
-#: src/shared/keybindings.ts
-msgid "Open link in default browser"
-msgstr ""
-
-#: src/shared/keybindings.ts
-msgid "Open link in Kangentic browser"
-msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Open or close the command terminal overlay."
@@ -1156,6 +1148,10 @@ msgstr "此任務位於「待辦」。"
 #: src/shared/task-template-vars.ts
 msgid "The task's #N, the number people say out loud."
 msgstr "任務的 #N，也就是大家口頭說的編號。"
+
+#: src/shared/task-template-vars.ts
+msgid "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
+msgstr ""
 
 #: src/shared/task-template-vars.ts
 msgid "The task's labels, comma-separated."

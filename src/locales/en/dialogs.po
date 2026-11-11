@@ -408,6 +408,11 @@ msgctxt "task status"
 msgid "Archived"
 msgstr "Archived"
 
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Artifacts"
+msgstr "Artifacts"
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgctxt "plan approval"
 msgid "Automatic"
@@ -1858,14 +1863,6 @@ msgstr "Open in new window"
 msgid "Open on {providerName}"
 msgstr "Open on {providerName}"
 
-#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-msgid "Open PR #{prNumber}"
-msgstr "Open PR #{prNumber}"
-
-#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-msgid "Open PR #{prNumber} ({prLabel})"
-msgstr "Open PR #{prNumber} ({prLabel})"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Open project folder"
 msgstr "Open project folder"
@@ -1989,6 +1986,7 @@ msgstr "Plan approval is shared by every profile. Switch to Default to change it
 msgid "Pop out of tiling"
 msgstr "Pop out of tiling"
 
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "PR #{prNumber}"
 msgstr "PR #{prNumber}"
@@ -2044,6 +2042,7 @@ msgid "Project relocated"
 msgstr "Project relocated"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Pull request"
 msgstr "Pull request"
 
@@ -2051,10 +2050,6 @@ msgstr "Pull request"
 msgctxt "completed task metric"
 msgid "Pull request"
 msgstr "Pull request"
-
-#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
-msgid "Pull Request"
-msgstr "Pull Request"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "Queued"

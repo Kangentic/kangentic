@@ -18,7 +18,7 @@ import {
   type LinkTipTerminal,
 } from '../../src/renderer/utils/terminal-links/link-tip';
 import { TOOLTIP_DWELL_MS, resetTipStateForTests } from '../../src/renderer/utils/tooltip';
-import { planLinkActions } from '../../src/renderer/utils/terminal-links/link-actions';
+import { planLinkActions } from '../../src/renderer/utils/link-open';
 import { readRangeText } from '../../src/renderer/utils/terminal-links/buffer-line-text';
 
 /** 40 by 10 cells of 8 by 16 pixels, with the screen's top left corner at (100, 50). */
@@ -68,27 +68,42 @@ describe('linkRowAnchor', () => {
 });
 
 describe('linkTipContent', () => {
-  const BOTH = planLinkActions({ 'default-browser': 'Mod+Mouse:Left', 'kangentic-browser': 'Mod+Shift+Mouse:Left' }, true, false).actions;
+  const BOTH = planLinkActions('default', true, false).actions;
+  const SWAPPED = planLinkActions('kangentic', true, false).actions;
+  const NO_KANGENTIC_BROWSER = planLinkActions('default', false, false).actions;
 
-  it('lists a URL\'s two actions, plainer click first, with their chips', () => {
+  it('lists a URL\'s two actions, the plain click first, with their chips', () => {
     expect(linkTipContent('url', BOTH, null, false)).toEqual({
       destination: null,
       rows: [
-        { label: 'Open in default browser', keys: ['Ctrl', 'Click'], target: 'default-browser' },
-        { label: 'Open in Kangentic browser', keys: ['Ctrl', 'Shift', 'Click'], target: 'kangentic-browser' },
+        { label: 'Open in default browser', keys: ['Click'], target: 'default-browser' },
+        { label: 'Open in Kangentic browser', keys: ['Ctrl', 'Click'], target: 'kangentic-browser' },
       ],
     });
   });
 
-  it('draws the Mac glyphs on a Mac, where Ctrl+click is a right click', () => {
-    expect(linkTipContent('url', BOTH, null, true)?.rows.map((row) => row.keys)).toEqual([['⌘', 'Click'], ['⌘', '⇧', 'Click']]);
+  it('swaps the rows when the setting names the Kangentic browser', () => {
+    expect(linkTipContent('url', SWAPPED, null, false)?.rows).toEqual([
+      { label: 'Open in Kangentic browser', keys: ['Click'], target: 'kangentic-browser' },
+      { label: 'Open in default browser', keys: ['Ctrl', 'Click'], target: 'default-browser' },
+    ]);
   });
 
-  it('shows a path in its folder on Ctrl+click, whatever the link hotkeys are', () => {
+  it('shows one row where there is no Kangentic browser', () => {
+    expect(linkTipContent('url', NO_KANGENTIC_BROWSER, null, false)?.rows).toEqual([
+      { label: 'Open in default browser', keys: ['Click'], target: 'default-browser' },
+    ]);
+  });
+
+  it('draws the Mac glyph on a Mac, where Ctrl+click is a right click', () => {
+    expect(linkTipContent('url', BOTH, null, true)?.rows.map((row) => row.keys)).toEqual([['Click'], ['⌘', 'Click']]);
+  });
+
+  it('shows a path in its folder on Ctrl+click, whatever the link actions are', () => {
     expect(linkTipContent('path', [], null, false)).toEqual({ destination: null, rows: [{ label: 'Show in folder', keys: ['Ctrl', 'Click'] }] });
   });
 
-  it('carries the destination it is given, and says nothing for a URL with no hotkey bound', () => {
+  it('carries the destination it is given, and says nothing for a URL with no action', () => {
     expect(linkTipContent('url', BOTH, 'https://claude.ai/artifact/abc', false)?.destination).toBe('https://claude.ai/artifact/abc');
     expect(linkTipContent('url', [], null, false)).toBeNull();
   });
@@ -146,7 +161,7 @@ function hoverOf(osc8Uri?: string): LinkHover {
   return { event: { clientY: 5 }, range: { start: { x: 1, y: 1 }, end: { x: 4, y: 1 } }, kind: 'url', osc8Uri };
 }
 
-const ONE_ROW: LinkTipContent = { destination: null, rows: [{ label: 'Open in default browser', keys: ['Ctrl', 'Click'], target: 'default-browser' }] };
+const ONE_ROW: LinkTipContent = { destination: null, rows: [{ label: 'Open in default browser', keys: ['Click'], target: 'default-browser' }] };
 
 describe('createTerminalLinkTip', () => {
   beforeEach(() => {

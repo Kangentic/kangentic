@@ -7,6 +7,7 @@ import type { Task, BacklogTask, ValueLocation } from '../../../shared/types';
 import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { taskKnowledgeFor } from './task-knowledge-lines';
+import { formatArtifactLines } from './artifact-params';
 import { sliceKeepingPairs } from '../shared/slice-keeping-pairs';
 import { agentPathsOf, type AgentPaths } from '../../remote/host-paths';
 
@@ -62,6 +63,15 @@ export function taskDescriptionLines(task: Pick<Task, 'description'>, maxChars: 
   const lines = ['  Description:', ...shown.split('\n').map((line) => `    ${line}`.trimEnd())];
   if (shown.length < description.length) lines.push(`    ... (${description.length - shown.length} more characters not shown)`);
   return lines;
+}
+
+/**
+ * A task's artifacts under its line: each link with its name, its platform and
+ * who added it. Nothing for a task with none.
+ */
+export function taskArtifactLines(task: Pick<Task, 'artifacts'>): string[] {
+  const lines = formatArtifactLines(task.artifacts ?? []);
+  return lines.length === 0 ? [] : ['  Artifacts:', ...lines.map((line) => `    ${line}`)];
 }
 
 export type SearchScope = 'board' | 'backlog' | 'both';
@@ -301,7 +311,7 @@ export const handleFindTask: CommandHandler = async (
     const descriptionChars = descriptionCharsFor(taskMatches.length);
     const lines = taskMatches.map((task) => {
       const column = task.archived_at !== null ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown');
-      return [taskLine(task, column, paths), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
+      return [taskLine(task, column, paths), ...taskDescriptionLines(task, descriptionChars), ...taskArtifactLines(task), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
     });
     sections.push(lines.join('\n'));
   }
@@ -332,6 +342,7 @@ export const handleFindTask: CommandHandler = async (
         ...worktreeFields(task, paths),
         prNumber: task.pr_number,
         prUrl: task.pr_url,
+        artifacts: task.artifacts,
         useWorktree: task.use_worktree,
         automationsDisabled: task.automations_disabled,
         status: task.archived_at ? 'completed' : 'active',
@@ -437,6 +448,7 @@ export const handleGetCurrentTask: CommandHandler = async (
     ...worktreeFields(task, paths),
     prNumber: task.pr_number,
     prUrl: task.pr_url,
+    artifacts: task.artifacts,
     useWorktree: task.use_worktree,
     automationsDisabled: task.automations_disabled,
     status: task.archived_at ? 'completed' : 'active',
@@ -466,7 +478,7 @@ export const handleGetCurrentTask: CommandHandler = async (
   const columnOf = (task: Task): string => (task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown'));
   const descriptionChars = descriptionCharsFor(matches.length);
   const blockOf = (task: Task): string =>
-    [taskLine(task, columnOf(task), paths), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
+    [taskLine(task, columnOf(task), paths), ...taskDescriptionLines(task, descriptionChars), ...taskArtifactLines(task), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
   const withKnowledge = (task: Task) => ({ ...toData(task), knowledge: knowledge.knowledgeByTask.get(task.id) ?? null });
   const notes = knowledge.notes.length > 0 ? `\n${knowledge.notes.join('\n')}` : '';
 

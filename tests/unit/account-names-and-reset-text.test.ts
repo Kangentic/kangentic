@@ -56,6 +56,7 @@ function makeCard(accounts: AgentAccount[]): AgentAccountsCard {
     accounts,
     activeAccountId: null,
     reportsUsage: true,
+    usageWindows: [],
     signInIsInteractive: false,
     switchMovesSessions: true,
     overrides: [],
@@ -140,12 +141,21 @@ describe('formatResetMoment', () => {
     expect(formatResetMoment(epochSeconds(2 * HOUR_MS + 10 * MINUTE_MS), NOW)).toBe('2h 10m');
   });
 
-  it('reads a date from a day up', () => {
-    vi.useFakeTimers({ now: NOW });
-    const text = formatResetMoment(epochSeconds(3 * DAY_MS), NOW);
-    expect(text).toContain('Nov');
-    expect(text).toContain('12');
-    expect(text).not.toMatch(/\dh \d+m$/u);
+  it('counts days and whole hours from a day up, never a date (task #1064)', () => {
+    expect(formatResetMoment(epochSeconds(DAY_MS + 4 * HOUR_MS + 30 * MINUTE_MS), NOW)).toBe('1d 4h');
+    expect(formatResetMoment(epochSeconds(3 * DAY_MS), NOW)).toBe('3d');
+    expect(formatResetMoment(epochSeconds(6 * DAY_MS + 15 * HOUR_MS), NOW)).not.toContain('Nov');
+  });
+
+  it('reads 23h 59m just under a day, and 1d from a day', () => {
+    expect(formatResetMoment(epochSeconds(DAY_MS - MINUTE_MS), NOW)).toBe('23h 59m');
+    expect(formatResetMoment(epochSeconds(DAY_MS), NOW)).toBe('1d');
+  });
+
+  it('reads 23h 59m at 23h 59m 59.6s, never 24h 0m', () => {
+    // A fractional epoch: the reset is 400 ms short of a day, which rounding to the second would call 24h 0m.
+    const justUnderADay = (NOW + DAY_MS - 400) / 1000;
+    expect(formatResetMoment(justUnderADay, NOW)).toBe('23h 59m');
   });
 });
 

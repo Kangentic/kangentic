@@ -93,7 +93,13 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
     [conflicts],
   );
 
-  const customCount = Object.keys(overrides).length;
+  // Only overrides that name a hotkey: one saved for an action that is gone
+  // (the two link-click hotkeys) binds nothing, and counting it would offer a
+  // Reset with nothing on the page to reset.
+  const customCount = useMemo(
+    () => Object.keys(overrides).filter((id) => KEYBINDINGS.some((definition) => definition.id === id)).length,
+    [overrides],
+  );
 
   // Probe whether the current effective combos are already owned by the OS or
   // another app. Runs when the tab mounts (so a binding that silently stopped

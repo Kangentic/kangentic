@@ -48,6 +48,10 @@ msgstr "{count, plural, other {# 個子代理作用中}}"
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, other {# 個工具執行中}}"
 
+#: src/renderer/components/board/CollapsedLane.tsx
+msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
+msgstr ""
+
 #: src/renderer/components/board/HostDegradedStrip.tsx
 #, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
@@ -57,31 +61,31 @@ msgstr "無法連線至 {hostName}。其代理程式仍在執行。"
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, other {工作流程，# 個執行中}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，離開時 {exitCount} 項}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，輪次結束時 {turnEndCount} 項，離開時 {exitCount} 項}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，輪次結束時 {turnEndCount} 項}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：離開時 {exitCount} 項}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：輪次結束時 {turnEndCount} 項，離開時 {exitCount} 項}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：輪次結束時 {turnEndCount} 項}}"
 
@@ -186,6 +190,14 @@ msgstr "偵測到「未知專案」的 kangentic.json 有變更。要套用更�
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
 msgstr "偵測到 kangentic.json 有變更。要套用更新後的看板設定嗎？"
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse {columnName} column"
+msgstr ""
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse column"
+msgstr ""
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 msgid "Column automations don't run for this task. Resume them from the card's menu."

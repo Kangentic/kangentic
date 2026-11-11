@@ -57,6 +57,10 @@ msgstr "{count, plural, one {# активный субагент} few {# акт�
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# инструмент в работе} few {# инструмента в работе} many {# инструментов в работе} other {# инструмента в работе}}"
 
+#: src/renderer/components/board/CollapsedLane.tsx
+msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
+msgstr ""
+
 #: src/renderer/components/board/HostDegradedStrip.tsx
 #, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
@@ -67,37 +71,37 @@ msgstr "Хост {hostName} недоступен. Его агенты продо
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, one {Рабочие процессы, выполняется: #} few {Рабочие процессы, выполняется: #} many {Рабочие процессы, выполняется: #} other {Рабочие процессы, выполняется: #}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
 msgstr "{total, plural, one {Здесь выполняется # автоматизация: {enterCount} при входе, {exitCount} при выходе} few {Здесь выполняются # автоматизации: {enterCount} при входе, {exitCount} при выходе} many {Здесь выполняется # автоматизаций: {enterCount} при входе, {exitCount} при выходе} other {Здесь выполняется # автоматизации: {enterCount} при входе, {exitCount} при выходе}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {Здесь выполняется # автоматизация: {enterCount} при входе, {turnEndCount} в конце хода, {exitCount} при выходе} few {Здесь выполняются # автоматизации: {enterCount} при входе, {turnEndCount} в конце хода, {exitCount} при выходе} many {Здесь выполняется # автоматизаций: {enterCount} при входе, {turnEndCount} в конце хода, {exitCount} при выходе} other {Здесь выполняется # автоматизации: {enterCount} при входе, {turnEndCount} в конце хода, {exitCount} при выходе}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {Здесь выполняется # автоматизация: {enterCount} при входе, {turnEndCount} в конце хода} few {Здесь выполняются # автоматизации: {enterCount} при входе, {turnEndCount} в конце хода} many {Здесь выполняется # автоматизаций: {enterCount} при входе, {turnEndCount} в конце хода} other {Здесь выполняется # автоматизации: {enterCount} при входе, {turnEndCount} в конце хода}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
 msgstr "{total, plural, one {Здесь выполняется # автоматизация: {enterCount} при входе} few {Здесь выполняются # автоматизации: {enterCount} при входе} many {Здесь выполняется # автоматизаций: {enterCount} при входе} other {Здесь выполняется # автоматизации: {enterCount} при входе}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
 msgstr "{total, plural, one {Здесь выполняется # автоматизация: {exitCount} при выходе} few {Здесь выполняются # автоматизации: {exitCount} при выходе} many {Здесь выполняется # автоматизаций: {exitCount} при выходе} other {Здесь выполняется # автоматизации: {exitCount} при выходе}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {Здесь выполняется # автоматизация: {turnEndCount} в конце хода, {exitCount} при выходе} few {Здесь выполняются # автоматизации: {turnEndCount} в конце хода, {exitCount} при выходе} many {Здесь выполняется # автоматизаций: {turnEndCount} в конце хода, {exitCount} при выходе} other {Здесь выполняется # автоматизации: {turnEndCount} в конце хода, {exitCount} при выходе}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {Здесь выполняется # автоматизация: {turnEndCount} в конце хода} few {Здесь выполняются # автоматизации: {turnEndCount} в конце хода} many {Здесь выполняется # автоматизаций: {turnEndCount} в конце хода} other {Здесь выполняется # автоматизации: {turnEndCount} в конце хода}}"
@@ -227,6 +231,14 @@ msgstr "Обнаружены изменения в kangentic.json для «Не�
 #, fuzzy
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
 msgstr "Обнаружены изменения в kangentic.json. Применить обновлённую конфигурацию доски?"
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse {columnName} column"
+msgstr ""
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse column"
+msgstr ""
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy

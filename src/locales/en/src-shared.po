@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/shared/task-artifacts.ts
+msgid "{baseName}, frame {frame}"
+msgstr "{baseName}, frame {frame}"
+
 #: src/shared/workflow-refusals.ts
 msgid "{blockedLabel} already waits for {blockerLabel}."
 msgstr "{blockedLabel} already waits for {blockerLabel}."
@@ -329,6 +333,10 @@ msgid "Empty until the task has a worktree."
 msgstr "Empty until the task has a worktree."
 
 #: src/shared/task-template-vars.ts
+msgid "Empty until the task has an artifact."
+msgstr "Empty until the task has an artifact."
+
+#: src/shared/task-template-vars.ts
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "Empty until the task is linked to a tracker issue."
 
@@ -407,14 +415,6 @@ msgstr "Go to the previous running agent or Command Terminal terminal, switching
 msgctxt "automation field"
 msgid "Headers"
 msgstr "Headers"
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
-msgstr "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
-
-#: src/shared/keybindings.ts
-msgid "Hold these keys and click a link in a terminal to open it in your default browser."
-msgstr "Hold these keys and click a link in a terminal to open it in your default browser."
 
 #: src/shared/keybindings.ts
 msgid "Hold to dictate; release to populate the focused terminal or text field."
@@ -695,14 +695,6 @@ msgstr "Open"
 #: src/shared/keybindings.ts
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Open in-viewer search inside the focused Conversation window."
-
-#: src/shared/keybindings.ts
-msgid "Open link in default browser"
-msgstr "Open link in default browser"
-
-#: src/shared/keybindings.ts
-msgid "Open link in Kangentic browser"
-msgstr "Open link in Kangentic browser"
 
 #: src/shared/keybindings.ts
 msgid "Open or close the command terminal overlay."
@@ -1139,6 +1131,10 @@ msgstr "The task is in To Do."
 #: src/shared/task-template-vars.ts
 msgid "The task's #N, the number people say out loud."
 msgstr "The task's #N, the number people say out loud."
+
+#: src/shared/task-template-vars.ts
+msgid "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
+msgstr "The task's artifact links, one per line with its name. '{{task_xml}}' already includes them."
 
 #: src/shared/task-template-vars.ts
 msgid "The task's labels, comma-separated."

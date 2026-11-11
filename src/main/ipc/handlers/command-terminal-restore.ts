@@ -181,21 +181,27 @@ export function skipCommandTerminalRestore(context: IpcContext, projectId: strin
 /**
  * Resolves once the launch's restore and any pty host crash's restore are over,
  * or at the ceiling. Never rejects.
+ *
+ * The answer says which: true when the restores are over, false when the
+ * ceiling came first and one is still running. A caller that only needs to stop
+ * waiting ignores it. The panel's reopen after a restart reads it, because "over
+ * with nothing back" and "still coming" called for opposite things and looked
+ * the same: a restore slower than the ceiling had its panel left shut and the
+ * record of it erased, with the terminals back a moment later.
  */
-export async function waitForCommandTerminalRestore(context: IpcContext, projectId: string): Promise<void> {
+export async function waitForCommandTerminalRestore(context: IpcContext, projectId: string): Promise<boolean> {
   claimCommandTerminalRestore(context, projectId);
   const pass = passesOf(context).get(projectId);
-  if (!pass) return;
+  if (!pass) return true;
   let ceiling: ReturnType<typeof setTimeout> | undefined;
-  const reachedCeiling = new Promise<void>((resolve) => {
-    ceiling = setTimeout(resolve, RESTORE_WAIT_CEILING_MS);
+  const reachedCeiling = new Promise<false>((resolve) => {
+    ceiling = setTimeout(() => resolve(false), RESTORE_WAIT_CEILING_MS);
     ceiling.unref?.();
   });
-  await Promise.race([
-    Promise.all([pass.done, lostRestoresOf(context).get(projectId)?.done]),
-    reachedCeiling,
-  ]);
+  const restoresOver = Promise.all([pass.done, lostRestoresOf(context).get(projectId)?.done]).then((): true => true);
+  const over = await Promise.race([restoresOver, reachedCeiling]);
   clearTimeout(ceiling);
+  return over;
 }
 
 /** The project is gone: nothing of its pass carries over to a project re-added at its id. */
@@ -404,7 +410,8 @@ async function restoreConversation(
  */
 export function registerCommandTerminalRestoreHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.COMMAND_TERMINAL_RESTORE_WAIT, async (_, projectId: unknown) => {
-    if (typeof projectId !== 'string' || !context.projectRepo.getById(projectId)) return;
-    await waitForCommandTerminalRestore(context, projectId);
+    // Nothing is coming for a project this instance does not know: over.
+    if (typeof projectId !== 'string' || !context.projectRepo.getById(projectId)) return true;
+    return waitForCommandTerminalRestore(context, projectId);
   });
 }

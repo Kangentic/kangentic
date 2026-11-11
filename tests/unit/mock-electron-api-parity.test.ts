@@ -51,6 +51,8 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import * as ts from 'typescript';
+import { CLAUDE_ACCOUNT_SUPPORT } from '../../src/main/agent/adapters/claude/accounts';
+import { RATE_LIMIT_WINDOWS } from '../../src/main/agent/adapters/claude/status-parser';
 
 const TYPES_PATH = path.resolve(__dirname, '../../src/shared/types.ts');
 const MOCK_ELECTRON_API_PATH = path.resolve(__dirname, '../ui/mock-electron-api.js');
@@ -246,6 +248,30 @@ function resolveOnMock(root: MockObject, memberPath: string): ResolvedMember {
   }
   return { owner, key };
 }
+
+describe('Claude usage windows', () => {
+  const expectedWindows = RATE_LIMIT_WINDOWS.map(({ id, label, iconKind, windowDurationSeconds }) => (
+    { id, label, iconKind, windowDurationSeconds }
+  ));
+
+  it('the Claude adapter declares its two parser windows, five-hour then seven-day', () => {
+    expect(CLAUDE_ACCOUNT_SUPPORT.usageWindows).toEqual(expectedWindows);
+    expect(expectedWindows.map((window) => window.id)).toEqual(['five-hour', 'seven-day']);
+  });
+
+  it('the mock gives a Claude card the same windows, with no seed saying otherwise', async () => {
+    const electronApi = loadMockElectronApi();
+    const accountsApi = electronApi.accounts;
+    if (!isMockObject(accountsApi) || typeof accountsApi.list !== 'function') {
+      throw new Error('mock-electron-api-parity: the mock has no accounts.list().');
+    }
+    const cards: unknown = await accountsApi.list();
+    const claudeCard = Array.isArray(cards)
+      ? cards.find((card: unknown) => isMockObject(card) && card.agent === 'claude')
+      : undefined;
+    expect(isMockObject(claudeCard) ? claudeCard.usageWindows : undefined).toEqual(expectedWindows);
+  });
+});
 
 describe('mock-electron-api implements the whole ElectronAPI interface', () => {
   it('every namespace, method and data property the interface declares exists on the mock', () => {

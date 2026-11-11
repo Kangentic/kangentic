@@ -49,14 +49,14 @@ async function accountCalls(page: Page, name: string): Promise<MockCall[]> {
 }
 
 test.describe('Settings > Accounts', () => {
-  test('one account: its login and usage, no run order, nothing to switch or remove', async () => {
+  test('one account: its login and usage, no switching card, nothing to switch or remove', async () => {
     const { browser, page } = await launchPage();
     try {
       await openAccounts(page);
       const row = page.getByTestId('account-row-account-claude-1');
       await expect(row.getByTestId('account-name')).toHaveText('dev@example.com');
       await expect(row.getByTestId('account-usage-line')).toHaveCount(2);
-      await expect(page.getByTestId('settings-card-accounts-run-order')).toHaveCount(0);
+      await expect(page.getByTestId('settings-card-accounts-switching')).toHaveCount(0);
       await expect(row.getByTestId('account-switch-to')).toHaveCount(0);
       await expect(row.getByTestId('account-menu')).toHaveCount(0);
       await expect(page.getByTestId('accounts-add-claude')).toBeVisible();
@@ -69,17 +69,21 @@ test.describe('Settings > Accounts', () => {
     const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
     try {
       await openAccounts(page);
-      await expect(page.getByTestId('settings-card-accounts-run-order')).toBeVisible();
+      await expect(page.getByTestId('settings-card-accounts-switching')).toBeVisible();
 
       const full = page.getByTestId('account-row-account-1');
       const withRoom = page.getByTestId('account-row-account-2');
       const signedOut = page.getByTestId('account-row-account-3');
-      // At its weekly limit: skipped, and offered no switch it could not honor as the active one.
-      await expect(full.getByTestId('account-place')).toHaveAttribute('data-skipped', '');
+      // At its weekly limit: skipped, and not the active one.
+      await expect(full.locator('[data-skipped]')).toHaveCount(1);
       await expect(full).not.toContainText('Active');
       await expect(withRoom).toContainText('Active');
-      await expect(withRoom.getByTestId('account-place')).not.toHaveAttribute('data-skipped', '');
+      await expect(withRoom.locator('[data-skipped]')).toHaveCount(0);
       await expect(withRoom.getByTestId('account-usage-line')).toHaveCount(2);
+      // The full account reported only its weekly window: its 5h line is still drawn, Not started,
+      // so every row of the agent is one height (task #1064).
+      await expect(full.getByTestId('account-usage-line')).toHaveCount(2);
+      await expect(full.getByTestId('account-usage-not-started')).toHaveText('Not started');
       await expect(signedOut).toContainText('Not signed in');
       await expect(signedOut.getByTestId('account-usage-line')).toHaveCount(0);
       await expect(signedOut.getByTestId('account-switch-to')).toHaveCount(0);
@@ -88,7 +92,26 @@ test.describe('Settings > Accounts', () => {
     }
   });
 
-  test('Switch to moves the account to #1', async () => {
+  test('position is one signal: no numbers, a grip only once the order is Manual, and no outline on the active row', async () => {
+    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
+    try {
+      await openAccounts(page);
+      const card = page.getByTestId('settings-card-accounts-claude');
+      await expect(card.getByTestId('account-place')).toHaveCount(0);
+      // Automatic sorts the list by reset, so nothing is offered to drag.
+      await expect(card.getByTestId('account-grip')).toHaveCount(0);
+      // The Active pill carries the state; the row itself has no outline.
+      const activeRowShadow = await page.getByTestId('account-row-account-2').evaluate((element) => getComputedStyle(element).boxShadow);
+      expect(activeRowShadow).toBe('none');
+
+      await page.getByTestId('accounts-order-mode').getByRole('radio', { name: 'Manual' }).click();
+      await expect(card.getByTestId('account-grip')).toHaveCount(3);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Switch to moves the account to the top', async () => {
     const cards = [{ agent: 'claude', accounts: [
       { id: 'account-1', email: 'one@example.com', plan: 'Max', lastUsage: [sevenDay(20, 3 * DAY)] },
       { id: 'account-2', email: 'two@example.com', plan: 'Max', lastUsage: [sevenDay(30, 2 * DAY)] },
@@ -214,8 +237,8 @@ test.describe('Settings > Accounts', () => {
       await expect(dialog).toHaveCount(0);
       const names = page.getByTestId('settings-card-accounts-claude').getByTestId('account-name');
       await expect(names).toHaveText(['dev@example.com', 'second@example.com']);
-      // Two accounts now, so the run order shows.
-      await expect(page.getByTestId('settings-card-accounts-run-order')).toBeVisible();
+      // Two accounts now, so the switching card shows.
+      await expect(page.getByTestId('settings-card-accounts-switching')).toBeVisible();
     } finally {
       await browser.close();
     }
@@ -228,6 +251,10 @@ test.describe('Settings > Accounts', () => {
     ]) });
     try {
       await openAccounts(page);
+      // Gemini has only its own login and no usage, so it sits on More agents, added from its menu.
+      await expect(page.getByTestId('settings-card-accounts-gemini')).toHaveCount(0);
+      await expect(page.getByTestId('accounts-more-gemini')).toBeVisible();
+      await page.getByTestId('accounts-add-more').click();
       await page.getByTestId('accounts-add-gemini').click();
       await expect(page.getByTestId('account-login-hint')).toHaveText(/^Sign in here, then exit .+ to finish\.$/);
       await page.getByTestId('account-login-close').click();
@@ -291,6 +318,84 @@ test.describe('Settings > Accounts', () => {
       await page.getByTestId('account-login-close').click();
       await expect(page.getByTestId('account-login-dialog')).toHaveCount(0);
       await expect.poll(async () => (await accountCalls(page, 'cancelLogin')).length, { timeout: 3000 }).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the switching card names the agents it applies to, and is absent when only a no-usage agent has two accounts', async () => {
+    const twoClaudeAccounts = [{ agent: 'claude', accounts: [
+      { id: 'account-1', email: 'one@example.com', plan: 'Max', lastUsage: [sevenDay(20, 3 * DAY)] },
+      { id: 'account-2', email: 'two@example.com', plan: 'Max', lastUsage: [sevenDay(30, 2 * DAY)] },
+    ] }];
+    const first = await launchPage({ beforeLoad: seedAccounts(twoClaudeAccounts) });
+    try {
+      await openAccounts(first.page);
+      await expect(first.page.getByTestId('settings-card-accounts-switching'))
+        .toContainText('Applies to agents that report usage: Claude Code.');
+    } finally {
+      await first.browser.close();
+    }
+
+    const keyFileOnly = [
+      { agent: 'claude', accounts: [{ id: 'account-1', email: 'one@example.com', plan: 'Max' }] },
+      { agent: 'droid', kind: 'key-file', reportsUsage: false, accounts: [
+        { id: 'account-d1', kind: 'default' },
+        { id: 'account-d2', kind: 'key-file', keyFilePath: '/mock/work.env', keyNames: ['FACTORY_API_KEY'] },
+      ] },
+    ];
+    const second = await launchPage({ beforeLoad: seedAccounts(keyFileOnly) });
+    try {
+      await openAccounts(second.page);
+      await expect(second.page.getByTestId('account-row-account-d2')).toBeVisible();
+      await expect(second.page.getByTestId('settings-card-accounts-switching')).toHaveCount(0);
+    } finally {
+      await second.browser.close();
+    }
+  });
+
+  test('the add menu trigger on More agents is named by its visible text, with no aria-label and no tip', async () => {
+    const { browser, page } = await launchPage({ beforeLoad: seedAccounts([
+      { agent: 'claude', accounts: [{ id: 'account-1', email: 'one@example.com', plan: 'Max' }] },
+      { agent: 'gemini', reportsUsage: false, accounts: [{ id: 'account-gemini-1' }] },
+    ]) });
+    try {
+      await openAccounts(page);
+      const trigger = page.getByTestId('accounts-add-more');
+      await expect(trigger).toBeVisible();
+      await expect(trigger).not.toHaveAttribute('aria-label', /.*/);
+      await expect(trigger).toHaveAccessibleName('Add account');
+      await trigger.hover();
+      // A tip would only repeat the label (one-tooltip.md), so there is none to wait for.
+      await expect(trigger).toHaveAccessibleDescription('');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Order row shows its description inline, with no info tip', async () => {
+    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
+    try {
+      await openAccounts(page);
+      const row = page.getByTestId('setting-row-accounts.orderMode');
+      await expect(row).toContainText('Automatic puts the soonest reset first.');
+      await expect(row.getByRole('button', { name: /^About / })).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a live usage track says how much of its window has passed', async () => {
+    const cards = [{ agent: 'claude', accounts: [
+      { id: 'account-1', email: 'one@example.com', plan: 'Max', lastUsage: [sevenDay(20, 3 * DAY)] },
+    ] }];
+    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(cards) });
+    try {
+      await openAccounts(page);
+      // 3 of 7 days remain, so 4/7 (57.1%) has passed. Allow one point for the seconds between seed and read.
+      const track = page.getByTestId('account-row-account-1').locator('[data-testid="account-usage-line"] span[aria-description]').first();
+      await track.hover();
+      await expect(track).toHaveAccessibleDescription(/^5[78]% of the window has passed\.$/);
     } finally {
       await browser.close();
     }

@@ -22,17 +22,30 @@ msgstr "{contextLabel} コンテキストウィンドウ"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, other {さらに # 件を表示}}"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d"
+msgstr "{days}日"
+
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d {hours}h"
+msgstr "{days}日{hours}時間"
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+"
-msgstr ""
+msgstr "{limit}+"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+ on screen"
-msgstr ""
+msgstr "画面上 {limit}+ 件"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
-msgstr ""
+msgstr "{lineCount, plural, other {直近 # 行に一致なし}}"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
@@ -50,8 +63,9 @@ msgid "{position} of {total}"
 msgstr "{position} / {total}"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{position} of {total} on screen"
-msgstr ""
+msgstr "画面上 {position} / {total}"
 
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
@@ -64,8 +78,9 @@ msgid "{toolName} interrupted"
 msgstr "{toolName} が中断されました"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{total} on screen"
-msgstr ""
+msgstr "画面上 {total} 件"
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -154,17 +169,19 @@ msgid "Expand terminal panel"
 msgstr "ターミナル パネルを展開"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgctxt "terminal find field"
 msgid "Find"
-msgstr ""
+msgstr "検索"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Find in terminal"
 msgstr ""
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Find on screen"
-msgstr ""
+msgstr "画面内を検索"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
@@ -182,8 +199,9 @@ msgid "Input / output tokens"
 msgstr "入力 / 出力トークン"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Loading conversation"
-msgstr ""
+msgstr "会話を読み込み中"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
@@ -197,8 +215,9 @@ msgid "Model done"
 msgstr "モデル完了"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Newer match"
-msgstr ""
+msgstr "新しい一致"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
@@ -211,8 +230,9 @@ msgid "No activity yet for {filteredLabel}..."
 msgstr "{filteredLabel} のアクティビティはまだありません..."
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "No matches on screen"
-msgstr ""
+msgstr "画面上に一致なし"
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 #, fuzzy
@@ -225,13 +245,15 @@ msgid "Notice"
 msgstr "通知"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
 msgctxt "when a usage window resets"
 msgid "now"
-msgstr ""
+msgstr "まもなく"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Older match"
-msgstr ""
+msgstr "古い一致"
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

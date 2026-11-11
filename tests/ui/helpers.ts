@@ -306,6 +306,8 @@ export interface TransientTerminalSetup {
   launchArgs?: string[];
   /** Seeds the project's Kangentic browser switch (`browser.enabled`). Absent leaves the default, on. */
   browserEnabled?: boolean;
+  /** Seeds the global `linkClickTarget` ("Click opens links in") before the app mounts. Absent leaves it unset, which reads as the default browser. */
+  linkClickTarget?: 'default' | 'kangentic';
 }
 
 /**
@@ -336,6 +338,7 @@ export async function launchWithTransientTerminal(setup: TransientTerminalSetup)
         }));
       });
       ${setup.terminalFontSize === undefined ? '' : `state.config.terminal = Object.assign({}, state.config.terminal, { fontSize: ${JSON.stringify(setup.terminalFontSize)} });`}
+      ${setup.linkClickTarget === undefined ? '' : `state.config.linkClickTarget = ${JSON.stringify(setup.linkClickTarget)};`}
       ${setup.browserEnabled === undefined ? '' : `state.projectConfigs[${JSON.stringify(projectPath)}] = { browser: { enabled: ${JSON.stringify(setup.browserEnabled)} } };`}
       return { currentProjectId: ${JSON.stringify(setup.projectId)} };
     });
