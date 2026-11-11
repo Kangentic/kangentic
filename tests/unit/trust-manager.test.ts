@@ -12,17 +12,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-// Mock os.homedir() to redirect ~/.claude.json to a temp dir
+// Mock os.homedir() to redirect ~/.claude.json to a temp dir. The mock reads a
+// hoisted holder, not `tmpHome`: on macOS src/main/config/paths.ts calls
+// os.homedir() while this file's imports load, before `tmpHome` is initialized,
+// so until beforeEach sets a temp dir the mock answers with the real home.
+const mockHome = vi.hoisted(() => ({ directory: '' }));
 let tmpHome: string;
 vi.mock('node:os', async () => {
   const actual = await vi.importActual<typeof import('node:os')>('node:os');
+  const homedir = (): string => mockHome.directory || actual.homedir();
   return {
     ...actual,
     default: {
       ...actual,
-      homedir: () => tmpHome,
+      homedir,
     },
-    homedir: () => tmpHome,
+    homedir,
   };
 });
 
@@ -549,6 +554,7 @@ function readClaudeJson(): Record<string, unknown> {
 
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'trust-'));
+  mockHome.directory = tmpHome;
 });
 
 afterEach(() => {
