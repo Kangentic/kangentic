@@ -133,8 +133,12 @@ test.describe('BoardManagerDialog', () => {
     // showed half of it under the Icon label.
     await openManagerByHeader('Code Review');
     const field = page.locator('[data-testid="board-manager-description"]');
+    // `offsetHeight`, the laid-out height. A bounding box is scaled by the
+    // dialog's entrance animation, so a first read taken while it was still
+    // growing came back about a pixel short, and the next read looked like a
+    // second row.
     const measure = () => field.evaluate((element: HTMLTextAreaElement) => ({
-      height: element.getBoundingClientRect().height,
+      height: element.offsetHeight,
       lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
       scrolls: element.scrollHeight > element.clientHeight + 1,
     }));

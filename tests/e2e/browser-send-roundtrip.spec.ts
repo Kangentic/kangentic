@@ -45,6 +45,38 @@ async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: str
   await page.waitForTimeout(500);
 }
 
+/**
+ * Wait until the Browser pane's guest answers a script, which needs it attached
+ * and past dom-ready, and which is what Send itself needs.
+ *
+ * The loading cover is not proof the guest is up: BrowserPane lifts it on
+ * dom-ready or on a 2.5s fallback timer, so on a slow runner it lifts before
+ * the guest has attached. Send then runs capturePage() and executeJavaScript()
+ * on an unattached <webview>, which throws. handleSend reports that as a toast
+ * and pastes nothing, and a test learns of it only when its scrollback wait
+ * runs out.
+ */
+async function waitForGuestReady(page: Page): Promise<void> {
+  await expect.poll(
+    () => page.evaluate(async () => {
+      const webview = document.querySelector('[data-testid="browser-pane"] webview') as
+        (HTMLElement & { executeJavaScript?: (code: string) => Promise<unknown> }) | null;
+      if (!webview || typeof webview.executeJavaScript !== 'function') return false;
+      try {
+        const state = await Promise.race([
+          webview.executeJavaScript('document.readyState'),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)),
+        ]);
+        return state === 'complete' || state === 'interactive';
+      } catch {
+        // Thrown synchronously until the guest attaches.
+        return false;
+      }
+    }),
+    { timeout: 20000, intervals: [200, 500, 1000] },
+  ).toBe(true);
+}
+
 test.describe('Claude Agent -- Browser Send round-trip', () => {
   // Windows-only platform limitation: this test asserts the paste content
   // (`<browser_context>` envelope) appears in PTY scrollback, relying on
@@ -90,9 +122,8 @@ test.describe('Claude Agent -- Browser Send round-trip', () => {
     await page.locator('[data-testid="browser-toggle"]').click();
     await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 5000 });
 
-    // Wait for the webview to settle so capturePage() has something to copy.
-    // about:blank is effectively instant but we guard against early Send.
-    await page.waitForTimeout(500);
+    // Wait for the guest, so capturePage() has something to copy.
+    await waitForGuestReady(page);
 
     // Click Send. Dialog has the terminal subscribed via TERMINAL_SUBSCRIBE,
     // so the paste-engine has the session in focusedSessionIds when invoked.
@@ -145,9 +176,7 @@ test.describe('Claude Agent -- Browser Send round-trip', () => {
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
     await page.locator('[data-testid="browser-toggle"]').click();
     await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 5000 });
-    // The loading cover lifts on the guest's first dom-ready, which is also
-    // when the page layer can be drawn.
-    await expect(page.locator('[data-testid="browser-pane-page-loading"]')).toHaveCount(0, { timeout: 10000 });
+    await waitForGuestReady(page);
 
     await page.locator('[data-testid="browser-draw-toggle"]').click();
     const box = await page.locator('[data-testid="browser-overlay"]').boundingBox();
