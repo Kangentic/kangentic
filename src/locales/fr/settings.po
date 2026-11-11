@@ -8,20 +8,24 @@ msgstr ""
 "Language: fr\n"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "{agentName} does not take a key file."
-msgstr ""
+msgstr "{agentName} n'accepte pas de fichier de clés."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "{agentName} runs in WSL here, where it keeps the one login it has."
-msgstr ""
+msgstr "{agentName} s'exécute ici dans WSL, où il conserve son unique connexion."
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "{agentName} sign-in"
-msgstr ""
+msgstr "Connexion à {agentName}"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "{agentName} uses this variable, set where Kangentic started, ahead of any account here."
-msgstr ""
+msgstr "{agentName} utilise cette variable, définie là où Kangentic a démarré, avant tout compte configuré ici."
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #, fuzzy
@@ -94,20 +98,29 @@ msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} Mo"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "{duplicateEmail} is already in the list."
-msgstr ""
+msgstr "{duplicateEmail} est déjà dans la liste."
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
+msgid "{elapsed}% of the window has passed."
+msgstr "{elapsed} % de la fenêtre est écoulé."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "{eventName} desktop notification"
-msgstr ""
+msgstr "Notification de bureau pour {eventName}"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "{eventName} sound: {valueName}"
-msgstr ""
+msgstr "Son {eventName} : {valueName}"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "{eventName} toast"
-msgstr ""
+msgstr "Toast pour {eventName}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -160,12 +173,14 @@ msgid "{toWrite, plural, one {# task} other {# tasks}}"
 msgstr "{toWrite, plural, one {# tâche} many {# tâches} other {# tâches}}"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "<0>{variable}</0> overrides these accounts."
-msgstr ""
+msgstr "<0>{variable}</0> remplace ces comptes."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A browser in task windows for you and your agents."
-msgstr ""
+msgstr "Un navigateur dans les tâches, pour vous et vos agents."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -208,8 +223,9 @@ msgid "A small, fast model is usually enough to read one reply and answer yes or
 msgstr "Un petit modèle rapide suffit généralement pour lire une réponse et répondre par oui ou non."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A toast with a button stays until you close it."
-msgstr ""
+msgstr "Une notification avec un bouton reste affichée jusqu'à sa fermeture."
 
 #: src/renderer/components/settings/settings-card.tsx
 #, fuzzy
@@ -217,22 +233,32 @@ msgid "About {label}"
 msgstr "À propos de {label}"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Account {folderNumber}"
-msgstr ""
+msgstr "Compte {folderNumber}"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Account options"
-msgstr ""
+msgstr "Options du compte"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "Account switching"
+msgstr "Changement de compte"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Accounts"
-msgstr ""
+msgstr "Comptes"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgctxt "the account new sessions start on"
 msgid "Active"
-msgstr ""
+msgstr "Actif"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -240,8 +266,9 @@ msgid "Activity engine debug overlay"
 msgstr "Superposition de débogage du moteur d'activité"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Add account"
-msgstr ""
+msgstr "Ajouter un compte"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
@@ -407,8 +434,9 @@ msgid "App crashes and errors (stack traces with machine-specific paths removed 
 msgstr "Plantages et erreurs de l'app (traces de pile sans les chemins propres à la machine dans le code de l'app)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "App icon badge"
-msgstr ""
+msgstr "Badge de l'icône de l'application"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
@@ -439,6 +467,16 @@ msgstr "Apparaît uniquement dans le menu d'actions du détail de la tâche"
 #, fuzzy
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "S'applique après un redémarrage et ne modifie ni la sortie de l'agent ni le texte du terminal."
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "Applies to agents that report usage: {agentNames}."
+msgstr "S'applique aux agents qui signalent leur utilisation : {agentNames}."
+
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "Applies to agents that report usage."
+msgstr "S'applique aux agents qui signalent leur utilisation."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -502,16 +540,19 @@ msgid "Auto-submit"
 msgstr "Envoi automatique"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Automatic"
-msgstr ""
+msgstr "Automatique"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Automatic runs the account whose longest limit resets soonest first, and Manual keeps your order."
-msgstr ""
+#, fuzzy
+msgid "Automatic puts the soonest reset first."
+msgstr "Automatique : réinitialisation la plus proche d'abord."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automatically switch accounts at the usage limit"
-msgstr ""
+msgstr "Changer automatiquement de compte à la limite d'utilisation"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -652,9 +693,10 @@ msgid "Checking..."
 msgstr "Vérification..."
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Chime"
-msgstr ""
+msgstr "Carillon"
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 #, fuzzy
@@ -702,8 +744,9 @@ msgid "Click empty space outside a task window to close it. Controls, task cards
 msgstr "Cliquez dans un espace vide hors d'une fenêtre de tâche pour la fermer. Les contrôles, les cartes de tâche et les terminaux en cours réagissent toujours au premier clic. L'agent continue de s'exécuter et se rattache quand vous rouvrez la tâche."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Click with modifiers"
-msgstr ""
+msgstr "Clic avec modificateurs"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -889,8 +932,9 @@ msgid "Conversations, tasks, commits, summaries and source code are all rebuilt,
 msgstr "Les conversations, tâches, commits, résumés et le code source sont tous reconstruits, dans chaque projet. {rebuildAsk, plural, one {Le # résumé rédigé avec un modèle antérieur est réécrit} many {Les # de résumés rédigés avec un modèle antérieur sont réécrits} other {Les # résumés rédigés avec un modèle antérieur sont réécrits}}, en environ {rewriteCalls, plural, one {# appel} many {# d'appels} other {# appels}} en arrière-plan."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Cookies and storage the Kangentic browser keeps."
-msgstr ""
+msgstr "Cookies et stockage conservés par le navigateur Kangentic."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -924,8 +968,9 @@ msgid "Copy pairing link"
 msgstr "Copier le lien d'association"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Copy, paste, interrupt and open links in a terminal."
-msgstr ""
+msgstr "Copier, coller, interrompre et ouvrir des liens dans un terminal."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -938,8 +983,9 @@ msgid "Could not start pairing."
 msgstr "Impossible de démarrer l'association."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Couldn't add account"
-msgstr ""
+msgstr "Impossible d'ajouter le compte"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
 #, fuzzy
@@ -967,8 +1013,9 @@ msgid "Couldn't save Stop script"
 msgstr "Impossible d'enregistrer le script d'arrêt"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Couldn't start sign-in"
-msgstr ""
+msgstr "Impossible de démarrer la connexion"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1034,8 +1081,9 @@ msgid "Custom commands in the task window's header and menu."
 msgstr "Commandes personnalisées dans l'en-tête et le menu de la tâche."
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "Custom file..."
-msgstr ""
+msgstr "Fichier personnalisé..."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1091,8 +1139,9 @@ msgid "Default diff scope"
 msgstr "Portée du diff par défaut"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Default Kangentic browser URL"
-msgstr ""
+msgstr "URL par défaut du navigateur Kangentic"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1242,9 +1291,10 @@ msgid "Environment variables that turn telemetry off."
 msgstr "Variables d'environnement qui désactivent la télémétrie."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification table column"
 msgid "Event"
-msgstr ""
+msgstr "Événement"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -1290,9 +1340,10 @@ msgid "Fair accuracy"
 msgstr "Précision correcte"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Fall"
-msgstr ""
+msgstr "Descendant"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1300,8 +1351,9 @@ msgid "File list"
 msgstr "Liste des fichiers"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "File not found"
-msgstr ""
+msgstr "Fichier introuvable"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
@@ -1324,8 +1376,9 @@ msgid "Files to copy into a worktree"
 msgstr "Fichiers à copier dans une arborescence de travail"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
-msgstr ""
+msgstr "Fichiers, dossiers et motifs glob copiés dans chaque nouvelle arborescence de travail avant le démarrage de son agent."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1354,8 +1407,9 @@ msgid "Folder on disk this project points at. Move it to a new location; all tas
 msgstr "Dossier sur le disque ciblé par ce projet. Déplacez-le ailleurs : toutes les tâches, l'historique et les arborescences de travail le suivent."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Folders to link into a worktree"
-msgstr ""
+msgstr "Dossiers à lier dans une arborescence de travail"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1400,8 +1454,9 @@ msgid "Git changes"
 msgstr "Modifications Git"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
-msgstr ""
+msgstr "Dossiers ignorés par Git que chaque arborescence de travail partage via un lien : une modification atteint le projet et toutes les tâches."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1455,20 +1510,24 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "Un effort plus élevé répond plus lentement et peut fiabiliser les décomptes sur de nombreuses tâches ; les résumés utilisent toujours le niveau par défaut de l'agent."
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "History not shared"
-msgstr ""
+msgstr "Historique non partagé"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Hold a modifier key while you click."
-msgstr ""
+msgstr "Maintenez une touche de modification enfoncée en cliquant."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-msgstr ""
+msgstr "Maintenez Cmd, Option ou Maj et cliquez dans la zone. Échap pour annuler."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-msgstr ""
+msgstr "Maintenez Ctrl, Alt ou Maj et cliquez dans la zone. Échap pour annuler."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1481,8 +1540,9 @@ msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Maintenez push-to-talk pour dicter dans un terminal/champ."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Hold the modifier keys and click here. Escape to cancel."
-msgstr ""
+msgstr "Maintenez les touches de modification et cliquez ici. Échap pour annuler."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1528,8 +1588,9 @@ msgstr "Durée pendant laquelle un agent vous attend avant que le minuteur d'ina
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How long toasts appear, in seconds"
-msgstr ""
+msgstr "Durée d'affichage des notifications, en secondes"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
@@ -1537,8 +1598,9 @@ msgid "How many agents run at once and what happens when idle."
 msgstr "Nombre d'agents simultanés et comportement en cas d'inactivité."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How many show at once, and for how long."
-msgstr ""
+msgstr "Nombre affiché simultanément et durée d'affichage."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
@@ -1586,8 +1648,9 @@ msgid "How to install and pair"
 msgstr "Installer et associer"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How you hear about each event."
-msgstr ""
+msgstr "Comment vous êtes averti de chaque événement."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
@@ -1651,8 +1714,9 @@ msgid "Inspection bridge"
 msgstr "Pont d'inspection"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Install an agent that signs in, and its accounts show here."
-msgstr ""
+msgstr "Installez un agent avec connexion pour voir ses comptes ici."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -1665,8 +1729,9 @@ msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "Évalue les conditions et étapes de workflow, et nomme les tâches."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Kangentic browser"
-msgstr ""
+msgstr "Navigateur Kangentic"
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
@@ -1689,8 +1754,9 @@ msgid "Kangentic runs {wslAgentList} from WSL."
 msgstr "Kangentic exécute {wslAgentList} depuis WSL."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Kangentic stops using it for new sessions."
-msgstr ""
+msgstr "Kangentic ne l'utilise plus pour les nouvelles sessions."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
@@ -1723,8 +1789,9 @@ msgid "Keys for the Changes panel and its diff."
 msgstr "Touches du panneau Modifications et de son diff."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for the Kangentic browser."
-msgstr ""
+msgstr "Touches du navigateur Kangentic."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -1773,8 +1840,9 @@ msgid "Leftover processes"
 msgstr "Processus résiduels"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Let agents drive the Kangentic browser."
-msgstr ""
+msgstr "Laisser les agents piloter le navigateur Kangentic."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1804,8 +1872,9 @@ msgid "Limit how many agents can run at the same time"
 msgstr "Limiter le nombre d'agents exécutés simultanément"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Link folders"
-msgstr ""
+msgstr "Lier des dossiers"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1845,8 +1914,9 @@ msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on
 msgstr "Journalise chaque appel IPC dans .kangentic/logs en masquant les canaux de modification ; activé par défaut uniquement dans /preview."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Manual"
-msgstr ""
+msgstr "Manuel"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1855,8 +1925,9 @@ msgstr "Sessions simultanées max."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Maximum toasts on screen"
-msgstr ""
+msgstr "Nombre maximal de notifications à l'écran"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1919,6 +1990,11 @@ msgstr "Accélération du modèle"
 msgid "Model used for new sessions when no column or task override is set"
 msgstr "Modèle utilisé pour les nouvelles sessions sans remplacement défini au niveau de la colonne ou de la tâche"
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "More agents"
+msgstr "Autres agents"
+
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
 #, fuzzy
 msgid "Move..."
@@ -1930,8 +2006,9 @@ msgid "Moving between task windows and arranging them."
 msgstr "Navigation entre les fenêtres de tâches et disposition."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Mute notifications"
-msgstr ""
+msgstr "Couper les notifications"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1972,12 +2049,14 @@ msgid "Needs the Knowledge Graph"
 msgstr "Nécessite le graphe de connaissances"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "New account"
-msgstr ""
+msgstr "Nouveau compte"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "No agents with accounts"
-msgstr ""
+msgstr "Aucun agent avec des comptes"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -1999,10 +2078,6 @@ msgstr "Aucune tâche terminée pour l'instant"
 msgid "No key detected. It may be reserved by your OS or another app."
 msgstr "Aucune touche détectée. Elle est peut-être réservée par votre système ou une autre application."
 
-#: src/renderer/components/settings/accounts/AccountRow.tsx
-msgid "No key file"
-msgstr ""
-
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "No response"
@@ -2019,8 +2094,9 @@ msgid "No shortcuts configured. Add one below or choose a preset."
 msgstr "Aucun raccourci configuré. Ajoutez-en un ci-dessous ou choisissez un préréglage."
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "No subscription"
-msgstr ""
+msgstr "Aucun abonnement"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2049,6 +2125,12 @@ msgstr "Non défini"
 #, fuzzy
 msgid "Not signed in"
 msgstr "Non connecté"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
+msgctxt "a usage window the account has not opened"
+msgid "Not started"
+msgstr "Non démarrée"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2134,8 +2216,9 @@ msgid "Optional startup features this agent CLI can turn off"
 msgstr "Fonctionnalités de démarrage facultatives que cette CLI d'agent peut désactiver"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Order"
-msgstr ""
+msgstr "Ordre"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
@@ -2144,8 +2227,14 @@ msgid "Other"
 msgstr "Autre"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Own prompt history"
-msgstr ""
+msgstr "Historique des prompts distinct"
+
+#: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
+msgid "Own sign-in"
+msgstr "Connexion distincte"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
@@ -2174,8 +2263,9 @@ msgid "Password"
 msgstr "Mot de passe"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Past this, the oldest timed toast makes way for a new one."
-msgstr ""
+msgstr "Au-delà, la plus ancienne notification temporisée laisse place à une nouvelle."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2247,8 +2337,9 @@ msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "Planifie chaque workflow. Rien ne démarre sans agent choisi."
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "Play {name}"
-msgstr ""
+msgstr "Lire {name}"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2313,8 +2404,9 @@ msgid "Project"
 msgstr "Projet"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
-msgstr ""
+msgstr "URL par défaut du projet si une tâche n'a pas de remplacement propre. Enregistrée automatiquement lors de votre première navigation dans le navigateur Kangentic."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -2484,8 +2576,9 @@ msgid "Release buffer"
 msgstr "Délai après relâchement"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Reload the Kangentic browser to apply."
-msgstr ""
+msgstr "Rechargez le navigateur Kangentic pour appliquer."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2506,8 +2599,9 @@ msgid "Remove"
 msgstr "Retirer"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Remove {accountToRemoveName}?"
-msgstr ""
+msgstr "Retirer {accountToRemoveName} ?"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2515,8 +2609,9 @@ msgid "Remove a task's worktree when the task completes."
 msgstr "Supprimer l'arborescence de travail d'une tâche lorsque celle-ci est terminée."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Remove this account?"
-msgstr ""
+msgstr "Retirer ce compte ?"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2534,8 +2629,9 @@ msgid "Rendering"
 msgstr "Rendu"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Reorder"
-msgstr ""
+msgstr "Réorganiser"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -2606,9 +2702,10 @@ msgid "Revoke device"
 msgstr "Révoquer l'appareil"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Rise"
-msgstr ""
+msgstr "Montant"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2621,23 +2718,19 @@ msgid "Run any JavaScript in the page, with its cookies."
 msgstr "Exécuter tout JavaScript dans la page, avec ses cookies."
 
 #: src/renderer/components/settings/settings-registry.ts
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-#, fuzzy
-msgid "Run order"
-msgstr "Ordre d'exécution"
-
-#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Run this agent locally, or attach to a server you run elsewhere"
 msgstr "Exécuter cet agent localement ou se connecter à un serveur exécuté ailleurs"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Running sessions move here too"
-msgstr ""
+msgstr "Les sessions en cours sont aussi déplacées ici"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Running sessions stay on their account"
-msgstr ""
+msgstr "Les sessions en cours restent sur leur compte"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2732,8 +2825,9 @@ msgid "Sessions"
 msgstr "Sessions"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Sessions at 100% continue on the next account in the list."
-msgstr ""
+msgstr "Les sessions à 100 % passent au compte suivant de la liste."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
@@ -2803,8 +2897,9 @@ msgid "Shows a PR as ready when you can bypass its required review, never past a
 msgstr "Affiche une PR comme prête si vous pouvez contourner sa revue requise, jamais malgré une vérification en échec."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shows how many agents need you, on the taskbar or dock."
-msgstr ""
+msgstr "Nombre d'agents en attente, dans la barre des tâches/Dock."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2812,28 +2907,34 @@ msgid "Side by side"
 msgstr "Côte à côte"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Sign in"
-msgstr ""
+msgstr "Se connecter"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "Sign in here, then exit {agentName} to finish."
-msgstr ""
+msgstr "Connectez-vous ici, puis quittez {agentName} pour terminer."
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "Sign in to {agentName}"
-msgstr ""
+msgstr "Se connecter à {agentName}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Sign in to more than one account per agent and choose the order they run in."
-msgstr ""
+msgstr "Connectez-vous à plusieurs comptes par agent et choisissez leur ordre d'utilisation."
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Signed in on this machine"
-msgstr ""
+msgstr "Connecté sur cette machine"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Silences all notifications on this machine until turned off."
-msgstr ""
+msgstr "Coupe toutes les notifications ici jusqu'à désactivation."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2858,13 +2959,15 @@ msgid "Soft-wrap long lines onto the next row instead of scrolling the diff hori
 msgstr "Renvoyer les lignes longues à la ligne suivante au lieu de faire défiler le diff horizontalement."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Soonest reset first"
-msgstr ""
+msgstr "Réinitialisation la plus proche d'abord"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification table column"
 msgid "Sound"
-msgstr ""
+msgstr "Son"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2935,8 +3038,9 @@ msgid "Summaries written"
 msgstr "Résumés rédigés"
 
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "Switch to"
-msgstr ""
+msgstr "Basculer vers"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2944,9 +3048,10 @@ msgid "Symlink the root node_modules into each worktree to skip a fresh install;
 msgstr "Créer un lien symbolique du node_modules racine dans chaque arborescence de travail pour éviter une nouvelle installation ; à désactiver pour les dépôts de type workspace."
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "System"
-msgstr ""
+msgstr "Système"
 
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
@@ -3036,12 +3141,14 @@ msgid "Test connection"
 msgstr "Tester la connexion"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "That file is already in the list."
-msgstr ""
+msgstr "Ce fichier figure déjà dans la liste."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "The {agentName} sign-in did not start."
-msgstr ""
+msgstr "La connexion à {agentName} n'a pas démarré."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3079,12 +3186,14 @@ msgid "The default branch's source and docs, kept current; tests, data files and
 msgstr "Le code source et la documentation de la branche par défaut, tenus à jour ; les tests, fichiers de données et fichiers de plus de 256 Ko sont ignorés."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "The file could not be read."
-msgstr ""
+msgstr "Impossible de lire le fichier."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "The file sets none of the keys {agentName} reads."
-msgstr ""
+msgstr "Le fichier ne définit aucune des clés lues par {agentName}."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3147,8 +3256,9 @@ msgid "The shell, font, cursor and colors every terminal uses."
 msgstr "Shell, police, curseur et couleurs de tous les terminaux."
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "The sign-in did not finish."
-msgstr ""
+msgstr "La connexion n'a pas abouti."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
@@ -3162,9 +3272,15 @@ msgstr "La description de la tâche"
 msgid "Theme"
 msgstr "Thème"
 
+#: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
+msgid "These use their own sign-in."
+msgstr "Ceux-ci utilisent leur propre connexion."
+
 #: src/renderer/components/settings/accounts/AccountRow.tsx
+#, fuzzy
 msgid "This account's folder is on another drive, so its prompt history stays its own."
-msgstr ""
+msgstr "Le dossier de ce compte se trouve sur un autre lecteur, son historique des prompts reste donc distinct."
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
@@ -3182,13 +3298,15 @@ msgid "This restores every hotkey to its default. Your custom bindings will be r
 msgstr "Tous les raccourcis seront rétablis par défaut. Vos associations personnalisées seront supprimées."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
-msgstr ""
+msgstr "Cette action supprime les cookies, localStorage, IndexedDB, service workers et caches HTTP/d'authentification du navigateur Kangentic pour toutes les tâches et tous les projets. Vous serez déconnecté de tous les sites."
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgctxt "notification sound"
 msgid "Tick"
-msgstr ""
+msgstr "Tic"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3239,8 +3357,9 @@ msgid "Try a different search term"
 msgstr "Essayez un autre terme de recherche"
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+#, fuzzy
 msgid "Turn on Toast or Desktop to hear a sound"
-msgstr ""
+msgstr "Activez Toast ou Bureau pour entendre un son"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -3418,10 +3537,6 @@ msgstr "Emplacement de ce projet sur le disque."
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
 msgstr "Indique si les agents peuvent joindre le serveur MCP, ici et depuis toute distribution WSL ciblée par un chemin de CLI."
 
-#: src/renderer/components/settings/tabs/AccountsTab.tsx
-msgid "Which account new sessions start on."
-msgstr ""
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
@@ -3481,8 +3596,9 @@ msgid "Windows"
 msgstr "Fenêtres"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
-msgstr ""
+msgstr "Efface les cookies, localStorage, IndexedDB, service workers et caches HTTP/auth du navigateur Kangentic. Les URL enregistrées sont conservées."
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3543,12 +3659,14 @@ msgid "WSL: {0}"
 msgstr "WSL : {0}"
 
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
+#, fuzzy
 msgid "Your browser signs in the account it already has open, so use its Switch account to add a different one."
-msgstr ""
+msgstr "Votre navigateur connecte le compte déjà ouvert : utilisez sa fonction Changer de compte pour en ajouter un autre."
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
+#, fuzzy
 msgid "Your order"
-msgstr ""
+msgstr "Votre ordre"
 
 #: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
 #, fuzzy

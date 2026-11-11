@@ -22,17 +22,30 @@ msgstr "{contextLabel} kontextusablak"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, one {# további megjelenítése} other {# további megjelenítése}}"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d"
+msgstr "{days} n"
+
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d {hours}h"
+msgstr "{days} n {hours} ó"
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+"
-msgstr ""
+msgstr "{limit}+"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+ on screen"
-msgstr ""
+msgstr "{limit}+ a képernyőn"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
-msgstr ""
+msgstr "{lineCount, plural, one {Nincs találat az utolsó # sorban} other {Nincs találat az utolsó # sorban}}"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
@@ -50,8 +63,9 @@ msgid "{position} of {total}"
 msgstr "{position}/{total}"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{position} of {total} on screen"
-msgstr ""
+msgstr "{position}/{total} a képernyőn"
 
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
@@ -64,8 +78,9 @@ msgid "{toolName} interrupted"
 msgstr "{toolName} megszakítva"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{total} on screen"
-msgstr ""
+msgstr "{total} a képernyőn"
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -154,17 +169,19 @@ msgid "Expand terminal panel"
 msgstr "Terminálpanel kibontása"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgctxt "terminal find field"
 msgid "Find"
-msgstr ""
+msgstr "Keresés"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Find in terminal"
 msgstr ""
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Find on screen"
-msgstr ""
+msgstr "Keresés a képernyőn"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
@@ -182,8 +199,9 @@ msgid "Input / output tokens"
 msgstr "Bemeneti / kimeneti tokenek"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Loading conversation"
-msgstr ""
+msgstr "Beszélgetés betöltése"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
@@ -197,8 +215,9 @@ msgid "Model done"
 msgstr "Modell kész"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Newer match"
-msgstr ""
+msgstr "Újabb találat"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
@@ -211,8 +230,9 @@ msgid "No activity yet for {filteredLabel}..."
 msgstr "Még nincs tevékenység: {filteredLabel}..."
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "No matches on screen"
-msgstr ""
+msgstr "Nincs találat a képernyőn"
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 #, fuzzy
@@ -225,13 +245,15 @@ msgid "Notice"
 msgstr "Értesítés"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
 msgctxt "when a usage window resets"
 msgid "now"
-msgstr ""
+msgstr "most"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Older match"
-msgstr ""
+msgstr "Régebbi találat"
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

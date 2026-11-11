@@ -251,6 +251,9 @@ export const CLAUDE_ACCOUNT_SUPPORT: FolderAccountSupport = {
   sharedEntries: SHARED_ENTRIES,
   identify: identifyClaudeAccount,
   readIdleUsage: readClaudeIdleUsage,
+  // The 5h and 7d windows every Claude subscription has. The 5h one is reported only once an
+  // account has run in it, so the Accounts rows draw it as Not started until then.
+  usageWindows: RATE_LIMIT_WINDOWS.map(({ id, label, iconKind, windowDurationSeconds }) => ({ id, label, iconKind, windowDurationSeconds })),
   // Claude's StopFailure hook names a usage limit `rate_limit`, the same word it uses for a
   // momentary 429 it retries by itself. The account layer tells the two apart by reading the
   // account's usage: only a full account is continued elsewhere.

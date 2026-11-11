@@ -17,6 +17,7 @@ sources:
   - resource: src/renderer/components/settings/tabs/AccountsTab.tsx
   - resource: src/renderer/components/settings/accounts/
   - resource: src/renderer/stores/accounts-store.ts
+  - resource: src/renderer/utils/account-cards.ts
 ---
 # Agent accounts
 
@@ -106,6 +107,13 @@ nothing gets no card.
 never removes one from a session's environment. When one is set where Kangentic started, the
 agent's card shows one line naming it.
 
+`usageWindows`, on either kind, names the usage windows the CLI always has, shortest first, as an
+id, label, icon and duration. A CLI can leave a window out until an account opens it: Claude
+reports its 5h window only once the account has run in it. Each row in the tab then draws a line
+per declared window, and one the account has not opened reads Not started, so every row of an
+agent is one height. Claude declares its 5h and 7d windows from `RATE_LIMIT_WINDOWS`
+(`status-parser.ts`), the table its status line is parsed with.
+
 ## Which account a session runs on
 
 Every spawn asks `resolveSpawnAccount` (`account-service.ts`) and merges the answer's variables over
@@ -121,7 +129,10 @@ is `ok`, and Switch to refuses an account that is not.
 
 Automatic order sorts by the longest window each account reports, soonest reset first, so an
 allowance is used before it resets. A drag or Switch to sets Manual, which keeps the saved order.
-A drag only reorders, for new sessions. Switch to is a deliberate switch: the account goes to #1
+That holds for an agent that reports usage. One that reports none has no reset to sort by, so its
+list is always the saved order (`followsOrderMode` in `account-service.ts`), and a drag or Switch
+to on it leaves the order mode alone.
+A drag only reorders, for new sessions. Switch to is a deliberate switch: the account goes to the top
 and the agent's running task sessions restart in place on it, one at a time, each resuming its
 conversation. One that was mid-turn is told to continue. Command Terminals and workflow agents
 stay where they are. For an agent whose conversations stay on their account (Codex), Switch to
@@ -174,6 +185,23 @@ conversation with the prompt `Continue.`, and a toast names where it continues.
 When every account is full, the session waits where it is, one toast names the first reset, and it
 continues once a later read shows room. A Command Terminal or a workflow's own agent is not
 continued: at its limit it waits as before.
+
+## The tab
+
+Settings > Accounts lays out its agents with the pure helpers in `utils/account-cards.ts`. An agent
+gets a card of its own when it has two accounts, reports usage, has a variable that outranks its
+accounts, or runs in WSL. Every other installed agent is one line on the More agents card, whose
+one Add account opens a menu of those agents. The Account switching card holds Order and the
+switch, and shows once an agent that reports usage has two accounts. Both settings act through
+usage, so its description names those agents.
+
+Rows carry no number. The list's order is the position, and the Active pill marks where new
+sessions start. A row shows its drag grip only while the list is in the user's order: Manual, or an
+agent that reports no usage, which Automatic cannot sort. Usage lines come from
+`accountUsageLines` (`utils/rate-limit-window.ts`), one per declared window and then any other
+window the CLI reported. A reset reads as a countdown (`41m`, `3h 14m`, `1d 4h`) and its tip gives
+the moment. The percent beside the bar is what is used. The bar's tip says how much of the window
+has passed, which is what the tick on the bar marks.
 
 ## Signing in
 

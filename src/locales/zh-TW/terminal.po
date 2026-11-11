@@ -20,17 +20,29 @@ msgstr "{contextLabel} 上下文視窗"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, other {顯示其他 # 項}}"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+msgid "{days}d"
+msgstr "{days} 天"
+
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d {hours}h"
+msgstr "{days} 天 {hours} 小時"
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+"
-msgstr ""
+msgstr "{limit}+"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+ on screen"
-msgstr ""
+msgstr "畫面上 {limit}+ 個"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
-msgstr ""
+msgstr "{lineCount, plural, other {最後 # 行中沒有相符項目}}"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
@@ -46,8 +58,9 @@ msgid "{position} of {total}"
 msgstr "第 {position} 個，共 {total} 個"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{position} of {total} on screen"
-msgstr ""
+msgstr "畫面上第 {position} 個，共 {total} 個"
 
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "{remainingPercent}% remaining"
@@ -58,8 +71,9 @@ msgid "{toolName} interrupted"
 msgstr "{toolName} 已中斷"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{total} on screen"
-msgstr ""
+msgstr "畫面上 {total} 個"
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -133,17 +147,19 @@ msgid "Expand terminal panel"
 msgstr "展開終端機面板"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgctxt "terminal find field"
 msgid "Find"
-msgstr ""
+msgstr "尋找"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Find in terminal"
 msgstr ""
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Find on screen"
-msgstr ""
+msgstr "在畫面上尋找"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Idle (no activity detected)"
@@ -158,8 +174,9 @@ msgid "Input / output tokens"
 msgstr "輸入 / 輸出 token"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Loading conversation"
-msgstr ""
+msgstr "正在載入對話"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
@@ -171,8 +188,9 @@ msgid "Model done"
 msgstr "模型已完成"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Newer match"
-msgstr ""
+msgstr "較新的相符項目"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "No active sessions. Drag a task into a column that starts an agent."
@@ -183,8 +201,9 @@ msgid "No activity yet for {filteredLabel}..."
 msgstr "{filteredLabel} 尚無活動..."
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "No matches on screen"
-msgstr ""
+msgstr "畫面上沒有相符項目"
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 msgid "No tool calls yet"
@@ -195,13 +214,15 @@ msgid "Notice"
 msgstr "通知"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
 msgctxt "when a usage window resets"
 msgid "now"
-msgstr ""
+msgstr "現在"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Older match"
-msgstr ""
+msgstr "較舊的相符項目"
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

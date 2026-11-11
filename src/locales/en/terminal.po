@@ -19,6 +19,14 @@ msgstr "{contextLabel} context window"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, one {Show # more} other {Show # more}}"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+msgid "{days}d"
+msgstr "{days}d"
+
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+msgid "{days}d {hours}h"
+msgstr "{days}d {hours}h"
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "{limit}+"
 msgstr "{limit}+"
