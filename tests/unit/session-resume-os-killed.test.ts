@@ -326,6 +326,9 @@ describe('resumeSuspendedSessions: OS-killed (interrupted-exited) recovery', () 
             agentSessionId: INCIDENT_172_AGENT_SESSION_ID,
             recordId: 'rec-172',
             recordCwd: '/project/cwd',
+            // The mode the record was launched with, so the agent can keep the
+            // mode its conversation was last in (keepsSessionPermissionMode).
+            recordPermissionMode: 'default',
           },
           sessionRepo: expect.anything(),
         }),
@@ -344,6 +347,19 @@ describe('resumeSuspendedSessions: OS-killed (interrupted-exited) recovery', () 
       expect(spawnArg.permissionMode).toBe('default');
       expect(sessionRepoInsert).toHaveBeenCalledWith(expect.objectContaining({ permission_mode: 'default' }));
     });
+  });
+
+  it('passes the mode the record was launched with, whatever it is, so the resume can keep it', async () => {
+    const record = makeExitedRecord({ id: 'rec-plan', task_id: 'task-plan', permission_mode: 'plan' });
+    sessionRepoGetInterruptedExited.mockReturnValue([record]);
+    dbRecords = [record];
+    taskRepoList.mockReturnValue([makeTask({ id: 'task-plan', swimlane_id: 'lane-exec' })]);
+    wirePrepareAgentSpawnEcho();
+
+    await resumeSuspendedSessions('proj-1', '/project', makeSessionManager() as never, makeConfigManager(true) as never);
+
+    expect(prepareAgentSpawn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prepareAgentSpawn).mock.calls[0][0].resume?.recordPermissionMode).toBe('plan');
   });
 
   it('clean exit 0 is never gathered, so it is not resumed on startup', async () => {

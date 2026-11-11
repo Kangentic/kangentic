@@ -1677,6 +1677,33 @@ describe('Config Manager -- terminal.colors replace semantics', () => {
   });
 });
 
+describe('Config Manager -- collapsedColumnsByProject replace semantics', () => {
+  // 'collapsedColumnsByProject' is a CONFIG_DICTIONARY_PATHS entry: the renderer
+  // sends the whole map, so a project omitted from a save is gone. Under plain
+  // deep-merge an expanded column would come back collapsed on the next load.
+  it('a save that omits a project replaces the stored map instead of merging into it', async () => {
+    const cm = await createConfigManager();
+
+    cm.save({ collapsedColumnsByProject: { 'project-a': ['lane-1', 'lane-2'], 'project-b': ['lane-9'] } });
+    expect(cm.load().collapsedColumnsByProject).toEqual({ 'project-a': ['lane-1', 'lane-2'], 'project-b': ['lane-9'] });
+
+    cm.save({ collapsedColumnsByProject: { 'project-b': ['lane-9'] } });
+
+    expect(cm.load().collapsedColumnsByProject).toEqual({ 'project-b': ['lane-9'] });
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.collapsedColumnsByProject).not.toHaveProperty('project-a');
+  });
+
+  it('a save with a shorter list for a project drops the expanded column', async () => {
+    const cm = await createConfigManager();
+
+    cm.save({ collapsedColumnsByProject: { 'project-a': ['lane-1', 'lane-2'] } });
+    cm.save({ collapsedColumnsByProject: { 'project-a': ['lane-2'] } });
+
+    expect(cm.load().collapsedColumnsByProject).toEqual({ 'project-a': ['lane-2'] });
+  });
+});
+
 describe('Config Manager -- onboardingBaseline replace semantics', () => {
   // The dev-only "Restart checklist" trigger (src/devtools/renderer/DevToolsSections.tsx ->
   // config-store's resetOnboarding) re-runs onboarding by DROPPING one project's baseline, so
