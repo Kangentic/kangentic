@@ -174,7 +174,7 @@ variable" picker and its inline `{{` completion, and this table - see
 entry's `description`, that field is user-facing copy and should stay to one
 line.
 
-26 keywords. 19 resolve wherever there is a task, 5 only in an automation (the
+27 keywords. 20 resolve wherever there is a task, 5 only in an automation (the
 move keywords and `{{agentReply}}`), and 2 only in a workflow agent's first
 message (`{{columns}}` and `{{brief_xml}}`), each marked below. That first
 message (Settings > Workflows) is the third context: it is written before any
