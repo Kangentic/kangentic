@@ -147,6 +147,13 @@ export interface AgentAccountsAllFull {
   resetsAt: number | null;
 }
 
+/**
+ * A usage window the agent's CLI always has, whether or not an account has opened it yet
+ * (Claude reports its 5h window only once an account has run in it). The Accounts tab draws one
+ * line per declared window on every row, so the rows are one height.
+ */
+export type AgentUsageWindowShape = Pick<RateLimitWindow, 'id' | 'label' | 'iconKind' | 'windowDurationSeconds'>;
+
 /** One agent's card in Settings > Accounts. */
 export interface AgentAccountsCard {
   agent: string;
@@ -158,6 +165,8 @@ export interface AgentAccountsCard {
   activeAccountId: string | null;
   /** The agent reports usage windows, so its rows draw usage lines. */
   reportsUsage: boolean;
+  /** The windows the agent always has, shortest first. Empty when it declares none. */
+  usageWindows: AgentUsageWindowShape[];
   /** The sign-in happens on the CLI's own screen, which the user leaves when done. */
   signInIsInteractive: boolean;
   /** Switch to moves the agent's running sessions too. False where a conversation stays on its account. */

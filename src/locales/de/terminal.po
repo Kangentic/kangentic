@@ -22,17 +22,30 @@ msgstr "Kontextfenster: {contextLabel}"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, one {# weiteres anzeigen} other {# weitere anzeigen}}"
 
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d"
+msgstr "{days} T"
+
+#: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
+msgid "{days}d {hours}h"
+msgstr "{days} T {hours} Std."
+
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+"
-msgstr ""
+msgstr "{limit}+"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{limit}+ on screen"
-msgstr ""
+msgstr "{limit}+ auf dem Bildschirm"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
-msgstr ""
+msgstr "{lineCount, plural, one {Keine Treffer in der letzten # Zeile} other {Keine Treffer in den letzten # Zeilen}}"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
 #, fuzzy
@@ -50,8 +63,9 @@ msgid "{position} of {total}"
 msgstr "{position} von {total}"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{position} of {total} on screen"
-msgstr ""
+msgstr "{position} von {total} auf dem Bildschirm"
 
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
@@ -64,8 +78,9 @@ msgid "{toolName} interrupted"
 msgstr "{toolName} unterbrochen"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "{total} on screen"
-msgstr ""
+msgstr "{total} auf dem Bildschirm"
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -154,17 +169,19 @@ msgid "Expand terminal panel"
 msgstr "Terminalbereich ausklappen"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgctxt "terminal find field"
 msgid "Find"
-msgstr ""
+msgstr "Suchen"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
 msgid "Find in terminal"
 msgstr ""
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Find on screen"
-msgstr ""
+msgstr "Auf dem Bildschirm suchen"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
@@ -182,8 +199,9 @@ msgid "Input / output tokens"
 msgstr "Eingabe-/Ausgabe-Tokens"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Loading conversation"
-msgstr ""
+msgstr "Unterhaltung wird geladen"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
@@ -197,8 +215,9 @@ msgid "Model done"
 msgstr "Modell fertig"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Newer match"
-msgstr ""
+msgstr "Neuerer Treffer"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
@@ -211,8 +230,9 @@ msgid "No activity yet for {filteredLabel}..."
 msgstr "Noch keine Aktivität für {filteredLabel}..."
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "No matches on screen"
-msgstr ""
+msgstr "Keine Treffer auf dem Bildschirm"
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 #, fuzzy
@@ -225,13 +245,15 @@ msgid "Notice"
 msgstr "Hinweis"
 
 #: src/renderer/components/terminal/rate-limit-meter.tsx
+#, fuzzy
 msgctxt "when a usage window resets"
 msgid "now"
-msgstr ""
+msgstr "jetzt"
 
 #: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
 msgid "Older match"
-msgstr ""
+msgstr "Älterer Treffer"
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

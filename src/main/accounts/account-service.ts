@@ -34,6 +34,16 @@ function statusFor(linked: boolean, identity: AccountIdentity): AgentAccountStat
   return identity.hasSubscription === false ? 'no-subscription' : 'ok';
 }
 
+/**
+ * True when the agent's usage reaches Kangentic: its sessions report rate limits, or its account
+ * folders can be read idle. Only such an agent's list has resets for Automatic to sort by, so only
+ * its order follows the global order mode.
+ */
+function adapterReportsUsage(adapter: AgentAdapter): boolean {
+  const support = adapter.accounts;
+  return adapter.reportsRateLimits === true || (support?.kind === 'folder' && support.readIdleUsage !== undefined);
+}
+
 /** The account a spawn runs on, and the env that selects it. */
 export interface ResolvedAccount {
   id: string;
@@ -90,11 +100,21 @@ export class AccountService {
     return Math.floor((this.dependencies.now?.() ?? Date.now()) / 1000);
   }
 
+  /**
+   * Whether the agent's list follows the global order mode. An agent that reports no usage has no
+   * reset to sort by, so its list is always the user's order, and a drag or Switch to on it leaves
+   * the mode alone. An agent with no registered adapter keeps following the mode.
+   */
+  private followsOrderMode(agent: string): boolean {
+    const adapter = this.dependencies.getAdapter(agent);
+    return adapter === undefined || adapterReportsUsage(adapter);
+  }
+
   /** The agent's accounts in run order: Automatic re-sorts by reset, Manual keeps positions. */
   ordered(agent: string): AgentAccount[] {
     const accounts = this.dependencies.repository.listForAgent(agent);
     const mode = this.dependencies.readConfig().orderMode;
-    return mode === 'automatic' ? automaticOrder(accounts, this.nowSeconds()) : accounts;
+    return mode === 'automatic' && this.followsOrderMode(agent) ? automaticOrder(accounts, this.nowSeconds()) : accounts;
   }
 
   /** Where Kangentic keeps a new folder account for `agent`. */
@@ -242,7 +262,8 @@ export class AccountService {
         kind: support.kind,
         accounts,
         activeAccountId: topAccountWithRoom(accounts, this.nowSeconds())?.id ?? null,
-        reportsUsage: adapter.reportsRateLimits === true || (support.kind === 'folder' && support.readIdleUsage !== undefined),
+        reportsUsage: adapterReportsUsage(adapter),
+        usageWindows: [...(support.usageWindows ?? [])],
         signInIsInteractive: support.kind === 'folder' && support.loginIsInteractive === true,
         switchMovesSessions: !(support.kind === 'folder' && support.conversationsStayOnAccount === true),
         overrides: support.overridingCredentialEnvVars
@@ -400,15 +421,19 @@ export class AccountService {
     if (config.orderMode !== 'manual') this.dependencies.writeConfig?.({ ...config, orderMode: 'manual' });
   }
 
-  /** A drag: the list takes this order and stays in it (Manual). */
+  /**
+   * A drag: the list takes this order and stays in it. For an agent whose list follows the order
+   * mode, that sets Manual; any other agent's list is already the user's order.
+   */
   reorder(agent: string, orderedIds: readonly string[]): void {
     this.dependencies.repository.reorder(agent, orderedIds);
-    this.setManual();
+    if (this.followsOrderMode(agent)) this.setManual();
     this.changed();
   }
 
   /**
-   * Switch to: the account moves to #1 and the list stays in that order (Manual). Refused for an
+   * Switch to: the account moves to the top and the list stays in that order (Manual, for an agent
+   * whose list follows the order mode). Refused for an
    * account that cannot run (signed out, no plan, links missing): running sessions would be moved
    * onto a login the CLI will not accept.
    */
@@ -418,7 +443,7 @@ export class AccountService {
     // From the order on screen, so the rest of the list keeps the places the user sees.
     const ids = this.ordered(account.agent).map((other) => other.id).filter((id) => id !== accountId);
     this.dependencies.repository.reorder(account.agent, [accountId, ...ids]);
-    this.setManual();
+    if (this.followsOrderMode(account.agent)) this.setManual();
     this.changed();
     return true;
   }

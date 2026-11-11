@@ -998,7 +998,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
   // is, then the cut, and Automatic again behind it.
   accounts: {
     ready: '[data-testid="settings-card-accounts-claude"] [data-testid="account-usage-line"]',
-    alt: 'Settings on the Accounts tab: the run order, and three Claude accounts in a numbered list with each one\'s plan, usage bars and reset times, the first marked Active and the second skipped at its weekly limit.',
+    alt: 'Settings on the Accounts tab: the account switching settings, and three Claude accounts in run order with each one\'s plan, usage bars and reset countdowns, the first marked Active and the second skipped at its weekly limit.',
     seeds: { __mockAccountCards: ACCOUNTS_SCENE_CARDS },
     choreography: [
       pickSetting(settingRadio('accounts.orderMode', 'Manual'), 2200),

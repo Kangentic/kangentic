@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Settings
-description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Accounts, Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile Devices, Privacy, Developer)."
+description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Accounts, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Language, Workflows, Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile Devices, Privacy, Developer)."
 tags: [settings, tabs, git, notifications, dictation]
 sources:
   - resource: src/renderer/components/settings/settings-tabs.ts
@@ -14,7 +14,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Accounts, Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Accounts through Notifications, unlabeled), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](troubleshooting.md#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Accounts, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Language, Workflows, Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Accounts through Language, unlabeled), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](troubleshooting.md#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ## Moving a project
 
@@ -28,7 +28,7 @@ If a project's folder was moved or renamed outside Kangentic while the app was c
 
 ## Language
 
-The Language tab (a shared setting, second in the list, under Accounts) holds one card, Display language, with a picker
+The Language tab (a shared setting, last in the Core group, after Notifications) holds one card, Display language, with a picker
 of the languages Kangentic ships. Each row shows the language's own name and its code, such as
 "English (en)", and the current one is checked. The picker lists English and 14 other languages. Their
 translations are machine-made and open to review.
@@ -45,17 +45,25 @@ language. Closing the toast or answering the prompt ends the offer for good.
 ## Accounts
 
 The Accounts tab (a shared setting, first in the list) lets one agent run on more than one login.
-It shows one card per installed agent that signs in, with its accounts in the order sessions use
-them. Account #1 is the login the agent already has. **Add account** runs the agent's own sign-in in
-a terminal for a new account, or adds an API key file for an agent that reads one. Drag an account to
-reorder the list, or use Switch to on it to move it to #1 and restart that agent's running task
-sessions on it. Remove stops Kangentic using an account for new sessions. Claude Code accounts are sign-ins. Aider,
-Cursor, Droid and Oz accounts are API key files. Other agents have no card yet.
+An agent that has two accounts, reports usage, has a variable that outranks its accounts, or runs
+in WSL has a card listing its accounts in the order sessions use them, and the first is the login
+the agent already has. The Active pill marks the
+account new sessions start on. Each row shows one line per usage window, with a countdown to its
+reset, and a window the account has not opened yet reads Not started. Installed agents with
+nothing added share the **More agents** card. **Add account** runs the agent's own sign-in in a
+terminal for a new account, or adds an API key file for an agent that reads one. On More agents it
+opens a menu of those agents. Switch to moves an account to the top and restarts that agent's
+running task sessions on it. Remove stops Kangentic using an account for new sessions. Claude Code
+accounts are sign-ins. Aider, Cursor, Droid and Oz accounts are API key files. Other agents have no
+card yet.
 
-The **Run order** card holds two settings. Order is Automatic (the account whose longest usage limit
-resets soonest goes first) or Manual (your order). A drag or Switch to sets Manual. **Automatically
-switch accounts at the usage limit** (on by default) lets a task's session that reaches 100% continue
-on the next account in the list. How accounts share history and usage is in
+The **Account switching** card holds two settings and names the agents they apply to. Both work
+from the usage an agent reports. Order is Automatic (the account whose longest usage limit resets
+soonest goes first) or Manual (your order). In Manual, drag a row by its grip to reorder. An agent
+that reports no usage has no reset to sort by, so its list is always in your order and takes a drag
+once it has two accounts. A drag or Switch to on an agent that reports usage sets Manual.
+**Automatically switch accounts at the usage limit** (on by default) lets a task's session that
+reaches 100% continue on the next account in the list. How accounts share history and usage is in
 [Agent accounts](../integrations/accounts.md).
 
 ## Search

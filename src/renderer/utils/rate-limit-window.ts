@@ -1,4 +1,4 @@
-import { rateLimitWindowKey } from '../../shared/agent-accounts';
+import { rateLimitWindowKey, type AgentUsageWindowShape } from '../../shared/agent-accounts';
 import { RATE_LIMIT_RESET_EPSILON_SECONDS, rateLimitGeneration } from '../../shared/types';
 import type { RateLimitWindow } from '../../shared/types';
 
@@ -278,4 +278,44 @@ export function windowElapsedPercentage(
   const remainingMs = resetsAtEpochSeconds * 1000 - nowMs;
   const percentage = (1 - remainingMs / windowMs) * 100;
   return Math.min(100, Math.max(0, percentage));
+}
+
+/**
+ * One line of an account row's usage block in Settings > Accounts.
+ * - `live`: a window the CLI reported and that has not reset.
+ * - `not-started`: a window the agent always has that this account has not opened (Claude reports
+ *   its 5h window only once the account has run in it). Drawn at 0% with no tick and no reset.
+ * - `unread`: no usage has been read for the account yet. Drawn empty, with no figures.
+ */
+export type AccountUsageLine =
+  | { kind: 'live'; window: RateLimitWindow }
+  | { kind: 'not-started'; shape: AgentUsageWindowShape }
+  | { kind: 'unread'; shape: AgentUsageWindowShape | null };
+
+/**
+ * The lines an account row draws, so every row of an agent is one height: one per window the
+ * agent declares (`usageWindows`, in its order), then any other window the CLI reported (a
+ * per-model weekly window), shortest first. `liveWindows` must already be free of lapsed windows
+ * (`liveRateLimitWindows`), so a window whose reset passed reads Not started again. With no
+ * reading yet (`hasReading` false) each declared window is `unread`; an agent that declares none
+ * gets one unnamed `unread` line, as the row drew before anything was read.
+ */
+export function accountUsageLines(
+  usageWindows: readonly AgentUsageWindowShape[],
+  liveWindows: RateLimitWindow[],
+  hasReading: boolean,
+): AccountUsageLine[] {
+  if (!hasReading) {
+    return usageWindows.length > 0
+      ? usageWindows.map((shape): AccountUsageLine => ({ kind: 'unread', shape }))
+      : [{ kind: 'unread', shape: null }];
+  }
+  const declaredIds = new Set(usageWindows.map((shape) => shape.id));
+  const lines: AccountUsageLine[] = usageWindows.map((shape): AccountUsageLine => {
+    const reported = liveWindows.find((rateLimitWindow) => rateLimitWindow.id === shape.id);
+    return reported ? { kind: 'live', window: reported } : { kind: 'not-started', shape };
+  });
+  const extra = rateLimitWindowsShortestFirst(liveWindows.filter((rateLimitWindow) => !declaredIds.has(rateLimitWindow.id)));
+  for (const rateLimitWindow of extra) lines.push({ kind: 'live', window: rateLimitWindow });
+  return lines.length > 0 ? lines : [{ kind: 'unread', shape: null }];
 }

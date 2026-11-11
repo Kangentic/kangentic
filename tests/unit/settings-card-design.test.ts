@@ -129,6 +129,23 @@ describe('settings card design', () => {
     expect(descriptions[0].text.length).toBeGreaterThan(DESCRIPTION_BUDGET[descriptions[0].context]);
   });
 
+  // A choice row that shows its description holds it to the switch budget, as a toggle row does.
+  // Red-green: drop `CardChoiceRow` from the scan's inline-description check and nothing is measured.
+  it('measures the shown description of a choice row, and not one behind its info icon', () => {
+    const { descriptions } = scanSnippet('choice.tsx', `
+      export function Choice() {
+        return (
+          <SettingsCard icon={null} label="Choice">
+            <CardChoiceRow label="Shown" description="${'x'.repeat(61)}" inlineDescription options={options} value="a" onChange={() => {}} />
+            <CardChoiceRow label="Hidden" description="${'y'.repeat(90)}" options={options} value="a" onChange={() => {}} />
+          </SettingsCard>
+        );
+      }
+    `);
+    expect(descriptions.map((entry) => [entry.text, entry.context])).toEqual([['x'.repeat(61), 'beside_switch']]);
+    expect(descriptions[0].text.length).toBeGreaterThan(DESCRIPTION_BUDGET[descriptions[0].context]);
+  });
+
   // A converted tab passes its text through Lingui. Red-green: drop `macroText`
   // from `descriptionOf` and nothing is measured here, so the over-budget
   // descriptions pass; drop it from `labelOf` and the card names lose their quotes.

@@ -290,6 +290,11 @@ describe('AccountService.addKeyFileAccount', () => {
 });
 
 describe('AccountService.remove, reorder and switchTo', () => {
+  /** A folder agent that reports usage (idle reads), so its list follows the global order mode. */
+  function usageFolderService(): AccountService {
+    return folderService(folderSupport({ readIdleUsage: async () => [] }));
+  }
+
   it('refuses to remove the default row', () => {
     const accountService = folderService();
     const own = accountService.ensureDefaultAccount(AGENT)!;
@@ -310,7 +315,7 @@ describe('AccountService.remove, reorder and switchTo', () => {
     config = { orderMode: 'automatic', autoSwitchAtLimit: false };
     const first = insertFolderAccount();
     const second = insertFolderAccount();
-    const accountService = folderService();
+    const accountService = usageFolderService();
     accountService.reorder(AGENT, [second.id, first.id]);
     expect(repository.listForAgent(AGENT).map((account) => account.id)).toEqual([second.id, first.id]);
     expect(configWrites).toEqual([{ orderMode: 'manual', autoSwitchAtLimit: false }]);
@@ -325,12 +330,63 @@ describe('AccountService.remove, reorder and switchTo', () => {
     const stored3 = insertFolderAccount();
     repository.updateUsage(stored1.id, [sevenDay(10, NOW + 5 * 86_400)]);
     repository.updateUsage(stored3.id, [sevenDay(10, NOW + 86_400)]);
-    const accountService = folderService();
+    const accountService = usageFolderService();
     // On screen: soonest reset first, an account with no reading last.
     expect(accountService.ordered(AGENT).map((account) => account.id)).toEqual([stored3.id, stored1.id, stored2.id]);
     expect(accountService.switchTo(stored2.id)).toBe(true);
     expect(repository.listForAgent(AGENT).map((account) => account.id)).toEqual([stored2.id, stored3.id, stored1.id]);
     expect(configWrites).toEqual([{ orderMode: 'manual', autoSwitchAtLimit: true }]);
+  });
+
+  describe('an agent that reports no usage', () => {
+    const KEY_FILE_AGENT = 'key-file-agent';
+
+    function keyFileAgentService(): AccountService {
+      return makeService({
+        [AGENT]: adapterOf(AGENT, folderSupport({ readIdleUsage: async () => [] })),
+        [KEY_FILE_AGENT]: adapterOf(KEY_FILE_AGENT, keyFileSupport()),
+      });
+    }
+
+    function insertKeyFileAccount(status: 'ok' | 'not-found' = 'ok') {
+      folderCounter += 1;
+      return repository.insert({
+        agent: KEY_FILE_AGENT,
+        kind: 'key-file',
+        keyFilePath: path.join(root, `keys-${folderCounter}.env`),
+        keyNames: ['OPENROUTER_API_KEY'],
+        status,
+      });
+    }
+
+    it('keeps the saved order under Automatic, even past an account that is not ok', () => {
+      config = { orderMode: 'automatic', autoSwitchAtLimit: true };
+      const first = insertKeyFileAccount();
+      const missing = insertKeyFileAccount('not-found');
+      const third = insertKeyFileAccount();
+      expect(keyFileAgentService().ordered(KEY_FILE_AGENT).map((account) => account.id)).toEqual([first.id, missing.id, third.id]);
+    });
+
+    it('does not set Manual on a drag or a switch', () => {
+      config = { orderMode: 'automatic', autoSwitchAtLimit: true };
+      const first = insertKeyFileAccount();
+      const second = insertKeyFileAccount();
+      const accountService = keyFileAgentService();
+      accountService.reorder(KEY_FILE_AGENT, [second.id, first.id]);
+      expect(repository.listForAgent(KEY_FILE_AGENT).map((account) => account.id)).toEqual([second.id, first.id]);
+      expect(accountService.switchTo(first.id)).toBe(true);
+      expect(repository.listForAgent(KEY_FILE_AGENT).map((account) => account.id)).toEqual([first.id, second.id]);
+      expect(configWrites).toEqual([]);
+      expect(config.orderMode).toBe('automatic');
+    });
+
+    it('still sets Manual on a drag for an agent that reports usage', () => {
+      config = { orderMode: 'automatic', autoSwitchAtLimit: true };
+      const first = insertFolderAccount();
+      const second = insertFolderAccount();
+      keyFileAgentService().reorder(AGENT, [second.id, first.id]);
+      expect(configWrites).toEqual([{ orderMode: 'manual', autoSwitchAtLimit: true }]);
+    });
   });
 
   it('refuses to switch to an account whose status is not ok', () => {
@@ -348,6 +404,7 @@ describe('AccountService.cards', () => {
     const adapters: Record<string, AgentAdapter> = {
       'folder-full': adapterOf('folder-full', folderSupport({
         readIdleUsage: async () => null,
+        usageWindows: [{ id: 'short', label: '5h session', iconKind: 'session', windowDurationSeconds: 5 * 3600 }],
         loginIsInteractive: true,
         conversationsStayOnAccount: true,
         overridingCredentialEnvVars: ['TEST_TOKEN', 'TEST_BLANK', 'TEST_UNSET'],
@@ -378,7 +435,11 @@ describe('AccountService.cards', () => {
       switchMovesSessions: false,
       overrides: [{ variable: 'TEST_TOKEN', source: 'environment' }],
       unsupportedTarget: false,
+      // The windows the adapter says the agent always has, for the rows' Not started lines.
+      usageWindows: [{ id: 'short', label: '5h session', iconKind: 'session', windowDurationSeconds: 5 * 3600 }],
     });
+    // An adapter that declares none gives an empty list, never undefined.
+    expect(cards[1].usageWindows).toEqual([]);
     expect(plain).toMatchObject({
       reportsUsage: false,
       signInIsInteractive: false,
