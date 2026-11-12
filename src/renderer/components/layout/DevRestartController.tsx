@@ -54,7 +54,7 @@ export function DevRestartController() {
         />
       )}
       confirmLabel={t({ message: 'Restart', context: 'Action' })}
-      icon={<RotateCw className="text-accent-fg" />}
+      icon={<RotateCw size={16} className="text-accent-fg" />}
       testId="dev-restart-confirm"
       onConfirm={() => {
         closeConfirm();
