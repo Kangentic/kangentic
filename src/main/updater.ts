@@ -777,8 +777,10 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     // says how this copy is signed.
     if (isSignatureRequirementError(error)) {
       handleSignatureRequirement(error).catch((handlingError: unknown) => {
-        // In the template: the breadcrumb policy drops string arguments after the first.
-        console.warn(`[UPDATER] Could not report a refused update signature: ${String(handlingError)}`);
+        // The cause is its own argument, not text in the line: the breadcrumb
+        // policy reduces an Error argument to its name and code, where an error
+        // interpolated into the string would keep its free text.
+        console.warn('[UPDATER] Could not report a refused update signature:', handlingError);
       });
       return;
     }
