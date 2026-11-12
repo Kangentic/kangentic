@@ -13,7 +13,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 // Mock os.homedir() to redirect ~/.claude.json to a temp dir. The mock reads a
-// hoisted holder, not `tmpHome`: on macOS src/main/config/paths.ts calls
+// hoisted holder, not `tmpHome`. On macOS src/main/config/paths.ts calls
 // os.homedir() while this file's imports load, before `tmpHome` is initialized,
 // so until beforeEach sets a temp dir the mock answers with the real home.
 const mockHome = vi.hoisted(() => ({ directory: '' }));
