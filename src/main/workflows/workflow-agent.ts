@@ -691,8 +691,14 @@ async function startWorkflowAgent(
     // folder-shared adapter file is held under it until the session ends.
     ptySessionId: sessionId,
     cliTarget,
-    // The agent's top account with room, like any session (task #1057).
-    account: cliTarget ? null : await resolveSpawnAccount(adapter.name),
+    // The agent's top account with room, like any session (task #1057). A resume
+    // hands its conversation over, so its plan file reaches the account it lands on.
+    account: cliTarget ? null : await resolveSpawnAccount(
+      adapter.name,
+      undefined,
+      undefined,
+      resume && agentSessionId ? { agentSessionId, cwd: projectRoot } : undefined,
+    ),
   };
   // A message rides its command line only where it arrives whole, as the task
   // spawns decide (resume-prompt-delivery.ts). Otherwise the start carries none,

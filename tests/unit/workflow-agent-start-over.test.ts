@@ -100,6 +100,7 @@ const agent = await import('../../src/main/workflows/workflow-agent');
 const agentEffort = await import('../../src/main/workflows/workflow-agent-effort');
 
 import { openTestDatabase } from './helpers/test-database';
+import { setAccountService, type AccountService } from '../../src/main/accounts/account-service';
 import { canBeWorkflowAgent } from '../../src/main/agent/shared/workflow-agent-capability';
 import { parseStoredCliTarget, serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -803,6 +804,39 @@ describe('a workflow\'s own agent starting over', () => {
       expect(manager.kill).not.toHaveBeenCalled();
       expect(manager.remove).not.toHaveBeenCalled();
       expect(manager.sessions.map((session) => session.id)).toEqual(['pty-spawned-1']);
+    });
+  });
+
+  // Task #1070. Red: dropping the 4th argument of resolveSpawnAccount fails the resume case; handing
+  // it on a new conversation (dropping the `resume &&` guard) fails the fresh case, whose agent
+  // session id is set (the adapter takes a caller id) and so would otherwise be passed.
+  describe('the conversation handed to the account service', () => {
+    const resolveForSpawn = vi.fn(async () => null);
+
+    beforeEach(() => {
+      resolveForSpawn.mockClear();
+      setAccountService({ resolveForSpawn } as unknown as AccountService);
+    });
+    afterEach(() => {
+      setAccountService(null);
+    });
+
+    it('passes the resumed conversation and the project root when the agent resumes', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(status.session?.resuming).toBe(true);
+      expect(resolveForSpawn).toHaveBeenCalledTimes(1);
+      expect((resolveForSpawn.mock.calls[0] as unknown[])[3]).toEqual({ agentSessionId: 'conv-gone', cwd: path.join(root, 'home') });
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
+    });
+
+    it('passes no conversation when the agent starts a new one', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', newWorkflow(), {});
+
+      expect(status.session?.resuming).toBe(false);
+      expect(resolveForSpawn).toHaveBeenCalledTimes(1);
+      expect((resolveForSpawn.mock.calls[0] as unknown[])[3]).toBeUndefined();
+      agentEffort.forgetWorkflowAgentEffort(status.session!.id);
     });
   });
 
