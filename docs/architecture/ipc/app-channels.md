@@ -20,7 +20,7 @@ sources:
 ---
 # App IPC channels
 
-## Dev-only (preview)
+## Dev-only (preview) (8 channels)
 Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in any group's channel count below. The one exception is `app:restart`, which `src/main/index.ts` registers under the same flag and the App group counts.
 
 | Channel | Pattern | Purpose |

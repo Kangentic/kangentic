@@ -120,7 +120,7 @@ Applies to every project (Settings > Board, not a per-project override). Two car
 | Setting | Card | Description |
 |---------|------|-------------|
 | Column width | Board layout | How wide a column with tasks is: Narrow, Default or Wide, each a fixed width, or Fill, which sizes the columns to fit the window. See [Column Widths and Collapsing](board-basics.md#column-widths-and-collapsing) |
-| Shrink empty columns | Board layout | Narrow a column with no tasks to its header (on by default) |
+| Shrink empty columns | Board layout | Narrow a column with no tasks to its header (off by default) |
 | Terminal panel | Board layout | Show the terminal panel below the board (on by default) |
 | Status bar | Board layout | Show the status bar at the bottom of the window (on by default) |
 | Auto-apply board config changes | Config sync | Apply a detected `kangentic.json` change at once instead of asking you to confirm it (off by default). See [Applying Changes](board-basics.md#applying-changes) |

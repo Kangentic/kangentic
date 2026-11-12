@@ -340,7 +340,7 @@ export function KanbanBoard() {
   // settings that size the rest. See lane-widths.ts.
   const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
   const columnWidth = useConfigStore((state) => state.config.columnWidth);
-  const shrinkEmptyColumns = useConfigStore((state) => state.config.shrinkEmptyColumns !== false);
+  const shrinkEmptyColumns = useConfigStore((state) => state.config.shrinkEmptyColumns === true);
   const collapsedColumnIds = useConfigStore(
     (state) => (projectId ? state.config.collapsedColumnsByProject?.[projectId] : undefined),
   );

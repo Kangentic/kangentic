@@ -128,7 +128,7 @@ frontmatter at the top of a concept is metadata, never part of the enumeration b
 ## Task Template Variable Anchors (auto_command / spawn_agent promptTemplate)
 
 1. Read `src/shared/task-template-vars.ts` (`TASK_TEMPLATE_VAR_NAMES` / `TASK_TEMPLATE_VARS`)
-2. Extract every keyword name (currently 26) and their `chip`/`description` fields
+2. Extract every keyword name (currently 27) and their `chip`/`description` fields
 3. Read `docs/architecture/automations/transition-engine.md` ("## Template Variables", canonical) and
    `docs/architecture/system-overview.md` (the "Template variables available" line, cross-reference)
 4. Compare: report any chip missing from either doc, or documented with stale prose (e.g.
