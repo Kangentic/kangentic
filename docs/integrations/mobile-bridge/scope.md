@@ -1,14 +1,14 @@
 ---
 type: Design
 title: Scope and protocol history
-description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.27.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the task report read, the paused session id, the built but unreleased resume on open and card fields, and what stays out of scope.
+description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.28.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the task report read, the paused session id, the resume on open and card fields in 0.28.0, and what stays out of scope.
 tags: [mobile, protocol, history, roadmap]
 sources:
   - resource: packages/protocol/CHANGELOG.md
 ---
 # Scope and protocol history
 
-One section per bridge phase and protocol release, oldest first, each saying what shipped and why. The last two are built but unreleased work and what stays out of scope. Releases 0.19.0, 0.22.0, 0.23.0, 0.25.0 and 0.26.0 have no section here; `packages/protocol/CHANGELOG.md` holds every release.
+One section per bridge phase and protocol release, oldest first, each saying what shipped and why. The last one is what stays out of scope. Releases 0.19.0, 0.22.0, 0.23.0, 0.25.0 and 0.26.0 have no section here; `packages/protocol/CHANGELOG.md` holds every release.
 
 ## Bridge Phase 1: protocol, pairing & secure relay transport
 
@@ -165,7 +165,7 @@ One section per bridge phase and protocol release, oldest first, each saying wha
 - Why: 0.26.0 made `send-user-message` hold a message for a session with no running agent, keyed by the session the phone names. A desktop pause clears `session_id`, and a restart re-registers the paused session under a fresh registry id that no board row, DB record or session list carried, so a phone opening a paused task fresh had no id to name, and one it remembered from before the restart answered `unknown-session`. Only a screen open through the pause, an idle-timeout suspend (its row keeps `session_id`) or a queued session could hold chat.
 - Sending chat to any paused task from the phone's composer is the mobile app's own change, gated on this package publishing.
 
-## Built, awaiting the next protocol release: opening a task resumes it, and the card's last gaps
+## Protocol 0.28.0: opening a task resumes it, and the card's last gaps
 
 - Protocol: `StartSessionRequestPayload.trigger?: 'open'`, refused when it is any other value, and the outcome `not-eligible`, sent only in answer to it. `resumeOnOpenOffered?: boolean` on both the board snapshot and the read-stream snapshot. Additive; `PROTOCOL_VERSION` stays '3'. Absent means a pre-0.28.0 desktop, which drops the trigger, so a phone sends nothing there.
 - Protocol: `BoardTaskWire.queue_place`, `start_blocked_reason` and `artifacts`, the snapshot's `priorities`, and `stopped?: true` on an idle `ActivityReasonWire`. Each is null or absent on an older desktop, and an older phone ignores each.
