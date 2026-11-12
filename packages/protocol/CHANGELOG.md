@@ -2,7 +2,7 @@
 
 <!-- releases -->
 
-## [Unreleased]
+## [protocol-v0.28.0] - 2026-11-11
 
 Lets a phone resume a task by opening it, the way the desktop does, and
 carries what a desktop card draws that a phone could not: a queued task's place
@@ -32,9 +32,12 @@ phone's guard ignores. The doc comments carry the words the desktop card draws
 for each field.
 
 ### Features
-- Resume a task when a phone opens it, and offer it on the board and stream snapshots
-- Carry a queued task's place in line on its board row
-- Carry the stopped mark, the priority scale, task links and the start-blocked reason
+- Resume a task when a phone opens it, and offer it on the board and stream snapshots (1e23d646)
+- Carry a queued task's place in line on its board row (1e23d646)
+- Carry the stopped mark, the priority scale, task links and the start-blocked reason (1e23d646)
+- Document `failing` among a PR's merge readiness values (0df5c318)
+- Document that a running or paused workflow's task cannot pause its automations (7aff391f)
+- Document that a stopped workflow card is the owner's to move (ec403ad8)
 
 ## [protocol-v0.27.0] - 2026-11-01
 
