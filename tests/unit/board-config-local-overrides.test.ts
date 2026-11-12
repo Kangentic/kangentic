@@ -201,8 +201,8 @@ describe('kangentic.local.json stays out of kangentic.json (real SQLite)', () =>
               { name: 'Notify me', type: 'notify', enabled: false, title: '{{title}}', body: 'moved to {{toColumn}}' },
             ],
             onTurnEnd: [
-              { name: 'Back to planning', type: 'move_to_column', enabled: false, condition: 'The plan needs revising', maxRuns: 2, targetColumn: 'To Do', message: '{{agentReply}}' },
-              { name: 'On to review', type: 'move_to_column', enabled: false, finalLine: 'Ready for review', maxRuns: 1 },
+              { name: 'Back to planning', type: 'move_to_column', enabled: false, condition: { agent: 'The plan needs revising' }, maxRuns: 2, targetColumn: 'To Do', message: '{{agentReply}}' },
+              { name: 'On to review', type: 'move_to_column', enabled: false, condition: { text: 'Ready for review' }, maxRuns: 1 },
             ],
             onExit: [
               { name: 'Ping the channel', type: 'webhook', enabled: false, url: 'https://hooks.example.com/kangentic', method: 'POST', body: '{"task":"{{taskNumber}}"}' },

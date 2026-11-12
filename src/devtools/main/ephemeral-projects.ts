@@ -202,8 +202,10 @@ const PREVIEW_AUTOMATIONS_BY_COLUMN: Record<string, {
     // "Condition: only if ..."), and Repeat with its count ("Frequency: at most
     // 2 times until you move the task.").
     onTurnEnd: [
-      { name: 'Back to planning', type: 'move_to_column', enabled: false, condition: 'The plan needs revising', maxRuns: 2, targetColumn: 'Planning', message: '{{agentReply}}' },
-      { name: 'On to review', type: 'move_to_column', enabled: false, finalLine: 'Ready for review', maxRuns: 1 },
+      // `condition` in the shape the serializer writes (`build-config.ts`), so
+      // opening the preview never rewrites this local file.
+      { name: 'Back to planning', type: 'move_to_column', enabled: false, condition: { agent: 'The plan needs revising' }, maxRuns: 2, targetColumn: 'Planning', message: '{{agentReply}}' },
+      { name: 'On to review', type: 'move_to_column', enabled: false, condition: { text: 'Ready for review' }, maxRuns: 1 },
     ],
     onExit: [
       { name: 'Ping the channel', type: 'webhook', enabled: false, url: 'https://hooks.example.com/kangentic', method: 'POST' },
