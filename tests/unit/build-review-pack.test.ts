@@ -1828,7 +1828,7 @@ describe('build-review-pack.mjs', () => {
   );
 
   it(
-    'packs an untracked symlink to a directory as a bodyless note instead of crashing with EISDIR',
+    'packs an untracked symlink to a directory without crashing with EISDIR (a bodyless note where git lists the link as one path)',
     () => {
       // /preview links a worktree's node_modules into the main checkout; git lists such a link as
       // one untracked path, and reading it as a file used to throw EISDIR and abort the script.
