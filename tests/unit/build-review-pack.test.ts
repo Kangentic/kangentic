@@ -1827,6 +1827,33 @@ describe('build-review-pack.mjs', () => {
     20000,
   );
 
+  // Symlinks need a privilege on Windows, so the case runs where they are free.
+  it.skipIf(process.platform === 'win32')(
+    'skips an untracked symlink to a directory instead of crashing with EISDIR',
+    () => {
+      fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');
+      commitAll(repoDirectory, 'base commit');
+      fs.appendFileSync(path.join(repoDirectory, 'tracked.txt'), 'line two (uncommitted)\n');
+
+      // Git lists the link as one untracked path, and reading it as a file
+      // fails with EISDIR because stat follows the link to the directory.
+      const linkTarget = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-review-pack-target-'));
+      try {
+        fs.symlinkSync(linkTarget, path.join(repoDirectory, 'linked-directory'), 'dir');
+
+        // runBuildScript throws on a non-zero exit, so returning is the exit-0 check.
+        runBuildScript(repoDirectory);
+        const packContent = readPack(repoDirectory);
+
+        expect(packContent).toContain('tracked.txt');
+        assertTocLineAccuracyAndHeaderTotal(packContent);
+      } finally {
+        fs.rmSync(linkTarget, { recursive: true, force: true });
+      }
+    },
+    20000,
+  );
+
   it(
     'writes both output files under a relative --out-dir and nothing to .kangentic/',
     () => {

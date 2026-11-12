@@ -1,5 +1,6 @@
 import type { SessionManager } from '../pty/session-manager';
 import type { ActivityState } from '../../shared/types';
+import { PAINT_GIVE_UP_MS } from './paint-give-up';
 
 /**
  * "Has the agent's current turn finished?" - the single predicate, used by
@@ -53,10 +54,19 @@ export interface TurnCompletionOptions {
    * turn-end pass and its recovery nudge; every other caller waits for idle.
    */
   acceptHeld?: boolean;
+  /**
+   * Take the turn as over once the session has read complete this long with
+   * its terminal never quiet. A CLI repaints its status line while its own
+   * background agents run, so an idle session can paint for minutes after its
+   * Stop, and a wait for quiet alone never ends (#804). The give-up logs a
+   * warning. Unset, only quiet ends the wait.
+   */
+  idleWithoutQuietMs?: number;
 }
 
 const DEFAULT_QUIET_MS = 1_500;
-const DEFAULT_TIMEOUT_MS = 120_000;
+/** The turn-end pass's whole wait, which `turnSettled` gives up after. */
+const DEFAULT_TIMEOUT_MS = PAINT_GIVE_UP_MS;
 
 /** Is this state a finished turn? Granular by design; see the module comment. */
 function isTurnComplete(state: ActivityState | undefined): boolean {
@@ -83,6 +93,8 @@ export function waitForTurnCompletion(
 
     let activity: ActivityState | undefined = sessionManager.getActivityCache()[sessionId];
     let lastOutputAt = Date.now();
+    /** When the session last began reading complete, or null while it does not. */
+    let completeSince: number | null = null;
     let settled = false;
     let quietTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -109,13 +121,32 @@ export function waitForTurnCompletion(
       // the cache, which a listener ahead of this one may not have written yet.
       const complete = isTurnComplete(activity)
         || (options.acceptHeld === true && sessionManager.isTurnHeldByBackgroundWork(sessionId));
-      if (!complete) return;
-      const quietFor = Date.now() - lastOutputAt;
+      if (!complete) {
+        completeSince = null;
+        return;
+      }
+      const now = Date.now();
+      completeSince ??= now;
+      const quietFor = now - lastOutputAt;
       if (quietFor >= quietMs) {
         finish('completed');
         return;
       }
-      quietTimer = setTimeout(evaluate, quietMs - quietFor);
+      let nextCheckIn = quietMs - quietFor;
+      const giveUpMs = options.idleWithoutQuietMs;
+      if (giveUpMs !== undefined) {
+        const completeFor = now - completeSince;
+        if (completeFor >= giveUpMs) {
+          console.warn(
+            `[turn-completion] Session ${sessionId.slice(0, 8)} has been idle ${Math.round(completeFor / 1000)}s `
+            + 'with its terminal still painting, so its turn is taken as over.',
+          );
+          finish('completed');
+          return;
+        }
+        nextCheckIn = Math.min(nextCheckIn, giveUpMs - completeFor);
+      }
+      quietTimer = setTimeout(evaluate, nextCheckIn);
     };
 
     const onActivity = (evtSessionId: string, state: ActivityState): void => {

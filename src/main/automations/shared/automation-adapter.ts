@@ -107,9 +107,11 @@ export interface AutomationContext {
    * in a workflow, else on the board). `message` is sent to the agent where the
    * task lands, after that column's own On task enter rows. Resolves once the
    * move is committed, with the destination's name; rejects with a reason the
-   * run log shows when the move cannot be made.
+   * run log shows when the move cannot be made. `runId` is the row's run, whose
+   * detail the message's delivery rewrites once that message lands, is held,
+   * or is not delivered.
    */
-  moveTask?(input: { column: string | null; message: string | null; reason: string }): Promise<{ columnName: string }>;
+  moveTask?(input: { column: string | null; message: string | null; reason: string; runId: string }): Promise<{ columnName: string }>;
   /** The move's signal, combined with this run's own timeout. */
   signal: AbortSignal;
   /** The `automation_runs` row id. The webhook sends it as its idempotency key. */

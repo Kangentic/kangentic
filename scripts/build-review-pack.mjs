@@ -226,7 +226,9 @@ function readFileSafe(relPath) {
   if (fileContentCache.has(relPath)) return fileContentCache.get(relPath);
   let body = null; // stays null for missing, oversized, or binary files
   const absolute = join(repoRoot, relPath);
-  if (existsSync(absolute) && statSync(absolute).size <= SINGLE_FILE_CAP_BYTES) {
+  // statSync follows a symlink, so an untracked link to a directory reads as absent, not EISDIR.
+  const stats = existsSync(absolute) ? statSync(absolute) : null;
+  if (stats !== null && stats.isFile() && stats.size <= SINGLE_FILE_CAP_BYTES) {
     const content = readFileSync(absolute);
     if (!content.includes(0)) {
       body = content.toString('utf8').replace(/\r\n/g, '\n');

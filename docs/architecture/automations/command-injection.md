@@ -7,6 +7,7 @@ sources:
   - resource: src/main/transition-engine/injection-plan.ts
   - resource: src/main/transition-engine/terminal-submit-scheduler.ts
   - resource: src/main/transition-engine/turn-completion.ts
+  - resource: src/main/transition-engine/paint-give-up.ts
   - resource: src/main/pty/terminal-submit.ts
   - resource: src/main/pty/slash-command.ts
   - resource: src/main/pty/automated-keys-guard.ts
@@ -15,6 +16,8 @@ sources:
   - resource: src/main/ipc/helpers/auto-command-outcome.ts
   - resource: src/main/ipc/helpers/exit-message-delivery.ts
   - resource: src/main/automations/turn-end/agent-message-delivery.ts
+  - resource: src/main/automations/turn-end/deliver-message.ts
+    title: a moved task's message waits for the agent's turn, with the paint give-up
   - resource: src/main/agent/adapters/claude/slash-command-verifier.ts
   - resource: src/main/agent/shared/submitted-text-verifier.ts
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
@@ -392,7 +395,7 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 - `src/main/transition-engine/injection-plan.ts` - decides the `restartReason` (`'model'` / `'effort'` / null) for a column transition or column/profile edit, and builds the auto_command sequence (with its verify mode) + verifier; sources the effort delta from the agent's reported level ahead of the session record's `applied_effort`, counting a silent downgrade of the launch level as applied (`resolveReportedEffort` / `resolveSourceEffort`), and the model delta from `applied_model` alone. `resolveTargetSettings` resolves the target side for a move and a ContextBar pick alike.
 - `src/main/transition-engine/terminal-submit-scheduler.ts` - task-keyed lifecycle: the burst FIFO, fresh-spawn wait, deferred wait, escalation, and outcome reporting.
 - `src/main/automations/turn-end/agent-message-delivery.ts` - the one paste-or-type decision every column message path asks (`shouldPaste`: more than one line or over 1,000 characters, and not a slash command), and the paste after the agent's turn ends.
-- `src/main/transition-engine/turn-completion.ts` - the shared turn-completion predicate.
+- `src/main/transition-engine/turn-completion.ts` - the shared turn-completion predicate, and the `idleWithoutQuietMs` give-up: an idle session whose terminal never goes quiet counts as done after `PAINT_GIVE_UP_MS` (120 s, `paint-give-up.ts`), with a console warning. A running workflow task's turn held only by background work also counts (`acceptHeld`).
 - `src/main/pty/terminal-submit.ts` - byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (handshake chain, prompt-state policy, per-command verification).
 - `src/main/pty/automated-keys-guard.ts` - the one gate every automated keystroke asks (`automatedKeysRefusal`, `waitForAutomatedKeysClearance`) and `KeysReachedPermissionPromptError`.
 - `src/main/pty/output-settle.ts` - the settle primitive, shared with `paste-engine.ts`.

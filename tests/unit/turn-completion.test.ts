@@ -194,4 +194,74 @@ describe('waitForTurnCompletion', () => {
 
     await expect(promise).resolves.toBe('completed');
   });
+
+  describe('idleWithoutQuietMs (#804)', () => {
+    /** Paint every 500 ms, inside the 1 s quiet window, so quiet never comes. */
+    function paintEvery500ms(totalMs: number): void {
+      for (let elapsed = 0; elapsed < totalMs; elapsed += 500) {
+        vi.advanceTimersByTime(500);
+        sessionManager.emitOutput(SESSION);
+      }
+    }
+
+    it('takes an idle session whose terminal keeps painting as over once the give-up passes, not before', async () => {
+      // A CLI repainting its status line for its own background agents: idle,
+      // and never quiet. Red before #804: only quiet ended the wait.
+      sessionManager.activity[SESSION] = 'idle';
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      let result: string | null = null;
+      void wait({ idleWithoutQuietMs: 10_000 }).then((outcome) => { result = outcome; });
+
+      paintEvery500ms(9_500);
+      await tick();
+      expect(result).toBeNull();
+
+      paintEvery500ms(1_000);
+      await tick();
+      expect(result).toBe('completed');
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('terminal still painting'));
+      warnSpy.mockRestore();
+    });
+
+    it('counts the give-up from the latest idle, so a turn that resumes starts it over', async () => {
+      sessionManager.activity[SESSION] = 'idle';
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      let result: string | null = null;
+      void wait({ idleWithoutQuietMs: 10_000 }).then((outcome) => { result = outcome; });
+
+      paintEvery500ms(8_000);
+      sessionManager.setActivity(SESSION, 'thinking');
+      paintEvery500ms(2_000);
+      sessionManager.setActivity(SESSION, 'idle');
+      paintEvery500ms(8_000);
+      await tick();
+      // 18 s since the wait began, 8 s of it idle since the turn ended.
+      expect(result).toBeNull();
+
+      paintEvery500ms(2_500);
+      await tick();
+      expect(result).toBe('completed');
+      warnSpy.mockRestore();
+    });
+
+    it('never gives up on a session that is not idle', async () => {
+      sessionManager.activity[SESSION] = 'thinking';
+      const promise = wait({ idleWithoutQuietMs: 5_000 });
+
+      paintEvery500ms(30_000);
+      await tick();
+
+      await expect(promise).resolves.toBe('timeout');
+    });
+
+    it('still times out on a painting idle session when the option is not passed', async () => {
+      sessionManager.activity[SESSION] = 'idle';
+      const promise = wait();
+
+      paintEvery500ms(30_000);
+      await tick();
+
+      await expect(promise).resolves.toBe('timeout');
+    });
+  });
 });

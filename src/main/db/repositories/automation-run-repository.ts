@@ -206,6 +206,16 @@ export class AutomationRunRepository {
   }
 
   /**
+   * Replace a finished run's detail, leaving its status and times. A Move to
+   * column row finishes when its move does, and its message reaches the agent
+   * there in the background: what became of that message is written here once
+   * it is known, so the run never says a message went that did not (#804).
+   */
+  updateDetail(id: string, detail: string): void {
+    this.db.prepare('UPDATE automation_runs SET detail = ? WHERE id = ?').run(detail, id);
+  }
+
+  /**
    * Record a run that never started, so a skip is as visible as a failure. A
    * row the column cannot run (the agent is off, an enter row on To Do) is
    * fixable on the column page, but only if the user can tell it was skipped.

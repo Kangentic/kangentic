@@ -26,7 +26,8 @@ export async function moveTaskFromRow(
     projectPath: string | null;
     task: Task;
     fromColumn: Swimlane;
-    move: { column: string | null; message: string | null; reason: string };
+    /** `runId`: the row's run, whose detail the message's delivery rewrites. */
+    move: { column: string | null; message: string | null; reason: string; runId?: string };
     /**
      * The turn-end group's own move, which must not abort the group that made it
      * (`supersedeTurnEndWork`'s `exceptOwnGroup`). False for Run again, which
@@ -64,6 +65,8 @@ export async function moveTaskFromRow(
     throw new Error(`The move to ${target.column.name} did not complete.`);
   }
 
-  if (message) void deliverMessageAfterMove(context, projectId, task.id, target.column.name, message);
+  if (message) {
+    void deliverMessageAfterMove(context, projectId, task.id, target.column.name, message, move.runId);
+  }
   return { columnName: target.column.name };
 }

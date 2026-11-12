@@ -828,7 +828,7 @@ describe('a turn end abandoned for newer work', () => {
     });
     let moved: { columnName: string } | undefined;
     hoisted.executeTransition.mockImplementation(async (_task: unknown, _column: unknown, _trigger: string, options: ExecuteOptions) => {
-      moved = await options.moveTask?.({ column: 'Testing', message: null, reason: 'On to Testing' });
+      moved = await options.moveTask?.({ column: 'Testing', message: null, reason: 'On to Testing', runId: 'run-move-1' });
       return { results: [] };
     });
 
