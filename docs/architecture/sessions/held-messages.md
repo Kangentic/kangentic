@@ -13,6 +13,8 @@ sources:
   - resource: src/main/automations/turn-end/deliver-message.ts
   - resource: src/main/automations/turn-end/hold-move-message.ts
     title: a moved task's message held, and the hold recorded on its run
+  - resource: src/main/automations/turn-end/move-message-outcome.ts
+    title: the run detail a moved task's message writes
   - resource: src/main/mobile-bridge/handlers/send-user-message.ts
     title: the phone's chat to a task with no running agent is held
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
