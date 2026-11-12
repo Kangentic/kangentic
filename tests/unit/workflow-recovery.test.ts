@@ -2017,7 +2017,7 @@ describe('a running workflow task whose turn ends without its step done', () => 
       expect(held.map((row) => row.message)).toEqual([MOVED_MESSAGE]);
     });
 
-    it('reports the message failed and holds nothing when its keys reached a permission prompt', async () => {
+    it('holds the message when its keys reached a permission prompt, which took them as an answer', async () => {
       const { KeysReachedPermissionPromptError } = await import('../../src/main/pty/automated-keys-guard');
       await endTurn(41, STALLED_REPLY);
       const parked = parkMoveMessage();
@@ -2025,16 +2025,14 @@ describe('a running workflow task whose turn ends without its step done', () => 
       await wait(RECOVERY_DELAYS_MS[0]);
 
       expect(nudges()).toEqual([MOVED_MESSAGE]);
-      // Red without the KeysReachedPermissionPromptError branch: the message was held and could reach the agent twice.
+      // The Enter answered a prompt, so the agent never read the message as one.
+      // Red if this error is special-cased to hold nothing: the message is lost.
       expect(parked.report).toHaveBeenCalledTimes(1);
-      expect(parked.report).toHaveBeenCalledWith({
-        kind: 'failed',
-        reason: 'its keys reached a permission prompt, so it is not held: the agent may already have it.',
-      });
+      expect(parked.report).toHaveBeenCalledWith({ kind: 'held' });
       const held = (hoisted.database as DatabaseType.Database)
         .prepare('SELECT message FROM session_messages_sent WHERE task_id = ? AND status = \'held\'')
         .all(taskId) as Array<{ message: string }>;
-      expect(held).toEqual([]);
+      expect(held.map((row) => row.message)).toEqual([MOVED_MESSAGE]);
     });
 
     it('gives the delivery the short paste quiet limit and accepts a held session, for the moved message and a plain nudge alike', async () => {
