@@ -210,7 +210,12 @@ import { isAbortError } from '../../src/shared/abort-utils';
 import { worktreeFolderFromPath } from '../../src/shared/worktree-folder';
 import { runWorktreeCreation } from '../../src/main/git/worktree-creation-registry';
 import { taskWorktreePathFor } from '../../src/main/git/task-worktree-folder';
-import { GitUserStateError, StaleWorktreeDirectoryError } from '../../src/main/git/worktree-errors';
+import {
+  GitUserStateError,
+  StaleWorktreeDirectoryError,
+  WorktreeSetupScriptError,
+  worktreeFailureCause,
+} from '../../src/main/git/worktree-errors';
 import { isUserConfigurationError } from '../../src/shared/user-configuration-error';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -760,6 +765,47 @@ describe('WorktreeManager - setUpWorktree (initScript and node_modules linking)'
     expect(logSpy.mock.calls.map((call) => String(call[0]))).toContainEqual(
       expect.stringMatching(/^\[INIT-SCRIPT\] Post-worktree script stopped in .+ after \d+ms: creation was aborted$/),
     );
+  });
+
+  // The launch report tells a script's failure from a git refusal by this type.
+  it('rejects a failing Post-Worktree Script with a WorktreeSetupScriptError that names its cause', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    spawnOverrides.push({ match: (_args, command) => command === 'failing-script', behavior: { exitCode: 1, stderr: 'boom' } });
+
+    const failure = await new WorktreeManager('/project')
+      .setUpWorktree(setupWorktreePath, { copyFiles: [], initScript: 'failing-script' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(WorktreeSetupScriptError);
+    expect(failure).not.toBeInstanceOf(GitUserStateError);
+    expect((failure as WorktreeSetupScriptError).cause).toBeInstanceOf(Error);
+    expect(((failure as WorktreeSetupScriptError).cause as Error).message).toBe((failure as Error).message);
+    expect((failure as Error).message).toMatch(/exited with code 1: boom/);
+    expect(worktreeFailureCause(failure)).toBe('worktree_setup_script');
+  });
+
+  it('leaves a script failure that is the repository\'s own state as that user-state error, not a script error', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    spawnOverrides.push({
+      match: (_args, command) => command === 'branch-in-use-script',
+      behavior: { exitCode: 1, stderr: "fatal: 'feature/x' is already checked out at '/mock/other'" },
+    });
+
+    const failure = await new WorktreeManager('/project')
+      .setUpWorktree(setupWorktreePath, { copyFiles: [], initScript: 'branch-in-use-script' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(GitUserStateError);
+    expect(failure).not.toBeInstanceOf(WorktreeSetupScriptError);
+  });
+
+  it('copies a string or numeric code off the failure onto the script error, and ignores any other', () => {
+    const withErrno = (code: unknown) => Object.assign(new Error('script failed'), { code });
+    expect(new WorktreeSetupScriptError('x', { cause: withErrno('ENOENT') }).code).toBe('ENOENT');
+    expect(new WorktreeSetupScriptError('x', { cause: withErrno(127) }).code).toBe(127);
+    expect(new WorktreeSetupScriptError('x', { cause: withErrno({ nested: true }) }).code).toBeUndefined();
+    expect(new WorktreeSetupScriptError('x', { cause: new Error('no code') }).code).toBeUndefined();
+    expect(new WorktreeSetupScriptError('x').code).toBeUndefined();
   });
 });
 
