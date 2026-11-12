@@ -7,6 +7,7 @@ sources:
   - resource: src/main/transition-engine/injection-plan.ts
   - resource: src/main/transition-engine/terminal-submit-scheduler.ts
   - resource: src/main/transition-engine/turn-completion.ts
+  - resource: src/main/transition-engine/paint-give-up.ts
   - resource: src/main/pty/terminal-submit.ts
   - resource: src/main/pty/slash-command.ts
   - resource: src/main/pty/automated-keys-guard.ts

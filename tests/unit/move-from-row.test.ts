@@ -182,7 +182,7 @@ describe('moveTaskFromRow', () => {
       expect(result).toEqual({ columnName: 'Done' });
     });
 
-    it('hands the row\'s message to the delivery as bound for Done, which drops it there', async () => {
+    it('hands the row\'s message to the delivery as bound for Done, which records it as not held', async () => {
       await runRouted(moveInput({ message: 'Open the PR.' }));
 
       expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'Done', 'Open the PR.', 'run-move-1');

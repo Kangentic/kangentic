@@ -20,6 +20,9 @@ sources:
   - resource: src/main/ipc/helpers/plan-exit-target.ts
   - resource: src/shared/template-escape.ts
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
+  - resource: src/main/automations/turn-end/move-message-outcome.ts
+    title: what a Move to column row's run says about its message
+  - resource: src/main/automations/turn-end/turn-end-passes.ts
 ---
 # Transition engine
 

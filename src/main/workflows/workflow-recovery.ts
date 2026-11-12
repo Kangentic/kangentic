@@ -846,9 +846,13 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
     workflowMemoryGate.release(gateKey);
     // The move's message is not lost with the attempt: the task's agent gets
     // it held. A move that stopped the attempt took the task from the column
-    // the message was for, so then nothing is held.
+    // the message was for, so then nothing is held. Keys that reached a
+    // permission prompt were typed, so a held copy could reach the agent twice.
     if (movedMessage && signal.aborted) movedMessage.report({ kind: 'superseded' });
-    else if (movedMessage) holdMovedMessageAfterFailedAttempt(context, entry, movedMessage);
+    else if (movedMessage && error instanceof KeysReachedPermissionPromptError) {
+      console.warn(`[WORKFLOW] Recovery's keys for task ${entry.taskId.slice(0, 8)}'s moved message reached a permission prompt; it is not held, since the agent may have it.`);
+      movedMessage.report({ kind: 'failed', reason: 'its keys reached a permission prompt, so it is not held: the agent may already have it.' });
+    } else if (movedMessage) holdMovedMessageAfterFailedAttempt(context, entry, movedMessage);
     // A move meanwhile: the move owns what happens next.
     if (signal.aborted || getRecoveryEntry(entry.taskId) !== entry) return;
     if (error instanceof KeysReachedPermissionPromptError) {
@@ -869,7 +873,7 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
   // Only now: a working wait that ran out stays run out through every hold
   // above, so the next try nudges instead of waiting another hour.
   endWorkingWait(entry);
-  movedMessage?.report({ kind: 'handed-to-recovery' });
+  movedMessage?.report({ kind: 'sent-by-recovery' });
   if (getRecoveryEntry(entry.taskId) !== entry) return;
   const rowId = recordAttempt(
     context,

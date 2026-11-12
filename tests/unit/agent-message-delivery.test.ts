@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { TurnCompletionResult } from '../../src/main/transition-engine/turn-completion';
 import type { InjectionReport } from '../../src/main/transition-engine/terminal-submit-scheduler';
+import { PAINT_GIVE_UP_MS } from '../../src/main/transition-engine/paint-give-up';
 
 const turnWaits = vi.hoisted(() => [] as Array<{
   sessionId: string;
@@ -229,7 +230,7 @@ describe('deliverAgentMessageInBackground', () => {
     // #804: an idle agent whose CLI keeps painting never goes quiet, and a held
     // message for a resumed session sat out the whole wait. Red: the paste's
     // turn wait without the paint give-up.
-    expect(turnWaits[0].idleWithoutQuietMs).toBe(120_000);
+    expect(turnWaits[0].idleWithoutQuietMs).toBe(PAINT_GIVE_UP_MS);
 
     turnWaits[0].resolve('completed');
     await settle();
@@ -576,14 +577,14 @@ describe('deliverAgentMessageAndWait', () => {
       verifier: null,
       signal: new AbortController().signal,
       turnWait: 'always',
-      idleWithoutQuietMs: 120_000,
+      idleWithoutQuietMs: PAINT_GIVE_UP_MS,
     });
     await settle();
 
     // Red: dropping the option from the awaited paste's turn wait leaves a
     // repainting CLI never going quiet, so the message waits the full hour.
     expect(turnWaits).toHaveLength(1);
-    expect(turnWaits[0].idleWithoutQuietMs).toBe(120_000);
+    expect(turnWaits[0].idleWithoutQuietMs).toBe(PAINT_GIVE_UP_MS);
 
     turnWaits[0].resolve('completed');
     await delivery;

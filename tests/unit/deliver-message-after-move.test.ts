@@ -10,6 +10,7 @@
  * row's run.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { PAINT_GIVE_UP_MS } from '../../src/main/transition-engine/paint-give-up';
 
 const PROJECT_ID = 'proj-1';
 const TASK_ID = 'task-moved';
@@ -22,11 +23,12 @@ const hoisted = vi.hoisted(() => ({
   holdTaskMessage: vi.fn<(...callArguments: unknown[]) => unknown>(() => ({ status: 'held', displayId: 7, rowId: 'held-1' })),
   workflowStepApplies: vi.fn(() => false),
   updateDetail: vi.fn(),
+  taskGone: { value: false },
 }));
 
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: () => ({
-    tasks: { getById: () => ({ id: TASK_ID, agent: 'claude', workflow_id: null, workflow_project_id: null }) },
+    tasks: { getById: () => (hoisted.taskGone.value ? null : { id: TASK_ID, agent: 'claude', workflow_id: null, workflow_project_id: null }) },
     automationRuns: { updateDetail: hoisted.updateDetail },
   }),
 }));
@@ -41,7 +43,9 @@ vi.mock('../../src/main/held-messages/held-messages', () => ({ holdTaskMessage: 
 vi.mock('../../src/main/workflows/workflow-step', () => ({ workflowStepApplies: hoisted.workflowStepApplies }));
 
 const { deliverMessageAfterMove } = await import('../../src/main/automations/turn-end/deliver-message');
-const { supersedeTurnEndWork, takeMoveFollowUpMessage, hasMoveFollowUp } = await import('../../src/main/automations/turn-end/turn-end-passes');
+const {
+  supersedeTurnEndWork, takeMoveFollowUpMessage, hasMoveFollowUp, hasPendingMessageDelivery,
+} = await import('../../src/main/automations/turn-end/turn-end-passes');
 
 function makeContext(live: { id: string; writable: boolean } | null) {
   const current = { live };
@@ -98,6 +102,7 @@ describe('deliverMessageAfterMove', () => {
     hoisted.workflowStepApplies.mockReset();
     hoisted.workflowStepApplies.mockReturnValue(false);
     hoisted.updateDetail.mockReset();
+    hoisted.taskGone.value = false;
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -122,7 +127,7 @@ describe('deliverMessageAfterMove', () => {
       message: MESSAGE,
     });
     expect(hoisted.deliverAgentMessageAndWait).not.toHaveBeenCalled();
-    expect(recordedDetail()).toContain('held for the task\'s next agent');
+    expect(recordedDetail()).toBe('Moved to Blocked; its message could not be sent yet, so it is held for the task\'s agent.');
   });
 
   it('holds it while the task\'s agent is still queued, with no PTY to type into', async () => {
@@ -152,11 +157,11 @@ describe('deliverMessageAfterMove', () => {
     expect(hoisted.waitForTurnCompletion).toHaveBeenCalledWith(
       expect.anything(),
       'live-session',
-      expect.objectContaining({ idleWithoutQuietMs: 120_000, acceptHeld: false }),
+      expect.objectContaining({ idleWithoutQuietMs: PAINT_GIVE_UP_MS, acceptHeld: false }),
     );
     expect(hoisted.deliverAgentMessageAndWait).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ idleWithoutQuietMs: 120_000, acceptHeld: false }),
+      expect.objectContaining({ idleWithoutQuietMs: PAINT_GIVE_UP_MS, acceptHeld: false }),
     );
   });
 
@@ -194,7 +199,7 @@ describe('deliverMessageAfterMove', () => {
     expect(hoisted.holdTaskMessage).toHaveBeenCalledTimes(1);
     expect(hoisted.deliverAgentMessageAndWait).not.toHaveBeenCalled();
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('did not end its turn'));
-    expect(recordedDetail()).toContain('held for the task\'s next agent');
+    expect(recordedDetail()).toBe('Moved to Blocked; its message could not be sent yet, so it is held for the task\'s agent.');
   });
 
   it('holds nothing when the move was superseded while the agent exited, and says so', async () => {
@@ -241,7 +246,7 @@ describe('deliverMessageAfterMove', () => {
     expect(hoisted.updateDetail).not.toHaveBeenCalled();
 
     // The taker reports the outcome through the follow-up's own run.
-    taken?.report({ kind: 'handed-to-recovery' });
+    taken?.report({ kind: 'sent-by-recovery' });
     expect(recordedDetail()).toBe('Moved to Blocked; workflow recovery sent its message in place of a nudge.');
   });
 
@@ -273,6 +278,82 @@ describe('deliverMessageAfterMove', () => {
 
     expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('is not held'));
     expect(recordedDetail()).toContain('could not be held: Task #7 is in Done');
+  });
+
+  it('is not takeable by recovery and counts as a pending delivery while it sends, then clears', async () => {
+    let finishSend: () => void = () => undefined;
+    hoisted.deliverAgentMessageAndWait.mockImplementation(
+      () => new Promise<undefined>((resolve) => { finishSend = () => resolve(undefined); }),
+    );
+
+    const delivery = deliverMessageAfterMove(makeContext(LIVE).context, PROJECT_ID, TASK_ID, 'Blocked', MESSAGE, RUN_ID);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(hoisted.deliverAgentMessageAndWait).toHaveBeenCalledTimes(1);
+
+    // Red without markMoveFollowUpSending: recovery could take it and send it twice.
+    expect(takeMoveFollowUpMessage(TASK_ID)).toBeNull();
+    expect(hasMoveFollowUp(TASK_ID)).toBe(true);
+    // Red without trackMessageDelivery: the nudge would not hold off for a message on its way.
+    expect(hasPendingMessageDelivery(TASK_ID)).toBe(true);
+
+    finishSend();
+    await delivery;
+
+    expect(hasPendingMessageDelivery(TASK_ID)).toBe(false);
+    expect(hasMoveFollowUp(TASK_ID)).toBe(false);
+    expect(recordedDetail()).toBe('Moved to Blocked, with a message the agent there received.');
+  });
+
+  it.each([
+    ['an Error', new Error('the store is locked'), 'the store is locked'],
+    ['a non-Error value', 'disk full', 'disk full'],
+  ])('records the message as not held, and logs, when the hold throws %s', async (_label, thrown, reason) => {
+    hoisted.holdTaskMessage.mockImplementation(() => { throw thrown; });
+
+    await expect(run(makeContext(null).context)).resolves.toBeUndefined();
+
+    // Red without the try/catch in hold-move-message.ts: the delivery would throw or say nothing.
+    expect(recordedDetail()).toBe(`Moved to Blocked; its message was not delivered and could not be held: ${reason}`);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('is not held'));
+  });
+
+  it('reports the move superseded, not a delivery error, and holds nothing, when a later move lands during the send', async () => {
+    hoisted.deliverAgentMessageAndWait.mockImplementation(async () => {
+      supersedeTurnEndWork(TASK_ID);
+      throw new Error('The message was not delivered before the automation was stopped.');
+    });
+
+    await run(makeContext(LIVE).context);
+
+    // Red without endIfStopped in the catch: it would record `not delivered: <error>`.
+    expect(recordedDetail()).toContain('because the task moved on first');
+    expect(hoisted.holdTaskMessage).not.toHaveBeenCalled();
+  });
+
+  it('records that the task is gone when it no longer exists', async () => {
+    hoisted.taskGone.value = true;
+
+    await run(makeContext(LIVE).context);
+
+    expect(recordedDetail()).toBe('Moved to Blocked; its message was not delivered: the task is gone.');
+    expect(hoisted.deliverAgentMessageAndWait).not.toHaveBeenCalled();
+    expect(hoisted.holdTaskMessage).not.toHaveBeenCalled();
+  });
+
+  it('lets a second move for the same task replace the first, which records it superseded and holds nothing', async () => {
+    const firstDelivery = deliverMessageAfterMove(makeContext(LIVE).context, PROJECT_ID, TASK_ID, 'Blocked', MESSAGE, 'run-first');
+    const secondDelivery = deliverMessageAfterMove(makeContext(LIVE).context, PROJECT_ID, TASK_ID, 'Testing', MESSAGE, 'run-second');
+    await vi.advanceTimersByTimeAsync(3_000);
+    await Promise.all([firstDelivery, secondDelivery]);
+
+    // Red without trackTurnEndFollowUp aborting the earlier one: both would send.
+    expect(hoisted.updateDetail).toHaveBeenCalledWith(
+      'run-first',
+      'Moved to Blocked; its message was not delivered, because the task moved on first.',
+    );
+    expect(hoisted.updateDetail).toHaveBeenCalledWith('run-second', 'Moved to Testing, with a message the agent there received.');
+    expect(hoisted.deliverAgentMessageAndWait).toHaveBeenCalledTimes(1);
+    expect(hoisted.holdTaskMessage).not.toHaveBeenCalled();
   });
 
   it('writes no run detail for a move with no run (kangentic_move_task)', async () => {

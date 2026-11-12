@@ -14,7 +14,7 @@ export type MoveMessageOutcome =
   | { kind: 'held' }
   | { kind: 'not-held'; reason: string }
   | { kind: 'superseded' }
-  | { kind: 'handed-to-recovery' }
+  | { kind: 'sent-by-recovery' }
   | { kind: 'failed'; reason: string };
 
 /** The run's detail while the message waits for the agent where the task landed. */
@@ -28,12 +28,12 @@ export function moveMessageOutcomeDetail(columnName: string, outcome: MoveMessag
     case 'delivered':
       return `Moved to ${columnName}, with a message the agent there received.`;
     case 'held':
-      return `Moved to ${columnName}; no agent there could take its message, so it is held for the task's next agent.`;
+      return `Moved to ${columnName}; its message could not be sent yet, so it is held for the task's agent.`;
     case 'not-held':
       return `Moved to ${columnName}; its message was not delivered and could not be held: ${outcome.reason}`;
     case 'superseded':
       return `Moved to ${columnName}; its message was not delivered, because the task moved on first.`;
-    case 'handed-to-recovery':
+    case 'sent-by-recovery':
       return `Moved to ${columnName}; workflow recovery sent its message in place of a nudge.`;
     case 'failed':
       return `Moved to ${columnName}; its message was not delivered: ${outcome.reason}`;

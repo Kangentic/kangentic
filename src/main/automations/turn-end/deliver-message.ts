@@ -64,7 +64,6 @@ const FOLLOW_UP_WAIT_MS = 60 * 60_000;
 /** A beat for the destination's own enter message to start its turn first. */
 const FOLLOW_UP_SETTLE_MS = 3_000;
 
-
 /**
  * Hand a message to the agent where a task just landed: a Move to column row's
  * Message, or `kangentic_move_task`'s `message`. Runs in the background, after
