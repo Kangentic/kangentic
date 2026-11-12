@@ -548,6 +548,9 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
   // what each agent is doing. Shared with the monitor card through
   // `excerptLinesFor`, so the two surfaces cannot clamp differently.
   const excerptLines = excerptLinesFor(density);
+  const artifactCount = task.artifacts?.length ?? 0;
+  // A PR beside a count splits the link row in a grid (below).
+  const linkRowIsGrid = Boolean(task.pr_url) && artifactCount > 1;
 
   return (
     <>
@@ -581,10 +584,21 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
 
       {/* The task's links: its pull request, then its artifacts (#1056). Compact
           density hides both, as it hides everything under the title. */}
-      {!isCompactDensity && (task.pr_url || (task.artifacts?.length ?? 0) > 0) && (
-        // A container, so the artifacts count can drop its word when a narrow
-        // card has no room for it beside the PR pill (`ArtifactsChip`).
-        <div className="@container flex min-w-0 items-center gap-2 mt-1.5">
+      {!isCompactDensity && (task.pr_url || artifactCount > 0) && (
+        // How the row splits (#1074). The artifacts chip fills whatever the PR
+        // pill leaves: the whole row alone, the rest of it beside one artifact
+        // (the PR keeps its label's width so the name gets the room). A count
+        // is as fixed as the PR, so the two share the row 50/50 in a grid whose
+        // PR column never drops below its label: at Narrow and the Fill floor
+        // the PR keeps "PR #1071" and the count takes what is left.
+        <div
+          className={
+            linkRowIsGrid
+              ?'grid grid-cols-[minmax(max-content,1fr)_minmax(0,1fr)] items-center gap-2 mt-1.5'
+              : 'flex min-w-0 items-center gap-2 mt-1.5'
+          }
+          data-testid="task-card-links"
+        >
           {task.pr_url && (
             <PrLink
               prUrl={task.pr_url}
@@ -599,12 +613,11 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
           {/* Mounted only for a task that has artifacts: the chip subscribes
               to three stores for its link tip, and most cards with a PR pill
               have none to show. */}
-          {(task.artifacts?.length ?? 0) > 0 && (
+          {artifactCount > 0 && (
             <ArtifactsChip
               task={task}
               variant="card"
               onEdit={hideDisplayId ? undefined : () => openArtifactsEditor(task.id)}
-              besidePr={Boolean(task.pr_url)}
               testId="task-card-artifacts"
             />
           )}

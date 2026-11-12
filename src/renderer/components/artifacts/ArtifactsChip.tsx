@@ -10,10 +10,12 @@ import { ArtifactPlatformLogo } from '../VendorMark';
 import { listArtifacts } from '../../../shared/task-artifacts';
 import type { Task } from '../../../shared/types';
 import { ArtifactsMenu } from './ArtifactsMenu';
+import { countStepShowsWord, useArtifactCountStep } from './useArtifactCountStep';
 
 /**
  * Where a task's artifacts show (#1056):
- * - `card`: the chip beside the PR pill on a board card.
+ * - `card`: the chip on a board card, alone or beside the PR pill. It fills the
+ *   slot the card's link row gives it (`task-card-view.tsx`).
  * - `header`: an icon button in the task window's header.
  * - `metric`: the count in a completed task's strip.
  */
@@ -24,12 +26,6 @@ interface ArtifactsChipProps {
   variant: ArtifactsChipVariant;
   /** Opens the task's edit form at Artifacts, from the menu's last row. Absent where the task cannot be edited. */
   onEdit?: () => void;
-  /**
-   * The card chip shares its row with a PR pill. A narrow card has no room for
-   * both at full length, so the count then drops its word below
-   * `@[240px]` of the row (the row is the container) and shows the number.
-   */
-  besidePr?: boolean;
   testId: string;
 }
 
@@ -49,19 +45,21 @@ const METRIC_CLASS = 'inline-flex items-center gap-[5px] rounded text-fg hover:u
  * On a card the control sits inside the card's own click and drag target, so
  * its click stops there.
  */
-export function ArtifactsChip({ task, variant, onEdit, besidePr = false, testId }: ArtifactsChipProps) {
+export function ArtifactsChip({ task, variant, onEdit, testId }: ArtifactsChipProps) {
   const { t } = useLingui();
   const items = useMemo(() => listArtifacts(task.artifacts ?? []), [task.artifacts]);
   const opener = useLinkOpener(task.id);
   const [menuOpen, setMenuOpen] = useState(false);
   const anchorRef = useRef<HTMLSpanElement>(null);
+  const chipRef = useRef<HTMLElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
-
-  if (items.length === 0) return null;
-
-  const only = items.length === 1 ? items[0] : null;
   const count = items.length;
   const countLabel = t`${plural(count, { one: '# artifact', other: '# artifacts' })}`;
+  const countStep = useArtifactCountStep(chipRef, countLabel, variant === 'card' && count > 1);
+
+  if (count === 0) return null;
+
+  const only = count === 1 ? items[0] : null;
 
   const handleClick = (event: MouseEvent<HTMLElement>) => {
     event.stopPropagation();
@@ -126,26 +124,40 @@ export function ArtifactsChip({ task, variant, onEdit, besidePr = false, testId 
     );
   }
 
+  // One artifact: its name and tool. A count: nothing while its word shows, the
+  // word once a step hides it. An empty label holds the tip shut.
+  const cardTipLabel = only
+    ? `${only.name}, ${only.tool}`
+    : countStepShowsWord(countStep) ? '' : countLabel;
+  // The chevron's classes: hidden on the two steps that drop it. The step names
+  // here and on the two spans below match `countStepShowsWord` and
+  // `countStepShowsChevron` (`useArtifactCountStep.ts`).
+  const chevronClass = 'flex-shrink-0 opacity-60 group-data-[count-step=word]/count:hidden group-data-[count-step=number]/count:hidden';
   return (
-    <span ref={anchorRef} className="relative inline-flex min-w-0">
+    // Fills its slot: the whole row alone, the rest of it beside a PR pill, or
+    // half of it beside a PR pill when it is a count.
+    <span ref={anchorRef} className="relative flex min-w-0 flex-1">
       <Tooltip
-        label={only ? `${only.name}, ${only.tool}` : countLabel}
+        label={cardTipLabel}
         destination={only?.artifact.url}
         rows={only ? opener.rows : undefined}
         enabled={!menuOpen}
-        // The chip shows the count; the tip would only repeat it.
+        // The chip's aria-label already names the count.
         describe={only ? undefined : false}
       >
         <Pill
+          ref={chipRef}
           shape="square"
           size="xs"
+          justify="start"
           onClick={handleClick}
           aria-expanded={only ? undefined : menuOpen}
           // The count's word can be hidden (below), so the name is said here.
           aria-label={only ? undefined : countLabel}
-          className={`min-w-0 max-w-full transition-colors ${menuOpen ? CARD_PRESSED_CLASS : CARD_REST_CLASS}`}
+          className={`group/count w-full min-w-0 transition-colors ${menuOpen ? CARD_PRESSED_CLASS : CARD_REST_CLASS}`}
           data-testid={testId}
           data-artifact-count={count}
+          data-count-step={only ? undefined : countStep}
         >
           {only ? (
             <>
@@ -158,13 +170,20 @@ export function ArtifactsChip({ task, variant, onEdit, besidePr = false, testId 
               <Shapes size={13} className="flex-shrink-0" aria-hidden="true" />
               {/* Never two lines: the label wrapped inside the chip at Narrow
                   and made the chip taller than the PR pill beside it. */}
-              <span className={`min-w-0 truncate ${besidePr ? 'hidden @[240px]:inline' : ''}`}>{countLabel}</span>
-              {besidePr && <span className="@[240px]:hidden" aria-hidden="true">{count}</span>}
-              {/* The arrow goes with the word: at Fill's 200px floor the PR
-                  pill leaves room for the icon and the number only. */}
+              <span
+                className="min-w-0 truncate group-data-[count-step=number-chevron]/count:hidden group-data-[count-step=number]/count:hidden"
+              >
+                {countLabel}
+              </span>
+              <span
+                className="hidden group-data-[count-step=number-chevron]/count:inline group-data-[count-step=number]/count:inline"
+                aria-hidden="true"
+              >
+                {count}
+              </span>
               {menuOpen
-                ? <ChevronUp size={11} className={`flex-shrink-0 opacity-60 ${besidePr ? 'hidden @[240px]:inline-block' : ''}`} aria-hidden="true" />
-                : <ChevronDown size={11} className={`flex-shrink-0 opacity-60 ${besidePr ? 'hidden @[240px]:inline-block' : ''}`} aria-hidden="true" />}
+                ? <ChevronUp size={11} className={chevronClass} aria-hidden="true" />
+                : <ChevronDown size={11} className={chevronClass} aria-hidden="true" />}
             </>
           )}
         </Pill>
