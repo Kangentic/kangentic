@@ -1,5 +1,6 @@
 import { forgetAbandonedTurnsForTask } from './abandoned-turns';
 import { forgetWorkflowRecovery } from '../../workflows/workflow-recovery-state';
+import type { MoveMessageOutcome } from './move-message-outcome';
 
 /**
  * The turn-end work in flight per task, and the background message deliveries,
@@ -14,7 +15,32 @@ import { forgetWorkflowRecovery } from '../../workflows/workflow-recovery-state'
  * just succeeded as interrupted.
  */
 const groupControllers = new Map<string, AbortController>();
-const followUpControllers = new Map<string, AbortController>();
+
+/**
+ * A moved task's message, as workflow recovery takes it: recovery then
+ * reports what became of the message itself.
+ */
+export interface TakenMoveFollowUp {
+  message: string;
+  /** Records what became of the message (the row's run detail, and the log). */
+  report: (outcome: MoveMessageOutcome) => void;
+}
+
+/** A moved task's message still waiting for the agent where the task landed. */
+interface MoveFollowUp extends TakenMoveFollowUp {
+  controller: AbortController;
+  /** Its delivery has begun typing or pasting, so recovery may no longer take it. */
+  sending: boolean;
+}
+const followUps = new Map<string, MoveFollowUp>();
+
+/**
+ * Why a moved task's message stopped waiting, as its signal's `reason`. The
+ * delivery reads back only the hand-over to recovery; any other stop is a
+ * later move.
+ */
+const MOVE_FOLLOW_UP_SUPERSEDED = 'move-follow-up:superseded';
+export const MOVE_FOLLOW_UP_HANDED_TO_RECOVERY = 'move-follow-up:handed-to-recovery';
 
 /** Register the running group's controller for a task. Returns its release. */
 export function trackTurnEndGroup(taskId: string, controller: AbortController): () => void {
@@ -31,16 +57,48 @@ export function hasTurnEndGroup(taskId: string): boolean {
 
 /** Is a moved task's message still waiting for the agent where the task landed? */
 export function hasMoveFollowUp(taskId: string): boolean {
-  return followUpControllers.has(taskId);
+  return followUps.has(taskId);
 }
 
-/** Register a message waiting to reach the agent after a Move to column move. */
-export function trackTurnEndFollowUp(taskId: string, controller: AbortController): () => void {
-  followUpControllers.get(taskId)?.abort();
-  followUpControllers.set(taskId, controller);
+/**
+ * Register a message waiting to reach the agent after a Move to column move.
+ * A newer one for the same task replaces it: that move took the task on from
+ * the column this one was for.
+ */
+export function trackTurnEndFollowUp(
+  taskId: string,
+  controller: AbortController,
+  followUp: TakenMoveFollowUp,
+): () => void {
+  followUps.get(taskId)?.controller.abort(MOVE_FOLLOW_UP_SUPERSEDED);
+  followUps.set(taskId, { controller, message: followUp.message, report: followUp.report, sending: false });
   return () => {
-    if (followUpControllers.get(taskId) === controller) followUpControllers.delete(taskId);
+    if (followUps.get(taskId)?.controller === controller) followUps.delete(taskId);
   };
+}
+
+/**
+ * The delivery registered with `controller` has begun typing or pasting its
+ * message. A later move still stops it; recovery no longer takes it.
+ */
+export function markMoveFollowUpSending(taskId: string, controller: AbortController): void {
+  const followUp = followUps.get(taskId);
+  if (followUp?.controller === controller) followUp.sending = true;
+}
+
+/**
+ * Take a moved task's waiting message for workflow recovery to send in place
+ * of its nudge (#804): an agent recovery would ask to carry on has the move's
+ * own instructions waiting for it. The waiting delivery stops and records
+ * nothing; the taker reports what became of the message. Null when none waits,
+ * and when its delivery is already sending it.
+ */
+export function takeMoveFollowUpMessage(taskId: string): TakenMoveFollowUp | null {
+  const followUp = followUps.get(taskId);
+  if (!followUp || followUp.sending) return null;
+  followUps.delete(taskId);
+  followUp.controller.abort(MOVE_FOLLOW_UP_HANDED_TO_RECOVERY);
+  return { message: followUp.message, report: followUp.report };
 }
 
 /**
@@ -50,7 +108,7 @@ export function trackTurnEndFollowUp(taskId: string, controller: AbortController
  */
 export function supersedeTurnEndWork(taskId: string, options: { exceptOwnGroup?: boolean } = {}): void {
   if (!options.exceptOwnGroup) groupControllers.get(taskId)?.abort();
-  followUpControllers.get(taskId)?.abort();
+  followUps.get(taskId)?.controller.abort(MOVE_FOLLOW_UP_SUPERSEDED);
   forgetAbandonedTurnsForTask(taskId);
   forgetWorkflowRecovery(taskId);
 }
@@ -58,7 +116,8 @@ export function supersedeTurnEndWork(taskId: string, options: { exceptOwnGroup?:
 /**
  * Column messages pasted in the background (`pasteAgentMessageInBackground`):
  * a multi-line On task enter message, or a re-run of one, waiting for the
- * agent's turn to end before it is pasted.
+ * agent's turn to end before it is pasted. A moved task's message joins them
+ * once its delivery starts sending (`deliverMessageAfterMove`).
  *
  * A set per task, not the single slot `trackTurnEndFollowUp` keeps. One enter
  * group can hold two multi-line message rows, and a Move to column follow-up

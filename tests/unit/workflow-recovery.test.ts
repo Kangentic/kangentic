@@ -34,7 +34,7 @@ import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repo
 import { IPC } from '../../src/shared/ipc-channels';
 import { nextOnRoute } from '../../src/shared/workflow-route';
 import { matchFinalLine } from '../../src/shared/final-line-match';
-import { supersedeTurnEndWork } from '../../src/main/automations/turn-end/turn-end-passes';
+import { supersedeTurnEndWork, trackTurnEndFollowUp } from '../../src/main/automations/turn-end/turn-end-passes';
 import { resetAbandonedTurnsForTests } from '../../src/main/automations/turn-end/abandoned-turns';
 import {
   cancelWorkflowRecovery,
@@ -125,7 +125,6 @@ vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() 
 
 const { registerTurnEndAutomations, catchUpAfterResume } = await import('../../src/main/automations/turn-end/turn-end-runner');
 const {
-  announceWorkflowStall,
   nudgeMessage,
   RECOVERY_DELAYS_MS,
   OUTAGE_RETRY_MS,
@@ -1969,6 +1968,132 @@ describe('a running workflow task whose turn ends without its step done', () => 
       expect(isUnderWorkflowRecovery(taskId)).toBe(true);
       // Recovery has run out, so nothing else will try: the card wears the pennant.
       expect(sessionManager.setTaskStopped).toHaveBeenCalledWith(taskId, 'turn');
+    });
+  });
+
+  describe('a moved task\'s message still waiting for the agent (#804)', () => {
+    const MOVED_MESSAGE = 'Fix the two review findings, then end your turn.';
+
+    /** A Move to column message parked on the agent's turn, as `deliverMessageAfterMove` leaves it. */
+    function parkMoveMessage(): { controller: AbortController; report: ReturnType<typeof vi.fn> } {
+      const controller = new AbortController();
+      const report = vi.fn();
+      trackTurnEndFollowUp(taskId, controller, { message: MOVED_MESSAGE, report });
+      return { controller, report };
+    }
+
+    it('sends the move\'s message in place of the nudge, once, and stops the waiting delivery', async () => {
+      await endTurn(41, STALLED_REPLY);
+      const parked = parkMoveMessage();
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      // Red before #804: the generic "carry on" went first and the message never came.
+      expect(nudges()).toEqual([MOVED_MESSAGE]);
+      expect(parked.controller.signal.aborted).toBe(true);
+      expect(parked.report).toHaveBeenCalledWith({ kind: 'sent-by-recovery' });
+      expect(recoveryRows()).toEqual([
+        expect.objectContaining({ status: 'succeeded', detail: 'Recovery 1 of 4: sent the moved task\'s waiting message in place of a nudge.' }),
+      ]);
+
+      // The next attempt has no message waiting: it nudges as before.
+      startTurn(42);
+      await endTurn(42, STALLED_REPLY);
+      await wait(RECOVERY_DELAYS_MS[1]);
+      expect(nudges()).toHaveLength(2);
+      expect(nudges()[1]).toContain('Carry on from where you stopped.');
+    });
+
+    it('holds the message for the task\'s agent when its delivery fails, so it is not lost', async () => {
+      await endTurn(41, STALLED_REPLY);
+      const parked = parkMoveMessage();
+      hoisted.deliverMessageToSession.mockRejectedValueOnce(new Error('the terminal was closed'));
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(nudges()).toEqual([MOVED_MESSAGE]);
+      // Red without the hold: the attempt's failure took the message with it.
+      expect(parked.report).toHaveBeenCalledTimes(1);
+      expect(parked.report).toHaveBeenCalledWith({ kind: 'held' });
+      const held = (hoisted.database as DatabaseType.Database)
+        .prepare('SELECT message FROM session_messages_sent WHERE task_id = ? AND status = \'held\'')
+        .all(taskId) as Array<{ message: string }>;
+      expect(held.map((row) => row.message)).toEqual([MOVED_MESSAGE]);
+    });
+
+    it('holds the message when its keys reached a permission prompt, which took them as an answer', async () => {
+      const { KeysReachedPermissionPromptError } = await import('../../src/main/pty/automated-keys-guard');
+      await endTurn(41, STALLED_REPLY);
+      const parked = parkMoveMessage();
+      hoisted.deliverMessageToSession.mockRejectedValueOnce(new KeysReachedPermissionPromptError());
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(nudges()).toEqual([MOVED_MESSAGE]);
+      // The Enter answered a prompt, so the agent never read the message as one.
+      // Red if this error is special-cased to hold nothing: the message is lost.
+      expect(parked.report).toHaveBeenCalledTimes(1);
+      expect(parked.report).toHaveBeenCalledWith({ kind: 'held' });
+      const held = (hoisted.database as DatabaseType.Database)
+        .prepare('SELECT message FROM session_messages_sent WHERE task_id = ? AND status = \'held\'')
+        .all(taskId) as Array<{ message: string }>;
+      expect(held.map((row) => row.message)).toEqual([MOVED_MESSAGE]);
+    });
+
+    it('gives the delivery the short paste quiet limit and accepts a held session, for the moved message and a plain nudge alike', async () => {
+      await endTurn(41, STALLED_REPLY);
+      parkMoveMessage();
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(1);
+      expect(hoisted.deliverMessageToSession.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ message: MOVED_MESSAGE, idleWithoutQuietMs: 10_000, acceptHeld: true }),
+      );
+
+      // The next attempt has no message parked: a plain nudge carries the same options.
+      startTurn(42);
+      await endTurn(42, STALLED_REPLY);
+      await wait(RECOVERY_DELAYS_MS[1]);
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(2);
+      expect(hoisted.deliverMessageToSession.mock.calls[1][1]).toEqual(
+        expect.objectContaining({ idleWithoutQuietMs: 10_000, acceptHeld: true }),
+      );
+    });
+
+    it('reports the message superseded and holds nothing when a move stopped the attempt that could not send it', async () => {
+      await endTurn(41, STALLED_REPLY);
+      const parked = parkMoveMessage();
+      hoisted.deliverMessageToSession.mockImplementationOnce(async () => {
+        // A move out of the column supersedes the recovery, which aborts the attempt's signal.
+        supersedeTurnEndWork(taskId);
+        throw new Error('the attempt was stopped');
+      });
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(nudges()).toEqual([MOVED_MESSAGE]);
+      // Red without the signal.aborted branch: the message was held for an agent the move no longer wants it for.
+      expect(parked.report).toHaveBeenCalledTimes(1);
+      expect(parked.report).toHaveBeenCalledWith({ kind: 'superseded' });
+      const held = (hoisted.database as DatabaseType.Database)
+        .prepare('SELECT message FROM session_messages_sent WHERE task_id = ? AND status = \'held\'')
+        .all(taskId) as Array<{ message: string }>;
+      expect(held).toEqual([]);
+    });
+
+    it('reports the message not held, with the refusal, when the task is in Done and the hold is refused', async () => {
+      await endTurn(41, STALLED_REPLY);
+      const parked = parkMoveMessage();
+      hoisted.deliverMessageToSession.mockImplementationOnce(async () => {
+        // The task is archived while the delivery runs, so nothing may be held for it.
+        (hoisted.database as DatabaseType.Database)
+          .prepare('UPDATE tasks SET archived_at = ? WHERE id = ?')
+          .run('2026-10-25T07:00:00.000Z', taskId);
+        throw new Error('the terminal was closed');
+      });
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(parked.report).toHaveBeenCalledTimes(1);
+      expect(parked.report).toHaveBeenCalledWith({ kind: 'not-held', reason: expect.stringContaining('is in Done') });
+      const held = (hoisted.database as DatabaseType.Database)
+        .prepare('SELECT message FROM session_messages_sent WHERE task_id = ? AND status = \'held\'')
+        .all(taskId) as Array<{ message: string }>;
+      expect(held).toEqual([]);
     });
   });
 

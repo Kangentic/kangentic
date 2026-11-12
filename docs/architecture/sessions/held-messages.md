@@ -11,6 +11,10 @@ sources:
   - resource: src/main/ipc/handlers/session-resume.ts
   - resource: src/main/agent/mcp-http/steering-tools.ts
   - resource: src/main/automations/turn-end/deliver-message.ts
+  - resource: src/main/automations/turn-end/hold-move-message.ts
+    title: a moved task's message held, and the hold recorded on its run
+  - resource: src/main/automations/turn-end/move-message-outcome.ts
+    title: the run detail a moved task's message writes
   - resource: src/main/mobile-bridge/handlers/send-user-message.ts
     title: the phone's chat to a task with no running agent is held
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
@@ -43,9 +47,15 @@ call it.
   The tool checks whether the target is writable in the same synchronous stretch as the send
   coordinator's own check, so the two cannot disagree.
 - **A Move to column message** (`deliverMessageAfterMove`), or `kangentic_move_task`'s `message`,
-  for a column where no agent runs, or whose agent exits before its turn ends. It used to be
-  logged and dropped. The check is liveness, not `task.session_id`, which a paused agent's id can
-  outlive.
+  for a column where no agent runs, whose agent exits before its turn ends, whose turn has not
+  ended within the hour the delivery waits, or whose session ended under a delivery that failed.
+  It used to be logged and dropped. The check is liveness, not `task.session_id`, which a paused
+  agent's id can outlive. A move made meanwhile holds nothing: the message was for the column the
+  task left. Every ending is logged, and a row's run detail says which one it was (#804).
+- **A move message workflow recovery took and could not deliver.** Recovery sends a waiting move
+  message in place of its nudge (`takeMoveFollowUpMessage`), and holds it when that delivery
+  fails, unless a move stopped the attempt. Both holds go through `holdMoveMessage`, which never
+  throws: a hold that fails is recorded on the run as not held.
 - **The phone's chat to a paused task.** The mobile bridge's `send-user-message` names a session.
   When that session is not writable and belongs to a task (paused, queued or exited), it calls
   `holdTaskMessage` for the session's task with no caller ids, as a human sends, and answers the
@@ -120,7 +130,9 @@ queued session's promotion, startup recovery, the legacy Start agent row) it wai
 pastes what is still held once the agent's turn has settled and the keystroke scheduler holds
 nothing for the task. A paste never cancels the opening message's keystrokes; a second fresh
 keystroke burst would. Every agent reaches `idle` for that wait, through its hooks or the PTY
-silence timer of `ActivityDetection.pty`.
+silence timer of `ActivityDetection.pty`. The wait asks for 1.5 s of PTY quiet too, and gives that
+up after `PAINT_GIVE_UP_MS` (120 s) of idle: a resumed Claude repaints its status line while its
+own background agents run, and its held messages used to wait out the whole hour and fail (#804).
 
 A start that opened on an expired conversation's recap delivers none of them: they wait for the
 next start, as the column's messages do. A return recap holds nothing back (see

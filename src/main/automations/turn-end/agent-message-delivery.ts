@@ -4,6 +4,7 @@ import type { CommandVerifier } from '../../pty/terminal-submit';
 import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import { deliverExitMessage, EXIT_BUDGET_ABORT_REASON } from '../../ipc/helpers/exit-message-delivery';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
+import { PAINT_GIVE_UP_MS } from '../../transition-engine/paint-give-up';
 import { trackMessageDelivery } from './turn-end-passes';
 import { AGENT_READY_CEILING_MS } from '../../pty/lifecycle/agent-output-tracker';
 import { isSlashCommand } from '../../pty/slash-command';
@@ -82,6 +83,8 @@ export async function deliverAgentMessageAndWait(
     abortReason?: string;
     /** The turn wait also takes a turn held only by background work its agent left (`waitForTurnCompletion`). */
     acceptHeld?: boolean;
+    /** The turn wait takes an idle session that never goes quiet after this long (`waitForTurnCompletion`). */
+    idleWithoutQuietMs?: number;
   },
 ): Promise<void> {
   const abortReason = input.abortReason ?? EXIT_BUDGET_ABORT_REASON;
@@ -107,6 +110,7 @@ export async function deliverAgentMessageAndWait(
         signal: input.signal,
         timeoutMs: PASTE_TURN_WAIT_MS,
         acceptHeld: input.acceptHeld,
+        idleWithoutQuietMs: input.idleWithoutQuietMs,
       });
       if (settled !== 'completed') throw new Error(turnWaitFailure(settled, abortReason));
     }
@@ -290,11 +294,15 @@ async function runBackgroundPaste(
     // an earlier row) may be waiting on this same turn end; it starts then,
     // and its typing breaks the quiet the next wait needs, so the loop lands
     // the paste after it. Each wait takes at least the 1.5 s quiet window, so
-    // the loop never spins.
+    // the loop never spins. An idle agent whose CLI keeps painting its status
+    // line never gives that window, so the wait takes its turn as over after
+    // the paint give-up (#804): a held message for a resumed session sat out
+    // the whole hour and was lost.
     for (;;) {
       const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
         signal,
         timeoutMs: Math.max(0, deadline - Date.now()),
+        idleWithoutQuietMs: PAINT_GIVE_UP_MS,
       });
       if (settled === 'aborted') {
         report('cancelled', SUPERSEDED_REASON);

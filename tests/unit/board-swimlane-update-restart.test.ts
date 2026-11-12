@@ -70,8 +70,12 @@ vi.mock('node:path', async (importOriginal) => {
   return { default: original };
 });
 
+// homedir too: on macOS src/main/config/paths.ts calls os.homedir() while
+// board.ts's imports load (Windows and Linux read APPDATA / XDG_CONFIG_HOME,
+// which tests/unit/helpers/isolate-data-dir.ts sets). node:fs is stubbed above,
+// so nothing is written under it.
 vi.mock('node:os', () => ({
-  default: { tmpdir: vi.fn(() => '/tmp') },
+  default: { tmpdir: vi.fn(() => '/tmp'), homedir: vi.fn(() => '/tmp') },
 }));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));

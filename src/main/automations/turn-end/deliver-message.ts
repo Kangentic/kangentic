@@ -6,9 +6,17 @@ import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { waitForTurnCompletion } from '../../transition-engine/turn-completion';
-import { trackTurnEndFollowUp } from './turn-end-passes';
+import { PAINT_GIVE_UP_MS } from '../../transition-engine/paint-give-up';
+import {
+  MOVE_FOLLOW_UP_HANDED_TO_RECOVERY,
+  markMoveFollowUpSending,
+  trackMessageDelivery,
+  trackTurnEndFollowUp,
+} from './turn-end-passes';
 import { deliverAgentMessageAndWait } from './agent-message-delivery';
-import { holdTaskMessage } from '../../held-messages/held-messages';
+import { holdMoveMessage } from './hold-move-message';
+import { workflowStepApplies } from '../../workflows/workflow-step';
+import { moveMessageOutcomeDetail, type MoveMessageOutcome } from './move-message-outcome';
 
 /**
  * Deliver an automation's message to a running session and WAIT for it to
@@ -40,6 +48,8 @@ export async function deliverMessageToSession(
      * may never drain.
      */
     acceptHeld?: boolean;
+    /** A paste's turn wait takes an idle session that never goes quiet after this long (`waitForTurnCompletion`). */
+    idleWithoutQuietMs?: number;
   },
 ): Promise<void> {
   await deliverAgentMessageAndWait(context, {
@@ -61,12 +71,28 @@ const FOLLOW_UP_SETTLE_MS = 3_000;
  *
  * It waits for that agent's turn to end, so it lands AFTER the destination
  * column's own On task enter rows (a message they sent starts a turn first),
- * and so a long first turn there never holds up the move that triggered it. A
- * move made meanwhile cancels it (`supersedeTurnEndWork`). Where no agent runs
- * on the task (a column that starts none, a paused agent, a spawn that
- * failed), or the agent exits before its turn ends, the message is held for
- * the task's next agent (src/main/held-messages). A move into Done holds
- * nothing, so there it is logged and dropped.
+ * and so a long first turn there never holds up the move that triggered it.
+ *
+ * The message is never dropped without a word (#804). Each way it ends is
+ * logged, and on a row's run (`runId`) its detail is rewritten to say which:
+ *
+ * - **Delivered.** An idle agent whose CLI keeps painting its status line (its
+ *   own background agents, after a resume) never gives the 1.5 s of quiet the
+ *   wait asks for, so after `PAINT_GIVE_UP_MS` idle the turn counts as over,
+ *   as a turn-end pass's does (`turnSettled`). A running workflow's task also
+ *   takes a turn held only by background work its agent left, as its turn-end
+ *   pass and recovery nudge do.
+ * - **Held** for the task's next agent (src/main/held-messages): where no agent
+ *   runs on the task (a column that starts none, a paused agent, a spawn that
+ *   failed), the agent exits before its turn ends, its turn has not ended in
+ *   `FOLLOW_UP_WAIT_MS`, or the delivery failed with the session gone. A hold
+ *   with a live agent hands it over once that agent's turn ends. A move into
+ *   Done holds nothing, so there it is logged and recorded as not held.
+ * - **Superseded** by a move made meanwhile (`supersedeTurnEndWork`): the
+ *   message was for a column the task left, so nothing is held.
+ * - **Taken by workflow recovery**, which sends it in place of its nudge and
+ *   records the outcome itself (`takeMoveFollowUpMessage`).
+ * - **Failed** while the agent is still there: the error is recorded.
  */
 export async function deliverMessageAfterMove(
   context: IpcContext,
@@ -74,53 +100,103 @@ export async function deliverMessageAfterMove(
   taskId: string,
   columnName: string,
   message: string,
+  runId?: string,
 ): Promise<void> {
+  const taskLabel = taskId.slice(0, 8);
+  const report = (outcome: MoveMessageOutcome): void => {
+    if (runId === undefined) return;
+    try {
+      getProjectRepos(context, projectId).automationRuns.updateDetail(runId, moveMessageOutcomeDetail(columnName, outcome));
+    } catch (error) {
+      console.error(`[move-message] Could not record what became of the message for ${columnName} (task ${taskLabel}):`, error);
+    }
+  };
+  const hold = (why: string): void => {
+    const outcome = holdMoveMessage(context, { projectId, taskId, message }, report);
+    if (outcome.kind === 'held') {
+      console.log(`[move-message] ${why}; the moved task's message for ${columnName} is held for the task's agent (task ${taskLabel}).`);
+    } else {
+      console.warn(`[move-message] ${why}, and the moved task's message for ${columnName} is not held (task ${taskLabel}): ${outcome.reason}`);
+    }
+  };
   const controller = new AbortController();
-  const release = trackTurnEndFollowUp(taskId, controller);
+  const release = trackTurnEndFollowUp(taskId, controller, { message, report });
+  /** A stop by a later move or by recovery: each says its own word. */
+  const endIfStopped = (): boolean => {
+    if (!controller.signal.aborted) return false;
+    if (controller.signal.reason === MOVE_FOLLOW_UP_HANDED_TO_RECOVERY) {
+      console.log(`[move-message] Workflow recovery took the moved task's message for ${columnName} to send in place of its nudge (task ${taskLabel}).`);
+    } else {
+      console.log(`[move-message] The moved task's message for ${columnName} was not delivered: the task moved on first (task ${taskLabel}).`);
+      report({ kind: 'superseded' });
+    }
+    return true;
+  };
+  let sessionId: string | null = null;
   try {
     await new Promise((resolve) => setTimeout(resolve, FOLLOW_UP_SETTLE_MS));
-    if (controller.signal.aborted) return;
+    if (endIfStopped()) return;
     const repos = getProjectRepos(context, projectId);
     const task = repos.tasks.getById(taskId);
-    if (!task) return;
-    // Liveness, not `task.session_id`: a paused agent's id can outlive its PTY.
-    const liveSession = context.sessionManager.findLiveSessionByTaskId(taskId);
-    const sessionId = liveSession && context.sessionManager.isWritable(liveSession.id) ? liveSession.id : null;
-    if (!sessionId) {
-      holdMovedMessage(context, projectId, taskId, columnName, message);
+    if (!task) {
+      console.log(`[move-message] The moved task is gone, so its message for ${columnName} is not delivered (task ${taskLabel}).`);
+      report({ kind: 'failed', reason: 'the task is gone.' });
       return;
     }
+    // Liveness, not `task.session_id`: a paused agent's id can outlive its PTY.
+    const liveSession = context.sessionManager.findLiveSessionByTaskId(taskId);
+    sessionId = liveSession && context.sessionManager.isWritable(liveSession.id) ? liveSession.id : null;
+    if (!sessionId) {
+      hold(`No agent is running in ${columnName}`);
+      return;
+    }
+    const acceptHeld = workflowStepApplies(task, projectId);
     const settled = await waitForTurnCompletion(context.sessionManager, sessionId, {
       signal: controller.signal,
       timeoutMs: FOLLOW_UP_WAIT_MS,
+      acceptHeld,
+      idleWithoutQuietMs: PAINT_GIVE_UP_MS,
     });
-    if (settled === 'exited' && !controller.signal.aborted) {
-      holdMovedMessage(context, projectId, taskId, columnName, message);
+    if (endIfStopped()) return;
+    if (settled === 'exited') {
+      hold(`The agent in ${columnName} exited before its turn ended`);
       return;
     }
-    if (settled !== 'completed') return;
+    if (settled === 'timeout') {
+      hold(`The agent in ${columnName} did not end its turn within ${FOLLOW_UP_WAIT_MS / 60_000} minutes`);
+      return;
+    }
     const sessionRepo = new SessionRepository(getProjectDb(projectId));
-    await deliverMessageToSession(context, {
-      taskId,
-      sessionId,
-      message,
-      mode: 'immediate',
-      verifier: resolveInjectionVerifier(task.agent, sessionRepo, taskId),
-      signal: controller.signal,
-    });
+    // Sending from here: recovery taking the message now would send it twice,
+    // and its nudge holds off while a message is on its way.
+    markMoveFollowUpSending(taskId, controller);
+    const releaseDelivery = trackMessageDelivery(taskId, controller);
+    try {
+      await deliverMessageToSession(context, {
+        taskId,
+        sessionId,
+        message,
+        mode: 'immediate',
+        verifier: resolveInjectionVerifier(task.agent, sessionRepo, taskId),
+        signal: controller.signal,
+        acceptHeld,
+        idleWithoutQuietMs: PAINT_GIVE_UP_MS,
+      });
+    } finally {
+      releaseDelivery();
+    }
+    console.log(`[move-message] Delivered the moved task's message to the agent in ${columnName} (task ${taskLabel}).`);
+    report({ kind: 'delivered' });
   } catch (error) {
-    console.error(`[move-message] The message for ${columnName} was not delivered (task ${taskId.slice(0, 8)}):`, error);
+    if (endIfStopped()) return;
+    console.error(`[move-message] The message for ${columnName} was not delivered (task ${taskLabel}):`, error);
+    // A session that ended under the delivery took nothing: the next agent gets it.
+    if (sessionId !== null && context.sessionManager.findLiveSessionByTaskId(taskId)?.id !== sessionId) {
+      hold(`The agent in ${columnName} ended before the message reached it`);
+      return;
+    }
+    report({ kind: 'failed', reason: error instanceof Error ? error.message : String(error) });
   } finally {
     release();
-  }
-}
-
-/** Hold a moved task's message for its next agent, or log why it cannot be. */
-function holdMovedMessage(context: IpcContext, projectId: string, taskId: string, columnName: string, message: string): void {
-  const outcome = holdTaskMessage(context, { projectId, taskId, message });
-  if (outcome.status === 'held') {
-    console.log(`[move-message] No agent is running in ${columnName}; the moved task's message is held for its next agent (task ${taskId.slice(0, 8)}).`);
-  } else {
-    console.log(`[move-message] No agent in ${columnName} to receive the moved task's message, and it is not held (task ${taskId.slice(0, 8)}): ${outcome.error}`);
   }
 }

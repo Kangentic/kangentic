@@ -48,10 +48,14 @@ process.env.XDG_CONFIG_HOME = path.join(dataDir, 'platform-config');
 // home directory, and `qwenHomeDir`, `geminiHomeDir` and `copilotHomeDir`
 // prefer QWEN_HOME, GEMINI_CLI_HOME and COPILOT_HOME over it, so a developer's
 // own value would point them at the real folder. A suite that wants one sets
-// it itself.
+// it itself. Claude is the same. `claudeHomeDir()` prefers CLAUDE_CONFIG_DIR,
+// which a Kangentic account session exports, so without this delete a suite
+// that sandboxes `.claude.json` by mocking the home directory (trust-manager)
+// writes that account's real file instead.
 delete process.env.QWEN_HOME;
 delete process.env.GEMINI_CLI_HOME;
 delete process.env.COPILOT_HOME;
+delete process.env.CLAUDE_CONFIG_DIR;
 
 afterAll(() => {
   try {
