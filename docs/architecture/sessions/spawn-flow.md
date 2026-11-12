@@ -14,6 +14,8 @@ sources:
   - resource: src/shared/task-description-limit.ts
   - resource: src/main/pty/spawn/typed-launch.ts
   - resource: src/main/pty/spawn/pty-spawn.ts
+  - resource: src/main/pty/spawn/agent-start-refused.ts
+  - resource: src/main/transition-engine/agent-cwd.ts
   - resource: src/main/pty/lifecycle/session-spawn-flow.ts
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
   - resource: src/shared/session-track.ts
@@ -75,7 +77,9 @@ chokepoint: the sign-in terminal (`src/main/accounts/account-login.ts`), a raw P
    - Detect the agent CLI via the resolved adapter
    - Resolve permission mode via `resolveEffectivePermissionMode` (lane `plan` always wins,
      else task pin -> lane -> global)
-   - Determine CWD (worktree path or project path)
+   - Determine CWD (worktree path or project path, `agentCwdFor` in `agent-cwd.ts`). A task whose
+     worktree folder is gone and which gets no worktree was already moved to the project path by
+     `ensureTaskWorktree`, so this is never a stale path that `performSpawn` would refuse
    - Apply agent-specific pre-spawn global-config state via `adapter.ensureTrust(cwd)`. The
      call is generic (no agent-name branching); each adapter writes its own store: Claude
      `~/.claude.json`, Codex `~/.codex/config.toml` `[projects]`, Gemini and Qwen

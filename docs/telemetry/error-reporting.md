@@ -25,6 +25,8 @@ sources:
   - resource: src/main/updater.ts
   - resource: src/main/pty/agent-launch-report.ts
   - resource: src/main/pty/launch-output-class.ts
+  - resource: src/main/git/worktree-errors.ts
+  - resource: src/main/pty/spawn/agent-start-refused.ts
   - resource: src/main/agent/shared/cli-identity.ts
   - resource: scripts/sentry-upload-gate.js
 ---
@@ -484,7 +486,11 @@ in one Sentry org, one triage surface.
   `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
   (`pause`, `kill`, `quit`) and `agent_process` (`present`, `absent`, `unknown`).
   `never_started` adds `judge` (`sweep`, `timer`). A preflight report
-  adds `error_type` and `errno` when the error has them.
+  adds `error_type` and `errno` when the error has them, and `start_refused_reason` for a start
+  refused before it had a PTY (`AgentStartRefusedError`): `worktree-missing` or `folder-missing`
+  for a gone folder, `prompt-too-long` for a command its shell cannot run. The folder's path is
+  redacted, so this tag is what tells a gone worktree from a gone project folder (Sentry DESKTOP-2P
+  could not).
 
   A report on a resuming session adds what the resume check read before it
   (`assessResumeConversationWithEvidence`, `src/main/transition-engine/resume-conversation-guard.ts`),
@@ -542,8 +548,16 @@ in one Sentry org, one triage surface.
   match. Detection keeps whatever a CLI printed, so `agent_cli_version` must look like a version or
   it reads `unknown`. The launcher's path stays in main, and only whether it still exists leaves.
   Git writes branch names into its errors, and branches are named after tasks, so a worktree or
-  checkout report sends a fixed message and a `cause` (`worktree`, `checkout`, `stale_directory`).
-  Other preflight reports keep the error's message with its paths redacted.
+  checkout report sends a fixed message and a `cause`. A checkout sends `checkout`. A worktree sends
+  what it failed on, read in main from git's own `fatal:` line (`worktreeFailureCause`,
+  `src/main/git/worktree-errors.ts`): `worktree_branch_checked_out`, `worktree_branch_exists`,
+  `worktree_path_registered`, `worktree_path_exists`, `worktree_invalid_reference`,
+  `worktree_invalid_branch_name`, `worktree_ref_lock`, `worktree_not_a_repository`,
+  `worktree_permission`, `worktree_no_space`, or `worktree_other`. Two come from a type instead:
+  `stale_directory` (a folder that would not clear) and `worktree_setup_script` (the Post-Worktree
+  Script failed, `WorktreeSetupScriptError`). Each phrase was read off real git, and
+  `tests/unit/worktree-failure-cause-real-git.test.ts` produces each one, except the full disk,
+  which no test can make. Other preflight reports keep the error's message with its paths redacted.
 
   One event per `stage`, `cause`, `attempt` and `agent` per run, on top of one report per session
   (`launchFailureNoted`), so one broken machine cannot use up the org's quota. `attempt` is in the

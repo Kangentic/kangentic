@@ -65,7 +65,10 @@ can do all of this, so the check lives in the app, not in a warning to whoever r
   folder. Startup recovery keeps the row and shows the task as not running, with a suspended
   placeholder whose reason is `worktree-missing`, and Resume recreates the folder. `git worktree add`
   refuses a path still registered, so `createWorktree` prunes first when it recreates one.
-  `demoteMissingWorktree` is only for a task `canRecreateWorktree` says nothing can make one for.
+  `demoteMissingWorktree` is only for a task `canRecreateWorktree` says nothing can make one for, and
+  `ensureTaskWorktree` applies it at runtime the same way: a start that makes no worktree for a task
+  whose folder is gone demotes it rather than handing the spawn a path it will refuse
+  (`session-resume-worktree-gone.test.ts`).
 - **A start that never reached an agent says so on its card.** `Session.startBlockedReason` replaces "Paused" in the footer, on the board card and the Monitor card alike, with the reason in the tip. Every refused or failed start sets it, a direct one (`showRefusedStart`) included, because a toast closes.
 - **A read never copies this instance's settings into a project.** `getEffectiveConfig` already
   merges global under project, so `parseProjectOverrides` needs no seed. Its remaining rewrites
@@ -85,6 +88,9 @@ can do all of this, so the check lives in the app, not in a warning to whoever r
   `tests/unit/worktree-recreate-after-folder-gone.test.ts` pins the prune on real git.
   `auto-spawn-first-spawn-lock-wiring.test.ts` and `resume-suspended-profile-scoped.test.ts` pin that
   recovery keeps the task, and `config-manager.test.ts` that a read writes no `cliPaths`.
+  `tests/unit/session-resume-worktree-gone.test.ts` pins the runtime demotion on real git, and
+  `task-git-remote-worktree-skip.test.ts` that a row the caller's copy disagrees with, or a project
+  folder that is gone, demotes nothing.
   `tests/e2e/project-folder-ownership.spec.ts` replays the incident across real launches: a second
   instance on a copied `index.db` sweeps nothing, the owner then does, and a card whose worktree went
   while the app was closed reads Worktree missing and comes back through Resume.
