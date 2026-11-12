@@ -26,6 +26,8 @@ const MACOS_CONTEXT: NativeCrashContext = {
   appExecutableName: 'Kangentic',
   appVersion: '0.39.0',
   caseInsensitivePaths: false,
+  previousRun: null,
+  shuttingDown: false,
 };
 
 const WINDOWS_CONTEXT: NativeCrashContext = {
@@ -33,6 +35,8 @@ const WINDOWS_CONTEXT: NativeCrashContext = {
   appExecutableName: 'Kangentic.exe',
   appVersion: '0.39.0',
   caseInsensitivePaths: true,
+  previousRun: null,
+  shuttingDown: false,
 };
 
 const LINUX_CONTEXT: NativeCrashContext = {
@@ -40,6 +44,8 @@ const LINUX_CONTEXT: NativeCrashContext = {
   appExecutableName: 'kangentic',
   appVersion: '0.39.0',
   caseInsensitivePaths: false,
+  previousRun: null,
+  shuttingDown: false,
 };
 
 function nativeEvent(overrides: Partial<ErrorEvent> = {}): ErrorEvent {
@@ -394,6 +400,8 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
       appExecutableName: '',
       appVersion: '0.42.0',
       caseInsensitivePaths: false,
+      previousRun: null,
+      shuttingDown: false,
     };
     const identity = readMinidumpIdentity(
       buildMinidump({
@@ -422,6 +430,8 @@ describe('correctNativeCrashEvent: isOurModule boundaries', () => {
       appExecutableName: '',
       appVersion: '0.42.0',
       caseInsensitivePaths: false,
+      previousRun: null,
+      shuttingDown: false,
     };
     const identity = readMinidumpIdentity(
       buildMinidump({
@@ -735,6 +745,199 @@ describe('correctNativeCrashEvent: the uploading run is not the crashed run', ()
     // The SDK merges the CURRENT scope's crumbs on top of the stored previous
     // run's, so the two runs cannot be told apart after the fact.
     expect(decision.event.breadcrumbs).toBeUndefined();
+  });
+});
+
+/**
+ * DESKTOP-W: a startup-found dump keeps no breadcrumbs, so the event alone
+ * cannot say whether the browser aborted at quit (the 00:30 event, inside the
+ * PTY drain) or mid-run, which is the case gpu-health.ts's next-boot recovery
+ * exists for. The previous run's record (run-uptime.ts) can, when the dump
+ * falls inside that run.
+ */
+describe('correctNativeCrashEvent: whether the crashed run had begun quitting', () => {
+  function linuxDumpIdentity() {
+    return readMinidumpIdentity(
+      buildMinidump({
+        modules: LINUX_APP_MODULES,
+        simpleAnnotations: { _version: '0.57.0' },
+        timeDateStamp: CRASH_TIME_STAMP,
+      })
+    );
+  }
+
+  function nativeCrashContextOf(
+    previousRun: NativeCrashContext['previousRun'],
+    shuttingDown = false
+  ): Record<string, unknown> | undefined {
+    const decision = correctNativeCrashEvent(nativeEvent(), linuxDumpIdentity(), {
+      ...LINUX_CONTEXT,
+      previousRun,
+      shuttingDown,
+    });
+    expect(decision.action).toBe('keep');
+    return decision.event.contexts?.native_crash;
+  }
+
+  it('marks a dump from a run that recorded a clean exit before it crashed', () => {
+    // The clean record's `at` is when performShutdown began, 3 s before the crash.
+    const nativeCrash = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 600,
+      lastAliveAt: '2026-09-08T14:46:40.000Z',
+    });
+    expect(nativeCrash?.quit_begun).toBe(true);
+    expect(nativeCrash?.previous_run_exit).toBe('clean');
+  });
+
+  it('marks a crash inside the second the quit began, which the dump stamp truncates', () => {
+    const nativeCrash = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 600,
+      lastAliveAt: '2026-09-08T14:46:43.600Z',
+    });
+    expect(nativeCrash?.quit_begun).toBe(true);
+  });
+
+  it('does not mark a dump from a run that ended abrupt', () => {
+    const nativeCrash = nativeCrashContextOf({
+      exit: 'abrupt',
+      uptimeSeconds: 1200,
+      lastAliveAt: '2026-09-08T14:46:00.000Z',
+    });
+    expect(nativeCrash?.quit_begun).toBe(false);
+    expect(nativeCrash?.previous_run_exit).toBe('abrupt');
+  });
+
+  it('does not mark a dump written well before a clean run began quitting', () => {
+    const nativeCrash = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 3600,
+      lastAliveAt: '2026-09-08T14:50:00.000Z',
+    });
+    expect(nativeCrash?.quit_begun).toBe(false);
+  });
+
+  it('says nothing about a dump older than the previous run, which that record does not describe', () => {
+    // A dump left over from an earlier run (a failed upload, the SDK's budget).
+    // A clean quit of the run after it says nothing about when it crashed.
+    const nativeCrash = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 300,
+      lastAliveAt: '2026-09-08T15:30:00.000Z',
+    });
+    expect(nativeCrash).toBeDefined();
+    expect(nativeCrash).not.toHaveProperty('quit_begun');
+    expect(nativeCrash).not.toHaveProperty('previous_run_exit');
+  });
+
+  it('names a failsafe exit but leaves quitting unset, since its record time is the kill', () => {
+    const nativeCrash = nativeCrashContextOf({
+      exit: 'failsafe',
+      uptimeSeconds: 600,
+      lastAliveAt: '2026-09-08T14:46:50.000Z',
+    });
+    expect(nativeCrash).not.toHaveProperty('quit_begun');
+    expect(nativeCrash?.previous_run_exit).toBe('failsafe');
+  });
+
+  it('says nothing with no previous run record, or one written before `at` existed', () => {
+    expect(nativeCrashContextOf(null)).not.toHaveProperty('quit_begun');
+    expect(
+      nativeCrashContextOf({ exit: 'clean', uptimeSeconds: 600, lastAliveAt: null })
+    ).not.toHaveProperty('quit_begun');
+  });
+
+  it('says nothing when the previous run record has an unparseable lastAliveAt', () => {
+    const nativeCrash = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 600,
+      lastAliveAt: 'not-a-date',
+    });
+    expect(nativeCrash).toBeDefined();
+    expect(nativeCrash).not.toHaveProperty('quit_begun');
+    expect(nativeCrash).not.toHaveProperty('previous_run_exit');
+  });
+
+  it('says nothing when the dump carries no crash time', () => {
+    const identity = readMinidumpIdentity(
+      buildMinidump({
+        modules: LINUX_APP_MODULES,
+        simpleAnnotations: { _version: '0.57.0' },
+        timeDateStamp: 0,
+      })
+    );
+    expect(identity.ok && identity.crashTime).toBeFalsy();
+    const decision = correctNativeCrashEvent(nativeEvent(), identity, {
+      ...LINUX_CONTEXT,
+      previousRun: { exit: 'abrupt', uptimeSeconds: 600, lastAliveAt: '2026-09-08T14:46:50.000Z' },
+      shuttingDown: false,
+    });
+    expect(decision.action).toBe('keep');
+    const nativeCrash = decision.event.contexts?.native_crash;
+    expect(nativeCrash).toBeDefined();
+    expect(nativeCrash).not.toHaveProperty('quit_begun');
+    expect(nativeCrash).not.toHaveProperty('previous_run_exit');
+  });
+
+  it('still judges a dump 1.5 s before the computed run start, and not one 2.5 s before it', () => {
+    // Crash is at 14:46:43.000. A run start of 14:46:44.500 is 1.5 s after the
+    // crash, inside the 2 s slack. 14:46:45.500 is 2.5 s after it, outside.
+    const insideSlack = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 600,
+      lastAliveAt: '2026-09-08T14:56:44.500Z',
+    });
+    expect(insideSlack?.previous_run_exit).toBe('clean');
+    expect(insideSlack).toHaveProperty('quit_begun');
+
+    const outsideSlack = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 600,
+      lastAliveAt: '2026-09-08T14:56:45.500Z',
+    });
+    expect(outsideSlack).toBeDefined();
+    expect(outsideSlack).not.toHaveProperty('quit_begun');
+    expect(outsideSlack).not.toHaveProperty('previous_run_exit');
+  });
+
+  it('counts a clean quit as begun when its second is the crash second, and not the next second', () => {
+    const sameSecond = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 600,
+      lastAliveAt: '2026-09-08T14:46:43.999Z',
+    });
+    expect(sameSecond?.quit_begun).toBe(true);
+
+    const nextSecond = nativeCrashContextOf({
+      exit: 'clean',
+      uptimeSeconds: 600,
+      lastAliveAt: '2026-09-08T14:46:44.000Z',
+    });
+    expect(nextSecond?.quit_begun).toBe(false);
+  });
+
+  it('reads a live crash event from the running session, never from the previous run', () => {
+    const liveEvent = () =>
+      nativeEvent({
+        tags: { 'event.environment': 'native', 'event.process': 'GPU', 'exit.reason': 'crashed' },
+      });
+    const previousRun = { exit: 'abrupt' as const, uptimeSeconds: 1200, lastAliveAt: '2026-09-08T14:46:00.000Z' };
+
+    const quitting = correctNativeCrashEvent(liveEvent(), linuxDumpIdentity(), {
+      ...LINUX_CONTEXT,
+      previousRun,
+      shuttingDown: true,
+    });
+    expect(quitting.event.contexts?.native_crash?.quit_begun).toBe(true);
+    expect(quitting.event.contexts?.native_crash).not.toHaveProperty('previous_run_exit');
+
+    const running = correctNativeCrashEvent(liveEvent(), linuxDumpIdentity(), {
+      ...LINUX_CONTEXT,
+      previousRun,
+      shuttingDown: false,
+    });
+    expect(running.event.contexts?.native_crash?.quit_begun).toBe(false);
   });
 });
 

@@ -121,7 +121,13 @@ in one Sentry org, one triage surface.
     Chromium survives now reaches this integration (measured on Linux, see `docs/platforms/gpu-failures.md`).
     The launch failure that ends in the fatal still does not, so DESKTOP-W's ladder is caught by the
     GPU health tracker, which on 44 records the survived failures as fault deaths as well as the
-    fallback - see below.
+    fallback - see below. Once shutdown has begun, `beforeSend` drops the `launch-failed` message
+    (`isQuitTimeGpuLaunchFailure` in `src/main/analytics/error-reporting.ts`). At quit the GPU
+    process dies with the session, Chromium relaunches it, the launch fails, and Chromium aborts the
+    browser for it, so the message only duplicates that native fatal. DESKTOP-2Q arrived at the
+    same instant as a DESKTOP-W event, inside the PTY drain. The GPU health tracker already counts
+    teardown exits as no fault. `ignoreErrors` cannot hold this rule, because it cannot see whether
+    the app is quitting.
   - The same integration's message for a Browser pane page's renderer,
     `'browser-guest' process exited with ...`. The page is the user's, not ours, and a pane page
     that actually crashes still arrives once, as the reduced native warning described under
@@ -648,9 +654,10 @@ in one Sentry org, one triage surface.
   `UtilityRestartPolicy` counts a worker's, but cannot report live: the failure sequence this exists
   for can end in Chromium calling `LOG(FATAL)` (`IntentionallyCrashBrowserForUnusableGpuProcess`),
   which kills the whole process before an async Sentry POST queued at that moment would ever
-  transmit. (A search of everything Sentry retained never turned up a `'GPU' process exited with 'launch-failed'` event
-  for a different reason: through Electron 41, Electron never emitted `child-process-gone` for a
-  launch failure at all. Electron 44 does, for the ones Chromium survives.)
+  transmit. (Through Electron 41, Electron never emitted `child-process-gone` for a launch failure
+  at all, so no `'GPU' process exited with 'launch-failed'` event could arrive. Electron 44 does.
+  The first one Sentry kept, DESKTOP-2Q, arrived at the same instant as a DESKTOP-W fatal during an
+  OS shutdown, which is why that message is now dropped once shutdown has begun; see "Filtering".)
   EVERY death writes the durable record at `<configDir>/gpu-health.json`, from the first - not
   just a threshold breach.
   The ordering is why: Chromium calls `GpuProcessHost::RecordProcessCrash` (and the `LOG(FATAL)`
@@ -949,6 +956,19 @@ in one Sentry org, one triage surface.
   version, uploading version, the main module's file name, the module count, whether the dump was
   found at startup, and which corrections fired. A dump the reader cannot parse keeps its event
   untouched and carries no context block, so the absence of one is itself a signal when triaging.
+
+  `quit_begun` says whether the crashed run had begun quitting. gpu-health.ts's next-boot recovery
+  acts only on a run that ended `abrupt`, and a startup-found dump keeps no breadcrumbs, so without
+  it a browser fatal at quit and one mid-run look the same (DESKTOP-W). A live event takes it from
+  the running session's shutdown flag. A startup-found dump is judged by the previous run's record
+  (`src/main/analytics/run-uptime.ts`), which `src/main/index.ts` reads at module scope before
+  `initRunUptimeTracking` overwrites it, and only when the crash time falls inside that run (its
+  last `at` less its uptime). A dump left from an earlier run gets no answer. Inside the run:
+  `abrupt` gives `false`; `clean` gives `true` when the crash came in or after the second of the
+  record's `at`, which is when `performShutdown` began, and `false` before it (the dump's stamp
+  holds whole seconds); `failsafe` leaves it out, because
+  that `at` is the kill, not the quit's start. `previous_run_exit` names the exit kind whenever the
+  dump was placed in the previous run. An absent `quit_begun` means unknown, never `false`.
   Note the SDK decrements its 10-minidumps-per-session budget at capture time, before `beforeSend`
   runs, so foreign dumps consume it too, even though their dumps never upload.
 - **Native debug files** ride the same gate: the Windows release build (`scripts/build.js`) also

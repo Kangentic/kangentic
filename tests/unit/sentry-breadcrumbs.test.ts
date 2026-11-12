@@ -621,9 +621,28 @@ describe('the log mirror wraps console before Sentry does', () => {
     const indexSource = fs.readFileSync(path.join(REPO_ROOT, 'src/main/index.ts'), 'utf-8');
     // Column 0 only: both are top-level statements, so source order is run order.
     const mirrorOffsets = [...indexSource.matchAll(/^installDiagnostics\(/gm)].map((match) => match.index);
-    const sentryOffsets = [...indexSource.matchAll(/^initErrorReporting\(\);/gm)].map((match) => match.index);
+    const sentryOffsets = [...indexSource.matchAll(/^initErrorReporting\(/gm)].map((match) => match.index);
     expect(mirrorOffsets).toHaveLength(1);
     expect(sentryOffsets).toHaveLength(1);
     expect(mirrorOffsets[0]).toBeLessThan(sentryOffsets[0]);
+  });
+
+  // DESKTOP-W: a startup-found dump is judged against the previous run's record,
+  // which initRunUptimeTracking overwrites. index.ts cannot be imported, so the
+  // wiring is pinned from source text.
+  it('hands the previous run to initErrorReporting, read before initRunUptimeTracking overwrites it', () => {
+    const indexSource = fs.readFileSync(path.join(REPO_ROOT, 'src/main/index.ts'), 'utf-8');
+    const peekOffsets = [
+      ...indexSource.matchAll(/^const PREVIOUS_RUN = peekPreviousRun\(RUN_UPTIME_FILE_PATH\)/gm),
+    ].map((match) => match.index);
+    const initOffsets = [
+      ...indexSource.matchAll(/^initErrorReporting\(\{ previousRun: PREVIOUS_RUN \}\)/gm),
+    ].map((match) => match.index);
+    const trackingOffsets = [...indexSource.matchAll(/\binitRunUptimeTracking\(/g)].map((match) => match.index);
+    expect(peekOffsets).toHaveLength(1);
+    expect(initOffsets).toHaveLength(1);
+    expect(trackingOffsets).toHaveLength(1);
+    expect(peekOffsets[0]).toBeLessThan(initOffsets[0]);
+    expect(peekOffsets[0]).toBeLessThan(trackingOffsets[0]);
   });
 });

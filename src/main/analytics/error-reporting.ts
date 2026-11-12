@@ -17,6 +17,8 @@ import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
 import { SENTRY_DATA_COLLECTION } from '../../shared/sentry-data-collection';
 import { redactEventPaths } from './redact-event-paths';
 import { rendererNameForReporting } from './renderer-classification';
+import type { PreviousRun } from './run-uptime';
+import { isShuttingDown } from '../shutdown-state';
 
 /**
  * Sentry DSN for the Kangentic desktop project (kangentic.sentry.io, project
@@ -29,6 +31,14 @@ const SENTRY_DSN =
   'https://6368bfbd74782d122cb321b26799bddd@o4511808143556608.ingest.us.sentry.io/4511996066660352';
 
 let active = false;
+
+/**
+ * The run before this one, as its record read at module scope in index.ts,
+ * before initRunUptimeTracking overwrote it with this run's. The SDK's startup
+ * scan can send a dump before or after that overwrite, so it is never re-read
+ * here: after it, the file says `exit: null`, which reads as `abrupt`.
+ */
+let previousRunForCrashReports: PreviousRun | null = null;
 
 /**
  * Decide whether Sentry error reporting should be enabled, as a pure function
@@ -199,6 +209,8 @@ function resolveNativeCrashContext(): NativeCrashContext {
     appExecutableName: app.isPackaged ? path.basename(executablePath) : '',
     appVersion: app.getVersion(),
     caseInsensitivePaths: process.platform === 'win32',
+    previousRun: previousRunForCrashReports,
+    shuttingDown: isShuttingDown(),
   };
 }
 
@@ -294,16 +306,38 @@ export function tagTruncatedStack(event: ErrorEvent): ErrorEvent {
 }
 
 /**
- * The actual `beforeSend`. Tags a frame-capped stack, runs the native crash
- * split, then rewrites every known project root to `[project]` and this
- * machine's home directory to `~` in whatever event is left
- * (`redactEventPaths`). None of them ever drops an event.
+ * The message the SDK's childProcessIntegration captures for a GPU process that
+ * failed to launch. Built from the SDK's own template and Electron's `GPU`
+ * process type. tests/unit/error-reporting-switch.test.ts pins the template and
+ * the captured reasons against the installed package, not the process type.
+ */
+const GPU_LAUNCH_FAILED_MESSAGE = "'GPU' process exited with 'launch-failed'";
+
+/**
+ * Whether this is the SDK's GPU `launch-failed` message from a run that has
+ * begun quitting (DESKTOP-2Q). At shutdown the GPU process dies with the
+ * session, Chromium relaunches it, the launch fails, and Chromium aborts the
+ * browser for it (DESKTOP-W). The message then only duplicates that native
+ * fatal, and gpu-health.ts's `isGpuFaultDeath` already counts teardown exits
+ * as no fault. Mid-run it is still the backstop #725 kept, so it stays then.
+ */
+function isQuitTimeGpuLaunchFailure(event: ErrorEvent, shuttingDown: boolean): boolean {
+  return shuttingDown && event.message === GPU_LAUNCH_FAILED_MESSAGE;
+}
+
+/**
+ * The actual `beforeSend`. Drops the one event shutdown makes a duplicate
+ * (`isQuitTimeGpuLaunchFailure`). Otherwise it tags a frame-capped stack, runs
+ * the native crash split, then rewrites every known project root to
+ * `[project]` and this machine's home directory to `~` in whatever event is
+ * left (`redactEventPaths`). None of those three ever drops an event.
  *
  * Fails OPEN for the same reason `filterNativeCrashEvent` does: a throwing
  * `beforeSend` makes the SDK drop the event, so a bug in the tagging must never
  * be able to delete telemetry.
  */
-export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent {
+export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent | null {
+  if (isQuitTimeGpuLaunchFailure(event, isShuttingDown())) return null;
   try {
     tagTruncatedStack(event);
   } catch {
@@ -361,17 +395,21 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * becoming `~`: the dump is another program's memory, and no Sentry-side rule
  * can scrub a file it has already received.
  *
- * `beforeSend` also does two other things. beforeSendEvent TAGS a frame-capped
- * stack (tagTruncatedStack, above), which is annotation on an event we keep. And
- * it rewrites project roots and this machine's home directory in the event that
- * is left, last, so a foreign-crash rewrite is covered too.
+ * `beforeSend` also does three other things. beforeSendEvent TAGS a frame-capped
+ * stack (tagTruncatedStack, above), which is annotation on an event we keep. It
+ * rewrites project roots and this machine's home directory in the event that
+ * is left, last, so a foreign-crash rewrite is covered too. And it drops the
+ * GPU `launch-failed` message once shutdown has begun
+ * (isQuitTimeGpuLaunchFailure, above), which `ignoreErrors` cannot do because
+ * it cannot see whether the app is quitting.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
  * enabled. Aptabase's app_error stays as the coarse error-rate pulse on the
  * product dashboard; Sentry is the diagnostic tool.
  */
-export function initErrorReporting(): void {
+export function initErrorReporting(options: { previousRun?: PreviousRun | null } = {}): void {
+  previousRunForCrashReports = options.previousRun ?? null;
   if (!SENTRY_DSN) return;
   if (
     !resolveErrorReportingEnabled(
@@ -457,7 +495,10 @@ export function initErrorReporting(): void {
         // be verified to cover (LOG(FATAL) kills the process before that
         // report's async POST would complete). Through Electron 41 no
         // 'launch-failed' GPU event could arrive here at all, because Electron
-        // did not forward launch failures; Electron 44 does. 'abnormal-exit'
+        // did not forward launch failures; Electron 44 does. It is kept
+        // mid-run only: once shutdown has begun, beforeSendEvent drops it
+        // (isQuitTimeGpuLaunchFailure), because there it only duplicates the
+        // native fatal (DESKTOP-2Q beside DESKTOP-W). 'abnormal-exit'
         // alone is what DESKTOP-15 is: the reason Chromium's own recovery
         // (a lone crash it relaunches past) fires this integration at all.
         /'GPU' process exited with 'abnormal-exit'/,

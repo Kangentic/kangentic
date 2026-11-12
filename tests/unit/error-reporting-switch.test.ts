@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
+import type { PreviousRun } from '../../src/main/analytics/run-uptime';
 import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -24,6 +25,9 @@ const mocks = vi.hoisted(() => {
   const userDataPath =
     process.platform === 'win32' ? 'C:\\Users\\dev\\AppData\\Roaming\\kangentic' : '/home/dev/.config/kangentic';
   return {
+    // setShuttingDown() has no reset, so a real one would leak into every later
+    // test. Each test that flips this puts it back.
+    shutdownState: { shuttingDown: false },
     electronMock: {
       app: {
         isPackaged: true,
@@ -64,6 +68,12 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({ app: mocks.electronMock.app }));
 vi.mock('@sentry/electron/main', () => mocks.sentryMock);
+vi.mock('../../src/main/shutdown-state', () => ({
+  isShuttingDown: () => mocks.shutdownState.shuttingDown,
+  setShuttingDown: () => {
+    mocks.shutdownState.shuttingDown = true;
+  },
+}));
 
 import {
   beforeSendEvent,
@@ -539,21 +549,23 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       hint: Record<string, unknown>
     ) => Record<string, unknown> | null;
 
-    async function initAndGetBeforeSend(): Promise<BeforeSend> {
+    async function initAndGetBeforeSend(
+      initOptions: { previousRun?: PreviousRun | null } = {}
+    ): Promise<BeforeSend> {
       const errorReporting = await importFreshErrorReporting();
-      errorReporting.initErrorReporting();
+      errorReporting.initErrorReporting(initOptions);
       const options = mocks.sentryMock.init.mock.calls[0][0] as { beforeSend: BeforeSend };
       expect(typeof options.beforeSend).toBe('function');
       return options.beforeSend;
     }
 
-    function minidumpHint(modules: string[], annotations: Record<string, string> = {}) {
+    function minidumpHint(modules: string[], annotations: Record<string, string> = {}, timeDateStamp?: number) {
       return {
         attachments: [
           {
             attachmentType: 'event.minidump',
             filename: 'crash.dmp',
-            data: buildMinidump({ modules, simpleAnnotations: annotations }),
+            data: buildMinidump({ modules, simpleAnnotations: annotations, timeDateStamp }),
           },
         ],
       };
@@ -597,6 +609,50 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(result?.breadcrumbs).toBeUndefined();
       expect(result?.level).not.toBe('warning');
       expect(minidumpCount(hint)).toBe(1);
+    });
+
+    // DESKTOP-W: the previous run's record reaches the startup-found dump only
+    // through initErrorReporting's option, which index.ts reads before
+    // initRunUptimeTracking overwrites the file. The decision itself is covered in
+    // native-crash-event.test.ts; this pins that the record gets there.
+    it('judges a startup-found dump against the previous run handed to initErrorReporting', async () => {
+      const crashTimeSeconds = Math.floor(Date.parse('2026-11-12T00:30:09.000Z') / 1000);
+      const beforeSend = await initAndGetBeforeSend({
+        previousRun: { exit: 'clean', uptimeSeconds: 204, lastAliveAt: '2026-11-12T00:30:05.000Z' },
+      });
+      const hint = minidumpHint(OUR_APP_MODULES, { _version: '0.57.0' }, crashTimeSeconds);
+
+      const result = beforeSend({ level: 'fatal', platform: 'native', release: 'Kangentic@0.57.0' }, hint);
+
+      expect(result?.contexts).toMatchObject({
+        native_crash: { found_at_startup: true, quit_begun: true, previous_run_exit: 'clean' },
+      });
+    });
+
+    // DESKTOP-W: a live crash (the SDK stamps exit.reason) reads quit_begun from
+    // the shutdown state that resolveNativeCrashContext wires in.
+    it('reports quit_begun from the shutdown state for a live native crash', async () => {
+      try {
+        const liveEvent = () => ({
+          level: 'fatal',
+          platform: 'native',
+          release: 'Kangentic@0.57.0',
+          tags: { 'event.process': 'GPU', 'exit.reason': 'crashed' },
+        });
+
+        mocks.shutdownState.shuttingDown = true;
+        const quittingBeforeSend = await initAndGetBeforeSend();
+        const quitting = quittingBeforeSend(liveEvent(), minidumpHint(OUR_APP_MODULES, { _version: '0.57.0' }));
+        expect(quitting?.contexts).toMatchObject({ native_crash: { found_at_startup: false, quit_begun: true } });
+
+        mocks.shutdownState.shuttingDown = false;
+        mocks.sentryMock.init.mockClear();
+        const runningBeforeSend = await initAndGetBeforeSend();
+        const running = runningBeforeSend(liveEvent(), minidumpHint(OUR_APP_MODULES, { _version: '0.57.0' }));
+        expect(running?.contexts).toMatchObject({ native_crash: { found_at_startup: false, quit_begun: false } });
+      } finally {
+        mocks.shutdownState.shuttingDown = false;
+      }
     });
 
     // A Browser pane page runs as Kangentic.exe, so its dump reads as ours, but its content is the
@@ -1165,5 +1221,43 @@ describe('beforeSendEvent: home directory in an event', () => {
   it('rewrites after the native crash split, so a foreign-crash rewrite is scrubbed too', () => {
     const event: ErrorEvent = { message: `crashed under ${os.homedir()}` };
     expect(beforeSendEvent(event, {})?.message).toBe('crashed under ~');
+  });
+});
+
+/**
+ * DESKTOP-2Q: the SDK's childProcessIntegration reported the GPU process's
+ * launch failure at the same instant Chromium aborted the browser for it
+ * (DESKTOP-W), inside an OS shutdown's PTY drain. Once shutdown has begun the
+ * message only duplicates the native fatal. Mid-run it is the backstop #725
+ * kept, so it must still arrive there.
+ */
+describe('beforeSendEvent: a GPU launch failure once shutdown has begun', () => {
+  // The SDK's own template, whose shape the 'against the installed
+  // @sentry/electron source' block above pins.
+  const gpuLaunchFailed = (): ErrorEvent => ({
+    level: 'fatal',
+    message: "'GPU' process exited with 'launch-failed'",
+    tags: { 'event.environment': 'javascript', 'event.process': 'GPU', 'exit.reason': 'launch-failed' },
+  });
+
+  afterEach(() => {
+    mocks.shutdownState.shuttingDown = false;
+  });
+
+  it('keeps it while the app is running', () => {
+    expect(beforeSendEvent(gpuLaunchFailed(), {})).not.toBeNull();
+  });
+
+  it('drops it once shutdown has begun', () => {
+    mocks.shutdownState.shuttingDown = true;
+    expect(beforeSendEvent(gpuLaunchFailed(), {})).toBeNull();
+  });
+
+  it('keeps every other process exit during shutdown', () => {
+    mocks.shutdownState.shuttingDown = true;
+    const rendererCrash: ErrorEvent = { level: 'fatal', message: "'renderer' process exited with 'crashed'" };
+    const gpuIntegrityFailure: ErrorEvent = { level: 'fatal', message: "'GPU' process exited with 'integrity-failure'" };
+    expect(beforeSendEvent(rendererCrash, {})).not.toBeNull();
+    expect(beforeSendEvent(gpuIntegrityFailure, {})).not.toBeNull();
   });
 });
