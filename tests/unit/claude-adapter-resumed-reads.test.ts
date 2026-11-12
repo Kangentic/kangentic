@@ -484,7 +484,8 @@ describe('reportTerminatedBackgroundShells for a conversation filed under the ro
     const rootFile = transcriptUnder(projectRoot);
     writeFile(rootFile, plainTurn(AGENT_SESSION_ID, projectRoot));
 
-    // The first call anchors the cursor at the end of the file it reads.
+    // The first call reads the file back, finds no notification, and leaves
+    // the cursor at its end.
     expect(reportShells(rootFile)).toEqual([]);
     fs.appendFileSync(rootFile, shellFinishedLine(SHELL_ID));
     expect(reportShells(rootFile)).toEqual([SHELL_ID]);
@@ -499,7 +500,8 @@ describe('reportTerminatedBackgroundShells for a conversation filed under the ro
     expect(reportShells()).toEqual([]);
     await untilTrue(probedRootFile, 'the first call\'s find to reach the root slug');
     await findClaudeTranscriptFile({ agentSessionId: AGENT_SESSION_ID, cwd: worktree });
-    // Call two is the first on the root-slug file: it anchors at its end.
+    // Call two is the first on the root-slug file: it reads it back, finds
+    // nothing, and leaves the cursor at its end.
     expect(reportShells()).toEqual([]);
     fs.appendFileSync(rootFile, shellFinishedLine(SHELL_ID));
     expect(reportShells()).toEqual([SHELL_ID]);

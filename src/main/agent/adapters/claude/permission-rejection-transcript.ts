@@ -79,10 +79,10 @@ const TAIL_BYTES = 256 * 1024;
  * mtime/size cache avoids a needless correctness hazard: two
  * back-to-back rewrites of the same size landing within one filesystem's
  * mtime resolution window could otherwise serve a stale tail. This is
- * unlike `background-shell-transcript.ts`'s forward-only byte CURSOR, which
- * exists to keep a much larger, per-cycle-shared consumer cheap and has no
- * such staleness mode (it only ever reads bytes newly appended past its own
- * cursor).
+ * unlike `background-shell-transcript.ts`'s byte CURSOR, which exists to keep
+ * a much larger, per-cycle-shared consumer cheap and has no such staleness
+ * mode (after one bounded look-back on its first read, it only reads bytes
+ * newly appended past its own cursor).
  */
 function readTailLinesSync(filePath: string): string[] | null {
   let stat: fs.Stats;
@@ -151,13 +151,13 @@ function subagentTranscriptsWrittenSince(directory: string, sinceMs: number): st
  * `tool_result` matching one of the caller's `toolIds`, at or after `sinceMs`.
  * Returns the matched subset. Never throws.
  *
- * A bounded TAIL re-scan (not a forward-only byte cursor like the bg-shell
- * transcript drain in `background-shell-transcript.ts`) is deliberate: that
- * cursor anchors at EOF on its first call for a path, which is safe there
- * because a shell is asked about long before it could terminate. Here the
- * first call happens AFTER the prompt is already open, so an EOF anchor
- * would fall behind a denial landing inside the very first poll interval
- * and miss it forever.
+ * A bounded TAIL re-scan, not a byte cursor like the bg-shell transcript
+ * drain's in `background-shell-transcript.ts`, is deliberate. The first call
+ * happens AFTER the prompt is already open, so a cursor anchored at EOF would
+ * fall behind a denial landing inside the very first poll interval and miss
+ * it forever. The bg-shell cursor anchored that way until #803 showed the
+ * same loss for a shell that exited before its first ask. It now reads back
+ * a bounded window on its first call.
  *
  * Re-scanning is made safe by `sinceMs`. The `toolId` match alone is not
  * enough. A `--resume` keeps appending to the same transcript file, so a

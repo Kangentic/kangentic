@@ -110,7 +110,15 @@ interface TranscriptCursor {
   size: number;
   byteOffset: number;
   carry: Buffer;
+  /**
+   * The cursor stands inside a line the first read began in the middle of,
+   * so the next read discards bytes through the first newline rather than
+   * reading that line's tail as a line of its own.
+   */
+  insidePartialLine: boolean;
 }
+
+const EMPTY_BUFFER = Buffer.alloc(0);
 
 /** LRU cap mirroring transcript-parser.ts's incremental-state cache. */
 const CURSOR_LIMIT = 32;
@@ -159,14 +167,83 @@ function extractTerminatedIds(text: string): string[] {
 }
 
 /**
+ * How far back from end-of-file the FIRST read of a transcript looks. The
+ * watcher asks about a shell within a poll cycle or two (about 2 s) of
+ * learning its id. A shell that exits at once can have its terminal
+ * notification written before Kangentic learns the id at all. In #803 the
+ * notification landed 30 ms before the named `background_shell_start`, and an
+ * EOF anchor at the first ask lost it for good. 1 MiB covers several large
+ * tool results in that gap and keeps the one-time read bounded.
+ */
+export const FIRST_READ_LOOKBACK_BYTES = 1024 * 1024;
+
+/**
+ * Read `filePath` from `offset` to `size`, prepend `carry`, and return every
+ * terminal-notification id in the complete lines, storing the cursor at what
+ * was read. With `insidePartialLine` the read began inside a line, so the
+ * bytes through the first newline are discarded. A read that finds no
+ * newline there stores the cursor still inside that line, and the next read
+ * keeps discarding.
+ */
+function readTerminatedIdsFrom(
+  filePath: string,
+  size: number,
+  offset: number,
+  carry: Buffer,
+  insidePartialLine: boolean,
+): string[] {
+  let fileDescriptor: number;
+  try {
+    fileDescriptor = fs.openSync(filePath, 'r');
+  } catch {
+    return [];
+  }
+  try {
+    const length = size - offset;
+    const buffer = Buffer.allocUnsafe(length);
+    const bytesRead = fs.readSync(fileDescriptor, buffer, 0, length, offset);
+    let appended: Buffer = bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
+    if (insidePartialLine) {
+      const firstNewline = appended.indexOf(0x0a);
+      if (firstNewline === -1) {
+        // Still inside that line. Move past what was read so a long line is
+        // not read again on every poll.
+        touchCursor(filePath, { size, byteOffset: offset + bytesRead, carry: EMPTY_BUFFER, insidePartialLine: true });
+        return [];
+      }
+      appended = appended.subarray(firstNewline + 1);
+    }
+    const combined = carry.length === 0 ? appended : Buffer.concat([carry, appended]);
+    const split = splitCompleteLines(combined);
+    // Advance the cursor by what was ACTUALLY read, not the full expected new
+    // size. A short read (bytesRead < length - possible on a network share or
+    // an AV/lock-contended Windows file being concurrently appended) must
+    // leave the unread tail to be picked up next cycle; advancing to `size`
+    // would skip that gap forever and silently lose a terminal notification
+    // landing in it. On a full read this equals `size`, so the normal path
+    // is unchanged.
+    // The carry is copied: a subarray, even an empty one, keeps the whole
+    // read buffer alive, which on a first read is up to 1 MiB per cursor.
+    const storedCarry = split.carry.length === 0 ? EMPTY_BUFFER : Buffer.from(split.carry);
+    touchCursor(filePath, { size, byteOffset: offset + bytesRead, carry: storedCarry, insidePartialLine: false });
+    return split.completeLinesText.length > 0 ? extractTerminatedIds(split.completeLinesText) : [];
+  } catch {
+    return [];
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+}
+
+/**
  * Read new bytes appended to `filePath` since the last call for this path,
- * returning every terminal-notification id captured across those bytes. On
- * the FIRST call for a path, anchors the cursor at end-of-file and returns
- * []: the caller starts asking about a shell only shortly after it began
- * (`background_shell_start`), long before a terminal notification could
- * exist, so history never needs scanning - only forward growth. A shrink,
- * rotation, or read failure re-anchors at the current EOF rather than
- * risking a stale offset.
+ * returning every terminal-notification id captured across those bytes. The
+ * FIRST call for a path reads back up to `FIRST_READ_LOOKBACK_BYTES` from
+ * end-of-file, since a shell that exits at once can be reported before the
+ * caller first asks (#803). Reading history is safe because the caller
+ * filters to its own tracked ids, each minted for one launch: a terminal
+ * notification naming one means that shell ended. A shrink or rotation
+ * re-anchors at the current EOF rather than risking a stale offset, since
+ * the bytes before it are a rewrite, not new.
  */
 function tailTerminalNotificationIds(filePath: string): string[] {
   let stat: fs.Stats;
@@ -179,14 +256,18 @@ function tailTerminalNotificationIds(filePath: string): string[] {
 
   const previous = cursorByPath.get(filePath);
   if (!previous) {
-    touchCursor(filePath, { size: stat.size, byteOffset: stat.size, carry: Buffer.alloc(0) });
-    return [];
+    const windowStart = stat.size - FIRST_READ_LOOKBACK_BYTES;
+    if (windowStart <= 0) return readTerminatedIdsFrom(filePath, stat.size, 0, EMPTY_BUFFER, false);
+    // Begin one byte before the window, inside the line that precedes it.
+    // When that byte is the newline ending a line, discarding through the
+    // first newline keeps the window's first line whole.
+    return readTerminatedIdsFrom(filePath, stat.size, windowStart - 1, EMPTY_BUFFER, true);
   }
 
   if (stat.size < previous.byteOffset) {
     // Shrink/rotation: re-anchor at the new EOF rather than reading with a
     // stale offset.
-    touchCursor(filePath, { size: stat.size, byteOffset: stat.size, carry: Buffer.alloc(0) });
+    touchCursor(filePath, { size: stat.size, byteOffset: stat.size, carry: EMPTY_BUFFER, insidePartialLine: false });
     return [];
   }
 
@@ -195,33 +276,7 @@ function tailTerminalNotificationIds(filePath: string): string[] {
     return [];
   }
 
-  let fileDescriptor: number;
-  try {
-    fileDescriptor = fs.openSync(filePath, 'r');
-  } catch {
-    return [];
-  }
-  try {
-    const length = stat.size - previous.byteOffset;
-    const buffer = Buffer.alloc(length);
-    const bytesRead = fs.readSync(fileDescriptor, buffer, 0, length, previous.byteOffset);
-    const appended = bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
-    const combined = Buffer.concat([previous.carry, appended]);
-    const { completeLinesText, carry } = splitCompleteLines(combined);
-    // Advance the cursor by what was ACTUALLY read, not the full expected new
-    // size. A short read (bytesRead < length - possible on a network share or
-    // an AV/lock-contended Windows file being concurrently appended) must
-    // leave the unread tail to be picked up next cycle; advancing to stat.size
-    // would skip that gap forever and silently lose a terminal notification
-    // landing in it. On a full read this equals stat.size, so the normal path
-    // is unchanged.
-    touchCursor(filePath, { size: stat.size, byteOffset: previous.byteOffset + bytesRead, carry });
-    return completeLinesText.length > 0 ? extractTerminatedIds(completeLinesText) : [];
-  } catch {
-    return [];
-  } finally {
-    fs.closeSync(fileDescriptor);
-  }
+  return readTerminatedIdsFrom(filePath, stat.size, previous.byteOffset, previous.carry, previous.insidePartialLine);
 }
 
 /**

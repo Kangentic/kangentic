@@ -763,6 +763,8 @@ describe('a running workflow task whose turn ends without its step done', () => 
       expect(nudge).toContain('running 10 min, output file 0 bytes');
       expect(nudge).toContain('It is this session\'s own work, even if a subagent started it.');
       expect(nudge).toContain('kangentic_mark_background_service');
+      // #803: a shell whose end Kangentic missed held the move until the agent marked it.
+      expect(nudge).toContain('or has already ended');
       expect(nudge).toContain('Then end your turn.');
       // Typed as keystrokes: one line, under the paste threshold.
       expect(nudge).not.toContain('\n');

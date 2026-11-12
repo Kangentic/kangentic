@@ -1166,7 +1166,11 @@ function shellSentences(shells: ReadonlyArray<OpenShellFact>, withCommands: bool
   return [
     `${subject} ${named.join('; ')}${more} ${verb} still running.`,
     'It is this session\'s own work, even if a subagent started it.',
-    `If it waits on input or is no longer needed, stop it. If it is a service meant to keep running, mark it with ${MARK_BACKGROUND_SERVICE_TOOL}.`,
+    // "or has already ended" (#803): a shell whose end Kangentic missed held a
+    // move until the agent marked it. The agent can see it ended, and the
+    // mark is how it says so. Folded into this sentence, not a new one,
+    // because a one-shell held-move nudge already sits near NUDGE_MAX_CHARS.
+    `If it waits on input or is no longer needed, stop it. If it is a service meant to keep running, or has already ended, mark it with ${MARK_BACKGROUND_SERVICE_TOOL}.`,
   ];
 }
 
