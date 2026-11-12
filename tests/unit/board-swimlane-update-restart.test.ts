@@ -165,6 +165,8 @@ interface MockContext {
     // and the before/after comparison is the column's own values, as before.
     getBoardProfiles: ReturnType<typeof vi.fn>;
     setBoardProfiles: ReturnType<typeof vi.fn>;
+    // SWIMLANE_DELETE drops the column's kangentic.local.json entry before its write-back.
+    removeLocalColumn: ReturnType<typeof vi.fn>;
   };
   projectRepo: {
     getById: ReturnType<typeof vi.fn>;
@@ -204,6 +206,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       setDefaultBaseBranch: vi.fn(),
       getBoardProfiles: vi.fn(() => []),
       setBoardProfiles: vi.fn(),
+      removeLocalColumn: vi.fn(),
     },
     projectRepo: {
       getById: vi.fn(() => ({ id: 'proj-board-1', name: 'Test Project', path: '/mock/board-project' })),
@@ -704,6 +707,21 @@ describe('SWIMLANE_DELETE handler - Board Profile pruning', () => {
     const setBoardProfilesOrder = context.boardConfigManager.setBoardProfiles.mock.invocationCallOrder[0];
     const writeBackOrder = context.boardConfigManager.writeBack.mock.invocationCallOrder[0];
     expect(setBoardProfilesOrder).toBeLessThan(writeBackOrder);
+  });
+
+  it('drops the column from kangentic.local.json BEFORE the write-back, which reads that file', () => {
+    const doomedSwimlane = createSwimlaneBefore({ id: 'lane-doomed', name: 'Brand Review' });
+    const repos = buildProjectRepos(doomedSwimlane, doomedSwimlane, []);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    callSwimlaneDelete('lane-doomed');
+
+    // Without this call a local-only column, or a personal override of this
+    // one, comes back on the next project open.
+    expect(context.boardConfigManager.removeLocalColumn).toHaveBeenCalledWith('proj-board-1', '/mock/board-project', 'lane-doomed');
+    const removeOrder = context.boardConfigManager.removeLocalColumn.mock.invocationCallOrder[0];
+    const writeBackOrder = context.boardConfigManager.writeBack.mock.invocationCallOrder[0];
+    expect(removeOrder).toBeLessThan(writeBackOrder);
   });
 
   it('does not write profiles when nothing referenced the deleted column', () => {
