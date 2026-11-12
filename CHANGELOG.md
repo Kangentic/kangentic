@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.57.0] - 2026-11-11
+
+### Features
+- Task artifacts, collapsible columns, and a resume that keeps its permission mode (#801) (e2eced0b)
+- Polish the Accounts tab before release (fd51e732)
+- Multiple accounts per agent, chosen per session (dade0101)
+- Replace Checks with a Pull request section that leads to the fix (33c4eacf)
+
+### Fixes
+- Leave Shrink empty columns off by default (15641e81)
+- Settle the accounts tab review findings (87668276)
+- Make the resume-miss and disk-full reports triageable (d9a91c71)
+- Register the accounts store and use writeTransaction (52cdf722)
+- Read zsh's wrapped job line on macOS and pin the lines the macOS run printed (cc7fb0ea)
+- Name what a failed launch printed, whether an agent existed, and whether the CLI moved (1e94dfc9)
+- Hold a board launch until its agent shows it ran or its output names a cause (c96cf6fc)
+
+### Other
+- De-flake the Browser annotation E2E and the activity watcher unit test (5b83c89d)
+- Pin resume evidence wiring and the fingerprinted write report (2f6071b2)
+- Say Claude's relocation follows CLAUDE_CONFIG_DIR (2e6cc5e3)
+- Cover agent accounts and fix what the review found (2befd1b7)
+- Keep Ubuntu's global compinit from taking the typed line in the zsh rig (1078e0cc)
+- Pin detector identity recording and agent process presence (9629bc12)
+- Read the guest through a reload in the webview shim test (244cec87)
+- Rename Checks section mentions to Pull request section (969b0b96)
+- Pin agentCliPath on the startup spawns and the unjudged-launch ceiling (2876a24d)
+- Pin the agent-absence start bound and agentCliPath wiring (4547d76a)
+
 ## [v0.56.0] - 2026-11-09
 
 ### Features

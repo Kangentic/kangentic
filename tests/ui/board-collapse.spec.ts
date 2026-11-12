@@ -1,10 +1,12 @@
 /**
  * Collapsible board columns (#1056).
  *
- * Eight columns did not fit the board, so an empty column narrows to its
- * header and a column can be collapsed to a strip. What only a browser proves:
- * the widths the flex row actually gives, that the strip is a button that
- * expands, and that a strip still takes a drop. The width rule itself is
+ * Eight columns did not fit the board, so with Shrink empty columns on an
+ * empty column narrows to its header, and a column can be collapsed to a
+ * strip. The setting is off by default, so every page here that is about
+ * shrinking turns it on first. What only a browser proves: the widths the flex
+ * row actually gives, that the strip is a button that expands, and that a
+ * strip still takes a drop. The width rule itself is
  * `tests/unit/lane-widths.test.ts`.
  *
  * Widths are compared with each other, never against a pixel value: a header's
@@ -22,8 +24,11 @@ const PROJECT_NAME = `Collapse Test ${runId}`;
 let browser: Browser;
 let page: Page;
 
+/** The mock's config with Shrink empty columns on, written before the app loads. */
+const SHRINK_EMPTY_COLUMNS_ON = 'window.__mockPreConfigure(function (state) { state.config.shrinkEmptyColumns = true; });';
+
 test.beforeAll(async () => {
-  const result = await launchPage();
+  const result = await launchPage({ beforeLoad: (target) => target.addInitScript(SHRINK_EMPTY_COLUMNS_ON) });
   browser = result.browser;
   page = result.page;
   await createProject(page, PROJECT_NAME, '/tmp/collapse-test');
@@ -275,13 +280,14 @@ test.describe('Board columns: filter, completed count and neighbouring strips', 
     while (openBrowsers.length > 0) await openBrowsers.pop()?.close();
   });
 
-  async function openSeeded(cards: SeedCard[], archivedCount = 0): Promise<Page> {
+  async function openSeeded(cards: SeedCard[], archivedCount = 0, shrinkEmptyColumns = true): Promise<Page> {
     await waitForViteReady(VITE_URL);
     const seededBrowser = await chromium.launch({ headless: true });
     openBrowsers.push(seededBrowser);
     const context = await seededBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
     const seededPage = await context.newPage();
     await seededPage.addInitScript({ path: MOCK_SCRIPT });
+    if (shrinkEmptyColumns) await seededPage.addInitScript(SHRINK_EMPTY_COLUMNS_ON);
     await seededPage.addInitScript(`
       window.__mockPreConfigure(function (state) {
         var timestamp = new Date().toISOString();
@@ -322,6 +328,20 @@ test.describe('Board columns: filter, completed count and neighbouring strips', 
   const laneIn = (target: Page, name: string): Locator => target.locator(`[data-testid="swimlane"][data-swimlane-name="${name}"]`);
   const stripIn = (target: Page, name: string): Locator => target.locator(`[data-testid="swimlane"][data-swimlane-name="${name}"][data-collapsed]`);
   const wrapperIn = (target: Page, name: string): Locator => target.locator('[data-lane-wrapper]').filter({ has: laneIn(target, name) });
+
+  test('with the setting at its default, an empty column keeps the width of one with a task', async () => {
+    // Off by default: agents and automations move cards on their own, and a
+    // column that resized each time it emptied or filled would shift the row
+    // under the user.
+    const seeded = await openSeeded([{ id: 'task-alpha', title: 'Alpha work', lane: 'To Do' }], 0, false);
+    await expect(laneIn(seeded, 'To Do').getByText('Alpha work')).toBeVisible();
+
+    await expect(wrapperIn(seeded, 'Planning')).toHaveAttribute('data-lane-shape', 'shared');
+    await expect(seeded.locator('[data-lane-wrapper][data-lane-shape="shrunk"]')).toHaveCount(0);
+    const occupied = await wrapperIn(seeded, 'To Do').boundingBox();
+    const empty = await wrapperIn(seeded, 'Planning').boundingBox();
+    expect(Math.abs((empty?.width ?? 0) - (occupied?.width ?? 0))).toBeLessThan(1);
+  });
 
   test('a column whose cards are all filtered out keeps its width, and a truly empty one still shrinks', async () => {
     const seeded = await openSeeded([
@@ -419,6 +439,7 @@ test.describe('Board columns: a drop that empties one column and fills another',
     const context = await dropBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
     dropPage = await context.newPage();
     await dropPage.addInitScript({ path: MOCK_SCRIPT });
+    await dropPage.addInitScript(SHRINK_EMPTY_COLUMNS_ON);
     await dropPage.addInitScript(`
       window.__mockPreConfigure(function (state) {
         var timestamp = new Date().toISOString();

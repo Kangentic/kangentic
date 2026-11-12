@@ -4461,7 +4461,9 @@ export interface AppConfig {
   columnWidth: ColumnWidth;
   /**
    * A column with no tasks narrows to the width of its header and opens again
-   * when a task arrives. On by default. The Done column never narrows.
+   * when a task arrives. The Done column never narrows. Off by default: agents
+   * and automations move cards on their own, and each move that empties or
+   * fills a column would resize the row under the user.
    */
   shrinkEmptyColumns: boolean;
   showTaskNumbers: boolean; // show each task's #N (display_id) on its board card
@@ -5321,7 +5323,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   cardDensity: 'default',
   cardPreview: 'agent-latest-message',
   columnWidth: 'default',
-  shrinkEmptyColumns: true,
+  shrinkEmptyColumns: false,
   showTaskNumbers: true,
   terminalPanelVisible: true,
   animationsEnabled: true,

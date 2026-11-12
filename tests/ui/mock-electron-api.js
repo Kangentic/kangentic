@@ -330,7 +330,7 @@
     cardDensity: 'default',
     cardPreview: 'agent-latest-message',
     columnWidth: 'default',
-    shrinkEmptyColumns: true,
+    shrinkEmptyColumns: false,
     linkClickTarget: 'default',
     showTaskNumbers: false,
     terminalPanelVisible: true,
