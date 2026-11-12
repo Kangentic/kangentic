@@ -55,7 +55,11 @@ export function splitLabelEntries(rawEntries: ReadonlyArray<unknown> | null | un
 
 /** The project's priority scale, bottom entry first. An empty one reads as the seeded scale. */
 export function priorityScaleOf(context: CommandContext): PriorityScale {
-  const priorities = context.getBacklogDisplayConfig?.().priorities;
+  return priorityScaleFrom(context.getBacklogDisplayConfig?.().priorities);
+}
+
+/** A stored priority scale as every reader takes it: an absent or empty one reads as the seeded scale. */
+export function priorityScaleFrom(priorities: PriorityScale | undefined): PriorityScale {
   return priorities && priorities.length > 0 ? priorities : DEFAULT_PRIORITY_CONFIG;
 }
 

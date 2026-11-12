@@ -18,17 +18,49 @@ function roomIn(line: QueueColumnLine): number {
  * the queue skips those tasks when a slot opens, so they are not ahead of anyone.
  */
 export function queuePlaceOf(snapshot: QueueSnapshot, sessionId: string): QueuePlace | null {
+  return queuePlacesOf(snapshot).get(sessionId) ?? null;
+}
+
+/**
+ * Every queued session's place, keyed by session id, in one pass over the
+ * snapshot. A caller that reads the place of each task in the line uses this
+ * instead of `queuePlaceOf` per task, which would walk the line once each.
+ */
+export function queuePlacesOf(snapshot: QueueSnapshot): Map<string, QueuePlace> {
+  const places = new Map<string, QueuePlace>();
+  const heldByColumn = new Set<string | null>();
   for (const line of snapshot.columns) {
-    const index = line.waiting.findIndex((task) => task.sessionId === sessionId);
-    if (index < 0) continue;
-    // Inside the limit, so the column is not what holds it. A session sits in
-    // one line only, so nothing is left to search.
-    if (index < roomIn(line)) break;
-    return { kind: 'column', position: index + 1, total: line.waiting.length, line };
+    const room = roomIn(line);
+    line.waiting.forEach((task, index) => {
+      // Inside the limit, so the column is not what holds it.
+      if (index < room) return;
+      heldByColumn.add(task.sessionId);
+      if (task.sessionId !== null && !places.has(task.sessionId)) {
+        places.set(task.sessionId, { kind: 'column', position: index + 1, total: line.waiting.length, line });
+      }
+    });
   }
-  const heldByColumn = new Set(snapshot.columns.flatMap((line) => line.waiting.slice(roomIn(line))).map((task) => task.sessionId));
   const tasks = snapshot.global.filter((task) => !heldByColumn.has(task.sessionId));
-  const position = tasks.findIndex((task) => task.sessionId === sessionId);
-  if (position < 0) return null;
-  return { kind: 'global', position: position + 1, total: tasks.length, tasks };
+  tasks.forEach((task, index) => {
+    if (task.sessionId !== null && !places.has(task.sessionId)) {
+      places.set(task.sessionId, { kind: 'global', position: index + 1, total: tasks.length, tasks });
+    }
+  });
+  return places;
+}
+
+/**
+ * Each queued task's place, keyed by task id, with the line entry it came
+ * from. The first entry with a session wins when a task appears twice. A task
+ * whose session has no place is left out.
+ */
+export function queuePlacesByTaskId(snapshot: QueueSnapshot): Map<string, { queued: QueueTask; place: QueuePlace }> {
+  const placeBySessionId = queuePlacesOf(snapshot);
+  const byTaskId = new Map<string, { queued: QueueTask; place: QueuePlace }>();
+  for (const queued of snapshot.global) {
+    if (!queued.sessionId || byTaskId.has(queued.taskId)) continue;
+    const place = placeBySessionId.get(queued.sessionId);
+    if (place) byTaskId.set(queued.taskId, { queued, place });
+  }
+  return byTaskId;
 }
