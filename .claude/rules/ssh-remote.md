@@ -52,7 +52,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   legacy `.json` is refused by the search's pattern. A reader treats that copy as what has arrived so
   far: empty at first, stale while the link is down, and never proof that a conversation is gone. So
   nothing deletes, prunes or demotes for want of a copy: `conversationAvailable` answers true for a host
-  rather than reading a null locate as gone.
+  rather than reading a null locate as gone. A dropped link holds each tail (`FileTail.markDetached`).
+  The same app process coming back, told by its boot id recorded at the drop, releases them to go on from
+  their offsets (`resumeDetached`), and a different process starts each file from byte 0 on its next
+  watch, since it never saw what the old one was sent. A hold only a new watch could end froze a live
+  session's copy after any brief drop.
 - **What a CLI cannot name at spawn, it names later; what it keeps in a shared database, it exports.**
   The relay asks the adapter again when the id arrives (`setAgentSessionId`, from `onAgentSessionId`) or
   an index grows (`remoteTranscriptIndex()`). A second `watchFiles` names the whole set, a file in both keeps

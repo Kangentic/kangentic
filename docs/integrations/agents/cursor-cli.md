@@ -124,6 +124,11 @@ model, not the one passed, and would replace the column's model until the TUI st
 The skip follows the same read of the built command as the seed, so a command it cannot read the
 flag from is seeded by `about`, as a start with no model is.
 
+A take-back of an agent a host kept running skips it too (`SessionContext.takingBack`), for the same
+reason: `about` would report this computer's account default, not the live session. The take-back
+shows the model and occupancy its record last saw, then reads them from the screen the host holds
+(`usageFromOutput`) until the status bar paints.
+
 ## Hooks
 
 `hook-config.ts`. Built from Cursor's [hooks reference](https://cursor.com/docs/hooks) and the
