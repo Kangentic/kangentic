@@ -327,7 +327,9 @@ src/main/workflows/
     (cut short), how long each has run and its output file's size, a hint only, since a gate that
     redirects to its own log holds 0 bytes while it runs fine. It says the command is this
     session's own work even if a subagent started it, to stop it if it waits on input or is no
-    longer needed, and to mark it with `kangentic_mark_background_service` if it is a service. One
+    longer needed, and to mark it with `kangentic_mark_background_service` if it is a service meant
+    to keep running or has already ended, because a shell whose end Kangentic missed held the move
+    until the agent marked it (#803). One
     agent saw its hung command and left it because it "looked like someone else's"; another,
     told only to carry on, found and stopped its own in 40 seconds. The nudge stays one line under
     1000 characters (commands give way first), so it types as keystrokes rather than as a paste,
