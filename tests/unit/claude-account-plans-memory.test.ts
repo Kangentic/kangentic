@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CLAUDE_ACCOUNT_SUPPORT } from '../../src/main/agent/adapters/claude/accounts';
 import { carryClaudePlanFiles, readTranscriptSlug } from '../../src/main/agent/adapters/claude/plan-carry';
 import { accountAutoMemoryDirectory, claudeMemoryProjectFolder } from '../../src/main/agent/adapters/claude/auto-memory-folder';
@@ -188,6 +188,25 @@ describe('carryClaudePlanFiles', () => {
     expect(fs.readFileSync(path.join(accountTwo, 'plans', 'calm-river.md'), 'utf8')).toBe('revised');
   });
 
+  it('still carries the other plan files when one vanishes between the listing and the read', async () => {
+    writeTranscript('calm-river');
+    write(path.join(accountThree, 'plans', 'calm-river.md'), 'the plan', 2_000);
+    const vanishing = path.join(accountThree, 'plans', 'calm-river-agent-a1.md');
+    write(vanishing, 'gone before the read', 2_000);
+    const realStat = fs.promises.stat.bind(fs.promises);
+    const statSpy = vi.spyOn(fs.promises, 'stat').mockImplementation(((target: fs.PathLike, ...rest: unknown[]) => (
+      String(target) === vanishing
+        ? Promise.reject(Object.assign(new Error('gone'), { code: 'ENOENT' }))
+        : (realStat as (...args: unknown[]) => Promise<fs.Stats>)(target, ...rest)
+    )) as typeof fs.promises.stat);
+    try {
+      await carryInto(accountTwo);
+    } finally {
+      statSpy.mockRestore();
+    }
+    expect(fs.readdirSync(path.join(accountTwo, 'plans'))).toEqual(['calm-river.md']);
+  });
+
   it('finds a transcript stored under another project folder', async () => {
     write(path.join(defaultHome, 'projects', 'some-other-project', `${SESSION_ID}.jsonl`), `${JSON.stringify({ type: 'user', slug: 'calm-river' })}\n`);
     write(path.join(accountThree, 'plans', 'calm-river.md'), 'plan', 2_000);
@@ -251,6 +270,18 @@ describe('accountAutoMemoryDirectory', () => {
     expect(accountAutoMemoryDirectory({ accountFolder: accountTwo, defaultHome, cwd, baseSettings: { autoMemoryDirectory: '~/notes' } })).toBeNull();
     write(path.join(accountTwo, 'settings.json'), JSON.stringify({ autoMemoryDirectory: '~/my-memory' }));
     expect(accountAutoMemoryDirectory({ accountFolder: accountTwo, defaultHome, cwd, baseSettings: {} })).toBeNull();
+  });
+
+  it('still names the memory folder when the account settings.json cannot be read as JSON', () => {
+    const expected = path.join(defaultHome, 'projects', claudeProjectSlug(path.resolve(cwd)), 'memory');
+    // A half-written file, valid JSON that is not an object, and a folder where the file goes.
+    write(path.join(accountTwo, 'settings.json'), '{"autoMemoryDirectory": ');
+    expect(accountAutoMemoryDirectory({ accountFolder: accountTwo, defaultHome, cwd, baseSettings: {} })).toBe(expected);
+    write(path.join(accountTwo, 'settings.json'), '[]');
+    expect(accountAutoMemoryDirectory({ accountFolder: accountTwo, defaultHome, cwd, baseSettings: {} })).toBe(expected);
+    fs.rmSync(path.join(accountTwo, 'settings.json'));
+    fs.mkdirSync(path.join(accountTwo, 'settings.json'));
+    expect(accountAutoMemoryDirectory({ accountFolder: accountTwo, defaultHome, cwd, baseSettings: {} })).toBe(expected);
   });
 
   it('reaches the session settings file through the real command builder only for a folder account', () => {

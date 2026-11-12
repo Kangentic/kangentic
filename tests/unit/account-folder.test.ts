@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkExistingFolder,
   provisionAccountFolder,
@@ -221,6 +221,29 @@ describe('provisionAccountFolder with an own-dir entry', () => {
     expect(ownPlans.isSymbolicLink()).toBe(false);
     expect(ownPlans.isDirectory()).toBe(true);
     expect(fs.readdirSync(path.join(account, 'plans'))).toEqual([]);
+  });
+
+  // A locked junction (EBUSY) must be reported, not thrown: a throw would stop every spawn on the account.
+  it('reports a link it cannot remove, keeps the link and the home plans, and does not block the account', async () => {
+    write(path.join(home, 'plans', 'calm-river.md'), '# Plan');
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(path.join(home, 'plans'), path.join(account, 'plans'), linkKind);
+    const busy = Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => { throw busy; });
+    const rmdirSpy = vi.spyOn(fs, 'rmdirSync').mockImplementation(() => { throw busy; });
+    let report: Awaited<ReturnType<typeof provisionAccountFolder>>;
+    try {
+      report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+    } finally {
+      unlinkSpy.mockRestore();
+      rmdirSpy.mockRestore();
+    }
+
+    expect(report.problems.map((problem) => problem.code)).toEqual(['link-failed']);
+    expect(report.problems[0].detail).toContain('resource busy');
+    expect(report.conversationLinkFailed).toBe(false);
+    expect(fs.lstatSync(path.join(account, 'plans')).isSymbolicLink()).toBe(true);
+    expect(snapshot(path.join(home, 'plans'))).toEqual({ 'calm-river.md': '# Plan' });
   });
 
   // The offline-drive protection: a link to somewhere that cannot be reached is not ours to remove.
