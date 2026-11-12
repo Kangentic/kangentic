@@ -328,7 +328,7 @@ export const IPC = {
   BOARD_CONFIG_BOARD_PROFILES_CHANGED: 'boardConfig:boardProfilesChanged',
   BOARD_CONFIG_GET_SHORTCUTS: 'boardConfig:getShortcuts',
   BOARD_CONFIG_SET_SHORTCUTS: 'boardConfig:setShortcuts',
-  BOARD_CONFIG_SHORTCUTS_CHANGED: 'boardConfig:shortcutsChanged',
+  BOARD_CONFIG_LOCAL_APPLIED: 'boardConfig:localApplied',
   BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH: 'boardConfig:setDefaultBaseBranch',
   BOARD_CONFIG_SET_STOP_SCRIPT: 'boardConfig:setStopScript',
 

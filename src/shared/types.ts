@@ -9521,7 +9521,12 @@ export interface ElectronAPI {
     onWarnings: (callback: (projectId: string, warnings: string[]) => void) => () => void;
     /** The warnings of the project's last apply, for a renderer that missed the `onWarnings` push. */
     getLastWarnings: (projectId: string) => Promise<string[]>;
-    onShortcutsChanged: (callback: (projectId: string) => void) => () => void;
+    /**
+     * A change to the open project's kangentic.local.json was applied to its
+     * board (no banner: the file is personal), so the board and its shortcuts
+     * need reloading.
+     */
+    onLocalApplied: (callback: (projectId: string) => void) => () => void;
     /**
      * The board's named Board Profiles (see `BoardProfile`). Empty when the
      * board has none. `projectId` reads another project's board; omitted, the

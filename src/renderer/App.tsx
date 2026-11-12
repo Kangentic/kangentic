@@ -928,8 +928,12 @@ export function App() {
         useBoardStore.getState().receiveOpenConfigWarnings(warnedProjectId, warnings);
       }));
     }
-    if (boardConfig?.onShortcutsChanged) {
-      cleanups.push(boardConfig.onShortcutsChanged(() => {
+    if (boardConfig?.onLocalApplied) {
+      // Main already applied the personal file (no banner), so only the
+      // reload is left. Held until drag end, like the team file's apply.
+      cleanups.push(boardConfig.onLocalApplied((appliedProjectId) => {
+        if (appliedProjectId !== useProjectStore.getState().currentProject?.id) return;
+        enqueueReload('board', () => useBoardStore.getState().loadBoard());
         useBoardStore.getState().loadShortcuts();
       }));
     }

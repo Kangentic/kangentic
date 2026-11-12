@@ -881,10 +881,10 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_WARNINGS, handler);
     },
     getLastWarnings: (projectId: string) => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_LAST_WARNINGS, projectId),
-    onShortcutsChanged: (callback) => {
+    onLocalApplied: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
-      ipcRenderer.on(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
-      return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, handler);
+      ipcRenderer.on(IPC.BOARD_CONFIG_LOCAL_APPLIED, handler);
+      return () => ipcRenderer.removeListener(IPC.BOARD_CONFIG_LOCAL_APPLIED, handler);
     },
     getBoardProfiles: (projectId) => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_BOARD_PROFILES, projectId ?? null),
     setBoardProfiles: (profiles) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_BOARD_PROFILES, profiles),

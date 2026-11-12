@@ -267,7 +267,7 @@ Valid values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, 
 | `boardConfig:boardProfilesChanged` | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | Get task detail dialog [shortcuts](board-config.md#shortcuts) |
 | `boardConfig:setShortcuts` | Update task detail dialog shortcuts |
-| `boardConfig:shortcutsChanged` | Event: shortcuts file changed |
+| `boardConfig:localApplied` | Event: a `kangentic.local.json` change was applied; reload the board and shortcuts |
 | `boardConfig:setDefaultBaseBranch` | Update the default base branch in `kangentic.json` |
 | `boardConfig:setStopScript` | Update a project's Stop script in `kangentic.json`, or in `kangentic.local.json` when that holds the key |
 
