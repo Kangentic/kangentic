@@ -8,16 +8,19 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/main/notifications/app-badge-display.ts
+#, fuzzy
 msgid "{count, plural, one {# agent needs you} other {# agents need you}}"
-msgstr ""
+msgstr "{count, plural, other {# 个代理需要你处理}}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is {megabytes} MB, over the 2 MB limit"
-msgstr ""
+msgstr "{fileName} 大小为 {megabytes} MB，超过 2 MB 的限制"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is not a wav, mp3, ogg or m4a file"
-msgstr ""
+msgstr "{fileName} 不是 wav、mp3、ogg 或 m4a 文件"
 
 #: src/main/notifications/desktop-notifier.ts
 msgid "{place}. Stalled: {reason}"
@@ -106,6 +109,11 @@ msgstr "复制"
 msgid "Copy Image"
 msgstr "复制图像"
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "Download Kangentic again to keep it updated."
+msgstr "请重新下载 Kangentic 以保持更新。"
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
 msgstr "当时空闲系统内存（提交量）：{remainingMb} MB。"
@@ -122,6 +130,11 @@ msgstr "Kangentic 无法读取数据库"
 #: src/main/index.ts
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic 窗口无响应"
+
+#: src/main/updater.ts
+#, fuzzy
+msgid "Move Kangentic to Applications to keep it updated."
+msgstr "请将 Kangentic 移至“应用程序”文件夹以保持更新。"
 
 #: src/main/window-open-policy.ts
 msgid "Not secure - {host}"
@@ -161,8 +174,9 @@ msgid "Session crashed: {label}"
 msgstr "会话已崩溃：{label}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "Sound files"
-msgstr ""
+msgstr "声音文件"
 
 #: src/main/notifications/desktop-notifier.ts
 msgid "Terminals restarted"

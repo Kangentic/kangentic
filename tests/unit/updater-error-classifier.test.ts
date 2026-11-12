@@ -29,6 +29,8 @@ import {
   isPackageManagerMissingError,
   isResourceUnavailableError,
   isPrereleaseWithNoMatchingRelease,
+  isSignatureRequirementError,
+  signatureRequirementReport,
   stripUrlQueries,
 } from '../../src/main/updater';
 
@@ -73,6 +75,17 @@ const PACKAGE_MANAGER_MISSING_MESSAGE =
 
 /** DESKTOP-17, verbatim. The provider writes exactly this, with no detail. */
 const DESKTOP_17_MESSAGE = 'No published versions on GitHub';
+
+/**
+ * DESKTOP-2R, from the Sentry event with the home directory put back as a
+ * placeholder (the app had already rewritten it to `~`). `update.<random>` is
+ * ShipIt's staging folder, new on every attempt, which is what split one
+ * failure into DESKTOP-2R and DESKTOP-2T.
+ */
+const signatureRequirementMessage = (stagingFolder: string): string =>
+  `Code signature at URL file:///Users/dev/Library/Caches/com.kangentic.app.ShipIt/${stagingFolder}/Kangentic.app/`
+  + ' did not pass validation: code failed to satisfy specified code requirement(s)';
+const DESKTOP_2R_MESSAGE = signatureRequirementMessage('update.1VC5jWG');
 
 /** The release DESKTOP-17 arrived from, prerelease component and all. */
 const PRERELEASE_VERSION = '0.41.0-dev.1';
@@ -681,6 +694,88 @@ describe('isResourceUnavailableError', () => {
   });
 });
 
+describe('isSignatureRequirementError', () => {
+  it('matches the production DESKTOP-2R message, which has no code', () => {
+    const error = makeError({ message: DESKTOP_2R_MESSAGE });
+    expect((error as NodeJS.ErrnoException).code).toBeUndefined();
+    expect(isSignatureRequirementError(error)).toBe(true);
+  });
+
+  it('survives a hypothetical prefix and suffix', () => {
+    expect(isSignatureRequirementError(makeError({
+      message: `Error: ${DESKTOP_2R_MESSAGE} (errSecCSReqFailed)`,
+    }))).toBe(true);
+  });
+
+  it.each([
+    ['a read-only volume', DESKTOP_1A_MESSAGE],
+    ['an EAGAIN', DESKTOP_1B_MESSAGE],
+    ['a missing package manager', PACKAGE_MANAGER_MISSING_MESSAGE],
+    ['an unrelated signature failure', 'ERR_UPDATER_INVALID_SIGNATURE'],
+    ['an empty message', ''],
+  ])('does not claim %s', (_label, message) => {
+    expect(isSignatureRequirementError(makeError({ message }))).toBe(false);
+  });
+
+  it('is not claimed by any classifier that runs before or beside it', () => {
+    // The gate stays reported, so a classifier above it that matched would
+    // silently turn a possible bad release into a count.
+    const error = makeError({ message: DESKTOP_2R_MESSAGE });
+    expect(isTransientUpdaterError(error)).toBe(false);
+    expect(hasTransientNetworkCause(error)).toBe(false);
+    expect(isElevationDeniedError(error)).toBe(false);
+    expect(isReadOnlyVolumeError(error)).toBe(false);
+    expect(isPackageManagerMissingError(error)).toBe(false);
+    expect(isResourceUnavailableError(error)).toBe(false);
+  });
+});
+
+describe('signatureRequirementReport', () => {
+  it('gives two attempts that differ only in the staging folder one fingerprint and one message', () => {
+    const first = signatureRequirementReport(makeError({ message: signatureRequirementMessage('update.1VC5jWG') }));
+    const second = signatureRequirementReport(makeError({ message: signatureRequirementMessage('update.Qz8pLr2') }));
+
+    expect(first.fingerprint).toEqual(second.fingerprint);
+    expect(first.error.message).toBe(second.error.message);
+    expect(first.error.message).not.toContain('1VC5jWG');
+    expect(first.error.message).toContain('com.kangentic.app.ShipIt/update.<staging>/Kangentic.app/');
+    expect(first.error.message).toContain('code failed to satisfy specified code requirement(s)');
+  });
+
+  it('scrubs the staging folder from the stack too', () => {
+    const error = makeError({ message: DESKTOP_2R_MESSAGE });
+    error.stack = `Error: ${DESKTOP_2R_MESSAGE}`;
+    const report = signatureRequirementReport(error);
+    expect(report.error.stack).not.toContain('1VC5jWG');
+  });
+
+  // Squirrel's code -1 and the error name group the Sentry issue; losing them splits or mislabels it.
+  it('keeps the error name and a numeric code on the scrubbed copy', () => {
+    const error = new Error(DESKTOP_2R_MESSAGE) as Error & { code?: number };
+    error.name = 'SquirrelError';
+    error.code = -1;
+    const report = signatureRequirementReport(error);
+    expect(report.error.name).toBe('SquirrelError');
+    expect((report.error as { code?: number }).code).toBe(-1);
+  });
+
+  // A signed download URL token in the report would leak a credential to Sentry.
+  it('strips a URL query from the message', () => {
+    const error = makeError({
+      message: `${DESKTOP_2R_MESSAGE} (from https://example.com/Kangentic.zip?token=SECRET123)`,
+    });
+    const report = signatureRequirementReport(error);
+    expect(report.error.message).not.toContain('SECRET123');
+    expect(report.error.message).toContain('https://example.com/Kangentic.zip');
+  });
+
+  it('leaves the error upstream emitted as it was', () => {
+    const error = makeError({ message: DESKTOP_2R_MESSAGE });
+    signatureRequirementReport(error);
+    expect(error.message).toBe(DESKTOP_2R_MESSAGE);
+  });
+});
+
 describe('isPrereleaseWithNoMatchingRelease', () => {
   it('matches the production DESKTOP-17 error, by code', () => {
     expect(isPrereleaseWithNoMatchingRelease(
@@ -915,19 +1010,20 @@ describe('against the installed electron-updater source', () => {
 });
 
 /**
- * The two macOS predicates get no such guard, and this names that rather than
+ * The three macOS predicates get no such guard, and this names that rather than
  * leaving it to read as an oversight.
  *
- * isReadOnlyVolumeError and isResourceUnavailableError both match strings that
- * have no source in node_modules to read. Squirrel.Mac is compiled into
- * Electron's framework binary, and `Resource temporarily unavailable` is
- * macOS's own strerror text reached through NSError. There is nothing on disk
- * for a drift test to assert against, so an upstream reword of either would go
- * unnoticed until the issue reappeared in Sentry. Accepted: both errors are
- * already suppressed on their message alone because they arrive with no code,
- * no cause and no stack, so a reword costs a rediscovery rather than a
- * regression, and the failure mode is an issue coming back, not one being
- * silently swallowed.
+ * isReadOnlyVolumeError, isResourceUnavailableError and
+ * isSignatureRequirementError all match strings that have no source in
+ * node_modules to read. Squirrel.Mac is compiled into Electron's framework
+ * binary, `Resource temporarily unavailable` is macOS's own strerror text
+ * reached through NSError, and errSecCSReqFailed's text is the Security
+ * framework's. There is nothing on disk for a drift test to assert against, so
+ * an upstream reword would go unnoticed until the issue reappeared in Sentry.
+ * Accepted: the errors arrive with no code, no cause and no stack, so a reword
+ * costs a rediscovery rather than a regression. For the first two the failure
+ * mode is an issue coming back. For the signature one it is the scattered,
+ * per-attempt issues coming back, still reported.
  */
 describe('the macOS predicates have no upstream source to pin', () => {
   const macUpdaterSource = fs.readFileSync(
@@ -938,10 +1034,11 @@ describe('the macOS predicates have no upstream source to pin', () => {
   it('confirms electron-updater only forwards them, so nothing here throws them', () => {
     // The forward itself IS assertable, and it is what makes these errors
     // reach our handler at all. If MacUpdater stops re-emitting the native
-    // updater's errors, both gates become dead code.
+    // updater's errors, all three gates become dead code.
     expect(macUpdaterSource).toMatch(/nativeUpdater\.on\(["']error["']/);
     expect(macUpdaterSource).not.toContain('read-only volume');
     expect(macUpdaterSource).not.toContain('Resource temporarily unavailable');
+    expect(macUpdaterSource).not.toContain('code failed to satisfy specified code requirement');
   });
 
   /**

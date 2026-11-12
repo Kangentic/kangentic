@@ -13,6 +13,9 @@ sources:
   - resource: scripts/merge-mac-update-feeds.js
   - resource: scripts/patch-mac-update-info.js
   - resource: src/main/updater-release-notes.ts
+  - resource: src/main/updater-mac-signing.ts
+  - resource: build/verify-signed-team-id.js
+  - resource: src/shared/apple-team-id.json
 ---
 # Deployment
 
@@ -33,7 +36,7 @@ This downloads the pre-built binary for your platform, installs it, and launches
 | Platform | Update mechanism | User action |
 |----------|-----------------|-------------|
 | Windows | `electron-updater` (NSIS) | Review the release notes in the modal and click "Restart to update", or quit normally - installs silently on next launch. |
-| macOS | `electron-updater` | Review the release notes in the modal and click "Restart to update". Requires code signing - see [macOS signing note](#macos-auto-update-requires-signing) - and the app must not be running from a read-only volume - see [macOS read-only volumes](#macos-read-only-volumes). |
+| macOS | `electron-updater` | Review the release notes in the modal and click "Restart to update". Requires code signing - see [macOS signing note](#macos-auto-update-requires-signing) - and the app must not be running from a read-only volume - see [macOS read-only volumes](#macos-read-only-volumes) - or from a copy re-signed after download - see [macOS signature mismatch](#macos-signature-mismatch). |
 | Linux | `electron-updater` (deb/rpm) | Review the release notes in the modal and click "Restart to update", then approve the system authentication prompt. Unlike the other platforms there is no install-on-quit - see [Linux auto-update](#linux-auto-update). |
 
 Auto-update is implemented in `src/main/updater.ts`. It checks for updates 5 seconds after launch, then every 4 hours. Updates download in the background; when ready, a centered modal shows the new version's release notes (rendered markdown, sourced from `RELEASE_NOTES.md` baked into the update manifest at build time - see [Release Sequencing](#release-sequencing)) with "Restart to update" and "Later". The modal auto-opens once per version; "Later" dismisses it in favor of a persistent title-bar indicator that reopens it. A version whose release carried no notes falls back to the legacy persistent toast. v0.1.0 users must manually update to v0.2.0 - auto-update kicks in from v0.2.0 onward.
@@ -46,9 +49,24 @@ Its notes do not come from the update manifest, which the relaunched app no long
 
 Squirrel.Mac replaces the app bundle in place, so an app that cannot be written over cannot update. Launching Kangentic straight from the mounted `.dmg` is the common way to end up there, and App Translocation produces the same result for a quarantined bundle run from an arbitrary folder. The install downloads normally, the release-notes modal appears, and the handoff to Squirrel then fails with `Cannot update while running on a read-only volume`.
 
-That is a property of where the app was launched from, not a defect, so it is counted and never filed as an issue. It is also one of two updater failures the app tells the user about, because nothing else would: the install stays on its current version indefinitely and says nothing. A warning toast naming the Applications folder appears once per app run, latched in main (`src/main/updater.ts`) so a condition every 4-hour check rediscovers does not repeat it. Dragging the app to Applications and relaunching from there is the fix.
+That is a property of where the app was launched from, not a defect, so it is counted and never filed as an issue. It is also one of three updater failures the app tells the user about, because nothing else would: the install stays on its current version indefinitely and says nothing. A warning toast naming the Applications folder appears once per app run, latched in main (`src/main/updater.ts`) so a condition every 4-hour check rediscovers does not repeat it. Dragging the app to Applications and relaunching from there is the fix.
 
 Note the ordering: because `MacUpdater` announces the finished download before handing it to Squirrel, the user sees the "Restart to update" modal first and this toast a moment later. The button in that modal is inert rather than visibly failing. Squirrel errored, so `squirrelDownloadedUpdate` was never set, and `MacUpdater.quitAndInstall` takes its else branch: it registers a listener for an `update-downloaded` that will not arrive, skips `checkForUpdates()` because `autoInstallOnAppQuit` is already true on macOS, and returns. Nothing quits and nothing errors. The toast is the only explanation the user gets.
+
+### macOS signature mismatch
+
+Squirrel.Mac installs an update only when its signature satisfies the designated requirement of the copy that is running. Ours names the bundle identifier and our Team ID, so any release we sign satisfies it. A copy that was re-signed after it left us carries a different requirement. An ad-hoc signature's requirement is its own cdhash, which no release can ever match. Squirrel then refuses every download with `code failed to satisfy specified code requirement(s)` (errSecCSReqFailed). The user sees the same inert "Restart to update" modal as in the read-only case above, every 4 hours.
+
+The app reports the failure to Sentry as one issue, tagged with how the running copy is signed (`running_signing`; see [Error reporting](../telemetry/error-reporting.md)). `our-team` on that tag means the copy is ours and the release's signing is the suspect. Anything else means the copy was changed on that machine, and then the app also tells the user once per run that this copy cannot install updates and that downloading it again fixes it. A copy signed by us gets no toast, because a fresh download would fetch the same release. The Team ID the app compares against lives in `src/shared/apple-team-id.json`, and `build/afterSign.js` fails a macOS release leg whose signature or `APPLE_TEAM_ID` disagrees with it.
+
+DESKTOP-2R was the first report: one install refused 0.57.0 and 0.57.1 on every check. One lead is still unverified. The `npx kangentic` launcher extracts the macOS zip with `unzip` rather than `ditto` (`packages/launcher/bin/kangentic.js`). It never re-signs, so it is an unlikely source of an ad-hoc copy, but an install through it has not been checked on a Mac. To settle it, install through `npx kangentic` on a Mac and run:
+
+```bash
+codesign --verify --deep --strict ~/Applications/Kangentic.app
+codesign -dv ~/Applications/Kangentic.app
+```
+
+The first must print nothing and exit 0. The second must show our `TeamIdentifier` and no `Signature=adhoc`.
 
 ### Linux auto-update
 
@@ -139,6 +157,8 @@ Signing only activates when the corresponding env vars are present. Local dev bu
 | `AZURE_SIGNING_ENDPOINT` | Regional endpoint (e.g., `https://eus.codesigning.azure.net/`) |
 | `AZURE_SIGNING_ACCOUNT` | Trusted Signing account name |
 | `AZURE_CERT_PROFILE` | Certificate profile name |
+
+The Team ID is also committed, in `src/shared/apple-team-id.json`. It is public, since every signed copy prints it in `codesign -dv`. The app reads it to tell its own signature from a re-signed one (see [macOS signature mismatch](#macos-signature-mismatch)). `build/verify-signed-team-id.js`, run from `afterSign`, fails a macOS leg when `APPLE_TEAM_ID` or the signed app's `TeamIdentifier` differs from the file. If the signing team ever changes, update the file in the same change. A build without `APPLE_TEAM_ID` logs that it skipped the check.
 
 The launcher publishes to npm via Trusted Publishing (OIDC), so no npm token secret is
 required. The `publish-npm` job proves its identity to npm per-run with a short-lived OIDC
