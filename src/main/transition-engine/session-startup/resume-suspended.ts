@@ -491,7 +491,7 @@ export async function resumeSuspendedSessions(
       // keeps the reconcile's transcript probe on that same record's cwd in
       // case it diverges from the gathered record's.
       const resume = canResume
-        ? { agentSessionId: typeMatch!.agent_session_id!, recordId: typeMatch!.id, recordCwd: typeMatch!.cwd }
+        ? { agentSessionId: typeMatch!.agent_session_id!, recordId: typeMatch!.id, recordCwd: typeMatch!.cwd, recordPermissionMode: typeMatch!.permission_mode }
         : null;
 
       const prep = await prepareAgentSpawn({

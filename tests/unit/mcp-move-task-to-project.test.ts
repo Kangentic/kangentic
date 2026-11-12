@@ -141,6 +141,33 @@ describe('handleMoveTaskToProject', () => {
     expect(fs.readFileSync(copiedAttachments[0].file_path, 'utf8')).toBe('hello');
   });
 
+  // A relocation makes a new row, so the links and the removed links go with it.
+  // Red: drop either field from the target's create call and the matching
+  // assertion fails (without the dismissed list the description's own link is
+  // detected back onto the new task).
+  it('carries the task\'s artifacts (link and name) and its removed links to the target project', () => {
+    const removedLink = 'https://www.figma.com/design/AbC123xyz/Old-File';
+    const keptLink = 'https://miro.com/app/board/uXjVabc123=/';
+    const sourceTaskRepo = new TaskRepository(sourceDb);
+    const created = sourceTaskRepo.create({
+      title: 'Linked task',
+      description: `Design is at ${removedLink}`,
+      swimlane_id: sourceTodo.id,
+      artifacts: [{ url: keptLink, name: 'Flow' }],
+    });
+    sourceTaskRepo.update({ id: created.id, artifactChanges: { remove: [removedLink] } });
+    const dismissed = sourceTaskRepo.getDismissedArtifacts(created.id);
+    expect(dismissed).toHaveLength(1);
+
+    const response = handleMoveTaskToProject({ taskId: created.id }, source, target);
+
+    expect(response.success).toBe(true);
+    const targetTaskRepo = new TaskRepository(targetDb);
+    const [newTask] = targetTaskRepo.list(targetTodo.id);
+    expect(newTask.artifacts.map((artifact) => [artifact.url, artifact.name])).toEqual([[keptLink, 'Flow']]);
+    expect(targetTaskRepo.getDismissedArtifacts(newTask.id)).toEqual(dismissed);
+  });
+
   // The switch is a user setting, like the labels: a task the user held is still
   // held in the project it was relocated to.
   it('carries a held task\'s automations_disabled switch to the target project', () => {

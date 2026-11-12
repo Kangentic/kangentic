@@ -1334,11 +1334,11 @@ msgstr "offen"
 msgid "Open a project first."
 msgstr "Öffnen Sie zuerst ein Projekt."
 
-#: src/renderer/utils/terminal-links/link-tip.ts
+#: src/renderer/utils/link-open.ts
 msgid "Open in default browser"
 msgstr ""
 
-#: src/renderer/utils/terminal-links/link-tip.ts
+#: src/renderer/utils/link-open.ts
 msgid "Open in Kangentic browser"
 msgstr ""
 
@@ -1346,14 +1346,6 @@ msgstr ""
 #, fuzzy
 msgid "Open in new window"
 msgstr "In neuem Fenster öffnen"
-
-#: src/renderer/components/PrLink.tsx
-msgid "Open PR #{prNumber} in default browser"
-msgstr ""
-
-#: src/renderer/components/PrLink.tsx
-msgid "Open PR in default browser"
-msgstr ""
 
 #: src/renderer/components/PrLink.tsx
 msgid "Open pull request"
@@ -1457,6 +1449,10 @@ msgstr "Projekt verschoben"
 #, fuzzy
 msgid "Project not available"
 msgstr "Projekt nicht verfügbar"
+
+#: src/renderer/components/PrLink.tsx
+msgid "Pull request"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

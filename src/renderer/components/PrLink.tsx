@@ -3,6 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { Pill } from './Pill';
 import { Tooltip } from './Tooltip';
+import { useLinkOpener } from '../hooks/useLinkOpener';
 import { prStatePresentation, prPillPresentation, prMergeReadinessTooltip } from '../lib/pr-state';
 import type { PRMergeReadiness, PRState } from '../../shared/types';
 
@@ -15,15 +16,20 @@ interface PrLinkProps {
    * it) degrades to the plain state pill rather than failing to compile.
    */
   prMergeReadiness?: PRMergeReadiness | null;
+  /**
+   * The task the PR belongs to, so Ctrl or Cmd click can open it in the
+   * Kangentic browser of that task's window when one is open (`useLinkOpener`).
+   */
+  taskId?: string | null;
   testId: string;
   className?: string;
 }
 
 /**
- * What a PR's open control says on hover: where the click goes, and the state
- * the PR is in (the readiness sentence while a verdict shows, else the state
- * word, "merged" or "draft"). Shared by the pill and the icon-only button so
- * the two can never word it differently.
+ * What a PR's open control says on hover: the PR and the state it is in (the
+ * readiness sentence while a verdict shows, else the state word, "merged" or
+ * "draft"), then where a click and a Ctrl or Cmd click open it. Shared by the
+ * pill and the icon-only button so the two can never word it differently.
  */
 function usePrOpenTip(
   prNumber: number | null,
@@ -31,7 +37,7 @@ function usePrOpenTip(
   prMergeReadiness: PRMergeReadiness | null | undefined,
 ): { label: string; detail: string | undefined } {
   const { t } = useLingui();
-  const label = prNumber != null ? t`Open PR #${prNumber} in default browser` : t`Open PR in default browser`;
+  const label = prNumber != null ? t`PR #${prNumber}` : t`Pull request`;
   const detail = prMergeReadinessTooltip(prState, prMergeReadiness)
     ?? (prStatePresentation(prState, prMergeReadiness).label || undefined);
   return { label, detail };
@@ -45,10 +51,11 @@ function usePrOpenTip(
  * it. While checks are queued or running, an inset ring pulses at 2800ms
  * (`.kng-pr-pulse`). Clicking opens the PR.
  */
-export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, className }: PrLinkProps) {
+export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, taskId, testId, className }: PrLinkProps) {
   const { t } = useLingui();
   const ringRef = useRef<HTMLSpanElement>(null);
   const openTip = usePrOpenTip(prNumber, prState, prMergeReadiness);
+  const opener = useLinkOpener(taskId);
   const { glyph: Glyph, toneClass, pulse } = prPillPresentation(prState, prMergeReadiness);
   // Anchor the pulse to the document timeline, as ActivityMark does for the
   // activity marks, so every running pill breathes in phase and a re-mount
@@ -64,13 +71,13 @@ export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, cla
   // bare "PR" label rather than rendering the literal string "PR #null".
   const prLabel = prNumber != null ? t`PR #${prNumber}` : t`PR`;
   return (
-    <Tooltip label={openTip.label} detail={openTip.detail}>
+    <Tooltip label={openTip.label} detail={openTip.detail} rows={opener.rows}>
       <Pill
         shape="square"
         size="xs"
         onClick={(event: MouseEvent) => {
           event.stopPropagation();
-          window.electronAPI.shell.openExternal(prUrl);
+          opener.open(prUrl, event);
         }}
         className={`relative transition-colors ${toneClass} hover:brightness-125 ${className ?? ''}`}
         data-testid={testId}
@@ -98,6 +105,8 @@ interface PrOpenButtonProps {
   prNumber: number | null;
   prState: PRState | null | undefined;
   prMergeReadiness?: PRMergeReadiness | null;
+  /** As on `PrLink`: the task whose window may offer a Kangentic browser. */
+  taskId?: string | null;
   testId: string;
   className?: string;
 }
@@ -108,15 +117,16 @@ interface PrOpenButtonProps {
  * Its tooltip is the pill's, so the PR's number and state are still one hover
  * away where no pill is drawn.
  */
-export function PrOpenButton({ prUrl, prNumber, prState, prMergeReadiness, testId, className }: PrOpenButtonProps) {
+export function PrOpenButton({ prUrl, prNumber, prState, prMergeReadiness, taskId, testId, className }: PrOpenButtonProps) {
   const { t } = useLingui();
   const openTip = usePrOpenTip(prNumber, prState, prMergeReadiness);
+  const opener = useLinkOpener(taskId);
   return (
-    <Tooltip label={openTip.label} detail={openTip.detail}>
+    <Tooltip label={openTip.label} detail={openTip.detail} rows={opener.rows}>
       <button
         type="button"
         aria-label={t`Open pull request`}
-        onClick={() => window.electronAPI.shell.openExternal(prUrl)}
+        onClick={(event: MouseEvent) => opener.open(prUrl, event)}
         className={`flex items-center text-fg-muted hover:bg-surface-hover hover:text-fg transition-colors ${className ?? ''}`}
         data-testid={testId}
         data-pr-state={prState ?? 'unknown'}

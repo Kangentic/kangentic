@@ -6,7 +6,8 @@ import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import { sendToBacklogAsksFirst } from '../../../utils/send-to-backlog-confirm';
-import type { Task, Session, AgentCommand, Swimlane, PermissionMode, TaskRunMode } from '../../../../shared/types';
+import type { Task, Session, AgentCommand, Swimlane, PermissionMode, TaskArtifactChanges, TaskRunMode } from '../../../../shared/types';
+import { hasArtifactChanges } from '../../../../shared/task-artifacts';
 import type { useBranchConfig } from './useBranchConfig';
 import { hasSessionLifecycle } from '../../../utils/task-progress';
 import { prNumberFromUrl } from '../../../../shared/pr-url';
@@ -82,6 +83,9 @@ export function useTaskActions(input: {
   description: string;
   prUrl: string;
   labels: string[];
+  /** The form's unsaved artifact edits, sent with a save and cleared by it and by Cancel. */
+  artifactChanges: TaskArtifactChanges;
+  setArtifactChanges: Dispatch<SetStateAction<TaskArtifactChanges>>;
   priority: number;
   agentOverride: string;
   modelOverride: string;
@@ -315,6 +319,7 @@ export function useTaskActions(input: {
     input.setDescription(input.task.description);
     input.setPrUrl(input.task.pr_url ?? '');
     input.setLabels(input.task.labels ?? []);
+    input.setArtifactChanges({});
     input.setPriority(input.task.priority ?? 0);
     input.setAgentOverride(input.task.agent_override ?? '');
     input.setModelOverride(input.task.model_override ?? '');
@@ -376,6 +381,9 @@ export function useTaskActions(input: {
     try {
       const needsSwitchBranch = (input.task.worktree_path && branchChanged) || enablingWorktree;
       const prFields = buildPrFields();
+      // Sent as changes, never the list: an artifact an agent added while the
+      // form was open stays.
+      const artifactFields = hasArtifactChanges(input.artifactChanges) ? { artifactChanges: input.artifactChanges } : {};
 
       // Per-task overrides: empty string in the form maps to null in the DB.
       // Always include them in the payload (even when unchanged) so a user
@@ -410,6 +418,7 @@ export function useTaskActions(input: {
           if (input.title !== input.task.title
             || input.description !== input.task.description
             || prFields.pr_url !== undefined
+            || artifactFields.artifactChanges !== undefined
             || JSON.stringify(input.labels) !== JSON.stringify(input.task.labels ?? [])
             || input.priority !== (input.task.priority ?? 0)
             || (input.agentOverride || null) !== input.task.agent_override
@@ -425,6 +434,7 @@ export function useTaskActions(input: {
               labels: input.labels,
               priority: input.priority,
               ...prFields,
+              ...artifactFields,
               ...overrideFields,
             });
           }
@@ -446,6 +456,7 @@ export function useTaskActions(input: {
           labels: input.labels,
           priority: input.priority,
           ...prFields,
+          ...artifactFields,
           ...overrideFields,
         };
 
@@ -479,6 +490,8 @@ export function useTaskActions(input: {
         }
       }
 
+      // Saved: the artifact edits are the task's now, and must not be sent twice.
+      input.setArtifactChanges({});
       if (!input.session || options.closeAfterSave) {
         input.onClose();
       } else {

@@ -188,6 +188,10 @@ msgid "A call failed"
 msgstr "Volání selhalo"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Plovoucí panel se stavem aktivity každé relace a posledními přechody, zapisovaný také do .kangentic/debug."
@@ -743,10 +747,9 @@ msgstr "Cesta k CLI"
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "Kliknutím na prázdné místo mimo okno úlohy jej zavřete. Ovládací prvky, karty úloh a spuštěné terminály reagují už na první kliknutí. Agent dál běží a po opětovném otevření úlohy se znovu připojí."
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Click with modifiers"
-msgstr "Kliknutí s modifikátory"
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click opens links in"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1133,6 +1136,11 @@ msgstr "Výchozí"
 msgid "Default base branch"
 msgstr "Výchozí základní větev"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Default browser"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Default diff scope"
@@ -1380,6 +1388,11 @@ msgstr "Soubory ke zkopírování do pracovního stromu"
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
 msgstr "Soubory, složky a vzory glob zkopírované do každého nového pracovního stromu před spuštěním jeho agenta."
 
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Fill"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
@@ -1514,21 +1527,6 @@ msgstr "Vyšší úsilí odpovídá pomaleji a může zpřesnit počty napříč
 msgid "History not shared"
 msgstr "Historie není sdílená"
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold a modifier key while you click."
-msgstr "Při kliknutí podržte modifikační klávesu."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-msgstr "Podržte Cmd, Option nebo Shift a klikněte do pole. Esc pro zrušení."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-msgstr "Podržte Ctrl, Alt nebo Shift a klikněte do pole. Esc pro zrušení."
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1538,11 +1536,6 @@ msgstr "Pozdržet výzvu kvůli skriptu"
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Podržte push-to-talk a mluvte do terminálu nebo pole."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold the modifier keys and click here. Escape to cancel."
-msgstr "Podržte modifikační klávesy a klikněte sem. Escape pro zrušení."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1647,6 +1640,10 @@ msgstr "Jak tento projekt zastavuje to, co úloha nechá spuštěné."
 msgid "How to install and pair"
 msgstr "Jak nainstalovat a spárovat"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How wide a column with tasks is, or Fill to share the window's width between the columns."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
 msgid "How you hear about each event."
@@ -1732,6 +1729,11 @@ msgstr "Vyhodnocuje podmínky a kroky workflow a pojmenovává úkoly."
 #, fuzzy
 msgid "Kangentic browser"
 msgstr "Prohlížeč Kangentic"
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Kangentic browser"
+msgstr ""
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
@@ -1880,6 +1882,12 @@ msgstr "Propojit složky"
 #, fuzzy
 msgid "Link node_modules"
 msgstr "Propojit node_modules"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "settings card"
+msgid "Links"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -2901,6 +2909,10 @@ msgstr "Zobrazí PR jako připravený, když můžete obejít jeho požadovanou 
 msgid "Shows how many agents need you, on the taskbar or dock."
 msgstr "Ukazuje na liště či v Docku, kolik agentů vás potřebuje."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shrink empty columns"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
@@ -3113,6 +3125,10 @@ msgstr "Terminál"
 msgid "Terminal cursor appearance"
 msgstr "Vzhled kurzoru terminálu"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
 msgid "Terminal may intercept"
@@ -3175,6 +3191,10 @@ msgstr "Nedávné zprávy agenta, každá na jednom řádku"
 msgid "The branch new worktrees start from."
 msgstr "Větev, ze které nové pracovní stromy vycházejí."
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "The browser beside the task's terminal"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
 msgid "The change was not written."
@@ -3184,6 +3204,10 @@ msgstr "Změna nebyla zapsána."
 #, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
 msgstr "Zdrojový kód a dokumentace výchozí větve, průběžně aktualizované; testy, datové soubory a soubory nad 256 KB se přeskakují."
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "The domain of an artifact link we do not recognise, once (never the rest of the link)"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -3557,6 +3581,14 @@ msgstr "Které CLI agenta použít pro nové relace"
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
 msgstr "Který agent plánuje každé workflow v levém panelu zobrazení Workflow. Žádný agent workflow se nespustí, dokud není vybrán."
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Cmd+Click opens the other."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Ctrl+Click opens the other."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
@@ -3577,11 +3609,6 @@ msgstr "Které statistiky se zobrazí v liště pod terminálem úkolu."
 msgctxt "column width"
 msgid "Wide"
 msgstr "Široká"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Width of board columns"
-msgstr "Šířka sloupců nástěnky"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3677,3 +3704,7 @@ msgstr "Klávesovou zkratku může dříve zabrat váš operační systém nebo 
 #, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
 msgstr "Tento kód se zobrazuje i v telefonu. Párování dokončíte potvrzením v telefonu."
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Your system's default browser"
+msgstr ""

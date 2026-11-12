@@ -345,6 +345,10 @@ export class ClaudeAdapter implements AgentAdapter {
   // approver never ran for AskUserQuestion, whose dialog still showed. A second
   // entry matched to MCP tools answers an allowed one (plan-tool-approval.ts).
   readonly supportsPlanAutoApproval = true;
+  // Claude Code's docs ("What a resumed session restores"): `--resume` without
+  // `--permission-mode` starts in the mode the session was in. Bypass is the
+  // exception and is never restored, which `keepsSessionPermissionMode` covers.
+  readonly restoresPermissionModeOnResume = true;
   // Background shells (task #857): PreToolUse/PostToolUse remaps in
   // hook-manager.ts report a Bash or PowerShell `run_in_background` launch,
   // KillBash and the transcript drain report the end, and a PostToolUse

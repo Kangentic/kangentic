@@ -4612,24 +4612,39 @@ test('a Command Terminal that tiles beside a new one repaints from the boot reco
   });
   await expect.poll(transientIds, { timeout: 10_000 }).toHaveLength(1);
   const [firstId] = await transientIds();
-  // Let that terminal mount alone first: the repaint under test is what its resize triggers.
+  // Let that terminal mount alone first: the repaint under test is what its resize triggers. Its
+  // resize is only the FIRST thing a mount does; the renderer then asks for the scrollback, and
+  // the seed answers with the boot (a frame through the emulator, or the bytes) and starts the
+  // terminal's replay. A tile that lands in between is repainted by the resize AND superseded by
+  // that late scrollback answer (the repaint's emulator start is replaced, so it emits nothing
+  // and the boot reaches the terminal as the getScrollback result instead of a pushed chunk).
+  // So wait for the boot to be in place: the seed notes the replay mode when it answers, and
+  // for a frame-fed terminal the painted frame once the emulator has started.
   await expect.poll(() => mountedGrid(page, firstId), { timeout: 10_000 }).not.toBeNull();
+  await expect.poll(() => page.evaluate((sessionId) => {
+    const seeded = window as unknown as { __demoReplayMode?: Record<string, string>; __demoPainted?: Record<string, unknown> };
+    const mode = seeded.__demoReplayMode?.[sessionId];
+    return mode === 'bytes' || (mode === 'frames' && !!seeded.__demoPainted?.[sessionId]);
+  }, firstId), { timeout: 10_000, message: 'the first terminal has its boot before the second tiles beside it' }).toBe(true);
   // The desktop's PTY resize makes the CLI repaint at the tiled width; the frame does the same
   // from the tiled recording, starting with a cleared screen (after leaving the alternate
-  // screen, so the clear lands on the buffer the boot is written into).
-  const repainted = page.evaluate(({ sessionId, timeout }) => new Promise<boolean>((resolve) => {
-    const api = (window as unknown as DemoElectronWindow).electronAPI;
-    const timer = setTimeout(() => resolve(false), timeout);
-    const unsubscribe = api.sessions.onData((id, data) => {
-      if (id !== sessionId || !data.replace(/^\x1b\[\?1049l/, '').startsWith('\x1b[2J\x1b[3J')) return;
-      clearTimeout(timer);
-      unsubscribe();
-      resolve(true);
+  // screen, so the clear lands on the buffer the boot is written into). The listener is in
+  // place, and confirmed so, before the second terminal opens; the verdict is polled, never
+  // timed inside the page.
+  await page.evaluate((sessionId) => {
+    const seeded = window as unknown as { __tiledRepaint?: { seen: boolean } };
+    const probe = { seen: false };
+    seeded.__tiledRepaint = probe;
+    (window as unknown as DemoElectronWindow).electronAPI.sessions.onData((id, data) => {
+      if (id === sessionId && data.replace(/^\x1b\[\?1049l/, '').startsWith('\x1b[2J\x1b[3J')) probe.seen = true;
     });
-  }), { sessionId: firstId, timeout: 15_000 });
+  }, firstId);
   await page.locator('[data-testid="command-terminal-new"]').click();
   await expect.poll(transientIds, { timeout: 10_000 }).toHaveLength(2);
-  expect(await repainted).toBe(true);
+  await expect.poll(
+    () => page.evaluate(() => (window as unknown as { __tiledRepaint?: { seen: boolean } }).__tiledRepaint?.seen === true),
+    { timeout: 15_000, message: 'the first terminal is repainted from a cleared screen at the tiled width' },
+  ).toBe(true);
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

@@ -96,7 +96,7 @@ export function HotkeyRow({
         </Tooltip>
       ) : (
         <div className="flex items-center gap-2 flex-shrink-0">
-          <KeyCaptureInput combo={effective} onCommit={onCommit} input={definition.input} />
+          <KeyCaptureInput combo={effective} onCommit={onCommit} />
           <Tooltip label={tipLabel({ disabled: !isCustom, disabledReason: t`Already default`, tip: t`Reset to default` })}>
             <button
               onClick={onReset}

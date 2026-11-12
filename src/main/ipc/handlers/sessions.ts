@@ -46,6 +46,7 @@ import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { presentLinkPaths, revealLinkPath } from '../../terminal-links/link-path-service';
 import type { SessionLinkFacts } from '../../terminal-links/resolve-link-path';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
+import { registerArtifactDetection } from '../../artifacts/artifact-detection';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { EMPTY_QUEUE_SNAPSHOT, readQueueSnapshot } from '../helpers/queue-snapshot';
@@ -550,6 +551,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     broadcast(context.mainWindow, IPC.SESSION_MESSAGE_TRAIL, sessionId, entries, projectId);
   });
   ipcMain.handle(IPC.SESSION_GET_MESSAGE_TRAILS, () => messageTrailTracker.snapshot());
+
+  // A task's artifacts, found without anyone asking: an agent's publish, the
+  // links in its messages, and a terminal's for an agent with no transcript.
+  registerArtifactDetection(context, messageTrailTracker);
 
   context.sessionManager.on('session-changed', (sessionId: string, session: Session) => {
     if (session.status === 'running') {

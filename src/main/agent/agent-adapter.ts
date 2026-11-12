@@ -300,6 +300,14 @@ export interface CommandOptions {
    */
   bypassAvailable?: boolean;
   /**
+   * Resume without stating a permission mode, so the CLI starts the session in
+   * the mode its conversation was last in (the user may have switched it). Set
+   * only on a resume, and only for an adapter that declares
+   * `restoresPermissionModeOnResume` (`keepsSessionPermissionMode`). Any other
+   * adapter ignores it and states `permissionMode` as usual.
+   */
+  keepSessionPermissionMode?: boolean;
+  /**
    * Launch with no tool that edits a file or runs a shell command, and with
    * Kangentic's MCP server as the only one. Set only for a workflow's own agent,
    * and only on an adapter that declares `supportsReadOnlyLaunch`.
@@ -671,6 +679,17 @@ export interface AgentAdapter {
    * reported only for an approved plan, measured against the real CLI.
    */
   readonly supportsPlanAutoApproval?: boolean;
+
+  /**
+   * True when the CLI, resumed with no permission-mode flag, starts in the mode
+   * the conversation was last in. A resume in the column the session was paused
+   * in then leaves the flag off (`keepsSessionPermissionMode`), so a mode the
+   * user switched to survives a pause. Absent: every resume states the column's
+   * mode, as before.
+   *
+   * Declare it only from the CLI's own documentation or a probe of the real CLI.
+   */
+  readonly restoresPermissionModeOnResume?: boolean;
 
   /**
    * How `buildCommand` (or `buildEnv`, or a config file it writes before spawn)

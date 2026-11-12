@@ -188,6 +188,10 @@ msgid "A call failed"
 msgstr "Una chiamata non è riuscita"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "A column with no tasks shrinks to the width of its name and opens again when a task arrives."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Un pannello mobile con lo stato di attività e le ultime transizioni di ogni sessione, scritto anche in .kangentic/debug."
@@ -743,10 +747,9 @@ msgstr "Percorso CLI"
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "Fai clic su uno spazio vuoto fuori da una finestra dell'attività per chiuderla. Controlli, schede delle attività e terminali in esecuzione rispondono comunque al primo clic. L'agente continua a funzionare e si ricollega quando riapri l'attività."
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Click with modifiers"
-msgstr "Clic con modificatori"
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click opens links in"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1133,6 +1136,11 @@ msgstr "Predefinita"
 msgid "Default base branch"
 msgstr "Ramo base predefinito"
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Default browser"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Default diff scope"
@@ -1380,6 +1388,11 @@ msgstr "File da copiare in un albero di lavoro"
 msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
 msgstr "File, cartelle e pattern glob copiati in ogni nuovo albero di lavoro prima dell'avvio del suo agente."
 
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Fill"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
@@ -1514,21 +1527,6 @@ msgstr "Un impegno maggiore risponde più lentamente e può aiutare nei conteggi
 msgid "History not shared"
 msgstr "Cronologia non condivisa"
 
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold a modifier key while you click."
-msgstr "Tieni premuto un tasto modificatore mentre fai clic."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
-msgstr "Tieni premuto Cmd, Option o Maiusc e fai clic sulla casella. Esc per annullare."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
-msgstr "Tieni premuto Ctrl, Alt o Maiusc e fai clic sulla casella. Esc per annullare."
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1538,11 +1536,6 @@ msgstr "Attendi lo script prima del prompt"
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Tieni premuto push-to-talk per dettare in terminale o campo."
-
-#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
-#, fuzzy
-msgid "Hold the modifier keys and click here. Escape to cancel."
-msgstr "Tieni premuti i tasti modificatori e fai clic qui. Esc per annullare."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1647,6 +1640,10 @@ msgstr "Come il progetto arresta ciò che un'attività lascia in esecuzione."
 msgid "How to install and pair"
 msgstr "Come installare e associare"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How wide a column with tasks is, or Fill to share the window's width between the columns."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
 msgid "How you hear about each event."
@@ -1732,6 +1729,11 @@ msgstr "Valuta condizioni e passaggi del workflow e dà nome alle attività."
 #, fuzzy
 msgid "Kangentic browser"
 msgstr "Browser Kangentic"
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "click opens links in"
+msgid "Kangentic browser"
+msgstr ""
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
@@ -1880,6 +1882,12 @@ msgstr "Collega cartelle"
 #, fuzzy
 msgid "Link node_modules"
 msgstr "Collega node_modules"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "settings card"
+msgid "Links"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -2901,6 +2909,10 @@ msgstr "Mostra una PR come pronta quando puoi saltare la revisione obbligatoria,
 msgid "Shows how many agents need you, on the taskbar or dock."
 msgstr "Mostra quanti agenti ti attendono, nella barra o nel dock."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shrink empty columns"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
@@ -3113,6 +3125,10 @@ msgstr "Terminale"
 msgid "Terminal cursor appearance"
 msgstr "Aspetto del cursore del terminale"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal links, the PR pill and a task's artifacts open here, and Ctrl or Cmd click opens the other browser."
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #, fuzzy
 msgid "Terminal may intercept"
@@ -3175,6 +3191,10 @@ msgstr "I messaggi recenti dell'agente, uno per riga"
 msgid "The branch new worktrees start from."
 msgstr "Il ramo da cui partono i nuovi alberi di lavoro."
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "The browser beside the task's terminal"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
 msgid "The change was not written."
@@ -3184,6 +3204,10 @@ msgstr "La modifica non è stata scritta."
 #, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
 msgstr "Codice sorgente e documentazione del ramo predefinito, mantenuti aggiornati; test, file di dati e file oltre 256 KB vengono saltati."
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "The domain of an artifact link we do not recognise, once (never the rest of the link)"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -3557,6 +3581,14 @@ msgstr "CLI dell'agente da usare per le nuove sessioni"
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
 msgstr "Quale agente pianifica ogni workflow, nel riquadro sinistro della vista Workflow. Nessun agente di workflow si avvia finché non ne scegli uno."
 
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Cmd+Click opens the other."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Which browser a click opens. Ctrl+Click opens the other."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
@@ -3577,11 +3609,6 @@ msgstr "Statistiche mostrate nella barra sotto il terminale dell'attività."
 msgctxt "column width"
 msgid "Wide"
 msgstr "Larga"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Width of board columns"
-msgstr "Larghezza delle colonne della bacheca"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3677,3 +3704,7 @@ msgstr "Il sistema operativo e altre app possono intercettare prima una scorciat
 #, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
 msgstr "Questo codice viene mostrato anche sul telefono. Conferma lì per completare l'associazione."
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Your system's default browser"
+msgstr ""

@@ -1985,6 +1985,18 @@ describe('Merged Settings -- Local Settings Merge', () => {
     expect(cmd).toContain('--resume');
   });
 
+  it('a resume that keeps the session mode states no permission mode', () => {
+    const builder = new CommandBuilder();
+    const base = { cliPath: '/usr/bin/claude', taskId: 'keep-task', cwd: tmpDir, sessionId: 'keep-sess', permissionMode: 'plan' as const };
+    const kept = builder.buildClaudeCommand({ ...base, resume: true, keepSessionPermissionMode: true });
+    expect(kept).toContain('--resume');
+    expect(kept).not.toContain('--permission-mode');
+    // The same resume without it states the column's mode, as every move does.
+    expect(builder.buildClaudeCommand({ ...base, resume: true })).toContain('--permission-mode');
+    // A fresh session has no earlier mode to keep.
+    expect(builder.buildClaudeCommand({ ...base, keepSessionPermissionMode: true })).toContain('--permission-mode');
+  });
+
   it('launches a plan session with bypass available, not on, only when asked', () => {
     const builder = new CommandBuilder();
     const base = { cliPath: '/usr/bin/claude', taskId: 'bypass-task', cwd: tmpDir, sessionId: 'bypass-sess' };

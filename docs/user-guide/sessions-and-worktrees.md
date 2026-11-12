@@ -70,6 +70,8 @@ Because Claude Code supports `--resume`, conversation context is fully preserved
 
 If Claude Code has already deleted a conversation (it removes transcripts older than its `cleanupPeriodDays`), the resume starts a new conversation from a recap of the old one instead, and an info toast says so.
 
+A Claude Code session resumed in the column it was paused in comes back in the permission mode it was last in, so a session you switched out of plan mode stays out of it. A move into another column, a column whose mode was edited since, and a bypass column still apply the column's mode. See [Resume](../architecture/sessions/resume.md).
+
 ### User-Paused Sessions
 
 Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you on the idle timer (see [Pausing agents](#pausing-agents)) stays paused across a restart too, until you open its task. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.

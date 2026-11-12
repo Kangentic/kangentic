@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMoveProvenance, TaskWorkflowMembership, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason, PlanApproval } from '../../../shared/types';
+import type { Task, TaskArtifact, TaskArtifactChanges, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMoveProvenance, TaskWorkflowMembership, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason, PlanApproval } from '../../../shared/types';
+import { findArtifactLinks } from '../../../shared/artifact-platforms';
+import { applyArtifactChanges, MAX_DISMISSED_ARTIFACTS, parseStoredArtifacts, type ArtifactMergeResult } from '../../../shared/task-artifacts';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 import { writeTransaction } from '../transaction';
@@ -13,10 +15,14 @@ import { TaskMoveRepository, type CappedColumnTask } from './task-move-repositor
  * Raw row from SQLite - labels and skipped columns stored as JSON strings, the
  * switch as 0/1, plus the main-only columns `rowToTask` strips.
  */
-interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids' | 'automations_disabled'> {
+interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids' | 'automations_disabled' | 'artifacts'> {
   labels: string;
   skipped_swimlane_ids: string | null;
   automations_disabled: number;
+  /** A JSON array of `TaskArtifact`. Absent on a row read before the column existed. */
+  artifacts?: string | null;
+  /** Main-only: the links taken off the task, read by the artifact writes. */
+  dismissed_artifacts?: string | null;
   /** Main-only: read through `getForkPointSha`, never sent over IPC on a Task. */
   fork_point_sha?: string | null;
 }
@@ -34,10 +40,11 @@ function parseStringList(raw: string | null | undefined): string[] {
 function rowToTask(row: TaskRow): Task {
   // The spread below copies every column, so a main-only one is dropped here
   // or it rides every Task over IPC.
-  const { fork_point_sha: _forkPointSha, ...columns } = row;
+  const { fork_point_sha: _forkPointSha, dismissed_artifacts: _dismissedArtifacts, ...columns } = row;
   return {
     ...columns,
     labels: parseStringList(row.labels),
+    artifacts: parseStoredArtifacts(row.artifacts),
     // A row from before the workflow columns reads as an ordinary task.
     workflow_id: row.workflow_id ?? null,
     workflow_project_id: row.workflow_project_id ?? null,
@@ -446,6 +453,7 @@ export class TaskRepository {
       canvas_x: input.workflow?.canvas_x ?? null,
       canvas_y: input.workflow?.canvas_y ?? null,
       plan_approval: input.workflow?.plan_approval ?? null,
+      artifacts: [],
       attachment_count: 0,
       // A brand-new task has never run an auto_command. These four columns are
       // written only by `recordAutoCommandOutcome`, never by create/update.
@@ -471,7 +479,66 @@ export class TaskRepository {
     // A task born into a column has entered it: its first visit starts here.
     this.recordMove(task.id, null, task.swimlane_id, { origin: 'create' });
 
+    // The links a moved task had taken off it, before detection reads the
+    // description: a removed link still written there must stay removed.
+    const dismissedArtifacts = (input.dismissedArtifacts ?? []).slice(-MAX_DISMISSED_ARTIFACTS);
+    if (dismissedArtifacts.length > 0) {
+      this.db.prepare('UPDATE tasks SET dismissed_artifacts = ? WHERE id = ?').run(JSON.stringify(dismissedArtifacts), task.id);
+    }
+
+    // The artifacts it was given, then any its description links to.
+    const given = (input.artifacts ?? []).length > 0
+      ? this.writeArtifactChanges(task.id, { add: input.artifacts, source: input.artifactSource ?? 'user' }, now)
+      : null;
+    const detected = this.detectDescriptionArtifacts(task.id, task.description, now);
+    task.artifacts = (detected ?? given)?.artifacts ?? [];
+
     return task;
+  }
+
+  /**
+   * Add, remove or rename a task's artifacts (see `Task.artifacts`) in one
+   * read-merge-write, and report what changed so a caller announces only a real
+   * change. Does NOT bump `updated_at`: a link an agent publishes mid-run must
+   * not reorder the board or trip "recently updated", and a lane pin's drop
+   * rule keys on that column. Returns null when the task is gone.
+   */
+  applyArtifactChanges(taskId: string, changes: TaskArtifactChanges): ArtifactMergeResult | null {
+    return writeTransaction(this.db, () => this.writeArtifactChanges(taskId, changes, new Date().toISOString()))();
+  }
+
+  /** The links taken off a task, which detection never adds back. Main-only, like the fork point. */
+  getDismissedArtifacts(taskId: string): string[] {
+    const row = this.db.prepare('SELECT dismissed_artifacts FROM tasks WHERE id = ?').get(taskId) as { dismissed_artifacts: string | null } | undefined;
+    return parseStringList(row?.dismissed_artifacts);
+  }
+
+  private writeArtifactChanges(taskId: string, changes: TaskArtifactChanges, now: string): ArtifactMergeResult | null {
+    const row = this.db.prepare('SELECT artifacts, dismissed_artifacts FROM tasks WHERE id = ?').get(taskId) as
+      { artifacts: string | null; dismissed_artifacts: string | null } | undefined;
+    if (!row) return null;
+    const result = applyArtifactChanges(
+      { artifacts: parseStoredArtifacts(row.artifacts), dismissed: parseStringList(row.dismissed_artifacts) },
+      changes,
+      now,
+    );
+    if (result.changed) {
+      this.db.prepare('UPDATE tasks SET artifacts = ?, dismissed_artifacts = ? WHERE id = ?')
+        .run(JSON.stringify(result.artifacts), JSON.stringify(result.dismissed), taskId);
+    }
+    return result;
+  }
+
+  /**
+   * The artifact links a description carries, added as detected. Documents
+   * count here: a link written into a task's description is about the task.
+   * Runs inside the write that set the description, so every way a description
+   * changes (the dialog, MCP, an import, a promote) is covered by one place.
+   */
+  private detectDescriptionArtifacts(taskId: string, description: string, now: string): ArtifactMergeResult | null {
+    const links = findArtifactLinks(description ?? '', { documents: true });
+    if (links.length === 0) return null;
+    return this.writeArtifactChanges(taskId, { add: links.map((url) => ({ url })), source: 'detected' }, now);
   }
 
   /**
@@ -586,12 +653,19 @@ export class TaskRepository {
   }
 
   update(input: TaskUpdateInput): Task {
+    return writeTransaction(this.db, () => this.updateWithinTransaction(input))();
+  }
+
+  private updateWithinTransaction(input: TaskUpdateInput): Task {
     const existing = this.getById(input.id);
     if (!existing) throw new Error(`Task ${input.id} not found`);
 
+    // Artifacts are not a column of the generic write below: they have their
+    // own read-merge-write, run after it in this same transaction.
+    const { artifactChanges, ...columnInput } = input;
     const merged: Task = {
       ...existing,
-      ...Object.fromEntries(Object.entries(input).filter(([_, v]) => v !== undefined)),
+      ...Object.fromEntries(Object.entries(columnInput).filter(([, value]) => value !== undefined)),
       updated_at: new Date().toISOString(),
     };
     // Decide exclusivity from `input` (what the caller asked to change), not
@@ -615,7 +689,17 @@ export class TaskRepository {
       WHERE id = ?
     `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.pr_merge_readiness, updated.head_sha, updated.pushed_branch, updated.base_branch, updated.resolved_base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.automations_disabled ? 1 : 0, updated.updated_at, forgetsBranch, updated.id);
 
-    return updated;
+    let artifacts: TaskArtifact[] = existing.artifacts;
+    if (artifactChanges) {
+      artifacts = this.writeArtifactChanges(updated.id, artifactChanges, updated.updated_at)?.artifacts ?? artifacts;
+    }
+    // A description that changed may link to something new. After the caller's
+    // own changes, so a link removed in this same write is already dismissed.
+    if (input.description !== undefined && input.description !== existing.description) {
+      artifacts = this.detectDescriptionArtifacts(updated.id, updated.description, updated.updated_at)?.artifacts ?? artifacts;
+    }
+
+    return { ...updated, artifacts };
   }
 
   /**

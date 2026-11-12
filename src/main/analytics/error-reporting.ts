@@ -127,6 +127,30 @@ export function reportHandledError(
 }
 
 /**
+ * Report something that is not an error but that we want to hear about: a
+ * count of installs that met a case the app does not handle yet. An `info`
+ * event grouped by its fingerprint, so it never reads as a failure. Tags only,
+ * and only values that identify no user, project or content.
+ */
+export function reportHandledMessage(
+  message: string,
+  tags: Record<string, string> = {},
+  fingerprint?: string[],
+): void {
+  if (!active) return;
+  try {
+    Sentry.withScope((scope) => {
+      scope.setLevel('info');
+      for (const [tagKey, tagValue] of Object.entries(tags)) scope.setTag(tagKey, tagValue);
+      if (fingerprint) scope.setFingerprint(fingerprint);
+      Sentry.captureMessage(message);
+    });
+  } catch {
+    // Reporting must never cascade into the path that called it
+  }
+}
+
+/**
  * Attach the latest host memory sample (Sentry DESKTOP-16) to the persisted
  * Sentry scope, so whatever event fires next - including a native crash,
  * which has no other route into `contexts` - carries it. Deliberately not a

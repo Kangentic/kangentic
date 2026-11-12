@@ -2,7 +2,7 @@
  * Terminal links in a task window and in the bottom panel. The Command Terminal's
  * cases live in terminal-link-click.spec.ts; these pin the two other hosts. A task
  * window offers its Kangentic browser, so a link's tip lists both clicks and a
- * Ctrl+Shift+click shows the window's pane on the link. The bottom panel has no pane
+ * Ctrl+click shows the window's pane on the link. The bottom panel has no pane
  * beside it, so its tip has one row and either click opens the default browser.
  *
  * Fixture: a task in Code Review with a running session, as browser-pane-hold-on-hide
@@ -102,12 +102,10 @@ async function hoverFirstRow(page: Page, screen: Locator): Promise<void> {
   await expect(screen).toHaveClass(/xterm-cursor-pointer/u, { timeout: 5000 });
 }
 
-async function ctrlShiftClick(page: Page): Promise<void> {
+async function ctrlClick(page: Page): Promise<void> {
   await page.keyboard.down('Control');
-  await page.keyboard.down('Shift');
   await page.mouse.down();
   await page.mouse.up();
-  await page.keyboard.up('Shift');
   await page.keyboard.up('Control');
 }
 
@@ -115,7 +113,7 @@ function openedExternally(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []);
 }
 
-test('a task window\'s terminal lists both clicks, and Ctrl+Shift+click shows its Kangentic browser on the link', async () => {
+test('a task window\'s terminal lists both clicks, and Ctrl+click shows its Kangentic browser on the link', async () => {
   const page = await openBoard();
   try {
     await page.locator('[data-swimlane-name="Code Review"]').locator('text=Link Window Task').first().click();
@@ -130,7 +128,7 @@ test('a task window\'s terminal lists both clicks, and Ctrl+Shift+click shows it
     await expect(tip).toBeVisible({ timeout: 5000 });
     await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser', 'Open in Kangentic browser']);
 
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
     await expect(page.getByTestId('browser-webview')).toHaveAttribute('src', URL_TEXT);
@@ -195,7 +193,7 @@ function webviewLoads(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __webviewLoads?: string[] }).__webviewLoads ?? []);
 }
 
-test('with the task\'s Browser popped out, the tip has one row and Ctrl+Shift+click opens the default browser, with no request for the pane', async () => {
+test('with the task\'s Browser popped out, the tip has one row and Ctrl+click opens the default browser, with no request for the pane', async () => {
   const page = await openBoard();
   try {
     // The pop-out's renderer keeps its own store, so this window must not drive a pane it cannot reach.
@@ -209,7 +207,7 @@ test('with the task\'s Browser popped out, the tip has one row and Ctrl+Shift+cl
     await expect(tip).toBeVisible({ timeout: 5000 });
     await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
 
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
     expect(await pendingNavigateRequest(page)).toBeNull();
@@ -219,14 +217,14 @@ test('with the task\'s Browser popped out, the tip has one row and Ctrl+Shift+cl
   }
 });
 
-test('a second Ctrl+Shift+click with the pane already showing keeps it open and loads the link through its page', async () => {
+test('a second Ctrl+click with the pane already showing keeps it open and loads the link through its page', async () => {
   const page = await openBoard();
   try {
     const dialog = await openTaskDialog(page);
     await drawFirstRow(page, URL_TEXT);
     const screen = dialog.locator('.xterm-screen').first();
     await hoverFirstRow(page, screen);
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
     const webview = page.getByTestId('browser-webview');
     await expect(webview).toHaveAttribute('src', URL_TEXT, { timeout: 10000 });
     await stubWebview(page);
@@ -235,7 +233,7 @@ test('a second Ctrl+Shift+click with the pane already showing keeps it open and 
 
     await drawFirstRow(page, OTHER_URL_TEXT);
     await hoverFirstRowAgain(page, screen);
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect.poll(() => webviewLoads(page)).toEqual([OTHER_URL_TEXT]);
     // The pill's toggle would have held the showing pane away.
@@ -256,7 +254,7 @@ test('a link click with Changes open puts Changes away and shows the Browser pan
     await drawFirstRow(page, URL_TEXT);
     const screen = dialog.locator('.xterm-screen').first();
     await hoverFirstRow(page, screen);
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect(page.getByTestId('browser-webview')).toHaveAttribute('src', URL_TEXT, { timeout: 10000 });
     await expect.poll(() => page.evaluate((taskId) => (window as unknown as { __zustandStores: { session: { getState: () => { changesOpenTasks: Set<string> } } } }).__zustandStores.session.getState().changesOpenTasks.has(taskId), TASK_ID)).toBe(false);
@@ -301,7 +299,7 @@ test('a clicked link is the first page of a task whose pane was closed and has a
 
     await drawFirstRow(page, URL_TEXT);
     await hoverFirstRow(page, dialog.locator('.xterm-screen').first());
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
     await expect(page.getByTestId('browser-webview')).toHaveAttribute('src', URL_TEXT);
@@ -328,7 +326,7 @@ test('with no Kangentic browser beside the terminal, an OSC 8 link whose text is
   }
 });
 
-test('the bottom panel has no Kangentic browser, so its tip has one row and Ctrl+Shift+click opens the default browser', async () => {
+test('the bottom panel has no Kangentic browser, so its tip has one row and Ctrl+click opens the default browser', async () => {
   const page = await openBoard();
   try {
     const pane = page.getByTestId('terminal-session-pane').first();
@@ -340,7 +338,7 @@ test('the bottom panel has no Kangentic browser, so its tip has one row and Ctrl
     await expect(tip).toBeVisible({ timeout: 5000 });
     await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
 
-    await ctrlShiftClick(page);
+    await ctrlClick(page);
 
     await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
     await expect(page.getByTestId('browser-webview')).toHaveCount(0);

@@ -57,42 +57,46 @@ msgstr "{count, plural, one {# aktív alágens} other {# aktív alágens}}"
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# futó eszköz} other {# futó eszköz}}"
 
+#: src/renderer/components/board/CollapsedLane.tsx
+msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
+msgstr ""
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, one {Munkafolyamatok, # fut} other {Munkafolyamatok, # fut}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
 msgstr "{total, plural, one {Itt # automatizálás fut: {enterCount} belépéskor, {exitCount} kilépéskor} other {Itt # automatizálás fut: {enterCount} belépéskor, {exitCount} kilépéskor}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {Itt # automatizálás fut: {enterCount} belépéskor, {turnEndCount} a kör végén, {exitCount} kilépéskor} other {Itt # automatizálás fut: {enterCount} belépéskor, {turnEndCount} a kör végén, {exitCount} kilépéskor}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {Itt # automatizálás fut: {enterCount} belépéskor, {turnEndCount} a kör végén} other {Itt # automatizálás fut: {enterCount} belépéskor, {turnEndCount} a kör végén}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
 msgstr "{total, plural, one {Itt # automatizálás fut: {enterCount} belépéskor} other {Itt # automatizálás fut: {enterCount} belépéskor}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
 msgstr "{total, plural, one {Itt # automatizálás fut: {exitCount} kilépéskor} other {Itt # automatizálás fut: {exitCount} kilépéskor}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
 msgstr "{total, plural, one {Itt # automatizálás fut: {turnEndCount} a kör végén, {exitCount} kilépéskor} other {Itt # automatizálás fut: {turnEndCount} a kör végén, {exitCount} kilépéskor}}"
 
-#: src/renderer/components/board/AutomationGlyph.tsx
+#: src/renderer/components/board/column-automations.tsx
 #, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
 msgstr "{total, plural, one {Itt # automatizálás fut: {turnEndCount} a kör végén} other {Itt # automatizálás fut: {turnEndCount} a kör végén}}"
@@ -222,6 +226,14 @@ msgstr "Változások észlelhetők a kangentic.json fájlban („Ismeretlen proj
 #, fuzzy
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
 msgstr "Változások észlelhetők a kangentic.json fájlban. Alkalmazza a frissített táblakonfigurációt?"
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse {columnName} column"
+msgstr ""
+
+#: src/renderer/components/board/CollapseColumnButton.tsx
+msgid "Collapse column"
+msgstr ""
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy

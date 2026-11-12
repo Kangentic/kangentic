@@ -8,6 +8,7 @@ import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../command
 import { MOVE_MESSAGE_MAX_CHARS } from '../commands/move-message-limit';
 import { resolveSpacedModelName, resolveEffortSelector } from '../../../shared/model-id';
 import { taskDescriptionTooLong } from '../../../shared/task-description-limit';
+import { MAX_TASK_ARTIFACTS } from '../../../shared/task-artifacts';
 import { validateSpawnOverrides } from './spawn-override-validation';
 import { resolveColumn } from '../commands/column-resolver';
 import { TaskRepository } from '../../db/repositories/task-repository';
@@ -62,6 +63,25 @@ const PLAN_APPROVAL_DESCRIPTION =
 const TASK_PLAN_APPROVAL_DESCRIPTION =
   'For a task in a workflow: "automatic" or "manual" sets who approves its plan, overriding its plan column; null follows its plan column again. '
   + 'Refused once the task has passed its plan column, and for a task in no workflow, whose column\'s Plan approval decides (kangentic_update_column).';
+
+/**
+ * One artifact, shared by create_task and update_task. Only the shape is
+ * checked here: the handler says what is wrong with a link in words an agent
+ * can act on (`commands/artifact-params.ts`), and the phone reaches it with no
+ * schema at all.
+ */
+const ARTIFACT_ENTRY_SCHEMA = z.object({
+  url: z.string().describe('The link, http or https.'),
+  name: z.string().max(200).optional().describe('What to call it, e.g. "Checkout flow". Omit it and the task shows the name in the link, or the link cut short.'),
+});
+
+/** What an artifact is and when to add one, so an agent adds the right things without being asked. */
+const ARTIFACT_GUIDE =
+  'An artifact is a link to something the task is built from or produces: a design (Figma, Penpot), a diagram '
+  + '(Miro, Excalidraw, Mermaid), a requirements document (Google Docs, Notion, Confluence), a generated page or app '
+  + '(a Claude artifact, v0, Lovable). The task shows them on its card and passes them to every agent that works it. '
+  + 'Add one when you publish or are handed such a link. Not for the task\'s pull request (prUrl) or a local file (attachments). '
+  + 'Any http or https link is accepted.';
 
 /**
  * Written to lead a caller to the right answer rather than to name the enum. An
@@ -246,12 +266,13 @@ export function registerTaskTools(
         runMode: RUN_MODE_SCHEMA.optional().describe('How this task gets its agent settings. "column_settings" (the default) follows each column the task moves through. "agent_override" pins agent/model/effort/permission for the task\'s whole life; any field you leave unset is resolved dynamically until the task first spawns, which then locks all four. Pass "agent_override" on its own to pin whatever the task would resolve to today. Passing any of the four *Override fields implies "agent_override", so you only need this to choose override mode without pinning anything - and pairing a pin with "column_settings" is rejected as a contradiction. Mutually exclusive with `profile`.'),
         prUrl: z.string().url().optional().describe('Pull request URL this task is about (e.g. https://github.com/owner/repo/pull/123). Set this when filing a review task for an existing PR - it is what links the task to that PR. Writing the URL into `description` instead does NOT link it. Board tasks only - ignored for backlog.'),
         prNumber: z.number().int().positive().optional().describe('Pull request number this task is about. Pass alongside `prUrl`. Board tasks only - ignored for backlog.'),
+        artifacts: z.array(ARTIFACT_ENTRY_SCHEMA).max(MAX_TASK_ARTIFACTS).optional().describe(`Links the task starts with as artifacts. ${ARTIFACT_GUIDE} Board tasks only - ignored for backlog.`),
         automationsDisabled: z.boolean().optional().describe(AUTOMATIONS_DISABLED_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, prUrl, prNumber, automationsDisabled, project }) => withProject(resolver, project, async (ctx, resolved) => {
+    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, profile, runMode, prUrl, prNumber, artifacts, automationsDisabled, project }) => withProject(resolver, project, async (ctx, resolved) => {
       // Rejected rather than silently resolved: the repository enforces
       // exclusivity by clearing whichever side the write did not set, so
       // accepting both would quietly discard half of what the caller asked for.
@@ -353,6 +374,7 @@ export function registerTaskTools(
         runMode: runMode ?? null,
         prUrl: prUrl ?? null,
         prNumber: prNumber ?? null,
+        artifacts: artifacts ?? null,
         automationsDisabled: automationsDisabled ?? null,
       }, ctx, 'Failed to create task');
       // The create message ends with the new row's id - `(#N, id: <uuid>)` for a
@@ -640,7 +662,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_task',
     {
-      description: 'Update an existing task. Supports title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, disabling or enabling its column automations, a workflow task\'s own plan approval, and attaching files. To move a task between columns, use kangentic_move_task instead. Setting model, effort, profile, or runMode on a task with a running session restarts that session onto the new settings unless it already runs at them, which ends its current turn (your own turn, if it is your task). A queued session is not restarted. Its waiting command is rebuilt, so it keeps its place in line and starts on the new settings. Setting automationsDisabled never restarts anything. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
+      description: 'Update an existing task. Supports title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, disabling or enabling its column automations, a workflow task\'s own plan approval, attaching files, and adding or removing artifacts (links to its designs, diagrams, documents and published pages). To move a task between columns, use kangentic_move_task instead. Setting model, effort, profile, or runMode on a task with a running session restarts that session onto the new settings unless it already runs at them, which ends its current turn (your own turn, if it is your task). A queued session is not restarted. Its waiting command is rebuilt, so it keeps its place in line and starts on the new settings. Setting automationsDisabled never restarts anything. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
@@ -666,20 +688,22 @@ export function registerTaskTools(
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments to ADD to the task. This is additive - existing attachments are kept, not replaced. Each entry needs `filePath` (absolute) and may override the display `filename`. Use kangentic_remove_task_attachment to remove one.'),
+        addArtifacts: z.array(ARTIFACT_ENTRY_SCHEMA).max(MAX_TASK_ARTIFACTS).optional().describe(`Links to ADD to the task's artifacts. Additive: the rest stay. A link the task already has is not added twice, and a "name" sent with it renames it. ${ARTIFACT_GUIDE}`),
+        removeArtifacts: z.array(z.string()).max(MAX_TASK_ARTIFACTS).optional().describe('Links to take off the task\'s artifacts, each as kangentic_get_current_task or kangentic_find_task prints it. Refused when a link is not on the task. A removed link is not detected back onto the task.'),
         automationsDisabled: z.boolean().optional().describe(AUTOMATIONS_DISABLED_DESCRIPTION),
         planApproval: PLAN_APPROVAL_SCHEMA.nullable().optional().describe(TASK_PLAN_APPROVAL_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, automationsDisabled, planApproval, project }) => {
+    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, addArtifacts, removeArtifacts, automationsDisabled, planApproval, project }) => {
       if (
         title === undefined && description === undefined && descriptionEdits === undefined && appendDescription === undefined &&
         prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
         useWorktree === undefined && model === undefined && effort === undefined && permissionMode === undefined &&
         profile === undefined && runMode === undefined && attachments === undefined && automationsDisabled === undefined &&
-        planApproval === undefined
+        planApproval === undefined && addArtifacts === undefined && removeArtifacts === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
@@ -752,6 +776,8 @@ export function registerTaskTools(
           profile: profile !== undefined ? (profile || null) : undefined,
           runMode: runMode ?? undefined,
           attachments: attachments ?? null,
+          addArtifacts: addArtifacts ?? null,
+          removeArtifacts: removeArtifacts ?? null,
           automationsDisabled: automationsDisabled ?? null,
           // Tri-state, as the handler reads it: absent leaves it, null follows the columns.
           planApproval,

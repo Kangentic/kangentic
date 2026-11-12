@@ -58,6 +58,7 @@ function makeMinimalConfig(): AppConfig {
     cardDensity: 'default',
     cardPreview: 'agent-messages',
     columnWidth: 'default',
+    shrinkEmptyColumns: true,
     showTaskNumbers: false,
     terminalPanelVisible: true,
     animationsEnabled: true,

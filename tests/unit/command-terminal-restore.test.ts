@@ -443,18 +443,27 @@ describe('waitForCommandTerminalRestore', () => {
     expect(finished).toBe(true);
   });
 
-  it('answers at once with nothing to restore', async () => {
+  it('answers at once with nothing to restore, and says the restore is over', async () => {
     const { context } = makeRig();
-    await expect(waitForCommandTerminalRestore(context, PROJECT_ID)).resolves.toBeUndefined();
+    await expect(waitForCommandTerminalRestore(context, PROJECT_ID)).resolves.toBe(true);
   });
 
-  it('never leaves the panel waiting past its ceiling', async () => {
+  it('says the restore is over once the start has finished', async () => {
+    const { context } = makeRig({ rows: [{ id: 'conversation-a' }] });
+    const wait = waitForCommandTerminalRestore(context, PROJECT_ID);
+    await startCommandTerminalRestore(context, PROJECT_ID);
+    await expect(wait).resolves.toBe(true);
+  });
+
+  it('never leaves the panel waiting past its ceiling, and says the restore is still running', async () => {
+    // The panel's reopen reads this: "still running" must not look like "over
+    // with nothing back", or a slow restore loses its panel and the record of it.
     vi.useFakeTimers();
     try {
       const { context } = makeRig({ rows: [{ id: 'conversation-a' }] });
       const wait = waitForCommandTerminalRestore(context, PROJECT_ID);
       await vi.advanceTimersByTimeAsync(10_000);
-      await expect(wait).resolves.toBeUndefined();
+      await expect(wait).resolves.toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -464,9 +473,9 @@ describe('waitForCommandTerminalRestore', () => {
     const { context } = makeRig();
     registerCommandTerminalRestoreHandlers(context);
     const handler = hoisted.handlers.get(IPC.COMMAND_TERMINAL_RESTORE_WAIT);
-    await expect(handler?.(null, PROJECT_ID)).resolves.toBeUndefined();
-    await expect(handler?.(null, 'no-such-project')).resolves.toBeUndefined();
-    await expect(handler?.(null, 42)).resolves.toBeUndefined();
+    await expect(handler?.(null, PROJECT_ID)).resolves.toBe(true);
+    await expect(handler?.(null, 'no-such-project')).resolves.toBe(true);
+    await expect(handler?.(null, 42)).resolves.toBe(true);
   });
 
   it('forgets a deleted project, so one re-added at its id gets a pass', async () => {

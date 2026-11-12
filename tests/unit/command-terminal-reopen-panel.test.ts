@@ -22,7 +22,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const configSetMock = vi.fn();
-const waitForRestoreMock = vi.fn<(projectId: string) => Promise<void>>();
+const waitForRestoreMock = vi.fn<(projectId: string) => Promise<boolean | undefined>>();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
@@ -35,6 +35,7 @@ import {
   reopenCommandTerminalPanelAfterRestart,
   isPanelEnterSkipped,
   clearPanelEnterSkip,
+  RESTORE_WAIT_EXTRA_ASKS,
 } from '../../src/renderer/components/command-bar/reopen-panel';
 import { useConfigStore } from '../../src/renderer/stores/config-store';
 import { useProjectStore } from '../../src/renderer/stores/project-store';
@@ -83,8 +84,8 @@ function recordOpenProject(projectId: string | null): void {
 function holdRestoreWait(): { resolve: () => void; reject: () => void } {
   let resolve!: () => void;
   let reject!: () => void;
-  waitForRestoreMock.mockReturnValueOnce(new Promise<void>((resolveWait, rejectWait) => {
-    resolve = resolveWait;
+  waitForRestoreMock.mockReturnValueOnce(new Promise<boolean | undefined>((resolveWait, rejectWait) => {
+    resolve = () => resolveWait(true);
     reject = () => rejectWait(new Error('main cannot say'));
   }));
   return { resolve, reject };
@@ -199,6 +200,86 @@ describe('reopenCommandTerminalPanelAfterRestart', () => {
 
       expect(configSetMock).toHaveBeenCalledWith({ commandTerminalOpenProjectId: null });
       expect(useSessionStore.getState().commandBarOpening).toBe(false);
+    });
+  });
+
+  // Main's wait gives up at a ceiling and answers false. A restore slower than
+  // that used to end here with the panel shut and the record erased, and the
+  // terminals came back a moment later with nothing to show them.
+  describe('a restore still running at main\'s ceiling', () => {
+    it('asks again, and reopens over the terminal once it is back', async () => {
+      useSessionStore.setState({ sessions: [] });
+      waitForRestoreMock.mockReset();
+      waitForRestoreMock.mockResolvedValueOnce(false);
+      waitForRestoreMock.mockImplementationOnce(async () => {
+        // The restore finishes during the second wait: its terminal is in the replica.
+        useSessionStore.setState({ sessions: [makeTerminal({ id: 'restored-late' })] });
+        return true;
+      });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(waitForRestoreMock).toHaveBeenCalledTimes(2);
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(true);
+      expect(isPanelEnterSkipped()).toBe(true);
+      expect(configSetMock).not.toHaveBeenCalled();
+      expect(useConfigStore.getState().globalConfig.commandTerminalOpenProjectId).toBe(PROJECT_ID);
+    });
+
+    it('shows the opening state only for the first wait', async () => {
+      useSessionStore.setState({ sessions: [] });
+      waitForRestoreMock.mockReset();
+      waitForRestoreMock.mockResolvedValueOnce(false);
+      let openingDuringSecondWait: boolean | null = null;
+      waitForRestoreMock.mockImplementationOnce(async () => {
+        openingDuringSecondWait = useSessionStore.getState().commandBarOpening;
+        return true;
+      });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(openingDuringSecondWait).toBe(false);
+    });
+
+    it('keeps the record when it gives up with the restore still running and nothing back', async () => {
+      useSessionStore.setState({ sessions: [] });
+      waitForRestoreMock.mockReset();
+      waitForRestoreMock.mockResolvedValue(false);
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      // The first wait, then the bounded extra asks: it does not wait for ever.
+      expect(waitForRestoreMock).toHaveBeenCalledTimes(1 + RESTORE_WAIT_EXTRA_ASKS);
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(false);
+      expect(configSetMock).not.toHaveBeenCalled();
+      expect(useConfigStore.getState().globalConfig.commandTerminalOpenProjectId).toBe(PROJECT_ID);
+    });
+
+    it('forgets the record once the restore is over with nothing back', async () => {
+      useSessionStore.setState({ sessions: [] });
+      waitForRestoreMock.mockReset();
+      waitForRestoreMock.mockResolvedValueOnce(false);
+      waitForRestoreMock.mockResolvedValueOnce(true);
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(waitForRestoreMock).toHaveBeenCalledTimes(2);
+      expect(configSetMock).toHaveBeenCalledWith({ commandTerminalOpenProjectId: null });
+    });
+
+    it('stops asking once the project is left', async () => {
+      useSessionStore.setState({ sessions: [] });
+      waitForRestoreMock.mockReset();
+      waitForRestoreMock.mockImplementationOnce(async () => {
+        useProjectStore.setState({ currentProject: makeProject(OTHER_PROJECT_ID) });
+        return false;
+      });
+
+      await reopenCommandTerminalPanelAfterRestart(PROJECT_ID);
+
+      expect(waitForRestoreMock).toHaveBeenCalledTimes(1);
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(false);
+      expect(configSetMock).not.toHaveBeenCalled();
     });
   });
 

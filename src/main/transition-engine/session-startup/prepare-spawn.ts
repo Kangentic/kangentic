@@ -11,7 +11,7 @@ import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import type { AppConfig, BoardProfile, PermissionMode, ResumeEvidenceSummary, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
 import type { TaskRepository } from '../../db/repositories/task-repository';
-import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
+import { runSpawnPreamble, resolveEffectivePermissionMode, keepsSessionPermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { notePlanApprovalSpawn, planSpawnNeedsBypass } from '../../plan-approval/plan-approval-spawns';
@@ -149,7 +149,17 @@ export async function prepareAgentSpawn(input: {
    * that record's own cwd for the reconcile's transcript probe, in case it
    * differs from the spawn `cwd` (falls back to the spawn cwd).
    */
-  resume: { agentSessionId: string; recordId?: string; recordCwd?: string } | null;
+  resume: {
+    agentSessionId: string;
+    recordId?: string;
+    recordCwd?: string;
+    /**
+     * The permission mode on the record being resumed. A startup resume is in
+     * the column the session was running in, so with this in hand the agent
+     * keeps the mode its conversation was last in (`keepsSessionPermissionMode`).
+     */
+    recordPermissionMode?: string | null;
+  } | null;
   /**
    * Persists a reconciled agent session id (only consulted when
    * `resume.recordId` is set), and lists the task's records so the
@@ -410,6 +420,14 @@ export async function prepareAgentSpawn(input: {
     // (releaseCommandHold).
     ptySessionId: sessionRecordId,
     bypassAvailable,
+    // A startup resume brings a session back in the column it was running in.
+    keepSessionPermissionMode: keepsSessionPermissionMode({
+      isResume: canResume,
+      sameColumnResume: true,
+      adapterRestores: adapter.restoresPermissionModeOnResume === true,
+      columnMode: permissionMode,
+      lastLaunchedMode: input.resume?.recordPermissionMode,
+    }),
     cliTarget,
     // The account a recovered session runs on (task #1057): the top account with room, as for a
     // board spawn. A WSL CLI keeps its single login.

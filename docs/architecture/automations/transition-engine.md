@@ -174,7 +174,7 @@ variable" picker and its inline `{{` completion, and this table - see
 entry's `description`, that field is user-facing copy and should stay to one
 line.
 
-26 keywords. 19 resolve wherever there is a task, 5 only in an automation (the
+27 keywords. 20 resolve wherever there is a task, 5 only in an automation (the
 move keywords and `{{agentReply}}`), and 2 only in a workflow agent's first
 message (`{{columns}}` and `{{brief_xml}}`), each marked below. That first
 message (Settings > Workflows) is the third context: it is written before any
@@ -223,6 +223,7 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{issueUrl}}` | The linked tracker issue's URL (empty if none) |
 | `{{labels}}` | The task's labels, comma-separated (empty if none) |
 | `{{attachments}}` | Bare file paths (one per line) when present |
+| `{{artifacts}}` | The task's artifact links, one per line as `name: link` (empty if none). `{{task_xml}}` already carries them in an `<artifacts>` section, so the default prompt needs no `{{artifacts}}`. See [Artifacts](../../integrations/artifacts.md). |
 | `{{port}}` | Lowest dev-server port this task has RESERVED (empty if none, which is the normal state) - a raw read, never falls back to another task's port |
 | `{{column}}` | The column the automation belongs to. Automations only |
 | `{{fromColumn}}` | The column the task moved out of (empty for a task born into a column). Automations only |

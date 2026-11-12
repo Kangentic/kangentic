@@ -238,6 +238,8 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     configGit?: { defaultBaseBranch: string };
     /** The cwd the conversation last ran in, as the recovered record kept it. */
     recordCwd?: string;
+    /** The permission mode on the record being resumed (`resume.recordPermissionMode`). */
+    recordPermissionMode?: string | null;
   } = {}) {
     const taskRecords = options.taskRecords;
     const listForTaskNewestFirst = vi.fn((_taskId: string) => taskRecords ?? []);
@@ -258,7 +260,12 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
       projectDefaultEffort: null,
       resolvedShell: 'bash',
       mcpServerHandle: null,
-      resume: { agentSessionId: STORED_ID, recordId: RECORD_ID, recordCwd: options.recordCwd },
+      resume: {
+        agentSessionId: STORED_ID,
+        recordId: RECORD_ID,
+        recordCwd: options.recordCwd,
+        ...(options.recordPermissionMode !== undefined ? { recordPermissionMode: options.recordPermissionMode } : {}),
+      },
       sessionRepo,
       recapSources: options.recapSources,
       boardDefaultBaseBranch: options.boardDefaultBaseBranch,
@@ -442,6 +449,53 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
       } finally {
         delete adapterWithProof.proveConversationGone;
       }
+    });
+  });
+
+  // A startup resume is in the column the session was running in, so an agent
+  // whose CLI restores the mode keeps the one its conversation was last in. The
+  // column's mode here is the config's: acceptEdits.
+  describe('keeps the session permission mode on a startup resume', () => {
+    type CommandOptionsSeen = { resume?: boolean; keepSessionPermissionMode?: boolean };
+    const restoringAdapter = adapter as typeof adapter & { restoresPermissionModeOnResume?: boolean };
+
+    afterEach(() => {
+      delete restoringAdapter.restoresPermissionModeOnResume;
+    });
+
+    async function builtKeepFlag(options: Parameters<typeof runPrepare>[0]): Promise<boolean | undefined> {
+      const { result } = await runPrepare(options);
+      expect(result.ok).toBe(true);
+      return (buildCommandMock.mock.calls[0][0] as CommandOptionsSeen).keepSessionPermissionMode;
+    }
+
+    it('carries keepSessionPermissionMode for a restoring adapter whose recorded mode equals the column\'s', async () => {
+      restoringAdapter.restoresPermissionModeOnResume = true;
+      writeRealConversationStatusFile(RECORD_ID);
+      expect(await builtKeepFlag({ recordPermissionMode: 'acceptEdits' })).toBe(true);
+      expect((buildCommandMock.mock.calls[0][0] as CommandOptionsSeen).resume).toBe(true);
+    });
+
+    it('states the column\'s mode when the recorded mode differs, is unknown, or is not passed', async () => {
+      restoringAdapter.restoresPermissionModeOnResume = true;
+      writeRealConversationStatusFile(RECORD_ID);
+      expect(await builtKeepFlag({ recordPermissionMode: 'plan' })).toBe(false);
+      buildCommandMock.mockClear();
+      expect(await builtKeepFlag({ recordPermissionMode: null })).toBe(false);
+      buildCommandMock.mockClear();
+      expect(await builtKeepFlag({})).toBe(false);
+    });
+
+    it('states the column\'s mode for an adapter that does not restore it, whatever was recorded', async () => {
+      writeRealConversationStatusFile(RECORD_ID);
+      expect(await builtKeepFlag({ recordPermissionMode: 'acceptEdits' })).toBe(false);
+    });
+
+    it('states the column\'s mode when the resume was downgraded to a fresh launch', async () => {
+      restoringAdapter.restoresPermissionModeOnResume = true;
+      writeEmptyStatusFile(RECORD_ID);
+      expect(await builtKeepFlag({ recordPermissionMode: 'acceptEdits' })).toBe(false);
+      expect((buildCommandMock.mock.calls[0][0] as CommandOptionsSeen).resume).toBe(false);
     });
   });
 

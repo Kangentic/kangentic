@@ -157,6 +157,7 @@ export function ChangesPullRequestSection({ task, checks, open, onToggle, sendin
           prNumber={task.pr_number}
           prState={task.pr_state}
           prMergeReadiness={task.pr_merge_readiness}
+          taskId={task.id}
           testId="changes-pr-open"
           // Right-aligned with a 12px inset: the icon sits in the rows' own
           // icon column (their 4px gutter plus 8px padding), in the narrowest

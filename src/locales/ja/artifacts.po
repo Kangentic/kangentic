@@ -1,0 +1,58 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-10 20:36-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: ja\n"
+
+#: src/renderer/components/artifacts/ArtifactsChip.tsx
+msgid "{count, plural, one {# artifact} other {# artifacts}}"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "A task keeps at most {limit} artifacts. Remove one to add another."
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "Add an artifact link"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "Add artifact"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "Artifact name"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsChip.tsx
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+#: src/renderer/components/artifacts/ArtifactsKebabItems.tsx
+msgid "Artifacts"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsMenu.tsx
+msgid "Edit artifacts"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsChip.tsx
+msgid "Open artifact"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "Paste a link to add an artifact"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "Remove artifact"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "Rename artifact"
+msgstr ""
+
+#: src/renderer/components/artifacts/ArtifactsField.tsx
+msgid "That is not a link. Paste one that starts with http or https."
+msgstr ""

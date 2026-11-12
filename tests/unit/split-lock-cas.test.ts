@@ -1087,7 +1087,7 @@ describe('SESSION_RESUME split-lock dedup', () => {
     expect(resumeSuspendedSession).toHaveBeenCalledTimes(1);
     // Argument 8 of engine.resumeSuspendedSession is the spawn overrides.
     const spawnOverrides = (resumeSuspendedSession.mock.calls[0] as unknown[])[7];
-    expect(spawnOverrides).toEqual({ isolatedSwimlaneId: 'lane-review', forceFresh: false });
+    expect(spawnOverrides).toEqual({ isolatedSwimlaneId: 'lane-review', forceFresh: false, keepSessionMode: true });
   });
 });
 

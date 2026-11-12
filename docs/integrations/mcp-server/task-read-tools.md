@@ -45,7 +45,7 @@ filtered and count-free and cannot answer that.
 
 ## kangentic_find_task
 
-Find a task or backlog item by display ID, UUID, branch name, title keyword, or PR number. Returns matching board tasks (with full `branch_name`, `worktree_path`, PR info) and any matching backlog items.
+Find a task or backlog item by display ID, UUID, branch name, title keyword, or PR number. Returns matching board tasks (with full `branch_name`, `worktree_path`, PR info) and any matching backlog items. A task with [artifacts](../artifacts.md) prints an Artifacts block under its description: each link with its name, its platform, and who added it (the user, an agent, or detected).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -90,7 +90,7 @@ The turn ledger the Usage tab reads is left out. An unknown task returns an erro
 
 ## kangentic_get_current_task
 
-Resolve the task that corresponds to the current working directory and/or git branch. Use at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back).
+Resolve the task that corresponds to the current working directory and/or git branch. Use at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). The task's [artifacts](../artifacts.md) print in the same Artifacts block `kangentic_find_task` uses.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

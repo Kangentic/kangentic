@@ -592,11 +592,55 @@ export type WorktreeSkipReason =
   | 'remote-agent'
   | 'worktree-missing';
 
+/** Who put an artifact on a task. Recorded and returned over MCP, never drawn. */
+export type TaskArtifactSource = 'user' | 'agent' | 'detected';
+
+/**
+ * One link a task keeps as an artifact (#1056): a design, a diagram, a
+ * requirements document, a Claude artifact. The platform (its logo and name) is
+ * read from the link each time (`src/shared/artifact-platforms.ts`), never
+ * stored, so a newly recognised platform lights up links saved before it.
+ */
+export interface TaskArtifact {
+  /** The link as written, fragment included. */
+  url: string;
+  /** A name a person or an agent gave it, or a publish's title. Null shows the name in the link, else the link cut short. */
+  name: string | null;
+  source: TaskArtifactSource;
+  /** When it was added (UTC ISO 8601). The list stays in this order. */
+  added_at: string;
+}
+
+/** One artifact to add: its link, and optionally a name. */
+export interface TaskArtifactInput {
+  url: string;
+  name?: string | null;
+}
+
+/** A change to a task's artifacts, applied in one write. */
+export interface TaskArtifactChanges {
+  add?: TaskArtifactInput[];
+  /** Links to take off the task. A removed link is never detected back onto it. */
+  remove?: string[];
+  /** New names by link. Null clears a name. */
+  rename?: Array<{ url: string; name: string | null }>;
+  /** Who is making the change. Defaults to `user`. */
+  source?: TaskArtifactSource;
+}
+
 export interface Task {
   id: string;
   display_id: number;
   title: string;
   description: string;
+  /**
+   * The task's artifacts, in the order added. Written only through
+   * `TaskRepository.applyArtifactChanges` and `update()`'s `artifactChanges`,
+   * never the generic column list. A link Kangentic detects is written with no
+   * `updated_at` bump, so an agent publishing mid-run does not reorder the
+   * board; an edit a person or an agent asks for is an update like any other.
+   */
+  artifacts: TaskArtifact[];
   swimlane_id: string;
   position: number;
   agent: string | null;
@@ -2471,6 +2515,18 @@ export interface SessionEvent {
    */
   expiresAfterMs?: number;
   /**
+   * On a `tool_end`: the links a publish tool's result carried, for a tool the
+   * adapter's hooks name (Claude's `CLAUDE_ARTIFACT_PUBLISH_SPEC`). Main adds the recognised ones to
+   * the task's artifacts (`Task.artifacts`). At most 10, each capped.
+   *
+   * Source: the event bridge's `extractToolUrls` directive, which reads the
+   * tool's response from the same payload. Claude's Artifact tool is the one
+   * that exists.
+   */
+  urls?: string[];
+  /** The title the publish in `urls` was given, when the tool's input carried one. */
+  urlsTitle?: string;
+  /**
    * On a `tool_start`: the call starts a subagent (Claude's Agent tool), so a
    * `subagent_start` may be its own approved call running. The engine closes a
    * permission prompt on a `subagent_start` only when the call it awaited
@@ -3798,6 +3854,14 @@ export interface NotificationConfig {
  *  every window. */
 export type WindowLightDismiss = 'off' | 'single' | 'focused' | 'all';
 
+/** The board's Column width setting. `fill` shares the window's width between
+ *  the columns; the other three stop at a width. */
+export type ColumnWidth = 'narrow' | 'default' | 'wide' | 'fill';
+
+/** The "Click opens links in" setting: the system's default browser, or the
+ *  Kangentic browser beside a task's terminal. */
+export type LinkClickTarget = 'default' | 'kangentic';
+
 // === Dictation (voice-to-text) ===
 
 /** Concrete transcription engine ids. `stub` is the no-ML test engine. */
@@ -4389,7 +4453,19 @@ export interface AppConfig {
    * yet. The Agent Monitor card honors the same value.
    */
   cardPreview: 'agent-messages' | 'agent-latest-message' | 'description';
-  columnWidth: 'narrow' | 'default' | 'wide';
+  /**
+   * How wide a board column with tasks is. Narrow, Default and Wide stop at
+   * that width and leave the rest of a wide window empty; Fill shares the
+   * window's width between the columns. See `components/board/lane-widths.ts`.
+   */
+  columnWidth: ColumnWidth;
+  /**
+   * A column with no tasks narrows to the width of its header and opens again
+   * when a task arrives. The Done column never narrows. Off by default: agents
+   * and automations move cards on their own, and each move that empties or
+   * fills a column would resize the row under the user.
+   */
+  shrinkEmptyColumns: boolean;
   showTaskNumbers: boolean; // show each task's #N (display_id) on its board card
   terminalPanelVisible: boolean;
   animationsEnabled: boolean;
@@ -4990,6 +5066,13 @@ export interface AppConfig {
   stopLeftoverProcesses: boolean;
   /** Click-outside dismiss policy for modeless task-detail windows. Default `focused`. */
   windowLightDismiss: WindowLightDismiss;
+  /**
+   * Which browser a plain click on a link opens: a terminal link, the PR pill,
+   * a task's artifacts. Ctrl+Click (Cmd on a Mac) opens the other one, so this
+   * only swaps the two. Default `default`. Optional so configs saved before the
+   * field existed stay valid; readers fall back to `default`.
+   */
+  linkClickTarget?: LinkClickTarget;
   /** One-shot marker for the `single` -> `focused` default flip on `windowLightDismiss`.
    *
    *  `ConfigManager.save()` writes the WHOLE merged blob, so every install that ran
@@ -5087,6 +5170,12 @@ export interface AppConfig {
    *  `config.set` and restored AFTER sessions resolve. See
    *  src/renderer/window-manager/persistence/. */
   workspaceByProject: Record<string, SerializedWorkspace>;
+  /** The board columns this user collapsed to a strip, by project id (the
+   *  columns' ids). Per machine and per user, never in `kangentic.json`: one
+   *  person's collapsed column is not the team's. A dictionary path, so a write
+   *  sends the whole map and a deleted project's entry goes with it. Optional so
+   *  configs saved before the field existed stay valid; readers guard with `?? []`. */
+  collapsedColumnsByProject?: Record<string, string[]>;
   /** GLOBAL in-app layout for the Command Terminal window layer: the open command
    *  terminal window(s) + their tiling, shared across ALL projects (one blob, not
    *  keyed by project) so the arrangement is consistent everywhere. The sessions
@@ -5234,6 +5323,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   cardDensity: 'default',
   cardPreview: 'agent-latest-message',
   columnWidth: 'default',
+  shrinkEmptyColumns: false,
   showTaskNumbers: true,
   terminalPanelVisible: true,
   animationsEnabled: true,
@@ -5388,6 +5478,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoFocusIdleSession: false,
   stopLeftoverProcesses: true,
   windowLightDismiss: 'focused',
+  linkClickTarget: 'default',
   hasMigratedWindowLightDismissDefault: false,
   hasMigratedNativeTerminalDefaults: false,
   hasMigratedIdleTimeoutDefault: false,
@@ -5404,6 +5495,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   usageStatsScope: 'project',
   lastActiveTaskByProject: {},
   workspaceByProject: {},
+  collapsedColumnsByProject: {},
   commandTerminalWorkspace: null,
   commandTerminalPanel: null,
   commandTerminalPanelByShape: {},
@@ -5874,6 +5966,16 @@ export interface TaskCreateInput {
     data: string; // base64
     media_type: string;
   }>;
+  /** Artifacts the task starts with (see `Task.artifacts`), beside any link its description carries. */
+  artifacts?: TaskArtifactInput[];
+  /** Who names `artifacts`. Defaults to `user`; MCP passes `agent`. */
+  artifactSource?: TaskArtifactSource;
+  /**
+   * Links already taken off this task (`artifactKey`s), so the description's
+   * own links among them are not detected back as the task is created. Only a
+   * task moved from another project has any: its removals move with it.
+   */
+  dismissedArtifacts?: string[];
   /** Preserve an original creation timestamp (UTC ISO 8601) instead of stamping "now". Used when relocating a task to a different project's board. */
   createdAt?: string;
   /** Workflow membership and route, for a task a workflow's Start creates (see `Task.workflow_id`). */
@@ -5926,6 +6028,8 @@ export interface TaskUpdateInput {
   run_mode?: TaskRunMode;
   /** Pause or resume column automations for the task (see `Task.automations_disabled`). A running or paused workflow's task refuses `true`. */
   automations_disabled?: boolean;
+  /** Add, remove or rename the task's artifacts (see `Task.artifacts`). Applied in the same transaction as the rest. */
+  artifactChanges?: TaskArtifactChanges;
 }
 
 /** Result of `IPC.TASK_RESOLVE_PR` - the on-demand branch->PR resolver. */
@@ -8772,9 +8876,10 @@ export interface ElectronAPI {
     /**
      * Resolves once this launch's restore of the project's running terminals is
      * over, or at main's ceiling. The panel and the detached window wait on it
-     * before they look for a project's terminals.
+     * before they look for a project's terminals. True means the restore is
+     * over; false means the ceiling came first and a terminal may still come back.
      */
-    waitForCommandTerminalRestore: (projectId: string) => Promise<void>;
+    waitForCommandTerminalRestore: (projectId: string) => Promise<boolean>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * Which sessions this renderer has an xterm MOUNTED for - a superset of

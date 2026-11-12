@@ -20,6 +20,7 @@ import { applyTaskSettingsToLiveSession } from '../ipc/handlers/task-runtime-ove
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../git/worktree-manager';
 import { sendToRenderer } from '../ipc/send-to-renderer';
+import { reportUnrecognisedArtifactDomains } from '../artifacts/artifact-domain-report';
 import {
   propagateBoardProfileChange,
   propagateStrategyToLiveSessions,
@@ -27,12 +28,22 @@ import {
 } from '../ipc/handlers/strategy-propagation';
 import type { CommandContext } from './commands';
 import type { IpcContext } from '../ipc/ipc-context';
-import type { AppConfig } from '../../shared/types';
+import type { AppConfig, Task } from '../../shared/types';
 import { RequestResolver } from './mcp-http/project-resolver';
 import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '../pr/pr-linking';
 import type { TaskKnowledge } from '../retrieval/task-knowledge';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { taskSummariesOn } from '../../shared/answer-agent';
+
+/**
+ * After an agent's task write: report the hosts of the artifacts agents added
+ * that Kangentic does not recognise. Every call is safe to repeat, since a host
+ * is reported once per install.
+ */
+function reportAgentArtifactDomains(task: Task): void {
+  const added = (task.artifacts ?? []).filter((artifact) => artifact.source === 'agent');
+  if (added.length > 0) reportUnrecognisedArtifactDomains(added.map((artifact) => artifact.url), 'agent');
+}
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -137,6 +148,7 @@ export function buildCommandContextForProject(
         ipcContext.mainWindow, IPC.TASK_CREATED_BY_AGENT, task.id, task.title, columnName, projectId,
       );
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-created', ids: [task.id] });
+      reportAgentArtifactDomains(task);
       // Auto-spawn fire-and-forget so the tool call returns immediately
       // and Claude doesn't block on a multi-second PTY spawn.
       autoSpawnForTask(ipcContext, projectId, task, swimlaneId).catch((err) => {
@@ -147,6 +159,7 @@ export function buildCommandContextForProject(
     onTaskUpdated: (task) => {
       sendToRenderer(ipcContext.mainWindow, IPC.TASK_UPDATED_BY_AGENT, task.id, task.title, projectId);
       ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [task.id] });
+      reportAgentArtifactDomains(task);
     },
 
     // Same board invalidation as onTaskUpdated, on the quiet channel. Used by

@@ -12,7 +12,7 @@ import { ARCHIVED_PREVIEW_LIMIT } from '../../stores/board-store/archived-tasks-
 import { useConfigStore } from '../../stores/config-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { workflowColor } from '../workflows/workflow-graph';
-import { useColumnWidthClass } from './column-width';
+import { CollapseColumnButton } from './CollapseColumnButton';
 import { CountBadge } from '../CountBadge';
 import { Tooltip } from '../Tooltip';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
@@ -58,7 +58,6 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
   const clearRecentlyArchived = useBoardStore((state) => state.clearRecentlyArchived);
   const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
   const updateConfig = useConfigStore((state) => state.updateConfig);
-  const widthClass = useColumnWidthClass();
 
   const handleDeleteRequest = useCallback((taskId: string) => {
     if (skipDeleteConfirm) {
@@ -103,7 +102,8 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
     <div
       data-testid="swimlane"
       data-swimlane-name={swimlane.name}
-      className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg overflow-clip bg-surface-raised/70 ring-1 ring-edge/50`}
+      // `w-full`: the width is the wrapper's, set by KanbanBoard (lane-widths.ts).
+      className="w-full h-full flex flex-col rounded-lg overflow-clip bg-surface-raised/70 ring-1 ring-edge/50"
     >
       {/* Accent bar */}
       <div
@@ -133,6 +133,8 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
                 space after the count still opens the Board Manager. */}
             <CountBadge count={tasks.length} variant="tinted" size="pill" className="shrink-0 text-fg-muted" testId="swimlane-task-count" />
           </button>
+
+          <CollapseColumnButton swimlaneId={swimlane.id} columnName={columnName} />
 
           <button
             type="button"
