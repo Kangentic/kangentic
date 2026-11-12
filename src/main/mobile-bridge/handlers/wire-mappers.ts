@@ -12,9 +12,13 @@
  * the payload's SHAPE has already been checked against the wire type.
  */
 import {
+  BOARD_TASK_ARTIFACTS_WIRE_MAX,
+  BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH,
   type ActivityReasonWire,
   type BacklogItemWire,
   type BoardColumnWire,
+  type BoardTaskArtifactWire,
+  type BoardTaskQueuePlaceWire,
   type BoardTaskWire,
   type BoardTaskWorkflowWire,
   type JsonValue,
@@ -29,6 +33,8 @@ import {
 import { isJsonValue } from '@kangentic/protocol';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { stripAnsiControlCodes } from '../../../shared/ansi-strip';
+import { artifactDisplayName } from '../../../shared/task-artifacts';
+import type { QueuePlace } from '../../../shared/queue-place';
 import type {
   ActivityReason,
   BacklogTask,
@@ -36,8 +42,10 @@ import type {
   SessionStatus,
   SessionSummary,
   SessionUsage,
+  StartBlockedReason,
   Swimlane,
   Task,
+  TaskArtifact,
   TranscriptBlock,
   TranscriptEntry,
 } from '../../../shared/types';
@@ -202,9 +210,10 @@ export function toActivityReasonWire(reason: ActivityReason): ActivityReasonWire
     // a reason whose agent did not say what it waits for carries no `waitKind`.
     case 'permission':
       return { kind: 'permission', since: reason.since, ...(reason.waitKind ? { waitKind: reason.waitKind } : {}) };
-    // `stopped` and `inOwnCall` are desktop facts the protocol does not define.
+    // `inOwnCall` is a desktop fact the protocol does not define. `stopped` is
+    // carried from 0.28.0, and only when set.
     case 'idle':
-      return { kind: 'idle', since: reason.since };
+      return { kind: 'idle', since: reason.since, ...(reason.stopped ? { stopped: true as const } : {}) };
     default:
       return reason;
   }
@@ -382,15 +391,20 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  * decides, and so a bare `.map(toBoardTaskWire)` (which would pass the array
  * index here) fails to compile.
  *
- * `pauseFlags` holds `pausedSessionId`, the registry id of the task's paused
+ * `sessionFacts` holds `pausedSessionId`, the registry id of the task's paused
  * session when it has one and no live one (`taskSessionStatesOf`), else null;
- * `resumable`, `isResumeOffered` for that same answer; and `pausable`,
- * `isPauseOffered` for the task's live session. The caller resolves all three
- * because they need the session registry and the column; see
- * `BoardTaskWire.paused_session_id`, `BoardTaskWire.resumable` and
- * `BoardTaskWire.pausable`. `paused` is derived from the id here, so the two
- * fields can never disagree. One object rather than positional values, so a
- * call site cannot swap them.
+ * `resumable`, `isResumeOffered` for that same answer; `pausable`,
+ * `isPauseOffered` for the task's live session; `queuePlace`, the queued
+ * session's place in line (`toQueuePlaceWire`); and `startBlockedReason`, why
+ * the task's paused or ended session never reached an agent. The caller
+ * resolves them because they need the session registry, the queue and the
+ * column; see `BoardTaskWire.paused_session_id`, `BoardTaskWire.resumable`,
+ * `BoardTaskWire.pausable`, `BoardTaskWire.queue_place` and
+ * `BoardTaskWire.start_blocked_reason`. `paused` is derived from the id here,
+ * so the two fields can never disagree. One object rather than positional
+ * values, so a call site cannot swap them.
+ *
+ * `artifacts` is read off the task itself (`toTaskArtifactsWire`).
  *
  * `workflow` is read per board, not per task (`workflowWireFacts`), since a
  * card's lock and what it waits for come from its whole workflow; a task
@@ -403,7 +417,7 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
 export function toBoardTaskWire(
   task: Task,
   spawnProgressLabel: string | null,
-  pauseFlags: { pausedSessionId: string | null; resumable: boolean; pausable: boolean },
+  sessionFacts: BoardTaskSessionFacts,
   workflow: BoardTaskWorkflowWire | null = null,
 ): BoardTaskWire {
   return {
@@ -429,13 +443,54 @@ export function toBoardTaskWire(
     created_at: task.created_at,
     updated_at: task.updated_at,
     spawn_progress: toSpawnProgressLabelWire(spawnProgressLabel),
-    resumable: pauseFlags.resumable,
-    paused: pauseFlags.pausedSessionId !== null,
-    paused_session_id: pauseFlags.pausedSessionId,
-    pausable: pauseFlags.pausable,
+    resumable: sessionFacts.resumable,
+    paused: sessionFacts.pausedSessionId !== null,
+    paused_session_id: sessionFacts.pausedSessionId,
+    pausable: sessionFacts.pausable,
     automations_disabled: task.automations_disabled === true,
     workflow,
+    queue_place: sessionFacts.queuePlace,
+    artifacts: toTaskArtifactsWire(task.artifacts),
+    start_blocked_reason: sessionFacts.startBlockedReason,
   };
+}
+
+/** What `toBoardTaskWire` needs from the session registry and the queue, resolved by the caller. */
+export interface BoardTaskSessionFacts {
+  pausedSessionId: string | null;
+  resumable: boolean;
+  pausable: boolean;
+  queuePlace: BoardTaskQueuePlaceWire | null;
+  startBlockedReason: StartBlockedReason | null;
+}
+
+/**
+ * A queued session's place, as the desktop card reads it (`useQueuedStatus`).
+ * `globalMaxAgents` is the desktop's Max concurrent sessions, the limit a
+ * `global` place waits under; a `column` place carries its column's own.
+ */
+export function toQueuePlaceWire(place: QueuePlace | null, globalMaxAgents: number | null): BoardTaskQueuePlaceWire | null {
+  if (!place) return null;
+  if (place.kind === 'column') {
+    return { kind: 'column', position: place.position, total: place.total, column_name: place.line.columnName, max_agents: place.line.maxAgents };
+  }
+  return { kind: 'global', position: place.position, total: place.total, column_name: null, max_agents: globalMaxAgents };
+}
+
+/**
+ * A task's links as the desktop chips name them (`artifactDisplayName`, which
+ * translates nothing). Capped so a board of linked tasks stays inside one
+ * frame: a link too long to send is left out whole rather than cut, since a
+ * cut link opens the wrong page, and the list stops at the cap.
+ */
+export function toTaskArtifactsWire(artifacts: readonly TaskArtifact[] | undefined): BoardTaskArtifactWire[] {
+  const wire: BoardTaskArtifactWire[] = [];
+  for (const artifact of artifacts ?? []) {
+    if (wire.length >= BOARD_TASK_ARTIFACTS_WIRE_MAX) break;
+    if (artifact.url.length > BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH) continue;
+    wire.push({ url: artifact.url, name: artifactDisplayName(artifact) });
+  }
+  return wire;
 }
 
 export function toBacklogItemWire(item: BacklogTask): BacklogItemWire {

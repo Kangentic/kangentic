@@ -39,10 +39,16 @@ vi.mock('../../../src/main/db/repositories/session-repository', () => ({
     }
   },
 }));
+// The line for an agent slot, as main reads it. Empty unless a test queues someone.
+let queueSnapshot: QueueSnapshot = { columns: [], global: [] };
+vi.mock('../../../src/main/ipc/helpers/queue-snapshot', () => ({
+  readQueueSnapshot: () => queueSnapshot,
+}));
 
 import type { CapabilityRequestMessage } from '@kangentic/protocol';
+import { DEFAULT_PRIORITY_CONFIG, type QueueSnapshot } from '../../../src/shared/types';
 import type { BrowserWindow } from 'electron';
-import { handleReadBoard } from '../../../src/main/mobile-bridge/handlers/read-board';
+import { handleReadBoard, startBlockedReasonsOf } from '../../../src/main/mobile-bridge/handlers/read-board';
 import { deriveProjectAccentColor, PROJECT_ACCENT_PALETTE } from '../../../src/main/mobile-bridge/handlers/project-color';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 import type { BridgeSession } from '../../../src/main/mobile-bridge/session/bridge-session';
@@ -59,6 +65,9 @@ import {
 /** A spawn-progress feed that never fires, for the tests that are not about it. */
 const noSpawnProgressFeed = { onTaskSpawnProgressChanged: vi.fn(() => vi.fn()) };
 
+/** A queue-place feed that never fires, for the tests that are not about it. */
+const noQueuePlaceFeed = { onQueuePlacesChanged: vi.fn(() => vi.fn()) };
+
 /** What the fake session registry lists; `resumable` reads it once per snapshot. */
 let registryRows: Array<{
   id: string;
@@ -68,6 +77,7 @@ let registryRows: Array<{
   projectId?: string;
   commandTerminalSlot?: string | null;
   commandTerminalLabel?: string | null;
+  startBlockedReason?: string | null;
 }> = [];
 /** The fake activity engine's state and reason per session id. */
 let activityStates: Record<string, string> = {};
@@ -97,6 +107,28 @@ function controllableSpawnProgressFeed(): {
       },
     },
     fire: (projectId, taskId) => captured?.(projectId, taskId),
+    release,
+  };
+}
+
+type QueuePlacesListener = (projectId: string, taskIds: string[]) => void;
+
+/** A queue-place feed whose listener the test can fire, and whose release it can observe. */
+function controllableQueuePlaceFeed(): {
+  feed: { onQueuePlacesChanged: (listener: QueuePlacesListener) => () => void };
+  fire: (projectId: string, taskIds: string[]) => void;
+  release: ReturnType<typeof vi.fn>;
+} {
+  let captured: QueuePlacesListener | undefined;
+  const release = vi.fn();
+  return {
+    feed: {
+      onQueuePlacesChanged: (listener) => {
+        captured = listener;
+        return release;
+      },
+    },
+    fire: (projectId, taskIds) => captured?.(projectId, taskIds),
     release,
   };
 }
@@ -142,6 +174,7 @@ describe('handleReadBoard', () => {
     tasksListArchivedPage.mockReset().mockReturnValue({ tasks: [], totalCount: 0 });
     // No task is in a workflow unless a test says so.
     workflowWireFacts.mockReset().mockReturnValue(new Map());
+    queueSnapshot = { columns: [], global: [] };
   });
 
   it('with no projectId, returns the project bootstrap list (with derived accent colors, group and position) and never touches task repos', async () => {
@@ -153,7 +186,7 @@ describe('handleReadBoard', () => {
     } as unknown as IpcContext;
     const subscriptions = new SubscriptionRegistry();
 
-    const response = await handleReadBoard(fakeRequest({}), fakeSession(), context, subscriptions, noSpawnProgressFeed);
+    const response = await handleReadBoard(fakeRequest({}), fakeSession(), context, subscriptions, noSpawnProgressFeed, noQueuePlaceFeed);
 
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({
@@ -176,13 +209,13 @@ describe('handleReadBoard', () => {
       projectRepo: { list: vi.fn(() => []), getById: vi.fn() },
       projectGroupRepo: { list: vi.fn(() => []) },
     } as unknown as IpcContext;
-    const response = await handleReadBoard(fakeRequest({ action: 'unsubscribe' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed);
+    const response = await handleReadBoard(fakeRequest({ action: 'unsubscribe' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
     expect(response.ok).toBe(true);
   });
 
   it('rejects an unknown project id', async () => {
     const context = { projectRepo: { getById: vi.fn(() => undefined) } } as unknown as IpcContext;
-    const response = await handleReadBoard(fakeRequest({ projectId: 'ghost' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed);
+    const response = await handleReadBoard(fakeRequest({ projectId: 'ghost' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
     expect(response.ok).toBe(false);
     expect(response.error).toMatch(/no such project/i);
   });
@@ -202,7 +235,7 @@ describe('handleReadBoard', () => {
     const subscriptions = new SubscriptionRegistry();
     const session = fakeSession();
 
-    const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, noSpawnProgressFeed);
+    const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, noSpawnProgressFeed, noQueuePlaceFeed);
 
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({
@@ -211,13 +244,20 @@ describe('handleReadBoard', () => {
       // An ordinary task carries a null workflow: the key is always sent.
       // automations_disabled is a real false even though the row left the
       // column out. An absent key would read on the phone as an older desktop.
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, paused_session_id: null, pausable: false, automations_disabled: false, workflow: null }],
+      tasks: [{
+        id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, paused_session_id: null, pausable: false, automations_disabled: false, workflow: null,
+        queue_place: null, artifacts: [], start_blocked_reason: null,
+      }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
       commandTerminals: [],
       commandTerminalsOffered: true,
       earlierConversationsOffered: true,
+      // This device holds no start-session grant, so it is offered no open.
+      resumeOnOpenOffered: false,
+      // No scale in the config: the default one the desktop's own reader falls back to.
+      priorities: DEFAULT_PRIORITY_CONFIG,
     });
     const snapshot = response.payload as { columns: object[]; tasks: object[]; backlog: object[] };
     expect(snapshot.tasks[0]).not.toHaveProperty('detail_view_state');
@@ -252,7 +292,7 @@ describe('handleReadBoard', () => {
       const session = fakeSession();
       const request = fakeRequest({ projectId: 'proj-1', view: 'full' });
 
-      const before = await handleReadBoard(request, session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      const before = await handleReadBoard(request, session, context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       expect((before.payload as { tasks: Array<{ automations_disabled: unknown }> }).tasks[0].automations_disabled).toBe(false);
 
       row.automations_disabled = true;
@@ -262,7 +302,7 @@ describe('handleReadBoard', () => {
         event: { kind: 'board', projectId: 'proj-1', taskId: 't-1', payload: { change: 'task-updated', ids: ['t-1'] } },
       });
 
-      const after = await handleReadBoard(request, session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      const after = await handleReadBoard(request, session, context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       expect((after.payload as { tasks: Array<{ automations_disabled: unknown }> }).tasks[0].automations_disabled).toBe(true);
     });
 
@@ -277,7 +317,7 @@ describe('handleReadBoard', () => {
       });
       const session = fakeSession();
 
-      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       capturedListener?.({ projectId: 'proj-1', change: 'task-updated', ids: [] });
 
       expect(session.sendMessage).toHaveBeenCalledWith({
@@ -303,6 +343,7 @@ describe('handleReadBoard', () => {
         boardContext(),
         new SubscriptionRegistry(),
         noSpawnProgressFeed,
+        noQueuePlaceFeed,
       );
 
       const snapshot = response.payload as {
@@ -326,6 +367,7 @@ describe('handleReadBoard', () => {
         boardContext(),
         new SubscriptionRegistry(),
         noSpawnProgressFeed,
+        noQueuePlaceFeed,
       );
 
       const snapshot = response.payload as { tasks: Array<{ id: string }>; view: string };
@@ -343,6 +385,7 @@ describe('handleReadBoard', () => {
         boardContext(),
         new SubscriptionRegistry(),
         noSpawnProgressFeed,
+        noQueuePlaceFeed,
       );
 
       expect(response.payload).toHaveProperty('backlog');
@@ -375,7 +418,7 @@ describe('handleReadBoard', () => {
       workflowWireFacts.mockReturnValue(new Map([['t-wf', workflowFact]]));
       const context = boardContext();
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       expect(response.ok).toBe(true);
       const rows = (response.payload as { tasks: Array<{ id: string; workflow: unknown }> }).tasks;
@@ -392,7 +435,7 @@ describe('handleReadBoard', () => {
       workflowWireFacts.mockReturnValue(new Map([['t-wf', workflowFact]]));
       const context = boardContext();
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       expect(response.ok).toBe(true);
       const page = response.payload as { archivedTasks: Array<{ id: string; workflow: unknown }>; archivedTotalCount: number };
@@ -414,10 +457,10 @@ describe('handleReadBoard', () => {
     const subscriptions = new SubscriptionRegistry();
     const session = fakeSession();
 
-    await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, noSpawnProgressFeed);
+    await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, noSpawnProgressFeed, noQueuePlaceFeed);
     expect(subscriptions.has('board:proj-1')).toBe(true);
 
-    const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'unsubscribe' }), session, context, subscriptions, noSpawnProgressFeed);
+    const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'unsubscribe' }), session, context, subscriptions, noSpawnProgressFeed, noQueuePlaceFeed);
     expect(response.ok).toBe(true);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(subscriptions.has('board:proj-1')).toBe(false);
@@ -454,7 +497,7 @@ describe('handleReadBoard', () => {
     });
 
     it('is true only for a paused task in a column that offers Resume, and false otherwise', async () => {
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const tasks = (response.payload as { tasks: Array<{ id: string; resumable: boolean | null }> }).tasks;
       expect(Object.fromEntries(tasks.map((task) => [task.id, task.resumable]))).toEqual({
@@ -469,7 +512,7 @@ describe('handleReadBoard', () => {
     });
 
     it("'sessions' keeps a resumable paused task, and still drops a paused task that offers no Resume", async () => {
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const snapshot = response.payload as { tasks: Array<{ id: string }>; taskCountsByColumnId: Record<string, number> };
       // t-paused stays though its session_id is null; the paused tasks in To Do
@@ -490,7 +533,7 @@ describe('handleReadBoard', () => {
         totalCount: 2,
       });
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       // tasks.list() leaves archived rows out, so this page is the only way a
       // completed task's paused session reaches the phone.
@@ -539,7 +582,7 @@ describe('handleReadBoard', () => {
     });
 
     it('follows the paused session row, not the Resume gate, and is false otherwise', async () => {
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const tasks = (response.payload as { tasks: Array<{ id: string; paused: boolean | null; resumable: boolean | null }> }).tasks;
       expect(Object.fromEntries(tasks.map((task) => [task.id, { paused: task.paused, resumable: task.resumable }]))).toEqual({
@@ -560,7 +603,7 @@ describe('handleReadBoard', () => {
     });
 
     it('names the paused row\'s registry id exactly while the row reads paused (protocol 0.27.0)', async () => {
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const tasks = (response.payload as { tasks: Array<{ id: string; session_id: string | null; paused: boolean | null; paused_session_id: string | null }> }).tasks;
       expect(Object.fromEntries(tasks.map((task) => [task.id, task.paused_session_id]))).toEqual({
@@ -587,7 +630,7 @@ describe('handleReadBoard', () => {
 
     it('a restart that re-registers the paused session under a new id reaches the next snapshot', async () => {
       const readPausedSessionId = async (): Promise<string | null | undefined> => {
-        const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+        const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
         const tasks = (response.payload as { tasks: Array<{ id: string; paused_session_id: string | null }> }).tasks;
         return tasks.find((task) => task.id === 't-paused')?.paused_session_id;
       };
@@ -641,7 +684,7 @@ describe('handleReadBoard', () => {
     });
 
     it('is true for a live session outside To Do, Done and archived included, and false otherwise', async () => {
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const tasks = (response.payload as { tasks: Array<{ id: string; paused: boolean | null; pausable: boolean | null }> }).tasks;
       expect(Object.fromEntries(tasks.map((task) => [task.id, task.pausable]))).toEqual({
@@ -670,7 +713,7 @@ describe('handleReadBoard', () => {
       emitSpawnWaiting(fakeWindow(), 't-fresh', 2);
       emitSpawnWaiting(fakeWindow(), 't-paused', 1);
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const tasks = (response.payload as { tasks: Array<{ id: string; spawn_progress: string | null; pausable: boolean | null }> }).tasks;
       const byId = Object.fromEntries(tasks.map((task) => [task.id, task]));
@@ -694,7 +737,7 @@ describe('handleReadBoard', () => {
       emitSpawnProgress(fakeWindow(), 't-2', 'creating-worktree');
       emitSpawnWaiting(fakeWindow(), 't-3', 2);
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const tasks = (response.payload as { tasks: Array<{ id: string; spawn_progress: string | null }> }).tasks;
       expect(tasks.map((task) => [task.id, task.spawn_progress])).toEqual([
@@ -708,7 +751,7 @@ describe('handleReadBoard', () => {
       // A respawn nulls session_id for the whole gap its label describes.
       emitSpawnProgress(fakeWindow(), 't-2', 'switching-model');
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const snapshot = response.payload as { tasks: Array<{ id: string }>; taskCountsByColumnId: Record<string, number> };
       expect(snapshot.tasks.map((task) => task.id)).toEqual(['t-1', 't-2']);
@@ -730,7 +773,7 @@ describe('handleReadBoard', () => {
       // only the sanitizer stands between it and the phone.
       expect(getInFlightSpawnProgress()['t-2']).toBe(rawLabel);
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const snapshot = response.payload as { tasks: Array<{ id: string; spawn_progress: string | null }>; taskCountsByColumnId: Record<string, number> };
       // t-2 is dropped; t-3, with a real label in flight, still stays.
@@ -746,7 +789,7 @@ describe('handleReadBoard', () => {
       tasksListArchivedPage.mockReturnValue({ tasks: [{ id: 't-done', swimlane_id: 'lane-done', session_id: null }], totalCount: 1 });
       emitSpawnProgress(fakeWindow(), 't-done', 'resuming');
 
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'archived' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       const archived = (response.payload as { archivedTasks: Array<{ spawn_progress: string | null }> }).archivedTasks;
       expect(archived[0].spawn_progress).toBe('Resuming session...');
@@ -755,7 +798,7 @@ describe('handleReadBoard', () => {
     it("a label change for this project's task sends task-updated; another project's sends nothing", async () => {
       const { feed, fire } = controllableSpawnProgressFeed();
       const session = fakeSession();
-      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, boardContext(), new SubscriptionRegistry(), feed);
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, boardContext(), new SubscriptionRegistry(), feed, noQueuePlaceFeed);
 
       fire('proj-OTHER', 't-x');
       expect(session.sendMessage).not.toHaveBeenCalled();
@@ -772,15 +815,79 @@ describe('handleReadBoard', () => {
       const subscriptions = new SubscriptionRegistry();
       const session = fakeSession();
       const context = boardContext();
-      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, first.feed);
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, first.feed, noQueuePlaceFeed);
 
       // The phone re-reads the board after an event, replacing the subscription.
       const second = controllableSpawnProgressFeed();
-      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, second.feed);
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, second.feed, noQueuePlaceFeed);
       expect(first.release).toHaveBeenCalledTimes(1);
 
-      await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'unsubscribe' }), session, context, subscriptions, second.feed);
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'unsubscribe' }), session, context, subscriptions, second.feed, noQueuePlaceFeed);
       expect(second.release).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('queue place feed forwarding', () => {
+    it("a queue change for this project sends one task-updated naming the first id; another project's sends nothing", async () => {
+      const { feed, fire } = controllableQueuePlaceFeed();
+      const session = fakeSession();
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, feed);
+
+      fire('proj-OTHER', ['t-x']);
+      expect(session.sendMessage).not.toHaveBeenCalled();
+
+      fire('proj-1', ['t-2', 't-3']);
+      expect(session.sendMessage).toHaveBeenCalledTimes(1);
+      expect(session.sendMessage).toHaveBeenCalledWith({
+        type: 'event',
+        event: { kind: 'board', projectId: 'proj-1', taskId: 't-2', payload: { change: 'task-updated', ids: ['t-2', 't-3'] } },
+      });
+    });
+
+    it('unsubscribe and a re-subscribe both release the queue feed listener', async () => {
+      const first = controllableQueuePlaceFeed();
+      const subscriptions = new SubscriptionRegistry();
+      const session = fakeSession();
+      const context = boardContext();
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, noSpawnProgressFeed, first.feed);
+
+      const second = controllableQueuePlaceFeed();
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), session, context, subscriptions, noSpawnProgressFeed, second.feed);
+      expect(first.release).toHaveBeenCalledTimes(1);
+
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1', action: 'unsubscribe' }), session, context, subscriptions, noSpawnProgressFeed, second.feed);
+      expect(second.release).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('startBlockedReasonsOf', () => {
+    type Row = Parameters<typeof startBlockedReasonsOf>[0][number];
+    const row = (taskId: string, status: Row['status'], startBlockedReason?: Row['startBlockedReason'], transient = false): Row =>
+      ({ taskId, status, transient, startBlockedReason: startBlockedReason ?? null });
+    const reasonFor = (rows: Row[], liveTaskIds: string[] = []) => startBlockedReasonsOf(rows, new Set(liveTaskIds)).get('t-1');
+
+    it('a suspended row with no reason listed before an exited row with one yields no reason', () => {
+      expect(reasonFor([row('t-1', 'suspended'), row('t-1', 'exited', 'spawn-failed')])).toBeUndefined();
+    });
+
+    it('a suspended row with a reason listed before an exited row with another yields the suspended reason', () => {
+      expect(reasonFor([row('t-1', 'suspended', 'worktree-missing'), row('t-1', 'exited', 'spawn-failed')])).toBe('worktree-missing');
+    });
+
+    it('with two suspended rows the last wins: a later row with no reason clears an earlier reason', () => {
+      expect(reasonFor([row('t-1', 'suspended', 'worktree-missing'), row('t-1', 'suspended')])).toBeUndefined();
+    });
+
+    it('with two suspended rows the last wins: a later reason replaces an earlier absence', () => {
+      expect(reasonFor([row('t-1', 'suspended'), row('t-1', 'suspended', 'folder-missing')])).toBe('folder-missing');
+    });
+
+    it('a transient suspended row is ignored', () => {
+      expect(reasonFor([row('t-1', 'suspended', 'worktree-missing', true)])).toBeUndefined();
+    });
+
+    it('a task with a live session has no reason', () => {
+      expect(reasonFor([row('t-1', 'suspended', 'worktree-missing')], ['t-1'])).toBeUndefined();
     });
   });
 
@@ -798,7 +905,7 @@ describe('handleReadBoard', () => {
     });
 
     it.each(['full', 'sessions'] as const)("the '%s' view lists the project's live terminals by slot, with name and activity", async (view) => {
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       const snapshot = response.payload as { commandTerminals: unknown[]; commandTerminalsOffered: boolean };
       expect(snapshot.commandTerminals).toEqual([
         {
@@ -824,13 +931,13 @@ describe('handleReadBoard', () => {
     it('a workflow\'s own agent is never listed as a terminal: it is transient, but no Command Terminal', async () => {
       // A slot is set on purpose, so only the owner check can keep it off the list.
       registryRows = [{ id: 'workflow-agent', taskId: 'workflow-1', workflowId: 'workflow-1', status: 'running', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-1' }];
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       expect((response.payload as { commandTerminals: unknown[] }).commandTerminals).toEqual([]);
     });
 
     it('a terminal that is not running is not listed', async () => {
       registryRows = [{ id: 'term-1', taskId: 'uuid-1', status: 'exited', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-1' }];
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       expect((response.payload as { commandTerminals: unknown[] }).commandTerminals).toEqual([]);
     });
 
@@ -838,7 +945,7 @@ describe('handleReadBoard', () => {
       registryRows = [{ id: 'term-3', taskId: 'uuid-3', status: 'queued', transient: true, projectId: 'proj-1', commandTerminalSlot: 'slot-3', commandTerminalLabel: null }];
       activityStates = {};
       activityReasons = {};
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       expect((response.payload as { commandTerminals: unknown[] }).commandTerminals).toEqual([
         { sessionId: 'term-3', projectId: 'proj-1', slot: 3, name: 'Command Terminal 3', named: false, activity: { state: null, reason: null } },
       ]);
@@ -851,6 +958,7 @@ describe('handleReadBoard', () => {
         boardContext(),
         new SubscriptionRegistry(),
         noSpawnProgressFeed,
+        noQueuePlaceFeed,
       );
       const snapshot = response.payload as { commandTerminalsOffered: boolean; earlierConversationsOffered: boolean };
       expect(snapshot.commandTerminalsOffered).toBe(false);
@@ -858,7 +966,7 @@ describe('handleReadBoard', () => {
     });
 
     it.each(['full', 'sessions'] as const)("the '%s' view tells a device that holds the verb it may list and resume earlier conversations", async (view) => {
-      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
       expect((response.payload as { earlierConversationsOffered: boolean }).earlierConversationsOffered).toBe(true);
     });
 
@@ -874,13 +982,96 @@ describe('handleReadBoard', () => {
         },
       } as unknown as IpcContext;
       const session = fakeSession();
-      await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), session, context, new SubscriptionRegistry(), noSpawnProgressFeed);
+      await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'sessions' }), session, context, new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
 
       capturedListener?.({ projectId: 'proj-1', change: 'command-terminals-changed', ids: ['term-1'] });
       expect(session.sendMessage).toHaveBeenCalledWith({
         type: 'event',
         event: { kind: 'board', projectId: 'proj-1', payload: { change: 'command-terminals-changed', ids: ['term-1'] } },
       });
+    });
+  });
+
+  describe('card parity on the snapshot (protocol 0.28.0)', () => {
+    type SnapshotTask = { id: string; queue_place: unknown; start_blocked_reason: unknown; artifacts: unknown };
+    const tasksOf = (payload: unknown): Map<string, SnapshotTask> =>
+      new Map((payload as { tasks: SnapshotTask[] }).tasks.map((task) => [task.id, task]));
+    const queued = (taskId: string, sessionId: string, projectId = 'proj-1') =>
+      ({ sessionId, taskId, projectId, projectName: 'Alpha', title: `Task ${taskId}`, displayId: 1 });
+
+    function contextWithConfig(config: Record<string, unknown>): IpcContext {
+      return { ...boardContext(), configManager: { getEffectiveConfig: vi.fn(() => config) } } as unknown as IpcContext;
+    }
+
+    it('places a queued task in its column line, and one past the column in the agent line, as the desktop card reads them', async () => {
+      tasksList.mockReturnValue([{ id: 't-merge-1' }, { id: 't-merge-2' }, { id: 't-free' }, { id: 't-idle' }]);
+      const mergeLine = { projectId: 'proj-1', swimlaneId: 'lane-merge', columnName: 'Merge', maxAgents: 1, holders: [queued('t-holder', 'sess-holder')], waiting: [queued('t-merge-1', 'sess-m1'), queued('t-merge-2', 'sess-m2')] };
+      queueSnapshot = { columns: [mergeLine], global: [queued('t-merge-1', 'sess-m1'), queued('t-free', 'sess-free'), queued('t-merge-2', 'sess-m2')] };
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), contextWithConfig({ agent: { maxConcurrentSessions: 4 } }), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+      const tasks = tasksOf(response.payload);
+
+      expect(tasks.get('t-merge-1')?.queue_place).toEqual({ kind: 'column', position: 1, total: 2, column_name: 'Merge', max_agents: 1 });
+      expect(tasks.get('t-merge-2')?.queue_place).toEqual({ kind: 'column', position: 2, total: 2, column_name: 'Merge', max_agents: 1 });
+      // The column holds both Merge tasks back, so the agent line skips them.
+      expect(tasks.get('t-free')?.queue_place).toEqual({ kind: 'global', position: 1, total: 1, column_name: null, max_agents: 4 });
+      expect(tasks.get('t-idle')?.queue_place).toBeNull();
+    });
+
+    it("carries the reason a paused or ended session's start never reached an agent, and none for a live task", async () => {
+      tasksList.mockReturnValue([{ id: 't-gone' }, { id: 't-failed' }, { id: 't-live' }, { id: 't-paused-ok' }]);
+      registryRows = [
+        { id: 'sess-gone', taskId: 't-gone', status: 'suspended', startBlockedReason: 'worktree-missing' },
+        { id: 'sess-failed', taskId: 't-failed', status: 'exited', startBlockedReason: 'spawn-failed' },
+        // A queued respawn behind a blocked pause shows the queued session, not the reason.
+        { id: 'sess-live-old', taskId: 't-live', status: 'suspended', startBlockedReason: 'never-started' },
+        { id: 'sess-live', taskId: 't-live', status: 'queued' },
+        // The paused row the card shows reached its agent, whatever an older ended row says.
+        { id: 'sess-old-exit', taskId: 't-paused-ok', status: 'exited', startBlockedReason: 'spawn-failed' },
+        { id: 'sess-paused', taskId: 't-paused-ok', status: 'suspended', startBlockedReason: null },
+      ];
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+      const tasks = tasksOf(response.payload);
+
+      expect(tasks.get('t-gone')?.start_blocked_reason).toBe('worktree-missing');
+      expect(tasks.get('t-failed')?.start_blocked_reason).toBe('spawn-failed');
+      expect(tasks.get('t-live')?.start_blocked_reason).toBeNull();
+      expect(tasks.get('t-paused-ok')?.start_blocked_reason).toBeNull();
+    });
+
+    it('a global place has a null max_agents when the config sets no agent cap', async () => {
+      tasksList.mockReturnValue([{ id: 't-free' }]);
+      queueSnapshot = { columns: [], global: [queued('t-free', 'sess-free')] };
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), contextWithConfig({}), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+
+      expect(tasksOf(response.payload).get('t-free')?.queue_place).toEqual({ kind: 'global', position: 1, total: 1, column_name: null, max_agents: null });
+    });
+
+    it("sends the project's priority scale, and the default one when the project has none", async () => {
+      const scale = [{ label: 'Whenever', color: '#6b7280' }, { label: 'Soon', color: '#ef4444' }];
+      const withScale = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), contextWithConfig({ backlog: { priorities: scale } }), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+      expect((withScale.payload as { priorities: unknown }).priorities).toEqual(scale);
+
+      const emptyScale = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), contextWithConfig({ backlog: { priorities: [] } }), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+      expect((emptyScale.payload as { priorities: unknown }).priorities).toEqual(DEFAULT_PRIORITY_CONFIG);
+    });
+
+    it("carries a task's links by the name its chip shows", async () => {
+      tasksList.mockReturnValue([{ id: 't-design', artifacts: [{ url: 'https://example.com/review', name: 'Design review', source: 'agent', added_at: '2026-11-11T00:00:00.000Z' }] }]);
+
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+
+      expect(tasksOf(response.payload).get('t-design')?.artifacts).toEqual([{ url: 'https://example.com/review', name: 'Design review' }]);
+    });
+
+    it.each(['full', 'sessions'] as const)("the '%s' view offers an open's resume only to a device that holds start-session", async (view) => {
+      const granted = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(['read-board', 'start-session']), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+      expect((granted.payload as { resumeOnOpenOffered: boolean }).resumeOnOpenOffered).toBe(true);
+
+      const notGranted = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(['read-board']), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed, noQueuePlaceFeed);
+      expect((notGranted.payload as { resumeOnOpenOffered: boolean }).resumeOnOpenOffered).toBe(false);
     });
   });
 });

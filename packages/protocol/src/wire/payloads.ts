@@ -144,6 +144,16 @@ export interface ReadStreamResponsePayload {
    * which a client reads as "offer no Resume".
    */
   resumable?: boolean;
+  /**
+   * True when this desktop answers `start-session` with `trigger: 'open'`
+   * (protocol 0.28.0): it resumes a task the idle timeout paused because the
+   * person opened it, and does nothing else. The copy on the board snapshot
+   * (`ReadBoardSnapshotResponsePayload.resumeOnOpenOffered`) says the same;
+   * this one is here because a push tap opens the session view, which reads
+   * this stream before any board read. Absent from older desktops, which drop
+   * the trigger and take the Resume button's path, so a phone sends nothing.
+   */
+  resumeOnOpenOffered?: boolean;
 }
 
 /** Phone-side narrowing of a read-stream subscribe response. Throws on a malformed required field. */
@@ -189,6 +199,10 @@ export function parseReadStreamResponsePayload(payload: JsonValue): ReadStreamRe
   if (payload.resumable !== undefined) {
     if (typeof payload.resumable !== 'boolean') throw new Error('read-stream response has an invalid "resumable"');
     response.resumable = payload.resumable;
+  }
+  if (payload.resumeOnOpenOffered !== undefined) {
+    if (typeof payload.resumeOnOpenOffered !== 'boolean') throw new Error('read-stream response has an invalid "resumeOnOpenOffered"');
+    response.resumeOnOpenOffered = payload.resumeOnOpenOffered;
   }
   return response;
 }
@@ -406,6 +420,51 @@ export interface ReadBoardSnapshotResponsePayload {
    * refuse as malformed.
    */
   earlierConversationsOffered?: boolean;
+  /**
+   * True when this desktop answers `start-session` with `trigger: 'open'` and
+   * the device holds `start-session` (protocol 0.28.0). See
+   * `StartSessionRequestPayload.trigger`. Absent from an older desktop, which
+   * drops the trigger and takes the Resume button's path: send nothing there.
+   */
+  resumeOnOpenOffered?: boolean;
+  /**
+   * The project's priority scale, lowest first (protocol 0.28.0). A task's or
+   * backlog item's `priority` is an index into it. The entry at index 0 draws
+   * nothing on a card, whatever it is named: position decides, not the label.
+   * An index past the end draws `P<n>` in gray (#6b7280). Labels are the
+   * stored text, untranslated.
+   *
+   * The desktop's settings raise no board event, so a change to the scale
+   * reaches the phone with the next snapshot it reads. Absent from an older
+   * desktop: draw the raw index, as before.
+   */
+  priorities?: PriorityLevelWire[];
+}
+
+/** One level of a project's priority scale (protocol 0.28.0). */
+export interface PriorityLevelWire {
+  label: string;
+  /** "#rrggbb". A malformed color reads as gray (#6b7280). */
+  color: string;
+}
+
+/** The gray a priority level without a usable color, or past the scale's end, draws in. */
+export const PRIORITY_FALLBACK_COLOR = '#6b7280';
+
+/**
+ * Narrows a priority scale. Never drops an entry, since a task's priority is
+ * an index and a dropped entry would shift every level above it: a malformed
+ * one reads as `P<index>` in gray.
+ */
+function parsePriorityScale(value: unknown): PriorityLevelWire[] {
+  if (!Array.isArray(value)) throw new Error('read-board response has a non-array "priorities"');
+  return value.map((entry, index): PriorityLevelWire => {
+    const label = isRecord(entry) && typeof entry.label === 'string' ? entry.label : `P${index}`;
+    const color = isRecord(entry) && typeof entry.color === 'string' && ACCENT_COLOR_PATTERN.test(entry.color)
+      ? entry.color
+      : PRIORITY_FALLBACK_COLOR;
+    return { label, color };
+  });
 }
 
 /**
@@ -516,6 +575,10 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
   if (payload.earlierConversationsOffered !== undefined && typeof payload.earlierConversationsOffered !== 'boolean') {
     throw new Error('read-board response has a non-boolean "earlierConversationsOffered"');
   }
+  if (payload.resumeOnOpenOffered !== undefined && typeof payload.resumeOnOpenOffered !== 'boolean') {
+    throw new Error('read-board response has a non-boolean "resumeOnOpenOffered"');
+  }
+  const priorities = payload.priorities !== undefined ? parsePriorityScale(payload.priorities) : undefined;
   return {
     projectId: payload.projectId,
     columns: payload.columns.map((column) => parseBoardColumnWire(column as JsonValue)),
@@ -534,6 +597,8 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
       : {}),
     ...(payload.commandTerminalsOffered !== undefined ? { commandTerminalsOffered: payload.commandTerminalsOffered } : {}),
     ...(payload.earlierConversationsOffered !== undefined ? { earlierConversationsOffered: payload.earlierConversationsOffered } : {}),
+    ...(payload.resumeOnOpenOffered !== undefined ? { resumeOnOpenOffered: payload.resumeOnOpenOffered } : {}),
+    ...(priorities !== undefined ? { priorities } : {}),
   };
 }
 
@@ -720,6 +785,25 @@ function parseMoveTaskRequestPayload(payload: JsonValue): MoveTaskRequestPayload
 export interface StartSessionRequestPayload {
   taskId: string;
   projectId: string;
+  /**
+   * What prompted the request (protocol 0.28.0). Omitted: a person asked for
+   * the start (the Start or Resume button), and the desktop starts the column
+   * or resumes the paused session.
+   *
+   * `'open'`: the person opened the task (a push tap, a card tap), and the
+   * desktop does what opening it there does: it resumes a task the idle timeout
+   * paused, and only when that sends the agent nothing. A person's own Pause,
+   * a paused workflow, a column the task entered while paused, a launch that
+   * still owes its prompt and a conversation that would start fresh all stay
+   * paused, answered `not-eligible`. Never an error for those: opening is not a
+   * request the person can fail.
+   *
+   * Send it once per open gesture, never on a reconnect or a re-render, and only
+   * when the snapshot's `resumeOnOpenOffered` (or the stream's) is true. An
+   * older desktop drops the key and would take the Resume button's path, which
+   * can deliver a column's message: a paid turn nobody asked for.
+   */
+  trigger?: 'open';
 }
 
 /**
@@ -729,15 +813,24 @@ export interface StartSessionRequestPayload {
  * the task already had a running session, nothing was spawned, and NO event
  * is coming, so a phone that tapped Start from a stale screen must refresh
  * its board and stream itself rather than wait.
+ *
+ * `not-eligible` (protocol 0.28.0) answers only `trigger: 'open'`: nothing was
+ * done, so keep the Resume button. A `starting` open can still end with the
+ * task paused: the desktop decides whether a resume would go fresh only after
+ * its git phase, and then leaves it paused. That reaches the phone as a
+ * `task-updated` board event whose row still reads `paused` and `resumable`,
+ * not as a successor session.
  */
-export type StartSessionOutcome = 'starting' | 'live';
+export type StartSessionOutcome = 'starting' | 'live' | 'not-eligible';
 
 /**
- * `ok` means the start was ACCEPTED (the task exists, is in a column that may
- * run an agent, and either has no live session or already has one), not that
- * a successor is up: the desktop answers before the worktree and PTY work so
- * the response fits the phone's per-verb budget. `outcome` says which of the
- * two accepted shapes this was.
+ * `ok` means the desktop handled the request, not that a successor is up: the
+ * desktop answers before the worktree and PTY work so the response fits the
+ * phone's per-verb budget. A plain start is handled when it is ACCEPTED (the
+ * task exists, is in a column that may run an agent, and either has no live
+ * session or already has one). An open is always handled, and answers
+ * `not-eligible` when it did nothing. `outcome` says which of the three this
+ * was.
  */
 export interface StartSessionResponsePayload {
   ok: boolean;
@@ -748,17 +841,24 @@ function parseStartSessionRequestPayload(payload: JsonValue): StartSessionReques
   if (!isRecord(payload)) throw new Error('start-session payload must be an object');
   if (typeof payload.taskId !== 'string') throw new Error('start-session payload missing "taskId"');
   if (typeof payload.projectId !== 'string') throw new Error('start-session payload missing "projectId"');
-  return {
+  const request: StartSessionRequestPayload = {
     taskId: payload.taskId,
     projectId: payload.projectId,
   };
+  // An unknown trigger is refused rather than dropped: dropped, it would read
+  // as a plain start, the paid path the trigger exists to keep a phone off.
+  if (payload.trigger !== undefined) {
+    if (payload.trigger !== 'open') throw new Error('start-session payload has an invalid "trigger"');
+    request.trigger = payload.trigger;
+  }
+  return request;
 }
 
 /** Phone-side guard: narrows a decoded start-session response before the phone acts on it. */
 export function parseStartSessionResponsePayload(payload: JsonValue): StartSessionResponsePayload {
   if (!isRecord(payload)) throw new Error('start-session response must be an object');
   if (typeof payload.ok !== 'boolean') throw new Error('start-session response missing "ok"');
-  if (payload.outcome !== 'starting' && payload.outcome !== 'live') {
+  if (payload.outcome !== 'starting' && payload.outcome !== 'live' && payload.outcome !== 'not-eligible') {
     throw new Error('start-session response has an invalid "outcome"');
   }
   return { ok: payload.ok, outcome: payload.outcome };

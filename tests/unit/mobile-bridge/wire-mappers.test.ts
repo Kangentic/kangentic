@@ -11,11 +11,15 @@ import {
   SPAWN_PROGRESS_LABEL_WIRE_MAX_LENGTH,
   toBoardColumnWire,
   toBoardTaskWire,
+  toQueuePlaceWire,
   toSpawnProgressLabelWire,
+  toTaskArtifactsWire,
+  type BoardTaskSessionFacts,
 } from '../../../src/main/mobile-bridge/handlers/wire-mappers';
-import { parseBoardColumnWire, parseBoardTaskWire } from '@kangentic/protocol';
+import { BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH, BOARD_TASK_ARTIFACTS_WIRE_MAX, parseBoardColumnWire, parseBoardTaskWire } from '@kangentic/protocol';
 import type { JsonValue } from '@kangentic/protocol';
-import type { Swimlane, Task } from '../../../src/shared/types';
+import { artifactDisplayName } from '../../../src/shared/task-artifacts';
+import type { Swimlane, Task, TaskArtifact } from '../../../src/shared/types';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -51,8 +55,8 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 describe('toBoardTaskWire', () => {
-  /** A task with no paused or live session, for the tests that are not about pausing. */
-  const notPaused = { pausedSessionId: null, resumable: false, pausable: false };
+  /** A task with no paused, live or queued session, for the tests that are not about those. */
+  const notPaused: BoardTaskSessionFacts = { pausedSessionId: null, resumable: false, pausable: false, queuePlace: null, startBlockedReason: null };
 
   it('carries a judged pr_merge_readiness value through to the wire shape', () => {
     const task = makeTask({ pr_merge_readiness: 'ready' });
@@ -75,20 +79,20 @@ describe('toBoardTaskWire', () => {
   });
 
   it('carries resumable as given, true and false, through the phone-side parse', () => {
-    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: 'session-paused', resumable: true, pausable: false }) as unknown as JsonValue).resumable).toBe(true);
+    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { ...notPaused, pausedSessionId: 'session-paused', resumable: true }) as unknown as JsonValue).resumable).toBe(true);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).resumable).toBe(false);
   });
 
   it('carries paused apart from resumable, through the phone-side parse', () => {
     // A paused task in Done: paused, but no Resume on offer.
-    const pausedInDone = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: 'session-paused', resumable: false, pausable: false }) as unknown as JsonValue);
+    const pausedInDone = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { ...notPaused, pausedSessionId: 'session-paused' }) as unknown as JsonValue);
     expect(pausedInDone.paused).toBe(true);
     expect(pausedInDone.resumable).toBe(false);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).paused).toBe(false);
   });
 
   it('carries the paused session id through the phone-side parse, with paused true exactly while it is set', () => {
-    const paused = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: 'session-paused', resumable: true, pausable: false }) as unknown as JsonValue);
+    const paused = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { ...notPaused, pausedSessionId: 'session-paused', resumable: true }) as unknown as JsonValue);
     expect(paused.paused_session_id).toBe('session-paused');
     expect(paused.paused).toBe(true);
     // session_id keeps its meaning: a desktop pause cleared it, and the id
@@ -104,7 +108,7 @@ describe('toBoardTaskWire', () => {
   });
 
   it('carries pausable as given, true and false, through the phone-side parse', () => {
-    const live = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: null, resumable: false, pausable: true }) as unknown as JsonValue);
+    const live = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { ...notPaused, pausable: true }) as unknown as JsonValue);
     expect(live.pausable).toBe(true);
     expect(live.paused).toBe(false);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).pausable).toBe(false);
@@ -128,6 +132,65 @@ describe('toBoardTaskWire', () => {
   it('sanitizes the label it puts on the wire, so a raw git line never reaches the phone as-is', () => {
     const wire = toBoardTaskWire(makeTask(), '\u001b[32mReceiving objects:\u001b[0m 45%\r', notPaused);
     expect(wire.spawn_progress).toBe('Receiving objects: 45%');
+  });
+
+  it('carries the queue place and the start-blocked reason through the phone-side parse, and real nulls without them (protocol 0.28.0)', () => {
+    const queuePlace = { kind: 'column', position: 2, total: 3, column_name: 'Merge', max_agents: 1 };
+    const queued = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { ...notPaused, queuePlace, startBlockedReason: 'worktree-missing' }) as unknown as JsonValue);
+    expect(queued.queue_place).toEqual(queuePlace);
+    expect(queued.start_blocked_reason).toBe('worktree-missing');
+
+    const plain = toBoardTaskWire(makeTask(), null, notPaused);
+    expect(plain.queue_place).toBeNull();
+    expect(plain.start_blocked_reason).toBeNull();
+  });
+
+  it("carries a task's links by their chip names, and an empty list for a task with none (protocol 0.28.0)", () => {
+    const task = makeTask({
+      artifacts: [
+        { url: 'https://example.com/spec', name: 'Spec', source: 'user', added_at: '2026-11-11T00:00:00.000Z' },
+        { url: 'https://example.com/pages/design-review', name: null, source: 'detected', added_at: '2026-11-11T00:00:00.000Z' },
+      ],
+    });
+    const wire = parseBoardTaskWire(toBoardTaskWire(task, null, notPaused) as unknown as JsonValue);
+    expect(wire.artifacts).toEqual([
+      { url: 'https://example.com/spec', name: 'Spec' },
+      // No stored name: the one the desktop chip derives from the link.
+      { url: 'https://example.com/pages/design-review', name: artifactDisplayName({ url: 'https://example.com/pages/design-review', name: null }) },
+    ]);
+    expect(toBoardTaskWire(makeTask({ artifacts: [] }), null, notPaused).artifacts).toEqual([]);
+  });
+});
+
+describe('toTaskArtifactsWire', () => {
+  const artifactAt = (url: string): TaskArtifact => ({ url, name: 'Link', source: 'agent', added_at: '2026-11-11T00:00:00.000Z' });
+
+  it('leaves a link too long to send out whole, rather than cutting it into one that opens the wrong page', () => {
+    const tooLong = `https://example.com/${'a'.repeat(BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH)}`;
+    const wire = toTaskArtifactsWire([artifactAt(tooLong), artifactAt('https://example.com/ok')]);
+    expect(wire.map((artifact) => artifact.url)).toEqual(['https://example.com/ok']);
+  });
+
+  it('stops at the per-task cap, so a board of linked tasks stays inside one frame', () => {
+    const many = Array.from({ length: BOARD_TASK_ARTIFACTS_WIRE_MAX + 5 }, (_, index) => artifactAt(`https://example.com/${index}`));
+    const wire = toTaskArtifactsWire(many);
+    expect(wire).toHaveLength(BOARD_TASK_ARTIFACTS_WIRE_MAX);
+    expect(wire[0].url).toBe('https://example.com/0');
+  });
+});
+
+describe('toQueuePlaceWire', () => {
+  const line = { projectId: 'proj-1', swimlaneId: 'lane-merge', columnName: 'Merge', maxAgents: 1, holders: [], waiting: [] };
+
+  it("names the column and its limit for a column's line, and Max concurrent sessions for the agent line", () => {
+    expect(toQueuePlaceWire({ kind: 'column', position: 1, total: 2, line }, 4))
+      .toEqual({ kind: 'column', position: 1, total: 2, column_name: 'Merge', max_agents: 1 });
+    expect(toQueuePlaceWire({ kind: 'global', position: 3, total: 3, tasks: [] }, 4))
+      .toEqual({ kind: 'global', position: 3, total: 3, column_name: null, max_agents: 4 });
+  });
+
+  it('is null for a task with no place in line', () => {
+    expect(toQueuePlaceWire(null, 4)).toBeNull();
   });
 });
 

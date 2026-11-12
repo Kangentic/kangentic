@@ -45,8 +45,8 @@ function fakeRequest(payload: Record<string, unknown>): CapabilityRequestMessage
   return { type: 'capability-request', requestId: 'req-1', verb: 'read-stream', payload };
 }
 
-function fakeSession(): BridgeSession {
-  return { deviceId: 'device-1', isEstablished: true, sendMessage: vi.fn() } as unknown as BridgeSession;
+function fakeSession(capabilities: readonly string[] = ['read-stream']): BridgeSession {
+  return { deviceId: 'device-1', isEstablished: true, sendMessage: vi.fn(), capabilities: new Set(capabilities) } as unknown as BridgeSession;
 }
 
 const usageFixture = {
@@ -2201,5 +2201,93 @@ describe('handleReadStream', () => {
       ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
     );
     expect(permissionPushes).toHaveLength(0);
+  });
+
+  // A push tap opens the session view before any board read, so the offer of
+  // an open's resume rides the stream too (protocol 0.28.0).
+  it('offers an open\'s resume only to a device that holds start-session', async () => {
+    const context = { sessionManager } as unknown as IpcContext;
+    const granted = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(['read-stream', 'start-session']), context, new SubscriptionRegistry());
+    expect((granted.payload as { resumeOnOpenOffered?: boolean }).resumeOnOpenOffered).toBe(true);
+
+    const notGranted = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(['read-stream']), context, new SubscriptionRegistry());
+    expect((notGranted.payload as { resumeOnOpenOffered?: boolean }).resumeOnOpenOffered).toBe(false);
+  });
+
+  describe('the stopped mark (protocol 0.28.0)', () => {
+    function activityPushes(session: BridgeSession): Array<Record<string, unknown>> {
+      return vi.mocked(session.sendMessage).mock.calls
+        .map((call) => (call[0] as { event?: { kind: string; payload: Record<string, unknown> } }).event)
+        .filter((event): event is { kind: string; payload: Record<string, unknown> } => event?.kind === 'activity' && event.payload.type === 'activity')
+        .map((event) => event.payload);
+    }
+
+    // The board stopping an idle task arrives on 'activity-reason' alone, and
+    // so do ~180 reason refreshes a turn: only the flip is worth a push.
+    it('forwards a reason refresh that flips the mark, once each way, and no other refresh', async () => {
+      sessionManager.getActivityReason.mockReturnValue({ kind: 'idle', since: 5 } as never);
+      const session = fakeSession();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, { sessionManager } as unknown as IpcContext, new SubscriptionRegistry());
+
+      sessionManager.emit('activity-reason', 'sess-1', 'idle', { kind: 'idle', since: 5 });
+      sessionManager.emit('activity-reason', 'sess-1', 'idle', { kind: 'idle', since: 5, stopped: true });
+      sessionManager.emit('activity-reason', 'sess-1', 'idle', { kind: 'idle', since: 5, stopped: true });
+      sessionManager.emit('activity-reason', 'sess-other', 'idle', { kind: 'idle', since: 5 });
+      sessionManager.emit('activity-reason', 'sess-1', 'idle', { kind: 'idle', since: 5 });
+
+      expect(activityPushes(session)).toEqual([
+        { type: 'activity', state: 'idle', reason: { kind: 'idle', since: 5, stopped: true } },
+        { type: 'activity', state: 'idle', reason: { kind: 'idle', since: 5 } },
+      ]);
+    });
+
+    it('a mark already in the snapshot is not pushed again by an unchanged refresh', async () => {
+      sessionManager.getActivityReason.mockReturnValue({ kind: 'idle', since: 5, stopped: true } as never);
+      const session = fakeSession();
+      const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, { sessionManager } as unknown as IpcContext, new SubscriptionRegistry());
+      expect((response.payload as { activity: { reason: unknown } }).activity.reason).toEqual({ kind: 'idle', since: 5, stopped: true });
+
+      sessionManager.emit('activity-reason', 'sess-1', 'idle', { kind: 'idle', since: 5, stopped: true });
+
+      expect(activityPushes(session)).toEqual([]);
+    });
+
+    it('a full activity event carrying the stopped mark counts as sent, so a same-mark reason refresh pushes nothing more', async () => {
+      sessionManager.getActivityReason.mockReturnValue({ kind: 'idle', since: 5 } as never);
+      const session = fakeSession();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, { sessionManager } as unknown as IpcContext, new SubscriptionRegistry());
+
+      sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle', since: 5, stopped: true });
+      sessionManager.emit('activity-reason', 'sess-1', 'idle', { kind: 'idle', since: 5, stopped: true });
+
+      expect(activityPushes(session)).toEqual([
+        { type: 'activity', state: 'idle', reason: { kind: 'idle', since: 5, stopped: true } },
+      ]);
+    });
+
+    it('a full activity event with a plain idle leaves the mark unset, so a stopped reason refresh is pushed', async () => {
+      sessionManager.getActivityReason.mockReturnValue({ kind: 'idle', since: 5, stopped: true } as never);
+      const session = fakeSession();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), session, { sessionManager } as unknown as IpcContext, new SubscriptionRegistry());
+
+      sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle', since: 5 });
+      sessionManager.emit('activity-reason', 'sess-1', 'idle', { kind: 'idle', since: 5, stopped: true });
+
+      expect(activityPushes(session)).toEqual([
+        { type: 'activity', state: 'idle', reason: { kind: 'idle', since: 5 } },
+        { type: 'activity', state: 'idle', reason: { kind: 'idle', since: 5, stopped: true } },
+      ]);
+    });
+
+    it('stops listening when the subscription ends', async () => {
+      sessionManager.getActivityReason.mockReturnValue({ kind: 'idle', since: 5 } as never);
+      const subscriptions = new SubscriptionRegistry();
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe', terminal: false }), fakeSession(), { sessionManager } as unknown as IpcContext, subscriptions);
+      expect(sessionManager.listenerCount('activity-reason')).toBe(1);
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'unsubscribe' }), fakeSession(), { sessionManager } as unknown as IpcContext, subscriptions);
+
+      expect(sessionManager.listenerCount('activity-reason')).toBe(0);
+    });
   });
 });

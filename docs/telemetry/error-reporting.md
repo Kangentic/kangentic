@@ -461,7 +461,7 @@ in one Sentry org, one triage surface.
   `retry: recovered`, so a recovered failure still shows.
 
   An event carries `stage`, `cause`, `platform`, `agent`, `agent_cli_version`, `start_path` (`board`,
-  `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry`, `open`), `shell`, `attempt`,
+  `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry`, `open`, `phone_open`), `shell`, `attempt`,
   `launcher` (`none`, `present`, `missing`), `command_head` (`present`, `missing`, or `unknown`
   for no recorded path, a bare command name or a WSL shell: whether the CLI path the command builder
   was handed exists at report time, never the path), `command_head_since_detection` (`same`,

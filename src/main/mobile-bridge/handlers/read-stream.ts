@@ -124,6 +124,11 @@ function resolveProjectIdForSession(context: IpcContext, sessionId: string): str
   return null;
 }
 
+/** Whether a reason carries the board's stopped mark, the one bit of a reason refresh a phone is told about. */
+function isStoppedIdle(reason: ActivityReason | null | undefined): boolean {
+  return reason?.kind === 'idle' && reason.stopped === true;
+}
+
 /**
  * Whether the desktop's own task view would offer Resume for this session
  * (`isResumeOffered`). The streamed session's copy of the board row's
@@ -406,15 +411,30 @@ function subscribeReadStream(
     flushTerminal();
     sendEvent(session, { kind: 'terminal-resize', sessionId, taskId, payload: { cols, rows } });
   };
-  const onActivity = (activitySessionId: string, state: ActivityState, reason: ActivityReason): void => {
-    if (activitySessionId !== sessionId) return;
+  // The stopped mark last sent, so a reason-only refresh is forwarded only when
+  // it flips that mark. Seeded from the snapshot the phone just received.
+  let lastSentStopped = isStoppedIdle(context.sessionManager.getActivityReason(sessionId));
+  const pushActivity = (state: ActivityState, reason: ActivityReason): void => {
+    lastSentStopped = isStoppedIdle(reason);
     sendEvent(session, {
       kind: 'activity',
       sessionId,
       taskId,
       payload: { type: 'activity', state, reason: toActivityReasonWire(reason) },
     });
+  };
+  const onActivity = (activitySessionId: string, state: ActivityState, reason: ActivityReason): void => {
+    if (activitySessionId !== sessionId) return;
+    pushActivity(state, reason);
     pushPermissionIfChanged();
+  };
+  // A reason refresh with no state change rides 'activity-reason', about 180
+  // a turn. Only the stopped mark (0.28.0) is worth a phone's push there: the
+  // board stopping or releasing an idle task arrives on this event alone.
+  const onActivityReason = (activitySessionId: string, state: ActivityState, reason: ActivityReason): void => {
+    if (activitySessionId !== sessionId) return;
+    if (isStoppedIdle(reason) === lastSentStopped) return;
+    pushActivity(state, reason);
   };
   /**
    * Usage is token accounting: it ticks on essentially every token, but the
@@ -603,6 +623,7 @@ function subscribeReadStream(
     if (pendingTerminalChunks.length > 0 && !terminalFlushTimer) terminalFlushTimer = setTimeout(flushTerminal, TERMINAL_COALESCE_MS);
   }
   context.sessionManager.on('activity', onActivity);
+  context.sessionManager.on('activity-reason', onActivityReason);
   context.sessionManager.on('usage', onUsage);
   context.sessionManager.on('event', onSessionEvent);
   context.sessionManager.on('exit', onExit);
@@ -615,6 +636,7 @@ function subscribeReadStream(
     releaseDataTap?.();
     context.sessionManager.off('pty-resize', onPtyResize);
     context.sessionManager.off('activity', onActivity);
+    context.sessionManager.off('activity-reason', onActivityReason);
     context.sessionManager.off('usage', onUsage);
     context.sessionManager.off('event', onSessionEvent);
     context.sessionManager.off('exit', onExit);
@@ -860,6 +882,9 @@ export async function handleReadStream(
         sessionStatus: toReadStreamSessionStatusWire(snapshotSession.status),
         resuming: snapshotSession.resuming,
         resumable,
+        // A push tap opens this screen before any board read, so the offer of
+        // an open's resume (0.28.0) rides here as well as on the board.
+        resumeOnOpenOffered: session.capabilities.has('start-session'),
       };
       const response: CapabilityResponseMessage = { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
       return { response, snapshotSession, resumable, awaitedPromptId };

@@ -36,6 +36,7 @@ import {
   parseTranscriptWindowResponsePayload,
   parseCommandTerminalStartResponsePayload,
   parseCommandTerminalEarlierResponsePayload,
+  PRIORITY_FALLBACK_COLOR,
 } from '../../../packages/protocol/src/wire/payloads';
 import type { JsonValue } from '../../../packages/protocol/src/wire/messages';
 
@@ -74,6 +75,9 @@ const boardTaskFixture: JsonValue = {
   pausable: true,
   automations_disabled: false,
   workflow: null,
+  queue_place: null,
+  artifacts: [],
+  start_blocked_reason: null,
 };
 
 const workflowFixture: JsonValue = {
@@ -148,6 +152,19 @@ describe('the permission wait kind', () => {
     expect(parseActivityReasonWire({ kind: 'permission', since: 'soon', waitKind: 'future-kind' })).toBeNull();
     expect(parseActivityReasonWire({ kind: 'nope' })).toBeNull();
     expect(parseActivityReasonWire(null)).toBeNull();
+  });
+});
+
+describe('the stopped mark (protocol 0.28.0)', () => {
+  it('keeps the mark on an idle reason, and an event carrying it still parses', () => {
+    expect(parseActivityReasonWire({ kind: 'idle', since: 5, stopped: true })).toStrictEqual({ kind: 'idle', since: 5, stopped: true });
+    const event: JsonValue = { type: 'activity', state: 'idle', reason: { kind: 'idle', since: 5, stopped: true } };
+    expect(parseActivityEventPayload(event)).toEqual(event);
+  });
+
+  it('reads a mark that is not true as a plain idle', () => {
+    expect(parseActivityReasonWire({ kind: 'idle', since: 5, stopped: 'yes' })).toStrictEqual({ kind: 'idle', since: 5 });
+    expect(parseActivityReasonWire({ kind: 'idle', since: 5, stopped: false })).toStrictEqual({ kind: 'idle', since: 5 });
   });
 });
 
@@ -360,6 +377,48 @@ describe('board row guards', () => {
     const withoutWorkflow = { ...(boardTaskFixture as Record<string, JsonValue>) };
     delete withoutWorkflow.workflow;
     expect(parseBoardTaskWire(withoutWorkflow).workflow).toBeNull();
+  });
+
+  describe('card parity fields (protocol 0.28.0)', () => {
+    const withField = (field: string, value: JsonValue): JsonValue => ({ ...(boardTaskFixture as Record<string, JsonValue>), [field]: value });
+    const withoutFields = (): JsonValue => {
+      const row = { ...(boardTaskFixture as Record<string, JsonValue>) };
+      delete row.queue_place;
+      delete row.artifacts;
+      delete row.start_blocked_reason;
+      return row;
+    };
+
+    it('reads each as null on a row from an older desktop', () => {
+      const parsed = parseBoardTaskWire(withoutFields());
+      expect(parsed.queue_place).toBeNull();
+      expect(parsed.artifacts).toBeNull();
+      expect(parsed.start_blocked_reason).toBeNull();
+    });
+
+    it('passes a queue place through, and keeps a kind it does not know for the client to draw as Queued...', () => {
+      const place = { kind: 'column', position: 1, total: 2, column_name: 'Merge', max_agents: 1 };
+      expect(parseBoardTaskWire(withField('queue_place', place)).queue_place).toEqual(place);
+      expect(parseBoardTaskWire(withField('queue_place', { ...place, kind: 'project' })).queue_place?.kind).toBe('project');
+    });
+
+    it('costs a malformed queue place only its count, never the task', () => {
+      for (const malformed of [{ kind: 'global', position: 0, total: 1 }, { kind: 'global', position: 3, total: 2 }, { position: 1, total: 1 }, 'first']) {
+        const parsed = parseBoardTaskWire(withField('queue_place', malformed as JsonValue));
+        expect(parsed.id).toBe('t-1');
+        expect(parsed.queue_place).toBeNull();
+      }
+    });
+
+    it('passes links through and drops an entry it cannot read', () => {
+      const parsed = parseBoardTaskWire(withField('artifacts', [{ url: 'https://example.com/spec', name: 'Spec' }, { url: 'https://example.com/x' }, 'loose']));
+      expect(parsed.artifacts).toEqual([{ url: 'https://example.com/spec', name: 'Spec' }]);
+    });
+
+    it('passes a start-blocked reason through, a value it does not know included', () => {
+      expect(parseBoardTaskWire(withField('start_blocked_reason', 'worktree-missing')).start_blocked_reason).toBe('worktree-missing');
+      expect(parseBoardTaskWire(withField('start_blocked_reason', 'quota')).start_blocked_reason).toBe('quota');
+    });
   });
 
   it('parses a workflow task\'s strip, wait and lock', () => {
@@ -807,6 +866,42 @@ describe('read-* response parsers', () => {
     // because nothing was spawned and no event is coming.
     expect(parseStartSessionResponsePayload({ ok: true, outcome: 'starting', extra: 1 })).toEqual({ ok: true, outcome: 'starting' });
     expect(parseStartSessionResponsePayload({ ok: true, outcome: 'live' })).toEqual({ ok: true, outcome: 'live' });
+  });
+
+  it('parses the open outcome `not-eligible` (protocol 0.28.0)', () => {
+    expect(parseStartSessionResponsePayload({ ok: true, outcome: 'not-eligible' })).toEqual({ ok: true, outcome: 'not-eligible' });
+  });
+
+  it('carries the snapshot\'s resume-on-open offer and priority scale, tolerating absence (pre-0.28.0 desktop)', () => {
+    const base = { projectId: 'p-1', columns: [], tasks: [] };
+    const scale = [{ label: 'None', color: '#6b7280' }, { label: 'Urgent', color: '#ef4444' }];
+    expect(parseReadBoardResponsePayload({ ...base, resumeOnOpenOffered: true, priorities: scale })).toEqual({ ...base, resumeOnOpenOffered: true, priorities: scale });
+    const bare = parseReadBoardResponsePayload(base);
+    expect('resumeOnOpenOffered' in bare).toBe(false);
+    expect('priorities' in bare).toBe(false);
+    expect(() => parseReadBoardResponsePayload({ ...base, resumeOnOpenOffered: 'yes' })).toThrow(/resumeOnOpenOffered/);
+    expect(() => parseReadBoardResponsePayload({ ...base, priorities: 'High' })).toThrow(/priorities/);
+  });
+
+  // A priority is an index, so a dropped level would shift every level above it.
+  it('keeps every priority level in place, reading a malformed one as P<index> in gray', () => {
+    const parsed = parseReadBoardResponsePayload({
+      projectId: 'p-1', columns: [], tasks: [],
+      priorities: [{ label: 'None', color: '#6b7280' }, 'broken', { label: 'High', color: 'orange' }, { label: 'Urgent', color: '#ef4444' }],
+    }) as { priorities: unknown };
+    expect(parsed.priorities).toEqual([
+      { label: 'None', color: '#6b7280' },
+      { label: 'P1', color: PRIORITY_FALLBACK_COLOR },
+      { label: 'High', color: PRIORITY_FALLBACK_COLOR },
+      { label: 'Urgent', color: '#ef4444' },
+    ]);
+  });
+
+  it('carries the stream\'s resume-on-open offer, tolerating absence (pre-0.28.0 desktop)', () => {
+    const base = { scrollback: '', activity: { state: null, reason: null }, usage: null, awaitedPromptId: null };
+    expect(parseReadStreamResponsePayload({ ...base, resumeOnOpenOffered: true }).resumeOnOpenOffered).toBe(true);
+    expect('resumeOnOpenOffered' in parseReadStreamResponsePayload(base)).toBe(false);
+    expect(() => parseReadStreamResponsePayload({ ...base, resumeOnOpenOffered: 1 })).toThrow(/resumeOnOpenOffered/);
   });
 
   it('rejects a start-session response with a missing ok or an unknown outcome', () => {
