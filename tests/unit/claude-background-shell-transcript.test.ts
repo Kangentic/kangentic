@@ -158,6 +158,37 @@ describe('reportTerminatedBackgroundShells', () => {
     expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bpartial01', 'bvqiw3a6s'] })).toEqual(['bvqiw3a6s']);
   });
 
+  it('keeps the half line that follows the end of a skipped line as carry, and completes it on the next read', () => {
+    const shellIds = ['bpartial01', 'bvqiw3a6s'];
+    fs.writeFileSync(transcriptPath, `{"type":"assistant","text":"${'z'.repeat(FIRST_READ_LOOKBACK_BYTES + 16)}`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    // One append ends the skipped line and starts a real notification line,
+    // with no trailing newline. The discard drops the first part; the
+    // trailing half must survive as carry.
+    const notificationLine = terminationLine('bvqiw3a6s');
+    const splitAt = Math.floor(notificationLine.length / 2);
+    fs.appendFileSync(transcriptPath, `"}\n${notificationLine.slice(0, splitAt)}`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    fs.appendFileSync(transcriptPath, `${notificationLine.slice(splitAt)}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual(['bvqiw3a6s']);
+  });
+
+  it('stops skipping a partial line when the transcript shrinks, so the first line written after the re-anchor is read', () => {
+    const shellIds = ['bap8rr008', 'bvqiw3a6s'];
+    fs.writeFileSync(transcriptPath, `{"type":"assistant","text":"${'z'.repeat(FIRST_READ_LOOKBACK_BYTES + 16)}`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    // Rewritten smaller than the stored offset: the cursor re-anchors at the
+    // new EOF and is no longer inside any line.
+    fs.writeFileSync(transcriptPath, `${terminationLine('bap8rr008')}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual(['bvqiw3a6s']);
+  });
+
   it('reports a tracked shell id once its terminal notification is appended after the anchor', () => {
     fs.writeFileSync(transcriptPath, '');
     // An empty file has nothing to look back at: the cursor starts at 0.
@@ -241,14 +272,15 @@ describe('reportTerminatedBackgroundShells', () => {
 
   it('returns [] for a non-id-shaped agentSessionId, even when a matching terminal notification exists at the same resolved path (guards a path-traversal-shaped id)', () => {
     fs.writeFileSync(transcriptPath, '');
-    // Anchor the cursor at EOF for the REAL transcript path via a legitimate call.
+    // Start the cursor for the REAL transcript path via a legitimate first
+    // call. The file is empty, so the cursor stands at its end.
     expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] })).toEqual([]);
     fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
 
     // A path-traversal-shaped id that `path.join` normalizes to the exact
     // same resolved file as `agentSessionId` - proving the guard, not merely
     // file-not-found, is what keeps this rejected. Without the guard this
-    // call would tail the already-anchored cursor for that identical path and
+    // call would tail the already-started cursor for that identical path and
     // report the id just appended above.
     const traversalId = `x/../${agentSessionId}`;
     expect(

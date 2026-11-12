@@ -1846,11 +1846,20 @@ describe('build-review-pack.mjs', () => {
         const packContent = readPack(repoDirectory);
 
         expect(packContent).toContain('## Full file: tracked.txt');
-        expect(packContent).toContain(
-          '## Not shown: linked-modules (binary, missing, or >1MB; new, untracked; read on demand)',
-        );
-        expect(packContent).toMatch(/^- linked-modules \(churn \d+; binary, missing, or >1MB\)$/m);
-        expect(packContent).not.toContain('content behind the link');
+        // Git lists a directory symlink as one path, which is the shape that threw EISDIR. Git for
+        // Windows with core.symlinks off walks a junction as a plain directory and lists the files
+        // inside it, so there the pack carries them like any other untracked file.
+        const untrackedPaths = runGit(['ls-files', '--others', '--exclude-standard'], repoDirectory).split('\n');
+        if (untrackedPaths.includes('linked-modules')) {
+          expect(packContent).toContain(
+            '## Not shown: linked-modules (binary, missing, or >1MB; new, untracked; read on demand)',
+          );
+          expect(packContent).toMatch(/^- linked-modules \(churn \d+; binary, missing, or >1MB\)$/m);
+          expect(packContent).not.toContain('content behind the link');
+        } else {
+          expect(untrackedPaths).toContain('linked-modules/inside.txt');
+          expect(packContent).toContain('## Full file: linked-modules/inside.txt');
+        }
         assertTocLineAccuracyAndHeaderTotal(packContent);
       } finally {
         fs.rmSync(linkTargetDirectory, { recursive: true, force: true });

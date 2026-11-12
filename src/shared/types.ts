@@ -7261,13 +7261,13 @@ export interface AdapterRuntimeStrategy {
      * a subagent/Task completion, whose id is never a tracked shell) can
      * never match.
      *
-     * Implementations read only NEW transcript bytes since the previous
-     * call (an internal per-transcript cursor) so repeated polling stays
-     * cheap. The first call for a transcript reads a bounded window back
-     * from its end, because a shell that exits at once can be reported
-     * before the caller first asks (#803). Must not throw: return [] when the transcript is missing,
-     * unreadable, or nothing terminal appeared. Omit entirely for agents
-     * whose transcript carries no such signal.
+     * The first call for a transcript reads a bounded window back from its
+     * end, because a shell that exits at once can be reported before the
+     * caller first asks (#803). Every later call reads only the bytes
+     * appended since the previous one (an internal per-transcript cursor),
+     * so repeated polling stays cheap. Must not throw: return [] when the
+     * transcript is missing, unreadable, or nothing terminal appeared. Omit
+     * entirely for agents whose transcript carries no such signal.
      */
     reportTerminatedShells?(options: {
       cwd: string;
