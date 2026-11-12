@@ -87,7 +87,7 @@ vi.mock('../../src/main/db/repositories/action-repository', () => ({
   },
 }));
 
-import { buildBoardConfigFromDb } from '../../src/main/config/board-config/build-config';
+import { buildBoardConfigFromDb, COLUMN_FIELD_VALUE_READERS } from '../../src/main/config/board-config/build-config';
 import { applyBoardConfigToDb } from '../../src/main/config/board-config/apply-config';
 
 // ---------------------------------------------------------------------------
@@ -217,6 +217,23 @@ describe('board-config parity: coverage', () => {
         + `ROUNDTRIP_CASES (and wire it into build-config.ts + apply-config.ts) or to `
         + `STRUCTURAL_TEAM_FIELDS if it needs special handling.`,
       ).toBe(true);
+    }
+  });
+
+  it('every team-shared column key has a read-back in COLUMN_FIELD_VALUE_READERS', () => {
+    // The write-back saves an edit to a field a kangentic.local.json entry sets by
+    // reading the lane's value back through these readers. A team field with none
+    // is saved to the team file instead, so a personal edit leaks to teammates.
+    // `automations` is serialized with its rows and `id` is identity, so neither has one.
+    const structuralConfigKeys: Array<keyof BoardColumnConfig> = ['name', 'role', 'planExitTarget'];
+    const configKeys = [...ROUNDTRIP_CASES.map((entry) => entry.configKey), ...structuralConfigKeys];
+
+    for (const configKey of configKeys) {
+      expect(
+        COLUMN_FIELD_VALUE_READERS[configKey],
+        `Column key '${String(configKey)}' is team-shared but has no entry in COLUMN_FIELD_VALUE_READERS `
+        + '(build-config.ts), so an edit to it cannot be saved to kangentic.local.json.',
+      ).toBeTypeOf('function');
     }
   });
 
