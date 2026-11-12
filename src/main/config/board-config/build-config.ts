@@ -12,6 +12,7 @@ import type {
 } from '../../../shared/types';
 import { CURRENT_VERSION, isJsonObject } from './config-helpers';
 import { COLUMN_FIELD_DEFAULTS } from './column-field-defaults';
+import { textMatchFileValue } from '../../../shared/final-line-match';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -312,10 +313,12 @@ function serializeGroup(
       // Only `false` is written: an absent key means enabled, which keeps the
       // common row to two keys plus its fields.
       if (!automation.enabled) row.enabled = false;
-      // One Condition kind per row: a Text match is written as `finalLine`, an
-      // Agent evaluation as `condition`, and the other key is left out.
-      if (automation.final_line) row.finalLine = automation.final_line;
-      else if (automation.condition) row.condition = automation.condition;
+      // One Condition kind per row, written as the dialog's card holds it: the
+      // kind inside `condition`. One pattern stays a string, as a reader expects
+      // in a diff; several are a list. The old `finalLine` key is never written.
+      const text = textMatchFileValue(automation.final_line);
+      if (text !== null) row.condition = { text };
+      else if (automation.condition) row.condition = { agent: automation.condition };
       if (automation.max_runs !== null) row.maxRuns = automation.max_runs;
 
       const fields = isAutomationType(automation.type) ? AUTOMATION_MANIFEST[automation.type].fields : [];

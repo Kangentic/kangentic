@@ -119,6 +119,10 @@ msgstr "A workflow task's <workflow> block: its route, its neighbours, and how i
 msgid "Agent Monitor"
 msgstr "Agent Monitor"
 
+#: src/shared/final-line-match.ts
+msgid "Any line but this one"
+msgstr "Any line but this one"
+
 #: src/shared/transcript-format.ts
 msgid "Approved automatically"
 msgstr "Approved automatically"
@@ -241,12 +245,8 @@ msgid "Condition: only if {condition}."
 msgstr "Condition: only if {condition}."
 
 #: src/shared/automation-describe.ts
-msgid "Condition: only if the last line reads \"{line}\"."
-msgstr "Condition: only if the last line reads \"{line}\"."
-
-#: src/shared/final-line-match.ts
-msgid "Contains it"
-msgstr "Contains it"
+msgid "Condition: only if the last line {rule}."
+msgstr "Condition: only if the last line {rule}."
 
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
@@ -281,6 +281,10 @@ msgstr "Dev-server port this task reserved. Usually empty - one exists only once
 #: src/shared/keybindings.ts
 msgid "Dismiss dialog"
 msgstr "Dismiss dialog"
+
+#: src/shared/automation-describe.ts
+msgid "does not read {pattern}"
+msgstr "does not read {pattern}"
 
 #: src/shared/knowledge-graph-task-fields.ts
 msgctxt "task status"
@@ -336,10 +340,6 @@ msgstr "Empty until the task has an artifact."
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "Empty until the task is linked to a tracker issue."
 
-#: src/shared/final-line-match.ts
-msgid "Ends with it"
-msgstr "Ends with it"
-
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
 msgid "English"
@@ -348,10 +348,6 @@ msgstr "English"
 #: src/shared/relay.ts
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
 msgstr "Enter a full relay URL, e.g. wss://relay.example.com."
-
-#: src/shared/final-line-match.ts
-msgid "Exactly this line"
-msgstr "Exactly this line"
 
 #: src/shared/pop-out.ts
 msgid "File Diff"
@@ -676,12 +672,12 @@ msgid "Only if {condition}."
 msgstr "Only if {condition}."
 
 #: src/shared/automation-describe.ts
-msgid "only if the last line reads \"{line}\""
-msgstr "only if the last line reads \"{line}\""
+msgid "only if the last line {rule}"
+msgstr "only if the last line {rule}"
 
 #: src/shared/automation-describe.ts
-msgid "Only if the last line reads \"{line}\"."
-msgstr "Only if the last line reads \"{line}\"."
+msgid "Only if the last line {rule}."
+msgstr "Only if the last line {rule}."
 
 #: src/shared/knowledge-graph-task-fields.ts
 msgctxt "task status"
@@ -828,6 +824,22 @@ msgstr "Queued..."
 #: src/shared/keybindings.ts
 msgid "Quick Find"
 msgstr "Quick Find"
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}"
+msgstr "reads {patterns}"
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}, but not {excluded}"
+msgstr "reads {patterns}, but not {excluded}"
+
+#: src/shared/automation-describe.ts
+msgid "reads neither {first} nor {second}"
+msgstr "reads neither {first} nor {second}"
+
+#: src/shared/automation-describe.ts
+msgid "reads none of {patterns}"
+msgstr "reads none of {patterns}"
 
 #: src/shared/keybindings.ts
 msgid "Rebuild main and preload, then restart. Agents pause and resume."
@@ -1041,8 +1053,16 @@ msgid "Starts the agent."
 msgstr "Starts the agent."
 
 #: src/shared/final-line-match.ts
-msgid "Starts with it"
-msgstr "Starts with it"
+msgid "Starts with \"Ready for\""
+msgstr "Starts with \"Ready for\""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", but is not \"Ready for review\""
+msgstr "Starts with \"Ready for\", but is not \"Ready for review\""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", or is \"Done\""
+msgstr "Starts with \"Ready for\", or is \"Done\""
 
 #: src/shared/keybindings.ts
 msgid "Switch board / backlog"

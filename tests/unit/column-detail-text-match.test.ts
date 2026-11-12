@@ -64,7 +64,7 @@ describe('handleGetColumnDetail: the Text match guard on an automation row', () 
   it('words a Text match row with the line it needs the agent to end on', () => {
     writeTurnEndRows();
 
-    expect(lineFor('Verdict ping')).toContain('only if the last line reads: Verdict: Ready');
+    expect(lineFor('Verdict ping')).toContain('only if the last line reads "Verdict: Ready"');
   });
 
   it('keeps a wildcard pattern exactly as written', () => {
@@ -72,7 +72,15 @@ describe('handleGetColumnDetail: the Text match guard on an automation row', () 
       { name: 'Verdict ping', type: 'notify', trigger: 'turn_end', enabled: true, config: { title: 'Ready' }, final_line: 'Ready for *' },
     ]);
 
-    expect(lineFor('Verdict ping')).toContain('only if the last line reads: Ready for *');
+    expect(lineFor('Verdict ping')).toContain('only if the last line reads "Ready for *"');
+  });
+
+  it('words a ! and several patterns as the rule, on the row\'s one line', () => {
+    new AutomationRepository(database).replaceForColumn(columnId, [
+      { name: 'Verdict ping', type: 'notify', trigger: 'turn_end', enabled: true, config: { title: 'Ready' }, final_line: '!Design: waiting on you\n!Design: shelved' },
+    ]);
+
+    expect(lineFor('Verdict ping')).toContain('only if the last line reads neither "Design: waiting on you" nor "Design: shelved"');
   });
 
   it('does not word a Text match on a Condition row, which keeps its own guard', () => {

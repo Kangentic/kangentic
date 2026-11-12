@@ -1,7 +1,7 @@
 /**
  * Tooltip, the one tooltip (src/renderer/components/Tooltip.tsx), through its live adopters:
  * the settings InfoTip (a label that wraps), the task window's header (icon buttons with keys, a
- * disabled pill with its reason), and the Edit automation dialog's wildcard examples (the rich
+ * disabled pill with its reason), and the Edit automation dialog's Text match patterns (the rich
  * shape).
  *
  * Timing is read IN the page, never from the test's own clock: a MutationObserver stamps each
@@ -362,17 +362,18 @@ test('the rich shape draws a header band over its body', async () => {
     await expect(manager).toBeVisible({ timeout: 3000 });
     await manager.locator('[data-testid="column-automation-add"][data-trigger="turn_end"]').click();
     await page.locator('[data-testid="column-automation-picker-type"][data-type="notify"]').click();
-    const info = page.locator('[data-testid="edit-automation-wildcard-info"]');
+    const info = page.locator('[data-testid="edit-automation-patterns-info"]');
     await expect(info).toBeVisible();
 
     await info.hover();
-    const tip = page.locator('[data-testid="edit-automation-wildcard-tip"]');
+    const tip = page.locator('[data-testid="edit-automation-patterns-tip"]');
     await expect(tip).toBeVisible();
     await expect(tip).toHaveAttribute('data-shape', 'rich');
-    await expect(tip.locator('[data-tooltip-part="header"]')).toHaveText('Wildcard examples');
-    await expect(tip.locator('[data-tooltip-part="body"] code')).toHaveCount(4);
-    await expect(info).toHaveAccessibleName('Wildcard examples');
-    await expect(info).toHaveAccessibleDescription(/^Wildcard examples\. Ready for review: Exactly this line/);
+    await expect(tip.locator('[data-tooltip-part="header"]')).toHaveText('Patterns');
+    // Four examples, two of them two patterns each.
+    await expect(tip.locator('[data-tooltip-part="body"] code')).toHaveCount(6);
+    await expect(info).toHaveAccessibleName('Patterns');
+    await expect(info).toHaveAccessibleDescription(/^Patterns\. Read once each time the agent ends its turn/);
   } finally {
     await browser.close();
   }

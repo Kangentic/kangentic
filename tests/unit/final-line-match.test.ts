@@ -13,13 +13,20 @@ import { describe, it, expect } from 'vitest';
 import {
   TEXT_MATCH_NO_REPLY_REASON,
   TEXT_MATCH_PLACEHOLDER,
-  TEXT_MATCH_WILDCARD_EXAMPLES,
+  TEXT_MATCH_EXAMPLES,
   conditionKindsAsStored,
   finalMatchLine,
+  legacyTextMatch,
   lineMatchesPattern,
   matchFinalLine,
   normalizeForMatch,
+  normalizeTextMatch,
+  parseTextMatch,
   textMatchCanMatch,
+  textMatchFileValue,
+  textMatchLines,
+  textMatchMatches,
+  unmatchablePattern,
 } from '../../src/shared/final-line-match';
 import { renderClosingBlock } from '../../scripts/review-verdict.mjs';
 
@@ -172,12 +179,105 @@ describe('matchFinalLine: wildcards', () => {
     expect(lineMatchesPattern('a.b', 'axb')).toBe(false);
   });
 
-  it("every example in the field's tip matches its own sample and the placeholder", () => {
-    expect(TEXT_MATCH_WILDCARD_EXAMPLES[0].pattern).toBe(TEXT_MATCH_PLACEHOLDER);
-    for (const example of TEXT_MATCH_WILDCARD_EXAMPLES) {
-      expect(lineMatchesPattern(example.pattern, TEXT_MATCH_PLACEHOLDER)).toBe(true);
-      if (example.sample !== null) expect(lineMatchesPattern(example.pattern, example.sample)).toBe(true);
+  it("every example in the field's tip keeps the lines it says and none it rules out", () => {
+    expect(TEXT_MATCH_EXAMPLES.length).toBe(4);
+    for (const example of TEXT_MATCH_EXAMPLES) {
+      const value = example.patterns.join('\n');
+      for (const line of example.matches) expect(textMatchMatches(value, line), `${value} on ${line}`).toBe(true);
+      for (const line of example.misses) expect(textMatchMatches(value, line), `${value} on ${line}`).toBe(false);
     }
+    // Built on the field's own placeholder.
+    expect(textMatchMatches(TEXT_MATCH_EXAMPLES[0].patterns.join('\n'), TEXT_MATCH_PLACEHOLDER)).toBe(true);
+  });
+});
+
+describe('textMatchMatches: a leading ! and one pattern per line', () => {
+  it('a leading ! runs on any line but the one it names', () => {
+    expect(textMatchMatches('!Design: waiting on you', 'Findings: applied')).toBe(true);
+    expect(textMatchMatches('!Design: waiting on you', 'Design: waiting on you')).toBe(false);
+    // The rest is read like any pattern: any case, punctuation ignored, * a wildcard.
+    expect(textMatchMatches('!Design: waiting on you', '**DESIGN: waiting on you.**')).toBe(false);
+    expect(textMatchMatches('!Design: *', 'Design: shelved')).toBe(false);
+    expect(textMatchMatches('! Design: shelved', 'Design: shelved')).toBe(false);
+  });
+
+  it('runs when the line matches any plain pattern, in any order', () => {
+    expect(textMatchMatches('Verdict: Ready\nVerdict: Blocked', 'Verdict: Blocked')).toBe(true);
+    expect(textMatchMatches('Verdict: Blocked\nVerdict: Ready', 'Verdict: Ready')).toBe(true);
+    expect(textMatchMatches('Verdict: Ready\nVerdict: Blocked', 'Findings: applied')).toBe(false);
+  });
+
+  it('with only ! patterns, runs on any line but those: two never cancel each other out', () => {
+    const value = '!Design: waiting on you\n!Design: shelved';
+    expect(textMatchMatches(value, 'Findings: applied')).toBe(true);
+    expect(textMatchMatches(value, 'Design: waiting on you')).toBe(false);
+    expect(textMatchMatches(value, 'Design: shelved')).toBe(false);
+  });
+
+  it('a ! pattern rules a line out of the plain ones, whichever comes first', () => {
+    for (const value of ['Ready for *\n!Ready for review', '!Ready for review\nReady for *']) {
+      expect(textMatchMatches(value, 'Ready for testing')).toBe(true);
+      expect(textMatchMatches(value, 'Ready for review')).toBe(false);
+      expect(textMatchMatches(value, 'Done')).toBe(false);
+    }
+  });
+
+  it('skips blank lines and Windows line breaks', () => {
+    expect(textMatchMatches('\r\n  Verdict: Ready  \r\n\r\n', 'Verdict: Ready')).toBe(true);
+  });
+
+  it('a pattern of only !, which once meant nothing, still never runs', () => {
+    expect(textMatchMatches('!', 'Findings: applied')).toBe(false);
+    expect(textMatchMatches('!---', 'Findings: applied')).toBe(false);
+    expect(textMatchCanMatch('!')).toBe(false);
+  });
+
+  it('matchFinalLine reads the same rule, and a turn with no message runs nothing, ! included', () => {
+    expect(matchFinalLine('!Design: waiting on you', EXECUTING_APPLIED).met).toBe(true);
+    expect(matchFinalLine('!Findings: applied', EXECUTING_APPLIED).met).toBe(false);
+    expect(matchFinalLine('!Design: waiting on you', null)).toEqual({ met: false, reason: TEXT_MATCH_NO_REPLY_REASON });
+    expect(matchFinalLine('!Design: waiting on you', '\n---\n')).toEqual({ met: false, reason: TEXT_MATCH_NO_REPLY_REASON });
+  });
+
+  it('stays linear across many patterns', () => {
+    // The line ends in `b`, so each pattern passes its head and tail checks and
+    // walks every `a` before missing on the late `c`: the scan itself is what
+    // runs, 20 times over an 8000-character line. A backtracking matcher would
+    // try each `a` against each place and not finish in the time limit.
+    const value = Array.from({ length: 20 }, () => `${'*a'.repeat(16)}*c*b`).join('\n');
+    const line = `${'a '.repeat(4000)}b`;
+    const started = performance.now();
+    expect(textMatchMatches(value, line)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1000);
+    // The same patterns with the `c` in the line do match, so the miss above is the scan's.
+    expect(textMatchMatches(value, `${'a '.repeat(4000)}c b`)).toBe(true);
+  });
+});
+
+describe('parseTextMatch, normalizeTextMatch, unmatchablePattern, legacyTextMatch', () => {
+  it('splits plain from ! patterns and takes the ! and its spaces off', () => {
+    expect(parseTextMatch('Ready for *\n !  Ready for review \n\nDone')).toEqual({
+      plain: ['Ready for *', 'Done'],
+      negated: ['Ready for review'],
+    });
+  });
+
+  it('stores lines trimmed and joined, with blanks dropped, or null when none is left', () => {
+    expect(normalizeTextMatch('  A \r\n\r\n B  \n')).toBe('A\nB');
+    expect(normalizeTextMatch(' \n \n')).toBeNull();
+    expect(normalizeTextMatch(null)).toBeNull();
+  });
+
+  it('names the first line that can never match', () => {
+    expect(unmatchablePattern('Verdict: Ready\n!---\n...')).toBe('!---');
+    expect(unmatchablePattern('Verdict: Ready\n!Design: *')).toBeNull();
+  });
+
+  it('a legacy pattern loses its leading !, unless that is all it is', () => {
+    expect(legacyTextMatch('!Ready')).toBe('Ready');
+    expect(legacyTextMatch('!! Ready')).toBe('Ready');
+    expect(legacyTextMatch('Ready!')).toBe('Ready!');
+    expect(legacyTextMatch('!')).toBe('!');
   });
 });
 
@@ -263,6 +363,22 @@ describe('textMatchCanMatch', () => {
   });
 });
 
+describe('pattern lines: line breaks and the file value', () => {
+  it('splits on a lone CR, as on LF and CRLF', () => {
+    expect(textMatchLines('A\rB')).toEqual(['A', 'B']);
+    expect(textMatchLines('A\r\nB\nC\rD')).toEqual(['A', 'B', 'C', 'D']);
+    expect(normalizeTextMatch('A\rB')).toBe('A\nB');
+  });
+
+  it('writes one pattern as a string, several as a list, and a blank as null', () => {
+    expect(textMatchFileValue(' Ready ')).toBe('Ready');
+    expect(textMatchFileValue('A\nB')).toEqual(['A', 'B']);
+    expect(textMatchFileValue('A\rB')).toEqual(['A', 'B']);
+    expect(textMatchFileValue('  \n ')).toBeNull();
+    expect(textMatchFileValue(null)).toBeNull();
+  });
+});
+
 describe('conditionKindsAsStored', () => {
   it('keeps a Text match on a turn end and stores no Condition beside it', () => {
     expect(conditionKindsAsStored({ trigger: 'turn_end', condition: 'CI is green', final_line: ' Verdict: Ready ' }))
@@ -272,6 +388,11 @@ describe('conditionKindsAsStored', () => {
   it('drops a Text match off a turn end and keeps the Condition', () => {
     expect(conditionKindsAsStored({ trigger: 'enter', condition: ' CI is green ', final_line: 'Verdict: Ready' }))
       .toEqual({ condition: 'CI is green', final_line: null });
+  });
+
+  it('stores a Text match one pattern per line, blank lines dropped', () => {
+    expect(conditionKindsAsStored({ trigger: 'turn_end', condition: null, final_line: '!Design: waiting on you\n\n !Design: shelved ' }))
+      .toEqual({ condition: null, final_line: '!Design: waiting on you\n!Design: shelved' });
   });
 
   it('reads a blank of either kind as none', () => {

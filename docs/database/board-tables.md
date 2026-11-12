@@ -246,7 +246,7 @@ Key/value flags for data migrations that cannot answer "have I run" from the dat
 | key | TEXT | PRIMARY KEY | |
 | value | TEXT | NOT NULL | |
 
-Five keys so far. `folder_owner_token` is this database's half of the ownership proof, mirrored in `.kangentic/project-owner.json` and written only when the database claims the folder (see [On Project Open](../architecture/worktrees/worktree-lifecycle.md#on-project-open)). The automations migration writes `automations_migrated_at`. That migration is one-way and deliberately
+Six keys so far. `folder_owner_token` is this database's half of the ownership proof, mirrored in `.kangentic/project-owner.json` and written only when the database claims the folder (see [On Project Open](../architecture/worktrees/worktree-lifecycle.md#on-project-open)). The automations migration writes `automations_migrated_at`. That migration is one-way and deliberately
 leaves its source rows in `actions` and `swimlane_transitions` for an older build to read, so the
 presence of converted rows proves nothing: a board could legitimately have automations and no
 transitions, or both.
@@ -267,6 +267,11 @@ the key is deleted when the repair flag is written.
 holds left on workflow tasks. A task whose workflow is gone or finished may be held again, so a
 repeat run could not tell that hold from the old kind. That one run cannot tell either, since a
 task's workflow can live in another database, so it also releases such a task once.
+
+`text_match_not_stripped_at` marks the one run of `stripLegacyTextMatchNot`, which takes a leading
+`!` off every saved `column_automations.final_line` (migration 107 in
+[migrations.md](migrations.md)). A leading `!` was ignored as punctuation before; after this key is
+written it is one a user typed, meaning not, and a repeat run would strip it.
 
 Distinct from `project_meta`, which holds live per-project state (the `display_id` high-water
 mark) rather than migration bookkeeping.
@@ -301,8 +306,9 @@ is skipped with a warning, never read as `enter`.
 
 `condition` is the row's Condition in plain words, judged by the Automation agent before the row
 runs; NULL (or blank) means the row always runs. `final_line` is the other kind of Condition, a
-Text match: a pattern the agent's last line must match, checked in code with no agent call
-(`src/shared/final-line-match.ts`). A row holds one kind. `AutomationRepository.replaceForColumn`
+Text match: patterns checked in code against the agent's last line with no agent call
+(`src/shared/final-line-match.ts`), one per line joined by a line break, each trimmed with blank
+lines dropped (`normalizeTextMatch`). A pattern that starts with `!` means not. A row holds one kind. `AutomationRepository.replaceForColumn`
 stores `final_line` only on a `turn_end` row and, when it is set, stores `condition` as NULL, so a
 writer that slips past the editor, the file reader and the MCP refusals still cannot leave a row
 with two checks or a Text match on a trigger with no final message. `max_runs` is its Frequency,

@@ -203,9 +203,9 @@ answered yes or no by the **Automation agent** (Settings > Workflows) before the
 one-line reason the run log keeps. One headless, read-only call answers every pending Agent
 evaluation of a group at once; at a turn end it reads the task and the agent's final message, on
 enter or exit the task and the move. Until an Automation agent is set up, a row with an Agent
-evaluation is skipped (a Condition written earlier is kept). A **Text match** (`finalLine`) is
-checked in code against the agent's last line at a turn end, needs no Automation agent and makes no
-call; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
+evaluation is skipped (a Condition written earlier is kept). A **Text match** (`condition.text`) is
+checked in code against the agent's last line at a turn end, one pattern per line with a leading `!`
+meaning not, needs no Automation agent and makes no call; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
 **Frequency** is the most times it may run on one task, counted across every visit; a row past it
 is skipped. The count starts over when a person moves the task to another column and when the task
 leaves Done, so a task sent back for another pass, or a reopened one, can loop and advance again.

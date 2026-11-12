@@ -30,6 +30,14 @@
  * regular expression, so no pattern a team file or an agent writes can stall
  * the main process on a long line.
  *
+ * A Text match holds one pattern per line (stored joined by a line break). A
+ * pattern that starts with `!` rules a line out. The row runs when the last
+ * line matches any plain pattern and no `!` pattern; with only `!` patterns it
+ * runs on any line but those. Order does not matter. The `!` is safe to read
+ * as syntax because punctuation never reaches the comparison, so no line can
+ * contain one; the one-time upgrade in `project-schema.ts` took a leading `!`
+ * off every pattern saved before, when it meant nothing.
+ *
  * Shared, not main-only: the runner, the eval harness
  * (`scripts/eval-condition-check.mjs`) and the tests all match through this
  * one function, so they cannot disagree about what a line means.
@@ -38,31 +46,67 @@ import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 
 /**
- * The Text match field's placeholder, and the line its wildcard examples are
- * built on. English: it stands for a line the agent writes, and the examples
- * are matched against it.
+ * The Text match field's placeholder, and the line the Patterns tip's examples
+ * are built on. English: it stands for a line the agent writes, and the
+ * examples are matched against it.
  */
 export const TEXT_MATCH_PLACEHOLDER = 'Ready for review';
 
-/** One row of the field's wildcard tip: a pattern, what it means, and a line it matches. */
-export interface TextMatchWildcardExample {
-  pattern: string;
-  /** What the pattern means. Resolve it where it shows. */
+/**
+ * The most patterns one Text match holds, and the longest one, as the MCP tools
+ * refuse them. The board file and the dialog keep every pattern instead: cutting
+ * one could drop a `!` line and run the row on lines it ruled out.
+ */
+export const TEXT_MATCH_MAX_PATTERNS = 20;
+export const TEXT_MATCH_MAX_PATTERN_LENGTH = 500;
+
+/** The longest Agent evaluation sentence the MCP tools take. */
+export const AGENT_CONDITION_MAX_LENGTH = 2000;
+
+/**
+ * One example in the field's Patterns tip: the patterns (one per line, as the
+ * field holds them), what they mean, and lines they must and must not match.
+ */
+export interface TextMatchExample {
+  patterns: readonly string[];
+  /** What the patterns mean. Resolve it where it shows. */
   rule: MessageDescriptor;
-  /** A line the pattern matches other than the placeholder itself, or null. */
-  sample: string | null;
+  /** Lines the patterns match. Never shown: a unit test holds the rule to the matcher. */
+  matches: readonly string[];
+  /** Lines the patterns do not match. Never shown, as `matches`. */
+  misses: readonly string[];
 }
 
 /**
- * The wildcard tip's rows, each built on the placeholder so the tip reads the
- * same on every row whatever was typed. Data rather than markup so a unit test
- * can hold each pattern to its sample through the real matcher.
+ * The Patterns tip's examples, each built on the placeholder so the tip reads
+ * the same whatever was typed, and generic, never one board's own lines. Data
+ * rather than markup so a unit test can hold each one to the real matcher.
  */
-export const TEXT_MATCH_WILDCARD_EXAMPLES: readonly TextMatchWildcardExample[] = [
-  { pattern: TEXT_MATCH_PLACEHOLDER, rule: msg`Exactly this line`, sample: null },
-  { pattern: 'Ready for *', rule: msg`Starts with it`, sample: 'Ready for testing' },
-  { pattern: '* for review', rule: msg`Ends with it`, sample: 'The fix is ready for review' },
-  { pattern: '*review*', rule: msg`Contains it`, sample: 'Review passed' },
+export const TEXT_MATCH_EXAMPLES: readonly TextMatchExample[] = [
+  {
+    patterns: ['Ready for *'],
+    rule: msg`Starts with "Ready for"`,
+    matches: ['Ready for testing', TEXT_MATCH_PLACEHOLDER],
+    misses: ['Ready forever', 'Done'],
+  },
+  {
+    patterns: ['!Ready for review'],
+    rule: msg`Any line but this one`,
+    matches: ['Still testing', 'Done'],
+    misses: [TEXT_MATCH_PLACEHOLDER],
+  },
+  {
+    patterns: ['Ready for *', 'Done'],
+    rule: msg`Starts with "Ready for", or is "Done"`,
+    matches: ['Ready for testing', 'Done'],
+    misses: ['Still testing'],
+  },
+  {
+    patterns: ['Ready for *', '!Ready for review'],
+    rule: msg`Starts with "Ready for", but is not "Ready for review"`,
+    matches: ['Ready for testing'],
+    misses: [TEXT_MATCH_PLACEHOLDER, 'Done'],
+  },
 ];
 
 /**
@@ -124,10 +168,14 @@ export function finalMatchLine(reply: string | null | undefined): string | null 
  * the only placement a wildcard-only pattern ever needs.
  */
 export function lineMatchesPattern(pattern: string, line: string): boolean {
+  return normalizedLineMatchesPattern(pattern, normalizeForMatch(line));
+}
+
+/** `lineMatchesPattern` on a line already through `normalizeForMatch`, so several patterns share one pass over it. */
+function normalizedLineMatchesPattern(pattern: string, text: string): boolean {
   const parts = pattern.split('*').map(spaced);
   parts[0] = parts[0].trimStart();
   parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
-  const text = normalizeForMatch(line);
   if (parts.length === 1) return text === parts[0];
 
   const head = parts[0];
@@ -143,14 +191,113 @@ export function lineMatchesPattern(pattern: string, line: string): boolean {
   return true;
 }
 
+/** A Text match's patterns, read from its stored text: plain ones, and the `!` ones without their `!`. */
+export interface TextMatchPatterns {
+  plain: string[];
+  negated: string[];
+}
+
+/** The `!` that starts a pattern, and any spaces after it. */
+const NOT_MARK = /^!\s*/;
+
+/** A line break in pattern text: CRLF, LF, or a lone CR. */
+export const PATTERN_LINE_BREAK = /\r\n|\r|\n/;
+
+/** A Text match's pattern lines, each trimmed, blank ones dropped. */
+export function textMatchLines(value: string | null | undefined): string[] {
+  return (value ?? '').split(PATTERN_LINE_BREAK).map((line) => line.trim()).filter((line) => line !== '');
+}
+
 /**
- * Whether any line could match a pattern: it has a wildcard, or a letter or
- * number once normalized. The line read is always one with words in it, so a
- * pattern of only punctuation (`---`, `...`) never matches, and its row never
- * runs.
+ * A Text match as `kangentic.json` and the MCP tools write it: one pattern as
+ * a string, several as a list, or null when it has none.
  */
-export function textMatchCanMatch(pattern: string): boolean {
+export function textMatchFileValue(value: string | null | undefined): string | string[] | null {
+  const patterns = textMatchLines(value);
+  if (patterns.length === 0) return null;
+  return patterns.length === 1 ? patterns[0] : patterns;
+}
+
+/** Split a Text match into its plain patterns and its `!` patterns. */
+export function parseTextMatch(value: string | null | undefined): TextMatchPatterns {
+  const plain: string[] = [];
+  const negated: string[] = [];
+  for (const line of textMatchLines(value)) {
+    if (line.startsWith('!')) negated.push(line.replace(NOT_MARK, ''));
+    else plain.push(line);
+  }
+  return { plain, negated };
+}
+
+/**
+ * Whether any line could match one pattern: it has a wildcard, or a letter or
+ * number once normalized. The line read is always one with words in it, so a
+ * pattern of only punctuation (`---`, `...`) never matches.
+ */
+export function patternCanMatch(pattern: string): boolean {
   return pattern.includes('*') || normalizeForMatch(pattern) !== '';
+}
+
+/**
+ * Whether a Text match can ever let its row run. With plain patterns, one of
+ * them has to be able to match. With only `!` patterns, one of them has to be
+ * able to rule a line out; otherwise there is no rule at all. A pattern of
+ * only punctuation (`---`, a bare `!`) therefore leaves its row never running,
+ * as it always has.
+ */
+export function textMatchCanMatch(value: string | null | undefined): boolean {
+  const { plain, negated } = parseTextMatch(value);
+  return plain.length > 0 ? plain.some(patternCanMatch) : negated.some(patternCanMatch);
+}
+
+/**
+ * The first pattern line, as written, that can never match a line with words
+ * in it (`---`, `!...`), or null when every line can. For the warnings and
+ * refusals that name the line to fix.
+ */
+export function unmatchablePattern(value: string | null | undefined): string | null {
+  for (const line of textMatchLines(value)) {
+    if (!patternCanMatch(line.replace(NOT_MARK, ''))) return line;
+  }
+  return null;
+}
+
+/**
+ * Whether a line meets a Text match: it matches a plain pattern (or there are
+ * none) and no `!` pattern. A Text match that can never run
+ * (`textMatchCanMatch`) never matches, so a stored `!` alone still runs
+ * nothing rather than everything.
+ */
+export function textMatchMatches(value: string | null | undefined, line: string): boolean {
+  const { plain, negated } = parseTextMatch(value);
+  const text = normalizeForMatch(line);
+  const included = plain.length > 0
+    ? plain.some((pattern) => normalizedLineMatchesPattern(pattern, text))
+    : negated.some(patternCanMatch);
+  return included && !negated.some((pattern) => normalizedLineMatchesPattern(pattern, text));
+}
+
+/**
+ * A pattern written before `!` meant "not" (the board file's old `finalLine`
+ * key, the MCP tools' old `finalLine` parameter): a leading `!` was ignored as
+ * punctuation then, so it is taken off now. A pattern that is nothing but `!`
+ * is kept as written: it never ran, and it still cannot.
+ */
+export function legacyTextMatch(value: string): string {
+  const stripped = value.replace(/^[!\s]+/, '');
+  return stripped.trim() === '' ? value : stripped;
+}
+
+/**
+ * A Text match as stored: each line trimmed, blank lines dropped, joined by a
+ * line break, or null when no pattern is left. The repository, the dialog,
+ * the board file and the MCP tools all store through this. The UI tier's mock
+ * bridge (`mockNormalizeTextMatch` in `tests/ui/mock-electron-api.js`) is a
+ * plain-JS copy of it, so a change here goes there too.
+ */
+export function normalizeTextMatch(value: string | null | undefined): string | null {
+  const lines = textMatchLines(value);
+  return lines.length > 0 ? lines.join('\n') : null;
 }
 
 /**
@@ -166,7 +313,7 @@ export function conditionKindsAsStored(row: {
   final_line?: string | null;
   trigger: string;
 }): { condition: string | null; final_line: string | null } {
-  const finalLine = row.trigger === 'turn_end' ? trimmedOrNull(row.final_line) : null;
+  const finalLine = row.trigger === 'turn_end' && typeof row.final_line === 'string' ? normalizeTextMatch(row.final_line) : null;
   return { condition: finalLine === null ? trimmedOrNull(row.condition) : null, final_line: finalLine };
 }
 
@@ -177,16 +324,17 @@ function trimmedOrNull(text: string | null | undefined): string | null {
 }
 
 /**
- * Match a Text match pattern against an agent's final message.
+ * Match a Text match (one pattern per line) against an agent's final message.
  *
  * The reason names the line that was read either way ("The final line reads
  * ..."), so a run row says what the agent actually ended on, which is the
- * thing to look at when a row did not run.
+ * thing to look at when a row did not run. With no line to read, nothing is
+ * met, `!` patterns included: there is nothing to compare.
  */
-export function matchFinalLine(pattern: string, reply: string | null | undefined): FinalLineMatch {
+export function matchFinalLine(value: string, reply: string | null | undefined): FinalLineMatch {
   const line = finalMatchLine(reply);
   if (line === null) return { met: false, reason: TEXT_MATCH_NO_REPLY_REASON };
-  return { met: lineMatchesPattern(pattern, line), reason: `The final line reads "${shownFinalLine(line)}".` };
+  return { met: textMatchMatches(value, line), reason: `The final line reads "${shownFinalLine(line)}".` };
 }
 
 /** A final line as a reason quotes it: cut after `REASON_LINE_MAX` characters. */

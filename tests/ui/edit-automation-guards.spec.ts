@@ -956,12 +956,12 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Ready ping');
 
     await expect(conditionKind('text')).toHaveAttribute('aria-checked', 'true');
-    const finalLine = card('condition').locator('[data-testid="edit-automation-final-line"]');
+    const finalLine = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
     const setup = card('condition').locator('[data-testid="edit-automation-condition-setup"]');
     await expect(finalLine).toBeVisible();
     await expect(finalLine).toHaveAttribute('placeholder', 'Ready for review');
     await expect(card('condition').locator('[data-testid="edit-automation-final-line-hint"]'))
-      .toHaveText("Matches the agent's last line, ignoring case and punctuation, with * as a wildcard.");
+      .toHaveText('Matches the last line the agent writes when its turn ends, with * and ! supported.');
     await expect(setup).toBeHidden();
 
     await card('condition').getByText(CONDITION_DESCRIPTION).click();
@@ -1001,7 +1001,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(editDialog()).toBeVisible();
 
     const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
-    const finalLine = card('condition').locator('[data-testid="edit-automation-final-line"]');
+    const finalLine = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
     await expect(conditionKind('text')).toHaveAttribute('aria-checked', 'true');
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
     await expect(finalLine).toHaveValue('Verdict: Ready');
@@ -1063,23 +1063,102 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     expect(Math.max(...all) - Math.min(...all)).toBeLessThanOrEqual(1);
   });
 
-  test('the wildcard tip opens on hover and on keyboard focus, with its examples', async () => {
+  test('a Text match takes one pattern per line, edited like a text editor, and saves the lines', async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'notify');
+    await editDialog().locator('[data-testid="edit-automation-name"]').fill('Apply findings');
+    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+
+    const lines = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
+    await expect(lines).toHaveCount(1);
+    await lines.nth(0).fill('!Design: waiting on you');
+
+    // Enter at the end adds an empty line below, with the caret in it.
+    await page.keyboard.press('Enter');
+    await expect(lines).toHaveCount(2);
+    await expect(lines.nth(1)).toBeFocused();
+    // The placeholder belongs to the single empty field only.
+    await expect(lines.nth(1)).not.toHaveAttribute('placeholder', /.+/);
+    await page.keyboard.type('!Design: shelved');
+
+    // Enter mid-line splits it; Backspace at the start joins it back.
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Enter');
+    await expect(lines).toHaveCount(3);
+    await expect(lines.nth(1)).toHaveValue('');
+    await expect(lines.nth(2)).toHaveValue('!Design: shelved');
+    await expect(lines.nth(2)).toBeFocused();
+    await page.keyboard.press('Backspace');
+    await expect(lines).toHaveCount(2);
+    await expect(lines.nth(1)).toHaveValue('!Design: shelved');
+
+    // Paste with line breaks splits into lines; a blank one is dropped on Done.
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await lines.nth(2).evaluate((input) => {
+      const data = new DataTransfer();
+      data.setData('text/plain', '\nDone');
+      input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    await expect(lines).toHaveCount(4);
+    await expect(lines.nth(3)).toHaveValue('Done');
+
+    // An emptied line goes on Backspace, and the caret goes up to the line above.
+    await lines.nth(3).fill('');
+    await page.keyboard.press('Backspace');
+    await expect(lines).toHaveCount(3);
+    await lines.nth(2).focus();
+    await page.keyboard.press('ArrowUp');
+    await expect(lines.nth(1)).toBeFocused();
+
+    await editDialog().locator('[data-testid="edit-automation-done"]').click();
+    await expect(editDialog()).toBeHidden();
+    await expectMarkSays(
+      textMatchMark('Apply findings'),
+      'Condition: only if the last line reads neither "Design: waiting on you" nor "Design: shelved".',
+    );
+
+    await saveManager();
+    const saved = (await readColumnRows('Executing')).find((entry) => entry.name === 'Apply findings');
+    expect(saved?.final_line).toBe('!Design: waiting on you\n!Design: shelved');
+  });
+
+  test('the last empty line stays when Backspace is pressed on it', async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'notify');
+    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+
+    const lines = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
+    await lines.nth(0).focus();
+    await page.keyboard.press('Backspace');
+    await expect(lines).toHaveCount(1);
+    await expect(lines.nth(0)).toBeFocused();
+  });
+
+  test('the patterns tip opens on hover and on keyboard focus, with its rules and examples', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
     await expect(conditionKind('text')).toHaveAttribute('aria-checked', 'true');
 
-    const info = card('condition').locator('[data-testid="edit-automation-wildcard-info"]');
-    const tip = page.locator('[data-testid="edit-automation-wildcard-tip"]');
-    await expect(info).toHaveAttribute('aria-label', 'Wildcard examples');
+    const info = card('condition').locator('[data-testid="edit-automation-patterns-info"]');
+    const tip = page.locator('[data-testid="edit-automation-patterns-tip"]');
+    await expect(info).toHaveAttribute('aria-label', 'Patterns');
     await expect(tip).toHaveCount(0);
 
     await info.hover();
     await expect(tip).toBeVisible();
     await expect(tip).toHaveAttribute('role', 'tooltip');
-    await expect(tip).toContainText('Wildcard examples');
-    for (const pattern of ['Ready for review', 'Ready for *', '* for review', '*review*']) {
-      await expect(tip.locator('code', { hasText: pattern })).toHaveCount(1);
+    await expect(tip).toContainText('Read once each time the agent ends its turn, from its final message.');
+    await expect(tip.locator('[data-testid="edit-automation-patterns-rules"]')).toContainText('One per line.');
+    for (const pattern of ['Ready for *', '!Ready for review', 'Done']) {
+      await expect(tip.locator('code', { hasText: pattern }).first()).toBeVisible();
     }
+    // Every line on one line, and the tip wide enough that nothing is cut.
+    const layout = await tip.locator('[data-tooltip-part="body"]').evaluate((body) => ({
+      whiteSpace: getComputedStyle(body.firstElementChild as Element).whiteSpace,
+      clipped: body.scrollWidth > body.clientWidth + 1,
+    }));
+    expect(layout).toEqual({ whiteSpace: 'nowrap', clipped: false });
 
     await editDialog().locator('[data-testid="edit-automation-name"]').hover();
     await expect(tip).toHaveCount(0);

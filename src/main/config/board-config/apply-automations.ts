@@ -6,7 +6,7 @@ import type {
   BoardColumnConfig,
 } from '../../../shared/types';
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
-import { isWholeMaxRuns, normalizeCondition, normalizeFinalLine, normalizeMaxRuns } from '../../db/repositories/automation-repository';
+import { isWholeMaxRuns, normalizeCondition, normalizeMaxRuns } from '../../db/repositories/automation-repository';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -16,7 +16,7 @@ import {
   isTypeOfferedOnTrigger,
 } from '../../../shared/automation-manifest';
 import { englishText } from '../../../shared/i18n/english';
-import { textMatchCanMatch } from '../../../shared/final-line-match';
+import { legacyTextMatch, normalizeTextMatch, textMatchCanMatch, unmatchablePattern } from '../../../shared/final-line-match';
 import { uniqueName } from '../../automations/column-message';
 import { isJsonObject, isMalformedList } from './config-helpers';
 
@@ -222,10 +222,6 @@ function readRow(
   // A guard of the wrong type is read as off, and said so: a hand-edited
   // `"maxRuns": "3"` would otherwise let a review loop run without its limit
   // with nothing to tell anyone.
-  const rawCondition: unknown = entry.condition;
-  if (rawCondition !== undefined && rawCondition !== null && typeof rawCondition !== 'string') {
-    warnings.push(`Automation "${name}" on "${columnName}" has a condition that is not text. It runs without one.`);
-  }
   const rawMaxRuns: unknown = entry.maxRuns;
   if (rawMaxRuns !== undefined && rawMaxRuns !== null && typeof rawMaxRuns !== 'number') {
     warnings.push(`Automation "${name}" on "${columnName}" has a maxRuns that is not a number. It runs without a limit.`);
@@ -237,35 +233,7 @@ function readRow(
       + (readAs === null ? 'It runs without a limit.' : `Its limit is read as ${readAs}.`),
     );
   }
-  // Text match, the Condition's other kind. Only a turn end has a final
-  // message to match, and a row holds one kind, so a `finalLine` anywhere else,
-  // or beside a `condition`, is read as written by hand and said so.
-  const rawFinalLine: unknown = entry.finalLine;
-  let finalLine: string | null = null;
-  if (rawFinalLine !== undefined && rawFinalLine !== null && typeof rawFinalLine !== 'string') {
-    warnings.push(`Automation "${name}" on "${columnName}" has a finalLine that is not text. It runs without one.`);
-  } else if (typeof rawFinalLine === 'string' && rawFinalLine.trim() !== '') {
-    if (trigger === 'turn_end') {
-      finalLine = normalizeFinalLine(rawFinalLine, trigger);
-      // Kept, not dropped: without it the row would run at every turn end.
-      if (finalLine !== null && !textMatchCanMatch(finalLine)) {
-        warnings.push(
-          `Automation "${name}" on "${columnName}" has a finalLine with no letter, number or *, so no last line can match it and the row never runs.`,
-        );
-      }
-    } else {
-      warnings.push(
-        `Automation "${name}" on "${columnName}" has a finalLine in ${AUTOMATION_TRIGGER_FILE_KEYS[trigger]}. `
-        + `A text match reads the agent's last message, so it works in ${AUTOMATION_TRIGGER_FILE_KEYS.turn_end} only. It runs without it.`,
-      );
-    }
-  }
-  const condition = normalizeCondition(typeof rawCondition === 'string' ? rawCondition : null);
-  if (finalLine !== null && condition !== null) {
-    warnings.push(
-      `Automation "${name}" on "${columnName}" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.`,
-    );
-  }
+  const { condition, finalLine } = readCondition(entry, trigger, `Automation "${name}" on "${columnName}"`, warnings);
   return {
     name,
     type: type as AutomationType,
@@ -276,6 +244,111 @@ function readRow(
     final_line: finalLine,
     max_runs: normalizeMaxRuns(typeof rawMaxRuns === 'number' ? rawMaxRuns : null),
   };
+}
+
+/**
+ * A row's Condition, one kind of two:
+ *
+ * - `"condition": { "text": "..." | ["...", ...] }`, a Text match, one pattern
+ *   per item, on a turn end only (the one trigger with a final message).
+ * - `"condition": { "agent": "..." }`, an Agent evaluation.
+ *
+ * What older builds wrote still reads: a plain string under `condition` is an
+ * Agent evaluation, and `finalLine` is a Text match whose leading `!` meant
+ * nothing then and is taken off (`legacyTextMatch`). Anything else is read as
+ * written by hand and said so, and the row runs without a Condition, except a
+ * pattern no line can match, which is kept: without it the row would run at
+ * every turn end.
+ */
+function readCondition(
+  entry: BoardAutomationConfig,
+  trigger: AutomationTrigger,
+  rowLabel: string,
+  warnings: string[],
+): { condition: string | null; finalLine: string | null } {
+  const rawCondition: unknown = entry.condition;
+  const rawFinalLine: unknown = entry.finalLine;
+  let condition: string | null = null;
+  let objectText: string | null = null;
+  const conditionIsObject = isJsonObject(rawCondition);
+
+  if (typeof rawCondition === 'string') {
+    condition = normalizeCondition(rawCondition);
+  } else if (conditionIsObject) {
+    const kinds = Object.keys(rawCondition);
+    const kind = kinds.length === 1 ? kinds[0] : null;
+    const value: unknown = kind === null ? undefined : rawCondition[kind];
+    if (kind === 'agent') {
+      if (typeof value === 'string') condition = normalizeCondition(value);
+      else warnings.push(`${rowLabel} has a condition.agent that is not text. It runs without a condition.`);
+    } else if (kind === 'text') {
+      const lines = textMatchValueLines(value);
+      if (lines === null) {
+        warnings.push(`${rowLabel} has a condition.text that is not text or a list of text. It runs without a condition.`);
+      } else {
+        objectText = readTextMatch(lines.join('\n'), 'condition.text', trigger, rowLabel, warnings);
+      }
+    } else {
+      warnings.push(`${rowLabel} has a condition that is not { "text": ... } or { "agent": ... }. It runs without one.`);
+    }
+  } else if (rawCondition !== undefined && rawCondition !== null) {
+    warnings.push(`${rowLabel} has a condition that is not text or an object. It runs without one.`);
+  }
+
+  let legacyText: string | null = null;
+  if (rawFinalLine !== undefined && rawFinalLine !== null && typeof rawFinalLine !== 'string') {
+    warnings.push(`${rowLabel} has a finalLine that is not text. It runs without one.`);
+  } else if (typeof rawFinalLine === 'string' && rawFinalLine.trim() !== '') {
+    legacyText = readTextMatch(legacyTextMatch(rawFinalLine), 'finalLine', trigger, rowLabel, warnings);
+  }
+
+  // One kind per row. A written shape that gave a Condition wins over the old
+  // key; between the two old keys, the Text match wins, as it always did. An
+  // object that gave none (malformed, blank, or a Text match off a turn end)
+  // leaves the finalLine in charge, so a bad edit never unguards the row.
+  const objectGaveCondition = objectText !== null || (conditionIsObject && condition !== null);
+  if (legacyText !== null && (objectGaveCondition || condition !== null)) {
+    const kept = objectGaveCondition ? 'the condition' : 'the finalLine';
+    warnings.push(`${rowLabel} has both a condition and a finalLine. A row holds one kind of condition, so it keeps ${kept}.`);
+  }
+  const finalLine = objectText ?? (objectGaveCondition ? null : legacyText);
+  return { condition: finalLine === null ? condition : null, finalLine };
+}
+
+/** A `condition.text` value as pattern lines: a string, or a list of strings, else null. */
+function textMatchValueLines(value: unknown): string[] | null {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value) && value.every((item): item is string => typeof item === 'string')) return value;
+  return null;
+}
+
+/**
+ * A Text match read from the file, normalized, or null. Off a turn end it is
+ * dropped and said so. A pattern no line can match is kept and said so.
+ */
+function readTextMatch(
+  text: string,
+  key: 'finalLine' | 'condition.text',
+  trigger: AutomationTrigger,
+  rowLabel: string,
+  warnings: string[],
+): string | null {
+  const normalized = normalizeTextMatch(text);
+  if (normalized === null) return null;
+  if (trigger !== 'turn_end') {
+    warnings.push(
+      `${rowLabel} has a ${key} in ${AUTOMATION_TRIGGER_FILE_KEYS[trigger]}. `
+      + `A text match reads the agent's last message, so it works in ${AUTOMATION_TRIGGER_FILE_KEYS.turn_end} only. It runs without it.`,
+    );
+    return null;
+  }
+  const unmatchable = unmatchablePattern(normalized);
+  if (!textMatchCanMatch(normalized)) {
+    warnings.push(`${rowLabel} has a ${key} with no letter, number or *, so no last line can match it and the row never runs.`);
+  } else if (unmatchable !== null) {
+    warnings.push(`${rowLabel} has a ${key} pattern "${unmatchable}" with no letter, number or *, so it can never match.`);
+  }
+  return normalized;
 }
 
 /** "onEnter, onTurnEnd and onExit", from the one trigger list. */

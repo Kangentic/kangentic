@@ -161,14 +161,15 @@ export function productionOutcomeOf(rows, testCase) {
 
 /**
  * Every case where the shipped matcher and the strict `lastLineIs` read a line differently. A line
- * with a wildcard is left out: `lastLineIs` reads it as literal text, so it would differ everywhere.
+ * with a wildcard, a leading `!` or several patterns is left out: `lastLineIs` reads it as literal
+ * text, so it would differ everywhere.
  */
 export function lineDisagreements(cases, lines, matchFinalLine) {
   const found = [];
   for (const testCase of cases) {
     if (!testCase.reply) continue;
     for (const line of lines) {
-      if (line.includes('*')) continue;
+      if (line.includes('*') || line.trimStart().startsWith('!') || line.includes('\n')) continue;
       const code = matchFinalLine(line, testCase.reply).met;
       const strict = lastLineIs(testCase.reply, line);
       if (code !== strict) found.push({ caseId: testCase.id, line, code, strict });

@@ -7,6 +7,14 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid ", then "
+msgstr ", then "
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "! at the very start: not. The row runs only when the last line does not match."
+msgstr "! at the very start: not. The row runs only when the last line does not match."
+
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr "\"{fileName}\" is over the 10 MB limit."
@@ -155,13 +163,9 @@ msgstr "{overage, plural, one {# character over the limit} other {# characters o
 msgid "{passedCount} passed"
 msgstr "{passedCount} passed"
 
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{pattern}: {rule}, as in {sample}."
-msgstr "{pattern}: {rule}, as in {sample}."
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{pattern}: {rule}."
-msgstr "{pattern}: {rule}."
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "{patterns}: {rule}."
+msgstr "{patterns}: {rule}."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "{percent}% of pixels changed"
@@ -184,10 +188,6 @@ msgstr "{prFixes, plural, one {# thing on the PR to fix} other {# things on the 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
 msgstr "{reason} Saved {savedBeforeFailing} before failing."
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{rule}<0>, as in {sample}</0>"
-msgstr "{rule}<0>, as in {sample}</0>"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
@@ -261,6 +261,26 @@ msgstr "{viewedCount} of {fileCount, plural, one {# file marked viewed} other {#
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
+msgstr "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
+msgstr "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
+msgstr "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Not.</0> At the very start, the row runs only when the last line does not match."
+msgstr "<0>Not.</0> At the very start, the row runs only when the last line does not match."
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
+msgstr "<0>One per line.</0> Runs on any plain line, never on a ! line."
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
@@ -374,6 +394,10 @@ msgstr "An alternate set of per-column agent, model, and effort settings"
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 msgid "Another column uses this icon"
 msgstr "Another column uses this icon"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Any case. Punctuation is ignored too."
+msgstr "Any case. Punctuation is ignored too."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Approve each plan for you. Questions the agent asks still wait."
@@ -1144,6 +1168,14 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "Error"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples"
+msgstr "Examples"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples: {examples}"
+msgstr "Examples: {examples}"
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgid "Exited ({exitCode})"
@@ -1449,8 +1481,8 @@ msgid "Mark as viewed"
 msgstr "Mark as viewed"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
-msgstr "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
+msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
+msgstr "Matches the last line the agent writes when its turn ends, with * and ! supported."
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"
@@ -1759,6 +1791,10 @@ msgctxt "board overview column header"
 msgid "One at a time"
 msgstr "One at a time"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "One pattern per line. Runs on any plain line, never on a ! line."
+msgstr "One pattern per line. Runs on any plain line, never on a ! line."
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Only one agent CLI detected - install another to choose"
@@ -1877,6 +1913,14 @@ msgstr "Page kept"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
 msgstr "Path copied"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns"
+msgstr "Patterns"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns. {plain}"
+msgstr "Patterns. {plain}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Pause session"
@@ -2003,6 +2047,10 @@ msgctxt "call outcome"
 msgid "Ran"
 msgstr "Ran"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Read once each time the agent ends its turn, from its final message."
+msgstr "Read once each time the agent ends its turn, from its final message."
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Rebase or merge it in the session instead."
 msgstr "Rebase or merge it in the session instead."
@@ -2128,6 +2176,10 @@ msgstr "Reveal in file manager"
 msgctxt "completed task card"
 msgid "Route"
 msgstr "Route"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Rules"
+msgstr "Rules"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
 msgid "Run in a new worktree"
@@ -2511,8 +2563,13 @@ msgid "Text File"
 msgstr "Text File"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match"
 msgstr "Text match"
+
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
+msgid "Text match, line {lineNumber}"
+msgstr "Text match, line {lineNumber}"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
@@ -2831,14 +2888,6 @@ msgstr "Whether you approve each plan or Kangentic does. A workflow task can ove
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Which conversation this column uses"
 msgstr "Which conversation this column uses"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "Wildcard examples"
-msgstr "Wildcard examples"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "Wildcard examples. {rows}"
-msgstr "Wildcard examples. {rows}"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "Window limit reached"
