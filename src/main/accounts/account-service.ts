@@ -44,6 +44,12 @@ function adapterReportsUsage(adapter: AgentAdapter): boolean {
   return adapter.reportsRateLimits === true || (support?.kind === 'folder' && support.readIdleUsage !== undefined);
 }
 
+/** The conversation a spawn resumes, for an adapter that carries files between homes. */
+export interface SpawnResume {
+  agentSessionId: string;
+  cwd: string;
+}
+
 /** The account a spawn runs on, and the env that selects it. */
 export interface ResolvedAccount {
   id: string;
@@ -507,8 +513,10 @@ export class AccountService {
    * conversations stay on their account. Null for an agent that declares no accounts. When no
    * account can be prepared the spawn runs on the agent's own login and is recorded against its
    * `default` row, so its usage still lands on a row and a later limit can still move it.
+   * `resume` names the conversation being resumed, whose own files the adapter carries into the
+   * chosen home (`carryConversation`).
    */
-  async resolveForSpawn(agent: string, overrideAccountId?: string | null, conversationAccountId?: string | null): Promise<ResolvedAccount | null> {
+  async resolveForSpawn(agent: string, overrideAccountId?: string | null, conversationAccountId?: string | null, resume?: SpawnResume): Promise<ResolvedAccount | null> {
     const adapter = this.dependencies.getAdapter(agent);
     if (!adapter?.accounts) return null;
     // The agent's own login is account #1, so its sessions are recorded against it too and its
@@ -547,13 +555,33 @@ export class AccountService {
       }
       const env = this.envFor(candidate, adapter);
       if (!env) continue;
+      await this.carryConversation(adapter, candidate, ordered, resume);
       return { id: candidate.id, agent, kind: candidate.kind, env };
     }
     // More than one account and none could be prepared: the spawn runs on the agent's own login,
     // which is the `default` row, with nothing added to its env.
     this.reportProblem('spawn-account-unresolved', agent, { accounts: ordered.length, named: Boolean(overrideAccountId) });
     const ownLogin = ordered.find((account) => account.kind === 'default');
+    if (ownLogin) await this.carryConversation(adapter, ownLogin, ordered, resume);
     return ownLogin ? { id: ownLogin.id, agent, kind: 'default', env: {} } : null;
+  }
+
+  /**
+   * Hands a resume to the adapter's `carryConversation`, with every home the agent has: the
+   * conversation's own files may sit in any of them. Never throws.
+   */
+  private async carryConversation(adapter: AgentAdapter, account: AgentAccount, ordered: readonly AgentAccount[], resume: SpawnResume | undefined): Promise<void> {
+    const support = adapter.accounts;
+    if (!resume || support?.kind !== 'folder' || !support.carryConversation) return;
+    const defaultHome = support.defaultHome();
+    const toHome = account.kind === 'folder' ? account.folderPath : defaultHome;
+    if (!toHome) return;
+    const folderHomes = ordered.flatMap((candidate) => (candidate.kind === 'folder' && candidate.folderPath ? [candidate.folderPath] : []));
+    try {
+      await support.carryConversation({ ...resume, defaultHome, toHome, homes: [defaultHome, ...folderHomes] });
+    } catch (error) {
+      console.warn('[ACCOUNTS] Could not carry a resumed conversation\'s files:', error instanceof Error ? error.message : String(error));
+    }
   }
 }
 
@@ -641,9 +669,14 @@ export function noteLaunchNotSignedIn(outputClass: string | undefined, accountId
 }
 
 /** Resolves a spawn's account when the service runs; null otherwise, which keeps today's spawn. */
-export async function resolveSpawnAccount(agent: string, overrideAccountId?: string | null, conversationAccountId?: string | null): Promise<ResolvedAccount | null> {
+export async function resolveSpawnAccount(
+  agent: string,
+  overrideAccountId?: string | null,
+  conversationAccountId?: string | null,
+  resume?: SpawnResume,
+): Promise<ResolvedAccount | null> {
   try {
-    return (await service?.resolveForSpawn(agent, overrideAccountId, conversationAccountId)) ?? null;
+    return (await service?.resolveForSpawn(agent, overrideAccountId, conversationAccountId, resume)) ?? null;
   } catch (error) {
     // An account that cannot be prepared must not stop the spawn: it runs on the agent's own login.
     console.warn('[ACCOUNTS] Could not resolve an account for the spawn:', error);

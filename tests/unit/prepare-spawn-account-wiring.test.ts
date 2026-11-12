@@ -170,7 +170,8 @@ describe('prepareAgentSpawn: the account a recovered session runs on', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(resolveForSpawn).toHaveBeenCalledWith('claude', undefined, undefined);
+    // A fresh start resumes nothing, so it hands over no conversation.
+    expect(resolveForSpawn).toHaveBeenCalledWith('claude', undefined, undefined, undefined);
     expect(buildCommandMock.mock.calls[0][0]).toMatchObject({ account: FOLDER_ACCOUNT });
     expect(result.data.accountId).toBe('account-2');
     expect(result.data.extraEnv).toEqual({ ADAPTER_VARIABLE: 'adapter', CLAUDE_CONFIG_DIR: '/mock/accounts/claude/2' });
@@ -224,7 +225,8 @@ describe('prepareAgentSpawn: the account a recovered session runs on', () => {
 
       expect(result.ok && result.data.resumed).toBe(true);
       if (!result.ok) return;
-      expect(resolveForSpawn).toHaveBeenCalledWith('claude', undefined, 'account-2');
+      // The resumed conversation is handed over, so its plan file reaches the account (task #1070).
+      expect(resolveForSpawn).toHaveBeenCalledWith('claude', undefined, 'account-2', { agentSessionId: 'agent-1', cwd: '/mock/project' });
       expect(result.data.resumeEvidence?.account).toBe('same');
     });
 

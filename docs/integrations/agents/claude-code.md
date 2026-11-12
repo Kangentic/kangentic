@@ -146,8 +146,9 @@ For every session, a merged settings file is built at `.kangentic/sessions/<sess
 5. Inject `statusLine` config pointing to the status bridge script
 6. Inject event-bridge hooks into all registered hook points, plus the plan approval hook (and its tool approval entry, matcher `mcp__.*|Artifact`, which answers an allowed MCP tool and a built-in Artifact read, list or publish that plan mode asks about, unless a deny or ask rule names the tool) and, for a task session whose MCP URL names it, the background shell hint hook (see [`plan-approval-bridge.js`](bridge-scripts.md#plan-approval-bridgejs) and [`background-shell-hint-bridge.js`](bridge-scripts.md#background-shell-hint-bridgejs))
 7. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode. `--permission-mode auto` runs a SEPARATE natural-language classifier that does not honor `permissions.allow`, so a plain-language allow rule (`KANGENTIC_AUTO_MODE_ALLOW_RULE`) is also appended to `autoMode.allow` (seeded with `$defaults` when the array is absent, preserving the classifier's built-in rules) so a board-driven auto-mode session does not soft-deny Kangentic's own board/session tools
-8. Write merged file to session directory
-9. Pass `--settings <mergedSettingsPath>` to the CLI
+8. For a session on a folder account, set `autoMemoryDirectory` to the default home's memory folder for the project, by its real path (`auto-memory-folder.ts`, see [Agent accounts](../accounts.md)). Skipped when the merged settings or the account's `settings.json` already name one, when the session runs on the agent's own home, for a linked worktree of a repository whose git directory sits apart, and for a WSL CLI
+9. Write merged file to session directory
+10. Pass `--settings <mergedSettingsPath>` to the CLI
 
 All Kangentic artifacts stay in `.kangentic/` - nothing is written to `.claude/settings.local.json`.
 

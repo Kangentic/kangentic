@@ -6,8 +6,9 @@ import { safeWriteJson } from '../safe-write';
 import type { SharedEntry } from './account-support';
 
 /**
- * An account folder holds one account's login and nothing else of its own. Every shared entry is a
- * link or a copy back to the agent's default home, so every conversation stays in one folder that
+ * An account folder holds one account's login and, for an `own-dir` entry, a folder the CLI will
+ * not write through a link (Claude's `plans`). Every other entry is a link or a copy back to the
+ * agent's default home, so every conversation stays in one folder that
  * every account reads and writes (measured with three real Claude accounts: transcripts through a
  * junction, cross-account resume with signed thinking blocks, concurrent writes, and a deleted
  * account folder that never reached a transcript).
@@ -18,7 +19,8 @@ import type { SharedEntry } from './account-support';
  *   it are an empty folder or file a link needs, and entries drained from the account folder
  *   itself, which are merged and never replace anything there (a name clash keeps both).
  * - A conversation-bearing link that cannot be made is reported, and the caller blocks the account.
- * - Nothing here deletes a folder's contents.
+ * - Nothing here deletes a folder's contents. What it removes is an empty folder a link replaces,
+ *   and an old link into the default home where an `own-dir` entry goes.
  */
 
 export type AccountFolderProblemCode = 'link-failed' | 'user-owned' | 'kept-aside' | 'history-private';
@@ -241,6 +243,81 @@ function linkDirectory(
   }
 }
 
+/** Removes a folder link itself. A junction on Windows may need `rmdir`; neither touches its target. */
+function removeLinkOnly(link: string): void {
+  try {
+    fs.unlinkSync(link);
+  } catch (unlinkError) {
+    try {
+      fs.rmdirSync(link);
+    } catch {
+      // The first error says why (a locked junction's EBUSY), not the fallback's ENOTDIR.
+      throw unlinkError;
+    }
+  }
+}
+
+/**
+ * True when the link at `link` points at `homeEntry`. A link whose target cannot be reached (gone,
+ * or on a drive that is offline) is judged by the path it names, so only a link that names the
+ * home's own entry counts.
+ */
+function linksTo(link: string, homeEntry: string, platform: NodeJS.Platform): boolean {
+  try {
+    return comparable(fs.realpathSync.native(link), platform) === comparable(realOrResolved(homeEntry), platform);
+  } catch {
+    try {
+      const named = comparable(path.resolve(path.dirname(link), fs.readlinkSync(link)), platform);
+      return named === comparable(homeEntry, platform) || named === comparable(realOrResolved(homeEntry), platform);
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * A real folder of the account's own (`own-dir`). Claude refuses to write its plan file through a
+ * link: the write resolves outside the folder it is allowed to write in plan mode (task #1070).
+ * A link to the default home's folder, as an earlier version made it, is removed as a link and a
+ * folder made in its place, so the home's files stay where they are. A link elsewhere is the user's.
+ */
+function ownDirectory(
+  entry: Extract<SharedEntry, { how: 'own-dir' }>,
+  homeRoot: string,
+  accountRoot: string,
+  platform: NodeJS.Platform,
+  report: AccountFolderReport,
+): void {
+  const homeEntry = entryPath(homeRoot, entry.name);
+  const target = entryPath(accountRoot, entry.name);
+  const current = lstatIfPresent(target);
+  if (current?.isSymbolicLink()) {
+    if (!linksTo(target, homeEntry, platform)) {
+      report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} links somewhere else` });
+      return;
+    }
+    try {
+      // Checked again just before: only ever a link, never a folder with files in it.
+      if (!lstatIfPresent(target)?.isSymbolicLink()) return;
+      removeLinkOnly(target);
+    } catch (error) {
+      report.problems.push({ entry: entry.name, code: 'link-failed', detail: `Could not remove the link ${target}: ${String(error)}` });
+      return;
+    }
+  } else if (current?.isDirectory()) {
+    return;
+  } else if (current) {
+    report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} is a file, not a folder` });
+    return;
+  }
+  try {
+    ensureParent(target);
+    fs.mkdirSync(target, { mode: 0o700 });
+  } catch (error) {
+    report.problems.push({ entry: entry.name, code: 'link-failed', detail: `Could not create ${target}: ${String(error)}` });
+  }
+}
+
 function appendMissingLines(from: string, into: string): void {
   const existing = new Set(fs.readFileSync(into, 'utf8').split('\n'));
   const lines = fs.readFileSync(from, 'utf8').split('\n').filter((line) => line !== '' && !existing.has(line));
@@ -382,6 +459,9 @@ export async function provisionAccountFolder(input: ProvisionAccountFolderInput)
     switch (entry.how) {
       case 'link-dir':
         linkDirectory(entry, homeRoot, accountRoot, platform, report);
+        break;
+      case 'own-dir':
+        ownDirectory(entry, homeRoot, accountRoot, platform, report);
         break;
       case 'hardlink-file':
         linkFile(entry, homeRoot, accountRoot, report);

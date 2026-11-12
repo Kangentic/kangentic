@@ -397,8 +397,9 @@ All sessions (main repo and worktree) use a unified approach. For each session, 
 4. Drop `permissions.defaultMode` when it is `auto` or `bypassPermissions`, which Claude refuses from project and local settings and `--settings` would let through
 5. Inject bridge commands into appropriate hook points
 6. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
-7. Write merged file to session directory
-8. Pass `--settings <mergedSettingsPath>` to the CLI
+7. For a session on a folder account, set `autoMemoryDirectory` to the default home's memory folder (see [Settings Merge](../../integrations/agents/claude-code.md#settings-merge))
+8. Write merged file to session directory
+9. Pass `--settings <mergedSettingsPath>` to the CLI
 
 All Kangentic artifacts stay in `.kangentic/` -- nothing is written to `.claude/settings.local.json`. When users hit "always allow" on a permission prompt, Claude writes to `settings.local.json` at the main checkout's root, or in the worktree on Windows. These grants are read back on session resume (steps 2 and 3) so they persist across restarts.
 

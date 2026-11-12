@@ -694,9 +694,11 @@ export class TransitionEngine {
   /**
    * The launch a spawn makes for these ids and this command-line prompt, short
    * of building the command: the session's output paths, the shell, the CLI
-   * path the shell can run, and the command options. Creates nothing, so an
+   * path the shell can run, and the command options. It starts nothing, so an
    * adoption can compute the launch it would make and compare it with the one
-   * an early agent made (`launchKey`).
+   * an early agent made (`launchKey`). Resolving the account may refresh the
+   * account folder and copy a resumed conversation's plan file into it; both
+   * leave the same files however often they run.
    */
   private async resolveLaunch(input: LaunchInput): Promise<ResolvedLaunch> {
     const appConfig = this.getConfig();
@@ -733,7 +735,9 @@ export class TransitionEngine {
       input.agentSessionId,
       input.canResume,
     );
-    const account = cliTarget ? null : await resolveSpawnAccount(input.agentName, input.spawnOverrides?.accountId, conversationAccountId);
+    // A resume also hands over its conversation, whose plan file may sit in another account's home.
+    const resumeConversation = input.canResume && input.agentSessionId ? { agentSessionId: input.agentSessionId, cwd } : undefined;
+    const account = cliTarget ? null : await resolveSpawnAccount(input.agentName, input.spawnOverrides?.accountId, conversationAccountId, resumeConversation);
     const commandOptions: SpawnCommandOptions = {
       agentPath: launch.agentPath,
       taskId: task.id,
