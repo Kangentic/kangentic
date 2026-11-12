@@ -68,7 +68,8 @@ can do all of this, so the check lives in the app, not in a warning to whoever r
   `demoteMissingWorktree` is only for a task `canRecreateWorktree` says nothing can make one for, and
   `ensureTaskWorktree` applies it at runtime the same way: a start that makes no worktree for a task
   whose folder is gone demotes it rather than handing the spawn a path it will refuse
-  (`session-resume-worktree-gone.test.ts`).
+  (`session-resume-worktree-gone.test.ts`). Never for a project on an SSH host: its worktree folder
+  here is a stand-in, and only the host proves a path absent ([[ssh-remote]]).
 - **A start that never reached an agent says so on its card.** `Session.startBlockedReason` replaces "Paused" in the footer, on the board card and the Monitor card alike, with the reason in the tip. Every refused or failed start sets it, a direct one (`showRefusedStart`) included, because a toast closes.
 - **A read never copies this instance's settings into a project.** `getEffectiveConfig` already
   merges global under project, so `parseProjectOverrides` needs no seed. Its remaining rewrites
