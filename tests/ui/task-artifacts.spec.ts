@@ -716,7 +716,11 @@ test.describe('Artifacts on the other surfaces', () => {
     await expect(dialog(page).getByTestId('artifacts-button')).toHaveCount(0);
 
     await dialog(page).getByRole('button', { name: 'Actions', exact: true }).click();
-    await page.getByTestId('kebab-artifacts-button').click();
+    // Hover opens the flyout. A click would race the pointer's own enter: once
+    // React has rendered the open flyout, the click toggles it shut again, which
+    // read as a flake on a loaded runner (same reason as the Commands flyout in
+    // task-menu-session-toggle-hosts.spec.ts).
+    await page.getByTestId('kebab-artifacts-button').hover();
     const flyout = page.getByTestId('kebab-artifacts-flyout');
     await expect(flyout).toBeVisible();
     await expect(flyout.locator('[data-artifact-url]')).toHaveCount(3);
