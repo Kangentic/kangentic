@@ -114,7 +114,7 @@ export async function deliverMessageAfterMove(
   const hold = (why: string): void => {
     const outcome = holdMoveMessage(context, { projectId, taskId, message }, report);
     if (outcome.kind === 'held') {
-      console.log(`[move-message] ${why}; the moved task's message for ${columnName} is held for its next agent (task ${taskLabel}).`);
+      console.log(`[move-message] ${why}; the moved task's message for ${columnName} is held for the task's agent (task ${taskLabel}).`);
     } else {
       console.warn(`[move-message] ${why}, and the moved task's message for ${columnName} is not held (task ${taskLabel}): ${outcome.reason}`);
     }

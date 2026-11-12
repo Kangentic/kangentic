@@ -908,7 +908,7 @@ function holdMovedMessageAfterFailedAttempt(context: IpcContext, entry: Recovery
     movedMessage.report,
   );
   if (outcome.kind === 'held') {
-    console.log(`[WORKFLOW] Recovery could not send task ${entry.taskId.slice(0, 8)}'s moved message; it is held for its next agent.`);
+    console.log(`[WORKFLOW] Recovery could not send task ${entry.taskId.slice(0, 8)}'s moved message; it is held for the task's agent.`);
   } else {
     console.warn(`[WORKFLOW] Recovery could not send task ${entry.taskId.slice(0, 8)}'s moved message, and it is not held: ${outcome.reason}`);
   }
