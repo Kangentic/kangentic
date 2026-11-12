@@ -203,9 +203,9 @@ answered yes or no by the **Automation agent** (Settings > Workflows) before the
 one-line reason the run log keeps. One headless, read-only call answers every pending Agent
 evaluation of a group at once; at a turn end it reads the task and the agent's final message, on
 enter or exit the task and the move. Until an Automation agent is set up, a row with an Agent
-evaluation is skipped (a Condition written earlier is kept). A **Text match** (`finalLine`) is
-checked in code against the agent's last line at a turn end, needs no Automation agent and makes no
-call; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
+evaluation is skipped (a Condition written earlier is kept). A **Text match** (`condition.text`) is
+checked in code against the agent's last line at a turn end, one pattern per line with a leading `!`
+meaning not, needs no Automation agent and makes no call; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
 **Frequency** is the most times it may run on one task, counted across every visit; a row past it
 is skipped. The count starts over when a person moves the task to another column and when the task
 leaves Done, so a task sent back for another pass, or a reopened one, can loop and advance again.
@@ -267,7 +267,7 @@ Valid values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, 
 | `boardConfig:boardProfilesChanged` | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | Get task detail dialog [shortcuts](board-config.md#shortcuts) |
 | `boardConfig:setShortcuts` | Update task detail dialog shortcuts |
-| `boardConfig:shortcutsChanged` | Event: shortcuts file changed |
+| `boardConfig:localApplied` | Event: a `kangentic.local.json` change was applied; reload the board and shortcuts |
 | `boardConfig:setDefaultBaseBranch` | Update the default base branch in `kangentic.json` |
 | `boardConfig:setStopScript` | Update a project's Stop script in `kangentic.json`, or in `kangentic.local.json` when that holds the key |
 

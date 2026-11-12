@@ -9,6 +9,7 @@ import { SWIMLANE_ROLES } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
 
 const WORKFLOW_HOLDS_RELEASED_FLAG = 'workflow_task_holds_released_at';
+const TEXT_MATCH_NOT_STRIPPED_FLAG = 'text_match_not_stripped_at';
 
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
@@ -2166,6 +2167,40 @@ export function runProjectMigrations(db: Database.Database): void {
   if (!intervalColumnNames.has('reason_kind')) {
     db.exec('ALTER TABLE session_activity_intervals ADD COLUMN reason_kind TEXT DEFAULT NULL');
   }
+
+  stripLegacyTextMatchNot(db);
+}
+
+/**
+ * Migration: a leading `!` on a Text match now means "not"
+ * (`src/shared/final-line-match.ts`). Before, punctuation was ignored, so a
+ * saved `!Ready` meant `Ready`; this takes that `!` (and any spaces after it)
+ * off every saved pattern so the row keeps doing what it did. A pattern that
+ * is nothing but `!` is left as written: it never ran, and it still cannot.
+ *
+ * Once per database, through `schema_meta`: after it, a leading `!` is one the
+ * user typed meaning "not", and a repeat run would strip it.
+ *
+ * The strip is done in JS, not with SQLite's `ltrim`, so it takes off the same
+ * characters the new reader reads as part of the `!` (any JS whitespace,
+ * a pasted non-breaking space included). An `ltrim` of only spaces and tabs
+ * would leave `!` + U+00A0 + `Ready` reading as "not Ready". The pattern is
+ * written out here rather than imported from `legacyTextMatch`, so this
+ * one-time step keeps its meaning if that helper ever changes.
+ */
+function stripLegacyTextMatchNot(db: Database.Database): void {
+  const stripped = db.prepare('SELECT value FROM schema_meta WHERE key = ?').get(TEXT_MATCH_NOT_STRIPPED_FLAG);
+  if (stripped !== undefined) return;
+  writeTransaction(db, () => {
+    const rows = db.prepare("SELECT id, final_line FROM column_automations WHERE final_line LIKE '!%'")
+      .all() as Array<{ id: string; final_line: string }>;
+    const update = db.prepare('UPDATE column_automations SET final_line = ? WHERE id = ?');
+    for (const row of rows) {
+      const withoutNot = row.final_line.replace(/^[!\s]+/, '');
+      if (withoutNot.trim() !== '') update.run(withoutNot, row.id);
+    }
+    db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(TEXT_MATCH_NOT_STRIPPED_FLAG, new Date().toISOString());
+  })();
 }
 
 /**

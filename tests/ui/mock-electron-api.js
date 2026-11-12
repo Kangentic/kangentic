@@ -915,6 +915,17 @@
    * (assigned after this file runs) is still picked up. After the first call the
    * array is the mock's own state again, so `replaceForColumn` behaves normally.
    */
+  /**
+   * A Text match as the repository stores it (`normalizeTextMatch` in
+   * `src/shared/final-line-match.ts`): one pattern per line, each trimmed,
+   * blank lines dropped, or null when none is left.
+   */
+  function mockNormalizeTextMatch(value) {
+    if (typeof value !== 'string') return null;
+    var lines = value.split(/\r\n|\r|\n/).map(function (line) { return line.trim(); }).filter(function (line) { return line !== ''; });
+    return lines.length > 0 ? lines.join('\n') : null;
+  }
+
   function hydrateSeededAutomations() {
     if (automationsHydrated) return;
     automationsHydrated = true;
@@ -927,9 +938,10 @@
       );
       // As the repository's read hands a row over: a Text match on a turn end
       // only, so a seeded enter row never shows one the app would drop.
-      seeded.final_line = seeded.trigger === 'turn_end' && typeof seeded.final_line === 'string' && seeded.final_line.trim() !== ''
-        ? seeded.final_line.trim()
-        : null;
+      seeded.final_line = seeded.trigger === 'turn_end' ? mockNormalizeTextMatch(seeded.final_line) : null;
+      // One Condition kind per row, as `conditionKindsAsStored` stores it: a
+      // Text match clears the Agent evaluation, so a seed cannot hold both.
+      if (seeded.final_line !== null) seeded.condition = null;
       automations.push(seeded);
     });
   }
@@ -2560,9 +2572,7 @@
           var trigger = AUTOMATION_TRIGGER_ORDER.indexOf(row.trigger) >= 0 ? row.trigger : 'enter';
           // One Condition kind per row, a Text match on a turn end only: the
           // repository's backstop, mirrored so a spec reads back what the app would.
-          var finalLine = trigger === 'turn_end' && typeof row.final_line === 'string' && row.final_line.trim() !== ''
-            ? row.final_line.trim()
-            : null;
+          var finalLine = trigger === 'turn_end' ? mockNormalizeTextMatch(row.final_line) : null;
           automations.push({
             id: row.id || uuid(),
             swimlane_id: swimlaneId,
@@ -6107,7 +6117,7 @@
       getLastWarnings: async function (/* projectId */) {
         return Array.isArray(window.__mockLastConfigWarnings) ? window.__mockLastConfigWarnings.slice() : [];
       },
-      onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
+      onLocalApplied: function (/* callback(projectId) */) { return noop; },
       // `projectId` reads another project's board, as main's
       // boardConfig:getBoardProfiles does: seed it with
       // window.__mockBoardProfilesByProject = { [projectId]: BoardProfile[] }.

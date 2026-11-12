@@ -127,9 +127,16 @@ export function isPermissionWaitKindWire(value: unknown): value is PermissionWai
  * `waitKind` on `permission` (protocol 0.26.0) says what the wait is for.
  * Absent means the agent did not say, or an older desktop. An older phone
  * ignores it.
+ *
+ * `stopped` on `idle` (protocol 0.28.0) marks a task the board has stopped:
+ * its column's turn-end rows ended the run, or it waits on a person. The
+ * desktop draws its stopped pennant in place of the idle mark, with no tip and
+ * no elapsed time. Absent means a plain idle, or an older desktop; an older
+ * phone ignores it and keeps the idle mark. A flip of this mark alone reaches
+ * a read-stream subscriber as an `activity` event.
  */
 export type ActivityReasonWire =
-  | { kind: 'idle'; since?: number }
+  | { kind: 'idle'; since?: number; stopped?: true }
   | { kind: 'permission'; since?: number; waitKind?: PermissionWaitKindWire }
   | { kind: 'tool'; pendingCount: number; currentTool: string | null }
   | { kind: 'subagent'; depth: number }
@@ -546,7 +553,107 @@ export interface BoardTaskWire {
    * it cannot read. Declared OPTIONAL for the reason `pr_merge_readiness` is.
    */
   workflow?: BoardTaskWorkflowWire | null;
+  /**
+   * Where the task's queued session stands in the line for an agent slot, and
+   * what it waits for (protocol 0.28.0). Null when the task has no queued
+   * session. See `BoardTaskQueuePlaceWire` for the words the desktop card draws.
+   *
+   * A session joining, leaving or moving up the line reaches the phone as a
+   * `task-updated` board event for each task whose place changed, after which
+   * the next snapshot carries the new value. Null or absent also means a
+   * desktop that predates the field: a queued card then reads "Queued...".
+   *
+   * Declared OPTIONAL (`?`) like `workflow`; `parseBoardTaskWire` populates the
+   * key from every real wire response.
+   */
+  queue_place?: BoardTaskQueuePlaceWire | null;
+  /**
+   * The task's links (protocol 0.28.0): design review pages, specs, generated
+   * pages, in the order the desktop lists them. `name` is the text the desktop
+   * chip shows, already resolved from the stored name or the link itself. At
+   * most `BOARD_TASK_ARTIFACTS_WIRE_MAX` per task, and a link longer than
+   * `BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH` is left out, so a snapshot stays
+   * inside one frame.
+   *
+   * Untrusted, like any task text: open `url` only with the platform's own
+   * link handling, never as code. A link added, removed or renamed reaches the
+   * phone as a `task-updated` board event. Null or absent means a desktop that
+   * predates the field; an empty array means the task has none.
+   *
+   * Declared OPTIONAL (`?`) like `workflow`; `parseBoardTaskWire` populates the
+   * key from every real wire response, dropping an entry it cannot read.
+   */
+  artifacts?: BoardTaskArtifactWire[] | null;
+  /**
+   * Why the task's last start never reached an agent, while its session is
+   * paused or ended (protocol 0.28.0). The desktop card draws it in place of
+   * "Paused", in its warning tone, with the reason in the tip:
+   *
+   * - `worktree-missing`: "Worktree missing", tip "Its worktree folder is
+   *   gone. Resume makes it again from the branch."
+   * - `folder-missing`: "Folder missing", tip "The folder this agent starts in
+   *   is gone."
+   * - `never-started`: "Didn't start", tip "The agent never reported that it
+   *   started."
+   * - `spawn-failed`: "Didn't start", tip "The terminal could not start. Its
+   *   window shows why."
+   * - `prompt-too-long`: "Didn't start", tip "Its prompt is too long for this
+   *   agent to start with."
+   *
+   * A value a client does not know draws as plain "Paused". Null when the last
+   * start reached its agent, or the task has no paused or ended session. Null
+   * or absent also means a desktop that predates the field.
+   *
+   * Declared OPTIONAL (`?`) like `workflow`; `parseBoardTaskWire` populates the
+   * key from every real wire response.
+   */
+  start_blocked_reason?: string | null;
 }
+
+/**
+ * A queued task's place in line (protocol 0.28.0), as the desktop card draws it.
+ *
+ * - `kind` is `column` when the task's column runs a limited number of agents
+ *   and holds it back, and `global` when it waits for a free slot under the
+ *   desktop's Max concurrent sessions. A task held by both reads `column`, the
+ *   more specific reason. A value a client does not know draws "Queued...".
+ * - `position` is 1-based among the tasks waiting for the same thing; `total`
+ *   is how many wait. Running agents never count.
+ * - `column_name` names the column for `column`, and is null for `global`.
+ * - `max_agents` is the column's limit for `column`, and Max concurrent
+ *   sessions for `global`; null when unknown.
+ *
+ * The card's words, by `position - 1` tasks ahead: "Next in line..." at 0,
+ * "1 task ahead..." and "# tasks ahead..." above it. Its tip is "Waiting for a
+ * slot in {column_name}." for `column` and "Waiting for a free agent slot."
+ * for `global`. With no place known the card reads "Queued...". The task
+ * window's heading reads the same without the dots ("Next in line", "# tasks
+ * ahead") over "{position} of {total}", with the reason "{column_name} runs #
+ * agents at a time" or "Up to # agents run at a time".
+ *
+ * The numbered line itself (which tasks are ahead) is not carried: on every
+ * board row it would repeat every queued task's title across projects.
+ */
+export interface BoardTaskQueuePlaceWire {
+  kind: 'column' | 'global' | (string & {});
+  position: number;
+  total: number;
+  column_name: string | null;
+  max_agents: number | null;
+}
+
+/** One link of a task (protocol 0.28.0). */
+export interface BoardTaskArtifactWire {
+  url: string;
+  /** The chip's text: the stored name, else one derived from the link. */
+  name: string;
+}
+
+/** The most artifacts the desktop sends per task. */
+export const BOARD_TASK_ARTIFACTS_WIRE_MAX = 20;
+
+/** The longest artifact link the desktop sends; a longer one is left out, not cut. */
+export const BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH = 2048;
 
 /**
  * A board task's workflow, as its card draws it: the strip (name, color), what
@@ -803,6 +910,11 @@ export function parseActivityReasonWire(value: unknown): ActivityReasonWire | nu
     const { waitKind: _unknownWaitKind, ...withoutWaitKind } = value;
     return isActivityReasonWire(withoutWaitKind) ? withoutWaitKind : null;
   }
+  // `stopped` is only ever `true`; anything else reads as a plain idle.
+  if (isRecord(value) && value.kind === 'idle' && value.stopped !== undefined && value.stopped !== true) {
+    const { stopped: _malformedStopped, ...withoutStopped } = value;
+    return isActivityReasonWire(withoutStopped) ? withoutStopped : null;
+  }
   return isActivityReasonWire(value) ? value : null;
 }
 
@@ -953,7 +1065,43 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     pausable: nullableBoolean(value, 'pausable'),
     automations_disabled: nullableBoolean(value, 'automations_disabled'),
     workflow: parseBoardTaskWorkflowWire(value.workflow),
+    queue_place: parseBoardTaskQueuePlaceWire(value.queue_place),
+    artifacts: parseBoardTaskArtifactsWire(value.artifacts),
+    start_blocked_reason: nullableString(value, 'start_blocked_reason'),
   };
+}
+
+/**
+ * A queued task's place, or null when absent or unreadable. Lenient on
+ * purpose: a malformed place costs the card its count ("Queued..."), never the
+ * board.
+ */
+export function parseBoardTaskQueuePlaceWire(value: JsonValue | undefined): BoardTaskQueuePlaceWire | null {
+  if (value === undefined || !isRecord(value)) return null;
+  const { kind, position, total } = value;
+  if (typeof kind !== 'string') return null;
+  if (typeof position !== 'number' || !Number.isInteger(position) || position < 1) return null;
+  if (typeof total !== 'number' || !Number.isInteger(total) || total < position) return null;
+  return {
+    kind,
+    position,
+    total,
+    column_name: typeof value.column_name === 'string' ? value.column_name : null,
+    max_agents: typeof value.max_agents === 'number' ? value.max_agents : null,
+  };
+}
+
+/**
+ * A task's links, or null when absent. An entry without a string `url` and
+ * `name` is dropped rather than failing the board.
+ */
+export function parseBoardTaskArtifactsWire(value: JsonValue | undefined): BoardTaskArtifactWire[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((entry): BoardTaskArtifactWire[] =>
+    isRecord(entry) && typeof entry.url === 'string' && typeof entry.name === 'string'
+      ? [{ url: entry.url, name: entry.name }]
+      : [],
+  );
 }
 
 /**

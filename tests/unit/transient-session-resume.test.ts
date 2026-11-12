@@ -5,7 +5,7 @@
  * SESSION_SPAWN_TRANSIENT handler. Harness shape follows
  * transient-session-spawn-ensure-trust.test.ts.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
@@ -77,6 +77,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
+import { setAccountService, type AccountService } from '../../src/main/accounts/account-service';
 import { registerTransientSessionHandlers, startCommandTerminal } from '../../src/main/ipc/handlers/transient-sessions';
 import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -197,6 +198,36 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     // The conversation is claimed before the spawn and handed to its terminal after.
     expect(context.commandTerminalHistory.claimResume).toHaveBeenCalledWith('proj-1', 'conversation-a');
     expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', 'session-1');
+  });
+
+  // Task #1070. Red: dropping the 4th argument of resolveSpawnAccount fails the first case; handing
+  // it without a resume (dropping the resumeAgentSessionId guard) fails the second.
+  describe('the conversation handed to the account service', () => {
+    const resolveForSpawn = vi.fn(async () => null);
+
+    beforeEach(() => {
+      setAccountService({ resolveForSpawn } as unknown as AccountService);
+    });
+    afterEach(() => {
+      setAccountService(null);
+    });
+
+    it('passes the resumed conversation and the project root on a resume', async () => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+      await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+
+      expect(resolveForSpawn).toHaveBeenCalledTimes(1);
+      expect((resolveForSpawn.mock.calls[0] as unknown[])[0]).toBe('claude');
+      expect((resolveForSpawn.mock.calls[0] as unknown[])[3]).toEqual({ agentSessionId: 'conversation-a', cwd: PROJECT_ROOT });
+    });
+
+    it('passes no conversation on a fresh start', async () => {
+      const context = createContext({});
+      await spawn(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+      expect(resolveForSpawn).toHaveBeenCalledTimes(1);
+      expect((resolveForSpawn.mock.calls[0] as unknown[])[3]).toBeUndefined();
+    });
   });
 
   it("resumes a row a user named as a user's name, so a suggestion never replaces it", async () => {

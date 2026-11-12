@@ -1,6 +1,7 @@
-import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type JsonValue, type StartSessionResponsePayload } from '@kangentic/protocol';
-import { startTaskSession } from '../../ipc/handlers/session-start';
+import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type CapabilityResponseMessage, type StartSessionResponsePayload } from '@kangentic/protocol';
+import { openTaskSession, startTaskSession } from '../../ipc/handlers/session-start';
 import { resolveKnownProject } from './known-project';
+import { toWireJson } from './wire-mappers';
 import type { IpcContext } from '../../ipc/ipc-context';
 
 export async function handleStartSession(
@@ -13,6 +14,22 @@ export async function handleStartSession(
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: `No such project: ${payload.projectId}` };
   }
   const { projectId } = project;
+
+  // An open (protocol 0.28.0) does what opening the task on the desktop does:
+  // it resumes a task the idle timeout paused, and only when that sends the
+  // agent nothing. Every other task is left alone and answered `not-eligible`,
+  // never an error: opening is not a request the person can fail. It answers on
+  // the decision, before the git phase, for the same budget a start answers in.
+  if (payload.trigger === 'open') {
+    const opened = await openTaskSession(context, projectId, payload.taskId);
+    if (opened.outcome === 'starting') {
+      opened.settled.catch((error: unknown) => {
+        console.error(`[mobile-bridge] start-session open ${payload.taskId.slice(0, 8)} failed after accept:`, error);
+      });
+    }
+    const openPayload: StartSessionResponsePayload = { ok: true, outcome: opened.outcome };
+    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(openPayload) };
+  }
 
   // startTaskSession owns the task lock, the stale-pointer reconcile, and the
   // To Do / Done / archived gate. A paused task takes the desktop Resume
@@ -49,5 +66,5 @@ export async function handleStartSession(
   }
 
   const responsePayload: StartSessionResponsePayload = { ok: true, outcome: result.outcome };
-  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: responsePayload as unknown as JsonValue };
+  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }

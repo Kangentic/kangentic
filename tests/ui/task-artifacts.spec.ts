@@ -162,6 +162,8 @@ test.describe('Artifacts on a board card', () => {
     const one = chip(page, 'task-one');
 
     await expect(one).toContainText('My File');
+    // Only a count steps down; one artifact's name just cuts off.
+    await expect(one).not.toHaveAttribute('data-count-step');
     // Its tip names it and where it goes, and says what a click does.
     await expect(one).toHaveAccessibleDescription(/My File, Figma/);
     await expect(one).toHaveAccessibleDescription(/Open in default browser/);
@@ -174,7 +176,8 @@ test.describe('Artifacts on a board card', () => {
   test('several artifacts show a count; a click opens a menu that is not inside the card, and Escape closes it', async () => {
     const page = await openBoard({ tasks: [{ id: 'task-many', title: 'Many links', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI] }] });
     const many = chip(page, 'task-many');
-    await expect(many).toHaveText('3 artifacts');
+    // innerText: the number the chip falls back to is in the DOM, hidden.
+    await expect(many).toHaveText('3 artifacts', { useInnerText: true });
 
     await many.click();
     await expect(menu(page)).toBeVisible();
@@ -243,6 +246,10 @@ test.describe('Artifacts on a board card', () => {
       await expect(many).toBeVisible();
       // Whatever it shows, it is still named for a screen reader.
       await expect(many).toHaveAccessibleName('3 artifacts');
+      // The chevron says the chip opens a menu, so it comes back beside the
+      // number at Narrow rather than leaving with the word. Asserted first, so
+      // the reads below wait for the step to settle.
+      await expect(many).toHaveAttribute('data-count-step', columnWidth === 'narrow' ? 'number-chevron' : 'full');
 
       const measured = await page.evaluate(() => {
         const cardElement = document.querySelector('[data-task-id="task-pr"]') as HTMLElement;
@@ -262,10 +269,121 @@ test.describe('Artifacts on a board card', () => {
       expect(Math.abs(measured.chipHeight - measured.pillHeight)).toBeLessThan(2);
       expect(measured.chipRight).toBeLessThanOrEqual(measured.cardRight);
       expect(measured.clipped).toBe(false);
-      // The word shows where there is room for it, and the number alone where there is not.
+      // The word shows where there is room for it, and the number where there is not.
       expect(measured.shown).toBe(columnWidth === 'narrow' ? '3' : '3 artifacts');
     });
   }
+
+  /** The link row's box and its two pills' widths, read in one pass. */
+  async function measureLinkRow(page: Page, taskId: string) {
+    return page.evaluate((id) => {
+      const cardElement = document.querySelector(`[data-task-id="${id}"]`) as HTMLElement;
+      const row = cardElement.querySelector('[data-testid="task-card-links"]') as HTMLElement;
+      const pill = cardElement.querySelector('[data-testid="task-card-pr-link"]') as HTMLElement | null;
+      const chipElement = cardElement.querySelector('[data-testid="task-card-artifacts"]') as HTMLElement;
+      return {
+        row: row.getBoundingClientRect().width,
+        gap: parseFloat(getComputedStyle(row).columnGap) || 0,
+        chip: chipElement.getBoundingClientRect().width,
+        pill: pill ? pill.getBoundingClientRect().width : 0,
+        pillClipped: pill ? pill.scrollWidth > pill.clientWidth + 1 : false,
+        pillNatural: pill ? pill.scrollWidth : 0,
+      };
+    }, taskId);
+  }
+
+  for (const artifacts of [[FIGMA], [FIGMA, MIRO, WIKI]]) {
+    test(`alone, ${artifacts.length === 1 ? 'one artifact' : 'a count'} fills the row`, async () => {
+      // It stopped after its name and left the rest of the row empty.
+      const page = await openBoard({ tasks: [{ id: 'task-alone', title: 'Alone', lane: 'To Do', artifacts }] });
+      await expect(chip(page, 'task-alone')).toBeVisible();
+      const measured = await measureLinkRow(page, 'task-alone');
+      expect(measured.chip / measured.row).toBeGreaterThan(0.98);
+    });
+  }
+
+  test('beside a PR pill, a count shares the row 50/50', async () => {
+    const page = await openBoard({
+      tasks: [{ id: 'task-split', title: 'Split', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
+      config: { columnWidth: 'default' },
+    });
+    await expect(chip(page, 'task-split')).toBeVisible();
+    const measured = await measureLinkRow(page, 'task-split');
+    expect(Math.abs(measured.chip / measured.pill - 1)).toBeLessThan(0.05);
+    expect(Math.abs((measured.pill + measured.gap + measured.chip) / measured.row - 1)).toBeLessThan(0.02);
+    // Stretched pills start their content at the left, not the middle.
+    const justify = await page.evaluate(() => {
+      const cardElement = document.querySelector('[data-task-id="task-split"]') as HTMLElement;
+      const read = (testId: string) => getComputedStyle(cardElement.querySelector(`[data-testid="${testId}"]`) as HTMLElement).justifyContent;
+      return { pill: read('task-card-pr-link'), chip: read('task-card-artifacts') };
+    });
+    // Chromium reports `justify-start` as "flow-start", the spec's "flex-start" elsewhere.
+    expect(justify.pill).toMatch(/^(flex|flow)-start$/);
+    expect(justify.chip).toMatch(/^(flex|flow)-start$/);
+  });
+
+  test('hovering the count shows its label once a step has hidden the word, and nothing while the word shows', async () => {
+    const narrowPage = await openBoard({
+      tasks: [{ id: 'task-tip-narrow', title: 'Tip narrow', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
+      config: { columnWidth: 'narrow' },
+    });
+    const narrowChip = chip(narrowPage, 'task-tip-narrow');
+    await expect(narrowChip).toHaveAttribute('data-count-step', 'number-chevron');
+    await narrowChip.hover();
+    await expect(narrowPage.locator('[role="tooltip"]')).toHaveText('3 artifacts', { timeout: 5000 });
+
+    const widePage = await openBoard({
+      tasks: [{ id: 'task-tip-wide', title: 'Tip wide', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
+      config: { columnWidth: 'default' },
+    });
+    const wideChip = chip(widePage, 'task-tip-wide');
+    await expect(wideChip).toHaveAttribute('data-count-step', 'full');
+    await wideChip.hover();
+    // Intentional fixed wait: a tip that never opens cannot be polled for. 1000ms is
+    // well past the 400ms dwell, so a tip that would open has opened.
+    await widePage.waitForTimeout(1000);
+    await expect(widePage.locator('[role="tooltip"]')).toHaveCount(0);
+  });
+
+  test('beside a PR pill at the Fill floor, the count gives up the chevron and keeps the number', async () => {
+    // 10 columns at 900px wide: Fill cannot share the row, so each sits at its 200px floor.
+    const page = await openBoard({
+      tasks: [{ id: 'task-floor', title: 'Floor', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
+      config: { columnWidth: 'fill' },
+      viewport: { width: 900, height: 700 },
+    });
+    const many = chip(page, 'task-floor');
+    await expect(many).toHaveAttribute('data-count-step', 'number');
+    await expect(many).toHaveText('3', { useInnerText: true });
+    await expect(many.locator('.lucide-chevron-down')).toBeHidden();
+    await expect(many).toHaveAccessibleName('3 artifacts');
+  });
+
+  test('beside a PR pill at Narrow, the PR keeps its label and the count takes the rest', async () => {
+    // Half a Narrow card is narrower than "PR #1071", so 50/50 would cut the PR's label.
+    const page = await openBoard({
+      tasks: [{ id: 'task-narrow', title: 'Narrow', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
+      config: { columnWidth: 'narrow' },
+    });
+    await expect(chip(page, 'task-narrow')).toBeVisible();
+    const measured = await measureLinkRow(page, 'task-narrow');
+    expect(measured.pillClipped).toBe(false);
+    expect(measured.pill).toBeGreaterThan(measured.chip);
+    expect(Math.abs((measured.pill + measured.gap + measured.chip) / measured.row - 1)).toBeLessThan(0.02);
+  });
+
+  test('beside a PR pill, one artifact takes the rest and the PR keeps its own width', async () => {
+    const page = await openBoard({
+      tasks: [{ id: 'task-rest', title: 'Rest', lane: 'To Do', artifacts: [FIGMA], prNumber: 718 }],
+      config: { columnWidth: 'default' },
+    });
+    await expect(chip(page, 'task-rest')).toBeVisible();
+    const measured = await measureLinkRow(page, 'task-rest');
+    // Not stretched: the pill is as wide as its own content.
+    expect(Math.abs(measured.pill / measured.pillNatural - 1)).toBeLessThan(0.02);
+    expect(measured.chip).toBeGreaterThan(measured.pill);
+    expect(Math.abs((measured.pill + measured.gap + measured.chip) / measured.row - 1)).toBeLessThan(0.02);
+  });
 
   test('compact density hides the chip', async () => {
     const page = await openBoard({
@@ -331,7 +449,7 @@ test.describe('Editing artifacts', () => {
 
     await dialog(page).getByRole('button', { name: 'Save' }).click();
 
-    await expect(chip(page, 'task-edit')).toHaveText('2 artifacts');
+    await expect(chip(page, 'task-edit')).toHaveText('2 artifacts', { useInnerText: true });
     await chip(page, 'task-edit').click();
     await expect(menuRows(page)).toHaveCount(2);
     await expect(menuRows(page).nth(0)).toContainText('Filter chips');

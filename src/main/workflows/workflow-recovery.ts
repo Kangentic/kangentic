@@ -8,8 +8,9 @@ import { SessionRepository } from '../db/repositories/session-repository';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { resolveInjectionVerifier } from '../ipc/helpers/agent-spawn';
 import { deliverMessageToSession } from '../automations/turn-end/deliver-message';
+import { holdMoveMessage } from '../automations/turn-end/hold-move-message';
 import { tryReadSessionFinalReply } from '../automations/turn-end/final-reply-reader';
-import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-passes';
+import { hasPendingMessageDelivery, takeMoveFollowUpMessage, type TakenMoveFollowUp } from '../automations/turn-end/turn-end-passes';
 import { refreshStoppedMark } from '../automations/stopped-mark';
 import { isSessionInOwnCall } from '../ipc/handlers/own-call-turn-wait';
 import { automatedKeysRefusal, KeysReachedPermissionPromptError } from '../pty/automated-keys-guard';
@@ -812,7 +813,10 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
   entry.memoryHoldNoted = false;
 
   const label = attemptLabel(entry);
-  const message = nudgeMessage({
+  // A move's message still waiting for this agent says what to do better than
+  // a nudge can (#804): it goes in the nudge's place, once.
+  const movedMessage = takeMoveFollowUpMessage(entry.taskId);
+  const message = movedMessage?.message ?? nudgeMessage({
     columnName: column.name,
     reason: verdict.reason,
     leftRunning: verdict.verdict === 'working',
@@ -833,10 +837,18 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
       verifier: resolveInjectionVerifier(task.agent, new SessionRepository(getProjectDb(entry.projectId)), entry.taskId),
       signal: AbortSignal.any([signal, AbortSignal.timeout(NUDGE_DELIVERY_TIMEOUT_MS)]),
       acceptHeld: true,
+      // The turn was found settled above, so a paste (a long moved message)
+      // waits out a status line's repaint only briefly.
+      idleWithoutQuietMs: SETTLED_PASTE_QUIET_GIVE_UP_MS,
     });
   } catch (error) {
     // Nothing started, so the gate moves on at once.
     workflowMemoryGate.release(gateKey);
+    // The move's message is not lost with the attempt: the task's agent gets
+    // it held. A move that stopped the attempt took the task from the column
+    // the message was for, so then nothing is held.
+    if (movedMessage && signal.aborted) movedMessage.report({ kind: 'superseded' });
+    else if (movedMessage) holdMovedMessageAfterFailedAttempt(context, entry, movedMessage);
     // A move meanwhile: the move owns what happens next.
     if (signal.aborted || getRecoveryEntry(entry.taskId) !== entry) return;
     if (error instanceof KeysReachedPermissionPromptError) {
@@ -857,8 +869,14 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
   // Only now: a working wait that ran out stays run out through every hold
   // above, so the next try nudges instead of waiting another hour.
   endWorkingWait(entry);
+  movedMessage?.report({ kind: 'sent-by-recovery' });
   if (getRecoveryEntry(entry.taskId) !== entry) return;
-  const rowId = recordAttempt(context, entry, 'succeeded', `${label}: asked the agent to carry on.`);
+  const rowId = recordAttempt(
+    context,
+    entry,
+    'succeeded',
+    movedMessage ? `${label}: sent the moved task's waiting message in place of a nudge.` : `${label}: asked the agent to carry on.`,
+  );
   entry.attemptIndex += 1;
   entry.countedNudges += 1;
   entry.countedSinceNotice += 1;
@@ -873,6 +891,28 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
 
 /** How long an idle agent's open tool call holds the nudge before the owner is told it may be a prompt. */
 const OPEN_CALL_NOTICE_MS = 10 * 60_000;
+
+/**
+ * How long a nudge's paste waits for quiet on a turn already found settled.
+ * The short form of `PAINT_GIVE_UP_MS`, which a wait that has not yet seen
+ * the turn settle uses. Well inside `NUDGE_DELIVERY_TIMEOUT_MS`, which would
+ * otherwise end the wait first on a CLI painting its status line.
+ */
+const SETTLED_PASTE_QUIET_GIVE_UP_MS = 10_000;
+
+/** Hold a move's message an attempt took and could not deliver, and record that. */
+function holdMovedMessageAfterFailedAttempt(context: IpcContext, entry: RecoveryEntry, movedMessage: TakenMoveFollowUp): void {
+  const outcome = holdMoveMessage(
+    context,
+    { projectId: entry.projectId, taskId: entry.taskId, message: movedMessage.message },
+    movedMessage.report,
+  );
+  if (outcome.kind === 'held') {
+    console.log(`[WORKFLOW] Recovery could not send task ${entry.taskId.slice(0, 8)}'s moved message; it is held for the task's agent.`);
+  } else {
+    console.warn(`[WORKFLOW] Recovery could not send task ${entry.taskId.slice(0, 8)}'s moved message, and it is not held: ${outcome.reason}`);
+  }
+}
 
 /**
  * Tasks of the same workflow whose PR merged into this task's base branch since
@@ -1126,7 +1166,11 @@ function shellSentences(shells: ReadonlyArray<OpenShellFact>, withCommands: bool
   return [
     `${subject} ${named.join('; ')}${more} ${verb} still running.`,
     'It is this session\'s own work, even if a subagent started it.',
-    `If it waits on input or is no longer needed, stop it. If it is a service meant to keep running, mark it with ${MARK_BACKGROUND_SERVICE_TOOL}.`,
+    // "or has already ended" (#803): a shell whose end Kangentic missed held a
+    // move until the agent marked it. The agent can see it ended, and the
+    // mark is how it says so. Folded into this sentence, not a new one,
+    // because a one-shell held-move nudge already sits near NUDGE_MAX_CHARS.
+    `If it waits on input or is no longer needed, stop it. If it is a service meant to keep running, or has already ended, mark it with ${MARK_BACKGROUND_SERVICE_TOOL}.`,
   ];
 }
 

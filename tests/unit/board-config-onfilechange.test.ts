@@ -4,14 +4,15 @@
  * `kangentic.json` board-config changes did not hot-reload on the machine that
  * authored the commit: a pulled file carries THIS machine's own `_modifiedBy`
  * fingerprint (stable per hostname+username and persisted in the committed
- * file), and onFileChanged used to treat that as a self-write and only reload
- * shortcuts (BOARD_CONFIG_SHORTCUTS_CHANGED), skipping the live reconcile
+ * file), and onFileChanged used to treat that as a self-write and send only the
+ * shortcuts-reload event it had then, skipping the live reconcile
  * (BOARD_CONFIG_CHANGED). So the DB swimlane auto_command stayed stale until a
  * restart. The fix removes that fingerprint guard.
  *
  * These tests lock the resulting behavior:
  *   - a genuine external change (incl. a pulled own-commit) fires
- *     BOARD_CONFIG_CHANGED, never the shortcuts-only event;
+ *     BOARD_CONFIG_CHANGED, never BOARD_CONFIG_LOCAL_APPLIED, which is the
+ *     kangentic.local.json event;
  *   - the app's own write-backs are still suppressed by the two earlier
  *     filters (the isWritingBack window and the content-hash echo check).
  *
@@ -88,7 +89,7 @@ describe('board-config-manager onFileChanged (team file reconcile)', () => {
     internals.onFileChanged('proj-1', 'team');
 
     expect(send).toHaveBeenCalledWith(IPC.BOARD_CONFIG_CHANGED, 'proj-1');
-    expect(send).not.toHaveBeenCalledWith(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, 'proj-1');
+    expect(send).not.toHaveBeenCalledWith(IPC.BOARD_CONFIG_LOCAL_APPLIED, 'proj-1');
   });
 
   it('fires BOARD_CONFIG_CHANGED for a teammate edit (different fingerprint)', () => {

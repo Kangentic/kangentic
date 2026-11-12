@@ -2,6 +2,43 @@
 
 <!-- releases -->
 
+## [protocol-v0.28.0] - 2026-11-11
+
+Lets a phone resume a task by opening it, the way the desktop does, and
+carries what a desktop card draws that a phone could not: a queued task's place
+in line, the stopped mark, the priority scale, a task's links, and why a start
+never reached an agent. Additive on the wire; `PROTOCOL_VERSION` stays '3'.
+
+`StartSessionRequestPayload` gains an optional `trigger: 'open'`. With it the
+desktop does what opening the task there does: it resumes a task the idle
+timeout paused, only when that sends the agent nothing, and leaves every other
+task alone. `StartSessionOutcome` gains `not-eligible` for that answer, never
+an error. The parser refuses any other trigger value, since a dropped one would
+read as a plain start. An older desktop drops the key and takes the Resume
+button's path, which can send a paid turn, so the board snapshot and the
+read-stream snapshot each gain `resumeOnOpenOffered`, and a phone sends the
+trigger only when it is true.
+
+`BoardTaskWire` gains `queue_place` (`kind`, `position`, `total`,
+`column_name`, `max_agents`), `start_blocked_reason` (a widened string), and
+`artifacts` (`url` and `name`, capped per task by
+`BOARD_TASK_ARTIFACTS_WIRE_MAX` and `BOARD_TASK_ARTIFACT_URL_WIRE_MAX_LENGTH`).
+`parseBoardTaskWire` populates each key from every wire response, null when
+absent or unreadable. The board snapshot gains `priorities`, the project's scale
+as `PriorityLevelWire` entries, which the parser never drops, since a priority
+is an index: a malformed level reads as `P<index>` in `PRIORITY_FALLBACK_COLOR`.
+`ActivityReasonWire`'s `idle` variant gains `stopped?: true`, which an older
+phone's guard ignores. The doc comments carry the words the desktop card draws
+for each field.
+
+### Features
+- Resume a task when a phone opens it, and offer it on the board and stream snapshots (1e23d646)
+- Carry a queued task's place in line on its board row (1e23d646)
+- Carry the stopped mark, the priority scale, task links and the start-blocked reason (1e23d646)
+- Document `failing` among a PR's merge readiness values (0df5c318)
+- Document that a running or paused workflow's task cannot pause its automations (7aff391f)
+- Document that a stopped workflow card is the owner's to move (ec403ad8)
+
 ## [protocol-v0.27.0] - 2026-11-01
 
 Names a paused task's session on its board row, so a phone can send chat to

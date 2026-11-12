@@ -31,7 +31,7 @@ Template variables available in shortcut commands (defined in `src/shared/templa
 | `{{taskTitle}}` | Task title (shell-sanitized to prevent injection) |
 | `{{projectPath}}` | Project root directory path |
 
-IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortcuts`, `boardConfig:setShortcuts`, `boardConfig:shortcutsChanged`.
+IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortcuts` and `boardConfig:setShortcuts`. A change to `kangentic.local.json` is applied to the open board, and `boardConfig:localApplied` tells the renderer to reload the board and its shortcuts.
 
 ## Board Profiles
 
@@ -102,6 +102,31 @@ Kangentic supports shareable board configuration via JSON files in the project r
 
 When both files exist, `kangentic.local.json` is merged over `kangentic.json` by matching columns by ID. Unmatched local entries are appended. A column's automations merge as a WHOLE list, not row by row: a local column that declares `automations` replaces the team file's list for that column outright, because an ordered list has no stable key to merge a row against once names can change.
 
+The database holds the merged board, so the write-back sends each value back to the file it came
+from (`board-config/split-config.ts`). Nothing in `kangentic.local.json` reaches `kangentic.json`:
+
+- **A key a local column entry sets** keeps the team file's value in `kangentic.json`. An edit to
+  that field, from the Column Manager or `kangentic_update_column`, is saved to
+  `kangentic.local.json`. A cleared value is written there explicitly (`null` or `false`), so the
+  merge does not fall back to the team value. A `null` you write by hand clears the field the same
+  way: it goes back to its default. Every other field is saved to `kangentic.json`.
+- **A local entry for a column the team file no longer has** is ignored when it has no `name`,
+  so a teammate removing a column you override leaves your board as it was.
+- **Automations** belong to the local file for a column whose local entry declares them, whether
+  as `automations` or as the legacy `autoCommand`.
+- **A local-only column** (an entry with no team column) lives entirely in `kangentic.local.json`:
+  its edits, and its delete. If the entry has no `id`, the first write-back adds the id the board
+  gave it, so the next open finds the same column instead of creating another one.
+- **A team column that points at a local-only column** (`planExitTarget`, or a Move to column
+  row's `targetColumn`) keeps the team file's value, since teammates do not have that column. The
+  new pointer goes into the column's local entry instead, and for a row that means the column's
+  whole automations list.
+- **Deleting a column** also removes its entry from `kangentic.local.json`.
+
+**Known gap.** The position of a local-only column is not saved. The merge always puts local-only
+columns just before the Done column, so if you drag one somewhere else, it goes back there on the
+next open.
+
 ### Board Config Sync (kangentic.json)
 
 **The sync is bidirectional, and the two directions do not fire on the same events.** Getting
@@ -119,8 +144,9 @@ occurs.
 1. **On project open**, if `kangentic.json` exists, Kangentic applies it to the database
    **before** the export above. On a conflict the file wins. There is no banner and no prompt on
    this path.
-2. **On an external edit while the project is open**, the file watcher raises a reconciliation
-   banner (or applies silently when `skipBoardConfigConfirm` is set).
+2. **On an external edit to `kangentic.json` while the project is open**, the file watcher raises a
+   reconciliation banner (or applies silently when `skipBoardConfigConfirm` is set). An edit to
+   `kangentic.local.json` applies at once, as File Watching and Reconciliation below describes.
 
 The open-time apply is why a hand-edited `kangentic.json` sticks: the app is not merely writing
 to the file, it reads it back as the source of truth for column identity every time the project
@@ -160,7 +186,29 @@ its `profiles[].columns` entries in the same edit.
 
 ### File Watching and Reconciliation
 
-Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes. When a change is detected (e.g., a teammate pulls a new version), a reconciliation banner appears in the UI. The user can apply the changes or dismiss the banner. If `skipBoardConfigConfirm` is enabled, changes are applied automatically without the banner.
+Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes while the project is
+open, and treats them differently.
+
+- **`kangentic.json`.** A change from outside the app (a teammate's commit you pulled) raises a
+  reconciliation banner. You can apply the change or dismiss the banner. With
+  `skipBoardConfigConfirm` set, the change applies without the banner.
+- **`kangentic.local.json`.** A change applies at once, with no banner, because the file is yours
+  and gitignored, so there is no teammate's edit to review. If you remove a key from a column's
+  entry, or delete the file, that field goes back to the team file's value, or to the default
+  when the team file does not set it.
+
+**Known gap.** The app can only notice a removed local key while it is running. It compares the
+file with the version it last applied, and it keeps that version in memory. So if you remove a key
+while the app is closed, and `kangentic.json` does not set that field, the old personal value stays
+on the board. The next write-back then saves it to `kangentic.json`, because no local entry claims
+it any more. Check `git diff kangentic.json` after that kind of edit, or make it while the app is
+open.
+
+**Known gap.** Until the app applies a changed `kangentic.local.json`, a write-back routes each
+value by the version it last applied and leaves the local file as it is, so nothing personal
+reaches `kangentic.json`. Only the open project's file is applied as you save it. For another
+project, an agent's edit to a field its local file sets, made after you edited that file by hand,
+is not saved and is undone when you next open the project.
 
 The same matching rules below also run unprompted on project open, per the sync section above.
 
@@ -215,10 +263,16 @@ Ghost columns are invisible on the board but still exist in the database. Once a
             "type": "move_to_column",
             "targetColumn": "Executing",
             "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
-            "finalLine": "Verdict: Blocked",
+            "condition": { "text": "Verdict: Blocked" },
             "maxRuns": 3
           },
-          { "name": "Clean", "type": "move_to_column", "condition": "The review is clean" }
+          { "name": "Clean", "type": "move_to_column", "condition": { "agent": "The review is clean" } },
+          {
+            "name": "Apply findings",
+            "type": "send_message",
+            "condition": { "text": ["!Design: waiting on you", "!Design: shelved"] },
+            "message": "Apply your findings."
+          }
         ],
         "onExit": [
           { "name": "Archive the log", "type": "run_script", "enabled": false, "script": "scripts/archive.sh" }
@@ -270,30 +324,42 @@ cannot change it.
 key, and the type's own fields sit flat on the row beside `name`, `type`, `enabled`, `condition`,
 `finalLine` and `maxRuns` rather than under a `with` object. Those six keys are reserved:
 `automation-manifest-reserved-keys.test.ts` fails an adapter that declares a field colliding with
-one, which is what keeps the flat shape safe as the reserved set grows.
+one, which is what keeps the flat shape safe as the reserved set grows. `finalLine` is only read
+now (below), and stays reserved so an adapter field can never take the name.
 
-`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`,
-`finalLine` and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits
+`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`
+and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits
 in already says which trigger it runs on. A `move_to_column` row names its column by name, as
 `planExitTarget` does, and renaming that column rewrites the row.
 
-**A row's Condition is one of two kinds.** `condition` is plain words the Automation agent judges in
-a headless call. `finalLine` is a Text match, checked in code against the last line of the agent's final message that has a word in it (a
-closing code fence or rule is skipped), with no call: the pattern must cover the whole line, `*`
+**A row's Condition is one of two kinds, named inside `condition`**, as the Edit automation dialog's
+Condition card holds them. `{ "agent": "..." }` is plain words the Automation agent judges in a
+headless call. `{ "text": ... }` is a Text match: one pattern as a string, several as a list. It is
+checked in code against the last line of the agent's final message that has a word in it (a
+closing code fence or rule is skipped), with no call: a pattern must cover the whole line, `*`
 matches any text, and case, punctuation (markdown marks included), invisible characters such as a
 zero-width space, and extra spaces are ignored, so `"Verdict: Ready"` matches
-`**Verdict: Ready.**`. A Text match needs a final message, so it works in `onTurnEnd` only. A row carries one of the two keys, never both.
+`**Verdict: Ready.**`. A `!` at the very start of a pattern means not. The row runs when the line
+matches any plain pattern and no `!` pattern, in any order; with only `!` patterns it runs on any
+line but those. A `!` is safe to read as syntax because punctuation never reaches the comparison,
+so no line can contain one. A Text match needs a final message, so it works in `onTurnEnd` only,
+and a turn with no message runs none, `!` included.
+
+**What older builds wrote still reads.** A plain string under `condition` is an Agent evaluation,
+and a `finalLine` key is a Text match of one pattern whose leading `!` is taken off, since it
+meant nothing when that key was written. The export writes neither, so the first save after
+upgrading rewrites each Condition into the nested shape, a one-time diff in a tracked file.
 
 **Keys this build does not know are kept.** When the export rebuilds a column's `automations`, it
 carries over any automation list, row type, or row key it does not recognize from the file it last
 read (a row is matched by name and type). So a field or trigger that a NEWER build added survives a
 save by this one. The reverse cannot be fixed from here: a build from before On agent turn end
 ignores `onTurnEnd`, `condition` and `maxRuns`, drops those rows from its database, and its next
-export writes the file without them. A build from before Text match is worse for a row that uses
-one: it ignores `finalLine` and keeps the row, so a Move to column guarded by a Text match runs on
-that build as an unguarded move, at every turn end. **A team that shares `kangentic.json` should
-update Kangentic together, and restart every running copy onto the new build before applying a
-file that adds `finalLine`.**
+export writes the file without them. A build from before the nested `condition` is worse for a
+row that uses it: it reads the object as a condition that is not text and keeps the row with no
+Condition, so a Move to column guarded by a Text match runs on that build as an unguarded move, at
+every turn end. **A team that shares `kangentic.json` should update Kangentic together, and restart
+every running copy onto the new build before applying a file written by it.**
 
 **The top-level `actions` and `transitions` arrays are gone, along with `columns[].autoCommand`
 and `columns[].autoCommandMode`.** All four are still READ, and converted on apply by the same
@@ -311,12 +377,19 @@ board:
 - A row filed under a trigger its type does not run on (a `move_to_column` row in `onEnter` or
   `onExit`) is skipped: it would run inside the move that fired it.
 - A `maxRuns` below 1 or not a number reads as off, and a fraction is rounded down. Each one warns,
-  since the MCP writer refuses all three. A blank `condition` or `finalLine` reads as off with no
-  warning.
-- A `finalLine` that is not text, or one on a row in `onEnter` or `onExit`, reads as off with a
-  warning; the row still runs. A row with both a `condition` and a `finalLine` keeps the
-  `finalLine`, with a warning. A `finalLine` with no letter, number or `*` is kept, with a
-  warning: no last line can match it, so the row never runs.
+  since the MCP writer refuses all three. A blank `condition`, `condition.text` or `finalLine`
+  reads as off with no warning.
+- A `condition` that is neither text nor an object, an object with no kind, both kinds or another
+  key, a `condition.agent` that is not text, a `condition.text` that is not text or a list of text,
+  and a Text match on a row in `onEnter` or `onExit` each read as off with a warning; the row still
+  runs.
+- A row with both a usable `condition` object and a `finalLine` keeps the `condition`; one with a
+  string `condition` and a `finalLine` keeps the `finalLine`. Either warns. An object that gives no
+  Condition (blank, malformed, or a Text match outside `onTurnEnd`) leaves the `finalLine` in
+  charge, so a bad edit never runs a guarded row unguarded.
+- A Text match whose patterns can never match (no letter, number or `*`) is kept, with a warning:
+  dropping it would run the row at every turn end. A list with one such pattern among others names
+  that pattern.
 - A second row with a name already used in the same column is renamed (`Notify 2`).
 - An `automations` value that is not an object, or an `onEnter` / `onTurnEnd` / `onExit` that is not a list
   (`{}`, or a single row written without brackets), keeps that column's current automations

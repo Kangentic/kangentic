@@ -1,8 +1,9 @@
 /**
  * Unit tests for the Claude background-shell transcript-drain resolver
  * (task #386). Locks the terminal <task-notification> shape captured from a
- * real incident transcript, the early-EOF-anchor cursor (never scans
- * transcript history), forward-only tailing, id filtering to the caller's
+ * real incident transcript, the first read's bounded lookback (#803: a
+ * notification written before the first ask is still found), forward-only
+ * tailing after it, id filtering to the caller's
  * tracked shellIds (structural rejection of subagent completions), and
  * cross-read carry handling for a line split across two reads.
  */
@@ -11,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {
+  FIRST_READ_LOOKBACK_BYTES,
   reportTerminatedBackgroundShells,
   resetBackgroundShellTranscriptCursorsForTests,
 } from '../../src/main/agent/adapters/claude/background-shell-transcript';
@@ -39,6 +41,25 @@ function terminationLine(shellOrTaskId: string, status = 'completed'): string {
   });
 }
 
+// The shape Claude Code writes when a shell ends mid-turn: a
+// `queue-operation` record whose `content` is the notification (captured
+// from the #803 incident transcript, paths generalized).
+function queuedNotificationLine(shellId: string): string {
+  const content =
+    `<task-notification>\n<task-id>${shellId}</task-id>\n` +
+    '<tool-use-id>toolu_016NXnzWJKBNTkZZjMJd1rsx</tool-use-id>\n' +
+    `<output-file>/tmp/claude/-repo/${agentSessionId}/tasks/${shellId}.output</output-file>\n` +
+    '<status>completed</status>\n' +
+    '<summary>Background command "Run the unit tests" completed (exit code 0)</summary>\n</task-notification>';
+  return JSON.stringify({
+    type: 'queue-operation',
+    operation: 'enqueue',
+    timestamp: '2026-11-11T15:19:09.322Z',
+    sessionId: agentSessionId,
+    content,
+  });
+}
+
 describe('reportTerminatedBackgroundShells', () => {
   let tempHome: string;
   let transcriptPath: string;
@@ -58,22 +79,119 @@ describe('reportTerminatedBackgroundShells', () => {
     resetBackgroundShellTranscriptCursorsForTests();
   });
 
-  it('returns [] and anchors at EOF on the first call, even if a terminal notification already exists', () => {
-    // The watcher only starts asking about a shell shortly after it began -
-    // long before a terminal notification could exist - so the first call
-    // for a transcript path must never scan history. A notification present
-    // BEFORE the shell was ever tracked is exactly the case this guards:
-    // it must NOT be reported.
-    fs.writeFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
+  it('reports a notification written before the first call (#803: a shell that exited before its id reached Kangentic)', () => {
+    // Issue #803: Claude wrote this `queue-operation` line 30 ms BEFORE the
+    // named `background_shell_start` carrying its id was logged, so the
+    // transcript's first drain call came after it. Anchoring that call at
+    // EOF lost the notification for good and held a turn-end move forever.
+    fs.writeFileSync(transcriptPath, `${queuedNotificationLine('baciwed3y')}\n`);
 
-    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] });
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['baciwed3y'] });
 
-    expect(result).toEqual([]);
+    expect(result).toEqual(['baciwed3y']);
+  });
+
+  it('bounds the first read: a notification more than the lookback window before EOF is not reported', () => {
+    const filler = `${JSON.stringify({ type: 'assistant', text: 'x'.repeat(4096) })}\n`;
+    const fillerLines = Math.ceil((FIRST_READ_LOOKBACK_BYTES + 4096) / filler.length);
+    fs.writeFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n${filler.repeat(fillerLines)}`);
+
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] })).toEqual([]);
+
+    // The cursor stands at EOF afterwards: a later notification is read once.
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] })).toEqual(['bvqiw3a6s']);
+  });
+
+  it('drops the partial line the lookback window starts inside, and still reports the lines after it', () => {
+    // One line straddles the window's start. Its tail alone holds a whole
+    // notification, which must not be read as a line of its own.
+    const straddling = JSON.stringify({ type: 'assistant', text: `${'y'.repeat(FIRST_READ_LOOKBACK_BYTES)}${'<task-notification>\n<task-id>bpartial01</task-id>\n<status>completed</status>\n</task-notification>'}` });
+    fs.writeFileSync(transcriptPath, `${straddling}\n${terminationLine('bvqiw3a6s')}\n`);
+
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bpartial01', 'bvqiw3a6s'] })).toEqual(['bvqiw3a6s']);
+  });
+
+  it('keeps skipping a line the whole window sits inside until it ends on a later read, and never reads that line\'s tail as a line', () => {
+    fs.writeFileSync(transcriptPath, `{"type":"assistant","text":"${'z'.repeat(FIRST_READ_LOOKBACK_BYTES + 16)}`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bpartial01', 'bvqiw3a6s'] })).toEqual([]);
+
+    // The line ends with notification-shaped text, then a real notification follows.
+    fs.appendFileSync(transcriptPath, '<task-notification><task-id>bpartial01</task-id><status>completed</status></task-notification>"}\n');
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bpartial01', 'bvqiw3a6s'] })).toEqual(['bvqiw3a6s']);
+  });
+
+  it('keeps a line that begins exactly on the lookback window start (the byte before the window is a newline)', () => {
+    const terminal = terminationLine('bvqiw3a6s');
+    const terminalBytes = Buffer.byteLength(terminal) + 1;
+    // The trailing filler is sized so the notification line starts at
+    // exactly fileSize - FIRST_READ_LOOKBACK_BYTES.
+    const trailingBytes = FIRST_READ_LOOKBACK_BYTES - terminalBytes;
+    const leadingLine = `${'p'.repeat(99)}\n`;
+    const trailingLine = `${'a'.repeat(trailingBytes - 1)}\n`;
+    fs.writeFileSync(transcriptPath, `${leadingLine}${terminal}\n${trailingLine}`);
+    const fileSize = fs.statSync(transcriptPath).size;
+    expect(fileSize - FIRST_READ_LOOKBACK_BYTES).toBe(leadingLine.length);
+
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] })).toEqual(['bvqiw3a6s']);
+  });
+
+  it('reads only the newly appended bytes on the next call when the first window sat inside one unterminated line', () => {
+    fs.writeFileSync(transcriptPath, `{"type":"assistant","text":"${'z'.repeat(FIRST_READ_LOOKBACK_BYTES + 16)}`);
+    const readSyncSpy = vi.spyOn(fs, 'readSync');
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bpartial01', 'bvqiw3a6s'] })).toEqual([]);
+    const callsAfterFirstRead = readSyncSpy.mock.calls.length;
+    expect(callsAfterFirstRead).toBeGreaterThan(0);
+
+    const smallChunk = 'q'.repeat(32);
+    fs.appendFileSync(transcriptPath, smallChunk);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bpartial01', 'bvqiw3a6s'] })).toEqual([]);
+    const secondReadCalls = readSyncSpy.mock.calls.slice(callsAfterFirstRead);
+    expect(secondReadCalls).toHaveLength(1);
+    // readSync(fd, buffer, offset, length, position): the length is the 4th argument.
+    expect(secondReadCalls[0]?.[3]).toBe(smallChunk.length);
+
+    // The line ends, then a real notification follows; the line's tail is not read as a line.
+    fs.appendFileSync(transcriptPath, '<task-notification><task-id>bpartial01</task-id><status>completed</status></task-notification>"}\n');
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bpartial01', 'bvqiw3a6s'] })).toEqual(['bvqiw3a6s']);
+  });
+
+  it('keeps the half line that follows the end of a skipped line as carry, and completes it on the next read', () => {
+    const shellIds = ['bpartial01', 'bvqiw3a6s'];
+    fs.writeFileSync(transcriptPath, `{"type":"assistant","text":"${'z'.repeat(FIRST_READ_LOOKBACK_BYTES + 16)}`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    // One append ends the skipped line and starts a real notification line,
+    // with no trailing newline. The discard drops the first part; the
+    // trailing half must survive as carry.
+    const notificationLine = terminationLine('bvqiw3a6s');
+    const splitAt = Math.floor(notificationLine.length / 2);
+    fs.appendFileSync(transcriptPath, `"}\n${notificationLine.slice(0, splitAt)}`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    fs.appendFileSync(transcriptPath, `${notificationLine.slice(splitAt)}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual(['bvqiw3a6s']);
+  });
+
+  it('stops skipping a partial line when the transcript shrinks, so the first line written after the re-anchor is read', () => {
+    const shellIds = ['bap8rr008', 'bvqiw3a6s'];
+    fs.writeFileSync(transcriptPath, `{"type":"assistant","text":"${'z'.repeat(FIRST_READ_LOOKBACK_BYTES + 16)}`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    // Rewritten smaller than the stored offset: the cursor re-anchors at the
+    // new EOF and is no longer inside any line.
+    fs.writeFileSync(transcriptPath, `${terminationLine('bap8rr008')}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual([]);
+
+    fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
+    expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds })).toEqual(['bvqiw3a6s']);
   });
 
   it('reports a tracked shell id once its terminal notification is appended after the anchor', () => {
     fs.writeFileSync(transcriptPath, '');
-    // Anchor at EOF (empty file).
+    // An empty file has nothing to look back at: the cursor starts at 0.
     expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] })).toEqual([]);
 
     fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
@@ -154,14 +272,15 @@ describe('reportTerminatedBackgroundShells', () => {
 
   it('returns [] for a non-id-shaped agentSessionId, even when a matching terminal notification exists at the same resolved path (guards a path-traversal-shaped id)', () => {
     fs.writeFileSync(transcriptPath, '');
-    // Anchor the cursor at EOF for the REAL transcript path via a legitimate call.
+    // Start the cursor for the REAL transcript path via a legitimate first
+    // call. The file is empty, so the cursor stands at its end.
     expect(reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bvqiw3a6s'] })).toEqual([]);
     fs.appendFileSync(transcriptPath, `${terminationLine('bvqiw3a6s')}\n`);
 
     // A path-traversal-shaped id that `path.join` normalizes to the exact
     // same resolved file as `agentSessionId` - proving the guard, not merely
     // file-not-found, is what keeps this rejected. Without the guard this
-    // call would tail the already-anchored cursor for that identical path and
+    // call would tail the already-started cursor for that identical path and
     // report the id just appended above.
     const traversalId = `x/../${agentSessionId}`;
     expect(

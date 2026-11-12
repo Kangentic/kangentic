@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { setAccountService, type AccountService } from '../../src/main/accounts/account-service';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import { RESUME_PROMPT_COMMAND_LINE_CAP } from '../../src/main/transition-engine/resume-prompt-delivery';
 import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
@@ -822,6 +823,45 @@ describe('TransitionEngine - migrateResumeCwdIfRenamed wiring', () => {
         agentSessionId: 'agent-sess-uuid',
       }),
     );
+  });
+});
+
+describe('TransitionEngine - the conversation a resume hands the account service (task #1070)', () => {
+  // Red: dropping the 4th argument of resolveSpawnAccount in resolveLaunch fails the resume case;
+  // handing it on a fresh start (dropping the canResume/agentSessionId guard) fails the fresh case.
+  const resolveForSpawn = vi.fn(async () => null);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+    setAccountService({ resolveForSpawn } as unknown as AccountService);
+  });
+  afterEach(() => {
+    setAccountService(null);
+  });
+
+  it('passes the resumed conversation and its working directory on a resume', async () => {
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+      id: 'session-record-1',
+      agent_session_id: 'agent-sess-uuid',
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: '/new/worktree/path',
+    });
+    const { runSpawn } = makeEngine({ sessionRepo });
+    await runSpawn(makeTask({ worktree_path: '/new/worktree/path' }));
+
+    expect(resolveForSpawn).toHaveBeenCalledTimes(1);
+    expect((resolveForSpawn.mock.calls[0] as unknown[])[3]).toEqual({ agentSessionId: 'agent-sess-uuid', cwd: '/new/worktree/path' });
+  });
+
+  it('passes no conversation on a fresh start', async () => {
+    const { runSpawn } = makeEngine({});
+    await runSpawn(makeTask({ worktree_path: '/new/worktree/path' }));
+
+    expect(resolveForSpawn).toHaveBeenCalledTimes(1);
+    expect((resolveForSpawn.mock.calls[0] as unknown[])[3]).toBeUndefined();
   });
 });
 

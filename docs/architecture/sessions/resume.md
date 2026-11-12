@@ -92,6 +92,13 @@ catches the workflow step up, and recovery may nudge the agent.
 notice through `onFailed`, since nobody awaits it. The launch carries `startPath: 'open'`, so returns
 can be counted.
 
+**From a phone.** A paired phone opening the task (a push tap, a card tap) reaches the same
+function through `start-session` with `trigger: 'open'` (`openTaskSession`, protocol 0.28.0), with
+`startPath: 'phone_open'`. `resumeTaskOnOpen` reports what it did, `not-eligible`, `live` or
+`starting`, through `onDecided` as soon as it knows, before the git phase, so the phone's verb
+answers inside its budget. The desktop's own open ignores the outcome. See
+[Capability verbs](../../integrations/mobile-bridge/capability-verbs.md).
+
 **What the sweep leaves running.** With the timeout on by default, the idle pause also waits while
 `getOpenWork` lists a background shell. The activity engine reclaims a shell the watcher cannot
 confirm at the five-minute cap, so a long build can read idle, and a pause ends it. A service the

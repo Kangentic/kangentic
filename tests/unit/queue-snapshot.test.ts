@@ -2,7 +2,8 @@
  * The line for an agent slot, as the cards and the task detail read it.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { queuePlaceOf } from '../../src/shared/queue-place';
+import { queuePlaceOf, queuePlacesByTaskId } from '../../src/shared/queue-place';
+import type { QueueSnapshot, QueueTask } from '../../src/shared/types';
 import type { QueuedInput } from '../../src/main/pty/session-queue';
 import type { CappedColumnTask } from '../../src/main/db/repositories/task-move-repository';
 
@@ -209,5 +210,30 @@ describe('queuePlaceOf', () => {
 
   it('is null for a session not in the line', () => {
     expect(queuePlaceOf({ columns: [], global: [] }, 'session-x')).toBeNull();
+  });
+});
+
+describe('queuePlacesByTaskId', () => {
+  const queuedTask = (taskId: string, sessionId: string | null): QueueTask =>
+    ({ sessionId, taskId, projectId: 'proj-1', projectName: 'Alpha', title: `Task ${taskId}`, displayId: 1 });
+
+  it('a task listed twice in the global line takes the first entry that has a session', () => {
+    const snapshot: QueueSnapshot = {
+      columns: [],
+      global: [queuedTask('a', null), queuedTask('a', 'sess-a-first'), queuedTask('a', 'sess-a-second')],
+    };
+
+    const byTaskId = queuePlacesByTaskId(snapshot);
+
+    expect(byTaskId.size).toBe(1);
+    expect(byTaskId.get('a')?.queued.sessionId).toBe('sess-a-first');
+  });
+
+  it('an entry with a null sessionId is skipped, and a task with only such entries is left out', () => {
+    const snapshot: QueueSnapshot = { columns: [], global: [queuedTask('ghost', null), queuedTask('real', 'sess-real')] };
+
+    const byTaskId = queuePlacesByTaskId(snapshot);
+
+    expect([...byTaskId.keys()]).toEqual(['real']);
   });
 });

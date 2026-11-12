@@ -2,7 +2,7 @@
  * Pins the final-line contracts between this repo's own board (`kangentic.json`) and the script,
  * skills and message that print the lines its On agent turn end rows read.
  *
- * A Text match row (`finalLine`) moves a card only when the WHOLE last line of the agent's final
+ * A Text match row (`condition.text`, or the legacy `finalLine` this file still carries) moves a card only when the WHOLE last line of the agent's final
  * message matches it. When a row and its producer drift apart (a reworded skill, a renamed row, the
  * verdict printed above its steps again), nothing errors anywhere: the card just waits in its
  * column. So each row is held to the thing that prints its line:
@@ -41,8 +41,13 @@ const REPOSITORY_ROOT = path.resolve(__dirname, '../..');
 interface AutomationRow {
   name: string;
   type: string;
+  /**
+   * The key older builds wrote, still read. This board's own file stays on it until every running
+   * copy reads `condition.text`: a build from before that reads the object as no condition and
+   * would run every guarded row unguarded.
+   */
   finalLine?: string;
-  condition?: string;
+  condition?: string | { text?: string | string[]; agent?: string };
   targetColumn?: string;
   message?: string;
   maxRuns?: number;
@@ -72,9 +77,23 @@ function turnEndRow(columnName: string, rowName: string): AutomationRow {
   return row;
 }
 
+/**
+ * A row's Text match, from `condition.text` (joined one pattern per line) or the legacy
+ * `finalLine`, or undefined. Either key, as the reader in `apply-automations.ts` takes either.
+ */
+function textMatchOf(row: AutomationRow): string | undefined {
+  const condition = row.condition;
+  if (typeof condition === 'object' && condition.text !== undefined) {
+    return Array.isArray(condition.text) ? condition.text.join('\n') : condition.text;
+  }
+  return row.finalLine;
+}
+
+/** The one line a contract row's agent has to end on. */
 function finalLineOf(columnName: string, rowName: string): string {
-  const { finalLine } = turnEndRow(columnName, rowName);
-  if (finalLine === undefined) throw new Error(`the ${columnName} "${rowName}" row has no finalLine`);
+  const finalLine = textMatchOf(turnEndRow(columnName, rowName));
+  if (finalLine === undefined) throw new Error(`the ${columnName} "${rowName}" row has no Text match`);
+  if (finalLine.includes('\n')) throw new Error(`the ${columnName} "${rowName}" row has several patterns; a contract pins one line`);
   return finalLine;
 }
 
@@ -269,19 +288,21 @@ describe('board turn-end contracts: row shape', () => {
       rows.map((row) => ({ columnName: column.name, trigger, row })),
     ),
   );
-  const textMatchRows = everyRow.flatMap(({ columnName, trigger, row }) =>
-    row.finalLine === undefined ? [] : [{ columnName, trigger, row, finalLine: row.finalLine }],
-  );
+  const textMatchRows = everyRow.flatMap(({ columnName, trigger, row }) => {
+    const finalLine = textMatchOf(row);
+    return finalLine === undefined ? [] : [{ columnName, trigger, row, finalLine }];
+  });
 
   it('pins every Text match row on the board, and finds every row it pins', () => {
     const onBoard = new Set(textMatchRows.map(({ columnName, row }) => `${columnName}/${row.name}`));
     expect(onBoard).toEqual(PINNED_ROWS);
   });
 
-  it('puts a Text match only on a turn-end row, never beside a condition', () => {
+  it('puts a Text match only on a turn-end row, never beside another condition', () => {
     for (const { columnName, trigger, row } of textMatchRows) {
       expect(trigger, `${columnName} "${row.name}"`).toBe('onTurnEnd');
-      expect(row.condition, `${columnName} "${row.name}"`).toBeUndefined();
+      // One kind per row: a legacy finalLine never sits beside a condition of either shape.
+      if (row.finalLine !== undefined) expect(row.condition, `${columnName} "${row.name}"`).toBeUndefined();
     }
   });
 

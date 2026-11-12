@@ -1,14 +1,14 @@
 ---
 type: Design
 title: Scope and protocol history
-description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.21.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the built but unreleased task report read, and what stays out of scope.
+description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.28.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the task report read, the paused session id, the resume on open and card fields in 0.28.0, and what stays out of scope.
 tags: [mobile, protocol, history, roadmap]
 sources:
   - resource: packages/protocol/CHANGELOG.md
 ---
 # Scope and protocol history
 
-One section per bridge phase and protocol release, oldest first, each saying what shipped and why. The last two are built but unreleased work and what stays out of scope.
+One section per bridge phase and protocol release, oldest first, each saying what shipped and why. The last one is what stays out of scope. Releases 0.19.0, 0.22.0, 0.23.0, 0.25.0 and 0.26.0 have no section here; `packages/protocol/CHANGELOG.md` holds every release.
 
 ## Bridge Phase 1: protocol, pairing & secure relay transport
 
@@ -150,20 +150,29 @@ One section per bridge phase and protocol release, oldest first, each saying wha
 - Desktop: `read-board` computes each board's workflow facts once per snapshot (`handlers/workflow-wire.ts`) from the same summaries the desktop board draws its cards from, so the phone's lock and footer cannot disagree with the desktop's. A board with no workflow task reads nothing extra. `move-task` refuses a locked card before it commits and `start-session` refuses a paused workflow's task, both with the desktop's sentence (see [Capability Verbs](capability-verbs.md#capability-verbs-1)). A later desktop change dropped the `start-session` refusal: a person may start one task of a paused workflow, and the workflow stays paused.
 - The phone-side rendering (the strip and lock on its cards, explaining or hiding the moves the lock refuses, the Pause and Resume actions, the push's channel) is the mobile app's own change.
 
-## Built, awaiting the next protocol release: a completed task's full report
+## Protocol 0.24.0: a completed task's full report
 
 - Protocol: `get_task_report` joins `BOARD_TOOL_READ_NAMES`. Its result type is `TaskReportWire` (`capabilities/task-report.ts`), with the phone-side guard `parseTaskReportWire`: the route (each working column's total time and stays, with `visitCount`), the span (`startedAt`, `endedAt`), the linked commits with `commitCount`, the per-file changes from git (`DiffFileWire` entries with `fileCount`, and `totals` only when one range holds the whole change), `changesError` when git could not be read, and the summary state. Additive; `PROTOCOL_VERSION` stays '3'.
 - Desktop: `handlers/board-tool.ts` needs no change. The new `commandHandlers` entry (`src/main/agent/commands/task-report-commands.ts`) calls the completed task view's own reads through two `CommandContext` callbacks, so the phone and the desktop view show the same route, span and files. Agents read it as `kangentic_get_task_report`. The files, commits and stays are capped (200, 100 and 50 per column) and carry their counts; the Usage tab's ledger is left out.
 - Why: `find_task` gives a phone the summary, three commits and eight file paths. The desktop's completed view also shows the route, each file's status and lines, and every commit, and its span comes from the task's moves, which a phone could only approximate from session rows.
 - Rendering the Route and the per-file lines in the phone's completed Summary is the mobile app's own change, gated on this package publishing.
 
-## Built, awaiting the next protocol release: a paused task's session id
+## Protocol 0.27.0: a paused task's session id
 
 - Protocol: `BoardTaskWire.paused_session_id?: string | null`, parsed with `nullableString`. It is the id of the task's paused session while `paused` is true, and null otherwise. `SendUserMessageRequestPayload.sessionId`'s doc names it as the id to send to for a paused task. Additive; `PROTOCOL_VERSION` stays '3'. Null or absent also means a pre-0.27.0 desktop.
 - Desktop: `taskSessionStatesOf` returns `pausedSessionIdByTaskId` in place of its paused set, from the same loop, and `pausedTaskIdsOf` reads the paused tasks from its keys. A task with two paused rows maps to the later one. `read-board` reads the id from it and `toBoardTaskWire` derives `paused` from the id, so the two cannot disagree. The `'sessions'` projection is unchanged. No new event wiring: a restart's `registerSuspendedPlaceholder` emits `session-changed`, which already reaches the phone as `task-updated` through `SessionLifecycleBoardFeed`.
 - `session_id` keeps its meaning and stays null while paused, because phones read it to detect a resume binding to a new session.
 - Why: 0.26.0 made `send-user-message` hold a message for a session with no running agent, keyed by the session the phone names. A desktop pause clears `session_id`, and a restart re-registers the paused session under a fresh registry id that no board row, DB record or session list carried, so a phone opening a paused task fresh had no id to name, and one it remembered from before the restart answered `unknown-session`. Only a screen open through the pause, an idle-timeout suspend (its row keeps `session_id`) or a queued session could hold chat.
 - Sending chat to any paused task from the phone's composer is the mobile app's own change, gated on this package publishing.
+
+## Protocol 0.28.0: opening a task resumes it, and the card's last gaps
+
+- Protocol: `StartSessionRequestPayload.trigger?: 'open'`, refused when it is any other value, and the outcome `not-eligible`, sent only in answer to it. `resumeOnOpenOffered?: boolean` on both the board snapshot and the read-stream snapshot. Additive; `PROTOCOL_VERSION` stays '3'. Absent means a pre-0.28.0 desktop, which drops the trigger, so a phone sends nothing there.
+- Protocol: `BoardTaskWire.queue_place`, `start_blocked_reason` and `artifacts`, the snapshot's `priorities`, and `stopped?: true` on an idle `ActivityReasonWire`. Each is null or absent on an older desktop, and an older phone ignores each.
+- Desktop: `start-session` with the trigger calls `openTaskSession`, which runs the desktop open's own `resumeTaskOnOpen` with `startPath: 'phone_open'` and answers on its `onDecided`, before the git phase. `read-board` reads the queue once per response and places each task with the card's `queuePlaceOf`, and a new `QueuePlaceFeed` announces a task whose place moved, through read-board and off the board bus. `read-stream` forwards a reason refresh that flips the stopped mark. The full contract and the words the phone draws are in [Capability verbs](capability-verbs.md) and [Data feeds](data-feeds.md).
+- Grants: none. The offer flag is the device's `start-session` grant, which every pairing already holds.
+- Why: since 0b9005758 the desktop resumes a task the idle timeout paused as soon as it is opened, and the same change turned that pause on by default, so most push taps landed on an idle-paused task behind a Resume button. The phone's only way back was `start-session`, the Resume button's path, which can deliver the column's message or a launch's owed prompt, a paid turn nobody asked for. A queued Merge card read no place in line, because the place lived only in desktop IPC. The stopped mark, the priority scale, task links and the start-blocked reason were desktop card facts the wire did not carry.
+- The phone-side adoption (an open on push tap and card tap, the queued card's words, the stopped pennant, the priority pill, the links, the start-blocked footer) is the mobile app's own change, gated on this package publishing.
 
 ## Out of scope: later phases
 

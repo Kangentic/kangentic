@@ -168,13 +168,13 @@ describe('kangentic.json automations round-trip', () => {
         {
           name: 'Back for revisions',
           type: 'move_to_column',
-          condition: 'The review found work the implementer can do',
+          condition: { agent: 'The review found work the implementer can do' },
           maxRuns: 3,
           targetColumn: 'Executing',
           message: 'Back from review:\n{{agentReply}}',
         },
         // No targetColumn: Next column is the absent key, not a stored value.
-        { name: 'Clean', type: 'move_to_column', condition: 'The review is clean' },
+        { name: 'Clean', type: 'move_to_column', condition: { agent: 'The review is clean' } },
       ]);
       // A row with neither guard carries neither key.
       expect(automations?.onEnter?.[0]).toEqual({ name: 'Review', type: 'send_message', message: '/code-review' });
@@ -259,8 +259,8 @@ describe('kangentic.json automations round-trip', () => {
       for (const row of after) expect(row.id).toBe(before.get(row.name));
     });
 
-    describe('Text match (finalLine)', () => {
-      it('writes finalLine in place of condition, and round-trips it through apply with the row\'s id', () => {
+    describe('Text match (condition.text, and the legacy finalLine)', () => {
+      it('writes condition.text, one pattern as a string, and round-trips it through apply with the row\'s id', () => {
         const { lanes, automations } = freshDatabase();
         const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
         automations.replaceForColumn(codeReview.id, [
@@ -270,13 +270,88 @@ describe('kangentic.json automations round-trip', () => {
 
         const first = build();
         expect(columnNamed(first, 'Code Review')?.automations?.onTurnEnd).toEqual([
-          { name: 'On to Testing', type: 'move_to_column', finalLine: 'Verdict: Ready', maxRuns: 1, targetColumn: 'Testing' },
+          { name: 'On to Testing', type: 'move_to_column', condition: { text: 'Verdict: Ready' }, maxRuns: 1, targetColumn: 'Testing' },
         ]);
 
         applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(first)) as BoardConfig);
         const [after] = automations.listForColumn(codeReview.id);
         expect(after).toMatchObject({ id: before.id, final_line: 'Verdict: Ready', condition: null, max_runs: 1 });
         expect(build().columns).toEqual(first.columns);
+      });
+
+      it('writes several patterns as a list, ! kept, and round-trips them', () => {
+        const { lanes, automations } = freshDatabase();
+        const executing = lanes.list().find((lane) => lane.name === 'Executing')!;
+        automations.replaceForColumn(executing.id, [
+          { name: 'Apply findings', type: 'send_message', trigger: 'turn_end', enabled: true, config: { message: 'Apply them.' }, final_line: '!Design: waiting on you\n!Design: shelved' },
+        ]);
+
+        const first = build();
+        expect(columnNamed(first, 'Executing')?.automations?.onTurnEnd?.[0]).toMatchObject({
+          condition: { text: ['!Design: waiting on you', '!Design: shelved'] },
+        });
+        applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(first)) as BoardConfig);
+        expect(automations.listForColumn(executing.id)[0]?.final_line).toBe('!Design: waiting on you\n!Design: shelved');
+        expect(build().columns).toEqual(first.columns);
+      });
+
+      it('reads what older builds wrote: a string condition as an Agent evaluation, finalLine as text with its ! taken off', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onTurnEnd: [
+              { name: 'Judged', type: 'notify', condition: 'The review is clean' },
+              { name: 'Legacy', type: 'notify', finalLine: '!Verdict: Ready' },
+              { name: 'Only bang', type: 'notify', finalLine: '!' },
+            ],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.name, row.condition, row.final_line])).toEqual([
+          ['Judged', 'The review is clean', null],
+          ['Legacy', null, 'Verdict: Ready'],
+          // Never ran, and still cannot: kept as written, and said so.
+          ['Only bang', null, '!'],
+        ]);
+        expect(plan.warnings).toEqual([
+          'Automation "Only bang" on "Code Review" has a finalLine with no letter, number or *, so no last line can match it and the row never runs.',
+        ]);
+      });
+
+      it('warns about each condition shape it cannot read, and runs the row without one', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onEnter: [{ name: 'Too early', type: 'notify', condition: { text: 'Verdict: Ready' } }],
+            onTurnEnd: [
+              { name: 'Both kinds', type: 'notify', condition: { text: 'A', agent: 'B' } as unknown as { text: string } },
+              { name: 'Unknown kind', type: 'notify', condition: { pattern: 'A' } as unknown as { text: string } },
+              { name: 'Bad list', type: 'notify', condition: { text: ['A', 3] as unknown as string[] } },
+              { name: 'Bad agent', type: 'notify', condition: { agent: 3 as unknown as string } },
+              { name: 'Beside', type: 'notify', condition: { text: 'Verdict: Ready' }, finalLine: 'Done' },
+              { name: 'Rule line', type: 'notify', condition: { text: ['Verdict: Ready', '!---'] } },
+            ],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.name, row.condition, row.final_line])).toEqual([
+          ['Too early', null, null],
+          ['Both kinds', null, null],
+          ['Unknown kind', null, null],
+          ['Bad list', null, null],
+          ['Bad agent', null, null],
+          ['Beside', null, 'Verdict: Ready'],
+          ['Rule line', null, 'Verdict: Ready\n!---'],
+        ]);
+        expect(plan.warnings).toEqual([
+          'Automation "Too early" on "Code Review" has a condition.text in onEnter. A text match reads the agent\'s last message, so it works in onTurnEnd only. It runs without it.',
+          'Automation "Both kinds" on "Code Review" has a condition that is not { "text": ... } or { "agent": ... }. It runs without one.',
+          'Automation "Unknown kind" on "Code Review" has a condition that is not { "text": ... } or { "agent": ... }. It runs without one.',
+          'Automation "Bad list" on "Code Review" has a condition.text that is not text or a list of text. It runs without a condition.',
+          'Automation "Bad agent" on "Code Review" has a condition.agent that is not text. It runs without a condition.',
+          'Automation "Beside" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the condition.',
+          'Automation "Rule line" on "Code Review" has a condition.text pattern "!---" with no letter, number or *, so it can never match.',
+        ]);
       });
 
       it('moves a row from a Condition to a Text match when the file says so, keeping its id', () => {
@@ -325,6 +400,91 @@ describe('kangentic.json automations round-trip', () => {
           'Automation "Both" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.',
           'Automation "Rule" on "Code Review" has a finalLine with no letter, number or *, so no last line can match it and the row never runs.',
         ]);
+      });
+
+      it('keeps the finalLine when the condition object beside it is malformed, and says the object was unreadable', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onTurnEnd: [
+              { name: 'Empty object', type: 'notify', condition: {} as unknown as { text: string }, finalLine: 'Findings: applied' },
+              { name: 'Bad agent', type: 'notify', condition: { agent: 3 } as unknown as { text: string }, finalLine: 'Findings: applied' },
+              { name: 'Bad text', type: 'notify', condition: { text: 5 } as unknown as { text: string }, finalLine: 'Findings: applied' },
+            ],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.name, row.condition, row.final_line])).toEqual([
+          ['Empty object', null, 'Findings: applied'],
+          ['Bad agent', null, 'Findings: applied'],
+          ['Bad text', null, 'Findings: applied'],
+        ]);
+        expect(plan.warnings).toEqual([
+          'Automation "Empty object" on "Code Review" has a condition that is not { "text": ... } or { "agent": ... }. It runs without one.',
+          'Automation "Bad agent" on "Code Review" has a condition.agent that is not text. It runs without a condition.',
+          'Automation "Bad text" on "Code Review" has a condition.text that is not text or a list of text. It runs without a condition.',
+        ]);
+        expect(plan.warnings.join('\n')).not.toContain('keeps the condition');
+      });
+
+      it('keeps the finalLine beside an empty condition.text, with no "both" warning', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onTurnEnd: [{ name: 'Empty text', type: 'notify', condition: { text: [] }, finalLine: 'Done' }],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.condition, row.final_line])).toEqual([[null, 'Done']]);
+        expect(plan.warnings).toEqual([]);
+      });
+
+      it('keeps a valid condition.text over a finalLine, and a string condition loses to the finalLine, each said so', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onTurnEnd: [
+              { name: 'Object', type: 'notify', condition: { text: 'Ready' }, finalLine: 'Done' },
+              { name: 'String', type: 'notify', condition: 'The review is clean', finalLine: 'Done' },
+            ],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.name, row.condition, row.final_line])).toEqual([
+          ['Object', null, 'Ready'],
+          ['String', null, 'Done'],
+        ]);
+        expect(plan.warnings).toEqual([
+          'Automation "Object" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the condition.',
+          'Automation "String" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.',
+        ]);
+      });
+
+      it('warns naming condition.text for a pattern of only punctuation, and keeps it', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: { onTurnEnd: [{ name: 'Rule', type: 'notify', condition: { text: '---' } }] },
+        });
+
+        expect(plan.rows.map((row) => [row.condition, row.final_line])).toEqual([[null, '---']]);
+        expect(plan.warnings).toEqual([
+          'Automation "Rule" on "Code Review" has a condition.text with no letter, number or *, so no last line can match it and the row never runs.',
+        ]);
+      });
+
+      it('round-trips a condition.text list with a ! pattern: imported, then exported, gives the same list', () => {
+        const { lanes, automations } = freshDatabase();
+        const file = build();
+        columnNamed(file, 'Executing')!.automations = {
+          onTurnEnd: [{ name: 'Apply findings', type: 'send_message', message: 'Apply them.', condition: { text: ['Ready for *', '!Ready for review'] } }],
+        };
+        applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(file)) as BoardConfig);
+
+        const executing = lanes.list().find((lane) => lane.name === 'Executing')!;
+        expect(automations.listForColumn(executing.id)[0]?.final_line).toBe('Ready for *\n!Ready for review');
+        expect(columnNamed(build(), 'Executing')?.automations?.onTurnEnd?.[0]).toMatchObject({
+          condition: { text: ['Ready for *', '!Ready for review'] },
+        });
       });
     });
 
@@ -458,7 +618,7 @@ describe('kangentic.json automations round-trip', () => {
 
       expect(plan.rows.map((row) => [row.name, row.condition])).toEqual([['Numbered', null]]);
       expect(plan.warnings).toEqual([
-        'Automation "Numbered" on "Code Review" has a condition that is not text. It runs without one.',
+        'Automation "Numbered" on "Code Review" has a condition that is not text or an object. It runs without one.',
       ]);
     });
   });

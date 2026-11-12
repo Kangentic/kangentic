@@ -26,6 +26,10 @@
  *   notice, and re-checks the column under its own lock. It registers
  *   alongside any resume in flight rather than cancelling it: there is no
  *   desktop action this start mirrors, so it never takes work away from one.
+ *
+ * The verb's `trigger: 'open'` takes neither: `openTaskSession` below is the
+ * desktop's own open (`resumeTaskOnOpen`), which resumes only an idle pause and
+ * sends the agent nothing.
  */
 import { withTaskLock } from '../task-lifecycle-lock';
 import { getProjectRepos } from '../helpers/project-repos';
@@ -33,7 +37,8 @@ import { autoSpawnForTask } from '../helpers/agent-spawn';
 import { notifySpawnBlocked } from '../helpers/task-git';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { resumeRefusalBeforeLock, resumeTaskSession, type ResumeAcceptance } from './session-resume';
-import { isTaskPaused, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
+import { resumeTaskOnOpen, type OpenResumeOutcome } from './session-resume-on-open';
+import { isTaskPaused, resumeBlockMessage, resumeBlockReasonForTask, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
 
 export type StartTaskSessionResult =
@@ -132,4 +137,45 @@ export async function startTaskSession(
   const acceptance = await Promise.race([accepted, resumed.then(() => null)]);
   if (acceptance === 'live') return { outcome: 'live' };
   return { outcome: 'starting', settled: resumed.then(() => undefined) };
+}
+
+export type OpenTaskSessionResult =
+  /** Nothing was done: the task is not one an open resumes. Not an error. */
+  | { outcome: 'not-eligible' }
+  /** The task already has a live session. Nothing was spawned. */
+  | { outcome: 'live' }
+  /**
+   * A resume is under way. `settled` never rejects. It resolves when this
+   * open's resume ends, or at once when the resume was already in flight from
+   * another caller, which owns its own end.
+   */
+  | { outcome: 'starting'; settled: Promise<void> };
+
+/**
+ * The phone's open of a task (`start-session` with `trigger: 'open'`): exactly
+ * what opening the task on the desktop does (`resumeTaskOnOpen`), so a task the
+ * idle timeout paused resumes with nothing sent to its agent, and every other
+ * task is left alone. Answers as soon as the outcome is known, before the git
+ * phase, for the phone's verb budget. Never throws: a To Do, Done or archived
+ * task, a person's own Pause and a paused workflow all answer `not-eligible`.
+ */
+export async function openTaskSession(
+  context: IpcContext,
+  projectId: string,
+  taskId: string,
+): Promise<OpenTaskSessionResult> {
+  // A phone on a stale screen opens a task whose agent is already running (or
+  // queued). Its latest record then reads running, which the open would answer
+  // `not-eligible`, leaving the phone a Resume button with nothing to resume.
+  // `live` tells it to re-read instead. Read the way the board row's
+  // `pausable` reads it, so the two cannot disagree.
+  if (taskSessionStatesOf(context.sessionManager.listSessions()).liveTaskIds.has(taskId)) return { outcome: 'live' };
+  const { promise: decided, resolve: onDecided } = Promise.withResolvers<OpenResumeOutcome>();
+  const done = resumeTaskOnOpen(context, taskId, projectId, { startPath: 'phone_open', onDecided });
+  // `decided` normally wins: resumeTaskOnOpen decides on every path before it
+  // resolves. `done` is in the race as a backstop, so a path that resolved
+  // without deciding cannot leave the phone waiting.
+  const outcome = await Promise.race([decided, done]);
+  if (outcome === 'starting') return { outcome, settled: done.then(() => undefined) };
+  return { outcome };
 }

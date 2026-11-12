@@ -327,11 +327,24 @@ src/main/workflows/
     (cut short), how long each has run and its output file's size, a hint only, since a gate that
     redirects to its own log holds 0 bytes while it runs fine. It says the command is this
     session's own work even if a subagent started it, to stop it if it waits on input or is no
-    longer needed, and to mark it with `kangentic_mark_background_service` if it is a service. One
+    longer needed, and to mark it with `kangentic_mark_background_service` if it is a service meant
+    to keep running or has already ended, because a shell whose end Kangentic missed held the move
+    until the agent marked it (#803). One
     agent saw its hung command and left it because it "looked like someone else's"; another,
     told only to carry on, found and stopped its own in 40 seconds. The nudge stays one line under
     1000 characters (commands give way first), so it types as keystrokes rather than as a paste,
     which waits for an idle turn.
+  - A Move to column message still waiting for the agent (`deliverMessageAfterMove`) goes in the
+    nudge's place, once (`takeMoveFollowUpMessage`). It names the work the move asked for, where a
+    nudge only says to carry on. The waiting delivery stops, the attempt's row says the move's
+    message was sent, and the move row's run says recovery sent it. A delivery that fails holds
+    the message for the task's agent instead, unless a move stopped the attempt. Once the move's
+    own delivery has started typing or pasting, recovery leaves the message to it, since taking it
+    then would send it twice, and holds its nudge as for any message on its way. A long message
+    goes as a paste, whose wait for quiet gives up after 10 s on a turn already found settled
+    (`SETTLED_PASTE_QUIET_GIVE_UP_MS`). Before #804 the generic nudge reached a resumed agent first,
+    about 5 minutes in, while the move's message was still waiting for a quiet terminal that never
+    came.
   - A sibling is named only when its PR merged, it was archived after the visit began (or after
     the last nudge that named siblings), and it has the same base branch. Reaching Done is not
     enough: some routes end at Done with no PR, and some siblings target another base.

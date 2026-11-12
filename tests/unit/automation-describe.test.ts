@@ -8,12 +8,14 @@
  * file pins which rows earn which mark, including the cases that must earn none.
  */
 import { describe, it, expect } from 'vitest';
+import { setupI18n } from '@lingui/core';
 import {
   AUTOMATION_VALUE_MAX,
   describeAutomation as describeAutomationIn,
   describeAutomationMarks as describeAutomationMarksIn,
   describeAutomationMarksInWords as describeAutomationMarksInWordsIn,
   describeAutomationSentence as describeAutomationSentenceIn,
+  textMatchRule,
   wholeFirstLine,
 } from '../../src/shared/automation-describe';
 import { englishI18n } from '../../src/shared/i18n/english';
@@ -144,6 +146,42 @@ describe('the marks beside a row name', () => {
       label: 'Condition: only if the last line reads "Verdict: Ready".',
       phrase: 'only if the last line reads "Verdict: Ready"',
     });
+  });
+
+  it.each([
+    ['plain patterns', 'Verdict: Ready\nVerdict: Blocked', 'reads "Verdict: Ready" or "Verdict: Blocked"'],
+    ['one !', '!Design: waiting on you', 'does not read "Design: waiting on you"'],
+    ['two !', '!Design: waiting on you\n!Design: shelved', 'reads neither "Design: waiting on you" nor "Design: shelved"'],
+    ['three !', '!A\n!B\n!C', 'reads none of "A", "B", and "C"'],
+    ['both kinds, in any order', '!Ready for review\nReady for *\nDone', 'reads "Ready for *" or "Done", but not "Ready for review"'],
+  ])('words a Text match of %s as the rule it runs', (_shape, finalLine, rule) => {
+    const [mark] = marksOf('notify', 'turn_end', { title: 'a' }, { final_line: finalLine });
+    expect(mark.label).toBe(`Condition: only if the last line ${rule}.`);
+    expect(textMatchRule(finalLine, englishI18n)).toBe(rule);
+  });
+
+  it('words a bare ! as the stored pattern, never as an empty one, and still marks the row', () => {
+    expect(textMatchRule('!', englishI18n)).toBe('reads "!"');
+    const marks = marksOf('notify', 'turn_end', { title: 'a' }, { final_line: '!' });
+    expect(marks.map((mark) => mark.kind)).toEqual(['text-match']);
+    expect(marks[0].label).toBe('Condition: only if the last line reads "!".');
+  });
+
+  it('leaves an unmatchable ! pattern out of the rule beside a plain one', () => {
+    expect(textMatchRule('A\n!', englishI18n)).toBe('reads "A"');
+  });
+
+  it('quotes a pattern holding a run of spaces with one space', () => {
+    expect(textMatchRule('Verdict:      Ready', englishI18n)).toBe('reads "Verdict: Ready"');
+  });
+
+  it('joins patterns in the session language, and falls back to English for a locale Intl cannot read', () => {
+    const german = setupI18n({ locale: 'de', messages: { de: {} } });
+    expect(textMatchRule('A\nB', german)).toBe('reads "A" oder "B"');
+
+    const invalid = setupI18n({ locale: 'not a locale!', messages: { 'not a locale!': {} } });
+    expect(() => textMatchRule('A\nB', invalid)).not.toThrow();
+    expect(textMatchRule('A\nB', invalid)).toBe('reads "A" or "B"');
   });
 
   it('marks one Condition kind, the Text match, when a row somehow carries both', () => {

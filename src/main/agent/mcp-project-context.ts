@@ -359,7 +359,9 @@ export function buildCommandContextForProject(
       // Load-bearing, not just for teammates: kangentic.json re-seeds the DB on
       // project open (applyConfigOnOpen runs before the export), so without this
       // the deleted column is re-created from the stale file entry - with the
-      // same uuid - the next time the project is opened.
+      // same uuid - the next time the project is opened. The column's
+      // kangentic.local.json entry goes first, for the same reason.
+      ipcContext.boardConfigManager.removeLocalColumn(projectId, projectPath, swimlane.id);
       ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
     },
 

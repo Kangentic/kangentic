@@ -803,16 +803,17 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
     const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
     const send = vi.fn();
     const writeBackForProject = vi.fn();
+    const removeLocalColumn = vi.fn();
     const emitBoardChanged = vi.fn();
     const drainQueue = vi.fn();
     const ipcContext = {
       projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
       mainWindow: { isDestroyed: () => false, webContents: { send } },
-      boardConfigManager: { writeBackForProject },
+      boardConfigManager: { writeBackForProject, removeLocalColumn },
       boardEvents: { emitBoardChanged },
       sessionManager: { drainQueue },
     } as unknown as IpcContext;
-    return { ipcContext, send, writeBackForProject, emitBoardChanged, drainQueue };
+    return { ipcContext, send, writeBackForProject, removeLocalColumn, emitBoardChanged, drainQueue };
   }
 
   // onSwimlaneUpdated only reads id + name off the swimlane.
@@ -885,13 +886,17 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
   // preview is exactly what /preview runs.
 
   it('writes back on delete too, or the next project open resurrects the column', () => {
-    const { ipcContext, writeBackForProject } = makeWriteBackContext();
+    const { ipcContext, writeBackForProject, removeLocalColumn } = makeWriteBackContext();
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
 
     context!.onSwimlaneDeleted(fakeSwimlane());
 
     expect(writeBackForProject).toHaveBeenCalledTimes(1);
     expect(writeBackForProject).toHaveBeenCalledWith(DEFAULT_ID, PROJECT_PATH);
+    // The column's kangentic.local.json entry goes too, before the write-back
+    // reads that file, or a local-only column comes back on the next open.
+    expect(removeLocalColumn).toHaveBeenCalledWith(DEFAULT_ID, PROJECT_PATH, 'lane-1');
+    expect(removeLocalColumn.mock.invocationCallOrder[0]).toBeLessThan(writeBackForProject.mock.invocationCallOrder[0]);
   });
 
   it('notifies the renderer on delete via the shared columns-changed channel', () => {

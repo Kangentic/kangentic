@@ -1828,6 +1828,47 @@ describe('build-review-pack.mjs', () => {
   );
 
   it(
+    'packs an untracked symlink to a directory without crashing with EISDIR (a bodyless note where git lists the link as one path)',
+    () => {
+      // /preview links a worktree's node_modules into the main checkout; git lists such a link as
+      // one untracked path, and reading it as a file used to throw EISDIR and abort the script.
+      fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');
+      commitAll(repoDirectory, 'base commit');
+      fs.appendFileSync(path.join(repoDirectory, 'tracked.txt'), 'line two (uncommitted)\n');
+
+      const linkTargetDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-review-pack-link-target-'));
+      try {
+        fs.writeFileSync(path.join(linkTargetDirectory, 'inside.txt'), 'content behind the link\n');
+        fs.symlinkSync(linkTargetDirectory, path.join(repoDirectory, 'linked-modules'), process.platform === 'win32' ? 'junction' : 'dir');
+
+        // runBuildScript throws on a non-zero exit, so a crash fails the test here.
+        runBuildScript(repoDirectory);
+        const packContent = readPack(repoDirectory);
+
+        expect(packContent).toContain('## Full file: tracked.txt');
+        // Git lists a directory symlink as one path, which is the shape that threw EISDIR. Git for
+        // Windows with core.symlinks off walks a junction as a plain directory and lists the files
+        // inside it, so there the pack carries them like any other untracked file.
+        const untrackedPaths = runGit(['ls-files', '--others', '--exclude-standard'], repoDirectory).split('\n');
+        if (untrackedPaths.includes('linked-modules')) {
+          expect(packContent).toContain(
+            '## Not shown: linked-modules (binary, missing, or >1MB; new, untracked; read on demand)',
+          );
+          expect(packContent).toMatch(/^- linked-modules \(churn \d+; binary, missing, or >1MB\)$/m);
+          expect(packContent).not.toContain('content behind the link');
+        } else {
+          expect(untrackedPaths).toContain('linked-modules/inside.txt');
+          expect(packContent).toContain('## Full file: linked-modules/inside.txt');
+        }
+        assertTocLineAccuracyAndHeaderTotal(packContent);
+      } finally {
+        fs.rmSync(linkTargetDirectory, { recursive: true, force: true });
+      }
+    },
+    20000,
+  );
+
+  it(
     'writes both output files under a relative --out-dir and nothing to .kangentic/',
     () => {
       fs.writeFileSync(path.join(repoDirectory, 'tracked.txt'), 'line one\n');

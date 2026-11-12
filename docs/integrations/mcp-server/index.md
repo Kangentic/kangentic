@@ -16,7 +16,7 @@
 
 ## Automation and workflows
 
-* [Column automation tools](automation-tools.md) - Column automations over MCP: the five automation types and their fields, the condition, finalLine and maxRuns guards, which rows can never run and why, and the list_automations, set_automations, get_automation_runs and run_automation tools.
+* [Column automation tools](automation-tools.md) - Column automations over MCP: the five automation types and their fields, the condition (agent or text, with ! and one pattern per line) and maxRuns guards, which rows can never run and why, and the list_automations, set_automations, get_automation_runs and run_automation tools.
 * [Workflow tools](workflow-tools.md) - Workflows over MCP: routes and blockers, the task lock while a workflow runs, save, start, pause, resume and delete, adding, linking and rerouting tasks, and request_project_access for a workflow's own agent.
 
 ## Sessions and diagnostics

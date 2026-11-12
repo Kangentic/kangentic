@@ -5,11 +5,14 @@ import type { BrowserWindow } from 'electron';
 import { FileWatcher } from '../pty/readers/file-watcher';
 import { IPC } from '../../shared/ipc-channels';
 import type {
+  BoardColumnConfig,
   BoardConfig,
   BoardProfile,
   ShortcutConfig,
 } from '../../shared/types';
 import {
+  AUTOMATION_OWNERSHIP_KEYS,
+  ownsColumnAutomations,
   CURRENT_VERSION,
   TEAM_FILE,
   LOCAL_FILE,
@@ -27,12 +30,15 @@ import {
   atomicWriteJson,
   computeFingerprint,
 } from './board-config/atomic-write';
-import { applyBoardConfigToDb } from './board-config/apply-config';
-import { buildBoardConfigFromDb } from './board-config/build-config';
+import { applyBoardConfigToDb, type ColumnFieldResets } from './board-config/apply-config';
+import { COLUMN_FIELD_DEFAULTS } from './board-config/column-field-defaults';
+import { buildSplitBoardConfigFromDb, jsonEqual } from './board-config/split-config';
 
 /** How often, and how far apart, a write-back retries a file a lock is holding. */
 const WRITE_BACK_LOCK_RETRIES = 3;
 const WRITE_BACK_LOCK_RETRY_MS = 500;
+/** How long after its own write the watcher ignores a team-file change. */
+const WRITE_SUPPRESSION_MS = 1000;
 
 const NOT_AN_OBJECT_REASON = 'The file is not a JSON object.';
 
@@ -61,6 +67,94 @@ function emptyTeamConfig(): Partial<BoardConfig> {
   return { version: CURRENT_VERSION, columns: [], actions: [], transitions: [] };
 }
 
+/** The column keys a removal from kangentic.local.json resets (see `localFieldResets`). */
+const RESETTABLE_COLUMN_KEYS = new Set<keyof BoardColumnConfig>([
+  ...(Object.keys(COLUMN_FIELD_DEFAULTS) as (keyof BoardColumnConfig)[]),
+  'planExitTarget',
+  'automations',
+]);
+
+/**
+ * A config file's column entries by id. For the local file, an entry with no
+ * id cannot be tracked, and a local-only one has no team column to fall back to.
+ */
+function localColumnsById(config: Partial<BoardConfig> | null): Map<string, BoardColumnConfig> {
+  const byId = new Map<string, BoardColumnConfig>();
+  for (const column of readObjectList<BoardColumnConfig>(config?.columns)) {
+    if (typeof column.id === 'string') byId.set(column.id, column);
+  }
+  return byId;
+}
+
+/**
+ * The fields to reset because `kangentic.local.json` stopped setting them
+ * since the last apply: a key removed from a column's entry, an entry removed,
+ * or the whole file deleted. Apply reads an absent key as "keep what the
+ * database has", so without this the personal value would stay on the lane
+ * and the next write-back would put it in `kangentic.json`. A key the team
+ * column sets needs no reset: the merge already carries the team value.
+ */
+function localFieldResets(
+  previousOverrides: Partial<BoardConfig> | null,
+  currentOverrides: Partial<BoardConfig> | null,
+  team: BoardConfig | null,
+): ColumnFieldResets {
+  const resets: ColumnFieldResets = new Map();
+  const teamColumns = localColumnsById(team);
+  const currentById = localColumnsById(currentOverrides);
+  for (const [columnId, previousEntry] of localColumnsById(previousOverrides)) {
+    const teamColumn = teamColumns.get(columnId);
+    if (!teamColumn) continue;
+    const currentEntry = currentById.get(columnId);
+    const removedKeys = new Set<keyof BoardColumnConfig>();
+    for (const rawKey of Object.keys(previousEntry)) {
+      // Every key that owns the automations list stands for that list, as in the split.
+      const key = (AUTOMATION_OWNERSHIP_KEYS.has(rawKey) ? 'automations' : rawKey) as keyof BoardColumnConfig;
+      if (!RESETTABLE_COLUMN_KEYS.has(key)) continue;
+      const stillSet = currentEntry !== undefined && (key === 'automations'
+        ? ownsColumnAutomations(currentEntry)
+        : key in currentEntry);
+      if (stillSet) continue;
+      // The merge carries the team's list when the team column has one to carry.
+      const teamSets = key === 'automations'
+        ? teamColumn.automations !== undefined || teamColumn.autoCommand !== undefined
+        : teamColumn[key] !== undefined;
+      if (!teamSets) removedKeys.add(key);
+    }
+    if (removedKeys.size > 0) resets.set(columnId, removedKeys);
+  }
+  return resets;
+}
+
+/**
+ * The fields a local entry sets to null: an explicit clear, which is also how
+ * the write-back saves a value cleared in the Column Manager. Apply reads a
+ * null like an absent key, "keep what the database has", so without this a
+ * value cleared by hand stays on the lane and the next write-back copies it
+ * back into the file. Needs no snapshot, so it holds on the first open too.
+ */
+function localNullResets(overrides: Partial<BoardConfig> | null): ColumnFieldResets {
+  const resets: ColumnFieldResets = new Map();
+  for (const [columnId, entry] of localColumnsById(overrides)) {
+    const clearedKeys = new Set<keyof BoardColumnConfig>();
+    for (const [rawKey, value] of Object.entries(entry)) {
+      const key = rawKey as keyof BoardColumnConfig;
+      if (value === null && key !== 'automations' && RESETTABLE_COLUMN_KEYS.has(key)) clearedKeys.add(key);
+    }
+    if (clearedKeys.size > 0) resets.set(columnId, clearedKeys);
+  }
+  return resets;
+}
+
+/** Both reset lists for one apply, merged per column. */
+function mergeResets(first: ColumnFieldResets, second: ColumnFieldResets): ColumnFieldResets {
+  const merged: ColumnFieldResets = new Map(first);
+  for (const [columnId, keys] of second) {
+    merged.set(columnId, new Set([...(merged.get(columnId) ?? []), ...keys]));
+  }
+  return merged;
+}
+
 /** Does this file hold a board, as opposed to a settings-save stub with no columns? */
 function carriesColumns(config: BoardConfig): boolean {
   const columns: unknown = config.columns;
@@ -76,7 +170,9 @@ function carriesColumns(config: BoardConfig): boolean {
  * The heavy lifting lives in:
  *   - `board-config/config-helpers.ts` - constants, migration, validation, merging
  *   - `board-config/apply-config.ts`   - BoardConfig -> DB (applyBoardConfigToDb)
- *   - `board-config/build-config.ts`   - DB -> BoardConfig (buildBoardConfigFromDb)
+ *   - `board-config/build-config.ts`   - DB -> BoardConfig (serializeColumn, buildBoardConfigFromDb)
+ *   - `board-config/split-config.ts`   - DB -> kangentic.json + kangentic.local.json (buildSplitBoardConfigFromDb)
+ *   - `board-config/column-field-defaults.ts` - a column field's value when no file sets it
  *   - `board-config/atomic-write.ts`   - hash + atomic-rename helpers
  *
  * Only watches the active (viewed) project. When the user switches projects,
@@ -115,6 +211,11 @@ export class BoardConfigManager {
    *  them. The open-time push can land before the renderer has made that project
    *  current (a launch restore, an open by folder path), and is dropped then. */
   private readonly lastWarningsByProject = new Map<string, string[]>();
+  /** Each project's kangentic.local.json as it was last applied or written,
+   *  so the next apply can tell which keys were removed since (see
+   *  `localFieldResets`). In memory only: a key removed while the app is
+   *  closed is not seen, and the docs say so. */
+  private readonly appliedLocalByProject = new Map<string, Partial<BoardConfig> | null>();
   private onConfigApplied: (() => void) | null = null;
 
   constructor(options?: { ephemeral?: boolean }) {
@@ -386,7 +487,19 @@ export class BoardConfigManager {
       warnings.push(`${LOCAL_FILE} could not be read, so its overrides were not applied. ${localProblem.reason}`);
     }
     const config = this.getEffectiveConfigForPath(projectPath);
-    const result = applyBoardConfigToDb(projectId, config);
+    // Resets only against a local file that was read. One caught mid-save
+    // reads as missing, and resetting every override for it would apply team
+    // values the user never chose.
+    const currentLocal = localProblem === null ? this.loadLocalOverridesForPath(projectPath) : null;
+    const removedKeyResets: ColumnFieldResets = localProblem === null && this.appliedLocalByProject.has(projectId)
+      ? localFieldResets(this.appliedLocalByProject.get(projectId) ?? null, currentLocal, this.loadTeamConfigForPath(projectPath))
+      : new Map();
+    const resetFields = mergeResets(removedKeyResets, localNullResets(currentLocal));
+    const result = applyBoardConfigToDb(projectId, config, { resetFields });
+    // Only an apply that reached the database moves the snapshot. One the
+    // validator rejected used none of the resets, and moving it anyway would
+    // lose them for good.
+    if (localProblem === null && result.applied) this.appliedLocalByProject.set(projectId, currentLocal);
     this.onConfigApplied?.();
     return { warnings: [...warnings, ...result.warnings] };
   }
@@ -498,7 +611,9 @@ export class BoardConfigManager {
 
     const fileCheck = contentMatchesFile(filePath, existing);
     if (fileCheck.matches) {
-      rememberWrittenHash(fileCheck.contentHash);
+      // Not the local hash: a matching local file may hold a hand edit the
+      // watcher has yet to deliver (see `writeLocalOverrides`).
+      if (!writesLocal) rememberWrittenHash(fileCheck.contentHash);
       return;
     }
 
@@ -678,11 +793,9 @@ export class BoardConfigManager {
 
     const fileCheck = contentMatchesFile(filePath, existing);
     if (fileCheck.matches) {
-      if (target === 'team') {
-        this.lastTeamContentHash = fileCheck.contentHash;
-      } else {
-        this.lastLocalContentHash = fileCheck.contentHash;
-      }
+      // Not the local hash: a matching local file may hold a hand edit the
+      // watcher has yet to deliver (see `writeLocalOverrides`).
+      if (target === 'team') this.lastTeamContentHash = fileCheck.contentHash;
       return;
     }
 
@@ -757,13 +870,17 @@ export class BoardConfigManager {
     // Never throws, because its callers are a debounce timer and the open path. A lock
     // that clears on its own is retried a bounded number of times instead of
     // dropping the edit until the next one.
-    const problem = this.readProblem(projectPath, TEAM_FILE);
-    if (problem !== null) {
+    // The local file is checked too: it is what says which fields and columns
+    // are personal, so a write-back that cannot read it would put them all in
+    // kangentic.json (GitHub #806).
+    for (const fileName of [TEAM_FILE, LOCAL_FILE]) {
+      const problem = this.readProblem(projectPath, fileName);
+      if (problem === null) continue;
       if (problem.transient && attempt < WRITE_BACK_LOCK_RETRIES) {
         setTimeout(() => this.doWriteBack(projectId, projectPath, attempt + 1), WRITE_BACK_LOCK_RETRY_MS);
         return;
       }
-      console.warn(`[BOARD_CONFIG] Write-back skipped: ${TEAM_FILE} could not be read and was left as it is. ${problem.reason}`);
+      console.warn(`[BOARD_CONFIG] Write-back skipped: ${fileName} could not be read and was left as it is. ${problem.reason}`);
       return;
     }
 
@@ -783,33 +900,109 @@ export class BoardConfigManager {
         console.warn(`[BOARD_CONFIG] Write-back skipped: ${TEAM_FILE} was left as it is. ${rejection}`);
         return;
       }
-      const boardConfig = buildBoardConfigFromDb({
+      const existingLocal = this.loadLocalOverridesForPath(projectPath);
+      // The database holds the personal values of the local file it last
+      // applied. When the file's columns changed since and were not applied
+      // (an apply the validator rejected, or a hand edit the watcher has yet to
+      // deliver), routing by the file on disk would send a value it no longer
+      // claims into kangentic.json. So route by the applied version, and leave
+      // the local file alone until the next apply catches up with it.
+      const localApplied = !this.appliedLocalByProject.has(projectId)
+        || jsonEqual(this.appliedLocalByProject.get(projectId)?.columns, existingLocal?.columns);
+      const split = buildSplitBoardConfigFromDb({
         projectId,
         existingTeamConfig: existingTeam,
+        existingLocalOverrides: localApplied ? existingLocal : (this.appliedLocalByProject.get(projectId) ?? null),
         fingerprint: this.fingerprint,
       });
 
       const teamFilePath = path.join(projectPath, TEAM_FILE);
-
-      const fileCheck = contentMatchesFile(teamFilePath, boardConfig);
+      const fileCheck = contentMatchesFile(teamFilePath, split.team);
       if (fileCheck.matches) {
         if (isActive) this.lastTeamContentHash = fileCheck.contentHash;
-        return;
+      } else {
+        if (isActive) this.isWritingBack = true;
+        const contentHash = atomicWriteJson(teamFilePath, split.team);
+        if (isActive) this.lastTeamContentHash = contentHash;
       }
 
-      if (isActive) this.isWritingBack = true;
-      const contentHash = atomicWriteJson(teamFilePath, boardConfig);
-      if (isActive) this.lastTeamContentHash = contentHash;
+      // Only an existing local file is rewritten: the split returns columns
+      // for it only when it was read, and never creates one.
+      if (localApplied && existingLocal && split.localColumns) {
+        this.writeLocalOverrides(projectId, projectPath, { ...existingLocal, columns: split.localColumns });
+      }
     } catch (error) {
       console.warn('[BOARD_CONFIG] Write-back failed:', error);
     } finally {
       // The active project's file just changed under the read memo.
       if (isActive) this.invalidateConfigCache();
-      // Keep isWritingBack true for a bit to suppress watcher re-entry
-      if (isActive && this.isWritingBack) {
-        setTimeout(() => {
-          this.isWritingBack = false;
-        }, 1000);
+      if (isActive && this.isWritingBack) this.releaseWriteSuppressionSoon();
+    }
+  }
+
+  /** Keep isWritingBack true for a bit to suppress watcher re-entry, then clear it. */
+  private releaseWriteSuppressionSoon(): void {
+    setTimeout(() => {
+      this.isWritingBack = false;
+    }, WRITE_SUPPRESSION_MS);
+  }
+
+  /**
+   * Write kangentic.local.json for a write-back or a column delete. Throws on
+   * an I/O error, like `atomicWriteJson`; both callers catch. The watcher
+   * bookkeeping is the active project's only, as in `doWriteBack`. Content the
+   * app wrote also becomes the apply snapshot, so a key the app wrote is one a
+   * later hand edit can remove.
+   *
+   * A file that already matches is NOT adopted as the snapshot or the echo
+   * hash. It may hold a hand edit the watcher has not delivered yet, and
+   * adopting it would filter that event as an echo and lose its resets.
+   */
+  private writeLocalOverrides(projectId: string, projectPath: string, content: Partial<BoardConfig>): void {
+    const isActive = projectId === this.activeProjectId && projectPath === this.activeProjectPath;
+    const localFilePath = path.join(projectPath, LOCAL_FILE);
+    if (contentMatchesFile(localFilePath, content).matches) return;
+    if (isActive) this.isWritingBack = true;
+    const contentHash = atomicWriteJson(localFilePath, content);
+    // After the write, so a failed one leaves the snapshot describing the disk.
+    if (this.appliedLocalByProject.has(projectId)) this.appliedLocalByProject.set(projectId, structuredClone(content));
+    if (isActive) this.lastLocalContentHash = contentHash;
+  }
+
+  /**
+   * Drop a deleted column's entry from kangentic.local.json: a local-only
+   * column, or a team column's personal override. Run by both delete paths
+   * (the Column Manager and `kangentic_delete_column`) before their
+   * write-back. The write-back never drops an entry because its lane is gone,
+   * since a local file the last open could not read holds lanes the database
+   * never got. A stale override left behind would read as a local-only column
+   * on the next open. Best-effort: never throws, because the delete already
+   * happened. A lock that clears on its own is retried like the write-back's.
+   */
+  removeLocalColumn(projectId: string, projectPath: string, columnId: string, attempt = 0): void {
+    if (this.isEphemeral) return;
+    const isActive = projectId === this.activeProjectId && projectPath === this.activeProjectPath;
+    const problem = this.readProblem(projectPath, LOCAL_FILE);
+    if (problem !== null) {
+      if (problem.transient && attempt < WRITE_BACK_LOCK_RETRIES) {
+        setTimeout(() => this.removeLocalColumn(projectId, projectPath, columnId, attempt + 1), WRITE_BACK_LOCK_RETRY_MS);
+        return;
+      }
+      console.warn(`[BOARD_CONFIG] ${LOCAL_FILE} could not be read, so the deleted column's entry was left in it. ${problem.reason}`);
+      return;
+    }
+    try {
+      const existing = this.readExistingForWrite(projectPath, LOCAL_FILE, {});
+      if (!Array.isArray(existing.columns)) return;
+      const columns = existing.columns.filter((column) => !(isJsonObject(column) && column.id === columnId));
+      if (columns.length === existing.columns.length) return;
+      this.writeLocalOverrides(projectId, projectPath, { ...existing, columns });
+    } catch (error) {
+      console.warn('[BOARD_CONFIG] Removing a deleted column from the local file failed:', error);
+    } finally {
+      if (isActive) {
+        this.invalidateConfigCache();
+        if (this.isWritingBack) this.releaseWriteSuppressionSoon();
       }
     }
   }
@@ -843,20 +1036,25 @@ export class BoardConfigManager {
     // FIRST, before any suppression fast-path can return: the file on disk
     // changed, so the read memo is stale regardless of who changed it.
     this.invalidateConfigCache();
-    // Fast path: suppress during active write-back
-    if (this.isWritingBack && projectId === this.activeProjectId) return;
     if (!this.activeProjectPath) return;
 
-    // Local overrides are user-specific and gitignored.
-    // Never show the reconciliation dialog for local changes.
-    // Just silently reload shortcuts in case they changed.
+    // Local overrides are personal and gitignored, so a change applies at once,
+    // with no reconciliation banner: there is no teammate's edit to review.
+    // Only the content hash filters the echo of the app's own local writes:
+    // every one records the hash it wrote. Checked before the write-back
+    // window below, which would drop a hand edit made within a second of any
+    // board edit, and with it the resets that keep personal values out of
+    // kangentic.json.
     if (source === 'local') {
-      this.lastLocalContentHash = hashFilePath(
-        path.join(this.activeProjectPath, LOCAL_FILE),
-      );
-      this.sendShortcutsChangedEvent(projectId);
+      const currentLocalHash = hashFilePath(path.join(this.activeProjectPath, LOCAL_FILE));
+      if (currentLocalHash === this.lastLocalContentHash) return;
+      this.lastLocalContentHash = currentLocalHash;
+      this.applyLocalFileChange(projectId, this.activeProjectPath);
       return;
     }
+
+    // Fast path: suppress during active write-back
+    if (this.isWritingBack && projectId === this.activeProjectId) return;
 
     // --- Team file (kangentic.json) ---
     const filePath = path.join(this.activeProjectPath, TEAM_FILE);
@@ -876,10 +1074,30 @@ export class BoardConfigManager {
     this.sendChangedEvent(projectId);
   }
 
-  /** Send BOARD_CONFIG_SHORTCUTS_CHANGED event for silent shortcut reload. */
-  private sendShortcutsChangedEvent(projectId: string): void {
+  /**
+   * Apply a kangentic.local.json change to the open board. The warnings go to
+   * the banner as an open's do, and the renderer reloads the board and the
+   * shortcuts on BOARD_CONFIG_LOCAL_APPLIED. A write-back follows, which
+   * writes a new local-only column's id into the file so the next open
+   * matches it instead of creating it again; its own write is filtered above.
+   */
+  private applyLocalFileChange(projectId: string, projectPath: string): void {
+    let warnings: string[];
+    try {
+      warnings = this.applyConfig(projectId, projectPath).warnings;
+    } catch (error) {
+      console.warn(`[BOARD_CONFIG] Applying a ${LOCAL_FILE} change failed:`, error);
+      return;
+    }
+    this.sendOpenWarnings(projectId, warnings);
+    this.sendLocalAppliedEvent(projectId);
+    if (this.existsForPath(projectPath)) this.writeBack();
+  }
+
+  /** Send BOARD_CONFIG_LOCAL_APPLIED so the renderer reloads the board and its shortcuts. */
+  private sendLocalAppliedEvent(projectId: string): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-    this.mainWindow.webContents.send(IPC.BOARD_CONFIG_SHORTCUTS_CHANGED, projectId);
+    this.mainWindow.webContents.send(IPC.BOARD_CONFIG_LOCAL_APPLIED, projectId);
   }
 
   /**

@@ -149,6 +149,10 @@ msgstr "워크플로 작업의 <workflow> 블록: 경로, 인접 항목, 턴 판
 msgid "Agent Monitor"
 msgstr "에이전트 모니터"
 
+#: src/shared/final-line-match.ts
+msgid "Any line but this one"
+msgstr ""
+
 #: src/shared/transcript-format.ts
 #, fuzzy
 msgid "Approved automatically"
@@ -299,14 +303,8 @@ msgid "Condition: only if {condition}."
 msgstr "조건: {condition}인 경우에만 실행됩니다."
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Condition: only if the last line reads \"{line}\"."
-msgstr "조건: 마지막 줄이 \"{line}\"인 경우에만 실행됩니다."
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Contains it"
-msgstr "포함"
+msgid "Condition: only if the last line {rule}."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -349,6 +347,10 @@ msgstr "이 작업이 예약한 개발 서버 포트. 보통 비어 있으며, �
 #, fuzzy
 msgid "Dismiss dialog"
 msgstr "대화 상자 닫기"
+
+#: src/shared/automation-describe.ts
+msgid "does not read {pattern}"
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -415,11 +417,6 @@ msgstr ""
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "작업이 트래커 이슈에 연결될 때까지 비어 있습니다."
 
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Ends with it"
-msgstr "다음으로 끝남"
-
 #: src/shared/dictation-languages.ts
 #, fuzzy
 msgctxt "spoken language"
@@ -430,11 +427,6 @@ msgstr "영어"
 #, fuzzy
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
 msgstr "전체 릴레이 URL을 입력하세요(예: wss://relay.example.com)."
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Exactly this line"
-msgstr "이 줄과 정확히 일치"
 
 #: src/shared/pop-out.ts
 #, fuzzy
@@ -834,14 +826,12 @@ msgid "Only if {condition}."
 msgstr "{condition}인 경우에만 실행됩니다."
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "only if the last line reads \"{line}\""
-msgstr "마지막 줄이 \"{line}\"인 경우에만"
+msgid "only if the last line {rule}"
+msgstr ""
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Only if the last line reads \"{line}\"."
-msgstr "마지막 줄이 \"{line}\"인 경우에만 실행됩니다."
+msgid "Only if the last line {rule}."
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -1023,6 +1013,22 @@ msgstr "대기 중..."
 #, fuzzy
 msgid "Quick Find"
 msgstr "빠른 찾기"
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}, but not {excluded}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads neither {first} nor {second}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads none of {patterns}"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Rebuild main and preload, then restart. Agents pause and resume."
@@ -1281,9 +1287,16 @@ msgid "Starts the agent."
 msgstr "에이전트를 시작합니다."
 
 #: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Starts with it"
-msgstr "다음으로 시작"
+msgid "Starts with \"Ready for\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", but is not \"Ready for review\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", or is \"Done\""
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

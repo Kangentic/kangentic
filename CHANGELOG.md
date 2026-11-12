@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.57.1] - 2026-11-12
+
+### Features
+- Resume on phone open, queue place and card parity (protocol 0.28.0) (1e23d646)
+
+### Fixes
+- Keep kangentic.local.json out of kangentic.json and apply it live (3e78747a)
+- Keep local overrides out of kangentic.json in the edge cases (36f42ad8)
+- Size the restart confirm's icon at 16px (f4cc201b)
+- Stop plan and memory write prompts on a second Claude account (7ee49aab)
+- Carry a resumed workflow agent's plan file to its account (92093c6d)
+- Decide a paused row through the shared definition (95c6453e)
+- Read back on a transcript's first drain so an instant-exit shell ends (#808) (00954d96)
+- Never drop a move's message silently (#807) (59226849)
+- Mock os.homedir safely for macOS imports (#805) (f7c1b4aa)
+
+### Other
+- Protocol-v0.28.0 (5a8884bd)
+- Cover a locked plans link, a vanished plan file and a corrupt settings file (a5bc96d7)
+- Keep queue places off the board bus, share one queue-place pass (b15e7a95)
+
 ## [v0.57.0] - 2026-11-11
 
 ### Features

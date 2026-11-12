@@ -23,6 +23,8 @@ import {
   type PlanToolApprovalHookSpec,
 } from '../../shared/plan-approval-hook';
 import { claudePlanToolApprovalSpec, planToolApprovalRules } from './plan-tool-approval';
+import { accountAutoMemoryDirectory } from './auto-memory-folder';
+import { claudeHomeDir } from './claude-json-lock';
 import { buildBackgroundShellHintCommand } from '../../shared/background-shell-hint-hook';
 import { offersMarkBackgroundService, shippedHintBridgePath } from '../../shared/background-command-hooks';
 import { encodeHookSpec, quoteBridgePath } from '../../shared/hook-utils';
@@ -700,6 +702,18 @@ export class CommandBuilder {
           : {}),
       });
     }
+
+    // An account session writes auto memory into the default home's folder by its real path: a
+    // Write through the account's `projects` link prompts (auto-memory-folder.ts, task #1070).
+    // A WSL CLI runs on no account, and the builder says so itself rather than trusting every
+    // caller to pass none: a Windows path in a distro's settings would name no folder there.
+    const memoryFolder = place ? null : accountAutoMemoryDirectory({
+      accountFolder: options.account?.kind === 'folder' ? options.account.env.CLAUDE_CONFIG_DIR ?? null : null,
+      defaultHome: claudeHomeDir(),
+      cwd: options.cwd,
+      baseSettings,
+    });
+    if (memoryFolder) merged.autoMemoryDirectory = memoryFolder;
 
     // The fullscreen renderer is turned on through the spawn environment, not
     // `tui` here (see fullscreenByDefault): a `tui` key in `--settings` arms

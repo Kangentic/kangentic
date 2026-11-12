@@ -1,6 +1,6 @@
 import type { ColumnAutomation, Swimlane, Task } from '../../shared/types';
 import { automationMovesTask, automationMoveTargetName, canColumnRun } from '../../shared/automation-manifest';
-import { finalMatchLine, lineMatchesPattern, shownFinalLine, textMatchCanMatch } from '../../shared/final-line-match';
+import { finalMatchLine, shownFinalLine, textMatchCanMatch, textMatchMatches } from '../../shared/final-line-match';
 import { doneColumn, isForwardOf, nextOnRoute, routeCandidates, routeColumns, type RouteFields } from '../../shared/workflow-route';
 import { resolveMoveTarget } from '../automations/move-target';
 import { hasFinalLine } from '../automations/row-guards';
@@ -251,7 +251,9 @@ export function stepExitVerdict(
   if (exits.length === 0) return null;
   const isForward = (row: StepExitRow): boolean => row.target !== null && isForwardOf(row.target, column);
   const line = finalMatchLine(agentReply);
-  const matched = line === null ? [] : exits.filter((row) => lineMatchesPattern(row.finalLine, line));
+  // The runner's own rule (`textMatchMatches`): a row with `!` patterns is an
+  // exit on every line it does not rule out, as the row itself moves the task.
+  const matched = line === null ? [] : exits.filter((row) => textMatchMatches(row.finalLine, line));
   if (matched.some(isForward)) return { accepted: true };
   const sendBack = matched.find((row) => row.target !== null && !isForward(row));
   if (line !== null && sendBack?.target) {

@@ -7572,11 +7572,13 @@ export interface AdapterRuntimeStrategy {
      * a subagent/Task completion, whose id is never a tracked shell) can
      * never match.
      *
-     * Implementations read only NEW transcript bytes since the previous
-     * call (an internal per-transcript cursor) so repeated polling stays
-     * cheap. Must not throw: return [] when the transcript is missing,
-     * unreadable, or nothing terminal appeared. Omit entirely for agents
-     * whose transcript carries no such signal.
+     * The first call for a transcript reads a bounded window back from its
+     * end, because a shell that exits at once can be reported before the
+     * caller first asks (#803). Every later call reads only the bytes
+     * appended since the previous one (an internal per-transcript cursor),
+     * so repeated polling stays cheap. Must not throw: return [] when the
+     * transcript is missing, unreadable, or nothing terminal appeared. Omit
+     * entirely for agents whose transcript carries no such signal.
      */
     reportTerminatedShells?(options: {
       cwd: string;
@@ -8005,6 +8007,8 @@ export interface SpawnRemote {
  * What started a session, as a launch failure report tags it. A fixed list, so
  * the value is safe on an event. `retry` is the one automatic second launch a
  * launch that never started gets (`src/main/pty/agent-launch-report.ts`).
+ * `open` is a resume because a person opened the task on the desktop, and
+ * `phone_open` the same resume because they opened it on a paired phone.
  */
 export type LaunchStartPath =
   | 'board'
@@ -8014,7 +8018,8 @@ export type LaunchStartPath =
   | 'phone'
   | 'startup_recovery'
   | 'retry'
-  | 'open';
+  | 'open'
+  | 'phone_open';
 
 /**
  * What the resume check (`src/main/transition-engine/resume-conversation-guard.ts`)
@@ -8367,17 +8372,28 @@ export interface BoardColumnConfig {
  * `tests/unit/automation-manifest-reserved-keys.test.ts` fails an adapter that
  * declares one of them.
  */
+/** A `kangentic.json` row's Condition, as written: exactly one kind. */
+export type BoardAutomationCondition = { text: string | string[] } | { agent: string };
+
 export type BoardAutomationConfig = {
   name: string;
   type: string;
   /** Omitted means enabled. Only `false` is ever written. */
   enabled?: boolean;
-  /** Prose the Automation agent judges before the row runs. Omitted means it always runs. */
-  condition?: string;
   /**
-   * Text match: the line the agent's final message must end on, `*` a
-   * wildcard, checked in code. `onTurnEnd` rows only, and never beside a
-   * `condition`. Omitted means none.
+   * When the row runs, one kind of two, the way the Edit automation dialog's
+   * Condition card holds one: `{ "agent": "..." }`, prose the Automation agent
+   * judges, or `{ "text": "..." | ["...", ...] }`, a Text match checked in code
+   * against the last line the agent writes when its turn ends (one pattern per
+   * item, `*` a wildcard, a leading `!` meaning not; `onTurnEnd` rows only).
+   * A plain string is what older builds wrote, read as an Agent evaluation.
+   * Omitted means the row always runs.
+   */
+  condition?: string | BoardAutomationCondition;
+  /**
+   * The Text match key older builds wrote, read only: one pattern, a leading
+   * `!` ignored as it was then. A build that reads this file writes
+   * `condition.text` instead.
    */
   finalLine?: string;
   /** The most times the row may run on one task, across visits. Omitted means no limit. */
@@ -9901,7 +9917,12 @@ export interface ElectronAPI {
     onWarnings: (callback: (projectId: string, warnings: string[]) => void) => () => void;
     /** The warnings of the project's last apply, for a renderer that missed the `onWarnings` push. */
     getLastWarnings: (projectId: string) => Promise<string[]>;
-    onShortcutsChanged: (callback: (projectId: string) => void) => () => void;
+    /**
+     * A change to the open project's kangentic.local.json was applied to its
+     * board (no banner: the file is personal), so the board and its shortcuts
+     * need reloading.
+     */
+    onLocalApplied: (callback: (projectId: string) => void) => () => void;
     /**
      * The board's named Board Profiles (see `BoardProfile`). Empty when the
      * board has none. `projectId` reads another project's board; omitted, the

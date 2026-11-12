@@ -405,6 +405,12 @@ describe('Text match rows', () => {
     expect(outcomeOf([move, apply], unfinished)).toBe('apply');
   });
 
+  it('judges a ! row with the shipped matcher: any line but the one it rules out', () => {
+    const notWaiting = { ...apply, key: 'apply', finalLine: '!Design: waiting on you' };
+    expect(matchRowsInCode([notWaiting], 'All three fixed.\n\nFindings: applied', matchFinalLine)).toEqual(new Map([['apply', true]]));
+    expect(matchRowsInCode([notWaiting], 'The canvas is up.\n\nDesign: waiting on you', matchFinalLine)).toEqual(new Map([['apply', false]]));
+  });
+
   it('refuses a design row that carries both kinds', () => {
     expect(() => assertDesignRows({ name: 'both', rows: [{ ...move, condition: 'is done' }] }))
       .toThrow('both: the row On to Code Review has both a condition and a finalLine; a row holds one kind');
@@ -437,7 +443,7 @@ describe('Text match rows', () => {
       { id: 'none', reply: null },
     ];
 
-    expect(lineDisagreements(cases, ['Findings: applied', 'Findings: *'], matchFinalLine)).toEqual([
+    expect(lineDisagreements(cases, ['Findings: applied', 'Findings: *', '!Design: shelved', 'A\nB'], matchFinalLine)).toEqual([
       { caseId: 'period', line: 'Findings: applied', code: true, strict: false },
       { caseId: 'bullet', line: 'Findings: applied', code: true, strict: false },
     ]);

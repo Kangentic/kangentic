@@ -6,6 +6,7 @@ import type {
   PermissionMode,
   ShortcutConfig,
 } from '../../../shared/types';
+import { AUTOMATION_TRIGGER_FILE_KEYS } from '../../../shared/automation-manifest';
 
 export const CURRENT_VERSION = 1;
 export const TEAM_FILE = 'kangentic.json';
@@ -179,12 +180,67 @@ export function validateBoardConfig(config: BoardConfig): string | null {
 }
 
 /**
+ * The column keys that say a local entry owns its column's automations. A
+ * legacy `autoCommand` is converted into automations on apply, so a local
+ * entry that carries one owns the list as surely as one with `automations`.
+ */
+export const AUTOMATION_OWNERSHIP_KEYS: ReadonlySet<string> = new Set(['automations', 'autoCommand', 'autoCommandMode']);
+
+/** Does this local entry own its column's automations? */
+export function ownsColumnAutomations(entry: BoardColumnConfig): boolean {
+  const fields = entry as unknown as Record<string, unknown>;
+  return [...AUTOMATION_OWNERSHIP_KEYS].some((key) => fields[key] !== undefined);
+}
+
+/**
+ * A merged team column with its team-file pointers (`planExitTarget`, a Move
+ * to column row's `targetColumn`) renamed to the local names. Returns the
+ * column itself when nothing changes, and a copy otherwise, so the team
+ * file's objects are never written to.
+ */
+function renameTeamPointers(
+  column: BoardColumnConfig,
+  localEntry: BoardColumnConfig | undefined,
+  localNameByTeamName: Map<string, string>,
+): BoardColumnConfig {
+  let renamed = column;
+  const pointerIsTeams = localEntry === undefined || !('planExitTarget' in localEntry);
+  if (pointerIsTeams && typeof column.planExitTarget === 'string' && localNameByTeamName.has(column.planExitTarget)) {
+    renamed = { ...renamed, planExitTarget: localNameByTeamName.get(column.planExitTarget) };
+  }
+  const automations: unknown = column.automations;
+  if ((localEntry === undefined || !ownsColumnAutomations(localEntry)) && isJsonObject(automations)) {
+    let renamedAutomations: Record<string, unknown> | null = null;
+    for (const fileKey of Object.values(AUTOMATION_TRIGGER_FILE_KEYS)) {
+      const group: unknown = automations[fileKey];
+      if (!Array.isArray(group)) continue;
+      let changed = false;
+      const renamedGroup = group.map((row: unknown) => {
+        if (!isJsonObject(row) || typeof row.targetColumn !== 'string') return row;
+        const localName = localNameByTeamName.get(row.targetColumn);
+        if (localName === undefined) return row;
+        changed = true;
+        return { ...row, targetColumn: localName };
+      });
+      if (!changed) continue;
+      renamedAutomations ??= { ...automations };
+      renamedAutomations[fileKey] = renamedGroup;
+    }
+    if (renamedAutomations) renamed = { ...renamed, automations: renamedAutomations as BoardColumnConfig['automations'] };
+  }
+  return renamed;
+}
+
+/**
  * Merge team-shared BoardConfig with the developer's local overrides.
  *
  * Merge strategy per field:
  *   - columns: matched by id. Local override replaces team entry in-place;
  *     local-only columns are inserted before the 'done' column (or appended
  *     if no done column exists) so they don't disturb the terminal column.
+ *     An unmatched local entry with no name is skipped: it overrides a
+ *     column the team file no longer has. A local name for a team column
+ *     renames the team file's pointers at it (`renameTeamPointers`).
  *   - actions: matched by id. Local overrides team; local-only actions
  *     are appended.
  *   - transitions: matched by (from, to). Local replaces team; local-only
@@ -210,18 +266,39 @@ export function mergeBoardConfigs(team: BoardConfig, local: Partial<BoardConfig>
     const localColumns = readObjectList<BoardColumnConfig>(local.columns);
     const mergedColumns: BoardColumnConfig[] = [];
     const usedIds = new Set<string>();
+    const localEntryByTeamIndex: (BoardColumnConfig | undefined)[] = [];
+    const localNameByTeamName = new Map<string, string>();
 
     for (const teamColumn of team.columns) {
       if (teamColumn.id) usedIds.add(teamColumn.id);
       const localColumn = localColumns.find((candidate) => candidate.id && candidate.id === teamColumn.id);
+      localEntryByTeamIndex.push(localColumn);
       if (localColumn) {
         mergedColumns.push({ ...teamColumn, ...localColumn });
+        if (typeof localColumn.name === 'string' && localColumn.name !== teamColumn.name) {
+          localNameByTeamName.set(teamColumn.name, localColumn.name);
+        }
       } else {
         mergedColumns.push(teamColumn);
       }
     }
 
-    const localOnlyColumns = localColumns.filter((candidate) => !candidate.id || !usedIds.has(candidate.id));
+    // A local name for a team column renames the team file's pointers at it
+    // too, or they would name a column this board does not have. A pointer the
+    // local entry sets is already in local names. The write-back turns them
+    // back into team names (split-config.ts).
+    if (localNameByTeamName.size > 0) {
+      for (let index = 0; index < mergedColumns.length; index++) {
+        mergedColumns[index] = renameTeamPointers(mergedColumns[index], localEntryByTeamIndex[index], localNameByTeamName);
+      }
+    }
+
+    // An unmatched entry with no name is an override of a column the team
+    // file no longer has (a teammate removed it). It is not a column, and
+    // merged as one it would fail validation and stop the whole apply.
+    const localOnlyColumns = localColumns.filter(
+      (candidate) => (!candidate.id || !usedIds.has(candidate.id)) && typeof candidate.name === 'string',
+    );
     if (localOnlyColumns.length > 0) {
       const doneIndex = mergedColumns.findIndex((column) => column.role === 'done');
       const insertIndex = doneIndex >= 0 ? doneIndex : mergedColumns.length;

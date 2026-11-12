@@ -149,6 +149,10 @@ msgstr "Blok <workflow> úlohy v pracovním postupu: její trasa, sousední úlo
 msgid "Agent Monitor"
 msgstr "Monitor agentů"
 
+#: src/shared/final-line-match.ts
+msgid "Any line but this one"
+msgstr ""
+
 #: src/shared/transcript-format.ts
 #, fuzzy
 msgid "Approved automatically"
@@ -299,14 +303,8 @@ msgid "Condition: only if {condition}."
 msgstr "Podmínka: pouze pokud {condition}."
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Condition: only if the last line reads \"{line}\"."
-msgstr "Podmínka: pouze pokud poslední řádek zní „{line}“."
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Contains it"
-msgstr "Obsahuje ho"
+msgid "Condition: only if the last line {rule}."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -349,6 +347,10 @@ msgstr "Port vývojového serveru rezervovaný touto úlohou. Obvykle prázdné 
 #, fuzzy
 msgid "Dismiss dialog"
 msgstr "Zavřít dialog"
+
+#: src/shared/automation-describe.ts
+msgid "does not read {pattern}"
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -415,11 +417,6 @@ msgstr ""
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "Prázdné, dokud úloha není propojena s issue v trackeru."
 
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Ends with it"
-msgstr "Končí jím"
-
 #: src/shared/dictation-languages.ts
 #, fuzzy
 msgctxt "spoken language"
@@ -430,11 +427,6 @@ msgstr "Angličtina"
 #, fuzzy
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
 msgstr "Zadejte úplnou adresu URL relaye, např. wss://relay.example.com."
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Exactly this line"
-msgstr "Přesně tento řádek"
 
 #: src/shared/pop-out.ts
 #, fuzzy
@@ -834,14 +826,12 @@ msgid "Only if {condition}."
 msgstr "Pouze pokud {condition}."
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "only if the last line reads \"{line}\""
-msgstr "pouze pokud poslední řádek zní „{line}“"
+msgid "only if the last line {rule}"
+msgstr ""
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Only if the last line reads \"{line}\"."
-msgstr "Pouze pokud poslední řádek zní „{line}“."
+msgid "Only if the last line {rule}."
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -1023,6 +1013,22 @@ msgstr "Ve frontě..."
 #, fuzzy
 msgid "Quick Find"
 msgstr "Rychlé hledání"
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}, but not {excluded}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads neither {first} nor {second}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads none of {patterns}"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Rebuild main and preload, then restart. Agents pause and resume."
@@ -1281,9 +1287,16 @@ msgid "Starts the agent."
 msgstr "Spustí agenta."
 
 #: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Starts with it"
-msgstr "Začíná jím"
+msgid "Starts with \"Ready for\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", but is not \"Ready for review\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", or is \"Done\""
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

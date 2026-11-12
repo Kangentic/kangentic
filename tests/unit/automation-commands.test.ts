@@ -338,7 +338,7 @@ describe('automation MCP commands', () => {
     });
 
     describe('finalLine, the Text match kind', () => {
-      it('stores a turn-end Text match, trimmed, and reads it back as finalLine', () => {
+      it('stores a turn-end Text match, trimmed, and reads it back as condition.text', () => {
         const response = handleSetAutomations({
           column: 'Executing',
           automations: [{ name: 'On to Code Review', type: 'move_to_column', on: 'turn_end', targetColumn: 'Code Review', finalLine: '  Findings: applied  ', maxRuns: 4 }],
@@ -348,28 +348,39 @@ describe('automation MCP commands', () => {
         const [row] = automations.listForColumn(executingId());
         expect(row).toMatchObject({ final_line: 'Findings: applied', condition: null, max_runs: 4 });
         const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
-        expect(saved).toMatchObject({ finalLine: 'Findings: applied', condition: null, maxRuns: 4 });
+        expect(saved).toMatchObject({ condition: { text: 'Findings: applied' }, maxRuns: 4 });
+        expect(saved).not.toHaveProperty('finalLine');
       });
 
-      it('refuses a finalLine that is not text, naming the row, and saves nothing', () => {
+      it('takes a leading ! off a legacy finalLine, where it always meant nothing', () => {
+        const response = handleSetAutomations({
+          column: 'Executing',
+          automations: [{ name: 'Move', type: 'move_to_column', on: 'turn_end', finalLine: '!Findings: applied' }],
+        }, context);
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]?.final_line).toBe('Findings: applied');
+      });
+
+      it('refuses a finalLine that is not text, naming the row and the current key, and saves nothing', () => {
         const response = handleSetAutomations({
           column: 'Executing',
           automations: [{ name: 'Move', type: 'move_to_column', on: 'turn_end', finalLine: 3 }],
         }, context);
 
         expect(response.success).toBe(false);
-        expect(response.error).toBe('automations[0]: finalLine must be text (or null for no text match). Nothing was saved.');
+        expect(response.error).toBe('automations[0]: finalLine must be text (or null for no text match); condition: { "text": ... } is the current key. Nothing was saved.');
         expect(automations.listForColumn(executingId())).toHaveLength(0);
       });
 
-      it('refuses a finalLine off a turn end, with the reason, and saves nothing', () => {
+      it('refuses a finalLine off a turn end, with the fix and the reason, and saves nothing', () => {
         const response = handleSetAutomations({
           column: 'Executing',
           automations: [{ name: 'Review', type: 'send_message', on: 'enter', message: '/code-review', finalLine: 'Ready for review' }],
         }, context);
 
         expect(response.success).toBe(false);
-        expect(response.error).toContain('finalLine works only with on: "turn_end", not enter.');
+        expect(response.error).toContain('finalLine runs on turn_end rows only, not enter; use condition.agent or set on: "turn_end".');
         expect(response.error).toContain('Nothing was saved.');
         expect(automations.listForColumn(executingId())).toHaveLength(0);
       });
@@ -398,7 +409,8 @@ describe('automation MCP commands', () => {
 
           expect(response.success).toBe(false);
           expect(response.error).toBe(
-            `automations[0]: finalLine works only with on: "turn_end", not enter. ${TEXT_MATCH_UNAVAILABLE_ENGLISH} Nothing was saved.`,
+            'automations[0]: finalLine runs on turn_end rows only, not enter; use condition.agent or set on: "turn_end". '
+              + `${TEXT_MATCH_UNAVAILABLE_ENGLISH} Nothing was saved.`,
           );
           expect(response.error).not.toContain(TEXT_MATCH_UNAVAILABLE_FRENCH);
           expect(automations.listForColumn(executingId())).toHaveLength(0);
@@ -418,7 +430,8 @@ describe('automation MCP commands', () => {
 
           expect(response.success).toBe(false);
           expect(response.error).toBe(
-            `automations[0]: finalLine works only with on: "turn_end", not enter. ${TEXT_MATCH_UNAVAILABLE_ENGLISH} Nothing was saved.`,
+            'automations[0]: finalLine runs on turn_end rows only, not enter; use condition.agent or set on: "turn_end". '
+              + `${TEXT_MATCH_UNAVAILABLE_ENGLISH} Nothing was saved.`,
           );
           expect(response.error).not.toContain(TEXT_MATCH_UNAVAILABLE_FRENCH);
           const rows = automations.listForColumn(executingId());
@@ -435,7 +448,7 @@ describe('automation MCP commands', () => {
         }, context);
 
         expect(response.success).toBe(false);
-        expect(response.error).toContain('finalLine "---" has no letter, number or *, so no last line can match it.');
+        expect(response.error).toContain('finalLine "---" has no letter, number or *, so it can never match a line; give it a word or a *, or remove it.');
         expect(response.error).toContain('Nothing was saved.');
         expect(automations.listForColumn(executingId())).toHaveLength(0);
       });
@@ -480,6 +493,162 @@ describe('automation MCP commands', () => {
         const lines = (handleListAutomations({ column: 'Executing' }, context).message ?? '').split('\n');
         expect(lines).toContain('    1. On to Code Review (move_to_column) Moves the task to Code Review'
           + ' (only if the last line reads "Findings: applied")');
+      });
+    });
+
+    describe('condition: { text } or { agent }', () => {
+      const setOne = (row: Record<string, unknown>) => handleSetAutomations({
+        column: 'Executing',
+        automations: [{ name: 'Apply findings', type: 'send_message', on: 'turn_end', message: 'Apply them', ...row }],
+      }, context);
+
+      it('stores a list of patterns one per line, ! kept, and reads it back as the list', () => {
+        const response = setOne({ condition: { text: ['!Design: waiting on you', '  ', '!Design: shelved '] } });
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({
+          final_line: '!Design: waiting on you\n!Design: shelved',
+          condition: null,
+        });
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.condition).toEqual({ text: ['!Design: waiting on you', '!Design: shelved'] });
+      });
+
+      it('stores one pattern as text and reads it back as a string', () => {
+        const response = setOne({ condition: { text: '!Design: waiting on you' } });
+
+        expect(response.success).toBe(true);
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.condition).toEqual({ text: '!Design: waiting on you' });
+      });
+
+      it('stores condition.agent as an Agent evaluation, as a plain string still is', () => {
+        expect(setOne({ condition: { agent: 'The review found work' } }).success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({ condition: 'The review found work', final_line: null });
+
+        const response = setOne({ condition: 'The review found work' });
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.condition).toEqual({ agent: 'The review found work' });
+      });
+
+      it.each([
+        [{ text: 'A', agent: 'B' }, 'condition takes one kind: give "text" or "agent", not both.'],
+        [{}, 'condition must hold exactly one key, "text" or "agent".'],
+        [{ pattern: 'A' }, 'condition must hold exactly one key, "text" or "agent".'],
+        [{ text: ['A', 3] }, 'condition.text must be a pattern or a list of patterns, each text.'],
+        [{ agent: 3 }, 'condition.agent must be a sentence for the Automation agent to judge.'],
+        [['A'], 'condition must be { "text": pattern or [patterns] } or { "agent": sentence } (or null to always run).'],
+        [{ text: ['Ready', '!---'] }, 'condition.text "!---" has no letter, number or *, so it can never match a line; give it a word or a *, or remove it.'],
+      ])('refuses %j, naming the field and the fix, and saves nothing', (condition, refusal) => {
+        const response = setOne({ condition });
+
+        expect(response.success).toBe(false);
+        expect(response.error).toBe(`automations[0]: ${refusal} Nothing was saved.`);
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      it('refuses condition.text off a turn end, naming the fix', () => {
+        const response = setOne({ on: 'enter', condition: { text: 'Ready' } });
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('condition.text runs on turn_end rows only, not enter; use condition.agent or set on: "turn_end".');
+      });
+
+      it('refuses more than 20 patterns', () => {
+        const response = setOne({ condition: { text: Array.from({ length: 21 }, (_unused, index) => `Line ${index}`) } });
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('condition.text has 21 patterns; keep it to 20 or fewer.');
+      });
+
+      it('refuses a condition object beside a finalLine', () => {
+        const response = setOne({ condition: { text: 'Ready' }, finalLine: 'Done' });
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('give a condition or a finalLine, not both');
+      });
+
+      it('refuses a pattern longer than 500 characters, and takes one of exactly 500', () => {
+        const refused = setOne({ condition: { text: ['a'.repeat(501)] } });
+        expect(refused.success).toBe(false);
+        expect(refused.error).toBe(
+          `automations[0]: condition.text pattern ${JSON.stringify(`${'a'.repeat(40)}...`)} is longer than 500 characters; shorten it. Nothing was saved.`,
+        );
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+
+        expect(setOne({ condition: { text: 'a'.repeat(500) } }).success).toBe(true);
+      });
+
+      it('refuses a string condition or condition.agent longer than 2000 characters, and takes 2000', () => {
+        const tooLongString = setOne({ condition: 'a'.repeat(2001) });
+        expect(tooLongString.success).toBe(false);
+        expect(tooLongString.error).toBe('automations[0]: condition is longer than 2000 characters; shorten the sentence. Nothing was saved.');
+
+        const tooLongAgent = setOne({ condition: { agent: 'a'.repeat(2001) } });
+        expect(tooLongAgent.success).toBe(false);
+        expect(tooLongAgent.error).toBe('automations[0]: condition.agent is longer than 2000 characters; shorten the sentence. Nothing was saved.');
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+
+        expect(setOne({ condition: { agent: 'a'.repeat(2000) } }).success).toBe(true);
+      });
+
+      it('splits a text string holding a line break into two patterns', () => {
+        expect(setOne({ condition: { text: 'A\nB' } }).success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({ final_line: 'A\nB', condition: null });
+      });
+
+      it.each([[[]], ['']])('reads condition.text %j as no condition', (text) => {
+        const response = setOne({ condition: { text } });
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({ final_line: null, condition: null });
+      });
+
+      it('refuses condition.agent beside a finalLine', () => {
+        const response = setOne({ condition: { agent: 'x' }, finalLine: 'Done' });
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('give a condition or a finalLine, not both');
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      it.each([
+        [{ text: [] }],
+        [{ text: '' }],
+        ['  '],
+      ])('accepts an empty condition %j beside a finalLine and stores the finalLine', (condition) => {
+        const response = setOne({ condition, finalLine: 'Done' });
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({ final_line: 'Done', condition: null });
+      });
+
+      it('refuses a legacy finalLine of only "!" as unmatchable, and strips a leading ! otherwise', () => {
+        const refused = setOne({ finalLine: '!' });
+        expect(refused.success).toBe(false);
+        expect(refused.error).toBe(
+          'automations[0]: finalLine "!" has no letter, number or *, so it can never match a line; give it a word or a *, or remove it. Nothing was saved.',
+        );
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+
+        expect(setOne({ finalLine: '!Ready' }).success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]?.final_line).toBe('Ready');
+      });
+
+      it('refuses a list holding a bare "!", naming that pattern', () => {
+        const response = setOne({ condition: { text: ['Ready', '!'] } });
+
+        expect(response.success).toBe(false);
+        expect(response.error).toBe(
+          'automations[0]: condition.text "!" has no letter, number or *, so it can never match a line; give it a word or a *, or remove it. Nothing was saved.',
+        );
+      });
+
+      it('words the rule in the list: neither, nor', () => {
+        setOne({ condition: { text: ['!Design: waiting on you', '!Design: shelved'] } });
+
+        const message = handleListAutomations({ column: 'Executing' }, context).message ?? '';
+        expect(message).toContain('only if the last line reads neither "Design: waiting on you" nor "Design: shelved"');
       });
     });
   });

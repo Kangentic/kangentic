@@ -149,6 +149,10 @@ msgstr "ワークフロータスクの <workflow> ブロック: ルート、前�
 msgid "Agent Monitor"
 msgstr "エージェントモニター"
 
+#: src/shared/final-line-match.ts
+msgid "Any line but this one"
+msgstr ""
+
 #: src/shared/transcript-format.ts
 #, fuzzy
 msgid "Approved automatically"
@@ -299,14 +303,8 @@ msgid "Condition: only if {condition}."
 msgstr "条件: {condition} の場合のみ。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Condition: only if the last line reads \"{line}\"."
-msgstr "条件: 最終行が「{line}」の場合のみ。"
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Contains it"
-msgstr "この行を含む"
+msgid "Condition: only if the last line {rule}."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -349,6 +347,10 @@ msgstr "このタスクが予約した開発サーバーのポート。通常は
 #, fuzzy
 msgid "Dismiss dialog"
 msgstr "ダイアログを閉じる"
+
+#: src/shared/automation-describe.ts
+msgid "does not read {pattern}"
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -415,11 +417,6 @@ msgstr ""
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "タスクがトラッカーのイシューにリンクされるまでは空です。"
 
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Ends with it"
-msgstr "この行で終わる"
-
 #: src/shared/dictation-languages.ts
 #, fuzzy
 msgctxt "spoken language"
@@ -430,11 +427,6 @@ msgstr "英語"
 #, fuzzy
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
 msgstr "完全なリレー URL を入力してください (例: wss://relay.example.com)。"
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Exactly this line"
-msgstr "この行と完全一致"
 
 #: src/shared/pop-out.ts
 #, fuzzy
@@ -834,14 +826,12 @@ msgid "Only if {condition}."
 msgstr "{condition} の場合のみ。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "only if the last line reads \"{line}\""
-msgstr "最終行が「{line}」の場合のみ"
+msgid "only if the last line {rule}"
+msgstr ""
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Only if the last line reads \"{line}\"."
-msgstr "最終行が「{line}」の場合のみ。"
+msgid "Only if the last line {rule}."
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -1023,6 +1013,22 @@ msgstr "キュー待機中..."
 #, fuzzy
 msgid "Quick Find"
 msgstr "Quick Find"
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}, but not {excluded}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads neither {first} nor {second}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads none of {patterns}"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Rebuild main and preload, then restart. Agents pause and resume."
@@ -1281,9 +1287,16 @@ msgid "Starts the agent."
 msgstr "エージェントを開始します。"
 
 #: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Starts with it"
-msgstr "この行で始まる"
+msgid "Starts with \"Ready for\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", but is not \"Ready for review\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", or is \"Done\""
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

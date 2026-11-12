@@ -7,6 +7,14 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: hu\n"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid ", then "
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "! at the very start: not. The row runs only when the last line does not match."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 #, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
@@ -196,15 +204,9 @@ msgstr ""
 msgid "{passedCount} passed"
 msgstr ""
 
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "{pattern}: {rule}, as in {sample}."
-msgstr "{pattern}: {rule}, például: {sample}."
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "{pattern}: {rule}."
-msgstr "{pattern}: {rule}."
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "{patterns}: {rule}."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -231,11 +233,6 @@ msgstr ""
 #, fuzzy
 msgid "{reason} Saved {savedBeforeFailing} before failing."
 msgstr "{reason} A hiba előtt mentve: {savedBeforeFailing}."
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "{rule}<0>, as in {sample}</0>"
-msgstr "{rule}<0>, például: {sample}</0>"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -327,6 +324,26 @@ msgstr "{fileCount, plural, one {# fájlból {viewedCount} megtekintettként meg
 #, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {{viewedCount}/# fájl megtekintve} other {{viewedCount}/# fájl megtekintve}}"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Not.</0> At the very start, the row runs only when the last line does not match."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "A folder inside your home on the host, such as ~/code/api"
@@ -481,6 +498,10 @@ msgstr "Oszloponkénti ügynök-, modell- és erőfeszítés-beállítások alte
 #, fuzzy
 msgid "Another column uses this icon"
 msgstr "Egy másik oszlop már használja ezt az ikont"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Any case. Punctuation is ignored too."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1445,6 +1466,14 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "Hiba"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples: {examples}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -1822,9 +1851,8 @@ msgid "Mark as viewed"
 msgstr "Megjelölés megtekintettként"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
-msgstr "Az ügynök utolsó sorát vizsgálja a kis- és nagybetűk és az írásjelek figyelmen kívül hagyásával; a * helyettesítő karakter."
+msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
+msgstr ""
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 #, fuzzy
@@ -2209,6 +2237,10 @@ msgctxt "board overview column header"
 msgid "One at a time"
 msgstr "Egyszerre egy"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "One pattern per line. Runs on any plain line, never on a ! line."
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Only one agent CLI detected - install another to choose"
@@ -2360,6 +2392,14 @@ msgstr ""
 #, fuzzy
 msgid "Path copied"
 msgstr "Elérési út másolva"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns. {plain}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2513,6 +2553,10 @@ msgstr "Sorban áll (kattintson a szüneteltetéshez)"
 msgctxt "call outcome"
 msgid "Ran"
 msgstr "Lefutott"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Read once each time the agent ends its turn, from its final message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2674,6 +2718,10 @@ msgstr "Megjelenítés a fájlkezelőben"
 msgctxt "completed task card"
 msgid "Route"
 msgstr "Útvonal"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Rules"
+msgstr ""
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
 #, fuzzy
@@ -3148,9 +3196,14 @@ msgid "Text File"
 msgstr "Szövegfájl"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 #, fuzzy
 msgid "Text match"
 msgstr "Szövegegyezés"
+
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
+msgid "Text match, line {lineNumber}"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -3550,16 +3603,6 @@ msgstr "Ön hagyja jóvá az egyes terveket, vagy a Kangentic. Egy munkafolyamat
 #, fuzzy
 msgid "Which conversation this column uses"
 msgstr "Az oszlop által használt beszélgetés"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "Wildcard examples"
-msgstr "Helyettesítő karakteres példák"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "Wildcard examples. {rows}"
-msgstr "Helyettesítő karakteres példák. {rows}"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy

@@ -433,7 +433,13 @@ export async function startCommandTerminal(
       cliTarget,
       // A Command Terminal starts on the agent's top account with room, like any session
       // (task #1057). A WSL CLI keeps its single login.
-      account: cliTarget ? null : await resolveSpawnAccount(agentName),
+      // A resumed conversation is handed over too, so its plan file reaches the account it lands on.
+      account: cliTarget ? null : await resolveSpawnAccount(
+        agentName,
+        undefined,
+        undefined,
+        resumeAgentSessionId ? { agentSessionId: resumeAgentSessionId, cwd: projectRoot } : undefined,
+      ),
     };
     const command = adapter.buildCommand(commandOptions);
 

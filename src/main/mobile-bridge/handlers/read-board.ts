@@ -5,6 +5,7 @@ import {
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
   type CommandTerminalWire,
+  type PriorityLevelWire,
   type ReadBoardArchivedResponsePayload,
   type ReadBoardResponsePayload,
   type ReadBoardSnapshotResponsePayload,
@@ -15,19 +16,23 @@ import { getProjectDb } from '../../db/database';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
-import type { Task } from '../../../shared/types';
-import { isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
+import type { Session, StartBlockedReason, Task } from '../../../shared/types';
+import { isPausedTaskSession, isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
+import { queuePlacesByTaskId } from '../../../shared/queue-place';
+import { priorityScaleFrom } from '../../agent/commands/label-and-priority';
+import { readQueueSnapshot } from '../../ipc/helpers/queue-snapshot';
 import { commandTerminalDisplayName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
 import type { SpawnProgressFeed } from '../spawn-progress-feed';
+import type { QueuePlaceFeed } from '../queue-place-feed';
 import { getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
 import { sendEvent } from './send-event';
 import { deriveProjectAccentColor } from './project-color';
 import { resolveKnownProject } from './known-project';
-import { toActivityReasonWire, toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
+import { toActivityReasonWire, toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toQueuePlaceWire, toSessionSummaryWire, toWireJson } from './wire-mappers';
 import { workflowWireFacts } from './workflow-wire';
 
 function subscriptionKeyFor(projectId: string): string {
@@ -70,6 +75,41 @@ function listCommandTerminalWires(context: IpcContext, projectId: string): Comma
   return terminals.sort((left, right) => left.slot - right.slot);
 }
 
+/**
+ * Why each task's last start never reached an agent, read off the row the
+ * desktop card reads (`task-progress.ts`): a paused or ended session's
+ * `startBlockedReason`. A task with a live session has none to show, and a
+ * paused row's reason wins over an ended one's, as the card shows the paused
+ * session. A Command Terminal's row is never a board task's.
+ */
+export function startBlockedReasonsOf(
+  sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient' | 'startBlockedReason'>>,
+  liveTaskIds: ReadonlySet<string>,
+): Map<string, StartBlockedReason> {
+  const reasons = new Map<string, StartBlockedReason>();
+  const fromPausedRow = new Set<string>();
+  for (const registrySession of sessions) {
+    const taskId = registrySession.taskId;
+    if (!taskId || registrySession.transient || liveTaskIds.has(taskId)) continue;
+    if (isPausedTaskSession(registrySession)) {
+      // The last paused row wins, as it does in `taskSessionStatesOf`, so the
+      // reason belongs to the row `paused_session_id` names.
+      fromPausedRow.add(taskId);
+      if (registrySession.startBlockedReason) reasons.set(taskId, registrySession.startBlockedReason);
+      else reasons.delete(taskId);
+      continue;
+    }
+    if (registrySession.status !== 'exited' || fromPausedRow.has(taskId)) continue;
+    if (registrySession.startBlockedReason) reasons.set(taskId, registrySession.startBlockedReason);
+  }
+  return reasons;
+}
+
+/** The project's priority scale for the wire, read the way the MCP priority tools read it (`priorityScaleFrom`). */
+function priorityScaleWire(priorities: ReadonlyArray<{ label: string; color: string }> | undefined): PriorityLevelWire[] {
+  return priorityScaleFrom(priorities).map((level) => ({ label: level.label, color: level.color }));
+}
+
 /** Non-archived tasks per column. TaskRepository.list() already excludes archived, so every task here counts. */
 function countTasksByColumnId(tasks: BoardTaskWire[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -83,6 +123,7 @@ export async function handleReadBoard(
   context: IpcContext,
   subscriptions: SubscriptionRegistry,
   spawnProgressFeed: Pick<SpawnProgressFeed, 'onTaskSpawnProgressChanged'>,
+  queuePlaceFeed: Pick<QueuePlaceFeed, 'onQueuePlacesChanged'>,
 ): Promise<CapabilityResponseMessage> {
   const payload = parseCapabilityRequestPayload('read-board', request.payload);
 
@@ -132,14 +173,26 @@ export async function handleReadBoard(
   // `session-changed` reaches the phone as a board event like any other edge.
   const swimlaneRows = repos.swimlanes.list();
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
-  const { liveTaskIds, pausedSessionIdByTaskId } = taskSessionStatesOf(context.sessionManager.listSessions());
+  const registrySessions = context.sessionManager.listSessions();
+  const { liveTaskIds, pausedSessionIdByTaskId } = taskSessionStatesOf(registrySessions);
+  const startBlockedReasonByTaskId = startBlockedReasonsOf(registrySessions, liveTaskIds);
+  const effectiveConfig = context.configManager.getEffectiveConfig(project.projectPath || undefined);
+  // The line is read once per response, like the registry, and every place in
+  // it is computed in one pass. An empty queue reads no database. A queue
+  // change reaches the phone as a task-updated for each task whose place moved
+  // (QueuePlaceFeed), so a phone re-reads it.
+  const queuePlaceByTaskId = queuePlacesByTaskId(readQueueSnapshot(context));
+  const globalMaxAgents = effectiveConfig.agent?.maxConcurrentSessions ?? null;
   const toTaskWire = (task: Task, workflow: BoardTaskWorkflowWire | null): BoardTaskWire => {
     const pausedSessionId = pausedSessionIdByTaskId.get(task.id) ?? null;
     const laneRole = laneRoleById.get(task.swimlane_id);
+    const queued = queuePlaceByTaskId.get(task.id);
     return toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null, {
       pausedSessionId,
       resumable: isResumeOffered({ hasPausedSession: pausedSessionId !== null, task, laneRole }),
       pausable: isPauseOffered({ hasLiveSession: liveTaskIds.has(task.id), laneRole }),
+      queuePlace: queued ? toQueuePlaceWire(queued.place, globalMaxAgents) : null,
+      startBlockedReason: startBlockedReasonByTaskId.get(task.id) ?? null,
     }, workflow);
   };
 
@@ -200,7 +253,7 @@ export async function handleReadBoard(
     projectColor: deriveProjectAccentColor(projectId),
     // The Layout "Ticket Numbers" setting travels with the snapshot so the
     // phone's cards match the desktop's (protocol 0.6.0 additive field).
-    showTicketNumbers: context.configManager.getEffectiveConfig(project.projectPath || undefined).showTaskNumbers ?? true,
+    showTicketNumbers: effectiveConfig.showTaskNumbers ?? true,
     ...(view !== undefined ? { view } : {}),
     // Only the filtered projection needs these: a phone appending a card to a
     // column has to know the column's real length, which it cannot get from a
@@ -217,6 +270,12 @@ export async function handleReadBoard(
     // The same grant serves the verb's list-earlier and resume actions; this
     // flag is how a phone learns the desktop knows them at all.
     earlierConversationsOffered: session.capabilities.has('command-terminal'),
+    // This desktop resumes a task on open through `start-session` (0.28.0),
+    // so the flag is the device's grant of that verb.
+    resumeOnOpenOffered: session.capabilities.has('start-session'),
+    // The scale the cards draw `priority` against. Settings raise no board
+    // event, so a change reaches the phone with its next snapshot.
+    priorities: priorityScaleWire(effectiveConfig.backlog?.priorities),
   };
 
   const listener = (event: BoardChangedEvent): void => {
@@ -244,9 +303,22 @@ export async function handleReadBoard(
       payload: { change: 'task-updated', ids: [taskId] },
     });
   });
+  // A queued task's place moving up the line reaches the phone the same way,
+  // so it re-reads `queue_place`. Kept off the board bus too; see
+  // queue-place-feed.ts.
+  const unsubscribeQueuePlaces = queuePlaceFeed.onQueuePlacesChanged((changedProjectId, taskIds) => {
+    if (changedProjectId !== projectId) return;
+    sendEvent(session, {
+      kind: 'board',
+      projectId,
+      taskId: taskIds[0],
+      payload: { change: 'task-updated', ids: taskIds },
+    });
+  });
   subscriptions.set(subscriptionKey, () => {
     unsubscribeBoard();
     unsubscribeSpawnProgress();
+    unsubscribeQueuePlaces();
   });
 
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };

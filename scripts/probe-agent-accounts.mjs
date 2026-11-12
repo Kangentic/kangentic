@@ -13,6 +13,13 @@
  *   concurrent   a run on each home at once leaves both conversations whole (P6)
  *   resume       a conversation started on the home resumes on the account (P4, two sign-ins)
  *   shared       the prompt history is still one file, and the account's private entries are its own (P7)
+ *   planwrite    a plan-mode run on the account writes its plan file into its own `plans` (P9, Claude)
+ *   memorywrite  an acceptEdits run on the account saves auto memory into the home's folder (P10, Claude)
+ *
+ * P9 and P10 are task #1070: Claude refuses or prompts for a Write through a link into its home, so
+ * an account keeps its own `plans` and names its memory folder by its real path in the home
+ * (`autoMemoryDirectory`, as Kangentic's session settings do). A `-p` run cannot show a prompt, so
+ * a write that would have prompted is a write that did not land.
  *
  * Everything it writes is under the sandbox, `~/.kangentic-account-probe/<agent>` unless `--sandbox`
  * names another. Not the temp folder: Codex 0.165 refuses to set up its helper binaries under it
@@ -26,7 +33,7 @@
  *   node scripts/probe-agent-accounts.mjs setup --agent codex
  *   node scripts/probe-agent-accounts.mjs login --agent codex --which home     (then --which account)
  *   node scripts/probe-agent-accounts.mjs status --agent codex
- *   node scripts/probe-agent-accounts.mjs all --agent codex                    (history, concurrent, resume, shared, final)
+ *   node scripts/probe-agent-accounts.mjs all --agent codex                    (history, concurrent, resume, shared, planwrite, memorywrite, final)
  *   node scripts/probe-agent-accounts.mjs cleanup --agent codex
  *
  * Results are appended to `<sandbox>/results.json`. To probe another agent, add one entry to
@@ -40,7 +47,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 
-/** One entry per agent CLI. Shared entries are `[name, how]`, `how` one of link-dir, hardlink-file, copy-file. */
+/** One entry per agent CLI. Shared entries are `[name, how]`, `how` one of link-dir, own-dir, hardlink-file, copy-file. */
 const AGENTS = {
   claude: {
     cli: 'claude',
@@ -48,7 +55,7 @@ const AGENTS = {
     realHome: () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
     shared: [
       ['projects', 'link-dir'], ['file-history', 'link-dir'], ['session-env', 'link-dir'], ['shell-snapshots', 'link-dir'],
-      ['todos', 'link-dir'], ['plans', 'link-dir'], ['tasks', 'link-dir'], ['paste-cache', 'link-dir'], ['transcripts', 'link-dir'],
+      ['todos', 'link-dir'], ['plans', 'own-dir'], ['tasks', 'link-dir'], ['paste-cache', 'link-dir'], ['transcripts', 'link-dir'],
       ['history.jsonl', 'hardlink-file'], ['settings.json', 'copy-file'],
     ],
     privateEntries: ['sessions'],
@@ -123,7 +130,7 @@ function parseArguments(argv) {
 const options = parseArguments(process.argv.slice(2));
 const agent = AGENTS[options.agent];
 if (!agent) {
-  console.log(`usage: node scripts/probe-agent-accounts.mjs <setup|login|status|history|concurrent|resume|shared|final|all|report|cleanup> --agent <${Object.keys(AGENTS).join('|')}> [--sandbox <dir>] [--which home|account]`);
+  console.log(`usage: node scripts/probe-agent-accounts.mjs <setup|login|status|history|concurrent|resume|shared|planwrite|memorywrite|final|all|report|cleanup> --agent <${Object.keys(AGENTS).join('|')}> [--sandbox <dir>] [--which home|account]`);
   process.exit(1);
 }
 // The CLI to run: an executable on PATH (claude.exe, codex.exe), or a path given with --cli. A .cmd shim
@@ -200,6 +207,15 @@ function findFile(root, matches) {
   return null;
 }
 
+/** The file names in a folder, or none when it is missing. */
+function filesIn(folder) {
+  try {
+    return fs.readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
 /** Line count and unparsable lines of a JSONL conversation. */
 function wholeness(file) {
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter((line) => line.trim() !== '');
@@ -231,6 +247,8 @@ function linkShared() {
     if (how === 'link-dir') {
       fs.mkdirSync(source, { recursive: true });
       fs.symlinkSync(source, target, process.platform === 'win32' ? 'junction' : 'dir');
+    } else if (how === 'own-dir') {
+      fs.mkdirSync(target, { recursive: true });
     } else if (how === 'hardlink-file') {
       if (!fs.existsSync(source)) fs.writeFileSync(source, '');
       fs.linkSync(source, target);
@@ -339,6 +357,45 @@ const commands = {
     saveResult('P7_shared_history', { historyStillOneFile: sameFile, privateEntries });
   },
 
+  planwrite() {
+    if (options.agent !== 'claude') return saveResult('P9_plan_write', { skipped: 'Claude only' });
+    const plansFolder = path.join(ACCOUNT, 'plans');
+    const before = new Set(filesIn(plansFolder));
+    const result = run(agent.cli, [
+      '-p', '--permission-mode', 'plan', '--model', 'haiku',
+      'Write a one-line plan that says PROBE-PLAN to your plan file, then stop. Do not call ExitPlanMode.',
+    ], { home: ACCOUNT, homeVar: agent.homeVar, cwd: REPO });
+    const added = filesIn(plansFolder).filter((name) => !before.has(name));
+    saveResult('P9_plan_write', {
+      code: result.code,
+      planFiles: added,
+      wroteInAccount: added.some((name) => fs.readFileSync(path.join(plansFolder, name), 'utf8').includes('PROBE-PLAN')),
+      plansIsOwnFolder: !fs.lstatSync(plansFolder).isSymbolicLink(),
+      refused: /sensitive file|while in plan mode|haven't granted/i.test(`${result.stdout}\n${result.stderr}`),
+      stderr: result.stderr || undefined,
+    });
+  },
+
+  memorywrite() {
+    if (options.agent !== 'claude') return saveResult('P10_memory_write', { skipped: 'Claude only' });
+    // The folder Kangentic's session settings name: the home's own, by its real path, after the repo.
+    const memoryFolder = path.join(HOME, 'projects', REPO.replace(/[^a-zA-Z0-9]/g, '-'), 'memory');
+    const settingsFile = path.join(SANDBOX, 'memory-settings.json');
+    fs.writeFileSync(settingsFile, JSON.stringify({ autoMemoryDirectory: memoryFolder }));
+    const result = run(agent.cli, [
+      '-p', '--permission-mode', 'acceptEdits', '--settings', settingsFile, '--model', 'haiku',
+      'Save an auto memory whose body says PROBE-MEMORY, then reply with only DONE.',
+    ], { home: ACCOUNT, homeVar: agent.homeVar, cwd: REPO });
+    const saved = filesIn(memoryFolder).filter((name) => fs.readFileSync(path.join(memoryFolder, name), 'utf8').includes('PROBE-MEMORY'));
+    saveResult('P10_memory_write', {
+      code: result.code,
+      savedInHome: saved.length > 0,
+      files: saved,
+      refused: /sensitive file|haven't granted/i.test(`${result.stdout}\n${result.stderr}`),
+      stderr: result.stderr || undefined,
+    });
+  },
+
   final() {
     saveResult('final', { realHomeAfter: realHomeCounts() });
   },
@@ -349,6 +406,8 @@ const commands = {
     await commands.concurrent();
     commands.resume();
     commands.shared();
+    commands.planwrite();
+    commands.memorywrite();
     commands.final();
   },
 

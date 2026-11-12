@@ -8,8 +8,11 @@ import type {
   BoardAutomationConfig,
   BoardColumnAutomations,
   ColumnAutomation,
+  Swimlane,
 } from '../../../shared/types';
-import { CURRENT_VERSION } from './config-helpers';
+import { CURRENT_VERSION, isJsonObject } from './config-helpers';
+import { COLUMN_FIELD_DEFAULTS } from './column-field-defaults';
+import { textMatchFileValue } from '../../../shared/final-line-match';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -22,7 +25,9 @@ import {
 /**
  * Build a BoardConfig object from the current SQLite state for a project.
  *
- * Used by the write-back path (DB -> kangentic.json). The resulting
+ * The write-back (DB -> kangentic.json) uses it when kangentic.local.json has
+ * no columns. When it has some, `splitBoardConfig` (split-config.ts) builds
+ * the team file instead, from the same `serializeColumn`. The resulting
  * BoardConfig is stamped with `_modifiedBy = fingerprint` as last-writer
  * provenance (which device last wrote the file); it is not used to suppress
  * the reconciliation dialog (see computeFingerprint and onFileChanged).
@@ -41,12 +46,33 @@ export function buildBoardConfigFromDb(params: {
   existingTeamConfig: BoardConfig | null;
   fingerprint: string;
 }): BoardConfig {
-  const db = getProjectDb(params.projectId);
+  const { lanes, laneById, automationsByLane } = readBoardLanes(params.projectId);
+  const columns = lanes.map((lane) => serializeColumn(lane, {
+    automations: automationsByLane.get(lane.id) ?? [],
+    existingColumn: findExistingColumn(params.existingTeamConfig?.columns, lane),
+    targetNameOf: (laneId) => laneById.get(laneId)?.name,
+  }));
+  return assembleBoardConfig(columns, params.existingTeamConfig, params.fingerprint);
+}
+
+/** The board's real (non-ghost) lanes in order, with each lane's automations. */
+export interface BoardLanes {
+  lanes: Swimlane[];
+  laneById: Map<string, Swimlane>;
+  automationsByLane: Map<string, ColumnAutomation[]>;
+}
+
+/**
+ * Read the lanes the write-back serializes. Excludes ghost lanes: they hold
+ * orphaned tasks for a column the file no longer has, and writing them back
+ * would re-introduce them as real columns.
+ */
+export function readBoardLanes(projectId: string): BoardLanes {
+  const db = getProjectDb(projectId);
   const swimlaneRepo = new SwimlaneRepository(db);
   const automationRepo = new AutomationRepository(db);
 
   const lanes = swimlaneRepo.list().filter((lane) => !lane.is_ghost);
-
   const laneById = new Map(lanes.map((lane) => [lane.id, lane]));
   const automationsByLane = new Map<string, ColumnAutomation[]>();
   for (const automation of automationRepo.listAll()) {
@@ -54,52 +80,154 @@ export function buildBoardConfigFromDb(params: {
     existing.push(automation);
     automationsByLane.set(automation.swimlane_id, existing);
   }
+  return { lanes, laneById, automationsByLane };
+}
 
+/** The file's entry for a lane: by id, else by name (a hand-written file may carry no ids). */
+export function findExistingColumn(columns: BoardColumnConfig[] | undefined, lane: Swimlane): BoardColumnConfig | null {
+  if (!Array.isArray(columns)) return null;
+  return columns.find((candidate) => candidate.id === lane.id)
+    ?? columns.find((candidate) => candidate.name === lane.name)
+    ?? null;
+}
+
+/**
+ * Serialize one lane as a `kangentic.json` column, omitting every field at its
+ * default so a backward-compatible board stays byte-identical until a column
+ * is set non-default.
+ *
+ * `existingColumn` is the file's current entry for the lane, read for the
+ * automation rows and keys this build does not understand. `targetNameOf`
+ * names the column a `planExitTarget` points at, so the caller decides which
+ * file's names a pointer is written in.
+ */
+export function serializeColumn(
+  lane: Swimlane,
+  options: {
+    automations: ColumnAutomation[];
+    existingColumn: BoardColumnConfig | null;
+    targetNameOf: (laneId: string) => string | undefined;
+  },
+): BoardColumnConfig {
+  const column: BoardColumnConfig = {
+    id: lane.id,
+    name: lane.name,
+  };
+  if (lane.role) column.role = lane.role;
+  if (lane.description) column.description = lane.description;
+  if (lane.icon) column.icon = lane.icon;
+  if (lane.color && lane.color !== COLUMN_FIELD_DEFAULTS.color) column.color = lane.color;
+  if (lane.auto_spawn) column.autoSpawn = true;
+  if (!lane.auto_spawn && !lane.role) column.autoSpawn = false;
+  if (lane.permission_mode) column.permissionMode = lane.permission_mode;
+  if (lane.is_archived && lane.role !== 'done') column.archived = true;
+  if (lane.agent_override) column.agentOverride = lane.agent_override;
+  if (lane.model_override) column.modelOverride = lane.model_override;
+  if (lane.effort_override) column.effortOverride = lane.effort_override;
+  if (lane.handoff_context) column.handoffContext = true;
+  // Omit defaults so a backward-compatible board stays byte-identical until
+  // a column is set non-default (matches the sibling fields above).
+  if (lane.session_target !== COLUMN_FIELD_DEFAULTS.sessionTarget) column.sessionTarget = lane.session_target;
+  if (lane.session_spawn_strategy !== COLUMN_FIELD_DEFAULTS.sessionSpawnStrategy) column.sessionSpawnStrategy = lane.session_spawn_strategy;
+  // A To Do or Done column never approves plans (apply-config forces Manual).
+  if (lane.plan_approval !== 'manual' && lane.role !== 'todo' && lane.role !== 'done') column.planApproval = lane.plan_approval;
+  // A To Do or Done column runs no agent, so it has no limit to share.
+  if (lane.max_agents !== null && lane.role !== 'todo' && lane.role !== 'done') column.maxAgents = lane.max_agents;
+
+  const automations = serializeAutomations(options.automations, readExistingAutomations(options.existingColumn));
+  if (automations) column.automations = automations;
+
+  // Resolve plan_exit_target_id to target column name
+  if (lane.plan_exit_target_id) {
+    const targetName = options.targetNameOf(lane.plan_exit_target_id);
+    if (targetName) column.planExitTarget = targetName;
+  }
+
+  return column;
+}
+
+/**
+ * The column keys a lane's value can be read back for, with no default
+ * omission. A local override holds only the keys it sets, so a value cleared
+ * in the Column Manager must be written there explicitly (`null` or `false`),
+ * or the merge would fall through to the team file's value. A null in the
+ * local file is a clear: apply resets that field to its default
+ * (`localNullResets` in board-config-manager.ts).
+ *
+ * `automations` is not here: the caller serializes it with the rows.
+ *
+ * Exported for the parity test, which checks every team-shared field has one.
+ */
+export const COLUMN_FIELD_VALUE_READERS: Partial<Record<keyof BoardColumnConfig, (lane: Swimlane, targetNameOf: (laneId: string) => string | undefined) => unknown>> = {
+  name: (lane) => lane.name,
+  description: (lane) => lane.description || null,
+  role: (lane) => lane.role ?? undefined,
+  icon: (lane) => lane.icon ?? null,
+  color: (lane) => lane.color,
+  autoSpawn: (lane) => lane.auto_spawn,
+  permissionMode: (lane) => lane.permission_mode ?? null,
+  planExitTarget: (lane, targetNameOf) => (lane.plan_exit_target_id ? targetNameOf(lane.plan_exit_target_id) ?? null : null),
+  planApproval: (lane) => lane.plan_approval,
+  maxAgents: (lane) => lane.max_agents,
+  archived: (lane) => lane.is_archived,
+  agentOverride: (lane) => lane.agent_override,
+  modelOverride: (lane) => lane.model_override,
+  effortOverride: (lane) => lane.effort_override,
+  handoffContext: (lane) => lane.handoff_context,
+  sessionTarget: (lane) => lane.session_target,
+  sessionSpawnStrategy: (lane) => lane.session_spawn_strategy,
+};
+
+/**
+ * The fields `applyBoardConfigToDb` forces on a To Do or Done column, its
+ * `(isTodo || isDone) ? <value> :` guards. A field that gains one joins this list.
+ */
+export const ROLE_PINNED_FIELDS = new Set<keyof BoardColumnConfig>([
+  'permissionMode',
+  'autoSpawn',
+  'agentOverride',
+  'modelOverride',
+  'effortOverride',
+  'sessionTarget',
+  'sessionSpawnStrategy',
+  'planApproval',
+  'maxAgents',
+  'archived',
+]);
+
+/**
+ * A lane's current value for one column key, or `{ known: false }` for a key
+ * this build cannot read back from the database (a legacy key, or one a newer
+ * build wrote), which the caller keeps as the file has it. A known key whose
+ * value is `undefined` is omitted.
+ */
+export function readColumnFieldValue(
+  lane: Swimlane,
+  key: string,
+  targetNameOf: (laneId: string) => string | undefined,
+): { known: true; value: unknown } | { known: false } {
+  const reader = COLUMN_FIELD_VALUE_READERS[key as keyof BoardColumnConfig];
+  if (!reader) return { known: false };
+  // Apply pins these on a To Do or Done column whatever the file says, so the
+  // database cannot tell what was written and nothing can edit them there.
+  if ((lane.role === 'todo' || lane.role === 'done') && ROLE_PINNED_FIELDS.has(key as keyof BoardColumnConfig)) {
+    return { known: false };
+  }
+  return { known: true, value: reader(lane, targetNameOf) };
+}
+
+/**
+ * Wrap serialized columns into the team file, carrying across the keys that
+ * have no database representation.
+ */
+export function assembleBoardConfig(
+  columns: BoardColumnConfig[],
+  existingTeamConfig: BoardConfig | null,
+  fingerprint: string,
+): BoardConfig {
   const boardConfig: BoardConfig = {
     version: CURRENT_VERSION,
-    columns: lanes.map((lane) => {
-      const column: BoardColumnConfig = {
-        id: lane.id,
-        name: lane.name,
-      };
-      if (lane.role) column.role = lane.role;
-      if (lane.description) column.description = lane.description;
-      if (lane.icon) column.icon = lane.icon;
-      if (lane.color && lane.color !== '#3b82f6') column.color = lane.color;
-      if (lane.auto_spawn) column.autoSpawn = true;
-      if (!lane.auto_spawn && !lane.role) column.autoSpawn = false;
-      if (lane.permission_mode) column.permissionMode = lane.permission_mode;
-      if (lane.is_archived && lane.role !== 'done') column.archived = true;
-      if (lane.agent_override) column.agentOverride = lane.agent_override;
-      if (lane.model_override) column.modelOverride = lane.model_override;
-      if (lane.effort_override) column.effortOverride = lane.effort_override;
-      if (lane.handoff_context) column.handoffContext = true;
-      // Omit defaults so a backward-compatible board stays byte-identical until
-      // a column is set non-default (matches the sibling fields above).
-      if (lane.session_target !== 'main') column.sessionTarget = lane.session_target;
-      if (lane.session_spawn_strategy !== 'create_or_resume') column.sessionSpawnStrategy = lane.session_spawn_strategy;
-      // A To Do or Done column never approves plans (apply-config forces Manual).
-      if (lane.plan_approval !== 'manual' && lane.role !== 'todo' && lane.role !== 'done') column.planApproval = lane.plan_approval;
-      // A To Do or Done column runs no agent, so it has no limit to share.
-      if (lane.max_agents !== null && lane.role !== 'todo' && lane.role !== 'done') column.maxAgents = lane.max_agents;
-
-      const existingColumn = params.existingTeamConfig?.columns?.find((candidate) => candidate.id === lane.id)
-        ?? params.existingTeamConfig?.columns?.find((candidate) => candidate.name === lane.name)
-        ?? null;
-      const automations = serializeAutomations(
-        automationsByLane.get(lane.id) ?? [],
-        readExistingAutomations(existingColumn),
-      );
-      if (automations) column.automations = automations;
-
-      // Resolve plan_exit_target_id to target column name
-      if (lane.plan_exit_target_id) {
-        const target = laneById.get(lane.plan_exit_target_id);
-        if (target) column.planExitTarget = target.name;
-      }
-
-      return column;
-    }),
+    columns,
   };
 
   // `actions` and `transitions` are no longer written. Every automation belongs
@@ -113,20 +241,20 @@ export function buildBoardConfigFromDb(params: {
   // key without a DB representation is DESTROYED unless it is carried across
   // here. Adding a config-only key elsewhere and forgetting this block means it
   // silently vanishes the first time anyone edits a column.
-  if (params.existingTeamConfig?.shortcuts && params.existingTeamConfig.shortcuts.length > 0) {
-    boardConfig.shortcuts = params.existingTeamConfig.shortcuts;
+  if (existingTeamConfig?.shortcuts && existingTeamConfig.shortcuts.length > 0) {
+    boardConfig.shortcuts = existingTeamConfig.shortcuts;
   }
-  if (params.existingTeamConfig?.profiles && params.existingTeamConfig.profiles.length > 0) {
-    boardConfig.profiles = params.existingTeamConfig.profiles;
+  if (existingTeamConfig?.profiles && existingTeamConfig.profiles.length > 0) {
+    boardConfig.profiles = existingTeamConfig.profiles;
   }
-  if (params.existingTeamConfig?.defaultBaseBranch) {
-    boardConfig.defaultBaseBranch = params.existingTeamConfig.defaultBaseBranch;
+  if (existingTeamConfig?.defaultBaseBranch) {
+    boardConfig.defaultBaseBranch = existingTeamConfig.defaultBaseBranch;
   }
-  if (params.existingTeamConfig?.stopScript) {
-    boardConfig.stopScript = params.existingTeamConfig.stopScript;
+  if (existingTeamConfig?.stopScript) {
+    boardConfig.stopScript = existingTeamConfig.stopScript;
   }
 
-  boardConfig._modifiedBy = params.fingerprint;
+  boardConfig._modifiedBy = fingerprint;
   return boardConfig;
 }
 
@@ -152,7 +280,7 @@ export function buildBoardConfigFromDb(params: {
  * build older than whoever wrote the file strips their work on its next export
  * and the commit after that takes it from the whole team.
  */
-function serializeAutomations(
+export function serializeAutomations(
   automations: ColumnAutomation[],
   existing: Record<string, unknown> | null,
 ): BoardColumnAutomations | undefined {
@@ -185,10 +313,12 @@ function serializeGroup(
       // Only `false` is written: an absent key means enabled, which keeps the
       // common row to two keys plus its fields.
       if (!automation.enabled) row.enabled = false;
-      // One Condition kind per row: a Text match is written as `finalLine`, an
-      // Agent evaluation as `condition`, and the other key is left out.
-      if (automation.final_line) row.finalLine = automation.final_line;
-      else if (automation.condition) row.condition = automation.condition;
+      // One Condition kind per row, written as the dialog's card holds it: the
+      // kind inside `condition`. One pattern stays a string, as a reader expects
+      // in a diff; several are a list. The old `finalLine` key is never written.
+      const text = textMatchFileValue(automation.final_line);
+      if (text !== null) row.condition = { text };
+      else if (automation.condition) row.condition = { agent: automation.condition };
       if (automation.max_runs !== null) row.maxRuns = automation.max_runs;
 
       const fields = isAutomationType(automation.type) ? AUTOMATION_MANIFEST[automation.type].fields : [];
@@ -202,7 +332,7 @@ function serializeGroup(
       // Keys a newer build wrote on this same row, which this one has no field for.
       const existingRow = existingGroup.find(
         (candidate): candidate is Record<string, unknown> =>
-          isPlainObject(candidate) && candidate.name === automation.name && candidate.type === automation.type,
+          isJsonObject(candidate) && candidate.name === automation.name && candidate.type === automation.type,
       );
       if (existingRow) {
         const understood = understoodRowKeys(automation.type);
@@ -224,7 +354,7 @@ function carryUnknownRows(group: BoardAutomationConfig[], existingGroup: unknown
   const merged = group.slice();
   let anchorName: string | null = null;
   for (const candidate of existingGroup) {
-    if (!isPlainObject(candidate)) continue;
+    if (!isJsonObject(candidate)) continue;
     const candidateType = typeof candidate.type === 'string' ? candidate.type : '';
     const candidateName = typeof candidate.name === 'string' ? candidate.name : null;
     const known = isAutomationType(candidateType) || candidateType === 'send_command' || isRetiredActionType(candidateType);
@@ -249,11 +379,7 @@ function understoodRowKeys(type: string): Set<string> {
 }
 
 /** The column's `automations` object from the file on disk, when it is one. */
-function readExistingAutomations(column: BoardColumnConfig | null): Record<string, unknown> | null {
+export function readExistingAutomations(column: BoardColumnConfig | null): Record<string, unknown> | null {
   const automations: unknown = column?.automations;
-  return isPlainObject(automations) ? automations : null;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return isJsonObject(automations) ? automations : null;
 }
