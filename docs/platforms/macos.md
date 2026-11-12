@@ -8,6 +8,7 @@ sources:
   - resource: build/spawn-helper/spawn-helper.c
   - resource: build/install-spawn-helper.js
   - resource: build/afterSign.js
+  - resource: build/verify-signed-team-id.js
   - resource: .github/workflows/macos-spawn-helper.yml
   - resource: src/main/pty/spawn/shell-launch.ts
   - resource: src/main/pty/spawn/typed-launch.ts
@@ -40,7 +41,7 @@ node-pty never execs a terminal's program itself on macOS. It posix_spawns `preb
 `build/install-spawn-helper.js` does the work at package time and fails the build rather than skipping:
 
 - `build/afterPack.js` compiles a universal (arm64 + x86_64) helper for `mac.minimumSystemVersion`, copies it over every `darwin-*/spawn-helper` in the unpacked tree, and gates it. `build/spawn-helper/exception-port-probe.c` gives itself an `EXC_CRASH` port, checks that a control child inherits it, then checks that a child exec'd through the helper has none. A `/bin/pwd -P` run through the helper proves the cwd and exec contract.
-- `build/afterSign.js` runs the same gate on the signed helper before notarization, since hardened runtime is the one thing signing adds. electron-builder calls that hook only when it signed, so an unsigned local `npm run package` gets the afterPack gate alone.
+- `build/afterSign.js` runs the same gate on the signed helper before notarization, since hardened runtime is the one thing signing adds. electron-builder calls that hook only when it signed, so an unsigned local `npm run package` gets the afterPack gate alone. The hook then checks the signed app's Team ID against `src/shared/apple-team-id.json` (see [macOS signature mismatch](../releases/deployment.md#macos-signature-mismatch)).
 - `.github/workflows/macos-spawn-helper.yml` runs `node build/install-spawn-helper.js --self-test` on `macos-latest` when the helper, its gates, the typed launch, or `package-lock.json` change. It runs both gates, the second after ad-hoc signing the helper with hardened runtime (the same kernel flag Developer ID signing sets). It then runs a real node-pty session through the signed helper, checking cwd and the controlling tty. Last, it runs Node under the probe's `with-port` mode, so Node holds a live inherited port the way Kangentic's main process holds Crashpad's, and launches `[helper, '', '/bin/sh', '-c', command]` from `child_process` with stdin a pipe. A control launch must see the port and the shell launched through the helper must not, under the pid `child_process` returned. It is path-filtered and not a required check.
 - `tests/unit/spawn-helper-upstream-parity.test.ts` runs on Linux CI. It fails when the installed node-pty's `spawn-helper.cc`, its helper path, or its `[helper, cwd, file, ...args]` layout drifts from what our helper assumes.
 

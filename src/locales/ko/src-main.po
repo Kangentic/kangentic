@@ -8,16 +8,19 @@ msgstr ""
 "Language: ko\n"
 
 #: src/main/notifications/app-badge-display.ts
+#, fuzzy
 msgid "{count, plural, one {# agent needs you} other {# agents need you}}"
-msgstr ""
+msgstr "{count, plural, other {에이전트 #개가 사용자의 확인을 기다리는 중}}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is {megabytes} MB, over the 2 MB limit"
-msgstr ""
+msgstr "{fileName}의 크기가 {megabytes}MB로 2MB 제한을 초과합니다"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is not a wav, mp3, ogg or m4a file"
-msgstr ""
+msgstr "{fileName}은(는) wav, mp3, ogg 또는 m4a 파일이 아닙니다"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
@@ -120,6 +123,11 @@ msgstr "복사"
 msgid "Copy Image"
 msgstr "이미지 복사"
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "Download Kangentic again to keep it updated."
+msgstr "Kangentic을 계속 업데이트하려면 다시 다운로드하세요."
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
@@ -139,6 +147,11 @@ msgstr "Kangentic에서 데이터베이스를 읽을 수 없습니다"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic 창이 응답하지 않습니다"
+
+#: src/main/updater.ts
+#, fuzzy
+msgid "Move Kangentic to Applications to keep it updated."
+msgstr "Kangentic을 계속 업데이트하려면 응용 프로그램 폴더로 옮기세요."
 
 #: src/main/window-open-policy.ts
 #, fuzzy
@@ -186,8 +199,9 @@ msgid "Session crashed: {label}"
 msgstr "세션 충돌: {label}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "Sound files"
-msgstr ""
+msgstr "사운드 파일"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy

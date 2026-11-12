@@ -1,5 +1,7 @@
 const path = require('path');
 const { verifyPackagedSpawnHelpers } = require('./install-spawn-helper');
+const { verifySignedTeamId } = require('./verify-signed-team-id');
+const { teamId: committedTeamId } = require('../src/shared/apple-team-id.json');
 
 module.exports = async function afterSign(context) {
   if (context.electronPlatformName !== 'darwin') return;
@@ -17,6 +19,12 @@ module.exports = async function afterSign(context) {
   verifyPackagedSpawnHelpers({
     unpackedRoot: path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked'),
   });
+
+  // The app tags a Squirrel signature refusal by comparing its own signature
+  // with the committed Team ID, so a release must be signed by exactly that
+  // team. Throws on drift; skips, and says so, without APPLE_TEAM_ID. See
+  // build/verify-signed-team-id.js.
+  verifySignedTeamId({ appPath, expectedTeamId: committedTeamId });
 
   const appleId = process.env.APPLE_ID;
   const appleIdPassword = process.env.APPLE_APP_SPECIFIC_PASSWORD;

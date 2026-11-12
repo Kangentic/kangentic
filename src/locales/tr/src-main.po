@@ -8,16 +8,19 @@ msgstr ""
 "Language: tr\n"
 
 #: src/main/notifications/app-badge-display.ts
+#, fuzzy
 msgid "{count, plural, one {# agent needs you} other {# agents need you}}"
-msgstr ""
+msgstr "{count, plural, one {# ajan sizi bekliyor} other {# ajan sizi bekliyor}}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is {megabytes} MB, over the 2 MB limit"
-msgstr ""
+msgstr "{fileName} dosyası {megabytes} MB, 2 MB sınırını aşıyor"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is not a wav, mp3, ogg or m4a file"
-msgstr ""
+msgstr "{fileName} bir wav, mp3, ogg veya m4a dosyası değil"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
@@ -120,6 +123,11 @@ msgstr "Kopyala"
 msgid "Copy Image"
 msgstr "Görüntüyü kopyala"
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "Download Kangentic again to keep it updated."
+msgstr "Kangentic'i güncel tutmak için yeniden indirin."
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
@@ -139,6 +147,11 @@ msgstr "Kangentic veritabanını okuyamıyor"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic penceresi yanıt vermiyor"
+
+#: src/main/updater.ts
+#, fuzzy
+msgid "Move Kangentic to Applications to keep it updated."
+msgstr "Kangentic'i güncel tutmak için Uygulamalar klasörüne taşıyın."
 
 #: src/main/window-open-policy.ts
 #, fuzzy
@@ -186,8 +199,9 @@ msgid "Session crashed: {label}"
 msgstr "Oturum çöktü: {label}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "Sound files"
-msgstr ""
+msgstr "Ses dosyaları"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy

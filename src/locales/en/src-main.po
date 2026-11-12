@@ -100,6 +100,10 @@ msgstr "Copy"
 msgid "Copy Image"
 msgstr "Copy Image"
 
+#: src/main/updater.ts
+msgid "Download Kangentic again to keep it updated."
+msgstr "Download Kangentic again to keep it updated."
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
 msgstr "Free system memory (commit) at the time: {remainingMb} MB."
@@ -115,6 +119,10 @@ msgstr "Kangentic can't read its database"
 #: src/main/index.ts
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic's window stopped responding"
+
+#: src/main/updater.ts
+msgid "Move Kangentic to Applications to keep it updated."
+msgstr "Move Kangentic to Applications to keep it updated."
 
 #: src/main/window-open-policy.ts
 msgid "Not secure - {host}"

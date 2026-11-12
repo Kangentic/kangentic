@@ -122,6 +122,24 @@ describe('afterSign: spawn-helper gate on the signed app', () => {
     }
   });
 
+  it('checks the signed Team ID on a darwin leg, and fails before notarizing when it drifted', async () => {
+    // A secret that disagrees with src/shared/apple-team-id.json throws before
+    // codesign or notarytool run, so this needs no Mac.
+    vi.stubEnv('APPLE_ID', 'release@example.com');
+    vi.stubEnv('APPLE_APP_SPECIFIC_PASSWORD', 'app-specific-password');
+    vi.stubEnv('APPLE_TEAM_ID', 'TEAMID1234');
+    const fakeVerify = installFakeVerifyPackagedSpawnHelpers();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const afterSign = await importAfterSign();
+      await expect(afterSign(buildFakeContext('darwin', path.join('aftersign-fake-out', 'mac-drift'))))
+        .rejects.toThrow(/apple-team-id\.json/);
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Notarizing'));
+    } finally {
+      fakeVerify.restore();
+    }
+  });
+
   it('does nothing on win32 and linux', async () => {
     const fakeVerify = installFakeVerifyPackagedSpawnHelpers();
     try {

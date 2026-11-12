@@ -8,16 +8,19 @@ msgstr ""
 "Language: fr\n"
 
 #: src/main/notifications/app-badge-display.ts
+#, fuzzy
 msgid "{count, plural, one {# agent needs you} other {# agents need you}}"
-msgstr ""
+msgstr "{count, plural, one {# agent a besoin de vous} many {# d'agents ont besoin de vous} other {# agents ont besoin de vous}}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is {megabytes} MB, over the 2 MB limit"
-msgstr ""
+msgstr "{fileName} fait {megabytes} Mo, au-delà de la limite de 2 Mo"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "{fileName} is not a wav, mp3, ogg or m4a file"
-msgstr ""
+msgstr "{fileName} n'est pas un fichier wav, mp3, ogg ou m4a"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
@@ -120,6 +123,11 @@ msgstr "Copier"
 msgid "Copy Image"
 msgstr "Copier l'image"
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "Download Kangentic again to keep it updated."
+msgstr "Téléchargez à nouveau Kangentic pour le maintenir à jour."
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
@@ -139,6 +147,11 @@ msgstr "Kangentic ne peut pas lire sa base de données"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "La fenêtre de Kangentic ne répond plus"
+
+#: src/main/updater.ts
+#, fuzzy
+msgid "Move Kangentic to Applications to keep it updated."
+msgstr "Déplacez Kangentic dans Applications pour le maintenir à jour."
 
 #: src/main/window-open-policy.ts
 #, fuzzy
@@ -186,8 +199,9 @@ msgid "Session crashed: {label}"
 msgstr "Plantage de la session : {label}"
 
 #: src/main/notifications/custom-sound.ts
+#, fuzzy
 msgid "Sound files"
-msgstr ""
+msgstr "Fichiers audio"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy

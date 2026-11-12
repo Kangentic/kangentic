@@ -23,6 +23,9 @@ sources:
   - resource: src/renderer/monaco-error-funnel.ts
   - resource: src/main/diagnostics/gpu-health.ts
   - resource: src/main/updater.ts
+  - resource: src/main/updater-mac-signing.ts
+  - resource: src/shared/apple-team-id.json
+  - resource: build/verify-signed-team-id.js
   - resource: src/main/pty/agent-launch-report.ts
   - resource: src/main/pty/launch-output-class.ts
   - resource: src/main/git/worktree-errors.ts
@@ -837,6 +840,31 @@ in one Sentry org, one triage surface.
 
   The pattern matches Squirrel's opening sentence only. Squirrel appends a recovery suggestion
   naming Downloads, macOS Sierra and a GitHub issue URL, none of which identifies the condition.
+- **A refused update signature is still reported, as one issue, and a modified copy's user hears
+  about it.**
+  `isSignatureRequirementError` (`src/main/updater.ts`) matches `code failed to satisfy specified
+  code requirement`, Squirrel.Mac's errSecCSReqFailed text. Squirrel checks a downloaded update
+  against the RUNNING copy's designated requirement, so this means one of two things. The running
+  copy is no longer signed by us (an ad-hoc copy's requirement is its own cdhash, which no release
+  can satisfy), or a release was signed by another identity. The second would hit every Mac, so
+  this gate does not drop the report the way the read-only one does.
+
+  The event has no frames, so Sentry groups it by message, and the message names ShipIt's staging
+  folder (`update.<random>`), new on every attempt. That split one install's failure into
+  DESKTOP-2R and DESKTOP-2T. `signatureRequirementReport` replaces the folder with
+  `update.<staging>` in the message and stack, and reports under the fixed fingerprint
+  `['updater', 'signature-requirement']`. The `running_signing` tag tells the two causes apart. It
+  comes from `codesign -dv` on the running bundle (`src/main/updater-mac-signing.ts`), read once
+  per run:
+  - `adhoc`, `unsigned` or `other-team`: this copy was modified or re-signed after it left us.
+  - `our-team`: the copy is ours, so look at the release's signing.
+  - `unreadable`: codesign failed.
+
+  "Our team" is the Team ID in `src/shared/apple-team-id.json`. `build/afterSign.js` fails a
+  release leg whose signature or `APPLE_TEAM_ID` disagrees with that file, so the tag cannot go
+  stale quietly. Once the tag is known, the branch also pushes `updater:blocked` through the
+  shared once-per-run latch, and the toast tells the user to download Kangentic again. It skips
+  the toast on `our-team`, because a fresh download would fetch the same release.
 - **A `.deb` install with no package manager is counted, not reported, and the user hears about
   it.** `isPackageManagerMissingError` (`src/main/updater.ts`), the branch below the read-only one.
   `electron-updater` picks its updater from the `package-type` marker in `resourcesPath`, so a
@@ -848,7 +876,7 @@ in one Sentry org, one triage surface.
   `isElevationDeniedError`, because no prompt was shown and nothing was declined.
 
   It pushes `updater:blocked` through `notifyUpdateBlocked`, the once-per-run latch it shares with
-  the read-only case, so two clicks give one toast. The toast body is the error text word for
+  the two macOS cases, so two clicks give one toast. The toast body is the error text word for
   word, with no advice. The fix depends on how the package got there, and the event cannot say
   which tool unpacked it. Because the pattern hand-matches a third-party string,
   `tests/unit/updater-error-classifier.test.ts` runs it over the messages in the installed
@@ -913,7 +941,8 @@ in one Sentry org, one triage surface.
 
   Also note `sanitizeErrorMessage` truncates to 180 characters, which is shorter than the
   read-only-volume message. The classes are still distinguishable by their opening sentence,
-  since there is no per-class tag on the event.
+  since there is no per-class tag on the `app_error` event. The Sentry report for a refused
+  signature is the one that carries a class tag (`running_signing`).
 
 ## Investigating an issue
 
