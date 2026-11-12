@@ -194,6 +194,19 @@ describe('parseCapabilityRequestPayload', () => {
     expect(() => parseCapabilityRequestPayload('start-session', { taskId: 't-1' })).toThrow(/projectId/);
   });
 
+  it("start-session: keeps trigger 'open' (protocol 0.28.0), and leaves the key out of a plain start", () => {
+    expect(parseCapabilityRequestPayload('start-session', { taskId: 't-1', projectId: 'p-1', trigger: 'open' }))
+      .toEqual({ taskId: 't-1', projectId: 'p-1', trigger: 'open' });
+    expect('trigger' in parseCapabilityRequestPayload('start-session', { taskId: 't-1', projectId: 'p-1' })).toBe(false);
+  });
+
+  // Dropped, an unknown trigger would read as a plain start: the paid path an
+  // open exists to keep a phone off.
+  it('start-session: refuses a trigger it does not know rather than dropping it', () => {
+    expect(() => parseCapabilityRequestPayload('start-session', { taskId: 't-1', projectId: 'p-1', trigger: 'push-tap' })).toThrow(/trigger/);
+    expect(() => parseCapabilityRequestPayload('start-session', { taskId: 't-1', projectId: 'p-1', trigger: true })).toThrow(/trigger/);
+  });
+
   it('pause-session: parses a valid payload to exactly the trusted fields', () => {
     const parsed = parseCapabilityRequestPayload('pause-session', {
       taskId: 't-1',

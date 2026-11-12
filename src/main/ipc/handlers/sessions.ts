@@ -190,9 +190,11 @@ export function registerSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string, projectId?: string | null) =>
     resumeTaskSession(context, taskId, { projectId, resumePrompt }));
 
-  // The user opened a task. Main decides whether that resumes it.
-  ipcMain.handle(IPC.SESSION_RESUME_ON_OPEN, (_, taskId: string, projectId?: string | null) =>
-    resumeTaskOnOpen(context, taskId, projectId));
+  // The user opened a task. Main decides whether that resumes it. The renderer
+  // hears the outcome by push, so the invoke resolves with nothing.
+  ipcMain.handle(IPC.SESSION_RESUME_ON_OPEN, async (_, taskId: string, projectId?: string | null): Promise<void> => {
+    await resumeTaskOnOpen(context, taskId, projectId);
+  });
 
   registerSessionRecoveryHandlers(context);
 }

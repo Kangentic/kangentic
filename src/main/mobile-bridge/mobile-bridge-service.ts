@@ -43,6 +43,8 @@ import { registerCapabilityHandlers } from './handlers';
 import { terminalStreamKeyFor, TERMINAL_STREAM_KEY_PREFIX } from './handlers/read-stream';
 import { sizeGuardKeyFor } from './handlers/terminal-size-guard';
 import { SessionLifecycleBoardFeed } from './session-lifecycle-feed';
+import { QueuePlaceFeed } from './queue-place-feed';
+import { readQueueSnapshot } from '../ipc/helpers/queue-snapshot';
 import { SpawnProgressFeed } from './spawn-progress-feed';
 import { PushRegistrationStore } from './push/push-registration-store';
 import { collectConnectedDeviceIds, PushNotifier } from './push/push-notifier';
@@ -204,6 +206,8 @@ export class MobileBridgeService extends EventEmitter {
   private ipcContext: IpcContext | null = null;
   /** Feeds session lifecycle edges onto the board-changed bus so phones' board views track spawn/queue/suspend/exit. */
   private sessionLifecycleFeed: SessionLifecycleBoardFeed | null = null;
+  /** Queued tasks' places in line, which read-board forwards to phones as task-updated (kept off the board bus). */
+  private queuePlaceFeed: QueuePlaceFeed | null = null;
   /** Throttled spawn-progress label changes, which read-board forwards to phones as task-updated (kept off the board bus). */
   private spawnProgressFeed: SpawnProgressFeed | null = null;
   /** Per-device push registrations (Expo token + envelope key), written by the register-push handler and read by the notifier. */
@@ -281,12 +285,18 @@ export class MobileBridgeService extends EventEmitter {
       resolveProjectIdForTask: (taskId) => this.findTaskOwner(context, taskId)?.projectId ?? null,
     });
     this.spawnProgressFeed.start();
+    this.queuePlaceFeed = new QueuePlaceFeed({
+      sessionManager: context.sessionManager,
+      readSnapshot: () => readQueueSnapshot(context),
+    });
+    this.queuePlaceFeed.start();
     registerCapabilityHandlers(this.capabilityRouter, {
       context,
       diffWatcher: this.diffWatcher,
       getSubscriptions: (deviceId) => this.getOrCreateSubscriptions(deviceId),
       pushRegistrations: this.pushRegistrations,
       spawnProgressFeed: this.spawnProgressFeed,
+      queuePlaceFeed: this.queuePlaceFeed,
     });
     this.sessionLifecycleFeed = new SessionLifecycleBoardFeed({
       sessionManager: context.sessionManager,
@@ -1226,6 +1236,8 @@ export class MobileBridgeService extends EventEmitter {
     this.devQuickPair?.stop();
     this.sessionLifecycleFeed?.dispose();
     this.sessionLifecycleFeed = null;
+    this.queuePlaceFeed?.dispose();
+    this.queuePlaceFeed = null;
     this.spawnProgressFeed?.dispose();
     this.spawnProgressFeed = null;
     this.pushNotifier?.dispose();

@@ -99,6 +99,8 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
   prompt-options-probe.ts     # pure parser: pending dialog's numbered option labels out of a serialized PTY frame
   board-event-bus.ts          # consolidated main-process board-mutation event stream (IpcContext.boardEvents)
   session-lifecycle-feed.ts   # bridges SessionManager session-changed/session-removed/exit edges onto the board-changed bus
+  spawn-progress-feed.ts      # announces each task's in-flight spawn label, throttled to 1000 ms per task (read-board forwards it as task-updated; kept off the bus)
+  queue-place-feed.ts         # announces each queued task whose place in line moved (read-board forwards it as task-updated; kept off the bus)
   mobile-bridge-service.ts    # top-level service: identity, roster, pairing, sessions, attachContext()
 ```
 

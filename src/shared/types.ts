@@ -7681,6 +7681,8 @@ export interface QueueSnapshot {
  * What started a session, as a launch failure report tags it. A fixed list, so
  * the value is safe on an event. `retry` is the one automatic second launch a
  * launch that never started gets (`src/main/pty/agent-launch-report.ts`).
+ * `open` is a resume because a person opened the task on the desktop, and
+ * `phone_open` the same resume because they opened it on a paired phone.
  */
 export type LaunchStartPath =
   | 'board'
@@ -7690,7 +7692,8 @@ export type LaunchStartPath =
   | 'phone'
   | 'startup_recovery'
   | 'retry'
-  | 'open';
+  | 'open'
+  | 'phone_open';
 
 /**
  * What the resume check (`src/main/transition-engine/resume-conversation-guard.ts`)

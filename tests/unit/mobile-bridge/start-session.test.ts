@@ -22,14 +22,24 @@
  * `session-changed` at PTY creation, not a fake emit.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { startTaskSession as StartTaskSession, StartTaskSessionResult } from '../../../src/main/ipc/handlers/session-start';
+import type {
+  openTaskSession as OpenTaskSession,
+  OpenTaskSessionResult,
+  startTaskSession as StartTaskSession,
+  StartTaskSessionResult,
+} from '../../../src/main/ipc/handlers/session-start';
 
 const startTaskSessionMock = vi.hoisted(() =>
   vi.fn((..._args: Parameters<typeof StartTaskSession>): Promise<StartTaskSessionResult> =>
     Promise.resolve({ outcome: 'starting', settled: Promise.resolve() })),
 );
+const openTaskSessionMock = vi.hoisted(() =>
+  vi.fn((..._args: Parameters<typeof OpenTaskSession>): Promise<OpenTaskSessionResult> =>
+    Promise.resolve({ outcome: 'not-eligible' })),
+);
 vi.mock('../../../src/main/ipc/handlers/session-start', () => ({
   startTaskSession: startTaskSessionMock,
+  openTaskSession: openTaskSessionMock,
 }));
 
 // The real SessionManager for the fan-out block below; the same four module
@@ -200,6 +210,47 @@ describe('handleStartSession', () => {
     } finally {
       process.off('unhandledRejection', unhandled);
     }
+  });
+
+  // Protocol 0.28.0: an open does what opening the task on the desktop does,
+  // and never the Start or Resume button's path, which can send a paid turn.
+  describe("trigger: 'open'", () => {
+    beforeEach(() => {
+      openTaskSessionMock.mockClear();
+    });
+
+    it('routes to openTaskSession and never to the paid start', async () => {
+      const context = fakeContext();
+      const response = await handleStartSession(fakeRequest({ ...START_PAYLOAD, trigger: 'open' }), context);
+
+      expect(response).toMatchObject({ ok: true, payload: { ok: true, outcome: 'not-eligible' } });
+      expect(openTaskSessionMock).toHaveBeenCalledWith(context, 'proj-1', 't-1');
+      expect(startTaskSessionMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['starting', 'live'] as const)('carries the outcome %s', async (outcome) => {
+      openTaskSessionMock.mockResolvedValueOnce(outcome === 'starting' ? { outcome, settled: new Promise<void>(() => {}) } : { outcome });
+
+      const response = await handleStartSession(fakeRequest({ ...START_PAYLOAD, trigger: 'open' }), fakeContext());
+
+      expect(response.payload).toEqual({ ok: true, outcome });
+    });
+
+    it('still refuses a project the desktop does not know', async () => {
+      const context = fakeContext();
+      vi.mocked(context.projectRepo.getById).mockReturnValue(undefined);
+
+      const response = await handleStartSession(fakeRequest({ taskId: 't-1', projectId: 'proj-deleted', trigger: 'open' }), context);
+
+      expect(response).toMatchObject({ ok: false, error: 'No such project: proj-deleted' });
+      expect(openTaskSessionMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a trigger it does not know rather than falling back to a start', async () => {
+      await expect(handleStartSession(fakeRequest({ ...START_PAYLOAD, trigger: 'push' }), fakeContext())).rejects.toThrow('invalid "trigger"');
+      expect(startTaskSessionMock).not.toHaveBeenCalled();
+      expect(openTaskSessionMock).not.toHaveBeenCalled();
+    });
   });
 });
 

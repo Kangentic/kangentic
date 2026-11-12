@@ -29,7 +29,7 @@ import { isUnderWorkflowRecovery } from '../../workflows/workflow-recovery-state
 import { resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import { columnEnteredWhilePaused, resumeTaskSession } from './session-resume';
 import { isResumeInFlight } from './session-resume-controllers';
-import type { Task } from '../../../shared/types';
+import type { LaunchStartPath, Task } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -67,21 +67,66 @@ function isPlainIdleResume(context: IpcContext, projectId: string, task: Task): 
 }
 
 /**
- * Never rejects: the user opened a task, and nothing here is theirs to answer. A
- * resume that fails after it started shows the spawn-blocked notice.
+ * What an open did, decided before any git work:
+ *
+ * - `not-eligible`: nothing, because the task is not one an open resumes (most
+ *   opens), or the resume's own locked check found it no longer is.
+ * - `live`: the task already has a running agent.
+ * - `starting`: a resume is under way, this one or one already in flight. The
+ *   engine can still decline it after the git phase (`resumeOnly`), which leaves
+ *   the task paused behind its Resume button.
  */
-export async function resumeTaskOnOpen(context: IpcContext, taskId: string, projectId?: string | null): Promise<void> {
+export type OpenResumeOutcome = 'not-eligible' | 'live' | 'starting';
+
+export interface ResumeOnOpenOptions {
+  /** Where the open came from, for the launch report. The desktop's own is `'open'`. */
+  startPath?: LaunchStartPath;
+  /**
+   * Called once, as soon as the outcome is known: for an accepted resume,
+   * before its git phase. For a caller with a short answer budget, a phone's
+   * open, which answers then and leaves the slow part running.
+   */
+  onDecided?: (outcome: OpenResumeOutcome) => void;
+}
+
+/**
+ * Never rejects: the user opened a task, and nothing here is theirs to answer. A
+ * resume that fails after it started shows the spawn-blocked notice. Resolves
+ * with the outcome once the work is done; `onDecided` hears it sooner.
+ */
+export async function resumeTaskOnOpen(
+  context: IpcContext,
+  taskId: string,
+  projectId?: string | null,
+  options: ResumeOnOpenOptions = {},
+): Promise<OpenResumeOutcome> {
+  const startPath = options.startPath ?? 'open';
+  let decided: OpenResumeOutcome | null = null;
+  const decide = (outcome: OpenResumeOutcome): OpenResumeOutcome => {
+    if (decided === null) {
+      decided = outcome;
+      try {
+        options.onDecided?.(outcome);
+      } catch (hookError) {
+        console.warn('[SESSION_RESUME] onDecided hook threw:', hookError);
+      }
+    }
+    return decided;
+  };
+
   const resolvedProjectId = projectId ?? context.currentProjectId;
-  if (!resolvedProjectId) return;
+  if (!resolvedProjectId) return decide('not-eligible');
   try {
     const task = getProjectRepos(context, resolvedProjectId).tasks.getById(taskId);
-    if (!task || !isPlainIdleResume(context, resolvedProjectId, task)) return;
+    if (!task || !isPlainIdleResume(context, resolvedProjectId, task)) return decide('not-eligible');
     // Ahead of `resumeTaskSession`, which cancels whatever is in flight: a Resume
-    // click carrying a prompt, a workflow's Resume, the launch retry.
-    if (isResumeInFlight(taskId)) return;
+    // click carrying a prompt, a workflow's Resume, the launch retry. That one is
+    // already bringing the agent back, so the open reads as starting.
+    if (isResumeInFlight(taskId)) return decide('starting');
     await resumeTaskSession(context, taskId, {
       projectId: resolvedProjectId,
-      startPath: 'open',
+      startPath,
+      onAccepted: (acceptance) => decide(acceptance === 'live' ? 'live' : 'starting'),
       plainResume: {
         stillEligible: (current) => isPlainIdleResume(context, resolvedProjectId, current),
         onDeclined: () => {
@@ -89,11 +134,14 @@ export async function resumeTaskOnOpen(context: IpcContext, taskId: string, proj
           if (declined) declinedRecordIds.add(declined.id);
         },
       },
-      onFailed: (step, error, failedTask) => notifySpawnBlocked(context, failedTask, step, error, resolvedProjectId, 'open'),
+      onFailed: (step, error, failedTask) => notifySpawnBlocked(context, failedTask, step, error, resolvedProjectId, startPath),
     });
   } catch (error) {
     console.warn(`[SESSION_RESUME] Task ${taskId.slice(0, 8)} did not resume on open:`, error);
   }
+  // A resume that ended without accepting (its locked check found the task no
+  // longer eligible, a Pause cancelled it, or it was refused) did nothing.
+  return decide('not-eligible');
 }
 
 /** Test-only: forget every declined record. */

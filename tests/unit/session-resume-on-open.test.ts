@@ -29,6 +29,8 @@ let entry: { at: string; origin: string; from_swimlane_id: string | null };
 let outcome: SpawnOutcome;
 let workflowState: 'running' | 'paused' | null;
 let workflowReadFails: boolean;
+/** The session registry's rows, for the phone open's live check. */
+let registryRows: Array<Pick<Session, 'id' | 'taskId' | 'status' | 'transient'>> = [];
 
 const engine = {
   resumeSuspendedSession: vi.fn(async (): Promise<SpawnOutcome> => {
@@ -104,6 +106,8 @@ vi.mock('../../src/main/held-messages/held-messages', async (importOriginal) => 
 });
 
 import { resetDeclinedOpensForTests, resumeTaskOnOpen } from '../../src/main/ipc/handlers/session-resume-on-open';
+import { openTaskSession } from '../../src/main/ipc/handlers/session-start';
+import { onSpawnProgressChange } from '../../src/main/transition-engine/spawn-progress';
 import { resumeTaskSession } from '../../src/main/ipc/handlers/session-resume';
 import { registerResumeController, releaseResumeController } from '../../src/main/ipc/handlers/session-resume-controllers';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
@@ -118,6 +122,7 @@ function fakeContext(): IpcContext {
     projectRepo: { getById: vi.fn(() => ({ id: PROJECT_ID, path: '/mock/project' })) },
     sessionManager: {
       getSession: (id: string) => (id === 'sess-resumed' ? ({ id, taskId: TASK_ID, status: 'running' } as Session) : undefined),
+      listSessions: () => registryRows,
     },
   } as unknown as IpcContext;
 }
@@ -343,7 +348,7 @@ describe('resumeTaskOnOpen', () => {
       const failure = new Error('fatal: not a git repository');
       mockEnsureTaskWorktree.mockImplementation(async () => { throw failure; });
 
-      await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID)).resolves.toBeUndefined();
+      await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID)).resolves.toBe('starting');
 
       expect(mockNotifySpawnBlocked).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: TASK_ID }), 'worktree', failure, PROJECT_ID, 'open');
     });
@@ -356,5 +361,207 @@ describe('resumeTaskOnOpen', () => {
 
       expectNothingStarted();
     });
+  });
+
+  // A phone's open answers the person within its verb budget, so the outcome
+  // must be known before the git phase, and every path must report one.
+  describe('what it reports', () => {
+    it('decides `starting` for an accepted resume before its git phase runs', async () => {
+      let releaseGit: () => void = () => undefined;
+      mockEnsureTaskWorktree.mockImplementation(() => new Promise<void>((resolve) => { releaseGit = resolve; }));
+      const onDecided = vi.fn();
+
+      const resuming = resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID, { onDecided });
+      await vi.waitFor(() => expect(onDecided).toHaveBeenCalledWith('starting'));
+      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+
+      releaseGit();
+      await expect(resuming).resolves.toBe('starting');
+      expect(onDecided).toHaveBeenCalledTimes(1);
+    });
+
+    it.each<[string, () => void]>([
+      ["a user's Pause", () => { if (latestRecord) latestRecord.suspended_by = 'user'; }],
+      ['a task in Done', () => { storedTask = { ...storedTask, swimlane_id: DONE.id }; }],
+      ['a paused workflow', () => { workflowState = 'paused'; }],
+      ['a column entered while paused', () => { entry = { at: ENTERED_AFTER_PAUSE, origin: 'user', from_swimlane_id: DONE.id }; }],
+    ])('decides `not-eligible` for %s', async (_label, arrange) => {
+      arrange();
+      const onDecided = vi.fn();
+
+      await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID, { onDecided })).resolves.toBe('not-eligible');
+
+      expect(onDecided).toHaveBeenCalledWith('not-eligible');
+      expectNothingStarted();
+    });
+
+    it('decides `not-eligible` for a record the engine already declined', async () => {
+      outcome = { startOver: null, recapOnly: false, unsentPrompt: null, declined: true };
+      await resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID);
+
+      await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID)).resolves.toBe('not-eligible');
+    });
+
+    it('decides `starting` for a resume already in flight, which is bringing the agent back', async () => {
+      const inFlight = new AbortController();
+      registerResumeController(TASK_ID, inFlight);
+      try {
+        await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID)).resolves.toBe('starting');
+      } finally {
+        releaseResumeController(TASK_ID, inFlight);
+      }
+      expectNothingStarted();
+    });
+
+    it('decides `live` for a task whose agent is already running', async () => {
+      storedTask = { ...storedTask, session_id: 'sess-resumed' };
+
+      await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID)).resolves.toBe('live');
+      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    });
+
+    it('decides `not-eligible` when a Pause lands before the resume takes the task lock', async () => {
+      let release: () => void = () => undefined;
+      const held = withTaskLock(TASK_ID, () => new Promise<void>((resolve) => { release = resolve; }));
+      const resuming = resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID);
+
+      if (latestRecord) latestRecord.suspended_by = 'user';
+      release();
+      await held;
+
+      await expect(resuming).resolves.toBe('not-eligible');
+    });
+
+    it('an onDecided hook that throws does not stop the resume, and is logged', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const onDecided = vi.fn(() => { throw new Error('phone gone'); });
+
+      await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID, { onDecided })).resolves.toBe('starting');
+
+      expect(onDecided).toHaveBeenCalledTimes(1);
+      expect(engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('onDecided hook threw'), expect.any(Error));
+    });
+
+    it('decides `not-eligible` exactly once when there is no project to read', async () => {
+      const context = fakeContext();
+      context.currentProjectId = null;
+      const onDecided = vi.fn();
+
+      await expect(resumeTaskOnOpen(context, TASK_ID, undefined, { onDecided })).resolves.toBe('not-eligible');
+
+      expect(onDecided).toHaveBeenCalledTimes(1);
+      expect(onDecided).toHaveBeenCalledWith('not-eligible');
+    });
+
+    it('decides `not-eligible` exactly once when reading the task throws before acceptance', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      repos.tasks.getById.mockImplementationOnce(() => { throw new Error('database is closed'); });
+      const onDecided = vi.fn();
+
+      await expect(resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID, { onDecided })).resolves.toBe('not-eligible');
+
+      expect(onDecided).toHaveBeenCalledTimes(1);
+      expect(onDecided).toHaveBeenCalledWith('not-eligible');
+      expectNothingStarted();
+    });
+
+    it('tags the launch with the start path it is given', async () => {
+      await resumeTaskOnOpen(fakeContext(), TASK_ID, PROJECT_ID, { startPath: 'phone_open' });
+
+      expect(spawnOverrides()).toMatchObject({ startPath: 'phone_open', resumeOnly: true });
+    });
+  });
+});
+
+describe('openTaskSession (a phone opening the task)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    storedTask = { id: TASK_ID, title: 'Retry the sync', swimlane_id: EXECUTING.id, session_id: null, archived_at: null } as Task;
+    latestRecord = { id: 'record-paused', status: 'suspended', suspended_by: 'auto', suspended_at: PAUSED_AT, agent_session_id: 'agent-1' };
+    entry = { at: ENTERED_BEFORE_PAUSE, origin: 'user', from_swimlane_id: null };
+    outcome = { startOver: null, recapOnly: false, unsentPrompt: null };
+    workflowState = null;
+    workflowReadFails = false;
+    mockEnsureTaskWorktree.mockImplementation(async () => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetDeclinedOpensForTests();
+  });
+
+  it('answers `starting` while the git phase still runs, and resumes on the phone\'s start path, sending nothing', async () => {
+    let releaseGit: () => void = () => undefined;
+    mockEnsureTaskWorktree.mockImplementation(() => new Promise<void>((resolve) => { releaseGit = resolve; }));
+
+    const opened = await openTaskSession(fakeContext(), PROJECT_ID, TASK_ID);
+
+    expect(opened.outcome).toBe('starting');
+    expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    releaseGit();
+    if (opened.outcome === 'starting') await opened.settled;
+    expect(spawnOverrides()).toMatchObject({ startPath: 'phone_open', resumeOnly: true });
+    expect(resumePrompt()).toBeUndefined();
+  });
+
+  it('answers `not-eligible`, never an error, for a task in Done and for a user\'s Pause', async () => {
+    storedTask = { ...storedTask, swimlane_id: DONE.id };
+    await expect(openTaskSession(fakeContext(), PROJECT_ID, TASK_ID)).resolves.toEqual({ outcome: 'not-eligible' });
+
+    storedTask = { ...storedTask, swimlane_id: EXECUTING.id };
+    if (latestRecord) latestRecord.suspended_by = 'user';
+    await expect(openTaskSession(fakeContext(), PROJECT_ID, TASK_ID)).resolves.toEqual({ outcome: 'not-eligible' });
+
+    expectNothingStarted();
+  });
+
+  // A phone on a stale screen still draws the task paused. Its latest record
+  // reads running, which the desktop open answers as not eligible: `live` is
+  // what tells the phone to re-read rather than keep a Resume button.
+  it.each(['running', 'queued'] as const)('answers `live` for a task whose agent is already %s, and starts nothing', async (status) => {
+    latestRecord = { id: 'record-live', status: 'running', suspended_by: null, suspended_at: null, agent_session_id: 'agent-1' };
+    registryRows = [{ id: 'sess-live', taskId: TASK_ID, status, transient: false }];
+    try {
+      await expect(openTaskSession(fakeContext(), PROJECT_ID, TASK_ID)).resolves.toEqual({ outcome: 'live' });
+    } finally {
+      registryRows = [];
+    }
+    expectNothingStarted();
+  });
+
+  // The phone heard `starting` and waits for the board to change. A decline
+  // after the git phase spawns nothing, so the label's release is the only
+  // change it gets: the spawn-progress feed turns it into a task-updated.
+  it('releases the Resuming label when the engine declines after the phone heard `starting`', async () => {
+    outcome = { startOver: null, recapOnly: false, unsentPrompt: null, declined: true };
+    const labels: Array<string | null> = [];
+    const unsubscribe = onSpawnProgressChange((changedTaskId, label) => {
+      if (changedTaskId === TASK_ID) labels.push(label);
+    });
+    try {
+      const opened = await openTaskSession(fakeContext(), PROJECT_ID, TASK_ID);
+      expect(opened.outcome).toBe('starting');
+      if (opened.outcome === 'starting') await opened.settled;
+    } finally {
+      unsubscribe();
+    }
+
+    expect(labels.length).toBeGreaterThan(1);
+    expect(labels[labels.length - 1]).toBeNull();
+    expect(mockNotifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure after acceptance on the phone\'s start path, and never rejects', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const failure = new Error('fatal: not a git repository');
+    mockEnsureTaskWorktree.mockImplementation(async () => { throw failure; });
+
+    const opened = await openTaskSession(fakeContext(), PROJECT_ID, TASK_ID);
+    expect(opened.outcome).toBe('starting');
+    if (opened.outcome === 'starting') await expect(opened.settled).resolves.toBeUndefined();
+
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: TASK_ID }), 'worktree', failure, PROJECT_ID, 'phone_open');
   });
 });
