@@ -5,9 +5,17 @@ type PillShape = 'round' | 'square';
 
 type PillElement = 'button' | 'span' | 'div';
 
+type PillJustify = 'center' | 'start';
+
 type PillOwnProps = {
   size?: PillSize;
   shape?: PillShape;
+  /**
+   * Where the content sits when the pill is wider than it (a pill stretched to
+   * its slot). A prop rather than a `justify-*` class: two `justify-*` utilities
+   * in one class string leave the winner to Tailwind's sort order.
+   */
+  justify?: PillJustify;
   /** Explicit element type. Auto-detected from `onClick` if omitted. */
   as?: PillElement;
   className?: string;
@@ -77,6 +85,11 @@ function trimTextChildren(children: React.ReactNode): React.ReactNode {
   return output;
 }
 
+const JUSTIFY_CLASSES: Record<PillJustify, string> = {
+  center: 'justify-center',
+  start: 'justify-start',
+};
+
 const SHAPE_CLASSES: Record<PillShape, string> = {
   round: 'rounded-full',
   square: 'rounded-lg',
@@ -90,13 +103,13 @@ const SHAPE_CLASSES: Record<PillShape, string> = {
  * transitions, and extras via `className`.
  */
 export const Pill = React.memo(React.forwardRef<HTMLElement, PillProps>(function Pill(
-  { size = 'md', shape = 'round', as, className, children, ...rest },
+  { size = 'md', shape = 'round', justify = 'center', as, className, children, ...rest },
   ref,
 ) {
   const isInteractive = as === 'button' || (!as && 'onClick' in rest && rest.onClick != null);
   const Element = as ?? (isInteractive ? 'button' : 'span');
 
-  const base = `inline-flex items-center justify-center select-none ${SIZE_CLASSES[size]} ${SHAPE_CLASSES[shape]}`;
+  const base = `inline-flex items-center ${JUSTIFY_CLASSES[justify]} select-none ${SIZE_CLASSES[size]} ${SHAPE_CLASSES[shape]}`;
   const interactive = isInteractive ? 'cursor-pointer' : '';
   const classes = `${base} ${interactive} ${className ?? ''}`;
 

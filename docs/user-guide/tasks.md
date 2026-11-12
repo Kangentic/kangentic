@@ -113,8 +113,10 @@ conversation and sends the task once more.
 ## Artifacts
 
 A task keeps links to what it is built from and what it produces: a Figma file, a requirements
-document, a diagram, a page an agent published. They show as a chip beside the PR pill on the card,
-as a button in the task window's header, and as a count on a completed task's strip.
+document, a diagram, a page an agent published. They show as a chip on the card, as a button in
+the task window's header, and as a count on a completed task's strip. On the card the chip fills the
+row, or what the PR pill leaves of it: a single artifact takes the rest, and a count shares the row
+with the PR pill 50/50.
 
 - **One artifact**: the chip shows the tool's logo and the artifact's name, and a click opens it.
 - **Several**: the chip shows a count, and a click opens a menu that lists them. Arrow keys move

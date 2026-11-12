@@ -75,6 +75,10 @@ export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, taskId, tes
       <Pill
         shape="square"
         size="xs"
+        // Beside a count chip on a board card the pill is stretched to half the
+        // row; its content starts at the left, as the chip's does. At content
+        // width (everywhere else) start and center draw the same.
+        justify="start"
         onClick={(event: MouseEvent) => {
           event.stopPropagation();
           opener.open(prUrl, event);

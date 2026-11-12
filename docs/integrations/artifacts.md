@@ -11,6 +11,8 @@ sources:
   - resource: src/main/artifacts/artifact-domain-report.ts
   - resource: src/main/agent/commands/artifact-params.ts
   - resource: src/renderer/components/artifacts/ArtifactsChip.tsx
+  - resource: src/renderer/components/artifacts/useArtifactCountStep.ts
+  - resource: src/renderer/components/board/task-card-view.tsx
   - resource: src/renderer/components/artifacts/ArtifactsMenu.tsx
   - resource: src/renderer/components/artifacts/ArtifactsField.tsx
   - resource: src/renderer/components/artifacts/artifact-draft.ts
@@ -165,10 +167,19 @@ the second adds its `node-id`, or its place (`listArtifacts`).
 
 | Place | One artifact | Several |
 |---|---|---|
-| Board card, beside the PR pill | The tool's logo and the name; a click opens it | A count; a click opens the menu |
+| Board card | The tool's logo and the name; a click opens it | A count; a click opens the menu |
 | Task window header | An icon button; a click opens it | The same button; a click opens the menu |
 | Completed task strip | The count; a click opens it | The count; a click opens the menu |
 | Task window actions menu | One item that opens it | An Artifacts flyout |
+
+On a board card the chip fills the room the PR pill leaves (`task-card-view.tsx`). Alone it fills
+the row, and beside one artifact the PR pill keeps its label's width so the name gets the rest. A
+count is as fixed as the PR label, so the two split the row 50/50, in a grid whose PR column never
+drops below its label: at Narrow and the Fill floor the PR keeps "PR #1071" and the count takes what
+is left. The count measures its own room (`useArtifactCountStep`) and shows the widest of four
+forms that fits: "3 artifacts" with its chevron, "3 artifacts", "3" with its chevron, then "3"
+alone when nothing wider fits. A longer word in another language therefore never cuts off
+mid-word. Content in a stretched pill starts at the left.
 
 Compact card density hides the chip, as it hides the PR pill. A task with no artifacts shows
 nothing in any of these places. The menu lists the artifacts in the order added and ends in
