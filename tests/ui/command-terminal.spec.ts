@@ -5525,6 +5525,11 @@ test.describe('Command Terminal', () => {
   // ---------------------------------------------------------------------------
   test.describe('Per-window Changes panel isolation', () => {
     test('toggling Changes on one window does not open it on another window', async () => {
+      // Launches a fresh browser, opens two windows and drives two kebab menus. It takes 9.4 s
+      // locally, so the 15 s default leaves it about 5 s of headroom, and when it is one of UI
+      // shard 4's first tests on CI's loaded runner it ended at 15.5 and 16.3 s, on the first
+      // run and the retry. The window-refusal tests above take 45 s for the same reason.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
