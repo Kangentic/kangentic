@@ -17,7 +17,7 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { Session, StartBlockedReason, Task } from '../../../shared/types';
-import { isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
+import { isPausedTaskSession, isPauseOffered, isResumeOffered, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
 import { queuePlacesByTaskId } from '../../../shared/queue-place';
 import { priorityScaleFrom } from '../../agent/commands/label-and-priority';
 import { readQueueSnapshot } from '../../ipc/helpers/queue-snapshot';
@@ -91,7 +91,7 @@ export function startBlockedReasonsOf(
   for (const registrySession of sessions) {
     const taskId = registrySession.taskId;
     if (!taskId || registrySession.transient || liveTaskIds.has(taskId)) continue;
-    if (registrySession.status === 'suspended') {
+    if (isPausedTaskSession(registrySession)) {
       // The last paused row wins, as it does in `taskSessionStatesOf`, so the
       // reason belongs to the row `paused_session_id` names.
       fromPausedRow.add(taskId);
