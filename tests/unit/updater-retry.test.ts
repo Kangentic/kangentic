@@ -155,6 +155,7 @@ Object.defineProperty(process, 'resourcesPath', {
 // Import after mocks are registered.
 import { checkWithRetry, downloadWithRetry, initUpdater, updateUpdaterWindow } from '../../src/main/updater';
 import { BrowserWindow } from 'electron';
+import appleTeamId from '../../src/shared/apple-team-id.json';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -742,6 +743,10 @@ describe("autoUpdater.on('error') listener", () => {
       // The bundle does not change during a run, so codesign runs once.
       expect(mocks.readRunningAppSigning).toHaveBeenCalledTimes(1);
       expect(mocks.readRunningAppSigning.mock.calls[0][0]).toBe('/Applications/Kangentic.app');
+      // The committed Team ID is what separates our-team from other-team. A
+      // wrong value here labels every copy another team's and toasts our own
+      // users, and the stubbed reader above would never notice.
+      expect(mocks.readRunningAppSigning.mock.calls[0][1]).toBe(appleTeamId.teamId);
     });
 
     it('tells the user once per app run, whatever the 4-hour checks rediscover', async () => {
