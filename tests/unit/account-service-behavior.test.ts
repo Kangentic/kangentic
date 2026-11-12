@@ -490,6 +490,89 @@ describe('AccountService.resolveForSpawn', () => {
     expect(reports.map((entry) => entry.slice(0, 3))).toEqual([['spawn-account-unresolved', AGENT, { threw: true, kind: 'folder' }]]);
   });
 
+  // Task #1070: a resume's plan file can sit in any account's own `plans` folder.
+  it('hands a resume to the adapter carry with the chosen home and every home, once the folder is ready, and never fails the spawn on it', async () => {
+    const carried: Array<{ toHome: string; homes: readonly string[]; agentSessionId: string; cwd: string; folderReady: boolean }> = [];
+    const accountService = folderService(folderSupport({
+      carryConversation: async (input) => {
+        carried.push({
+          toHome: input.toHome,
+          homes: input.homes,
+          agentSessionId: input.agentSessionId,
+          cwd: input.cwd,
+          folderReady: fs.existsSync(path.join(input.toHome, 'projects')),
+        });
+        throw new Error('disk full');
+      },
+    }));
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    const first = insertFolderAccount();
+    const second = insertFolderAccount();
+    repository.reorder(AGENT, [second.id, first.id, own.id]);
+
+    const resolved = await accountService.resolveForSpawn(AGENT, undefined, first.id, { agentSessionId: 'conversation-1', cwd: '/mock/project' });
+
+    expect(resolved?.id).toBe(second.id);
+    expect(carried).toEqual([{
+      toHome: second.folderPath,
+      homes: [home, second.folderPath, first.folderPath],
+      agentSessionId: 'conversation-1',
+      cwd: '/mock/project',
+      folderReady: true,
+    }]);
+    // A fresh start carries nothing.
+    await accountService.resolveForSpawn(AGENT);
+    expect(carried).toHaveLength(1);
+  });
+
+  // Pins carryConversation's `account.kind === 'folder' ? folderPath : defaultHome`.
+  it('carries into the default home when the chosen account is the agent\'s own login', async () => {
+    const carried: Array<{ toHome: string; homes: readonly string[] }> = [];
+    const accountService = folderService(folderSupport({
+      carryConversation: async (input) => {
+        carried.push({ toHome: input.toHome, homes: input.homes });
+      },
+    }));
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    const other = insertFolderAccount();
+    repository.reorder(AGENT, [own.id, other.id]);
+
+    const resolved = await accountService.resolveForSpawn(AGENT, undefined, undefined, { agentSessionId: 'conversation-2', cwd: '/mock/project' });
+
+    expect(resolved).toEqual({ id: own.id, agent: AGENT, kind: 'default', env: {} });
+    expect(carried).toEqual([{ toHome: home, homes: [home, other.folderPath] }]);
+  });
+
+  // Pins the fallback call: the own-login row still receives the resumed conversation's files.
+  it('carries into the default home on the fallback path, when no account could be prepared', async () => {
+    const carried: Array<{ toHome: string; homes: readonly string[]; agentSessionId: string }> = [];
+    const accountService = folderService(folderSupport({
+      carryConversation: async (input) => {
+        carried.push({ toHome: input.toHome, homes: input.homes, agentSessionId: input.agentSessionId });
+      },
+    }));
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    const signedOut = insertFolderAccount('signed-out');
+
+    const resolved = await accountService.resolveForSpawn(AGENT, signedOut.id, undefined, { agentSessionId: 'conversation-3', cwd: '/mock/project' });
+
+    expect(resolved).toEqual({ id: own.id, agent: AGENT, kind: 'default', env: {} });
+    expect(carried).toEqual([{ toHome: home, homes: [home, signedOut.folderPath], agentSessionId: 'conversation-3' }]);
+  });
+
+  it('resolves the same account for a resume when the adapter has no carry hook', async () => {
+    const accountService = folderService();
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    const second = insertFolderAccount();
+    repository.reorder(AGENT, [second.id, own.id]);
+
+    const withResume = await accountService.resolveForSpawn(AGENT, undefined, undefined, { agentSessionId: 'conversation-4', cwd: '/mock/project' });
+    const fresh = await accountService.resolveForSpawn(AGENT);
+
+    expect(withResume).toEqual({ id: second.id, agent: AGENT, kind: 'folder', env: { TEST_AGENT_HOME: second.folderPath } });
+    expect(fresh).toEqual(withResume);
+  });
+
   it('resolves to the default row with an empty env, and reports, when the named account is signed out', async () => {
     const accountService = folderService();
     const own = accountService.ensureDefaultAccount(AGENT)!;

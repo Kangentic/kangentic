@@ -20,6 +20,9 @@ import type { AgentUsageWindowShape } from '../../shared/agent-accounts';
  * - `derive-json`: a JSON file built from the default home's copy by `derive`, refreshed before each
  *   spawn. For a state file that mixes shared answers with this account's own login fields.
  * - `text`: a file whose content `text` builds from the default home's path (an import line).
+ * - `own-dir`: a real folder of the account's own, for a folder the CLI refuses to write through a
+ *   link. A link to the default home's folder, which an earlier version made, is replaced by an
+ *   empty folder; the link alone is removed, never what it points at.
  */
 export type SharedEntry =
   | {
@@ -75,7 +78,22 @@ export type SharedEntry =
        */
       required?: boolean;
     }
-  | { name: string; how: 'text'; text: (defaultHome: string) => string | null };
+  | { name: string; how: 'text'; text: (defaultHome: string) => string | null }
+  | { name: string; how: 'own-dir' };
+
+/** A resume about to run on `toHome`, for `FolderAccountSupport.carryConversation`. */
+export interface ConversationCarryInput {
+  /** The conversation being resumed, as the CLI names it. */
+  agentSessionId: string;
+  /** Where the resumed session runs. */
+  cwd: string;
+  /** The agent's own home (account #1). */
+  defaultHome: string;
+  /** The home the resume runs on: the default home or an account folder. */
+  toHome: string;
+  /** Every home the agent has: the default home first, then each folder account's. */
+  homes: readonly string[];
+}
 
 /**
  * Thrown by `readIdleUsage` when the CLI answered in a shape the adapter does not know, which the
@@ -146,6 +164,12 @@ export interface FolderAccountSupport extends AccountSupportBase {
    */
   loginIsInteractive?: boolean;
   sharedEntries: readonly SharedEntry[];
+  /**
+   * Copies what a conversation keeps in a home's own folder (an `own-dir` entry) into the home a
+   * resume runs on, from whichever home holds the newest copy. Runs on every resume once the
+   * account is chosen and its folder is ready. Best effort: a failure never stops the spawn.
+   */
+  carryConversation?(input: ConversationCarryInput): Promise<void>;
   /**
    * A conversation can only go on under the account that started it: the provider ties what the
    * conversation stores to that account. A resume then runs on that account while it is signed

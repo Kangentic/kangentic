@@ -8,6 +8,8 @@ sources:
   - resource: src/main/accounts/
   - resource: src/main/accounts/account-report.ts
   - resource: src/main/agent/adapters/claude/accounts.ts
+  - resource: src/main/agent/adapters/claude/plan-carry.ts
+  - resource: src/main/agent/adapters/claude/auto-memory-folder.ts
   - resource: src/main/agent/adapters/codex/accounts.ts
   - resource: src/main/agent/adapters/codex/rate-limits.ts
   - resource: src/main/agent/adapters/gemini/accounts.ts
@@ -42,13 +44,17 @@ records the account it ran on in `sessions.account_id`. The two settings are glo
 
 ## The account folder
 
-A second login needs its own folder, because the CLI keeps one login per home. Everything else in
-that folder points back at the agent's own home, so every conversation stays in one place whichever
-account wrote it:
+A second login needs its own folder, because the CLI keeps one login per home. Nearly everything
+else in that folder points back at the agent's own home, so every conversation stays in one place
+whichever account wrote it. Claude's `plans` is the exception: each account keeps its own, so a
+plan file stays in the folder of the account that wrote it, until a resume on another home carries
+a copy there (see below).
 
 | Entry | How it is shared |
 |---|---|
-| Conversation folders (`projects`, `file-history`, `session-env`, `shell-snapshots`, `todos`, `plans`, `tasks`, `paste-cache`, `transcripts`) | A folder link: a junction on Windows, a directory symlink elsewhere. |
+| Conversation folders (`projects`, `file-history`, `session-env`, `shell-snapshots`, `todos`, `tasks`, `paste-cache`, `transcripts`) | A folder link: a junction on Windows, a directory symlink elsewhere. |
+| `plans` | The account's own folder. A resume carries the conversation's plan file into the home it runs on. |
+| Auto memory (`projects/<project>/memory/`) | The home's own folder, by its real path. An account session's `--settings` sets `autoMemoryDirectory` to it, so its Writes do not go through the `projects` link. |
 | Setup folders (`skills`, `agents`, `commands`, `plugins`, `rules`, `themes`, `workflows`, `output-styles`) | A folder link. |
 | `history.jsonl` | A hard link, on the same drive only. |
 | `settings.json`, `keybindings.json` | A copy, refreshed before each spawn, since the CLI saves them by replacing the file. |
@@ -74,6 +80,50 @@ first signed in, a session wrote its transcript through the link into the home, 
 a signed thinking block started on one account resumed on another, two accounts writing at once left
 both transcripts whole, and deleting an account folder removed no transcript.
 
+A Write through a link is a different case. Claude checks the path it was asked to write and the
+path it lands at. Measured on 2.1.322 with `scripts/probe-claude-plan-tool-approval.js --layouts`
+(a sandboxed home and a local API stand-in, so no account is used):
+
+| Write | Through a link into `~/.claude` | Through a link elsewhere | Into a real folder |
+|---|---|---|---|
+| The plan file, plan mode | Prompts: "Do you want to create ...md?" | Refused: "Cannot write ... while in plan mode." | Runs, no prompt |
+| Auto memory, default and acceptEdits | Prompts: "a sensitive file" | Prompts | Runs, no prompt |
+
+That is why v0.57.0's `plans` junction stopped every plan Write on a second account until someone
+answered it. An allow rule cannot help: Claude's docs say allow rules "do not pre-approve
+protected-path writes". `plansDirectory` cannot either, since Claude ignores a path outside the
+project root. So:
+
+- **`plans` is the account's own folder** (`own-dir`). Provisioning removes an old junction there
+  as a link only, never what it points at, and makes an empty folder. The plans already in the
+  home stay there. A link that names anything but the home's `plans` is the user's and stays,
+  including one whose target is offline.
+- **A resume carries the plan file** (`carryConversation`, `plan-carry.ts`). Claude names a plan
+  file after the conversation's slug, which a resume keeps, and looks for it only in the home it
+  runs on. Resumed on an account without the file, ExitPlanMode opened a bare "Exit plan mode?"
+  with no plan. With the file copied in, it opened the plan as usual. On every resume the account
+  service hands the conversation to the adapter, which reads the slug from the last message line
+  of the transcript and copies the newest `plans/<slug>.md` and its subagents'
+  `plans/<slug>-agent-<id>.md` from any home, keeping their modified time. Into an account folder a
+  copy replaces an older one. Into the agent's own home it only adds a missing file. A failed copy
+  is logged and never stops the spawn.
+- **Auto memory stays shared.** An account session's `--settings` sets `autoMemoryDirectory` to
+  the home's own memory folder for the project, by its real path, and that Write ran with no
+  prompt (`auto-memory-folder.ts`). Claude names the folder after the main checkout, measured for
+  a worktree, a folder inside a repository and a checkout whose git directory sits apart, and
+  after the session's folder outside git. An `autoMemoryDirectory` the user or the project set is
+  left alone. A linked worktree of a repository whose git directory sits apart gets none, since
+  that layout was not measured, so its memory writes still prompt.
+
+With every conversation folder linked (`--target tools`), a Write, Read and Edit in the project and
+a Bash `echo` ran with no prompt, the transcript landed in the home through the `projects` link,
+and a conversation resumed through it. A real session on a second account (task #1070's own, on
+2.1.322) wrote its edit backups into `file-history`, its `session-env` folder and its Bash
+snapshots into `shell-snapshots`, all through the links into the home, with no prompt. Nothing has
+been seen writing into `todos`, `tasks` or `paste-cache` from an account (TodoWrite and TaskCreate
+are off in a session against the stand-in), so those three are not measured. macOS and Linux were
+not measured either. Claude's docs say the same two-path check applies to directory symlinks there.
+
 A user who already runs Claude with `CLAUDE_CONFIG_DIR` keeps that folder as account #1, and
 Kangentic's own writes follow it: trust, the diff-panel key and project relocation go to the
 `.claude.json` inside that folder (`claudeJsonPath`, `claudeHomeDir` in `claude-json-lock.ts`).
@@ -92,6 +142,7 @@ nothing gets no card.
 - **Folder** (`FolderAccountSupport`): `accountEnv(accountFolder, defaultHome)` (the variables
   that put a run on the folder), `defaultHome()`, the login arguments, the shared entries,
   `identify(cliPath, home)`, and optionally `readIdleUsage`, `isUsageLimitFailure`,
+  `carryConversation` (copies a resumed conversation's own files into the home it runs on),
   `accountDataSubfolder`, `loginIsInteractive`, `conversationsStayOnAccount`, `unproven` (built
   with no second account to run it on, so its sign-in and session failures are reported) and
   `isConversationRefusal` (the provider's words for a conversation tied to another account).
@@ -142,8 +193,9 @@ sessions moved, that new sessions start on the account when none was running, or
 could not be moved and stay on their accounts.
 An account that is signed out, has no plan, or has a window at 100% is skipped.
 
-A resume follows the list like any other spawn. The shared folder is what lets any account resume
-any conversation. The exception is an agent that declares `conversationsStayOnAccount`: both task
+A resume follows the list like any other spawn. The shared folders, and the carry of what each home
+keeps on its own (Claude's plan file, `carryConversation`), let any account resume any
+conversation. The exception is an agent that declares `conversationsStayOnAccount`: both task
 spawn chokepoints hand `resolveSpawnAccount` the account on the conversation's session record
 (`conversationAccountOf`), and the resume runs there while that account is signed in.
 

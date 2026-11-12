@@ -147,6 +147,98 @@ describe('provisionAccountFolder', () => {
   });
 });
 
+// Task #1070: Claude refuses a plan file Write through a link, so `plans` is each account's own.
+// Accounts made by v0.57.0 hold a junction there into the default home, whose plans must survive.
+describe('provisionAccountFolder with an own-dir entry', () => {
+  const OWN_PLANS: SharedEntry[] = [{ name: 'plans', how: 'own-dir' }];
+  const linkKind = process.platform === 'win32' ? 'junction' : 'dir';
+
+  it('replaces a link into the default home with a real folder and keeps every file the home had', async () => {
+    write(path.join(home, 'plans', 'calm-river.md'), '# Plan');
+    write(path.join(home, 'plans', 'calm-river-agent-1.md'), '# Subagent plan');
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(path.join(home, 'plans'), path.join(account, 'plans'), linkKind);
+
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+
+    expect(report.problems).toEqual([]);
+    expect(report.conversationLinkFailed).toBe(false);
+    const ownPlans = fs.lstatSync(path.join(account, 'plans'));
+    expect(ownPlans.isSymbolicLink()).toBe(false);
+    expect(ownPlans.isDirectory()).toBe(true);
+    expect(fs.readdirSync(path.join(account, 'plans'))).toEqual([]);
+    expect(snapshot(path.join(home, 'plans'))).toEqual({ 'calm-river.md': '# Plan', 'calm-river-agent-1.md': '# Subagent plan' });
+  });
+
+  it('makes the folder when missing and leaves an existing one and its files alone', async () => {
+    await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+    write(path.join(account, 'plans', 'own.md'), 'kept');
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+    expect(report.problems).toEqual([]);
+    expect(fs.readFileSync(path.join(account, 'plans', 'own.md'), 'utf8')).toBe('kept');
+    expect(fs.existsSync(path.join(home, 'plans', 'own.md'))).toBe(false);
+  });
+
+  it('reports a link the user pointed elsewhere and leaves it in place, without blocking the account', async () => {
+    const elsewhere = path.join(root, 'elsewhere-plans');
+    write(path.join(elsewhere, 'theirs.md'), 'theirs');
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(account, 'plans'), linkKind);
+
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+
+    expect(report.problems.map((problem) => problem.code)).toEqual(['user-owned']);
+    expect(report.conversationLinkFailed).toBe(false);
+    expect(fs.lstatSync(path.join(account, 'plans')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(elsewhere, 'theirs.md'), 'utf8')).toBe('theirs');
+  });
+
+  // Pins the `else if (current)` branch of ownDirectory: a file is reported, never replaced.
+  it('reports a regular file at the entry as user-owned and leaves it untouched', async () => {
+    write(path.join(account, 'plans'), 'a file where the folder goes');
+
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+
+    expect(report.problems.map((problem) => problem.code)).toEqual(['user-owned']);
+    expect(report.conversationLinkFailed).toBe(false);
+    expect(fs.lstatSync(path.join(account, 'plans')).isFile()).toBe(true);
+    expect(fs.readFileSync(path.join(account, 'plans'), 'utf8')).toBe('a file where the folder goes');
+  });
+
+  // Pins linksTo's fallback to the link text: an earlier version's link whose home folder is gone.
+  it('replaces a dangling link that names the default home plans with a real empty folder', async () => {
+    fs.mkdirSync(path.join(home, 'plans'), { recursive: true });
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(path.join(home, 'plans'), path.join(account, 'plans'), linkKind);
+    fs.rmSync(path.join(home, 'plans'), { recursive: true, force: true });
+    expect(fs.existsSync(path.join(account, 'plans'))).toBe(false);
+    expect(fs.lstatSync(path.join(account, 'plans')).isSymbolicLink()).toBe(true);
+
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+
+    expect(report.problems).toEqual([]);
+    const ownPlans = fs.lstatSync(path.join(account, 'plans'));
+    expect(ownPlans.isSymbolicLink()).toBe(false);
+    expect(ownPlans.isDirectory()).toBe(true);
+    expect(fs.readdirSync(path.join(account, 'plans'))).toEqual([]);
+  });
+
+  // The offline-drive protection: a link to somewhere that cannot be reached is not ours to remove.
+  it('leaves a dangling link that names some other folder in place and reports it user-owned', async () => {
+    const elsewhere = path.join(root, 'elsewhere');
+    fs.mkdirSync(elsewhere, { recursive: true });
+    fs.mkdirSync(account, { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(account, 'plans'), linkKind);
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+
+    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: OWN_PLANS });
+
+    expect(report.problems.map((problem) => problem.code)).toEqual(['user-owned']);
+    expect(report.conversationLinkFailed).toBe(false);
+    expect(fs.lstatSync(path.join(account, 'plans')).isSymbolicLink()).toBe(true);
+  });
+});
+
 describe('checkExistingFolder', () => {
   it('refuses the default home, a folder inside it, and one containing it', () => {
     expect(checkExistingFolder(home, home)).toBe('is-default-home');

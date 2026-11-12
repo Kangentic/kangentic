@@ -65,6 +65,30 @@
  *   Every PermissionRequest arrived with permission_mode "plan". The approving
  *   hook started 5 to 114 ms after the catch-all one.
  *
+ * Layouts (task #1070): `--layouts control,real,protected-junction,plain-junction --target plan|memory
+ * [--permission-modes plan|default,acceptEdits] [--project-shape plain|repo|subdir|worktree|separate-git]
+ * [--auto-memory-dir home]` makes one Write into the session's plan file or auto memory folder,
+ * through each way an account folder can hold it. `HOME` and `USERPROFILE` point at a sandbox, so
+ * `~/.claude` is a temp folder and the real one is never touched. `--carry` writes a plan on one
+ * home and resumes the conversation in plan mode on another, without and then with the plan file
+ * copied over.
+ *
+ * Measured 2026-11-11 on Claude Code 2.1.322, Windows 11 build 26200, layouts:
+ *   plan     control and real: written, no prompt. protected-junction: "Do you want to create
+ *            ...md?" (print: "a sensitive file"). plain-junction: "Cannot write ... while in plan
+ *            mode." (interactive: the same create prompt). The dialog names the path "(outside
+ *            working directory) via a symlink".
+ *   memory   real: written, no prompt, in default and acceptEdits. protected-junction: "a
+ *            sensitive file". plain-junction: "you haven't granted it yet". With
+ *            --auto-memory-dir home, every layout wrote into the home's folder with no prompt.
+ *            The folder is named after the main checkout for a worktree and a subfolder, and
+ *            after the checkout for `--project-shape separate-git`.
+ *   tools    (acceptEdits, every conversation folder linked) Write, Read, Edit and Bash ran with no
+ *            prompt in print and interactive; only the transcript landed under a link. TodoWrite
+ *            and TaskCreate are off against the stand-in, so `todos` and `tasks` got nothing.
+ *   carry    without the file, ExitPlanMode opened "Exit plan mode? Claude wants to exit plan
+ *            mode" with no plan; with it copied in, the usual plan dialog on the account's copy.
+ *
  * Measured 2026-10-31 on Claude Code 2.1.316, Windows, print mode, with a
  * built-in tool and no allow rule (`--tool Write --matcher "mcp__.*|Write"`,
  * task #952): control was refused, "Cannot write ... while in plan mode."; hook
@@ -218,6 +242,12 @@ function runMcpServer() {
 class FakeAnthropicApi {
   constructor() {
     this.lookupResults = [];
+    this.toolResults = [];
+    this.toolsRunDir = os.tmpdir();
+    this.carryResults = [];
+    this.carrySeen = [];
+    this.layoutResults = [];
+    this.layoutPaths = [];
     this.requests = [];
     this.toolNamesSeen = new Set();
     this.server = http.createServer((request, response) => this.handle(request, response));
@@ -233,6 +263,11 @@ class FakeAnthropicApi {
 
   reset() {
     this.lookupResults = [];
+    this.toolResults = [];
+    this.carryResults = [];
+    this.carrySeen = [];
+    this.layoutResults = [];
+    this.layoutPaths = [];
     this.requests = [];
   }
 
@@ -279,6 +314,50 @@ class FakeAnthropicApi {
     const resultText = (block) => typeof block.content === 'string'
       ? block.content
       : (block.content ?? []).map((entry) => entry.text ?? '').join('');
+
+    // A resumed plan on another home: what Claude says about the plan file, then ExitPlanMode.
+    if (userText.includes('PROBE-CARRY-RESUME')) {
+      if (lastResult && lastResult.tool_use_id.includes('_carryexit_')) {
+        this.carryResults.push({ isError: lastResult.is_error === true, text: resultText(lastResult).slice(0, 400) });
+        return [{ kind: 'text', text: 'Done.' }];
+      }
+      // Only this turn's text: the resumed history carries the first run's reminder too.
+      const turnText = requestText({ messages: messages.slice(lastAssistant + 1) }) + '\n' + requestText({ system: payload.system });
+      const exists = turnText.match(/plan file already exists at\s+(\S+?\.md)/i);
+      const create = turnText.match(/create your plan at\s+(\S+?\.md)/i);
+      this.carrySeen.push({ planFileExists: exists ? exists[1] : null, createPlanAt: create ? create[1] : null });
+      return [{ kind: 'tool', name: 'ExitPlanMode', id: `toolu_probe_carryexit_${Date.now()}`, input: {} }];
+    }
+
+    // The `tools` target: each step once the one before has answered, then "Done.".
+    if (userText.includes('PROBE-LAYOUT-TOOLS')) {
+      const steps = toolStepsFor(toolNames, this.toolsRunDir);
+      if (lastResult && lastResult.tool_use_id.includes('_toolstep_')) {
+        const index = Number(lastResult.tool_use_id.split('_toolstep_')[1].split('_')[0]);
+        this.toolResults.push({ tool: steps[index]?.name ?? null, isError: lastResult.is_error === true, text: resultText(lastResult).slice(0, 200) });
+      }
+      const done = messages.filter((message) => message.role === 'assistant' && Array.isArray(message.content)
+        && message.content.some((block) => block.type === 'tool_use' && String(block.id).includes('_toolstep_'))).length;
+      if (done >= steps.length) return [{ kind: 'text', text: 'Done.' }];
+      const step = steps[done];
+      return [{ kind: 'tool', name: step.name, id: `toolu_probe_toolstep_${done}_${Date.now()}`, input: step.input }];
+    }
+
+    const layoutTarget = userText.includes('PROBE-LAYOUT-PLAN') ? 'plan'
+      : userText.includes('PROBE-LAYOUT-MEMORY') ? 'memory' : null;
+    if (layoutTarget) {
+      if (lastResult && lastResult.tool_use_id.includes('_layoutwrite_')) {
+        this.layoutResults.push({ isError: lastResult.is_error === true, text: resultText(lastResult).slice(0, 300) });
+        return [{ kind: 'text', text: 'Done.' }];
+      }
+      const filePath = layoutTargetPath(payload, layoutTarget);
+      this.layoutPaths.push(filePath);
+      if (!filePath) return [{ kind: 'text', text: 'NO-TARGET-PATH' }];
+      return [{ kind: 'tool', name: 'Write', id: `toolu_probe_layoutwrite_${Date.now()}`, input: {
+        file_path: filePath,
+        content: layoutTarget === 'plan' ? '# Probe plan\n\nWrite one file.\n' : '---\nname: probe\ndescription: probe memory\n---\n\nProbe memory.\n',
+      } }];
+    }
 
     // The spawner first: once its subagent reports back, the main conversation
     // can carry the subagent's prompt too.
@@ -353,6 +432,327 @@ class FakeAnthropicApi {
 }
 
 // ---------------------------------------------------------------------------
+// --layouts: one Write into the plan or auto memory folder, through each way an
+// account folder can hold it (task #1070).
+// ---------------------------------------------------------------------------
+
+/**
+ * control             no CLAUDE_CONFIG_DIR: the (sandboxed) ~/.claude itself
+ * real                CLAUDE_CONFIG_DIR=<account>, the folder a real one
+ * protected-junction  <account>/<folder> links to ~/.claude/<folder>, as accounts did in v0.57.0
+ * plain-junction      <account>/<folder> links to a folder outside ~/.claude
+ */
+const LAYOUTS = ['control', 'real', 'protected-junction', 'plain-junction'];
+/** The folders a target's layout links, or makes real. `tools` is every folder an account links. */
+const LAYOUT_FOLDERS = {
+  plan: ['plans'],
+  memory: ['projects'],
+  tools: ['projects', 'todos', 'tasks', 'file-history', 'session-env', 'shell-snapshots', 'paste-cache', 'transcripts'],
+};
+
+/** The tool calls the `tools` target makes, in order, each once the one before has answered. */
+function toolStepsFor(toolNames, runDir) {
+  const note = path.join(runDir, 'note.txt');
+  return [
+    toolNames.includes('TodoWrite')
+      ? { name: 'TodoWrite', input: { todos: [{ content: 'Probe the todo list', status: 'pending', activeForm: 'Probing the todo list' }] } }
+      : { name: 'TaskCreate', input: { subject: 'Probe the task list', description: 'Probe.' } },
+    { name: 'Write', input: { file_path: note, content: 'one\n' } },
+    { name: 'Read', input: { file_path: note } },
+    // An Edit of a file that exists is what Claude backs up into `file-history`.
+    { name: 'Edit', input: { file_path: note, old_string: 'one', new_string: 'two' } },
+    { name: 'Bash', input: { command: 'echo probe', description: 'Print a word' } },
+  ];
+}
+
+/** Every text Claude sent: the system prompt and each message's text blocks. */
+function requestText(payload) {
+  const texts = [];
+  const system = payload.system;
+  if (typeof system === 'string') texts.push(system);
+  else if (Array.isArray(system)) for (const block of system) texts.push(block.text ?? '');
+  for (const message of payload.messages ?? []) {
+    if (typeof message.content === 'string') texts.push(message.content);
+    else for (const block of message.content ?? []) if (block.type === 'text') texts.push(block.text);
+  }
+  return texts.join('\n');
+}
+
+/** The path Claude itself names for the session's plan file or auto memory folder. */
+function layoutTargetPath(payload, target) {
+  const text = requestText(payload);
+  if (target === 'plan') {
+    const match = text.match(/(?:create your plan at|plan file already exists at)\s+(\S+?\.md)/i);
+    return match ? match[1] : null;
+  }
+  // "You have a persistent file-based memory at `<folder>`" (2.1.322). The folder holds `.claude`,
+  // so the match runs to the closing backtick, never to the first dot.
+  const match = text.match(/memory (?:directory )?at `([^`]+)`/i);
+  return match ? path.join(match[1], 'probe.md') : null;
+}
+
+/** Files anywhere under `folder`, or 0 when it is missing. */
+function countFiles(folder) {
+  if (!fs.existsSync(folder)) return 0;
+  let count = 0;
+  for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+    count += entry.isDirectory() ? countFiles(path.join(folder, entry.name)) : 1;
+  }
+  return count;
+}
+
+function buildLayout(root, layout, target, runDir) {
+  const fakeHome = path.join(root, 'home');
+  const claudeHome = path.join(fakeHome, '.claude');
+  const account = path.join(root, 'account');
+  const plain = path.join(root, 'plain');
+  const folders = LAYOUT_FOLDERS[target];
+  fs.mkdirSync(claudeHome, { recursive: true });
+  const configDir = layout === 'control' ? null : account;
+  if (configDir) {
+    fs.mkdirSync(account, { recursive: true });
+    for (const folder of folders) {
+      const linkTarget = layout === 'protected-junction' ? path.join(claudeHome, folder)
+        : layout === 'plain-junction' ? path.join(plain, folder) : null;
+      if (linkTarget) {
+        fs.mkdirSync(linkTarget, { recursive: true });
+        fs.symlinkSync(linkTarget, path.join(account, folder), process.platform === 'win32' ? 'junction' : 'dir');
+      } else {
+        fs.mkdirSync(path.join(account, folder), { recursive: true });
+      }
+    }
+  }
+  writeTrustedState(configDir ? path.join(configDir, '.claude.json') : path.join(fakeHome, '.claude.json'), runDir);
+  return { fakeHome, claudeHome, configDir, folders };
+}
+
+/** Onboarding done and the run's folder trusted, in the state file a home's Claude reads. */
+function writeTrustedState(statePath, runDir) {
+  const trusted = { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true };
+  fs.writeFileSync(statePath, JSON.stringify({
+    hasCompletedOnboarding: true,
+    projects: { [runDir.replace(/\\/g, '/')]: trusted },
+  }, null, 2));
+}
+
+/** Removes a folder link itself: `unlink` takes a POSIX directory symlink, `rmdir` a junction that refuses it. */
+function removeLink(link) {
+  try {
+    fs.unlinkSync(link);
+  } catch {
+    fs.rmdirSync(link);
+  }
+}
+
+/** A sandbox folder by its real path, so a temp folder reached through a link (macOS `/var`) still compares. */
+function makeSandbox(prefix) {
+  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+function layoutEnvironment(port, built) {
+  const environment = runEnvironment(port);
+  environment.HOME = built.fakeHome;
+  environment.USERPROFILE = built.fakeHome;
+  if (built.configDir) environment.CLAUDE_CONFIG_DIR = built.configDir;
+  return environment;
+}
+
+async function runLayout(claude, api, port, mode, layout, target, permissionMode, version) {
+  const root = makeSandbox(`kangentic-layout-probe-${target}-${layout}-`);
+  const repoDir = path.join(root, 'project');
+  fs.mkdirSync(repoDir);
+  // `--project-shape`: plain (no git), repo, subdir (a folder inside a repo) or worktree (a git
+  // worktree of the repo). Which path Claude names a project's auto memory folder after.
+  const shape = argument('project-shape', 'plain');
+  let runDir = repoDir;
+  if (shape !== 'plain') {
+    const git = (args, cwd = repoDir) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+    // `separate-git`: the checkout's `.git` is a file naming a git directory outside it.
+    git(shape === 'separate-git' ? ['init', '-q', '-b', 'main', '--separate-git-dir', path.join(root, 'separate.git')] : ['init', '-q', '-b', 'main']);
+    fs.writeFileSync(path.join(repoDir, 'README.md'), 'probe\n');
+    git(['add', '.']);
+    git(['-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '-m', 'init']);
+    if (shape === 'subdir') {
+      runDir = path.join(repoDir, 'sub');
+      fs.mkdirSync(runDir);
+    } else if (shape === 'worktree') {
+      runDir = path.join(root, 'worktree');
+      git(['worktree', 'add', '-q', runDir]);
+    }
+  }
+  const built = buildLayout(root, layout, target, runDir);
+  const hookLog = path.join(root, 'hooks.jsonl');
+  const recorder = (label) => [{ matcher: '', hooks: [{ type: 'command', command: hookCommand(hookLog, label) }] }];
+  const settings = {
+    hooks: {
+      PreToolUse: recorder('pre-tool'),
+      PostToolUse: recorder('post-tool'),
+      PostToolUseFailure: recorder('post-tool-failure'),
+      PermissionDenied: recorder('permission-denied'),
+      PermissionRequest: recorder('permission'),
+      Notification: recorder('notification'),
+    },
+  };
+  // `--auto-memory-dir home`: the session's memory folder named by its real path in the
+  // default home, so the requested path passes through no link. Claude names a project's
+  // folder after the main checkout (every shape here has it at `repoDir`), every character
+  // that is not a letter or digit a dash.
+  if (target === 'memory' && argument('auto-memory-dir') === 'home') {
+    settings.autoMemoryDirectory = path.join(built.claudeHome, 'projects', repoDir.replace(/[^a-zA-Z0-9]/g, '-'), 'memory');
+  }
+  const settingsPath = path.join(root, 'settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  const files = { hookLog, callsPath: path.join(root, 'calls.jsonl'), settingsPath };
+  const layoutArguments = [
+    '--permission-mode', permissionMode,
+    '--settings', settingsPath,
+    '--setting-sources', 'project,local',
+    '--strict-mcp-config',
+    '--model', 'haiku',
+  ];
+  const prompt = target === 'plan' ? 'PROBE-LAYOUT-PLAN: write the plan file.'
+    : target === 'memory' ? 'PROBE-LAYOUT-MEMORY: save one memory.' : 'PROBE-LAYOUT-TOOLS: run the tool steps.';
+  const environment = layoutEnvironment(port, built);
+  const writeRan = target === 'tools'
+    ? () => api.toolResults.length >= 5
+    : () => readJsonLines(hookLog).some((line) => (line.label === 'post-tool' || line.label === 'post-tool-failure') && line.tool === 'Write');
+  api.reset();
+  api.toolsRunDir = runDir;
+  const startedAt = Date.now();
+  let outcome;
+  if (mode === 'print') {
+    outcome = await runPrintCommand(claude, ['-p', prompt, ...layoutArguments], runDir, environment);
+  } else {
+    outcome = await runInteractive(claude, files, environment, runDir, prompt, layoutArguments, writeRan);
+  }
+  const hooks = readJsonLines(hookLog);
+  // Where each linked folder's writes land: the account's own folders, the plain junctions' target,
+  // or the sandboxed ~/.claude.
+  const folderRoot = layout === 'real' ? path.join(root, 'account')
+    : layout === 'plain-junction' ? path.join(root, 'plain') : built.claudeHome;
+  const requestedPath = api.layoutPaths.find(Boolean) ?? null;
+  let landedAt = null;
+  if (requestedPath && fs.existsSync(requestedPath)) {
+    const real = fs.realpathSync.native(requestedPath);
+    landedAt = path.relative(root, real).replace(/\\/g, '/');
+  }
+  const record = {
+    at: new Date(startedAt).toISOString(),
+    platform: process.platform,
+    version,
+    mode,
+    target,
+    layout,
+    permissionMode,
+    projectShape: shape,
+    cwd: path.relative(root, runDir).replace(/\\/g, '/'),
+    requestedPath: requestedPath ? path.relative(root, requestedPath).replace(/\\/g, '/') : null,
+    writeRan: writeRan(),
+    landedAt,
+    writeResults: api.layoutResults,
+    ...(target === 'tools' ? {
+      toolResults: api.toolResults,
+      permissionRequestTools: hooks.filter((line) => line.label === 'permission').map((line) => line.tool),
+      filesPerFolder: Object.fromEntries(built.folders.map((folder) => [folder, countFiles(path.join(folderRoot, folder))])),
+    } : {}),
+    permissionRequests: hooks.filter((line) => line.label === 'permission' && line.tool === 'Write').length,
+    denied: hooks.filter((line) => line.label === 'permission-denied').map((line) => line.tool),
+    notifications: hooks.filter((line) => line.label === 'notification').map((line) => line.notificationType ?? line.message),
+    apiRequests: api.requests.map((request) => request.parts.join('+')),
+    ...outcome,
+  };
+  try {
+    // The links first, so a removal never reads through one into its target.
+    if (built.configDir) {
+      for (const folder of built.folders) {
+        const link = path.join(built.configDir, folder);
+        if (fs.lstatSync(link).isSymbolicLink()) removeLink(link);
+      }
+    }
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (error) {
+    record.cleanup = `left ${root}: ${error.code}`;
+  }
+  return record;
+}
+
+/** One `claude -p` run with no TUI, resolved with its tails. */
+function runPrintCommand(claude, args, cwd, environment) {
+  return new Promise((resolve) => {
+    const child = spawn(claude, args, { cwd, env: environment });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.stdin.end();
+    const timer = setTimeout(() => {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F']);
+      else child.kill();
+    }, PRINT_TIMEOUT_MS);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ exitCode: code, stdoutTail: stdout.trim().slice(-300), stderrTail: stderr.trim().slice(-300) });
+    });
+  });
+}
+
+/**
+ * `--carry`: a plan written on home A (the sandboxed ~/.claude), then the conversation resumed in
+ * plan mode on home B (an account folder whose `projects` links to A's and whose `plans` is its
+ * own). What Claude tells the model about the plan file, and what ExitPlanMode answers.
+ * `--carry-copy` copies A's plan file into B before the resume.
+ */
+async function runPlanCarry(claude, api, port, version, copyFirst) {
+  const root = makeSandbox('kangentic-carry-probe-');
+  const runDir = path.join(root, 'project');
+  fs.mkdirSync(runDir);
+  const homeA = buildLayout(root, 'control', 'plan', runDir);
+  const accountB = path.join(root, 'account');
+  fs.mkdirSync(path.join(accountB, 'plans'), { recursive: true });
+  fs.mkdirSync(path.join(homeA.claudeHome, 'projects'), { recursive: true });
+  fs.symlinkSync(path.join(homeA.claudeHome, 'projects'), path.join(accountB, 'projects'), process.platform === 'win32' ? 'junction' : 'dir');
+  writeTrustedState(path.join(accountB, '.claude.json'), runDir);
+  const settingsPath = path.join(root, 'settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify({}));
+  const common = ['--permission-mode', 'plan', '--settings', settingsPath, '--setting-sources', 'project,local', '--strict-mcp-config', '--model', 'haiku'];
+  const sessionId = require('node:crypto').randomUUID();
+
+  api.reset();
+  const first = await runPrintCommand(claude, ['-p', 'PROBE-LAYOUT-PLAN: write the plan file.', '--session-id', sessionId, ...common], runDir, layoutEnvironment(port, homeA));
+  const planPath = api.layoutPaths.find(Boolean) ?? null;
+  const planName = planPath ? path.basename(planPath) : null;
+  if (copyFirst && planPath && fs.existsSync(planPath)) fs.copyFileSync(planPath, path.join(accountB, 'plans', planName));
+
+  api.reset();
+  const resumeEnvironment = layoutEnvironment(port, { ...homeA, configDir: accountB });
+  // ExitPlanMode is off under `-p`, so the resume runs in the TUI, where its approval dialog
+  // (or its error) is what is read.
+  const second = argument('carry-mode', 'interactive') === 'print'
+    ? await runPrintCommand(claude, ['-p', 'PROBE-CARRY-RESUME: finish the plan.', '--resume', sessionId, ...common], runDir, resumeEnvironment)
+    : await runInteractive(claude, { hookLog: path.join(root, 'none.jsonl'), callsPath: path.join(root, 'none.jsonl') }, resumeEnvironment, runDir,
+      // The resumed history already shows "Done.", so only ExitPlanMode's own answer ends the wait.
+      'PROBE-CARRY-RESUME: finish the plan.', ['--resume', sessionId, ...common], () => api.carryResults.length > 0);
+  const relative = (value) => (value ? path.relative(root, value).replace(/\\/g, '/') : null);
+  const record = {
+    at: new Date().toISOString(),
+    platform: process.platform,
+    version,
+    scenario: copyFirst ? 'carry-with-copy' : 'carry-missing-file',
+    firstRun: { exitCode: first.exitCode, planWrittenAt: relative(planPath), planWritten: planPath ? fs.existsSync(planPath) : false },
+    resumeSaw: api.carrySeen.map((seen) => ({ planFileExists: relative(seen.planFileExists), createPlanAt: relative(seen.createPlanAt) })),
+    exitPlanModeResults: api.carryResults,
+    resume: second,
+  };
+  try {
+    removeLink(path.join(accountB, 'projects'));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (error) {
+    record.cleanup = `left ${root}: ${error.code}`;
+  }
+  return record;
+}
+
+// ---------------------------------------------------------------------------
 // One run.
 // ---------------------------------------------------------------------------
 
@@ -409,7 +809,8 @@ function probedToolRan(files) {
 function runEnvironment(port) {
   const environment = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (/^CLAUDE_?CODE/i.test(key) || key.startsWith('ANTHROPIC_')) continue;
+    // CLAUDE_CONFIG_DIR too: a probe started from an account session would inherit its folder.
+    if (/^CLAUDE_?CODE/i.test(key) || key === 'CLAUDE_CONFIG_DIR' || key.startsWith('ANTHROPIC_')) continue;
     environment[key] = value;
   }
   environment.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
@@ -474,10 +875,10 @@ function runPrint(claude, files, environment, runDir, prompt) {
   });
 }
 
-async function runInteractive(claude, files, environment, runDir, prompt) {
+async function runInteractive(claude, files, environment, runDir, prompt, extraArguments = null, toolRan = () => probedToolRan(files)) {
   const nodePtyDir = path.dirname(require.resolve('node-pty/package.json'));
   const pty = require(nodePtyDir);
-  const terminal = pty.spawn(claude, [...claudeArguments(files), '--', prompt], {
+  const terminal = pty.spawn(claude, [...(extraArguments ?? claudeArguments(files)), '--', prompt], {
     name: 'xterm-256color', cols: 140, rows: 40, cwd: runDir, env: environment,
   });
   let output = '';
@@ -501,8 +902,10 @@ async function runInteractive(claude, files, environment, runDir, prompt) {
       terminal.write('\r');
       continue;
     }
-    if (probedToolRan(files) && /Done\./.test(text)) break;
-    const dialogOpen = /Do you want to proceed/i.test(text.slice(-1500));
+    if (toolRan() && /Done\./.test(text)) break;
+    // "create" and "make this edit" are Write's and Edit's own permission prompts.
+    // "Would you like to proceed" is ExitPlanMode's approval dialog.
+    const dialogOpen = /(Do you want to (proceed|create|make this edit|overwrite)|Would you like to proceed)/i.test(text.slice(-1500));
     if (dialogOpen && dialogFirstSeenAt === null) dialogFirstSeenAt = Date.now();
     if (dialogFirstSeenAt !== null && Date.now() - dialogFirstSeenAt > DIALOG_SETTLE_MS) break;
   }
@@ -596,6 +999,39 @@ async function main() {
   const version = (versionResult.stdout ?? '').trim().split(' ')[0];
   const api = new FakeAnthropicApi();
   const port = await api.listen();
+  if (process.argv.includes('--carry')) {
+    try {
+      for (const copyFirst of [false, true]) {
+        const line = JSON.stringify(await runPlanCarry(claude, api, port, version, copyFirst));
+        console.log(line);
+        if (outPath) fs.appendFileSync(outPath, line + '\n');
+      }
+    } finally {
+      api.close();
+    }
+    return;
+  }
+  const layouts = argument('layouts');
+  if (layouts) {
+    const target = argument('target', 'plan');
+    if (!LAYOUT_FOLDERS[target]) throw new Error(`unknown target ${target}`);
+    const permissionModes = argument('permission-modes', target === 'plan' ? 'plan' : 'default,acceptEdits').split(',');
+    try {
+      for (const mode of modes) {
+        for (const permissionMode of permissionModes) {
+          for (const layout of layouts.split(',')) {
+            if (!LAYOUTS.includes(layout)) throw new Error(`unknown layout ${layout}`);
+            const line = JSON.stringify(await runLayout(claude, api, port, mode, layout, target, permissionMode, version));
+            console.log(line);
+            if (outPath) fs.appendFileSync(outPath, line + '\n');
+          }
+        }
+      }
+    } finally {
+      api.close();
+    }
+    return;
+  }
   try {
     for (const mode of modes) {
       for (const run of runs) {

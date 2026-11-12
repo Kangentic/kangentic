@@ -431,7 +431,13 @@ export async function prepareAgentSpawn(input: {
     cliTarget,
     // The account a recovered session runs on (task #1057): the top account with room, as for a
     // board spawn. A WSL CLI keeps its single login.
-    account: cliTarget ? null : await resolveSpawnAccount(agent, undefined, conversationAccountId),
+    // A resume also hands over its conversation, whose plan file may sit in another account's home.
+    account: cliTarget ? null : await resolveSpawnAccount(
+      agent,
+      undefined,
+      conversationAccountId,
+      canResume && agentSessionId ? { agentSessionId, cwd } : undefined,
+    ),
   };
 
   const command = adapter.buildCommand(commandOptions);

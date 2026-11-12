@@ -5,6 +5,7 @@ import type { RateLimitWindow } from '../../../../shared/types';
 import { isPlainRecord } from '../../shared/plain-record';
 import { claudeHomeDir, claudeStatePathForHome, isDefaultClaudeHome, withClaudeJsonFileLock } from './claude-json-lock';
 import { runClaudeCli } from './cli-run';
+import { carryClaudePlanFiles } from './plan-carry';
 import { RATE_LIMIT_WINDOWS } from './status-parser';
 
 /**
@@ -17,6 +18,18 @@ import { RATE_LIMIT_WINDOWS } from './status-parser';
  * junction into the default home; a conversation with a signed thinking block started on one
  * account resumed on another; two accounts writing at once left both transcripts whole; the
  * prompt history hard link survived Claude's writes.
+ *
+ * Measured on 2.1.322 (task #1070, `scripts/probe-claude-plan-tool-approval.js --layouts`, a
+ * sandboxed home and a local API stand-in): Claude checks a Write through a link both as asked and
+ * where it lands. Through a `plans` junction into `~/.claude` the plan file Write prompted ("Do you
+ * want to create ...md?") and through a junction anywhere else plan mode refused it, so `plans` is
+ * each account's own folder and a resume carries its plan file over (`plan-carry.ts`). An auto
+ * memory Write through the `projects` junction prompted the same way in default and acceptEdits
+ * mode, so an account session names its memory folder by its real path in the default home
+ * (`auto-memory-folder.ts`), which wrote with no prompt. With every other folder linked, Write,
+ * Read, Edit and Bash in the project ran with no prompt and the transcript landed through the
+ * link. A real account session wrote `file-history`, `session-env` and `shell-snapshots` through
+ * their links with no prompt. `todos`, `tasks` and `paste-cache` are unmeasured.
  */
 
 /** Keys Claude resets on logout, plus install ids and caches: the account's own, never copied. */
@@ -90,12 +103,15 @@ export function deriveClaudeAccountState(
   return next;
 }
 
-const CONVERSATION_FOLDERS = ['projects', 'file-history', 'session-env', 'shell-snapshots', 'todos', 'plans', 'tasks', 'paste-cache', 'transcripts'];
+const CONVERSATION_FOLDERS = ['projects', 'file-history', 'session-env', 'shell-snapshots', 'todos', 'tasks', 'paste-cache', 'transcripts'];
 const SETUP_FOLDERS = ['skills', 'agents', 'commands', 'plugins', 'rules', 'themes', 'workflows', 'output-styles'];
 
 const SHARED_ENTRIES: readonly SharedEntry[] = [
   ...CONVERSATION_FOLDERS.map((name): SharedEntry => ({ name, how: 'link-dir', conversationBearing: true })),
   ...SETUP_FOLDERS.map((name): SharedEntry => ({ name, how: 'link-dir', conversationBearing: false })),
+  // Plan mode allows a plan file Write only where it lands in the account's own `plans`, so this
+  // one is never a link. A resume carries the conversation's plan file in (`carryConversation`).
+  { name: 'plans', how: 'own-dir' },
   { name: 'history.jsonl', how: 'hardlink-file', conversationBearing: false },
   // Claude saves these by replacing the file, which would break a link.
   { name: 'settings.json', how: 'copy-file' },
@@ -249,6 +265,7 @@ export const CLAUDE_ACCOUNT_SUPPORT: FolderAccountSupport = {
   defaultHome: claudeHomeDir,
   loginArgs: ['auth', 'login'],
   sharedEntries: SHARED_ENTRIES,
+  carryConversation: carryClaudePlanFiles,
   identify: identifyClaudeAccount,
   readIdleUsage: readClaudeIdleUsage,
   // The 5h and 7d windows every Claude subscription has. The 5h one is reported only once an
