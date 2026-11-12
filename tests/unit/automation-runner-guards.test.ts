@@ -329,6 +329,29 @@ describe('Text match', () => {
     expect(rows[0]).toMatchObject({ status: 'skipped', detail: `Text match not met: ${TEXT_MATCH_NO_REPLY_REASON}` });
   });
 
+  it('runs a ! row on any other last line, and skips it on the line it rules out', async () => {
+    const executed = vi.fn(async () => ({ detail: 'Sent.' }));
+    const { rows, repository } = fakeRuns();
+    const run = (agentReply: string | null) => runAutomations({
+      automations: [automation({ final_line: '!Design: waiting on you' })],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', executed)),
+      agentReply,
+    });
+
+    await run(REPLY_READY);
+    await run('The canvas is up.\n\n**Design: waiting on you**');
+    // No message is no line to rule out: a ! row skips it as any Text match does.
+    await run(null);
+
+    expect(executed).toHaveBeenCalledTimes(1);
+    expect(rows.map((row) => row.status)).toEqual(['succeeded', 'skipped', 'skipped']);
+    expect(rows[2]).toMatchObject({ detail: `Text match not met: ${TEXT_MATCH_NO_REPLY_REASON}` });
+  });
+
   it('skips a Text match row when the caller has no final message to give it', async () => {
     const executed = vi.fn(async () => ({ detail: 'ok' }));
     const { rows, repository } = fakeRuns();

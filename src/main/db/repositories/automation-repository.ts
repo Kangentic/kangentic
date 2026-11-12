@@ -8,7 +8,7 @@ import type {
   ColumnAutomation,
 } from '../../../shared/types';
 import { AUTOMATION_MANIFEST, isAutomationTrigger } from '../../../shared/automation-manifest';
-import { conditionKindsAsStored } from '../../../shared/final-line-match';
+import { conditionKindsAsStored, normalizeTextMatch } from '../../../shared/final-line-match';
 import { columnNameKey } from '../../automations/move-target';
 import { writeTransaction } from '../transaction';
 
@@ -186,13 +186,13 @@ export function normalizeCondition(condition: string | null | undefined): string
 }
 
 /**
- * A Text match as stored: trimmed, a blank one is none, and none off a turn
- * end, the only trigger with a final message to read.
+ * A Text match as stored: one pattern per line, each trimmed, blank lines
+ * dropped, a blank one is none, and none off a turn end, the only trigger with
+ * a final message to read.
  */
 export function normalizeFinalLine(finalLine: string | null | undefined, trigger: string): string | null {
   if (trigger !== 'turn_end' || typeof finalLine !== 'string') return null;
-  const trimmed = finalLine.trim();
-  return trimmed ? trimmed : null;
+  return normalizeTextMatch(finalLine);
 }
 
 /** What makes a row in a column "the same automation" when a writer carries no id. Names are unique per column. */

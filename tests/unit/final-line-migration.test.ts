@@ -191,6 +191,69 @@ describe('runProjectMigrations: Text match columns', () => {
       expect(new AutomationRepository(database).listForColumn(columnId).map((row) => row.final_line)).toEqual(['Verdict: Ready']);
     });
 
+    // Before #1072 punctuation was ignored, so a saved `!Ready` meant `Ready`.
+    // A leading `!` now means "not", so the upgrade takes it off, once.
+    describe('the one-time strip of a leading !', () => {
+      function savedPatterns(database: DatabaseType.Database, columnId: string, patterns: Array<string | null>): void {
+        const insert = database.prepare(`
+          INSERT INTO column_automations
+            (id, swimlane_id, name, type, trigger, position, enabled, config_json, final_line, created_at, updated_at)
+          VALUES (?, ?, ?, 'notify', 'turn_end', ?, 1, '{}', ?, '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')
+        `);
+        patterns.forEach((pattern, index) => insert.run(`saved-${index}`, columnId, `Saved ${index}`, index + 1, pattern));
+      }
+
+      function patternsNow(database: DatabaseType.Database): Array<string | null> {
+        return (database.prepare("SELECT final_line FROM column_automations WHERE id LIKE 'saved-%' ORDER BY position").all() as Array<{ final_line: string | null }>)
+          .map((row) => row.final_line);
+      }
+
+      it('takes a leading ! and its spaces off once, and leaves a pattern of only ! as written', () => {
+        const { database, columnId } = upgradableDatabase();
+        runProjectMigrations(database);
+        database.prepare("DELETE FROM schema_meta WHERE key = 'text_match_not_stripped_at'").run();
+        savedPatterns(database, columnId, ['!Verdict: Ready', '! !  Design: shelved', 'Ready!', '!', ' ! ', 'PR: merged']);
+
+        runProjectMigrations(database);
+
+        expect(patternsNow(database)).toEqual(['Verdict: Ready', 'Design: shelved', 'Ready!', '!', ' ! ', 'PR: merged']);
+        expect(database.prepare("SELECT value FROM schema_meta WHERE key = 'text_match_not_stripped_at'").get()).toBeDefined();
+      });
+
+      it('takes off a ! followed by a non-breaking space or a tab, which SQLite ltrim would have left', () => {
+        const { database, columnId } = upgradableDatabase();
+        runProjectMigrations(database);
+        database.prepare("DELETE FROM schema_meta WHERE key = 'text_match_not_stripped_at'").run();
+        savedPatterns(database, columnId, ['! Verdict: Ready', '!\tReady']);
+
+        runProjectMigrations(database);
+
+        expect(patternsNow(database)).toEqual(['Verdict: Ready', 'Ready']);
+      });
+
+      it('leaves a row with no Text match untouched, and does not throw on it', () => {
+        const { database, columnId } = upgradableDatabase();
+        runProjectMigrations(database);
+        database.prepare("DELETE FROM schema_meta WHERE key = 'text_match_not_stripped_at'").run();
+        savedPatterns(database, columnId, [null, '!Ready']);
+
+        expect(() => runProjectMigrations(database)).not.toThrow();
+
+        expect(patternsNow(database)).toEqual([null, 'Ready']);
+        expect(database.prepare("SELECT value FROM schema_meta WHERE key = 'text_match_not_stripped_at'").get()).toBeDefined();
+      });
+
+      it('never runs again, so a ! typed after the upgrade keeps meaning not', () => {
+        const { database, columnId } = upgradableDatabase();
+        runProjectMigrations(database);
+        savedPatterns(database, columnId, ['!Design: waiting on you']);
+
+        runProjectMigrations(database);
+
+        expect(patternsNow(database)).toEqual(['!Design: waiting on you']);
+      });
+    });
+
     // Each ALTER has its own guard, so a database a build stopped halfway through
     // (or a downgrade that dropped only some columns) still upgrades. One shared
     // `if` around two ALTERs would throw "duplicate column name" here.

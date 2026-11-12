@@ -37,7 +37,16 @@ import {
 } from '../../../shared/automation-manifest';
 import { describeAutomation, describeAutomationMarksInWords } from '../../../shared/automation-describe';
 import { englishI18n, englishText } from '../../../shared/i18n/english';
-import { TEXT_MATCH_UNAVAILABLE_REASON, textMatchCanMatch } from '../../../shared/final-line-match';
+import {
+  AGENT_CONDITION_MAX_LENGTH,
+  TEXT_MATCH_MAX_PATTERNS,
+  TEXT_MATCH_MAX_PATTERN_LENGTH,
+  TEXT_MATCH_UNAVAILABLE_REASON,
+  legacyTextMatch,
+  normalizeTextMatch,
+  textMatchFileValue,
+  unmatchablePattern,
+} from '../../../shared/final-line-match';
 import { resolveMoveTarget, routeOf } from '../../automations/move-target';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
@@ -50,6 +59,7 @@ import type {
   AutomationRunCheck,
   AutomationTrigger,
   AutomationType,
+  BoardAutomationCondition,
   ColumnAutomation,
 } from '../../../shared/types';
 
@@ -225,41 +235,15 @@ export const handleSetAutomations: CommandHandler = (
     }
 
     // Condition (either kind) and Frequency, on every type. A blank one is none.
-    if (entry.condition !== undefined && entry.condition !== null && typeof entry.condition !== 'string') {
-      return { success: false, error: `${where}: condition must be text (or null to always run). Nothing was saved.` };
-    }
     if (entry.maxRuns !== undefined && entry.maxRuns !== null
       && (typeof entry.maxRuns !== 'number' || !isWholeMaxRuns(entry.maxRuns))) {
       return { success: false, error: `${where}: maxRuns must be a whole number of at least 1 (or null for no limit). Nothing was saved.` };
     }
-    // Text match, the Condition kind checked in code. Refused rather than
-    // dropped when it cannot apply, so an agent learns why its guard is missing.
-    if (entry.finalLine !== undefined && entry.finalLine !== null && typeof entry.finalLine !== 'string') {
-      return { success: false, error: `${where}: finalLine must be text (or null for no text match). Nothing was saved.` };
+    const conditionRead = readConditionParam(entry.condition, entry.finalLine, trigger);
+    if ('error' in conditionRead) {
+      return { success: false, error: `${where}: ${conditionRead.error} Nothing was saved.` };
     }
-    // Trimmed before the trigger is checked, so a blank finalLine on any
-    // trigger is none rather than a refusal.
-    const requestedFinalLine = typeof entry.finalLine === 'string' ? entry.finalLine.trim() : '';
-    const finalLine = requestedFinalLine === '' ? null : requestedFinalLine;
-    const condition = normalizeCondition(typeof entry.condition === 'string' ? entry.condition : null);
-    if (finalLine !== null && trigger !== 'turn_end') {
-      return {
-        success: false,
-        error: `${where}: finalLine works only with on: "turn_end", not ${trigger}. ${englishText(TEXT_MATCH_UNAVAILABLE_REASON)} Nothing was saved.`,
-      };
-    }
-    if (finalLine !== null && !textMatchCanMatch(finalLine)) {
-      return {
-        success: false,
-        error: `${where}: finalLine ${JSON.stringify(finalLine)} has no letter, number or *, so no last line can match it. Nothing was saved.`,
-      };
-    }
-    if (finalLine !== null && condition !== null) {
-      return {
-        success: false,
-        error: `${where}: give a condition or a finalLine, not both. A row holds one kind of condition. Nothing was saved.`,
-      };
-    }
+    const { condition, finalLine } = conditionRead;
 
     const runnable = canColumnRun(type as AutomationType, { autoSpawn: swimlane.auto_spawn, role: swimlane.role }, trigger);
     if (!runnable.ok) {
@@ -481,6 +465,108 @@ function readConfig(entry: Record<string, unknown>, type: AutomationType): Autom
   return config as AutomationConfig;
 }
 
+type ConditionParamRead = { condition: string | null; finalLine: string | null } | { error: string };
+
+/**
+ * A set_automations entry's Condition, read the way kangentic.json reads it:
+ * `{ "text": pattern | [patterns] }` or `{ "agent": sentence }`, a plain
+ * string as an Agent evaluation, and the old `finalLine` as a Text match whose
+ * leading `!` meant nothing then. Refused, never dropped, so an agent learns
+ * why its guard is missing; every refusal names the field and the fix.
+ */
+export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown, trigger: AutomationTrigger): ConditionParamRead {
+  let condition: string | null = null;
+  let textMatch: string | null = null;
+  let textField = 'condition.text';
+
+  if (typeof rawCondition === 'string') {
+    if (rawCondition.length > AGENT_CONDITION_MAX_LENGTH) {
+      return { error: `condition is longer than ${AGENT_CONDITION_MAX_LENGTH} characters; shorten the sentence.` };
+    }
+    condition = normalizeCondition(rawCondition);
+  } else if (rawCondition !== undefined && rawCondition !== null) {
+    if (typeof rawCondition !== 'object' || Array.isArray(rawCondition)) {
+      return { error: 'condition must be { "text": pattern or [patterns] } or { "agent": sentence } (or null to always run).' };
+    }
+    const kinds = Object.keys(rawCondition);
+    const [kind] = kinds;
+    if (kinds.length !== 1 || (kind !== 'text' && kind !== 'agent')) {
+      return {
+        error: kinds.includes('text') && kinds.includes('agent')
+          ? 'condition takes one kind: give "text" or "agent", not both.'
+          : 'condition must hold exactly one key, "text" or "agent".',
+      };
+    }
+    const value: unknown = (rawCondition as Record<string, unknown>)[kind];
+    if (kind === 'agent') {
+      if (typeof value !== 'string') return { error: 'condition.agent must be a sentence for the Automation agent to judge.' };
+      if (value.length > AGENT_CONDITION_MAX_LENGTH) {
+        return { error: `condition.agent is longer than ${AGENT_CONDITION_MAX_LENGTH} characters; shorten the sentence.` };
+      }
+      condition = normalizeCondition(value);
+    } else {
+      // A string's own line breaks split it into patterns in `normalizeTextMatch`.
+      const patterns = typeof value === 'string' ? [value] : value;
+      if (!Array.isArray(patterns) || !patterns.every((pattern): pattern is string => typeof pattern === 'string')) {
+        return { error: 'condition.text must be a pattern or a list of patterns, each text.' };
+      }
+      // An empty text is no Condition, like a blank sentence.
+      textMatch = normalizeTextMatch(patterns.join('\n'));
+    }
+  }
+
+  if (rawFinalLine !== undefined && rawFinalLine !== null) {
+    if (typeof rawFinalLine !== 'string') {
+      return { error: 'finalLine must be text (or null for no text match); condition: { "text": ... } is the current key.' };
+    }
+    const legacy = normalizeTextMatch(legacyTextMatch(rawFinalLine));
+    if (legacy !== null) {
+      // Refused only beside a Condition that is there: a blank sentence or an
+      // empty `{ "text": [] }` is none, so it sits beside a finalLine as a blank
+      // sentence always could. The board file reader keeps the same line.
+      if (textMatch !== null || condition !== null) {
+        return { error: 'give a condition or a finalLine, not both; finalLine is the old key for condition: { "text": ... }.' };
+      }
+      textMatch = legacy;
+      textField = 'finalLine';
+    }
+  }
+
+  if (textMatch !== null) {
+    if (trigger !== 'turn_end') {
+      return {
+        error: `${textField} runs on turn_end rows only, not ${trigger}; use condition.agent or set on: "turn_end". `
+          + englishText(TEXT_MATCH_UNAVAILABLE_REASON),
+      };
+    }
+    const lines = textMatch.split('\n');
+    if (lines.length > TEXT_MATCH_MAX_PATTERNS) {
+      return { error: `${textField} has ${lines.length} patterns; keep it to ${TEXT_MATCH_MAX_PATTERNS} or fewer.` };
+    }
+    const tooLong = lines.find((line) => line.length > TEXT_MATCH_MAX_PATTERN_LENGTH);
+    if (tooLong !== undefined) {
+      return { error: `${textField} pattern ${JSON.stringify(`${tooLong.slice(0, 40)}...`)} is longer than ${TEXT_MATCH_MAX_PATTERN_LENGTH} characters; shorten it.` };
+    }
+    // Any pattern no line can match is refused, which covers a Text match that
+    // could never run at all (every one of its patterns is such a pattern).
+    const unmatchable = unmatchablePattern(textMatch);
+    if (unmatchable !== null) {
+      return {
+        error: `${textField} ${JSON.stringify(unmatchable)} has no letter, number or *, so it can never match a line; `
+          + 'give it a word or a *, or remove it.',
+      };
+    }
+  }
+  return { condition: textMatch === null ? condition : null, finalLine: textMatch };
+}
+
+/** A row's Condition in the shape set_automations takes, or null when it always runs. */
+function conditionParamOf(row: ColumnAutomation): BoardAutomationCondition | null {
+  const text = textMatchFileValue(row.final_line);
+  if (text !== null) return { text };
+  return row.condition ? { agent: row.condition } : null;
+}
+
 function serializeRow(row: ColumnAutomation, columnName: string): Record<string, unknown> {
   return {
     id: row.id,
@@ -490,8 +576,7 @@ function serializeRow(row: ColumnAutomation, columnName: string): Record<string,
     on: row.trigger,
     position: row.position,
     enabled: row.enabled,
-    condition: row.condition,
-    finalLine: row.final_line,
+    condition: conditionParamOf(row),
     maxRuns: row.max_runs,
     ...row.config,
   };

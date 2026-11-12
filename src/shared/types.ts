@@ -8039,17 +8039,28 @@ export interface BoardColumnConfig {
  * `tests/unit/automation-manifest-reserved-keys.test.ts` fails an adapter that
  * declares one of them.
  */
+/** A `kangentic.json` row's Condition, as written: exactly one kind. */
+export type BoardAutomationCondition = { text: string | string[] } | { agent: string };
+
 export type BoardAutomationConfig = {
   name: string;
   type: string;
   /** Omitted means enabled. Only `false` is ever written. */
   enabled?: boolean;
-  /** Prose the Automation agent judges before the row runs. Omitted means it always runs. */
-  condition?: string;
   /**
-   * Text match: the line the agent's final message must end on, `*` a
-   * wildcard, checked in code. `onTurnEnd` rows only, and never beside a
-   * `condition`. Omitted means none.
+   * When the row runs, one kind of two, the way the Edit automation dialog's
+   * Condition card holds one: `{ "agent": "..." }`, prose the Automation agent
+   * judges, or `{ "text": "..." | ["...", ...] }`, a Text match checked in code
+   * against the last line the agent writes when its turn ends (one pattern per
+   * item, `*` a wildcard, a leading `!` meaning not; `onTurnEnd` rows only).
+   * A plain string is what older builds wrote, read as an Agent evaluation.
+   * Omitted means the row always runs.
+   */
+  condition?: string | BoardAutomationCondition;
+  /**
+   * The Text match key older builds wrote, read only: one pattern, a leading
+   * `!` ignored as it was then. A build that reads this file writes
+   * `condition.text` instead.
    */
   finalLine?: string;
   /** The most times the row may run on one task, across visits. Omitted means no limit. */

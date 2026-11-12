@@ -145,6 +145,10 @@ msgstr "Блок <workflow> задачи рабочего процесса: её
 msgid "Agent Monitor"
 msgstr "Монитор агента"
 
+#: src/shared/final-line-match.ts
+msgid "Any line but this one"
+msgstr ""
+
 #: src/shared/transcript-format.ts
 #, fuzzy
 msgid "Approved automatically"
@@ -295,14 +299,8 @@ msgid "Condition: only if {condition}."
 msgstr "Условие: только если {condition}."
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Condition: only if the last line reads \"{line}\"."
-msgstr "Условие: только если последняя строка — «{line}»."
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Contains it"
-msgstr "Содержит текст"
+msgid "Condition: only if the last line {rule}."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -345,6 +343,10 @@ msgstr "Порт dev-сервера, зарезервированный этой
 #, fuzzy
 msgid "Dismiss dialog"
 msgstr "Закрыть диалог"
+
+#: src/shared/automation-describe.ts
+msgid "does not read {pattern}"
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -411,11 +413,6 @@ msgstr ""
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "Пусто, пока задача не привязана к тикету трекера."
 
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Ends with it"
-msgstr "Заканчивается текстом"
-
 #: src/shared/dictation-languages.ts
 #, fuzzy
 msgctxt "spoken language"
@@ -426,11 +423,6 @@ msgstr "Английский"
 #, fuzzy
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
 msgstr "Введите полный URL ретранслятора, например wss://relay.example.com."
-
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Exactly this line"
-msgstr "Точно эта строка"
 
 #: src/shared/pop-out.ts
 #, fuzzy
@@ -821,14 +813,12 @@ msgid "Only if {condition}."
 msgstr "Только если {condition}."
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "only if the last line reads \"{line}\""
-msgstr "только если последняя строка — «{line}»"
+msgid "only if the last line {rule}"
+msgstr ""
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Only if the last line reads \"{line}\"."
-msgstr "Только если последняя строка — «{line}»."
+msgid "Only if the last line {rule}."
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 #, fuzzy
@@ -1005,6 +995,22 @@ msgstr "В очереди..."
 #, fuzzy
 msgid "Quick Find"
 msgstr "Быстрый поиск"
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}, but not {excluded}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads neither {first} nor {second}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads none of {patterns}"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Rebuild main and preload, then restart. Agents pause and resume."
@@ -1263,9 +1269,16 @@ msgid "Starts the agent."
 msgstr "Запускает агента."
 
 #: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Starts with it"
-msgstr "Начинается с текста"
+msgid "Starts with \"Ready for\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", but is not \"Ready for review\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", or is \"Done\""
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

@@ -30,7 +30,8 @@ import { OptionalTag } from '../../OptionalTag';
 import { AutomationTypePicker } from './AutomationTypePicker';
 import { ColumnPicker, type ColumnPickerChoice } from '../../ColumnPicker';
 import { AutomationIcon } from './automation-icons';
-import { WildcardExamplesTip } from './WildcardExamplesTip';
+import { TextMatchPatternsTip } from './TextMatchPatternsTip';
+import { PatternLinesField } from './PatternLinesField';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import {
   draftConditionKinds,
@@ -506,23 +507,22 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               )}
             </ConditionKindBody>
             <ConditionKindBody active={conditionKind === 'text'} testId="edit-automation-condition-text-body">
-              <input
-                data-testid="edit-automation-final-line"
-                aria-label={t`Text match`}
+              {/* One pattern per line, kept raw (blank lines too) while editing
+                  so a line survives a Trigger switch; Done drops the blanks. */}
+              <PatternLinesField
+                testId="edit-automation-final-line"
                 value={conditionOn && conditionKind === 'text' ? (local.final_line ?? '') : ''}
                 placeholder={TEXT_MATCH_PLACEHOLDER}
                 disabled={!conditionOn}
-                onChange={(event) => {
-                  const next = event.target.value;
+                onChange={(next) => {
                   setFinalLineDraft(next);
                   setLocal((current) => ({ ...current, final_line: next }));
                 }}
-                className={`${FIELD_CONTROL_CLASS} disabled:opacity-50`}
               />
               {/* The template picker's height, so the two bodies line up. */}
               <span className={`flex min-h-7 items-center gap-1.5 ${SETTING_DESCRIPTION_CLASS} ${conditionOn ? '' : 'opacity-50'}`}>
-                <span data-testid="edit-automation-final-line-hint">{t`Matches the agent's last line, ignoring case and punctuation, with * as a wildcard.`}</span>
-                <WildcardExamplesTip />
+                <span data-testid="edit-automation-final-line-hint">{t`Matches the last line the agent writes when its turn ends, with * and ! supported.`}</span>
+                <TextMatchPatternsTip />
               </span>
             </ConditionKindBody>
           </div>

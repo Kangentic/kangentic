@@ -7,6 +7,14 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-TW\n"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid ", then "
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "! at the very start: not. The row runs only when the last line does not match."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr "「{fileName}」超過 10 MB 的限制。"
@@ -157,13 +165,9 @@ msgstr ""
 msgid "{passedCount} passed"
 msgstr ""
 
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{pattern}: {rule}, as in {sample}."
-msgstr "{pattern}：{rule}，例如 {sample}。"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{pattern}: {rule}."
-msgstr "{pattern}：{rule}。"
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "{patterns}: {rule}."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "{percent}% of pixels changed"
@@ -186,10 +190,6 @@ msgstr ""
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
 msgstr "{reason} 失敗前已儲存 {savedBeforeFailing}。"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{rule}<0>, as in {sample}</0>"
-msgstr "{rule}<0>，例如 {sample}</0>"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
@@ -263,6 +263,26 @@ msgstr "{fileCount, plural, other {已將 {viewedCount} / # 個檔案標記為�
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, other {已檢視 {viewedCount} / # 個檔案}}"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Not.</0> At the very start, the row runs only when the last line does not match."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
@@ -376,6 +396,10 @@ msgstr "另一組依欄套用的代理、模型與投入程度設定"
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 msgid "Another column uses this icon"
 msgstr "其他欄已使用此圖示"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Any case. Punctuation is ignored too."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Approve each plan for you. Questions the agent asks still wait."
@@ -1148,6 +1172,14 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "錯誤"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples: {examples}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgid "Exited ({exitCode})"
@@ -1454,8 +1486,8 @@ msgid "Mark as viewed"
 msgstr "標示為已檢視"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
-msgstr "比對代理的最後一行，忽略大小寫與標點符號，* 為萬用字元。"
+msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
+msgstr ""
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"
@@ -1766,6 +1798,10 @@ msgctxt "board overview column header"
 msgid "One at a time"
 msgstr "一次一個"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "One pattern per line. Runs on any plain line, never on a ! line."
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "僅偵測到一個代理 CLI，請再安裝一個以供選擇"
@@ -1886,6 +1922,14 @@ msgstr "頁面已保留"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
 msgstr "已複製路徑"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns. {plain}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Pause session"
@@ -2013,6 +2057,10 @@ msgctxt "call outcome"
 msgid "Ran"
 msgstr "已執行"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Read once each time the agent ends its turn, from its final message."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Rebase or merge it in the session instead."
 msgstr "請改在工作階段中重定基底或合併。"
@@ -2138,6 +2186,10 @@ msgstr "在檔案總管中顯示"
 msgctxt "completed task card"
 msgid "Route"
 msgstr "路線"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Rules"
+msgstr ""
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
 msgid "Run in a new worktree"
@@ -2523,8 +2575,13 @@ msgid "Text File"
 msgstr "文字檔案"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match"
 msgstr "文字比對"
+
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
+msgid "Text match, line {lineNumber}"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
@@ -2845,14 +2902,6 @@ msgstr "每個計畫由你核准，或由 Kangentic 自動核准。工作流程�
 #, fuzzy
 msgid "Which conversation this column uses"
 msgstr "此欄使用的對話"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "Wildcard examples"
-msgstr "萬用字元範例"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "Wildcard examples. {rows}"
-msgstr "萬用字元範例。{rows}"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "Window limit reached"

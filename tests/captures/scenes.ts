@@ -612,7 +612,8 @@ const TESTING_TURN_END_AUTOMATIONS = [
 /** The Edit automation dialog's controls column-automation-edit's choreography works. */
 const AUTOMATION_KIND_TEXT = '[data-testid="edit-automation-condition-kind-text"]';
 const AUTOMATION_KIND_AGENT = '[data-testid="edit-automation-condition-kind-agent"]';
-const AUTOMATION_FINAL_LINE = '[data-testid="edit-automation-final-line"]';
+// The Text match field's one line: the field is a group of line inputs, and a new row has one.
+const AUTOMATION_FINAL_LINE = '[data-testid="edit-automation-final-line-line"]';
 const AUTOMATION_RUNS_DECREMENT = '[data-testid="edit-automation-max-runs-decrement"]';
 const AUTOMATION_RUNS_INCREMENT = '[data-testid="edit-automation-max-runs-increment"]';
 

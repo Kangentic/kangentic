@@ -2,6 +2,7 @@ import type { I18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { AUTOMATION_MANIFEST, automationFieldUnavailableReason, automationMoveTargetName } from './automation-manifest';
 import { resolveText } from './i18n/text';
+import { parseTextMatch, patternCanMatch, textMatchCanMatch, textMatchLines } from './final-line-match';
 import type { AutomationConfig, AutomationTrigger, AutomationType } from './types';
 
 /**
@@ -41,12 +42,25 @@ const GUARDS = {
   onlyIf: msg({ message: 'Only if {condition}.' }),
   onlyIfLabel: msg({ message: 'Condition: only if {condition}.' }),
   onlyIfPhrase: msg({ message: 'only if {condition}' }),
-  textMatch: msg({ message: 'Only if the last line reads "{line}".' }),
-  textMatchLabel: msg({ message: 'Condition: only if the last line reads "{line}".' }),
-  textMatchPhrase: msg({ message: 'only if the last line reads "{line}"' }),
+  textMatch: msg({ message: 'Only if the last line {rule}.' }),
+  textMatchLabel: msg({ message: 'Condition: only if the last line {rule}.' }),
+  textMatchPhrase: msg({ message: 'only if the last line {rule}' }),
   frequency: msg({ message: '{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}' }),
   frequencyLabel: msg({ message: '{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}' }),
   frequencyPhrase: msg({ message: '{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}' }),
+};
+
+/**
+ * What a Text match asks of the last line, continuing "Only if the last line".
+ * Each pattern is quoted whole and as written, its wildcards included, and a
+ * list is joined in the reader's language (`Intl.ListFormat`).
+ */
+const TEXT_MATCH_RULES = {
+  reads: msg({ message: 'reads {patterns}' }),
+  doesNotRead: msg({ message: 'does not read {pattern}' }),
+  readsNeither: msg({ message: 'reads neither {first} nor {second}' }),
+  readsNoneOf: msg({ message: 'reads none of {patterns}' }),
+  readsButNot: msg({ message: 'reads {patterns}, but not {excluded}' }),
 };
 
 const ACTION_MARKS = {
@@ -208,14 +222,14 @@ export function describeAutomationMarks(row: {
   // One Condition kind per row. A Text match is matched only at a turn end, so
   // a draft that still holds one on another trigger earns no mark: it would
   // promise a check that never runs.
-  const line = row.trigger === 'turn_end' ? textMatchLine(row.final_line) : null;
+  const rule = row.trigger === 'turn_end' ? textMatchRule(row.final_line, i18n) : null;
   const condition = conditionText(row.condition, 'keep-lines');
   const conditionOneLine = conditionText(row.condition, 'one-line');
-  if (line !== null) {
+  if (rule !== null) {
     marks.push({
       kind: 'text-match',
-      label: resolveText(i18n, GUARDS.textMatchLabel, { line }),
-      phrase: resolveText(i18n, GUARDS.textMatchPhrase, { line }),
+      label: resolveText(i18n, GUARDS.textMatchLabel, { rule }),
+      phrase: resolveText(i18n, GUARDS.textMatchPhrase, { rule }),
     });
   } else if (condition !== null && conditionOneLine !== null) {
     marks.push({
@@ -338,20 +352,70 @@ function conditionText(condition: string | null, lines: 'keep-lines' | 'one-line
   return continued.replace(/[.!?]+$/, '');
 }
 
-/** A Text match's pattern on one line, quoted whole and as written, or null when it has none. */
-function textMatchLine(finalLine: string | null): string | null {
-  const line = (finalLine ?? '').replace(/\s+/g, ' ').trim();
-  return line || null;
+/** One pattern as a rule quotes it: whole and as written, its runs of spaces one space. */
+function quotePattern(pattern: string): string {
+  return `"${pattern.replace(/\s+/g, ' ')}"`;
+}
+
+/** A list of quoted patterns joined in the reader's language: in English, "A" or "B", and "A", "B", and "C". */
+function joinPatterns(patterns: string[], type: 'conjunction' | 'disjunction', i18n: I18n): string {
+  const quoted = patterns.map(quotePattern);
+  try {
+    return new Intl.ListFormat(i18n.locale || 'en', { style: 'long', type }).format(quoted);
+  } catch {
+    return new Intl.ListFormat('en', { style: 'long', type }).format(quoted);
+  }
+}
+
+/**
+ * What a Text match asks of the last line, continuing "Only if the last
+ * line", or null when it has no pattern:
+ *
+ * - plain only: reads "A", reads "A" or "B"
+ * - one `!`: does not read "A"
+ * - two `!`: reads neither "A" nor "B"
+ * - three or more `!`: reads none of "A", "B", and "C"
+ * - both: reads "A" or "B", but not "C"
+ *
+ * It says what the matcher does, never more. A `!` pattern no line can match
+ * (a bare `!`) rules nothing out, so it is left out. A Text match that can
+ * never run is quoted as stored ("reads "!""), a guard no line meets, rather
+ * than dropped: with no mark the row would read as one that always runs.
+ */
+export function textMatchRule(finalLine: string | null, i18n: I18n): string | null {
+  const { plain, negated: written } = parseTextMatch(finalLine);
+  if (plain.length === 0 && written.length === 0) return null;
+  if (!textMatchCanMatch(finalLine)) {
+    return resolveText(i18n, TEXT_MATCH_RULES.reads, { patterns: joinPatterns(textMatchLines(finalLine), 'disjunction', i18n) });
+  }
+  const negated = written.filter(patternCanMatch);
+  if (negated.length === 0) {
+    return resolveText(i18n, TEXT_MATCH_RULES.reads, { patterns: joinPatterns(plain, 'disjunction', i18n) });
+  }
+  if (plain.length > 0) {
+    return resolveText(i18n, TEXT_MATCH_RULES.readsButNot, {
+      patterns: joinPatterns(plain, 'disjunction', i18n),
+      excluded: joinPatterns(negated, 'disjunction', i18n),
+    });
+  }
+  if (negated.length === 1) {
+    return resolveText(i18n, TEXT_MATCH_RULES.doesNotRead, { pattern: joinPatterns(negated, 'disjunction', i18n) });
+  }
+  if (negated.length === 2) {
+    const [first, second] = negated.map(quotePattern);
+    return resolveText(i18n, TEXT_MATCH_RULES.readsNeither, { first, second });
+  }
+  return resolveText(i18n, TEXT_MATCH_RULES.readsNoneOf, { patterns: joinPatterns(negated, 'conjunction', i18n) });
 }
 
 /**
  * A row's Text match as one sentence, or null when it has none: "Only if the
- * last line reads "Verdict: Ready"." The pattern is quoted whole and as
+ * last line reads "Verdict: Ready"." Each pattern is quoted whole and as
  * written, its wildcards included, since the exact text is the whole point.
  */
 export function describeAutomationTextMatch(finalLine: string | null, i18n: I18n): string | null {
-  const line = textMatchLine(finalLine);
-  return line === null ? null : resolveText(i18n, GUARDS.textMatch, { line });
+  const rule = textMatchRule(finalLine, i18n);
+  return rule === null ? null : resolveText(i18n, GUARDS.textMatch, { rule });
 }
 
 /**

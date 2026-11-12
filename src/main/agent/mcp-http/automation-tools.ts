@@ -8,6 +8,11 @@ import {
   DEFAULT_SCRIPT_TIMEOUT_MINUTES,
   stableAutomationTypes,
 } from '../../../shared/automation-manifest';
+import {
+  AGENT_CONDITION_MAX_LENGTH,
+  TEXT_MATCH_MAX_PATTERNS,
+  TEXT_MATCH_MAX_PATTERN_LENGTH,
+} from '../../../shared/final-line-match';
 import type { RequestResolver } from './project-resolver';
 
 /** The manifest's own bounds for the script budget, so this tool cannot drift from the dialog. */
@@ -38,8 +43,18 @@ const AUTOMATION_ROW_SCHEMA = z.object({
   type: z.enum(AUTOMATION_TYPE_VALUES).describe('What this automation does. send_message types a message at the column\'s agent; run_script runs a shell script in the task\'s worktree; webhook calls a URL; notify raises a desktop notification; move_to_column (on "turn_end" only) moves the task to another column with a message for the agent there, and ends the list.'),
   on: z.enum(AUTOMATION_TRIGGERS).optional().describe('When it runs: "enter" as a task ENTERS this column, "turn_end" each time the column\'s agent FINISHES A TURN there, "exit" as the task LEAVES. Defaults to "enter". To Do and Done can only run exit automations.'),
   enabled: z.boolean().optional().describe('Defaults to true. A switched-off automation stays in the list and is skipped.'),
-  condition: z.string().max(2000).nullable().optional().describe('Condition, in plain words, judged by the Automation agent before the row runs (e.g. "the review found work the implementer can do"). A no is not a run: the row is checked again next time. Omit or null to always run. Needs an Automation agent set up in Settings > Workflows. Give this or finalLine, not both.'),
-  finalLine: z.string().max(500).nullable().optional().describe('Text match, the Condition kind checked in code with no agent call: the row runs only when the last line of the agent\'s final message matches this, ignoring case, punctuation and markdown, with * as a wildcard (e.g. "Verdict: Ready", "PR: *"). "turn_end" rows only. A miss is not a run, like a condition\'s no. Give this or condition, not both. Omit or null for none.'),
+  // The schema takes a sentence or an object and refuses anything else (a list,
+  // a number) in zod's words. What is inside the object is checked in the
+  // handler, so that refusal names the field and the fix in our own words, and
+  // the mobile bridge, which skips zod, gets the same check.
+  condition: z.union([z.string().max(AGENT_CONDITION_MAX_LENGTH), z.record(z.string(), z.unknown())]).nullable().optional().describe(
+    'When the row runs, one kind of two. A no is not a run: the row is checked again next time. Omit or null to always run.\n'
+    + '- { "agent": "the review found work the implementer can do" }: Agent evaluation, a sentence the Automation agent judges before the row runs. Needs an Automation agent set up in Settings > Workflows.\n'
+    + '- { "text": "Ready for *" } or { "text": ["Ready for *", "!Ready for review"] }: Text match, checked in code with no agent call, against the last line the agent writes when its turn ends. "turn_end" rows only. Any case, punctuation and markdown ignored; * matches any text, and without one a pattern must match the whole line; a leading ! means not. The row runs when the line matches any plain pattern and no ! pattern; with only ! patterns, on any line but those. '
+    + `Up to ${TEXT_MATCH_MAX_PATTERNS} patterns of ${TEXT_MATCH_MAX_PATTERN_LENGTH} characters.\n`
+    + 'A plain string is still read as { "agent": ... }.',
+  ),
+  finalLine: z.string().max(TEXT_MATCH_MAX_PATTERN_LENGTH).nullable().optional().describe('Legacy: the old key for condition: { "text": ... }, one pattern, a leading ! ignored as it was then. Prefer condition.text. Give this or condition, not both.'),
   maxRuns: z.number().int().min(1).nullable().optional().describe('Frequency: the most times this row may run on one task, counted across every visit to the column since a person last moved the task to another column (a drag on the board, a move from the phone) or it last left Done. A move an agent makes, kangentic_move_task included, or an automation or workflow makes keeps the count, which is what holds a review loop to its round-trip limit. Omit or null for no limit.'),
 
   // The per-type fields. Every type's keys live on one object because the row

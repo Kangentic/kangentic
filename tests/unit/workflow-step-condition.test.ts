@@ -311,6 +311,14 @@ describe('stepExitVerdict', () => {
     expect(stepExitVerdict(codeReview, [exitTo('Ready for *', 'Done')], 'Ready for testing')).toEqual({ accepted: true });
   });
 
+  it('reads a ! exit row by the runner\'s rule: any line but the ones it rules out', () => {
+    const notWaiting = exitTo('!Design: waiting on you\n!Design: shelved', 'Testing');
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS, notWaiting], 'Findings: applied')).toEqual({ accepted: true });
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS, notWaiting], 'Design: shelved')).toMatchObject({ accepted: false });
+    // No message is no line to rule out, so a ! row moves nothing.
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS, notWaiting], null)).toEqual({ accepted: false, reason: 'the turn ended without a final message' });
+  });
+
   it('counts a later column as forward even when the route skips it', () => {
     // A route that skips Testing: the row still names Testing, and the step
     // then moves the task to the route's own next column.

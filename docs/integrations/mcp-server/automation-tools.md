@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Column automation tools
-description: "Column automations over MCP: the five automation types and their fields, the condition, finalLine and maxRuns guards, which rows can never run and why, and the list_automations, set_automations, get_automation_runs and run_automation tools."
+description: "Column automations over MCP: the five automation types and their fields, the condition (agent or text, with ! and one pattern per line) and maxRuns guards, which rows can never run and why, and the list_automations, set_automations, get_automation_runs and run_automation tools."
 tags: [mcp, automations, columns]
 sources:
   - resource: src/main/agent/mcp-http/automation-tools.ts
@@ -28,14 +28,22 @@ leaves. Each column owns one ordered list, split into three groups (`on`: `enter
 
 Every row also takes guards, a Condition of one kind or the other and a Frequency:
 
-- **`condition`**: a sentence in plain words, answered yes or no by the Automation agent (Settings >
-  Workflows) before the row runs. A no is not a run, so the next trigger checks it again. Omit or
-  `null` to always run. A row with a `condition` is skipped until an Automation agent is set up.
-- **`finalLine`**: a Text match, the other kind of Condition, checked in code with no agent call. The
-  row runs only when the last line of the agent's final message matches it, ignoring case,
-  punctuation (markdown marks included) and extra spaces, with `*` as a wildcard (`"Verdict: Ready"`,
-  `"PR: *"`). The pattern must cover the whole line. `turn_end` rows only, and a row gives this or
-  `condition`, not both. A miss is not a run, like a no.
+- **`condition`**: when the row runs, one kind of two. Omit or `null` to always run. A no or a
+  miss is not a run, so the next trigger checks it again.
+  - `{ "agent": "the review found work the implementer can do" }`: an Agent evaluation, a sentence
+    answered yes or no by the Automation agent (Settings > Workflows) before the row runs. A row
+    with one is skipped until an Automation agent is set up. A plain string is still read as this
+    kind. The sentence is at most 2000 characters.
+  - `{ "text": "Verdict: Ready" }` or `{ "text": ["Ready for *", "!Ready for review"] }`: a Text
+    match, checked in code with no agent call against the last line the agent writes when its turn
+    ends, ignoring case, punctuation (markdown marks included) and extra spaces. `*` matches any
+    text, and without one a pattern must cover the whole line. A leading `!` means not. The row
+    runs when the line matches any plain pattern and no `!` pattern, in any order; with only `!`
+    patterns, on any line but those. `turn_end` rows only, up to 20 patterns of 500 characters.
+    A turn with no message runs none, `!` included.
+- **`finalLine`**: the old key for `condition: { "text": ... }`, still accepted: one pattern, its
+  leading `!` taken off as it meant nothing then. A row gives this or `condition`, not both. A
+  blank sentence or an empty `{ "text": [] }` is no condition, so either may sit beside it.
 - **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
   loop's round-trip limit). The count starts over when a person moves the task to another column (a
   drag on the board, a move from the phone) and when the task leaves Done. A move an agent makes
@@ -90,9 +98,11 @@ board do": a board-wide read answers it once instead of one call per column.
 | `column` | string | No | Column name (case-insensitive). Omit to read every column. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
-Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `finalLine`,
-`maxRuns`, and the type's own fields. `condition`, `finalLine` and `maxRuns` are null when the row
-has none. A row that cannot run as things stand is flagged with the reason.
+Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `maxRuns`,
+and the type's own fields. `condition` is in the shape `kangentic_set_automations` takes
+(`{ "text": ... }` or `{ "agent": ... }`), so a row read back can be sent back as it is.
+`condition` and `maxRuns` are null when the row has none. A row that cannot run as things stand is
+flagged with the reason.
 
 The text lists each row on one line: its name, its type, and the sentence the Column Manager shows
 (the verb and the one required value), then every option the panel shows as a mark, in words, in
@@ -101,7 +111,12 @@ parentheses. The action's own options come first, then the Condition and the Fre
 ```
 Moves the task to Executing (with a message; only if the review is clean; at most 3 times until you move the task)
 Moves the task to Testing (only if the last line reads "Verdict: Ready")
+Sends "Apply your findings." (only if the last line reads neither "Design: waiting on you" nor "Design: shelved")
 ```
+
+A Text match is worded as its rule: `reads "A" or "B"`, `does not read "A"`, `reads neither "A"
+nor "B"`, `reads none of "A", "B", and "C"`, and `reads "A", but not "B"` when it has both kinds.
+`kangentic_get_column_detail` words it the same way.
 
 A waiting Send message reads "waits for the current turn to end", on enter and exit only: at a turn
 end the turn is already over, so it sends at once. A Move to column row's message text is in the
@@ -121,7 +136,7 @@ change applied. Pass `[]` to remove them all.
 
 Each entry takes `name` (required, unique within the column ignoring case), `type`, an optional
 `on` (`enter` by default, or `turn_end` or `exit`), an optional `enabled` (true by default), an
-optional `condition` or `finalLine` and an optional `maxRuns` (all off by default), an optional
+optional `condition` (or the old `finalLine`) and an optional `maxRuns` (all off by default), an optional
 `id`, and the type's own fields flat on the object. The `on` key belongs to this tool's input
 only: `kangentic.json` stores the same rows in one array per trigger and has no `on` key (see
 [Configuration cascade](../../settings/cascade.md#column-automations)).
@@ -137,10 +152,10 @@ only: `kangentic.json` stores the same rows in one array per trigger and has no 
       "on": "turn_end",
       "targetColumn": "Executing",
       "message": "Back from {{column}}. What the review found:\n{{agentReply}}",
-      "finalLine": "Verdict: Blocked",
+      "condition": { "text": "Verdict: Blocked" },
       "maxRuns": 3
     },
-    { "name": "Clean", "type": "move_to_column", "on": "turn_end", "condition": "The review is clean" },
+    { "name": "Clean", "type": "move_to_column", "on": "turn_end", "condition": { "agent": "The review is clean" } },
     { "name": "Archive the log", "type": "run_script", "on": "exit", "enabled": false, "script": "scripts/archive.sh" }
   ]
 }
@@ -156,12 +171,25 @@ A row the column cannot run as things stand is stored and warned about, not refu
 list before switching the column's agent on is a legitimate order of operations. Two things ARE
 refused, with the reason, so nothing is stored that could never be what the caller meant: an
 unknown `on`, and a type written under a trigger it does not run on (`move_to_column` runs on
-`turn_end` only). A `maxRuns` that is not a whole number of at least 1, or a `condition` or
-`finalLine` that is not a string, is refused too. So is a `finalLine` on an `enter` or `exit` row
-("finalLine works only with on: "turn_end"..."), a `finalLine` with no letter, number or `*`,
-which no last line can match, and a row that gives both a `condition` and a `finalLine` ("give a
-condition or a finalLine, not both"). A blank `finalLine` reads as none. Every refusal ends
-"Nothing was saved."
+`turn_end` only). A `maxRuns` that is not a whole number of at least 1 is refused too, and so is
+each `condition` it cannot read. Every refusal names the field and the fix, and ends "Nothing was
+saved.":
+
+- A `condition` that is neither a string nor an object, an object with no kind or another key, or
+  both kinds ("condition takes one kind: give "text" or "agent", not both"). Over MCP the tool's
+  schema refuses a list or a number first, in its own words; the handler's refusal covers a caller
+  that skips the schema, such as the mobile bridge.
+- A `condition.agent` that is not a string, or a `condition.text` that is not a pattern or a list
+  of them.
+- A sentence, plain or under `condition.agent`, longer than 2000 characters.
+- A Text match on an `enter` or `exit` row ("condition.text runs on turn_end rows only, not enter;
+  use condition.agent or set on: "turn_end".").
+- A pattern with no letter, number or `*`, which can never match a line, named as written.
+- More than 20 patterns, or one longer than 500 characters.
+- A `finalLine` that is not a string, or one beside a `condition` that holds one ("give a
+  condition or a finalLine, not both").
+
+A blank sentence, an empty `condition.text` and a blank `finalLine` each read as none.
 
 ## kangentic_get_automation_runs
 

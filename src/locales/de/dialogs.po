@@ -7,6 +7,14 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: de\n"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid ", then "
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "! at the very start: not. The row runs only when the last line does not match."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 #, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
@@ -190,15 +198,9 @@ msgstr ""
 msgid "{passedCount} passed"
 msgstr ""
 
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "{pattern}: {rule}, as in {sample}."
-msgstr "{pattern}: {rule}, z. B. {sample}."
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "{pattern}: {rule}."
-msgstr "{pattern}: {rule}."
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "{patterns}: {rule}."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -225,11 +227,6 @@ msgstr ""
 #, fuzzy
 msgid "{reason} Saved {savedBeforeFailing} before failing."
 msgstr "{reason} Vor dem Fehler gespeichert: {savedBeforeFailing}."
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "{rule}<0>, as in {sample}</0>"
-msgstr "{rule}<0>, z. B. {sample}</0>"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -321,6 +318,26 @@ msgstr "{fileCount, plural, one {{viewedCount} von # Datei als angesehen markier
 #, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {{viewedCount} von # Datei angesehen} other {{viewedCount} von # Dateien angesehen}}"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "*: any text. Use it anywhere. Without one, a pattern must match the whole line."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any case.</0> Punctuation is ignored too, so \"READY for review.\" matches."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Any text.</0> Use it anywhere. Without one, a pattern must match the whole line."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>Not.</0> At the very start, the row runs only when the last line does not match."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
@@ -460,6 +477,10 @@ msgstr "Alternative spaltenweise Einstellungen für Agent, Modell und Aufwand"
 #, fuzzy
 msgid "Another column uses this icon"
 msgstr "Eine andere Spalte verwendet dieses Symbol"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Any case. Punctuation is ignored too."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1396,6 +1417,14 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "Fehler"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Examples: {examples}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -1769,9 +1798,8 @@ msgid "Mark as viewed"
 msgstr "Als angesehen markieren"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
-msgstr "Vergleicht die letzte Zeile des Agents ohne Beachtung von Groß-/Kleinschreibung und Satzzeichen, mit * als Platzhalter."
+msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
+msgstr ""
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 #, fuzzy
@@ -2151,6 +2179,10 @@ msgctxt "board overview column header"
 msgid "One at a time"
 msgstr "Einzeln nacheinander"
 
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "One pattern per line. Runs on any plain line, never on a ! line."
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Only one agent CLI detected - install another to choose"
@@ -2294,6 +2326,14 @@ msgstr "Seite beibehalten"
 #, fuzzy
 msgid "Path copied"
 msgstr "Pfad kopiert"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Patterns. {plain}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2447,6 +2487,10 @@ msgstr "In Warteschlange (zum Pausieren klicken)"
 msgctxt "call outcome"
 msgid "Ran"
 msgstr "Ausgeführt"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Read once each time the agent ends its turn, from its final message."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2603,6 +2647,10 @@ msgstr "Im Dateimanager anzeigen"
 msgctxt "completed task card"
 msgid "Route"
 msgstr "Route"
+
+#: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
+msgid "Rules"
+msgstr ""
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
 #, fuzzy
@@ -3072,9 +3120,14 @@ msgid "Text File"
 msgstr "Textdatei"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 #, fuzzy
 msgid "Text match"
 msgstr "Textabgleich"
+
+#: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
+msgid "Text match, line {lineNumber}"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -3460,16 +3513,6 @@ msgstr "Ob Sie jeden Plan genehmigen oder Kangentic. Eine Workflow-Aufgabe kann 
 #, fuzzy
 msgid "Which conversation this column uses"
 msgstr "Welche Unterhaltung diese Spalte verwendet"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "Wildcard examples"
-msgstr "Platzhalterbeispiele"
-
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
-msgid "Wildcard examples. {rows}"
-msgstr "Platzhalterbeispiele. {rows}"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy

@@ -119,6 +119,10 @@ msgstr "工作流任务的 <workflow> 块：其路线、相邻任务，以及其
 msgid "Agent Monitor"
 msgstr "智能体监控"
 
+#: src/shared/final-line-match.ts
+msgid "Any line but this one"
+msgstr ""
+
 #: src/shared/transcript-format.ts
 msgid "Approved automatically"
 msgstr "已自动批准"
@@ -242,12 +246,8 @@ msgid "Condition: only if {condition}."
 msgstr "条件：仅当 {condition} 时。"
 
 #: src/shared/automation-describe.ts
-msgid "Condition: only if the last line reads \"{line}\"."
-msgstr "条件：仅当最后一行为「{line}」时。"
-
-#: src/shared/final-line-match.ts
-msgid "Contains it"
-msgstr "包含该文本"
+msgid "Condition: only if the last line {rule}."
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
@@ -282,6 +282,10 @@ msgstr "此任务预留的开发服务器端口。通常为空，仅在智能体
 #: src/shared/keybindings.ts
 msgid "Dismiss dialog"
 msgstr "关闭对话框"
+
+#: src/shared/automation-describe.ts
+msgid "does not read {pattern}"
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 msgctxt "task status"
@@ -337,10 +341,6 @@ msgstr ""
 msgid "Empty until the task is linked to a tracker issue."
 msgstr "任务关联跟踪器议题之前为空。"
 
-#: src/shared/final-line-match.ts
-msgid "Ends with it"
-msgstr "以该文本结尾"
-
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
 msgid "English"
@@ -349,10 +349,6 @@ msgstr "英语"
 #: src/shared/relay.ts
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
 msgstr "请输入完整的中继 URL，例如 wss://relay.example.com。"
-
-#: src/shared/final-line-match.ts
-msgid "Exactly this line"
-msgstr "与此行完全一致"
 
 #: src/shared/pop-out.ts
 msgid "File Diff"
@@ -677,12 +673,12 @@ msgid "Only if {condition}."
 msgstr "仅当 {condition} 时。"
 
 #: src/shared/automation-describe.ts
-msgid "only if the last line reads \"{line}\""
-msgstr "仅当最后一行为「{line}」时"
+msgid "only if the last line {rule}"
+msgstr ""
 
 #: src/shared/automation-describe.ts
-msgid "Only if the last line reads \"{line}\"."
-msgstr "仅当最后一行为「{line}」时。"
+msgid "Only if the last line {rule}."
+msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
 msgctxt "task status"
@@ -829,6 +825,22 @@ msgstr "排队中..."
 #: src/shared/keybindings.ts
 msgid "Quick Find"
 msgstr "快速查找"
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads {patterns}, but not {excluded}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads neither {first} nor {second}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "reads none of {patterns}"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Rebuild main and preload, then restart. Agents pause and resume."
@@ -1044,8 +1056,16 @@ msgid "Starts the agent."
 msgstr "启动智能体。"
 
 #: src/shared/final-line-match.ts
-msgid "Starts with it"
-msgstr "以该文本开头"
+msgid "Starts with \"Ready for\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", but is not \"Ready for review\""
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with \"Ready for\", or is \"Done\""
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Switch board / backlog"

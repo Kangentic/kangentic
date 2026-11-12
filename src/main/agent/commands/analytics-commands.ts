@@ -6,7 +6,8 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { AUTOMATION_TRIGGER_LABELS, AUTOMATION_TRIGGERS } from '../../../shared/automation-manifest';
-import { englishText } from '../../../shared/i18n/english';
+import { englishI18n, englishText } from '../../../shared/i18n/english';
+import { textMatchRule } from '../../../shared/automation-describe';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
 import { placeOfRecord } from '../shared/cli-target';
@@ -702,9 +703,13 @@ export const handleGetColumnDetail: CommandHandler = (
     if (group.length === 0) continue;
     lines.push(`  ${englishText(AUTOMATION_TRIGGER_LABELS[trigger])}:`);
     for (const row of group) {
+      // A Text match in words ("does not read ..."), as the automations list
+      // prints it: the stored patterns are one per line, which a raw quote
+      // would break across this listing's lines.
+      const textRule = row.trigger === 'turn_end' ? textMatchRule(row.final_line, englishI18n) : null;
       const guards = [
-        row.condition ? `only if: ${row.condition}` : null,
-        row.final_line ? `only if the last line reads: ${row.final_line}` : null,
+        textRule === null && row.condition ? `only if: ${row.condition}` : null,
+        textRule !== null ? `only if the last line ${textRule}` : null,
         row.max_runs !== null ? `at most ${row.max_runs} per task` : null,
       ].filter((guard): guard is string => guard !== null);
       lines.push(
