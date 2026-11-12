@@ -5,7 +5,7 @@ import { slugify, computeAutoBranchName, hasAutoBranchShape } from '../../shared
 import type { GitBranchChoice, WorktreeSkipReason } from '../../shared/types';
 import { taskUsesWorktree, storedWorktreeChoice } from '../../shared/worktree-choice';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
-import { GitUserStateError, StaleWorktreeDirectoryError, isRepositoryStateRefusal } from './worktree-errors';
+import { GitUserStateError, StaleWorktreeDirectoryError, WorktreeSetupScriptError, isRepositoryStateRefusal } from './worktree-errors';
 import { worktreesRootFor, taskWorktreeFolderFor, taskWorktreePathFor } from './task-worktree-folder';
 import { abortWorktreeSetup, isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
 import { isGitRepo, isInsideWorktree } from './git-checks';
@@ -1475,7 +1475,11 @@ export class WorktreeManager {
           throw new DOMException('Worktree creation was aborted during the post-worktree script', 'AbortError');
         }
         console.error(`[INIT-SCRIPT] Post-worktree script failed in ${worktreePath} after ${elapsedMs}ms:`, error);
-        throw withPathLengthCause(error, worktreePath);
+        const failure = withPathLengthCause(error, worktreePath);
+        // A path-length failure is the user's to fix and keeps its own type.
+        // Anything else is the script's, typed so a report can name it.
+        if (failure instanceof GitUserStateError) throw failure;
+        throw new WorktreeSetupScriptError(failure.message, { cause: failure });
       } finally {
         stopHeartbeat();
         options?.signal?.removeEventListener('abort', stopHeartbeat);

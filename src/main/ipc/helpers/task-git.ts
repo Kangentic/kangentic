@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { gitAt } from '../../git/git-client';
 import { IPC } from '../../../shared/ipc-channels';
@@ -21,7 +22,8 @@ import { setSpawnStaleNote, beginSpawnStaleProbe, touchSpawnStaleProbe } from '.
 import { isShuttingDown } from '../../shutdown-state';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { UserConfigurationError } from '../../../shared/user-configuration-error';
-import { StaleWorktreeDirectoryError } from '../../git/worktree-errors';
+import { worktreeFailureCause } from '../../git/worktree-errors';
+import { demoteMissingWorktree, isWorktreeMissing } from '../../transition-engine/session-startup/missing-worktree';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { DEFAULT_AGENT, type ConversationExpiredNotice, type LaunchStartPath, type SpawnWarningKind, type Task, type WorktreeSkipReason } from '../../../shared/types';
 import { sendToRenderer } from '../send-to-renderer';
@@ -38,8 +40,8 @@ import type { IpcContext } from '../ipc-context';
  * COLUMN PROFILE's rung for this column -> column override -> project default
  * -> global fallback), because skipping the worktree commits us to remote
  * execution: if this function and the spawn-time resolution disagree, a LOCAL
- * agent spawns with `cwd = projectPath` (transition-engine's
- * `task.worktree_path || projectPath` fallback) and runs unisolated in the
+ * agent spawns with `cwd = projectPath` (transition-engine's `agentCwdFor`
+ * fallback) and runs unisolated in the
  * user's main checkout.
  *
  * The profile tier is why this is not just "read the lane": a task riding a
@@ -288,10 +290,11 @@ export function notifySpawnBlocked(
   if (isShuttingDown()) return;
   // Ahead of the window check: a failure with no window to tell is still a
   // failure. The agent step reported where it was caught. Git writes branch names
-  // into its errors, so its text stays here and a fixed cause goes.
+  // into its errors, so its text stays here and a fixed cause goes: for a
+  // worktree, the refusal read from git's own phrase (`worktreeFailureCause`).
   if (step !== 'agent') {
     reportPreflightFailure({
-      cause: error instanceof StaleWorktreeDirectoryError ? 'stale_directory' : step,
+      cause: step === 'worktree' ? worktreeFailureCause(error) : step,
       error,
       agent: task.agent_override ?? task.agent,
       startPath,
@@ -435,6 +438,42 @@ function recordWorktreeSkip(task: Task, tasks: TaskRepository, reason: WorktreeS
 }
 
 /**
+ * Record why a start makes no worktree. A task whose recorded worktree folder
+ * is gone becomes a no-worktree task in the project checkout instead, as the
+ * startup pass makes one where `canRecreateWorktree` says nothing can make it
+ * again (`demoteMissingWorktree`). Left as it was, the stale path became the
+ * agent's folder. The spawn then refused it on every Resume with
+ * `worktree-missing`, a reason whose card promises a worktree this start never
+ * makes. That was Sentry DESKTOP-2P.
+ *
+ * The decision reads the row, not the caller's copy. Callers run this outside
+ * the task lock, so a Done move may have cleared the path since their snapshot,
+ * and demoting from the snapshot would drop the branch that move keeps. A
+ * project folder that is gone (an unmounted drive) is no reason to drop
+ * anything either: the worktree can come back with it.
+ *
+ * Never for a project on an SSH host (`ssh-remote.md`): its worktree is on the
+ * host and the folder here is an empty stand-in, so this computer's disk cannot
+ * say the worktree is gone. Only the host proves a path absent.
+ */
+async function recordNoWorktreeStart(
+  task: Task,
+  tasks: TaskRepository,
+  projectPath: string,
+  reason: WorktreeSkipReason,
+): Promise<void> {
+  const mayDemote = !remoteWorktreeBackendFor(projectPath) && isWorktreeMissing(task);
+  const current = mayDemote ? tasks.getById(task.id) : undefined;
+  if (current && isWorktreeMissing(current) && fs.existsSync(projectPath)) {
+    console.log(`[WORKTREE] Task ${task.id.slice(0, 8)}: its worktree folder is gone and this start makes none, so it runs in the project folder`);
+    await demoteMissingWorktree(tasks, current, projectPath);
+    Object.assign(task, tasks.getById(task.id));
+    return;
+  }
+  recordWorktreeSkip(task, tasks, reason);
+}
+
+/**
  * Create a worktree for a task if needed and update the DB + task object in place.
  * Creates nothing when worktrees are disabled, the project isn't a git repo, the repo has no
  * commits yet (unborn HEAD), or the resolved agent's execution mode for this project is 'remote'
@@ -487,7 +526,7 @@ export async function ensureTaskWorktree(
   const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
   const agentName = resolveWorktreeCheckAgentName(task, context, resolvedProjectPath);
   if (config.agent.execution[agentName]?.mode === 'remote') {
-    recordWorktreeSkip(task, tasks, 'remote-agent');
+    await recordNoWorktreeStart(task, tasks, resolvedProjectPath, 'remote-agent');
     return null;
   }
   // A project on a host runs no Post-Worktree Script (it is shell text for this computer), so there is no
@@ -586,7 +625,7 @@ export async function ensureTaskWorktree(
     if (!result) return null;
     if ('skipped' in result) {
       if (result.reason !== 'reused') {
-        recordWorktreeSkip(task, tasks, result.reason);
+        await recordNoWorktreeStart(task, tasks, resolvedProjectPath, result.reason);
         return null;
       }
       // The spawn is REUSING a pre-existing worktree. That tree was cut from

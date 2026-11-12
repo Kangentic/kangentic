@@ -54,6 +54,7 @@ import { getDevPortForTask } from '../dev-ports/dev-port-allocator';
 import { retireRecord } from './session-lifecycle';
 import { keepsSessionPermissionMode, resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
+import { agentCwdFor } from './agent-cwd';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { promptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
@@ -665,8 +666,8 @@ export class TransitionEngine {
         // A script always runs task-relative now: its worktree, or the project
         // checkout when it has none. The old `workingDir` setting existed to opt
         // INTO the worktree, which is what happens by default here.
-        cwd: task.worktree_path || config.projectPath || process.cwd(),
-        runOnHost: hostScriptRunner(config.projectPath, task.worktree_path || config.projectPath || process.cwd()),
+        cwd: agentCwdFor(task, config.projectPath),
+        runOnHost: hostScriptRunner(config.projectPath, agentCwdFor(task, config.projectPath)),
         projectId: config.projectId,
         projectPath: config.projectPath,
         projectName: config.projectName ?? null,
@@ -839,7 +840,7 @@ export class TransitionEngine {
     const adapter = agentRegistry.getOrThrow(agentName);
     const cliPathOverride = appConfig.cliPathOverrides[agentName] ?? null;
 
-    const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
+    const cwd = agentCwdFor(task, appConfig.projectPath);
     // A remote project runs its agent on a host (#913): the CLI is not detected here, it is the host's
     // own, named by the adapter. The launch is the path map to the host and the descriptor performSpawn
     // takes. Null for a project on this computer, which goes on exactly as before.

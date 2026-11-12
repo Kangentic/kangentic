@@ -37,6 +37,7 @@ import type { AgentProcessPresence } from './host/agent-process-presence';
 import { classifyLaunchOutput, type LaunchOutputClass } from './launch-output-class';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { parseWslShellSpec } from './process-tag/task-process-tag';
+import { AgentStartRefusedError } from './spawn/agent-start-refused';
 import type { ManagedSession } from './session-registry';
 
 // Re-exported for the callers that also read this file's report functions. A
@@ -405,6 +406,9 @@ function errorShapeTags(error: unknown): Record<string, string> {
   if (ERROR_TYPE.test(error.name)) tags.error_type = error.name;
   const code = String((error as NodeJS.ErrnoException).code ?? '');
   if (ERROR_CODE.test(code)) tags.errno = code;
+  // A fixed value: which folder a refused start lost (a worktree or the project
+  // folder), which its redacted path cannot say. Sentry DESKTOP-2P could not.
+  if (error instanceof AgentStartRefusedError) tags.start_refused_reason = error.reason;
   return tags;
 }
 
