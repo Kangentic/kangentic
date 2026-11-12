@@ -73,6 +73,28 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getTerminalStreams` | invoke | The set of session ids a phone is streaming a terminal for - the set the bottom panel suspends its own terminals for. Seeds a renderer that mounts after the phone already subscribed (app start with a connected phone, window reload) |
 | `mobile:terminalStreamsChanged` | on | Event: the phone-streamed session id set changed; keeps the renderer's copy current between seeds |
 
+## SSH hosts (16 channels)
+Machine-global like the mobile bridge, so none takes a trailing `projectId`: a host serves every project and must be addable with no project open. Backs the SSH settings tab and the Add project chooser. See [SSH remote hosts](../../platforms/ssh-remote.md).
+
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `ssh:detectClient` | invoke | The `ssh` program on this computer: found, its version line, or the raw error |
+| `ssh:listHosts` | invoke | Every host with its connection state, the link's own words about it, when the state last changed, and how many projects live on it |
+| `ssh:probeHostKey` | invoke | Learn the key a host presents (type and fingerprint) without trusting it. Rejects with ssh's words when the host cannot be reached |
+| `ssh:addHost` | invoke | Add a host: re-verify the fingerprint the user saw, set up how Kangentic signs in (SSH config, key file copy, or a created key installed with a password used once), install the host program, connect. Undoes its steps on a failure |
+| `ssh:removeHost` | invoke | Remove a host: hide its projects and suspend their agents, delete the key Kangentic made and take it off the host when reachable. Deletes no project data, and the same address added again restores them |
+| `ssh:clearHostData` | invoke | Delete Kangentic's boards, tasks, history, shell folders and transcript copy for a host's projects. Local only, the host stays |
+| `ssh:updateHost` | invoke | Change a host's name, address or sign-in in place. A new address needs the fingerprint the user was shown. Refused while terminals run on the host, and a failed sign-in leaves the old keys and row |
+| `ssh:listConfigHosts` | invoke | The `Host` names in this computer's `~/.ssh/config` (wildcards skipped, `Include` followed), for the address field's suggestions |
+| `ssh:listDirectories` | invoke | The folders directly inside a directory on a host, with a git flag, for the Directory field's suggestions and Browse list. A missing directory reads as not existing, a host that cannot answer rejects |
+| `ssh:reconnectHost` | invoke | Connect again now, installing the host program first if it is missing |
+| `ssh:hostProgram` | invoke | What the Kangentic program on a connected host reports: its version, this app's version, when it started, how many terminals it holds and which versions are installed. Rejects with the reason when the host cannot answer |
+| `ssh:checkKeyFile` | invoke | Whether a key file the user chose can be used. Rejects with the reason (not a private key, or a passphrase Kangentic never asks for), so the Add host form refuses it when it is chosen. Copies nothing |
+| `ssh:probeChangedKey` | invoke | The key a host whose key changed presents now (type, fingerprint) and the fingerprint recorded before when it can be read. Trusts nothing |
+| `ssh:trustNewKey` | invoke | Trust the fingerprint the user was shown for a host whose key changed: read the key again and require it to match, forget the old entry, record the new one, connect |
+| `ssh:probeRemoteFolder` | invoke | Whether a folder exists on a host, and whether it is a git repository, as the host's own program says. Rejects with the reason when it cannot say |
+| `ssh:hostsChanged` | on | Event: a host was added or removed, or its connection state moved |
+
 ## Notifications (5 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -122,10 +144,11 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `git:fileHistory` | invoke | Commits touching a single file (`git log --follow`), newest first, for the Changes panel's per-file history popover. Local-only and fail-safe |
 | `git:blame` | invoke | Per-line blame (`git blame --line-porcelain`) - short hash, author, date per line of the file's current content - for the DiffViewer blame gutter. Local-only and fail-safe |
 
-## Dialog (1 channel)
+## Dialog (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `dialog:selectFolder` | invoke | OS folder picker. With options (Add project) it offers New folder and starts at `options.defaultPath`, else home. Without (relocate, locate) it starts at the parent of the last folder it returned, else home, because Electron 43 otherwise opens in Downloads. Returns the path, or null on cancel |
+| `dialog:selectFile` | invoke | OS file picker for one file (the Add host key file). Opens in `options.defaultPath`, where a leading `~` is the home folder, and falls back to home when that folder is not there. Returns the path, or null on cancel |
 
 ## Window (6 channels)
 | Channel | Pattern | Purpose |

@@ -7,7 +7,7 @@
  * the server cannot answer.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { relayMcpMessage } from '../../src/main/pty/readers/wsl-mcp-relay';
+import { oversizeAnswer, relayMcpMessage, setMcpRelayServer } from '../../src/main/pty/readers/wsl-mcp-relay';
 
 const URL = 'http://127.0.0.1:4100/mcp/project-1/session-1';
 const REQUEST = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' });
@@ -62,20 +62,105 @@ describe('relayMcpMessage', () => {
     expect(answer).toBe(`${parseError}\n`);
   });
 
-  it('answers a refused request with the raw status, so the agent can say what went wrong', async () => {
+  it('answers a refused request with the raw status and what to do, so the agent can recover', async () => {
     const answer = await relayMcpMessage({ argument: `wrong ${URL}`, body: REQUEST, fetchImplementation: respond('', { status: 401 }) });
 
-    expect(JSON.parse(answer)).toEqual({ jsonrpc: '2.0', id: 7, error: { code: -32603, message: 'HTTP 401' } });
+    const error = JSON.parse(answer);
+    expect(error).toMatchObject({ jsonrpc: '2.0', id: 7, error: { code: -32603 } });
+    expect(error.error.message).toMatch(/^HTTP 401\. /);
+    expect(error.error.message).toContain('Restart this session');
   });
 
-  it('answers a connection failure with its message and cause', async () => {
+  it('says the server is off, or the project not open in it, for a 404, and to retry once for a server error', async () => {
+    const missing = JSON.parse(await relayMcpMessage({ argument: `token ${URL}`, body: REQUEST, fetchImplementation: respond('', { status: 404 }) }));
+    expect(missing.error.message).toMatch(/^HTTP 404\. .*turned off.*Settings, MCP Server/);
+
+    const failed = JSON.parse(await relayMcpMessage({ argument: `token ${URL}`, body: REQUEST, fetchImplementation: respond('boom', { status: 500 }) }));
+    expect(failed.error.message).toMatch(/^HTTP 500: boom\. .*Retry once/);
+  });
+
+  it('answers a connection failure with its message and cause, and says to retry', async () => {
     const fetchImplementation = vi.fn(async () => {
       throw new TypeError('fetch failed', { cause: new Error('connect ECONNREFUSED 127.0.0.1:4100') });
     }) as unknown as typeof fetch;
 
     const answer = await relayMcpMessage({ argument: `token ${URL}`, body: REQUEST, fetchImplementation });
 
-    expect(JSON.parse(answer).error.message).toBe('fetch failed: connect ECONNREFUSED 127.0.0.1:4100');
+    const message = JSON.parse(answer).error.message;
+    expect(message).toContain('fetch failed: connect ECONNREFUSED 127.0.0.1:4100');
+    expect(message).toContain('Retry in a moment');
+  });
+
+  it('gives up on a call the server never answers, and says it may still be running', async () => {
+    // A fetch that honors its signal, as the real one does.
+    const fetchImplementation = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    })) as unknown as typeof fetch;
+
+    const answer = await relayMcpMessage({ argument: `token ${URL}`, body: REQUEST, fetchImplementation, timeoutMs: 20 });
+
+    expect(JSON.parse(answer).error.message).toMatch(/did not answer within 0 seconds\. The call may still be running/);
+  });
+
+  describe('the server that is running now', () => {
+    const RUNNING = { baseUrl: 'http://127.0.0.1:55001/mcp', token: 'current-token' };
+
+    it('is the one posted to, with its own token, whatever address and token the agent was started with', async () => {
+      const fetchImplementation = respond('{"jsonrpc":"2.0","id":7,"result":{}}', { contentType: 'application/json' });
+
+      await relayMcpMessage({ argument: 'stale-token http://127.0.0.1:4100/mcp/project-1/session-1?caller=abc', body: REQUEST, fetchImplementation, server: RUNNING });
+
+      const [url, init] = vi.mocked(fetchImplementation).mock.calls[0];
+      expect(url).toBe('http://127.0.0.1:55001/mcp/project-1/session-1?caller=abc');
+      expect(init?.headers).toMatchObject({ 'X-Kangentic-Token': 'current-token' });
+    });
+
+    it('is read when a message arrives, so a relaunch is followed and a server that is gone is no server', async () => {
+      const fetchImplementation = respond('{"jsonrpc":"2.0","id":7,"result":{}}', { contentType: 'application/json' });
+      let running: typeof RUNNING | null = RUNNING;
+      setMcpRelayServer(() => running);
+      try {
+        await relayMcpMessage({ argument: `old http://127.0.0.1:4100/mcp/project-1`, body: REQUEST, fetchImplementation });
+        running = { baseUrl: 'http://127.0.0.1:55002/mcp', token: 'next-token' };
+        await relayMcpMessage({ argument: `old http://127.0.0.1:4100/mcp/project-1`, body: REQUEST, fetchImplementation });
+        running = null;
+        await relayMcpMessage({ argument: `old http://127.0.0.1:4100/mcp/project-1`, body: REQUEST, fetchImplementation });
+      } finally {
+        setMcpRelayServer(null);
+      }
+
+      const calls = vi.mocked(fetchImplementation).mock.calls;
+      expect(calls[0][0]).toBe('http://127.0.0.1:55001/mcp/project-1');
+      expect(calls[1][0]).toBe('http://127.0.0.1:55002/mcp/project-1');
+      expect(calls[1][1]?.headers).toMatchObject({ 'X-Kangentic-Token': 'next-token' });
+      // With no server registered the request's own address stands, as before.
+      expect(calls[2][0]).toBe('http://127.0.0.1:4100/mcp/project-1');
+    });
+
+    it('still refuses an address that is not Kangentic\'s, so a host cannot name a path on the running server\'s port', async () => {
+      const fetchImplementation = respond('{}');
+
+      const answer = await relayMcpMessage({ argument: 'token http://127.0.0.1:4100/admin', body: REQUEST, fetchImplementation, server: RUNNING });
+
+      expect(fetchImplementation).not.toHaveBeenCalled();
+      expect(JSON.parse(answer).error.message).toMatch(/^Not Kangentic's MCP server/);
+    });
+  });
+
+  describe('oversizeAnswer', () => {
+    it('answers with the request\'s own id and says to ask for less or save to a file', () => {
+      const answer = oversizeAnswer('{"jsonrpc":"2.0","id":"call-9","result":{"content":[{"type":"image"}]}}\n', 3_000_000, 1_000_000);
+
+      const parsed = JSON.parse(answer ?? '');
+      expect(parsed).toMatchObject({ jsonrpc: '2.0', id: 'call-9', error: { code: -32603 } });
+      expect(parsed.error.message).toContain('saveToFile');
+      expect(parsed.error.message).toContain('2930 KB');
+    });
+
+    it('has nothing to answer for a notification, which no one waits on', () => {
+      expect(oversizeAnswer('{"jsonrpc":"2.0","method":"notifications/progress"}\n', 3_000_000, 1_000_000)).toBeNull();
+      expect(oversizeAnswer('not json', 3_000_000, 1_000_000)).toBeNull();
+    });
   });
 
   it('answers nothing when a notification fails, since nothing waits on it', async () => {

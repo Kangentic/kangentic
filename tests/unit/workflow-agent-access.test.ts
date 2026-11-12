@@ -140,6 +140,7 @@ describe('the workflow agent\'s reads across projects', () => {
     suspend = vi.fn(async () => undefined);
     context = {
       projectRepo: {
+        listHidden: () => [],
         list: () => projects,
         getById: (id: string) => projects.find((project) => project.id === id),
       },

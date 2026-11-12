@@ -242,6 +242,12 @@ export class WslHookInbox {
       if (content === null) continue;
       const record = parseWslHookRecord(content);
       if (record?.head === WSL_MCP_REQUEST_HEAD) {
+        // Taken by removing the file: the bridge that wrote it gives up on a request nobody took by removing it
+        // too, and a removal happens once. So a call is either ours, and answered, or the bridge already told the
+        // agent it failed, and it never runs. (For a host the claim was made on the host's own copy, in
+        // `RemoteSessionRelay.claimRequest`, before this file existed.)
+        const taken = await fsPromises.unlink(file).then(() => true, () => false);
+        if (!taken) continue;
         this.relaysInFlight.add(name);
         void this.relay(name, file, record);
         continue;

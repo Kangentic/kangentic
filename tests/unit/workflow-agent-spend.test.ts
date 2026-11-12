@@ -252,6 +252,7 @@ describe('a workflow\'s own agent: spend and conversation', () => {
     manager = new FakeSessionManager();
     context = {
       projectRepo: {
+        listHidden: () => [],
         list: () => projects,
         getById: (id: string) => projects.find((project) => project.id === id),
       },

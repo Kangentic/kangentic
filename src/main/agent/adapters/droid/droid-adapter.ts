@@ -1,7 +1,8 @@
+import fs from 'node:fs';
 import { identifyDroidUserSetupFailure } from './startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { DroidDetector } from './detector';
-import { DroidCommandBuilder, removeMcpConfig, droidMcpWiringEnabled } from './command-builder';
+import { DROID_HOOK_SETTINGS_FILE, DroidCommandBuilder, removeMcpConfig, droidMcpWiringEnabled } from './command-builder';
 import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-capture';
 import { droidTranscriptFilePath, parseDroidTranscript, readDroidTranscriptPage } from './transcript-parser';
 import { migrateDroidProjectData } from './project-relocation';
@@ -11,7 +12,8 @@ import { parseBridgeEventLine } from '../../shared/hook-utils';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
+import { isPlainIdName, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -31,6 +33,7 @@ import type {
   SubmissionContextType,
   SubmissionVerifier,
   AgentCapabilities,
+  StoredCliTarget,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import type { KeyFileAccountSupport } from '../../../accounts/account-support';
@@ -103,6 +106,13 @@ export class DroidAdapter implements AgentAdapter {
   /** A Droid installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
   /**
+   * On a remote host over SSH the CLI is `droid` from the host's own login PATH (#913). Its hooks settings
+   * file goes to the host with the session's files (`remoteSessionFiles`), so the SessionStart hook reports
+   * the session's id, which names the transcript and lets a resume reach the conversation. A Droid that
+   * ignores `--settings` reports none, and runs as a fresh start with no copy.
+   */
+  readonly remoteCliName = 'droid';
+  /**
    * The launch modes Droid's own flags give (`droidPermissionFlags`):
    * `--use-spec` and `--auto low|medium|high`, from 0.218.0's `droid --help`.
    * The TUI still changes either mid-session (Shift+Tab, Ctrl+L). Interactive
@@ -136,6 +146,29 @@ export class DroidAdapter implements AgentAdapter {
   // worktrees usually make that impossible, but a project with no worktree
   // configured runs every task in the project root. See SharedFolderHolds.
   private readonly mcpHolds = new SharedFolderHolds();
+
+  /**
+   * The one file a Droid on a remote host has edited on the host (#913): the project's
+   * `.factory/mcp.json`, where Kangentic's entry is merged beside the user's servers. It holds only a
+   * `${KANGENTIC_MCP_TOKEN}` reference (the token travels in the spawn environment), so it needs no
+   * owner-only mode. The user's `~/.factory/mcp.json` is only read, so the browser policy sees the servers
+   * declared there, and nothing is pushed back. Droid has no trust store and no home file of ours.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return { home: ['.factory/mcp.json'], project: ['.factory/mcp.json'] };
+  }
+
+  /** The hooks settings file `--settings` names, which the host must hold before Droid starts. */
+  remoteSessionFiles(): readonly string[] {
+    return [DROID_HOOK_SETTINGS_FILE];
+  }
+
+  /** The conversation's JSONL on a host, filed under the slug of the folder there. Subagent files are not carried. */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh' || !isPlainIdName(options.agentSessionId)) return [];
+    return [droidTranscriptFilePath(options.agentSessionId, options.cwd, place)];
+  }
 
   /** See `startup-failure.ts`. */
   identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
@@ -269,6 +302,12 @@ export class DroidAdapter implements AgentAdapter {
   }
 
   async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    // A Droid on a remote host: its session file is copied into this computer's mirror
+    // (`remoteTranscriptFiles`), so the readers look at what has arrived, once. Polling would only wait.
+    if (place?.kind === 'ssh') {
+      const arrived = droidTranscriptFilePath(agentSessionId, cwd, place);
+      return fs.existsSync(arrived) ? arrived : null;
+    }
     return locateSessionFile({ agentSessionId, cwd, place });
   }
 

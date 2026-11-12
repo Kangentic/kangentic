@@ -34,6 +34,8 @@ import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '..
 import type { TaskKnowledge } from '../retrieval/task-knowledge';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { taskSummariesOn } from '../../shared/answer-agent';
+import { agentPathsForProject } from '../remote/host-paths';
+import { hostAccessFor } from '../remote/host-transfer';
 
 /**
  * After an agent's task write: report the hosts of the artifacts agents added
@@ -57,11 +59,14 @@ export function buildCommandContextForProject(
   const project = ipcContext.projectRepo.getById(projectId);
   if (!project) return null;
   const projectPath = project.path;
+  const agentPaths = agentPathsForProject(project);
 
   return {
     projectId,
     getProjectDb: () => getProjectDb(projectId),
     getProjectPath: () => projectPath,
+    agentPaths: () => agentPaths,
+    hostAccess: () => (agentPaths.hostId ? hostAccessFor(agentPaths.hostId) : null),
     // Bound to the request's project: a cross-project create validates its
     // priority against the board it files into. An empty or unreadable scale
     // reads as the seeded one in `priorityScaleOf`, rather than failing the call.

@@ -126,6 +126,10 @@ msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task 
 msgstr "{value, select, automatic {Automatica} other {Manuale}}, impostata per questa attività (la colonna {columnName} di {boardName} è {columnValue, select, automatic {automatica} other {manuale}})."
 
 #: src/shared/workflow-refusals.ts
+msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task cannot wait for itself."
 msgstr "Un'attività non può attendere se stessa."
@@ -471,20 +475,24 @@ msgid "Give up after"
 msgstr "Rinuncia dopo"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Vai al terminale successivo di un agente in esecuzione o del Terminale comandi in questo progetto."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Vai al terminale successivo di un agente in esecuzione o del Terminale comandi, cambiando progetto se si trova in un altro."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Vai al terminale precedente di un agente in esecuzione o del Terminale comandi in questo progetto."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Vai al terminale precedente di un agente in esecuzione o del Terminale comandi, cambiando progetto se si trova in un altro."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -694,16 +702,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "Colonna successiva è la prima scelta: la colonna successiva nel percorso dell'attività o nella bacheca."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "Progetto successivo"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "Terminale successivo in qualsiasi progetto"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "Terminale successivo in questo progetto"
 
 #: src/shared/automation-describe.ts
 #, fuzzy
@@ -751,12 +762,14 @@ msgid "Notifies \"{title}\""
 msgstr "Notifica \"{title}\""
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "Invia una notifica sul desktop e sul telefono."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "Ti invia una notifica sul desktop e sul telefono. Aprendola si apre l'attività."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -867,12 +880,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "Apri la finestra di dialogo Nuova attività sulla bacheca."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "Apri il progetto successivo nell'ordine della barra laterale."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "Apri il progetto precedente nell'ordine della barra laterale."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -949,16 +964,19 @@ msgid "Previous column"
 msgstr "Colonna precedente"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "Progetto precedente"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "Terminale precedente in qualsiasi progetto"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "Terminale precedente in questo progetto"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

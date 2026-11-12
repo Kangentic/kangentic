@@ -15,7 +15,7 @@ import { writeTransaction } from '../transaction';
  * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'
 > & { cli_target?: string | null; start_head_sha?: string | null };
 
 export interface SessionMetricsInput {
@@ -30,6 +30,8 @@ export interface SessionMetricsInput {
   toolBreakdown: string | null;
   /** Context compactions during this run (PreCompact hooks). Defaults to 0. */
   compactionCount: number;
+  /** Occupancy last reported (the card's percent). Null when never known. */
+  usedPercentage: number | null;
 }
 
 /**
@@ -207,6 +209,7 @@ export class SessionRepository {
       total_output_tokens: null,
       model_id: null,
       model_display_name: null,
+      used_percentage: null,
       applied_model: null,
       applied_effort: null,
       total_duration_ms: null,
@@ -306,16 +309,31 @@ export class SessionRepository {
    * is in the exclusion set. This prevents re-entrant recovery calls (e.g.
    * Vite hot-reload) from orphaning sessions that are actively running.
    */
-  markRunningAsOrphanedExcluding(excludeTaskIds: Set<string>): void {
-    if (excludeTaskIds.size === 0) {
+  markRunningAsOrphanedExcluding(excludeTaskIds: Set<string>, keepSessionIds: ReadonlySet<string> = new Set()): void {
+    if (excludeTaskIds.size === 0 && keepSessionIds.size === 0) {
       this.markAllRunningAsOrphaned();
       return;
     }
-    const ids = Array.from(excludeTaskIds);
-    const placeholders = ids.map(() => '?').join(', ');
+    const taskIds = Array.from(excludeTaskIds);
+    const sessionIds = Array.from(keepSessionIds);
+    const clauses = [
+      ...(taskIds.length > 0 ? [`task_id NOT IN (${taskIds.map(() => '?').join(', ')})`] : []),
+      ...(sessionIds.length > 0 ? [`id NOT IN (${sessionIds.map(() => '?').join(', ')})`] : []),
+    ];
     this.db.prepare(
-      `UPDATE sessions SET status = 'orphaned' WHERE status IN ('running', 'queued') AND task_id NOT IN (${placeholders})`
-    ).run(...ids);
+      `UPDATE sessions SET status = 'orphaned' WHERE status IN ('running', 'queued') AND ${clauses.join(' AND ')}`
+    ).run(...taskIds, ...sessionIds);
+  }
+
+  /**
+   * Agent sessions recorded as running whose agent ran on an SSH host (#913). A quit leaves such an agent
+   * running on the host, so at the next launch the record is not a crash's leftover: its agent may still be
+   * there. Startup asks the host before it orphans or resumes one (`rejoin-sessions.ts`).
+   */
+  getRunningRemote(): SessionRecord[] {
+    return this.db.prepare(
+      `SELECT * FROM sessions WHERE status = 'running' AND session_type != 'run_script' AND cli_target LIKE '%"kind":"ssh"%'`
+    ).all() as SessionRecord[];
   }
 
   /** Get orphaned agent sessions */
@@ -539,19 +557,25 @@ export class SessionRepository {
     return rows.map(r => r.id);
   }
 
-  /** Update the metric columns for a session record. */
+  /**
+   * Update the metric columns for a session record with what its telemetry knows. No reading of usage keeps what the record holds: an agent taken back
+   * from a host (#913) keeps its record, and this process has no usage for it until the agent next reports. Its
+   * counts are restored at the take (`restoreRunTotals`), so they are written as read. Occupancy (`used_percentage`)
+   * is the same: a take seeds the bar from it (`occupancySoFar`) until the agent reports again.
+   */
   updateMetrics(id: string, metrics: SessionMetricsInput): void {
     this.db.prepare(`
       UPDATE sessions SET
-        total_cost_usd = ?,
-        total_input_tokens = ?,
-        total_output_tokens = ?,
-        model_id = ?,
-        model_display_name = ?,
-        total_duration_ms = ?,
+        total_cost_usd = COALESCE(?, total_cost_usd),
+        total_input_tokens = COALESCE(?, total_input_tokens),
+        total_output_tokens = COALESCE(?, total_output_tokens),
+        model_id = COALESCE(?, model_id),
+        model_display_name = COALESCE(?, model_display_name),
+        total_duration_ms = COALESCE(?, total_duration_ms),
         tool_call_count = ?,
         tool_breakdown = ?,
-        compaction_count = ?
+        compaction_count = ?,
+        used_percentage = COALESCE(?, used_percentage)
       WHERE id = ?
     `).run(
       metrics.totalCostUsd,
@@ -563,6 +587,7 @@ export class SessionRepository {
       metrics.toolCallCount,
       metrics.toolBreakdown,
       metrics.compactionCount,
+      metrics.usedPercentage,
       id,
     );
   }

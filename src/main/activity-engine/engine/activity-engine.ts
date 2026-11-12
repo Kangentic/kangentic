@@ -8,6 +8,7 @@ import {
   DEFAULT_STALE_AFTER_IDLE_HINT_MS,
   DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS,
   DEFAULT_IDLE_STABILITY_WINDOW_MS,
+  HELD_WATCHDOG_RECHECK_MS,
   RECENT_TRANSITIONS_RING_SIZE,
   PTY_CHUNK_BUCKET_MS,
   PTY_CHUNK_WINDOW_MS,
@@ -71,10 +72,12 @@ export class ActivityEngine {
   private readonly bgShellOnlyGraceMs: number;
   private readonly now: () => number;
   private readonly watchdogConfig: readonly WatchdogHold[];
+  private readonly isHeld: ((sessionId: string) => boolean) | undefined;
   private disposed = false;
 
   constructor(callbacks: ActivityEngineCallbacks, options: ActivityEngineOptions = {}) {
     this.callbacks = callbacks;
+    this.isHeld = options.isHeld;
     this.idleStabilityWindowMs = options.idleStabilityWindowMs ?? DEFAULT_IDLE_STABILITY_WINDOW_MS;
     this.bgShellOnlyGraceMs = options.bgShellOnlyGraceMs ?? DEFAULT_BG_SHELL_ONLY_GRACE_MS;
     this.now = options.now ?? Date.now;
@@ -1385,6 +1388,12 @@ export class ActivityEngine {
     const sinceSignal = this.now() - baseTime;
 
     if (hold && sinceSignal >= this.effectiveThreshold(hold, state)) {
+      // A session whose link is down sends no hooks and no output, so a due watchdog would read
+      // that silence as a stuck agent and force idle on a turn that is still running on the host.
+      if (this.isHeld?.(sessionId)) {
+        this.armTimer(sessionId, HELD_WATCHDOG_RECHECK_MS);
+        return;
+      }
       const before = snapshotCounters(state);
       this.emitSyntheticIdleTimeout(sessionId);
       hold.reset(state);

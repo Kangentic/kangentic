@@ -32,11 +32,14 @@ function placeOfCliTarget(target: StoredCliTarget): LinkPathPlace | null {
   switch (target.kind) {
     case 'wsl':
       return { kind: 'wsl', distro: target.distro };
+    case 'ssh':
+      // The paths an agent prints name files on the host, which this computer cannot stat.
+      return null;
     default: {
       // A compile-time check, and a stored row can outrun it: a target written by a
       // later version reads back here, and links nothing.
-      const unclassified: never = target.kind;
-      console.warn(`[terminal-links] No link place for CLI target kind: ${String(unclassified)}`);
+      const unclassified: never = target;
+      console.warn(`[terminal-links] No link place for CLI target kind: ${String((unclassified as { kind?: unknown }).kind)}`);
       return null;
     }
   }

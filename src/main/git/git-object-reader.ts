@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { remoteGitRunnerFor } from './remote-git';
 
 /**
  * One file's bytes from a repository's object database, read through a single
@@ -62,6 +63,9 @@ export function parseObjectHeader(line: string): GitObjectHeader | null {
 export function readGitObject(gitDirectory: string, objectName: string, options: GitObjectReadOptions): Promise<GitObjectRead> {
   // --batch reads one name per line, so a name holding a line break cannot be asked for.
   if (/[\r\n]/.test(objectName)) return Promise.resolve({ kind: 'missing' });
+  // A project on an SSH host (#913): the object is read by the host's git, never by this computer's in the stand-in.
+  const remote = remoteGitRunnerFor(gitDirectory);
+  if (remote) return remote.readObject(objectName, options);
   return new Promise((resolve, reject) => {
     const child = spawn('git', ['cat-file', '--batch'], { cwd: gitDirectory, windowsHide: true });
     let settled = false;

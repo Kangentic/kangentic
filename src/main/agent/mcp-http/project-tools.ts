@@ -16,7 +16,7 @@ export function registerProjectTools(server: McpServer, resolver: RequestResolve
   server.registerTool(
     'kangentic_list_projects',
     {
-      description: 'List every Kangentic project registered on this machine. Returns name, id, on-disk path, and last-opened timestamp for each project, plus an isActive flag marking the project the MCP client is bound to. Use the returned name or id as the `project` argument on any other kangentic_* tool to route that call to a different project.',
+      description: 'List every Kangentic project registered on this machine. Returns name, id, path, and last-opened timestamp for each project, plus an isActive flag marking the project the MCP client is bound to. A project on a remote host shows its path on that host. Use the returned name or id as the `project` argument on any other kangentic_* tool to route that call to a different project.',
       inputSchema: z.object({}),
       annotations: READ_ONLY_ANNOTATIONS,
     },
@@ -29,10 +29,13 @@ export function registerProjectTools(server: McpServer, resolver: RequestResolve
       }
       const lines = projects.map((project) => {
         const activeTag = project.isActive ? ' [active]' : '';
-        return `- ${project.name}${activeTag} (id: ${project.id}, path: ${project.path}, lastOpened: ${project.lastOpened})`;
+        const hostTag = project.hostId ? ` on host ${project.hostId}` : '';
+        // host-value-ok: listProjects already holds the host path here
+        return `- ${project.name}${activeTag} (id: ${project.id}, path: ${project.path}${hostTag}, lastOpened: ${project.lastOpened})`;
       });
       return {
         content: [{ type: 'text' as const, text: lines.join('\n') }],
+        structuredContent: { items: projects },
       };
     },
   );

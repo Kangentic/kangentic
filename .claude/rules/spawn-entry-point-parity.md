@@ -143,6 +143,13 @@ contract was kept in sync across three files by prose comments alone.
   the text in. Every other start (`prepareAgentSpawn`, the legacy Start agent row, a queued
   session's promotion) gets them from `registerHeldMessageFlush`, pasted once the first turn
   settles. A new start never claims on its own; it would race those two for the same rows.
+- **Taking back an agent a host kept running is not a spawn entry point** (#913).
+  `SessionManager.adoptRemoteSession` starts nothing: it rebinds an agent a quit left running and
+  registers it under its own session id, reusing `performSpawn` in its rejoin mode (no command typed, the
+  status and events files kept, a reattach registration). Its one caller is startup recovery
+  (`resumeSuspendedSessions` step 0, through `createRecordAdopter`), which runs no preamble because no
+  agent is launched and no override is locked or resolved. It is never a way to start an agent: a record
+  the host no longer holds alive falls to the resume pipeline, which does go through `prepareAgentSpawn`.
 - Adding a new spawn entry point means routing it through one of the two chokepoints, or adding
   a reasoned allowlist entry in the enforcement test AND updating this rule.
 

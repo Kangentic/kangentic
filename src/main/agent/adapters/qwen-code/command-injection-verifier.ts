@@ -53,7 +53,7 @@ const resolvedPathByKey = new Map<string, { filePath: string; resolvedAtMs: numb
  * missing file, which the caller treats as "keep polling".
  */
 export function resolveQwenSessionPath(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
-  const key = `${place?.distro ?? ''}\0${cwd}\0${agentSessionId}`;
+  const key = `${place ? (place.kind === 'wsl' ? place.distro : place.hostId) : ''}\0${cwd}\0${agentSessionId}`;
   const nowMs = Date.now();
   const cached = resolvedPathByKey.get(key);
   if (cached && nowMs - cached.resolvedAtMs < RESOLVED_PATH_TTL_MS) return cached.filePath;

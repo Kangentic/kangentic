@@ -92,6 +92,14 @@ Kangentic's MCP server stays a static entry in the project's `.cursor/mcp.json`.
 
 A Knowledge Graph answer from a distro starts in a stable folder beside the shared answer home, `<home>-wsl-<distro>` (`cursorAnswerHome`), so its entry never overwrites the one a Cursor on this machine reads. Beside it rather than inside, in case Cursor looks for a `.cursor` folder above the one it starts in. Its chat is removed from the distro's `~/.cursor/chats`. Not yet run against a Cursor installed in a distro.
 
+## SSH
+
+A Cursor on a remote host over SSH (#913) runs as `cursor-agent`, found by the host's login `PATH` (`remoteCliName`). `agent`, the installer's other name, is shared with Grok's CLI, so it is not used. Cursor must be installed and logged in on the host. The spawn, files and `create-chat` path are checked against a fake host in `tests/unit/cursor-ssh-remote.test.ts`. The transcript copy is checked in `tests/unit/cursor-ssh-transcript.test.ts` against the same record shape a local transcript showed. Neither has run against a real Cursor or host.
+
+- **Synced files.** `remoteFiles()` declares the project's `.cursor/mcp.json`, `.cursor/hooks.json` and the folder's copy of the hook transport's script (`.kangentic/cursor-wsl-hook.sh`). Kangentic's hook entries are merged beside the user's, run that script on the host, and publish only for a session that carries `KANGENTIC_EVENTS_PATH_INTERACTIVE` (set to `1`, as for a distro). They are taken out again when the session releases. In `.cursor/mcp.json` the static entry is merged beside the user's servers, and a file that is not JSON Kangentic can merge into (comments, say) is left as written and the session starts without Kangentic's tools. Trust is the `--trust` flag, so there is no trust file. The entry is the WSL hook transport's stdio bridge, and its script path, URL and token are `${env:...}` references filled from the spawn environment, so the file holds no secret. The file is restored when the session releases, and removed again if Kangentic created it.
+- **Interactive starts.** `createSessionId(cliPath, workingDirectory, place)` runs `cursor-agent create-chat` on the host in the project's folder there, through the helper, when it is given the host's place. A chat made by a Cursor on this computer would be unknown to the host's Cursor. Both spawn paths pass the place to `resolveFreshAgentSessionId`, so an interactive start on a host makes its chat there.
+- **Transcript.** `remoteTranscriptFiles()` names the one file Cursor appends to under `~/.cursor/projects/<slug>/agent-transcripts/<id>/`, in this computer's mirror of the host's home, filed under the slug of the folder on the host ([SSH remote hosts](../../platforms/ssh-remote.md#transcripts)). `create-chat` writes nothing until the first turn, so the copy is empty until then. The viewer, the index and the ledger then read it as they read a local one. Subagent transcripts are not carried. Activity comes from the hooks above, with the PTY and the stream-json parser as the fallback.
+
 ## Model override
 
 `--list-models` prints `cursor-grok-4.6-high - Grok 4.6`. The picker shows the display name. A live session's stream-json init event and `agent about --format json` report that display name as `model`, not the id. A column that stored `grok 4.6 high` used to be passed through as `--model "grok 4.6 high"`, which the CLI rejects.
@@ -115,6 +123,11 @@ the id. Such a start skips the `agent about` seed, because `about` reports the a
 model, not the one passed, and would replace the column's model until the TUI status bar paints.
 The skip follows the same read of the built command as the seed, so a command it cannot read the
 flag from is seeded by `about`, as a start with no model is.
+
+A take-back of an agent a host kept running skips it too (`SessionContext.takingBack`), for the same
+reason: `about` would report this computer's account default, not the live session. The take-back
+shows the model and occupancy its record last saw, then reads them from the screen the host holds
+(`usageFromOutput`) until the status bar paints.
 
 ## Hooks
 

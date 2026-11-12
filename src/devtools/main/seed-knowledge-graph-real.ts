@@ -377,6 +377,7 @@ export async function seedKnowledgeGraphFromRealIndex(
           toolCallCount: sourceFacts.toolCalls ?? 0,
           toolBreakdown: null,
           compactionCount: 0,
+          usedPercentage: null,
         });
       }
       return previewSessionId;

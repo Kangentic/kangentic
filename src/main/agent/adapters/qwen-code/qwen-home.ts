@@ -25,6 +25,9 @@ import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
  * that changes the variable is not shadowed by a value captured at import.
  */
 export function qwenHomeDir(place: CliPlace | null = null): string {
+  // A Qwen on an SSH host keeps its directory on the host. The copy of its trust file the adapter edits
+  // is in the host's home mirror on this computer (#913).
+  if (place?.kind === 'ssh') return path.join(place.localHome, '.qwen');
   // No cwd: a relative value has nothing to resolve against, so it is skipped.
   const override = resolveRuntimeValue(place ? place.facts.env.QWEN_HOME : process.env.QWEN_HOME, null, place);
   if (override) return override;
@@ -55,6 +58,8 @@ export function qwenHomeDir(place: CliPlace | null = null): string {
  * real Qwen with either override set.
  */
 export function qwenRuntimeDir(cwd: string | null, place: CliPlace | null = null): string {
+  // On an SSH host the runtime output is on the host, and the mirror never holds it.
+  if (place?.kind === 'ssh') return qwenHomeDir(place);
   // A Qwen in a WSL distro reads the distro shell's own value
   // (`WSL_ENV_KEYS` in wsl-distro.ts collects it).
   const fromEnvironment = resolveRuntimeValue(
@@ -96,7 +101,7 @@ function readRuntimeOutputDir(settingsFile: string): string | null {
 function resolveRuntimeValue(raw: string | null | undefined, cwd: string | null, place: CliPlace | null): string | null {
   const value = raw?.trim();
   if (!value) return null;
-  if (place) {
+  if (place?.kind === 'wsl') {
     const linuxPath = value === '~' || value.startsWith('~/') ? `${place.facts.homeLinux}${value.slice(1)}` : value;
     if (linuxPath.startsWith('/')) return hostPathForTarget(linuxPath, place);
     // Relative: the distro resolves it against the `/mnt` form of the same cwd.

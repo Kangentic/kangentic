@@ -134,10 +134,19 @@ describe('linkPlaceOfSession', () => {
     expect(linkPlaceOfSession(facts({ cliTarget }))).toEqual({ kind: 'wsl', distro: 'Arch' });
   });
 
-  it('links nothing for a CLI target it has not classified, which is what an SSH host must get', () => {
+  it('links nothing for an agent on an SSH host, whose paths are not on this computer', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const cliTarget = { kind: 'ssh', distro: 'unused' } as unknown as StoredCliTarget;
+    const cliTarget: StoredCliTarget = { kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'bash', localHome: '', roots: [] };
     expect(linkPlaceOfSession(facts({ cliTarget }))).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('links nothing for a CLI target it has not classified, and says so', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const cliTarget = { kind: 'future-kind' } as unknown as StoredCliTarget;
+    expect(linkPlaceOfSession(facts({ cliTarget }))).toBeNull();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();
   });
 });

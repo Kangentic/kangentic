@@ -244,7 +244,9 @@ export class DroidCommandBuilder {
    * needed), and Kangentic does the bridges' work on what they publish. Null,
    * and the session runs on the PTY tracker alone, when there is no events
    * path or when a write fails: the hooks only add detail, so a failed write
-   * never blocks the spawn.
+   * never blocks the spawn. A Droid on a remote host over SSH takes the same
+   * transport: the relay sends this file (`remoteSessionFiles()`), and its
+   * SessionStart hook is the only way that session's id reaches this computer.
    */
   writeHookSettings(options: DroidCommandOptions): string | null {
     if (!options.eventsOutputPath) return null;

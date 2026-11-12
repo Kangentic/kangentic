@@ -32,9 +32,10 @@ import { loadBetterSqlite3 } from '../../shared/sqlite-loader';
  * stores `name = <name>`, and `-r -n <name>` resumes the session whose name or
  * id equals it (`crates/goose-cli/src/cli.rs`, `get_or_create_session_id`).
  *
- * Nothing here was read from a real Goose database: Goose was not installed
- * where this was written. A database or column that is missing answers null or
- * empty, never a throw.
+ * The columns match a real Goose 1.57.0's database (2026-11-05,
+ * `docs/audits/ssh-transcript-exports-audit.md`). It is still no published
+ * contract: a database or column that is missing answers null or empty, never a
+ * throw.
  */
 
 /**
@@ -127,7 +128,7 @@ export interface GooseSessionRow {
   contextLimit: number | null;
 }
 
-function numberOrNull(value: unknown): number | null {
+export function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 

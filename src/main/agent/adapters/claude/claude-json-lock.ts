@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createSerialLock } from '../../shared/relocation-utils';
-import type { CliPlace } from '../../shared/cli-target';
+import { cliHomeDir, type CliPlace } from '../../shared/cli-target';
 
 /**
  * The lock every Kangentic read-modify-write of `~/.claude.json` runs under.
@@ -90,7 +90,9 @@ export function claudeStatePathForHome(home: string): string {
  * config dir Kangentic's trust and diff-panel writes landed in a file their Claude never read.
  */
 export function claudeJsonPath(place: CliPlace | null = null): string {
-  return place ? path.join(place.facts.homeUnc, '.claude.json') : claudeStatePathForHome(claudeHomeDir());
+  // For a host this is this computer's mirror of it, never the host's own file: the host's is edited
+  // through its helper (`ensureRemoteClaudeSpawnConfig`), so no writer here may treat this path as it.
+  return place ? path.join(cliHomeDir(place), '.claude.json') : claudeStatePathForHome(claudeHomeDir());
 }
 
 export function claudeJsonLockPath(place: CliPlace | null = null): string {

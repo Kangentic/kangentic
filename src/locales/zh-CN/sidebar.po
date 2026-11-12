@@ -31,6 +31,11 @@ msgstr "{count, plural, other {# 个命令终端正在运行（工作中）}}"
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 msgstr "{groupProjectCount, plural, other {该分组内的 # 个项目将变为未分组。}}"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "{hostName}: {stateLabel}"
+msgstr "{hostName}：{stateLabel}"
+
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 msgid "{idleCount} idle"
 msgstr "{idleCount} 个空闲"
@@ -71,6 +76,16 @@ msgstr "确定要删除<0>「{projectName}」</0>吗？"
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "Clear search"
 msgstr "清除搜索"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "已连接"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "正在连接…"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
@@ -163,6 +178,11 @@ msgstr "项目设置"
 msgid "Projects"
 msgstr "项目"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "正在重新连接…"
+
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 msgid "Remove from group"
 msgstr "从分组中移除"
@@ -180,9 +200,19 @@ msgstr "搜索项目…"
 msgid "Show sidebar"
 msgstr "显示侧边栏"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "已停止"
+
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
 msgstr "这会将项目从 Kangentic 中移除，但不会删除磁盘上的任何文件。"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "无法连接"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "Use Add project below to open a folder"

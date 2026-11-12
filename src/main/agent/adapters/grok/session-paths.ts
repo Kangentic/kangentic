@@ -32,6 +32,7 @@ import type { StoredCliTarget } from '../../../../shared/types';
 
 /** Grok's config/data root: `$GROK_HOME` when set, else `~/.grok`. Read per-call so tests can redirect it. */
 export function grokHomeDir(place: CliPlace | null = null): string {
+  if (place?.kind === 'ssh') return path.join(place.localHome, '.grok');
   if (place) {
     const distroOverride = place.facts.env.GROK_HOME?.trim();
     return distroOverride?.startsWith('/') ? hostPathForTarget(distroOverride, place) : path.join(place.facts.homeUnc, '.grok');
@@ -81,6 +82,9 @@ export async function locateGrokUpdatesFile(options: {
   maxAttempts?: number;
 }): Promise<string | null> {
   const place = placeFromStored(options.cliTarget ?? null);
+  // A Grok on an SSH host keeps its sessions there, and this computer's mirror of the host's home
+  // is empty, so nothing can appear: answer at once instead of polling for a minute.
+  if (place?.kind === 'ssh') return null;
   const expected = grokUpdatesJsonlPath(options.cwd, options.agentSessionId, place);
   const maxAttempts = options.maxAttempts ?? 120; // ~60s at 500ms cadence
   for (let attempt = 0; attempt < maxAttempts; attempt++) {

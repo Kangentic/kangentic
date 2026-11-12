@@ -2,6 +2,7 @@ import { execFileAsync } from '../utility-process/off-main-exec';
 import path from 'node:path';
 import fs from 'node:fs';
 import { slugify } from '../../shared/slugify';
+import { remoteGitRunnerFor } from './remote-git';
 
 
 /**
@@ -16,6 +17,16 @@ import { slugify } from '../../shared/slugify';
 /** Check whether the project path is inside a git repository. */
 export function isGitRepo(projectPath: string): boolean {
   return fs.existsSync(path.join(projectPath, '.git'));
+}
+
+/**
+ * Whether a project has git, for a read that is about to ask it. A remote project's repository is on its host and
+ * this computer holds an empty folder, so `isGitRepo` always says no there, and a caller that gates on it skips
+ * itself in silence. Not a replacement for `isGitRepo` everywhere: what acts on this computer's disk, or would
+ * reach a host's worktrees at a project delete, keeps asking about the folder here.
+ */
+export function isProjectGitRepo(projectPath: string): boolean {
+  return remoteGitRunnerFor(projectPath) !== null || isGitRepo(projectPath);
 }
 
 /** Check whether the project path is a git worktree (has `.git` as a file, not a directory). */

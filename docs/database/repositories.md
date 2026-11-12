@@ -197,10 +197,12 @@ Operates on a per-project DB.
 | Method | Description |
 |--------|-------------|
 | `insert(record)` | Insert a new session record. Caller provides the `id` (PTY session ID = DB primary key, enabling unified session identity across the in-memory PTY layer and the database). `cli_target`, `start_head_sha` and `account_id` are optional and default to NULL. |
+| `updateMetrics(id, metrics)` | Save the metric columns from a session's telemetry. A null cost, token count, model, duration or occupancy (`used_percentage`) keeps the value the record holds (an agent taken back from an SSH host keeps its record and has no usage until it reports); the tool count, tool breakdown and compaction count are written as given |
 | `updateStatus(id, status, extra?)` | Update session status with optional `exit_code`, `suspended_at`, `exited_at`, `suspended_by` |
 | `getResumable()` | Get suspended agent sessions that can be resumed (any `session_type` except `run_script`) |
 | `markAllRunningAsOrphaned()` | Mark all `running` sessions as `orphaned` (crash recovery on startup) |
-| `markRunningAsOrphanedExcluding(excludeTaskIds)` | Same as above but skips sessions whose task_id is in the exclusion set (prevents HMR re-entrant recovery from orphaning active sessions) |
+| `markRunningAsOrphanedExcluding(excludeTaskIds, keepSessionIds)` | Same as above (`running` and `queued`) but skips sessions whose task_id is in the exclusion set (prevents HMR re-entrant recovery from orphaning active sessions) and sessions whose id is in `keepSessionIds` (a record whose agent runs on an SSH host and is waiting to be taken back) |
+| `getRunningRemote()` | Agent sessions recorded `running` whose `cli_target` names an SSH host (any `session_type` except `run_script`). Startup asks the host about each before it orphans or resumes one |
 | `getOrphaned()` | Get orphaned agent sessions (any `session_type` except `run_script`) |
 | `deleteByTaskId(taskId)` | Delete all session records for a given task |
 | `getLatestForTask(taskId)` | Find the most recent session record for a task (by `started_at` DESC) |

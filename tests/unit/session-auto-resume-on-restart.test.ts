@@ -38,12 +38,17 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 // The returned record status is driven by the module-level
 // `sessionRecordStatusRef` so tests can pick 'running' vs 'queued' per case.
 const sessionRecordStatusRef = { current: 'running' as 'running' | 'queued' };
+// Where the record's agent ran: null for this computer, or the stored target of an SSH host (#913).
+const sessionRecordTargetRef = { current: null as string | null };
+const updateMetricsMock = vi.fn();
 vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
     findByAnyId = vi.fn(() => ({
       id: 'record-1',
       status: sessionRecordStatusRef.current,
+      cli_target: sessionRecordTargetRef.current,
     }));
+    updateMetrics = (...args: unknown[]) => updateMetricsMock(...args);
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -66,6 +71,10 @@ function makeDeps(options: { sessionStatus?: 'running' | 'queued' } = {}) {
     ]),
     killAll: vi.fn(() => [] as number[]),
     dispose: vi.fn(),
+    getUsageCache: () => ({}),
+    getToolCallCount: () => 4,
+    getToolBreakdown: () => [],
+    getCompactionCount: () => 0,
   };
   return {
     getSessionManager: () => sessionManager as never,
@@ -89,7 +98,39 @@ describe('syncShutdownCleanup: session + task bookkeeping', () => {
     markRecordExitedMock.mockClear();
     settleQueuedRecordMock.mockClear();
     taskRepoUpdateMock.mockClear();
+    updateMetricsMock.mockClear();
     sessionRecordStatusRef.current = 'running';
+    sessionRecordTargetRef.current = null;
+  });
+
+  // A quit leaves an agent on a host running (#913). Its record stays `running` and its task keeps pointing at it,
+  // so the next launch can ask the host and take the agent back. Suspended here, that launch would resume a second
+  // agent beside the live one.
+  it('leaves the record of an agent on a remote host running, and the task still pointing at it', () => {
+    sessionRecordTargetRef.current = JSON.stringify({ kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'zsh', roots: [] });
+
+    syncShutdownCleanup(makeDeps());
+
+    expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+  });
+
+  // What the session measured up to the quit is on this computer only, and the telemetry that held it ends with it.
+  it('saves what a remote session measured before leaving it running', () => {
+    sessionRecordTargetRef.current = JSON.stringify({ kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'zsh', roots: [] });
+
+    syncShutdownCleanup(makeDeps());
+
+    expect(updateMetricsMock).toHaveBeenCalledTimes(1);
+    expect(updateMetricsMock).toHaveBeenCalledWith('record-1', expect.objectContaining({ toolCallCount: 4 }));
+  });
+
+  it('still suspends the record of an agent that ran on a distro of this computer', () => {
+    sessionRecordTargetRef.current = JSON.stringify({ kind: 'wsl', distro: 'Ubuntu' });
+
+    syncShutdownCleanup(makeDeps());
+
+    expect(markRecordSuspendedMock).toHaveBeenCalledTimes(1);
   });
 
   it("always marks running sessions as 'system' (reserves 'user' for explicit pause)", () => {

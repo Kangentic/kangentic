@@ -181,6 +181,15 @@ Aider has no login, so each account in Settings > Accounts is a key file the use
 
 An Aider installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Aider's Linux path in a `wsl -d <distro>` shell, and `--chat-history-file` is handed over in the distro's form (`/mnt/c/...`). Its idle notification is the WSL hook transport's `event idle` (`wsl-hook-transport.ts`) instead of `node event-bridge.js ... idle`, and the command ends in `</dev/null`: Aider runs it with `subprocess.run(command, shell=True, capture_output=True)` and passes no stdin (`aider/io.py` `ring_bell`), so it inherits the terminal, and the transport's stdin read would otherwise wait on the user's keyboard. A Knowledge Graph answer runs through `wsl.exe`, with `--chat-history-file` and `--input-history-file` in the distro's form. The history files Kangentic reads are in the project folder, which Windows reads as before. Not yet run against an Aider installed in a distro.
 
+## SSH
+
+An Aider on a remote host over SSH (#913) runs as `aider`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there. Its command is checked against a fake host in `tests/unit/aider-ssh-remote.test.ts`, and Aider 0.86.2's real history crossed the real helper and relay in a Linux container, a resume included (`tests/unit/remote-transcript-real-cli.test.ts`). It has not been started by the app on a real host. Aider writes nothing outside its session folder, so `remoteFiles()` declares none.
+
+- The idle notification is the WSL hook transport's `event idle </dev/null`, named by the script's path on the host, which the session relay pushes with the session folder. No node is needed on the host.
+- Each session keeps its own chat history file in the project's folder on the host, named by the session id Kangentic minted (`--chat-history-file`, by its host path), and a resume restores it with `--restore-chat-history`.
+- That file is copied to the same name in the working folder's stand-in on this computer (`remoteTranscriptFiles()`), where the conversation readers and the ledger look. A session with no id, a Command Terminal, keeps Aider's shared default file, which is not copied. The copy goes with the stand-in when a worktree is removed, as the history in a local worktree does.
+- Not available: the live reader for cost and tokens stays off for a host, so the card shows no cost or token count while a session runs. The command verifier reads the copy, which lags the host, so it can confirm a command Kangentic types late. It is confirm-only, so a late answer never restarts the session.
+
 ## Permission Modes
 
 | Mode | Flags | Aider Mode |

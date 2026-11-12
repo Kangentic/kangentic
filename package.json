@@ -31,6 +31,7 @@
     "dev": "node scripts/dev.js",
     "build": "node scripts/build.js",
     "build:demo": "node scripts/build-demo.js",
+    "build:host": "node scripts/build-host.mjs",
     "i18n:extract": "lingui extract --clean",
     "i18n:check": "node scripts/i18n-catalogs.js check",
     "i18n:compile": "node scripts/i18n-catalogs.js compile",

@@ -156,6 +156,18 @@ describe('pty host out-of-process boundary', () => {
       'src/main/activity-engine/background-shell/process-tree.ts': 'LocalSpawnService\'s probe; the utility host lists through the worker',
       'src/main/shared/child-tree-stop.ts': 'host-cli-processes, and a by-pid stop of a run a dead worker left',
       'src/main/pty/process-tag/darwin-reader.ts': 'runTool\'s default; the utility host passes runToolThrough(the spawn service)',
+      // The one entry here that DOES start a process on the terminal thread (#913): `ssh`, when a
+      // remote host's link dials or redials. Never per terminal, so it costs a start once per host
+      // at launch and once per reconnect. On Windows CreateProcess holds the thread for its
+      // duration, 20 to 40 ms idle and up to 454 ms under disk load (the figure above), which
+      // pauses local terminals for that long. The accepted interim of hosting the hub in this
+      // process (one renderer port serves local and remote); the fix is to start ssh on the spawn
+      // worker, named as the known cost in .claude/rules/pty-host-out-of-process.md.
+      'src/main/remote/link/ssh-connection.ts': 'ssh for a remote host\'s link, on dial and redial only; known to hold the thread for one CreateProcess (see above)',
+      // The same cost, once per forwarded dev-server port: an `ssh -N -L` started when a server first
+      // listens on the host, and again after a failure (backoff 2 s to 30 s). Held beside the links, which
+      // already know each host's ssh options. Not on any terminal's path.
+      'src/main/remote/link/port-forward.ts': 'ssh -N -L for a forwarded dev-server port, once per port and on a retry; the same CreateProcess cost as the link\'s ssh',
     };
     for (const devBuild of [false, true]) {
       const inputs = await bundleInputs(HOST_ENTRY, devBuild);
@@ -185,9 +197,15 @@ describe('pty host out-of-process boundary', () => {
       findOutside(/\bnew InProcessPtyHostTransport\s*\(/, new Set(['src/main/pty/session-manager.ts'])),
       'Only SessionManager.createInProcessHost may run the host core in main.',
     ).toEqual([]);
+    // The SSH helper (#913) runs the same core on a Linux host, behind its resumable link. That is a
+    // process on another machine, not a second host in the app: main never holds this core.
     expect(
-      findOutside(/\bnew PtyHostCore\s*\(/, new Set(['src/main/pty/host/pty-host-entry.ts', 'src/main/pty/host/pty-host-client.ts'])),
-      'PtyHostCore is built by the utility host entry or the in-process transport, nowhere else.',
+      findOutside(/\bnew PtyHostCore\s*\(/, new Set([
+        'src/main/pty/host/pty-host-entry.ts',
+        'src/main/pty/host/pty-host-client.ts',
+        'src/main/remote/helper/helper-server.ts',
+      ])),
+      'PtyHostCore is built by the utility host entry, the in-process transport, or the SSH helper on a host, nowhere else.',
     ).toEqual([]);
   });
 

@@ -296,15 +296,17 @@ describe('updateMetrics tool_breakdown round-trip', () => {
       toolCallCount: 3,
       toolBreakdown: toolBreakdownJson,
       compactionCount: 2,
+      usedPercentage: 12.5,
     });
 
     expect(capturedParams).toHaveLength(1);
     // Positional order in the UPDATE: cost, input, output, modelId, displayName,
-    // duration, count, breakdown, compactionCount, id.
+    // duration, count, breakdown, compactionCount, usedPercentage, id.
     const params = capturedParams[0];
     expect(params[7]).toBe(toolBreakdownJson);
     expect(params[8]).toBe(2);
-    expect(params[9]).toBe('session-1');
+    expect(params[9]).toBe(12.5);
+    expect(params[10]).toBe('session-1');
   });
 
   it('passes NULL for toolBreakdown when no tool events exist', () => {
@@ -321,11 +323,13 @@ describe('updateMetrics tool_breakdown round-trip', () => {
       toolCallCount: 0,
       toolBreakdown: null,
       compactionCount: 0,
+      usedPercentage: null,
     });
 
     const params = capturedParams[0];
     expect(params[7]).toBeNull();
     expect(params[8]).toBe(0);
+    expect(params[9]).toBeNull();
   });
 
   it('getSummaryForTask returns toolBreakdown [] when the stored value is NULL', () => {

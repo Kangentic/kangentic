@@ -29,6 +29,7 @@ import { canRecreateWorktree, demoteMissingWorktree, isWorktreeMissing } from '.
 import { startStartupTimer } from './timing';
 import { sweepIntervalsOncePerLaunch } from '../../activity-engine/activity-interval-store';
 import { workflowOfTask } from '../../workflows/workflow-home';
+import { createRecordAdopter, rejoinRunningRemoteSessions, type RejoinDeps } from '../../remote/rejoin-sessions';
 
 /**
  * A low-memory pause an earlier version made on a task in a running workflow.
@@ -68,6 +69,14 @@ export interface ResumeSuspendedOptions {
    * active project's: recovery also runs for projects not on screen.
    */
   boardDefaultBaseBranch?: string | null;
+  /**
+   * How to ask a host which agents it kept running (#913). A quit leaves a remote agent running, so a
+   * record that is still `running` at launch is not a crash's leftover: its agent may be on the host. With
+   * this, each such record is taken back, left alone while its host cannot be asked, or (only when the
+   * host says it is gone) orphaned and resumed. Without it, such a record is orphaned like any other,
+   * which is only right where no host exists to ask.
+   */
+  rejoinRemote?: { snapshot: RejoinDeps['snapshot'] };
 }
 
 /**
@@ -107,7 +116,7 @@ export async function resumeSuspendedSessions(
   boardProfiles?: ReadonlyArray<BoardProfile>,
   options: ResumeSuspendedOptions = {},
 ): Promise<void> {
-  const { onlySessionIds, onConversationExpired, boardDefaultBaseBranch } = options;
+  const { onlySessionIds, onConversationExpired, boardDefaultBaseBranch, rejoinRemote } = options;
   if (isShuttingDown()) return;
 
   const done = startStartupTimer('resumeSuspendedSessions', projectId, 'resumed');
@@ -115,12 +124,47 @@ export async function resumeSuspendedSessions(
   const sessionRepo = new SessionRepository(db);
   const taskRepo = new TaskRepository(db);
 
+  // 0. An agent a quit left running on a host is taken back before anything is orphaned or resumed. A
+  //    `running` record that names a host is not a crash's leftover: resumed, it would run a second agent
+  //    in the same worktree beside the first. A record whose host could not be asked stays `running` and
+  //    untouched (the host's first connect asks again). Only the host's own answer that the agent is gone
+  //    lets it fall through to the orphan step. A scoped recovery (a pty host loss) is mid-launch and
+  //    leaves this to the launch.
+  const keepRunning = new Set<string>();
+  if (!onlySessionIds && rejoinRemote) {
+    const remoteRunning = sessionRepo.getRunningRemote();
+    if (remoteRunning.length > 0) {
+      const adoptRecord = createRecordAdopter({ sessionManager, projectId, projectPath });
+      const lanesById = new Map(new SwimlaneRepository(db).list().map((lane) => [lane.id, lane]));
+      const outcomes = await rejoinRunningRemoteSessions(remoteRunning, {
+        snapshot: rejoinRemote.snapshot,
+        // A task that was deleted, archived, or moved to To Do or Done while its host was out of reach no longer
+        // wants its agent: it is not taken back, and the sweep after recovery ends it on the host.
+        adopt: async (record) => {
+          const task = taskRepo.getById(record.task_id);
+          const role = task ? lanesById.get(task.swimlane_id)?.role : null;
+          if (!task || task.archived_at || (role != null && NEVER_AUTO_SPAWN_ROLES.has(role))) return null;
+          return adoptRecord(record);
+        },
+        log: (line) => console.log(line),
+      });
+      for (const [recordId, outcome] of outcomes) {
+        if (outcome !== 'gone') keepRunning.add(recordId);
+      }
+      if (keepRunning.size > 0) {
+        const pending = [...outcomes.values()].filter((outcome) => outcome === 'pending').length;
+        console.log(`[SESSION_RECOVERY] ${keepRunning.size - pending} agent(s) taken back from a host, ${pending} waiting for their host`);
+      }
+    }
+  }
+
   // 1. Mark leftover 'running' records as orphaned (crash case).
   //    SKIP records whose task already has a live PTY session -- this prevents
   //    re-entrant calls (Vite hot-reload, duplicate PROJECT_OPEN) from
   //    orphaning sessions that were JUST created and are actively running.
   //    A scoped recovery skips it: its sessions' exits were already recorded,
   //    and every other 'running' record belongs to a live session.
+  //    Read after step 0, so an agent taken back from a host counts as live.
   const liveSessions = sessionManager.listSessions()
     .filter((session) => session.status === 'running' || session.status === 'queued');
   const liveTaskIds = new Set(liveSessions.map((session) => session.taskId));
@@ -130,8 +174,8 @@ export async function resumeSuspendedSessions(
   if (!onlySessionIds) sweepIntervalsOncePerLaunch(projectId, db, new Set(liveSessions.map((session) => session.id)));
   if (onlySessionIds) {
     // Nothing to orphan.
-  } else if (liveTaskIds.size > 0) {
-    sessionRepo.markRunningAsOrphanedExcluding(liveTaskIds);
+  } else if (liveTaskIds.size > 0 || keepRunning.size > 0) {
+    sessionRepo.markRunningAsOrphanedExcluding(liveTaskIds, keepRunning);
   } else {
     sessionRepo.markAllRunningAsOrphaned();
   }
@@ -648,6 +692,7 @@ export async function resumeSuspendedSessions(
           ...(restoredGrid ? { restoredGrid } : {}),
           shell: input.shell,
           cliTarget: input.cliTarget,
+          ...(input.remote ? { remote: input.remote } : {}),
         });
 
         retireRecord(sessionRepo, input.record.id);
@@ -729,9 +774,17 @@ export async function resumeSuspendedSessions(
         });
       }
       try {
-        retireRecord(sessionRepo, input.record.id);
+        if (input.remote && !isAbortError(result.reason)) {
+          // A spawn onto a host that threw is the host or its link, not the conversation: that lives on
+          // the host, and a retry after the link is back resumes it. Retiring would turn a paused card
+          // into an ended one for a fault that mends itself. (A PTY spawn that reaches the host and
+          // fails resolves as an exited session instead and does not come through here.)
+          await withTaskLock(input.task.id, async () => keepResumableIfUnchanged(input.record, input.task));
+        } else {
+          retireRecord(sessionRepo, input.record.id);
+        }
       } catch (updateErr) {
-        console.error(`[SESSION_RECOVERY] Failed to mark session ${input.record.id} as exited:`, updateErr);
+        console.error(`[SESSION_RECOVERY] Failed to settle session ${input.record.id} after its spawn failed:`, updateErr);
       }
     }
   }

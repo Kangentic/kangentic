@@ -926,14 +926,16 @@ describe('get_current_task uses defaultContextResolved, not withProject', () => 
     expect(mockWithProject).not.toHaveBeenCalled();
   });
 
-  it('returns an error when neither cwd nor branch is provided', async () => {
-    const result = await server.getHandler('kangentic_get_current_task')({});
+  it('passes the calling agent\'s own task, so a call with neither cwd nor branch can answer for it', async () => {
+    const callerServer = makeFakeServer();
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(callerServer as never, makeResolver(), taskCounter, undefined, 'task-of-the-caller');
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('Provide at least one of');
-    // No context resolution should happen when the inputs are invalid.
-    expect(resolver.defaultContextResolved).not.toHaveBeenCalled();
-    expect(mockWithProject).not.toHaveBeenCalled();
+    await callerServer.getHandler('kangentic_get_current_task')({});
+
+    const call = mockCallHandler.mock.calls.at(-1) as unknown as [string, unknown, { callerTaskId?: string }];
+    expect(call[0]).toBe('get_current_task');
+    expect(call[2].callerTaskId).toBe('task-of-the-caller');
   });
 });
 

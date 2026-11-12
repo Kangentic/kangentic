@@ -1,5 +1,6 @@
 import type { AnswerStreamEvent } from './shared/cli-answer';
 import type { CliPlace, CliTarget } from './shared/cli-target';
+import type { RemoteFileDeclaration } from './shared/remote-files';
 import type { BackgroundCommandSupport } from '../../shared/background-command-spec';
 import type { AgentAccountSupport } from '../accounts/account-support';
 import type { ResolvedAccount } from '../accounts/account-service';
@@ -11,6 +12,7 @@ import type {
   AdapterRuntimeStrategy,
   SessionContext,
   SessionAttachment,
+  SessionUsagePatch,
   AgentLiveTelemetryUnsupported,
   SubmissionContextType,
   SubmissionVerifier,
@@ -558,6 +560,25 @@ export interface AgentAdapter {
    */
   readonly supportsWslCli?: boolean;
 
+  /**
+   * The CLI's executable name on a remote host over SSH (#913), such as `claude`, which the host's
+   * login shell resolves from its own PATH. Present only on an adapter whose builder, trust, hooks and
+   * readers take an `ssh` place (`shared/cli-target.ts`); declare it once that integration is in, as
+   * for `supportsWslCli`. A remote project that runs an agent without it fails the spawn with a
+   * sentence instead of half working. The local CLI is never detected for a remote project.
+   */
+  readonly remoteCliName?: string;
+
+  /**
+   * The files this adapter's trust, hook and MCP code reads and edits outside the session folder, so
+   * the same code works for a CLI on an SSH host (#913). Before `ensureTrust` the spawn pulls each from
+   * the host into the folder that code edits, and after `buildCommand` it pushes what changed back;
+   * the strip at the end of the session is pushed too. Declare every file the adapter writes or
+   * merges into, home-relative or project-relative (`agent/shared/remote-files.ts`). Absent for an
+   * adapter with `remoteCliName` that edits no such file. The adapter's code does not change.
+   */
+  remoteFiles?(): RemoteFileDeclaration;
+
   /** Invalidate any cached detection result (e.g. after user changes CLI path). */
   invalidateDetectionCache(): void;
 
@@ -729,7 +750,7 @@ export interface AgentAdapter {
    * startup recovery, and a Command Terminal call it when
    * `reportsLaunchSessionId` is not true.
    */
-  createSessionId?(cliPath: string, workingDirectory: string): Promise<string | null>;
+  createSessionId?(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<string | null>;
 
   /**
    * True when this launch reports its own conversation id, so a fresh start
@@ -1639,8 +1660,22 @@ export interface AgentAdapter {
    * specifics stay in the adapter module.
    *
    * Adapters that do not need per-session work can omit this.
+   *
+   * `context.takingBack` is set when this process is taking back an agent it
+   * did not start. A seed that asks this computer's CLI (`agent about`) must
+   * not run then: it reports this account's default, not the live session.
    */
   attachSession?(context: SessionContext): SessionAttachment | void;
+
+  /**
+   * Optional: occupancy and live model from a chunk of the agent's own output.
+   * A take-back of an agent a host kept running has a screen that is already
+   * up, and the agent writes nothing until it next acts, so the card would
+   * otherwise sit at 0% until then. Returns a usage patch (percentage-only is
+   * fine) or null when this chunk names none. Events in the chunk are ignored:
+   * they already happened.
+   */
+  usageFromOutput?(data: string): SessionUsagePatch | null;
 
   /**
    * Optional one-shot summarization. Spawns the agent CLI in its non-interactive

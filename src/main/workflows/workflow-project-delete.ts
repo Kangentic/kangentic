@@ -48,8 +48,10 @@ export function detachProjectFromWorkflows(context: IpcContext, deletedProjectId
 
   // 3. Every other board: release the members of its workflows, drop the links
   // naming its tasks, and count what is left of each workflow it was part of.
+  // A board hidden because its host was removed counts: its database is here,
+  // its tasks are still members, and it comes back with the host.
   const unreadBoards: string[] = [];
-  for (const project of context.projectRepo.list()) {
+  for (const project of context.projectRepo.listIncludingHidden()) {
     if (project.id === deletedProjectId) continue;
     try {
       const db = getExistingProjectDb(project.id);

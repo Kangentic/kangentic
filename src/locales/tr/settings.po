@@ -32,6 +32,10 @@ msgstr "{agentName}, Kangentic'in başlatıldığı ortamda ayarlanan bu değiş
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Belgeler sayfasını açar."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
@@ -122,6 +126,10 @@ msgstr "{eventName} sesi: {valueName}"
 msgid "{eventName} toast"
 msgstr "{eventName} bildirimi"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{hostname} now presents a different key."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -131,6 +139,10 @@ msgstr "{hours, plural, one {# sa kaldı} other {# sa kaldı}}"
 #, fuzzy
 msgid "{label}, always on"
 msgstr "{label}, her zaman açık"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -161,6 +173,11 @@ msgstr "%{percent}, {displayName}"
 #, fuzzy
 msgid "{percent}%, {timeLeft}"
 msgstr "%{percent}, {timeLeft}"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "{projectCount, plural, one {# project} other {# projects}}"
+msgstr "{projectCount, plural, one {# proje} other {# proje}}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -196,10 +213,24 @@ msgstr ""
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Her oturumun etkinlik durumunu ve son geçişlerini gösteren, .kangentic/debug konumuna da yazılan kayan panel."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A name from your SSH config works too, which is how a jump host or a port is set."
+msgstr "SSH yapılandırmanızdaki bir ad da kullanılabilir; atlama sunucusu veya bağlantı noktası bu şekilde ayarlanır."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
 msgstr "Ön ayar, canlı ve iyileştirme modellerini sizin için seçer. Özel seçeneğiyle bunları kendiniz seçersiniz."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A private key file; Kangentic keeps a copy in its own folder"
+msgstr "Özel anahtar dosyası; Kangentic kendi klasöründe bir kopyasını saklar"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -274,10 +305,20 @@ msgstr "Etkinlik motoru hata ayıklama katmanı"
 msgid "Add account"
 msgstr "Hesap ekle"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Add host"
+msgstr "Ana bilgisayar ekle"
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Add shortcut"
 msgstr "Kısayol ekle"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Address"
+msgstr "Adres"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -584,6 +625,10 @@ msgstr "Çubuk"
 msgid "Basic accuracy"
 msgstr "Temel doğruluk"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr ""
+
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Behavior"
@@ -593,6 +638,11 @@ msgstr "Davranış"
 #, fuzzy
 msgid "Best accuracy"
 msgstr "En iyi doğruluk"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Beta"
+msgstr "Beta"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -650,8 +700,14 @@ msgstr "Tarayıcı verileri"
 msgid "Browser data cleared"
 msgstr "Tarayıcı verileri temizlendi"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Build server"
+msgstr "Derleme sunucusu"
+
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Cancel"
 msgstr "İptal"
@@ -691,6 +747,11 @@ msgstr "Ön planı değiştir"
 msgid "Changes"
 msgstr "Değişiklikler"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Checking"
+msgstr "Denetleniyor"
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "Checking..."
@@ -712,6 +773,10 @@ msgstr "Model seçin"
 msgid "Choose an agent"
 msgstr "Ajan seçin"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Claude 5h / weekly quota bars"
@@ -728,6 +793,7 @@ msgid "Clear browser data?"
 msgstr "Tarayıcı verileri temizlensin mi?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Clear data"
 msgstr "Verileri temizle"
@@ -893,6 +959,7 @@ msgid "Connect a phone over an end-to-end encrypted relay."
 msgstr "Uçtan uca şifreli bir aktarıcı üzerinden telefon bağlayın."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connected"
 msgstr "Bağlı"
@@ -904,6 +971,7 @@ msgid "Connected"
 msgstr "Bağlandı"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connecting…"
 msgstr "Bağlanıyor…"
@@ -918,6 +986,11 @@ msgstr "Bağlam çubuğu"
 #, fuzzy
 msgid "Context window"
 msgstr "Bağlam penceresi"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Continue"
+msgstr "Devam et"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 #, fuzzy
@@ -1273,6 +1346,11 @@ msgstr "Yeniden sıralamak için sürükleyin"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "Her ajan oturumu yerel bir MCP sunucusu alır ve bu araçları kendi başına keşfeder. Bir ajanın oluşturduğu görevler, bir bildirimle birlikte panoda görünür."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Editors"
@@ -1397,6 +1475,11 @@ msgstr ""
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
 msgstr "Çalışmalarınızı anlamına göre bulur ve soruları yanıtlar."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Fingerprint"
+msgstr "Parmak izi"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1543,6 +1626,11 @@ msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys
 msgstr "Kaydetmek için basılı tutun; transkripsiyonu eklemek için bırakın. Kısayol tuşları bölümünden yeniden atayın."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Hosts"
+msgstr "Ana bilgisayarlar"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1568,6 +1656,11 @@ msgstr "Paylaşılan pano yapılandırması değişikliklerinin uygulanma şekli
 #, fuzzy
 msgid "How it works"
 msgstr "Nasıl çalışır"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "How Kangentic signs in"
+msgstr "Kangentic'in oturum açma yöntemi"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
@@ -1765,10 +1858,19 @@ msgstr "Kangentic yeni oturumlarda bunu artık kullanmaz."
 msgid "Kangentic turned this off after repeated failures."
 msgstr "Kangentic, tekrarlanan hatalar nedeniyle bunu kapattı."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Kangentic uses your SSH config, agent and keys, the way a terminal does."
+msgstr "Kangentic, bir terminal gibi SSH yapılandırmanızı, aracınızı ve anahtarlarınızı kullanır."
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "Kangentic-operated relay"
 msgstr "Kangentic tarafından işletilen röle"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1779,6 +1881,15 @@ msgstr "Son kelimenin kesilmemesi için bıraktıktan sonra kısa bir süre kayd
 #, fuzzy
 msgid "Keep editing"
 msgstr "Düzenlemeye devam et"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Key file"
+msgstr "Anahtar dosyası"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1889,6 +2000,11 @@ msgctxt "settings card"
 msgid "Links"
 msgstr ""
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Linux machines Kangentic runs agents on over SSH."
+msgstr "Kangentic'in SSH üzerinden ajan çalıştırdığı Linux makineler."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "Live model"
@@ -1920,6 +2036,11 @@ msgstr "Yerel model"
 #, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
 msgstr "Her IPC çağrısını, değiştiren kanallar gizlenmiş olarak .kangentic/logs içine kaydeder; varsayılan olarak yalnızca /preview içinde açıktır."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Looking for ssh…"
+msgstr "ssh aranıyor…"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -2018,6 +2139,16 @@ msgstr "Görev pencereleri arasında geçiş ve düzenleme."
 msgid "Mute notifications"
 msgstr "Bildirimleri sessize al"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "My SSH config"
+msgstr "SSH yapılandırmam"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Name"
+msgstr "Ad"
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "sort files by"
@@ -2061,6 +2192,10 @@ msgstr "Bilgi Grafiği gerekli"
 msgid "New account"
 msgstr "Yeni hesap"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "No agents with accounts"
@@ -2080,6 +2215,11 @@ msgstr "Henüz eşleştirilmiş cihaz yok."
 #, fuzzy
 msgid "No Done tasks yet"
 msgstr "Henüz tamamlanan görev yok"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "No hosts yet."
+msgstr "Henüz ana bilgisayar yok."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
@@ -2118,9 +2258,17 @@ msgid "None"
 msgstr "Yok"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not checked"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Not found"
 msgstr "Bulunamadı"
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not on hosts yet"
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
 #, fuzzy
@@ -2154,6 +2302,10 @@ msgstr "Henüz commit yapılmadı"
 #, fuzzy
 msgid "Notifications"
 msgstr "Bildirimler"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
@@ -2266,9 +2418,15 @@ msgid "Pairing QR code"
 msgstr "Eşleştirme QR kodu"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Password"
 msgstr "Parola"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Password for the host"
+msgstr "Ana bilgisayar parolası"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2279,6 +2437,11 @@ msgstr "Bu sayı aşılınca en eski süreli bildirim yenisine yer açar."
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "Bu projenin görevleri için sunucudaki yol. Sunucunun kendi varsayılan dizinini kullanmak için boş bırakın"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Path to the private key"
+msgstr "Özel anahtarın yolu"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2390,10 +2553,26 @@ msgstr "Konuşurken önizleme: akış anlıktır, parçalı daha doğrudur."
 msgid "Privacy"
 msgstr "Gizlilik"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
 msgstr "Ana işlemin profilini çıkarır ve olay döngüsü raporunda takılmanın en ağır işlevlerini adlandırır; açıkken CPU tüketir."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version} (this app is {appVersion})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program version unknown"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2531,7 +2710,13 @@ msgctxt "card preview"
 msgid "Recent"
 msgstr "Son"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "Yeniden bağlan"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Reconnecting…"
 msgstr "Yeniden bağlanıyor…"
@@ -2602,6 +2787,7 @@ msgstr "Uzak"
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Remove"
 msgstr "Kaldır"
@@ -2616,10 +2802,23 @@ msgstr "{accountToRemoveName} kaldırılsın mı?"
 msgid "Remove a task's worktree when the task completes."
 msgstr "Görev tamamlandığında görevin çalışma ağacını kaldır."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Remove host"
+msgstr "Ana bilgisayarı kaldır"
+
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "Remove this account?"
 msgstr "Bu hesap kaldırılsın mı?"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2750,6 +2949,7 @@ msgstr "Bir çalışma ağacı oluşturulduktan sonra çalışır. Windows'ta cm
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "Bulut iyileştirmesi seçmezseniz bu makinede çalışır."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 #, fuzzy
 msgid "Save"
@@ -2948,6 +3148,11 @@ msgstr "Bu makinede oturum açıldı"
 msgid "Silences all notifications on this machine until turned off."
 msgstr "Kapatılana dek bu makinedeki tüm bildirimleri susturur."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "since {since}"
+msgstr "{since} itibarıyla"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "since {sinceTime}"
@@ -2996,6 +3201,26 @@ msgstr "Kaynak kod gömüldü"
 msgid "Spawn stalled"
 msgstr "Başlatma takıldı"
 
+#: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
+msgid "SSH"
+msgstr "SSH"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "SSH client"
+msgstr "SSH istemcisi"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh found"
+msgstr "ssh bulundu"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh not found"
+msgstr "ssh bulunamadı"
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "diff scope"
@@ -3033,6 +3258,11 @@ msgstr "Durdurma betiği"
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Görevi tamamlandığında, Yapılacaklar'a döndüğünde veya silindiğinde ya da Komut Terminali sona erdiğinde ajanın klasöründe çalışır bıraktığı şeyleri durdur."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Durduruldu"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3229,6 +3459,10 @@ msgstr "Yeni bir iş akışı için aldığı ilk mesaj."
 msgid "The Kangentic relay"
 msgstr "Kangentic aktarıcısı"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy
 msgid "The language of menus, settings and dialogs."
@@ -3284,6 +3518,11 @@ msgstr "Tüm terminallerin kullandığı kabuk, yazı tipi, imleç ve renkler."
 msgid "The sign-in did not finish."
 msgstr "Oturum açma işlemi tamamlanmadı."
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "The ssh program on this computer that Kangentic connects with."
+msgstr "Bu bilgisayarda Kangentic'in bağlanırken kullandığı ssh programı."
+
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
 msgid "The task's description"
@@ -3310,6 +3549,12 @@ msgstr "Bu hesabın klasörü başka bir sürücüde olduğundan istem geçmişi
 #, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "Bu kısayol tuşu sabittir ve yeniden atanamaz"
+
+#. placeholder {0}: editProbe.hostname
+#. placeholder {0}: probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "This is the key {0} presents."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3375,6 +3620,27 @@ msgstr "Yazıya dökme"
 msgid "Transition and motion effects."
 msgstr "Geçiş ve hareket efektleri."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Trust this key"
+msgstr "Bu anahtara güven"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr ""
+
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
 msgid "Try a different search term"
@@ -3385,6 +3651,11 @@ msgstr "Farklı bir arama terimi deneyin"
 msgid "Turn on Toast or Desktop to hear a sound"
 msgstr "Ses duymak için Toast veya Masaüstü seçeneğini açın"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Type"
+msgstr "Tür"
+
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
 msgctxt "cursor style"
@@ -3392,6 +3663,7 @@ msgid "Underline"
 msgstr "Alt çizgi"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Unreachable"
 msgstr "Erişilemiyor"
@@ -3431,10 +3703,25 @@ msgstr "{TERMINAL_FONT_SIZE_MIN} ile {TERMINAL_FONT_SIZE_MAX} arasında bir değ
 msgid "Use one theme when the system is light and another when it is dark."
 msgstr "Sistem açık moddayken bir tema, koyu moddayken başka bir tema kullanın."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use the password once to add a key Kangentic makes. It is never stored"
+msgstr "Parolayı bir kez kullanarak Kangentic'in oluşturduğu anahtarı ekleyin. Parola asla saklanmaz"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use your own ssh setup: its config, agent and keys, as a terminal does"
+msgstr "Kendi ssh kurulumunuzu kullanın: terminalde olduğu gibi yapılandırması, aracısı ve anahtarları"
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Used / total tokens"
 msgstr "Kullanılan / toplam token"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Used once to add a key Kangentic makes for this host. It is never stored."
+msgstr "Kangentic'in bu ana bilgisayar için oluşturduğu anahtarı eklemek üzere bir kez kullanılır. Asla saklanmaz."
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #, fuzzy

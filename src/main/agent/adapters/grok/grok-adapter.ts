@@ -7,7 +7,8 @@ import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import { GrokDetector } from './detector';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from './command-builder';
-import { removeHooksFile } from './hook-manager';
+import { removeHooksFile, GROK_WSL_HOOK_COPY_NAME } from './hook-manager';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { KANGENTIC_MCP_TOKEN_ENV, KANGENTIC_MCP_URL_ENV, removeMcpConfig, writeMcpConfig } from './mcp-config';
 import { GrokStatusParser } from './status-parser';
 import { GrokSessionHistoryParser, grokCachedModelDisplayName, grokModelDisplayName } from './session-history-parser';
@@ -16,7 +17,7 @@ import { createGrokCommandInjectionVerifier } from './command-injection-verifier
 import { discoverGrokCapabilities } from './capability-discovery';
 import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
-import { grokChatHistoryPath, grokSessionDir } from './session-paths';
+import { grokChatHistoryPath, grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import {
   runCliPrintAnswer,
@@ -26,7 +27,7 @@ import {
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { execCliForTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { answerHomeForPlace, withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
@@ -45,6 +46,7 @@ import type {
   AgentPermissionEntry,
   PermissionMode,
   AdapterRuntimeStrategy,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
   AgentCapabilities,
@@ -125,6 +127,23 @@ export class GrokAdapter implements AgentAdapter {
   readonly backgroundCommands = { source: 'hooks', launchHint: false } as const;
   /** A Grok installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a host over SSH the CLI is `grok` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'grok';
+  /**
+   * The conversation's transcript on a host over SSH (#913): the two files Grok appends to in
+   * `~/.grok/sessions/<cwd key>/<id>/`, in this computer's mirror of the host's home. `chat_history.jsonl`
+   * is what the viewer, the index and the archive read, and `updates.jsonl` is what the usage ledger reads.
+   * The id is caller-owned, so both are named at spawn, and the key comes from the folder as the host
+   * names it. The live telemetry reader stays off for a host (it polls for a file that has not landed).
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [
+      grokChatHistoryPath(options.cwd, options.agentSessionId, place),
+      grokUpdatesJsonlPath(options.cwd, options.agentSessionId, place),
+    ];
+  }
   // `chat_history.jsonl` records carry no timestamps, so every entry is stamped with parse time.
   readonly transcriptHasTimestamps = false;
   /**
@@ -176,6 +195,20 @@ export class GrokAdapter implements AgentAdapter {
   }
 
   /**
+   * What a Grok on an SSH host edits outside the session folder: the trust store `ensureTrust` reads
+   * and appends to, the user's project `config.toml` (a sentinel-delimited block is merged in and
+   * stripped), Kangentic's own hooks file, and the hook script copy those hooks run. None holds a
+   * token: the config block names the MCP URL and token as `${VAR}` references the session's
+   * environment fills.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.grok/trusted_folders.toml'],
+      project: ['.grok/config.toml', '.grok/hooks/kangentic.json', `.kangentic/${GROK_WSL_HOOK_COPY_NAME}`],
+    };
+  }
+
+  /**
    * Pre-approve folder trust for Kangentic worktrees so project hooks and
    * the MCP block load without the user re-answering per task. Grok trust
    * cascades from the project root, so this is a no-op in the common
@@ -192,6 +225,9 @@ export class GrokAdapter implements AgentAdapter {
    * the user has not trusted, the session would start without Kangentic's tools.
    */
   kangenticMcpBlockedReason(workingDirectory: string, place?: CliPlace | null): string | null {
+    // A host's trust file is on the host. This computer holds only a mirror, filled for a spawn and
+    // empty otherwise, so it can never prove the folder untrusted: say nothing rather than guess.
+    if (place?.kind === 'ssh') return null;
     if (isFolderTrusted(workingDirectory, place ?? null)) return null;
     return `${this.displayName} loads Kangentic's tools only in a folder you trusted in it. Trust ${path.resolve(workingDirectory)} in grok, then close Settings to retry.`;
   }

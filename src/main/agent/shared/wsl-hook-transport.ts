@@ -75,6 +75,17 @@ export const WSL_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
 /** How long the script waits for an answer, in 10 ms tries, before it prints nothing. */
 const REPLY_WAIT_TRIES = 1000;
 
+/** How long an MCP call waits for Kangentic to take it before the script gives up and says so. */
+export const WSL_MCP_TAKE_WAIT_SECONDS = 30;
+/** How long it then waits for the answer to a call Kangentic took. The longest tool call is a browser step. */
+export const WSL_MCP_ANSWER_WAIT_SECONDS = 600;
+/** The longest MCP request line (bytes) the script sends: a frame carries about 200 KB, escaped. */
+export const WSL_MCP_REQUEST_MAX_BYTES = 150_000;
+/** What the agent reads when nobody took its call. Holds no quote, backslash or newline: the script prints it as JSON. */
+export const WSL_MCP_NOT_TAKEN_MESSAGE = `Kangentic did not take this call within ${WSL_MCP_TAKE_WAIT_SECONDS} seconds, so nothing ran. Its desktop app is not connected to this machine right now. Carry on without it, or call the tool again later.`;
+/** What the agent reads when Kangentic took its call and then said nothing. */
+export const WSL_MCP_NO_ANSWER_MESSAGE = `Kangentic took this call but sent no answer within ${WSL_MCP_ANSWER_WAIT_SECONDS / 60} minutes. It may still be running there, so check what it changed before calling it again.`;
+
 /**
  * The script. The hook folder is `$KANGENTIC_WSL_HOOK_DIR`, else `$0`'s own
  * folder, so no path is written into it.
@@ -113,6 +124,8 @@ export const WSL_HOOK_SCRIPT = [
   '    publish inbox rec "$type" "$*"',
   '    ;;',
   '  reply)',
+  '    # A request can carry the MCP token on its third line, so on a shared host only its owner may read it.',
+  '    umask 077',
   '    publish requests req "$1" "$2" || exit 0',
   '    response="$dir/responses/$name.res"',
   '    tries=0',
@@ -134,24 +147,63 @@ export const WSL_HOOK_SCRIPT = [
   '    # after 12 s, and ends once the CLI that started this server is gone.',
   '    # The line goes in by a here-document, not a pipe: a pipe would run',
   '    # publish in a subshell and lose the $name it sets.',
+  '    #',
+  '    # The wait is bounded, and always ends in an answer the agent can act on.',
+  '    # Kangentic takes a request by removing its file; this script gives up on',
+  '    # one nobody took by removing it itself. A removal happens once, so a call',
+  '    # is either taken (and then answered, never reported as failed) or given',
+  '    # up on (and then never run, even if it is delivered later).',
   '    url=$1',
+  '    umask 077',
+  '    # A length below is in bytes, as a frame\'s limit is. Without this, bash counts characters in a UTF-8 locale.',
+  '    LC_ALL=C',
+  '    answer_error() {',
+  "      # $1 is the JSON-RPC line that was sent and $2 the message, which holds no quote or backslash.",
+  '      # An error for that line\'s id, or nothing for a notification, which has none and waits on nothing. The id is the',
+  '      # key at the top of the object wherever it sits (an MCP client may write it last), so an id inside a',
+  '      # notification\'s parameters is never taken for the call\'s.',
+  String.raw`      id=$(printf '%s' "$1" | awk '{ depth = 0; quoted = 0; for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (quoted) { if (c == "\\") i++; else if (c == "\"") quoted = 0; continue } if (c == "\"") { if (depth == 1 && substr($0, i, 4) == "\"id\"") { s = substr($0, i + 4); if (sub(/^ *: */, "", s)) { if (s ~ /^"/) { sub(/^"/, "", s); sub(/".*/, "", s); printf "\"%s\"", s } else { sub(/[^0-9].*/, "", s); printf "%s", s } exit } } quoted = 1; continue } if (c == "{" || c == "[") depth++; else if (c == "}" || c == "]") depth-- } }')`,
+  String.raw`      [ -n "$id" ] && printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"%s"}}\n' "$id" "$2"`,
+  '    }',
   '    while IFS= read -r line || [ -n "$line" ]; do',
   '      [ -n "$line" ] || continue',
+  `      if [ "\${#line}" -gt ${WSL_MCP_REQUEST_MAX_BYTES} ]; then`,
+  `        answer_error "$line" "This request is $(( \${#line} / 1024 )) KB, more than the ${Math.floor(WSL_MCP_REQUEST_MAX_BYTES / 1024)} KB that can be sent to Kangentic from a host. Send less in one call."`,
+  '        continue',
+  '      fi',
   `      publish requests req ${WSL_MCP_REQUEST_HEAD} "\${${WSL_MCP_TOKEN_ENV}:-} $url" <<KANGENTIC_MCP_LINE || continue`,
   '$line',
   'KANGENTIC_MCP_LINE',
+  '      request="$dir/requests/$name.req"',
   '      response="$dir/responses/$name.res"',
+  '      started=$(date +%s 2>/dev/null)',
+  '      case "$started" in ""|*[!0-9]*) started=0 ;; esac',
   '      tries=0',
   '      pause=0.01',
+  '      taken=0',
   '      while [ ! -f "$response" ]; do',
   '        tries=$((tries + 1))',
   '        [ "$tries" -eq 200 ] && pause=0.05',
   '        [ "$tries" -eq 400 ] && pause=0.25',
-  '        if [ "$tries" -gt 400 ] && [ -d /proc/self ] && [ ! -d "/proc/$PPID" ]; then rm -f "$dir/requests/$name.req"; exit 0; fi',
+  '        [ "$tries" -gt 400 ] && [ -d /proc/self ] && [ ! -d "/proc/$PPID" ] && { rm -f "$request"; exit 0; }',
+  '        if [ "$tries" -ge 401 ]; then',
+  '          now=$(date +%s 2>/dev/null)',
+  '          case "$now" in ""|*[!0-9]*) now=$started ;; esac',
+  '          elapsed=$((now - started))',
+  '          [ "$taken" = 0 ] && [ ! -f "$request" ] && taken=1',
+  `          if [ "$taken" = 0 ] && [ "$elapsed" -ge ${WSL_MCP_TAKE_WAIT_SECONDS} ]; then`,
+  '            # Nobody took it. If the removal fails it was taken this instant, and its answer is on its way.',
+  `            if rm "$request" 2>/dev/null; then answer_error "$line" "${WSL_MCP_NOT_TAKEN_MESSAGE}"; break; fi`,
+  '            taken=1',
+  '          fi',
+  `          if [ "$taken" = 1 ] && [ "$elapsed" -ge ${WSL_MCP_ANSWER_WAIT_SECONDS} ]; then answer_error "$line" "${WSL_MCP_NO_ANSWER_MESSAGE}"; break; fi`,
+  '        fi',
   '        sleep "$pause"',
   '      done',
-  '      cat "$response"',
-  '      rm -f "$response"',
+  '      if [ -f "$response" ]; then',
+  '        cat "$response"',
+  '        rm -f "$response"',
+  '      fi',
   '    done',
   '    ;;',
   'esac',
@@ -269,6 +321,9 @@ export function wslHookReplyCommand(paths: WslHookPaths, place: CliPlace, kind: 
  * the stdio bridge (`wslMcpServerLaunch`) instead.
  */
 export function wslReachesLoopback(place: CliPlace): boolean {
+  // A host over SSH never reaches this computer's loopback: its CLI gets the stdio bridge, and the
+  // helper carries the bridge's files back (see `remote-session-relay.ts`).
+  if (place.kind === 'ssh') return false;
   return place.facts.networkingMode === 'mirrored';
 }
 

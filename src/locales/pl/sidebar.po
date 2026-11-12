@@ -37,6 +37,11 @@ msgstr "{count, plural, one {# uruchomiony terminal poleceń (w trakcie pracy)} 
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 msgstr "{groupProjectCount, plural, one {Jej # projekt przestanie należeć do grupy.} few {Jej # projekty przestaną należeć do grupy.} many {Jej # projektów przestanie należeć do grupy.} other {Jej # projektu przestanie należeć do grupy.}}"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "{hostName}: {stateLabel}"
+msgstr "{hostName}: {stateLabel}"
+
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
 msgid "{idleCount} idle"
@@ -87,6 +92,16 @@ msgstr "Czy na pewno chcesz usunąć <0>„{projectName}”</0>?"
 #, fuzzy
 msgid "Clear search"
 msgstr "Wyczyść wyszukiwanie"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Połączono"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "Łączenie…"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
@@ -201,6 +216,11 @@ msgstr "Ustawienia projektu"
 msgid "Projects"
 msgstr "Projekty"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Ponowne łączenie…"
+
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy
 msgid "Remove from group"
@@ -222,10 +242,20 @@ msgstr "Szukaj projektów..."
 msgid "Show sidebar"
 msgstr "Pokaż pasek boczny"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Zatrzymany"
+
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
 msgstr "Projekt zostanie usunięty z Kangentic, ale żadne pliki na dysku nie zostaną usunięte."
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "Nieosiągalny"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

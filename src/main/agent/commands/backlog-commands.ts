@@ -3,7 +3,13 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
-import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
+import {
+  addPreparedAttachments,
+  attachmentFailureNote,
+  localAttachments,
+  withHostAttachments,
+  type PreparedAttachments,
+} from './attachment-input';
 import { resolveColumn } from './column-resolver';
 import { isLabelListOrAbsent, LABELS_NOT_A_LIST, priorityName, priorityScaleError, priorityScaleOf, splitLabelEntries } from './label-and-priority';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -70,7 +76,13 @@ export const handleListBacklog: CommandHandler = (
 export const handleCreateBacklogTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): CommandResponse | Promise<CommandResponse> => withHostAttachments(params.attachments, context, (prepared) => createBacklogItem(params, context, prepared));
+
+function createBacklogItem(
+  params: Record<string, unknown>,
+  context: CommandContext,
+  hostAttachments: PreparedAttachments | null,
+): CommandResponse {
   const title = String(params.title ?? '').slice(0, 200);
   const description = String(params.description ?? '').slice(0, BACKLOG_DESCRIPTION_MAX_LENGTH);
   const priority = (params.priority as number | null | undefined) ?? 0;
@@ -108,17 +120,17 @@ export const handleCreateBacklogTask: CommandHandler = (
   });
 
   // Process file attachments if provided
+  let attachmentNote = '';
   if (attachments && attachments.length > 0) {
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
+    // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
-    for (const entry of attachments) {
-      try {
-        const fileData = readFileAsAttachment(entry.filePath, entry.filename);
-        backlogAttachmentRepo.add(projectPath, item.id, fileData.filename, fileData.base64Data, fileData.mediaType);
-      } catch (error) {
-        console.error(`[create_backlog_task] Failed to attach file "${entry.filePath}":`, error);
-      }
-    }
+    const { failures } = addPreparedAttachments(
+      hostAttachments ?? localAttachments(attachments),
+      (file) => backlogAttachmentRepo.add(projectPath, item.id, file.filename, file.base64Data, file.mediaType),
+      'create_backlog_task',
+    );
+    attachmentNote = attachmentFailureNote(failures);
   }
 
   // Persist label colors to config if any were provided
@@ -132,14 +144,20 @@ export const handleCreateBacklogTask: CommandHandler = (
   return {
     success: true,
     data: { id: item.id, title: item.title, priority: priorityLabel, labels: item.labels },
-    message: `Created backlog task "${item.title}" (priority: ${priorityLabel}, id: ${item.id})`,
+    message: `Created backlog task "${item.title}" (priority: ${priorityLabel}, id: ${item.id})${attachmentNote}`,
   };
-};
+}
 
 export const handleUpdateBacklogItem: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): CommandResponse | Promise<CommandResponse> => withHostAttachments(params.attachments, context, (prepared) => updateBacklogItem(params, context, prepared));
+
+function updateBacklogItem(
+  params: Record<string, unknown>,
+  context: CommandContext,
+  hostAttachments: PreparedAttachments | null,
+): CommandResponse {
   const itemId = params.itemId as string;
   const newTitle = (params.title ?? null) as string | null;
   const newDescription = (params.description ?? null) as string | null;
@@ -202,18 +220,18 @@ export const handleUpdateBacklogItem: CommandHandler = (
 
   // Attach files if provided (additive - existing attachments are untouched).
   let attachmentsAdded = 0;
+  let attachmentNote = '';
   if (newAttachments && newAttachments.length > 0) {
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
+    // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
-    for (const entry of newAttachments) {
-      try {
-        const fileData = readFileAsAttachment(entry.filePath, entry.filename);
-        backlogAttachmentRepo.add(projectPath, existing.id, fileData.filename, fileData.base64Data, fileData.mediaType);
-        attachmentsAdded += 1;
-      } catch (error) {
-        console.error(`[update_backlog_item] Failed to attach file "${entry.filePath}":`, error);
-      }
-    }
+    const { added, failures } = addPreparedAttachments(
+      hostAttachments ?? localAttachments(newAttachments),
+      (file) => backlogAttachmentRepo.add(projectPath, existing.id, file.filename, file.base64Data, file.mediaType),
+      'update_backlog_item',
+    );
+    attachmentsAdded = added;
+    attachmentNote = attachmentFailureNote(failures);
     if (attachmentsAdded > 0) changedFields.push('attachments');
   }
 
@@ -222,7 +240,7 @@ export const handleUpdateBacklogItem: CommandHandler = (
     return {
       success: false,
       error: attachmentsRequested > 0
-        ? `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.`
+        ? `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.${attachmentNote}`
         : 'No fields provided to update',
     };
   }
@@ -244,7 +262,7 @@ export const handleUpdateBacklogItem: CommandHandler = (
   const priorityLabel = priorityName(updated.priority, scale);
   return {
     success: true,
-    message: `Updated ${changedFields.join(', ')} for "${updated.title}".`,
+    message: `Updated ${changedFields.join(', ')} for "${updated.title}".${attachmentNote}`,
     data: {
       id: updated.id,
       title: updated.title,
@@ -255,7 +273,7 @@ export const handleUpdateBacklogItem: CommandHandler = (
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };
-};
+}
 
 export const handleDeleteBacklogItem: CommandHandler = (
   params: Record<string, unknown>,
@@ -315,6 +333,7 @@ export const handlePromoteBacklog: CommandHandler = (
 
   const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
   const attachmentRepo = new AttachmentRepository(db);
+  // host-value-ok: the attachment store is on this computer
   const projectPath = context.getProjectPath();
 
   const promoted: Array<{ taskId: string; title: string }> = [];

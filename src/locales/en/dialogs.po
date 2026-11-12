@@ -47,6 +47,12 @@ msgstr "\"{taskTitle}\" is on the board."
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount} failed)"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr "{0} does not exist on {1}."
+
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
 msgstr "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
@@ -282,6 +288,10 @@ msgstr "<0>Not.</0> At the very start, the row runs only when the last line does
 msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
 msgstr "<0>One per line.</0> Runs on any plain line, never on a ! line."
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr "A folder inside your home on the host, such as ~/code/api"
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
 msgstr "A narrow pane renders inline"
@@ -306,6 +316,15 @@ msgstr "Add automation"
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "Add column"
 msgstr "Add column"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project"
+msgstr "Add project"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project on {0}"
+msgstr "Add project on {0}"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 msgctxt "file status"
@@ -528,6 +547,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Branch"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr "Browse"
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
 msgid "Cache read"
@@ -555,6 +578,7 @@ msgstr "Can't remove \"{name}\""
 msgid "Can't update from {baseBranch}"
 msgstr "Can't update from {baseBranch}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -592,6 +616,14 @@ msgstr "Changes are open in their own window"
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr "Checking <0>{trimmedQuery}</0>..."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr "Choose"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose a folder on this machine"
+msgstr "Choose a folder on this machine"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Choose icon"
@@ -790,6 +822,14 @@ msgstr "Conflicts with {base}"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with the base branch"
 msgstr "Conflicts with the base branch"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Connected"
+msgstr "Connected"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Connecting…"
+msgstr "Connecting…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgctxt "board overview column header"
@@ -1044,6 +1084,10 @@ msgstr "Diff"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Diff scope"
 msgstr "Diff scope"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr "Directory"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1366,6 +1410,10 @@ msgstr "Image preview"
 msgid "Image sent at lower quality"
 msgstr "Image sent at lower quality"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 msgid "Indexing is off, so no commits are linked"
 msgstr "Indexing is off, so no commits are linked"
@@ -1520,6 +1568,7 @@ msgstr "Modified"
 msgid "Move to"
 msgstr "Move to"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Name"
@@ -1642,6 +1691,10 @@ msgstr "No description"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "No files changed"
 msgstr "No files changed"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr "No folders here."
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 msgid "No fonts match \"{typedFilter}\""
@@ -1799,6 +1852,10 @@ msgstr "One pattern per line. Runs on any plain line, never on a ! line."
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Only one agent CLI detected - install another to choose"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr "Only the first folders are shown. Type the rest in the Directory field."
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 msgid "Only the label changes. Tasks already using this profile stay on it."
 msgstr "Only the label changes. Tasks already using this profile stay on it."
@@ -1909,6 +1966,10 @@ msgstr "Overview"
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Page kept"
 msgstr "Page kept"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr "Path"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
@@ -2054,6 +2115,10 @@ msgstr "Read once each time the agent ends its turn, from its final message."
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Rebase or merge it in the session instead."
 msgstr "Rebase or merge it in the session instead."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Reconnecting…"
+msgstr "Reconnecting…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Refresh PR"
@@ -2488,6 +2553,10 @@ msgstr "Stop"
 msgid "Stop {label}"
 msgstr "Stop {label}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Stopped"
+msgstr "Stopped"
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 msgctxt "leftover section"
 msgid "Stopped"
@@ -2651,6 +2720,14 @@ msgstr "This action cannot be undone."
 msgid "This commit changed no files"
 msgstr "This commit changed no files"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This computer"
+msgstr "This computer"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr "This directory is not on the host."
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "This is handled by the column's settings now. Remove it to use them."
@@ -2771,6 +2848,10 @@ msgstr "Type a branch, tag or commit"
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
 msgstr "Under 0.1% of pixels changed"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Unreachable"
+msgstr "Unreachable"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "Unsaved"

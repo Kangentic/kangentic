@@ -73,6 +73,11 @@ function useAgentNote(summary: WorkflowSummary): string | null {
     }
     return count;
   });
+  // Why it cannot resume outranks when it paused.
+  if (summary.hiddenBoards.length > 0) {
+    const boards = summary.hiddenBoards.join(', ');
+    return t`Paused: ${boards} is on a removed host`;
+  }
   // A workflow paused before `paused_at` existed has no time, and falls through to its agent.
   const pausedAt = summary.workflow.state === 'paused' ? summary.workflow.paused_at ?? null : null;
   if (pausedAt) {

@@ -7,8 +7,9 @@ import { resolveScriptInvocation } from '../../../pty/spawn/script-invocation';
 import { resolveShellLaunch } from '../../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../../shared/child-env';
 import { killChildTreeNow } from '../../../shared/child-tree-stop';
-import type { AutomationAdapter, AutomationContext } from '../../shared/automation-adapter';
+import type { AutomationAdapter, AutomationContext, AutomationOutcome } from '../../shared/automation-adapter';
 import { AutomationTimeoutError } from '../../shared/automation-errors';
+import type { HostScriptRunner } from '../../../remote/host-script';
 
 /**
  * Run script. Three things changed from the action it replaces, and all three
@@ -49,6 +50,8 @@ export const runScriptAdapter: AutomationAdapter = {
     if (!script) return { detail: 'No script to run.' };
 
     const timeoutMs = resolveTimeoutMs(config);
+    // A remote project's folder is on its host, and `context.cwd` is an empty stand-in.
+    if (context.runOnHost) return runOnHost(context.runOnHost, script, context, timeoutMs);
     // The SAME shell the user's terminals run, in its non-interactive form, so
     // a script behaves the way it does when they test it by hand.
     const { exe, args } = resolveScriptInvocation(await context.sessionHost.getShell(), script);
@@ -60,6 +63,25 @@ export const runScriptAdapter: AutomationAdapter = {
     return { detail: 'exit 0' };
   },
 };
+
+/**
+ * The script on the project's host, to the same ends as a local run: exit 0 passes, anything else fails, and its
+ * budget is a real bound, which the host enforces on the process group. A superseded move stops waiting, and the
+ * script goes on to that bound there, because nothing can reach a command already running on a host.
+ */
+async function runOnHost(run: HostScriptRunner, script: string, context: AutomationContext, timeoutMs: number): Promise<AutomationOutcome> {
+  const superseded = new Promise<never>((_resolve, reject) => {
+    const onAbort = (): void => reject(new Error('The move was superseded before the script finished.'));
+    if (context.signal.aborted) onAbort();
+    else context.signal.addEventListener('abort', onAbort, { once: true });
+  });
+  const result = await Promise.race([run({ script, environment: scriptEnvironment(context), timeoutMs }), superseded]);
+  if (result.error) throw new Error(result.error);
+  if (result.timedOut) throw new AutomationTimeoutError(`Script did not finish within ${Math.round(timeoutMs / 60_000)} min and was stopped.`);
+  if (result.code !== 0) throw new Error(`Script exited with code ${String(result.code)}.`);
+  const omitted = result.omittedVariables.length > 0 ? ` (too long to pass to the host: ${result.omittedVariables.join(', ')})` : '';
+  return { detail: `exit 0 on the host${omitted}` };
+}
 
 function resolveTimeoutMs(config: AutomationConfig): number {
   const minutes = config.timeoutMinutes;

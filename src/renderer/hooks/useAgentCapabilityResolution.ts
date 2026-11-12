@@ -56,7 +56,15 @@ export function useAgentCapabilityResolution(effectiveAgent: string | null): Age
       ? agentList.find((entry) => entry.name === effectiveAgent)
       : undefined;
     const effortLevels = info?.capabilities?.effortLevels ?? [];
-    const supportsModelOverride = !!info?.capabilities?.supportsModelOverride;
+    // An agent on an SSH host carries no capabilities: they come from running the CLI, and this computer
+    // does not run the host's. Without this the model row vanished for every remote project. The picker
+    // then has no list, so it is the free-form field the rest of the app falls back to, and what is typed
+    // reaches the host's CLI as `--model`. A CLI the host lacks (`missing`, or `unsupportedOnHost`) has no row.
+    const onHostWithoutCapabilities = info?.hostId !== undefined
+      && info.capabilities === undefined
+      && info.hostStatus !== 'missing'
+      && !info.unsupportedOnHost;
+    const supportsModelOverride = !!info?.capabilities?.supportsModelOverride || onHostWithoutCapabilities;
     const availableAgents = agentList.filter((entry) => entry.found);
     const canPickAgent = availableAgents.length > 1;
     return { info, models, effortLevels, supportsModelOverride, availableAgents, canPickAgent };

@@ -21,6 +21,7 @@ import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
  * keeps the distro's sign-in.
  */
 export function copilotHomeDir(place: CliPlace | null = null): string {
+  if (place?.kind === 'ssh') return path.join(place.localHome, '.copilot');
   if (place) {
     const distroOverride = place.facts.env.COPILOT_HOME?.trim();
     return distroOverride?.startsWith('/') ? hostPathForTarget(distroOverride, place) : path.join(place.facts.homeUnc, '.copilot');

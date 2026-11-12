@@ -1,0 +1,365 @@
+---
+paths:
+  - "src/main/remote/**"
+  - "src/main/pty/spawn/remote-spawn.ts"
+  - "src/main/pty/lifecycle/session-spawn-flow.ts"
+  - "src/main/pty/host/pty-host-client.ts"
+  - "src/main/pty/shutdown/session-shutdown.ts"
+  - "src/main/db/repositories/ssh-host-repository.ts"
+  - "src/main/db/repositories/project-repository.ts"
+  - "tests/unit/remote-*.test.ts"
+---
+# Rule: a session on a remote host is never treated as a process on this machine
+
+A remote project runs its agent on a Linux host over SSH (#913). The agent, its PTY, its files and
+its git all live there, and this computer holds the board, the UI and a link. Nearly every piece of
+code in main was written for a process that is here, so each of these is a place that is silently
+wrong, not loudly wrong, when it meets a session that is not: a pid that names another machine's
+process, a path tested against the wrong disk, an environment that overwrites the host's own.
+
+## The rule
+
+- **A remote PTY has no pid here, in the type.** `PtyHandle.pid` is `number | null`, and null means
+  the PTY runs on a host. Never invent a number for "none": `process.kill(0)` signals Kangentic's own
+  process group and `-1` signals every process the user owns. Anything that signals, waits on or
+  lists by pid handles null, and `tsc` fails the site that does not. A local pty host dying ends no
+  remote PTY (`PtyHostClient.takeLiveHandles`); the host's own link says when one is gone.
+- **A spawn names its host, and everything after follows the PTY.** `PtyHostSpawnParams.hostId` sends
+  a spawn to the link hub, and `HostRouter` sends each later command and request to wherever its PTY
+  or session lives. A request with no meaning on a host is refused with a sentence
+  (`HostUnreachableError`), never sent to the wrong machine.
+- **Nothing of this computer reaches a host.** A remote spawn is one plan (`planRemoteSpawn`): the
+  host's login shell, the host path verbatim, the adapter's variables plus the task tag and a TERM,
+  and a command quoted for the host's shell on Linux. Never `buildSpawnEnv`'s result (the helper
+  layers a spawn's variables over the host's own, so a sent `PATH` or `HOME` replaces the host's),
+  never `resolveSpawnCwd` (it tests the path on this disk), never `process.platform` for a question
+  about the host (graceful close, quoting).
+- **Only the host proves a path absent.** A path on a host is checked by the helper's `pathPresence`
+  and read through its `readFile`, never by this computer's disk or a local mirror, and a failed ask
+  is an error, never "absent". With the link down nothing is pruned, demoted, retired or deleted
+  for want of a path.
+- **A transcript is copied, never read from the host in place.** The conversation viewer, the search
+  index and the token ledger read this computer's disk, and for a session on a host the adapter names
+  the transcript (`remoteTranscriptFiles()`, as the path its own readers build), the helper tails the
+  host's file by byte offset, and the relay writes each chunk at its offset into this computer's mirror
+  of the host's home (`PATHS.remoteHomeMirror`), or under the project's shell folder for a file the CLI
+  keeps in a session or working folder (`rootPathToHost`). The relay writes only to a path it
+  registered, so a host names a key and never a path. A file whose name the id does not give is a
+  search (`RemoteTranscriptSearch`): the helper finds it and sends it under its key, and never says
+  what it found, so the copy's path is the one the adapter registered. A hook's id comes from the host,
+  so an id is checked to be a plain name before it becomes part of a path here. An offset tail is right
+  only for a file that is appended to: a CLI's file rewritten in place is never declared, and Gemini's
+  legacy `.json` is refused by the search's pattern. A reader treats that copy as what has arrived so
+  far: empty at first, stale while the link is down, and never proof that a conversation is gone. So
+  nothing deletes, prunes or demotes for want of a copy: `conversationAvailable` answers true for a host
+  rather than reading a null locate as gone. A dropped link holds each tail (`FileTail.markDetached`).
+  The same app process coming back, told by its boot id recorded at the drop, releases them to go on from
+  their offsets (`resumeDetached`), and a different process starts each file from byte 0 on its next
+  watch, since it never saw what the old one was sent. A hold only a new watch could end froze a live
+  session's copy after any brief drop.
+- **What a CLI cannot name at spawn, it names later; what it keeps in a shared database, it exports.**
+  The relay asks the adapter again when the id arrives (`setAgentSessionId`, from `onAgentSessionId`) or
+  an index grows (`remoteTranscriptIndex()`). A second `watchFiles` names the whole set, a file in both keeps
+  its place, and a key is never reused. A CLI's database is never copied or read on the host: the adapter
+  names the CLI's own export (`remoteTranscriptSnapshot()`), one `sh` script writes it to a file under the
+  host's home and swaps it in only when it changed, every value an argument, and the tail sends that file.
+  An export never crosses the link as a reply, which is one 256 KiB frame. It lands as `<copy>.part` and is
+  renamed in only when whole, so a stale copy never reads as an empty one, and a total is of the whole file,
+  never a difference. A resume is a new session on the same export paths, so its first export waits for
+  the release of the session it replaces. A reader of an ending session waits for the last export through
+  `remoteTranscriptSettled`, bounded. An id from an index is taken only when it can be no other session's,
+  and stays provisional (`notifyInferredAgentSessionId`) so the agent's own report replaces it: a wrong id
+  resumes another conversation. An export's position is the compact JSON before a message, never a byte of the
+  file, which is a new file each time, so a cursor holds from one export to the next.
+- **A worktree on a host is made by the host's git, and the folder here is a stand-in.** A task's
+  worktree is `<project folder on the host>/.kangentic/worktrees/<n>`, made, counted and removed by
+  one `sh` script the helper runs (`remote-worktrees.ts`), reached through `WorktreeManager`'s
+  delegate (`git/remote-worktree.ts`) so every caller that builds a manager works for a remote
+  project. This computer holds an empty folder at the same path under the shell folder, which the
+  task row records, so the roots map turns it into the agent's directory and a check that it exists
+  finds it. Nothing runs this computer's git or its Post-Worktree Script for it. The removal script
+  deletes a path, so the path is checked to be exactly one folder below `.kangentic/worktrees/`
+  before it is sent, and a task title never reaches the shell as code (every value is an argument).
+  A removal is forced only because the Done move asks the host for the uncommitted count first
+  (`probePendingChanges`), and a host that cannot answer reads as "there are changes".
+- **A git read for a project on a host runs on the host, and a host that cannot answer is an error,
+  never an empty answer.** `gitAt`, `openSimpleGit`, `runGitWithTimeout` and `readGitObject` each ask the
+  resolver in `git/remote-git.ts` first, so a folder under a remote project's shell folder reaches `HostGit`
+  (`remote/host-git.ts`) and never this computer's git, which would run in the empty stand-in or in
+  whatever repository the stand-in sits inside. The script sets `GIT_OPTIONAL_LOCKS=0` (a read never
+  takes the index lock the agent's git needs) and returns output larger than a frame in pieces, so no
+  reader sees a cut-short answer. A caller that shows git's answer lets `RemoteGitUnavailableError`
+  through (`getBranchSummary`, a file's content) so the panel keeps what it had. A new reader of a
+  working-tree file uses `readWorkingFile`, not `fs`. The panel's live refresh polls the host
+  (`DiffWatcher`), because a watch on the stand-in arms and never fires.
+- **A drop is a state, never an exit.** The link reports `remoteLink`, and agents on the host keep
+  running. A session ends only when the host reports its exit, or reports it gone after a restart
+  (`remoteSessions`, `lost`), which resumes it through the recovery path.
+- **A drop is not silence either.** Anything that reads quiet as "stuck" or "idle" asks whether the
+  session's link is down first. The activity watchdog takes `isActivityHeld`, the idle sweep takes
+  `isIdleTimeoutExempt`, and `noteLinkRestored` wipes the outage from their clocks when the link
+  returns. A new timer that acts on a session's silence does the same.
+- **A quit leaves remote agents running, and the next launch takes them back.** `killAllSessions`
+  neither signals, types into, seals, counts nor deletes the folder of a session whose PTY has no pid
+  here, and the shutdown marks no remote record suspended: it stays `running` with its task still
+  pointing at it. The link lets go and sends nothing (the old `suspendAll` plan is gone). Never seal
+  a remote PTY at a quit: the host keeps the seal and the rejoined agent would take no keystrokes.
+- **Startup never reads a running remote record as a crash.** `resumeSuspendedSessions` step 0 asks the
+  host (`rejoin-sessions.ts`, only when the host is connected) for each `running` record whose
+  `cli_target` names one, and the answer is one of three: rejoined (`SessionManager.adoptRemoteSession`,
+  the same id, a rebind, a reattach registration, the events file read from its end), pending (could not
+  ask, so the record stays `running` and nothing is resumed or started for its task, and auto-spawn
+  skips it) or gone (only the host's own list saying the agent is not alive, or a task that was deleted,
+  archived or moved to To Do or Done meanwhile). Could not ask is never gone: two agents in one
+  worktree is the worst outcome here. A cold open and a host's first connection can both reach one record,
+  so a session the app already holds is the answer and two takes share one, or the second would drain the
+  first and release its files off the host. A take whose registration fails adds no session: an agent with
+  no registration has no hooks, so the agent stays and the record waits. A take goes on in the same record,
+  so it restores the run's counts from that record (`restoreRunTotals`), and a capture with no usage yet
+  keeps the record's. A take also marks the agent on screen and stamps that it ran
+  (`markTakenBackAgentRunning`), and shows the model and occupancy the record last saw (`modelSoFar`,
+  `occupancySoFar`, only when the agent has reported none): an idle agent writes no output and no status,
+  so without these the launch overlay, the "Resuming agent..." label and a 0% bar stay up for as long as
+  it is quiet. A take also reads the screen that is already up (`usageFromOutput`). A TUI that still
+  holds `Auto · 9.2%` fills the card even when the record has none, and replaces a seed this computer's
+  `agent about` once polluted. Never ask this computer's CLI for the live model on a take
+  (`SessionContext.takingBack`). Never clear the session's `resuming` to hide the label instead, since
+  the launch-failure paths read it. After recovery, an agent alive on
+  the host for this app's projects that the app neither holds nor has a `running` record for is hung up
+  (`endUnownedHostSessions`).
+- **Every hook record stays on the host until the app has stored it.** The helper keeps a record, marked
+  `claim`, and the relay writes it to the local inbox before removing the host's copy, and a write that
+  failed removes nothing. A new boot attaching to the helper resends what is still there
+  (`resendUnclaimed`), because the old link's retained frames are discarded. A real sshd showed five of
+  eight records lost before this.
+- **A reconnect never prompts.** `ssh` runs with `BatchMode=yes`, so a host that needs a password or a
+  passphrase fails with its own words, shown as given. Kangentic never asks for a passphrase. A
+  destination that `ssh` would read as an option (a leading `-`) is refused before it reaches `ssh`.
+  The one exception reads ssh's prompt and answers nothing: a refused config sign-in is repeated once
+  with `SSH_ASKPASS` forced to a helper that records the prompt and exits 1
+  (`remote/ssh-key-prompt.ts`), so a passphrase key shows ssh's own `Enter passphrase for key`. What is
+  shown is that line as ssh wrote it, never wording of ours, and the helper is generated at run time,
+  never a file the user must install.
+- **The helper writes and reads only beneath the user's home on the host,** and refuses any other
+  path, a relative one and one that climbs out, before it touches anything. That covers removing a
+  file and the folder a program is run in.
+- **An adapter declares the host files its code edits; it never reaches for the host itself.** A
+  CLI on a host has its trust, hook and MCP files there. An adapter lists them in `remoteFiles()`
+  (home-relative, project-relative, and the ones that hold a secret), and `HostFileSync` pulls them
+  into the folders the unchanged adapter code edits, pushes the change after the command is built,
+  and restores them at release. A new adapter file that reads or writes a CLI's config does it
+  through `cliHomeDir(place)` or the working directory and declares the file; it never opens a path
+  on the host any other way. Nothing is written over or removed from a host file that changed meanwhile,
+  the helper re-checks it as it swaps the file in or unlinks it, and a push is compared with what Kangentic last knew the host
+  to hold (shared by every session on the host), never with one session's own pull, which another
+  session's push makes stale. A file that is not plain JSON is never rewritten.
+- **A forwarded dev-server port is its own `ssh -N -L`, never a channel of the link.** The process that
+  holds the links starts it (`link/port-forward.ts`), bound to 127.0.0.1 and named explicitly, only for a
+  port the dev-port ledger leases to a project on that host, and only once the host's program reports a
+  server listening on it. Main sends the full wanted set (`port-forward-plan.ts`), recomputed from the
+  tables and not from one release path. Terminal traffic never shares a stream with it.
+- **A probe of an agent's CLI on a host runs on the host.** `execCliForTarget` and
+  `place.files.runCommand` run the program through the user's shell on the host, with a timeout
+  that stops its process group. `cliInvocationForTarget` throws for a host: it would start a
+  process on this computer.
+- **A remote project's agent inventory is the host's.** `agent:list` for a remote project is
+  `listAgentsOnHost` over `probeAgentOnHost` (`<cli> --version` on the host), never `adapter.detect`,
+  which finds this computer's CLI. The answer has three states: only the host's own "not found" is
+  `missing`, and a failed ask is `unknown` with its reason, which is never cached and never shown as
+  "Not found". A spawn refuses `missing` with `RemoteAgentMissingError` and goes on for `unknown`.
+- **A probe of a remote project's folder runs on the host.** `project:probePath` for a folder under a remote
+  project's shell folder asks `probeGitOnHost` (`git/remote-git-probe.ts`) through the git resolver, never
+  `isGitRepo` and `hasCommits` on the stand-in, which read "not a repository" for every remote project. A host
+  that cannot answer rejects, and the renderer reads that as unknown. A host agent has no capabilities, so the
+  model row is a free-form field for it (`useAgentCapabilityResolution`), never a row that vanishes.
+- **Removing a host hides its projects and deletes nothing, and a hidden project is never swept.** Remove
+  refuses every start on the host from its first step (`holdStarts`), since the board stays usable while the key
+  comes off, then marks the host row `removed_at` and `ProjectRepository.list/getById/getLastOpened` leave its
+  projects out (`listOnHost` still finds them). It stops their agents as the system's (not a held pause), takes the key
+  Kangentic made off the host and deletes it here. The same address added again restores that row, so each
+  project keeps its host and directory, and activates them once the host connects, after ending what the
+  host still runs for them (a Remove with the link down could not), so one conversation never has two
+  agents. Clear data is the only local delete of a host's projects, shell folders and transcript copy.
+  **A sweep, a prune, a deletion or a count of survivors reads every row, hidden ones included**
+  (`listIncludingHidden`, `listHidden`, `isHidden`, `listOnHost`), because "not in the list" is not
+  "gone": a jar sweep on `list()` deleted a hidden project's browser logins. Only what a person or an agent
+  picks from reads `list()`. A workflow with a task on a hidden board is paused at the Remove, never
+  completes, and refuses Resume until the board is back.
+- **A hidden project is still remote.** `remoteOfProjectPath` and the git resolver read every row, and a start
+  for a removed host is refused (`RemoteHostRemovedError`). Read as local, it would run in the empty stand-in.
+- **An edit proves the new sign-in before it takes the old one away.** `updateHost` signs in with a real `ssh`
+  in BatchMode first. A key file is only copied, My SSH config runs nothing, and `connectHost` never throws,
+  so without the proof a key Kangentic made comes off a host it was the only way into.
+- **A directory listing on a host is an answer or an error, never an empty list for a failed ask.** The
+  Directory field's listing runs one fixed `sh` script through `runCommand` with the path as an argument,
+  after the inside-home check, and a host that cannot answer rejects with its words.
+- **A tool the agent calls answers from the layer its fact belongs to.** The MCP server runs here
+  and the agent runs on the host, so a path read from `task.worktree_path`, `sessions.cwd` or
+  `project.path` is this computer's empty stand-in, not where the agent works. A fact about where
+  the agent works is the host's value, a fact about this computer is local and labeled, and an input
+  path is a host path. The whole rule, with the helper and the `location` label, is
+  [[mcp-tool-host-values]].
+- **An MCP call from a host always ends in an answer, and never runs after the agent was told it
+  failed.** The host's watcher keeps a request file until it is claimed. `RemoteSessionRelay.claimRequest`
+  removes the host's copy before anything here acts on it, and the bridge script removes it to give up
+  after 30 seconds; a removal happens once, so a call is claimed or given up on, never both. Only a
+  request the host marked `claim` is claimed (an older program removes them as it sends). The relay
+  posts to the running server with the current token and ignores the address and token the agent was
+  started with (`setMcpRelayServer`), so a restart strands no agent. Every failure is a JSON-RPC error
+  for the call's own id that says what happened and what to do: not taken, no answer, too large to send
+  or to receive, refused token, server off, server failed, timed out. The id is read at the top of the
+  object wherever it sits, because the MCP TypeScript SDK writes it last, and a request's length is its
+  bytes. A new failure path ends in one of these, never in a wait with no bound.
+- **Bytes cross through `remote/host-transfer.ts`, over `runCommand`.** The helper's file jobs decode
+  text, and a new helper method has no handler on a daemon a relay rejoins with no version check.
+  Its scripts hold a path beneath the home and refuse a symlink themselves, because `runCommand`
+  does not check its arguments. A write refuses a path with a `.` or `..` in it, then checks the
+  deepest folder that exists before any is made.
+- **What runs for a remote project's task runs on the host.** A `run_script` row runs there, with
+  its output discarded and its variables bounded to a frame (`remote/host-script.ts`). A workflow's
+  own agent starts through `resolveSpawnCli` like a task's. A superseded move cannot stop a script
+  already running on a host: it stops waiting, and the script goes on to its own bound.
+- **A prompt names the host, and what it names is there.** `resolveTaskTemplateVars` maps every path
+  it gives a prompt or an automation, and a task's attachments are copied to those paths before
+  its agent starts (`remote/host-attachments.ts`). One that cannot be copied is named in the prompt
+  in place of its path. The copy runs under the task's lock, which has no timeout, so it has a
+  budget, stops on the move's signal, and what is left then is named the same way.
+- **A request that names how long it runs outlasts both default waits.** `RemoteHostRequest.timeoutMs`
+  reaches the link and the pty host transport, whose own default is 15 s. Without it a long
+  `runCommand` fails in main while the host still runs it.
+
+## Enforcement (self-maintaining)
+
+- **Type system:** `PtyHandle.pid: number | null` makes `tsc` (`npm run typecheck`) name every pid
+  reader.
+- **Tests (pid and quit):** `tests/unit/pty-host-client-remote-pid.test.ts` pins the null pid and that
+  a dying local host leaves a remote PTY alone. `tests/unit/session-shutdown-flow.test.ts` and
+  `tests/unit/session-manager-remote-quit.test.ts` pin that the quit signals, types into, seals and
+  counts nothing for a remote session, posts it no command, keeps its folder, and still counts the host
+  process; `tests/unit/session-auto-resume-on-restart.test.ts` that its record stays `running`.
+- **Tests (rejoin):** `tests/unit/rejoin-sessions.test.ts` pins rejoined, pending and gone and the
+  adoption input; `tests/unit/resume-suspended-rejoin.test.ts` runs the recovery pass and auto-spawn
+  against a real database (a running remote record is never orphaned or resumed beside a live agent,
+  could not ask is never gone, a task moved to Done is not taken back);
+  `tests/unit/session-manager-remote-spawn.test.ts` takes back a running agent through a real
+  `SessionManager`, router, link and helper; `tests/unit/remote-host-router.test.ts` rebinds under a new
+  boot; `tests/unit/remote-resume-endpoint.test.ts` pins that a request queued before a restarted app
+  connects is delivered (it was dropped).
+- **Rig (quit, by hand):** `node scripts/ssh-link-rig.mjs --client quit --work <dir>` has one link start a
+  counting agent and let go, and a second link with a new boot take it back, on a real `sshd`: same pid,
+  whole scrollback, every record in order, a dead agent reported dead with its code. Needs Docker.
+- **Rig matrix (by hand):** every client (`link`, `removal`, `mcp`, `quit`) also takes `--image
+  kangentic-ssh-rig-debian10` (glibc 2.28, the host program's floor; build it from
+  `scripts/probe-ssh-rig/Dockerfile` with `--build-arg BASE=debian:10`) and `--jump` (the host behind a
+  second container, reached with `ProxyJump` from an ssh config, because OpenSSH applies a command-line
+  option to the destination only, never to a jump host). Measured on 2026-11-07: link 20 of 20 drops,
+  removal 17 of 17, mcp 12 of 12, quit 11 of 11 on Ubuntu 24.04; link 10 of 10 and quit 11 of 11 on
+  Debian 10; link 10 of 10 and quit 11 of 11 through a jump host.
+- **Tests (spawn):** `tests/unit/session-spawn-flow.test.ts` (the remote block) and
+  `tests/unit/remote-spawn.test.ts` pin the shell, cwd, environment, graceful-close platform and
+  quoting. `tests/unit/remote-helper-host-ops.test.ts` pins the login-shell flags, the host's own
+  environment, and the helper's refusal of a path outside home.
+- **Tests (routing and link):** `tests/unit/remote-host-router.test.ts`, `remote-link-hub.test.ts`,
+  `remote-link-gate.test.ts`, `remote-frame-codec.test.ts` and `remote-resume-endpoint.test.ts` run the
+  real router, hub, link and helper over an in-memory stream.
+  `tests/unit/remote-host-service.test.ts` pins the ssh options, the destination check, and that a
+  failed ask is never an absence. `tests/unit/remote-helper-boundary.test.ts` keeps the helper bundle
+  free of electron and the native modules it cannot load.
+- **Tests (host files and probes):** `tests/unit/host-file-sync.test.ts` pins the pull, the push
+  (modes, private files, a conflict refused), the git exclude and the restore against an in-memory
+  host. `tests/unit/remote-host-command.test.ts` runs real programs through the helper's command
+  runner on POSIX (banner stripped, exit code, stdin, timeout) and pins the shell choice.
+  `tests/unit/<adapter>-ssh-remote.test.ts` runs each adapter's real trust and builder over a fake
+  host and asserts what lands there carries host paths and nothing of this computer.
+- **Tests (worktrees):** `tests/unit/remote-worktrees.test.ts` pins the script's arguments and the answer's
+  reading (a refusal, a timeout, a shell with no marker, a count it cannot read as zero), the path check,
+  the stand-in, `WorktreeManager`'s delegation (no local script, copy or link), and, with a POSIX shell and
+  git, the real script on real repositories: two tasks with two checkouts, the base fallbacks, a husk, a
+  nested worktree, a branch kept after removal, and a hostile title.
+- **Tests (git reads):** `tests/unit/remote-host-git.test.ts` pins the directory mapping (longest shell
+  folder, never a sibling), that git's arguments stay arguments, every shape of an answer that did not come, that
+  `gitAt`, `openSimpleGit` and `runGitWithTimeout` never start this computer's git for a remote folder, and,
+  with a POSIX shell and git, the real scripts: output past a frame byte for byte and every reply under the
+  frame cap, binary and multi-byte text, a hostile argument, and no index lock taken.
+  `tests/unit/remote-host-git-parity.test.ts` reads one real repository locally and through the host and compares
+  the file lists and counts in every scope, file content, images, the branch header and the fingerprint.
+  `tests/unit/diff-watcher-remote.test.ts` pins the poll (baseline, one fire per change, the refresh after an
+  outage, no overlap, one poll for many subscribers, no `fs.watch` on the stand-in).
+- **Tests (transcripts):** `tests/unit/remote-transcript-tail.test.ts` pins the file tail on real files (the
+  backfill, the pace, a chunk edge inside a multi-byte character, a replaced or emptied file, the unpaced
+  last pass, a search's depth, order, backoff and last look, no symlink followed) and Claude's declared
+  file, and `tests/unit/remote-session-relay.test.ts` runs the whole path through the real link and helper:
+  a copy that grows, a file that appears late, the end of the file in the copy when the session is
+  released, a path outside the mirror and the roots refused, a chunk written at its offset, a stale longer
+  copy emptied, a search landing at the registered path, an older program that ignores a search, and a
+  resume's folder copied on the host.
+  `tests/unit/remote-transcript-sources.test.ts` pins late registration, the id from an index and when it
+  refuses one, the export's schedule, staging and reset on a fake host, and on POSIX the real script through
+  the real helper (past a frame's cap, a failed or empty export, a hostile argument). `<agent>-ssh-transcript`
+  tests read real captures through the real readers. `remote-transcript-fixed-path-agents.test.ts` pins the
+  files of the CLIs whose path follows from the id and folder (Qwen, Grok, Antigravity) against each CLI's own
+  layout, and that `locateSessionHistoryFile` finds the copy once it has arrived and never waits for it.
+  `remote-transcript-host-agents.test.ts` does the same for Codex, Gemini, Copilot, Aider and Droid, on real
+  captures, with a Gemini slug that is not the folder's name and an id that is no plain name. An
+  adapter that declares a transcript for a host must let its locator answer from the mirror: a locator that
+  returns null for any host reads the copy as absent. `resume-conversation-guard-ssh.test.ts` pins `unknown`
+  whatever copy this computer holds, and `register-all-command-terminal-history.test.ts` the kept row.
+  `tests/unit/remote-transcript-real-cli.test.ts` runs real CLIs end to end, only in the rig
+  (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed. `scripts/ssh-link-rig.mjs`,
+  which `ssh-rig.yml` runs, takes an export past a frame's cap across a real `ssh` killed partway.
+- **Rig (removal, by hand):** `node scripts/ssh-link-rig.mjs --client removal --work <dir>` runs what only a host can
+  prove on a real sshd: a Remove's leftover agents hung up by a new link, only those of the hidden projects, with
+  the hangup reaching the process under the shell, and a sign-in change refused with the only key left in place, or
+  accepted with the old key really off `authorized_keys`. Needs Docker, so no CI job runs it.
+- **Rig (passphrase, by hand):** `node scripts/ssh-passphrase-rig.mjs --work <dir>` runs the real
+  `captureKeyPrompt` and the real `ssh` against a real `sshd`: a passphrase key prints ssh's own prompt, a key
+  the server does not know prints nothing, a key with no passphrase connects. Needs Docker. Unit tests:
+  `tests/unit/ssh-key-prompt.test.ts` (the helper run by a real shell, an `&` in a Windows key path) and the
+  refusal cases in `tests/unit/remote-host-service.test.ts`.
+- **Rig (MCP, by hand):** `node scripts/ssh-link-rig.mjs --client mcp --work <dir>` runs the real bridge script
+  under the host's own `sh`, over the real link, helper and `ssh`, with the connection cut on purpose: an
+  ordinary call, a call the link drops under (one answer, one run), a call nobody takes (an error for its id,
+  and the frame delivered late after the link returns runs nothing), an answer past the frame, a request past
+  the limit, and the real 30-second wait with the app away. 12 of 12 on a real `sshd`. Needs Docker.
+- **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
+  (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
+  `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only
+  once a server listens, a port held here is blocked without starting `ssh`, retry with backoff, and that
+  every `ssh` is ended on removal, when a port leaves the wanted set, and on exit.
+  `tests/unit/remote-port-forward-plan.test.ts` pins the wanted set from the ledger and project rows, and
+  `tests/unit/remote-host-router.test.ts` the path through the router and the helper.
+- **Tests (work on the host):** `tests/unit/remote-host-transfer.test.ts` runs the transfer scripts on
+  a real shell (binary past a frame, a hostile name, every refusal), and `remote-run-script.test.ts`
+  runs a script through the helper's real runner on POSIX. `remote-prompt-paths.test.ts` pins the
+  variables, the copy and the note, and `workflow-agent-remote.test.ts` a workflow agent's start and
+  what it may read. `remote-host-service.test.ts`, `remote-host-router.test.ts` and
+  `pty-host-client-remote-pid.test.ts` pin a long request's wait through all three layers.
+- **Tests (agent inventory):** `tests/unit/remote-host-agent-detection.test.ts` pins the three
+  answers (found with the version; missing only on the helper's "could not start" or exit 127; a
+  dropped link, a timeout and a refusal as unknown with the reason), that the host's inventory never
+  calls a local `detect`, that only a whole answer is kept, that a link coming back, a forced refresh
+  and another host each ask again, and that a spawn is refused with the host and CLI named on
+  `missing` and goes on for `unknown`. `tests/ui/add-remote-project.spec.ts` pins the Agent tab for a
+  remote project (the host's version, a read-only path, and "Not checked" in place of "Not found").
+- **Tests (resume on connect):** `tests/unit/project-open-lifecycle.test.ts` pins that a host's first
+  connection recovers its opened remote projects (resume and first spawn, no sweep) and leaves
+  others alone; `tests/unit/remote-hosting-status.test.ts` that the hook fires once per host per run.
+- **Test (link down):** `tests/unit/remote-link-down-no-mutation.test.ts` runs cold-open recovery
+  with the host out of reach and asserts a paused remote task stays paused, whether the resume fails
+  to prepare (the case a down link reaches) or the spawn throws, and that a local spawn that throws
+  still retires its record. A PTY spawn that reaches the host and fails resolves as an exited session
+  for local and remote alike, and is not covered.
+  **Gap:** the other board operations (prune, stale-resource cleanup, auto-spawn) have no remote
+  test yet. A remote task's worktree path is an empty stand-in folder here, which exists, and that is
+  what keeps them from demoting it: nothing proves the host's worktree absent, and `pathPresence`
+  over `existsSync` is otherwise held by review. Do not delete the stand-in without the host's
+  worktree.
+- **Review:** `/code-review` flags a new `existsSync`, `fs` read or pid use on a path or session that
+  may belong to a remote project, and a new spawn path that reads `process.env` or `process.platform`
+  for a host.
+
+## Scope
+
+The link, helper, router and host service under `src/main/remote/`, the remote branches of the spawn
+flow, client and quit path, and the host table. The renderer's connection indicators (the host chip, the
+board strip) and the SSH tab's Add host flow follow the UI conventions, like any other renderer surface.

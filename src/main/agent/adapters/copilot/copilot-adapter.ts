@@ -9,7 +9,7 @@ import { CopilotCommandBuilder, KANGENTIC_MCP_SERVER_NAME, copilotModelFlagValue
 import { removeSessionConfig } from './hook-manager';
 import { CopilotStatusParser } from './status-parser';
 import { CopilotStreamParser, prettifyModelId } from './stream-parser';
-import { SESSION_CONFIG_DIR_NAME, locateCopilotEventsFile } from './session-state';
+import { SESSION_CONFIG_DIR_NAME, isSessionFolderName, kangenticSessionFolders, locateCopilotEventsFile, sessionEventsFile, sessionStateDir } from './session-state';
 import {
   copilotTranscriptToolCounts,
   copilotTranscriptUsage,
@@ -28,13 +28,26 @@ import type {
 } from '../../agent-adapter';
 import type {
   AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities,
-  TranscriptToolCounts, TranscriptUsage,
+  RemoteResumeSeed, StoredCliTarget, TranscriptToolCounts, TranscriptUsage,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import { copilotHomeDir } from './copilot-home';
 import { cliPathForTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
+
+/**
+ * The session-folder files a Copilot command needs on a remote host, relative to the session folder
+ * (`hook-manager.ts` `writeSessionConfig` writes the first four, `command-builder.ts` the last).
+ */
+export const COPILOT_REMOTE_SESSION_FILES: readonly string[] = [
+  'copilot-config/hooks/kangentic.json',
+  'copilot-config/settings.json',
+  'copilot-config/config.json',
+  'copilot-config/mcp-config.json',
+  'copilot-mcp.json',
+];
 
 /** Where the transcript readers find a session's event log: a path, or the session to locate. */
 interface TranscriptSourceInput {
@@ -99,6 +112,55 @@ export class CopilotAdapter implements AgentAdapter {
   readonly defaultPermission: PermissionMode = 'acceptEdits';
   /** A Copilot installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a remote host over SSH (#913) the CLI is `copilot` from the host's own login PATH. */
+  readonly remoteCliName = 'copilot';
+
+  /**
+   * The files of the user's `~/.copilot` that a session's config home is seeded from
+   * (`writeSessionConfig`): the signed-in account and trusted folders, the settings and the MCP
+   * servers. Declared so a host's copies are pulled into the empty local mirror
+   * (`copilotHomeDir(place)`) before the command is built. Nothing is edited in place, so nothing is
+   * pushed back to the host's own `~/.copilot`: the changes land in the session's config home.
+   * A `COPILOT_HOME` set on the host is not read; the default `~/.copilot` is.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.copilot/config.json', '.copilot/settings.json', '.copilot/mcp-config.json'],
+      project: [],
+    };
+  }
+
+  /**
+   * Every file under the session folder that the command names and the host must hold before Copilot
+   * starts, relative to it. The relay pushes these (owner-only) beside the settings, MCP config and
+   * hook script it always sends. `--config-dir` points at `copilot-config` and
+   * `--additional-mcp-config` at `copilot-mcp.json`; a file the command did not write is skipped.
+   */
+  remoteSessionFiles(): readonly string[] {
+    return COPILOT_REMOTE_SESSION_FILES;
+  }
+
+  /**
+   * The event log on a host. `--config-dir` makes the session's own folder its config home, so the log is
+   * in the session folder, not the home, and the copy lands at the same place under the shell folder, where
+   * `locateCopilotEventsFile` looks through the project's session records.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cliTarget: StoredCliTarget; sessionDirectory: string }): readonly string[] {
+    if (options.cliTarget.kind !== 'ssh' || !isSessionFolderName(options.agentSessionId)) return [];
+    return [sessionEventsFile(path.join(options.sessionDirectory, SESSION_CONFIG_DIR_NAME), options.agentSessionId)];
+  }
+
+  /**
+   * A resume on a host starts in a new config home, and without the session's folder Copilot opens an empty
+   * conversation under the same id. `seedResumedSessionState` does this on this computer. On a host the
+   * folder Copilot reads is there, so the copy runs there. The newest copy here says which record held it.
+   */
+  remoteResumeSeed(options: { agentSessionId: string; cliTarget: StoredCliTarget; sessionDirectory: string }): RemoteResumeSeed | null {
+    if (options.cliTarget.kind !== 'ssh' || !isSessionFolderName(options.agentSessionId)) return null;
+    const configHome = path.join(options.sessionDirectory, SESSION_CONFIG_DIR_NAME);
+    const source = kangenticSessionFolders(path.dirname(options.sessionDirectory), options.agentSessionId, configHome)[0];
+    return source ? { source, target: sessionStateDir(configHome, options.agentSessionId) } : null;
+  }
 
   private readonly detector = new CopilotDetector();
   private readonly commandBuilder = new CopilotCommandBuilder();

@@ -68,8 +68,168 @@ export interface Project {
   default_effort: string | null;
   group_id: string | null;
   position: number;
+  /**
+   * Set when the project's repo and agents live on an SSH host (#913). `path` is then a folder on
+   * THIS computer that holds the project's local files (config, logs, session staging), and the
+   * repo itself is `remote.path` on `remote.hostId`. Absent or null for a project on this computer.
+   */
+  remote?: ProjectRemote | null;
   last_opened: string;
   created_at: string;
+}
+
+/**
+ * Which machine a path, URL, pid or port in a tool's answer belongs to: the host an agent works on, or this
+ * computer. A project on this computer answers `local` for everything.
+ */
+export type ValueLocation = 'host' | 'local';
+
+/** Where a remote project's repo lives (#913). */
+export interface ProjectRemote {
+  hostId: string;
+  /** An absolute folder on the host. */
+  path: string;
+}
+
+/**
+ * A Linux machine Kangentic runs agents on over SSH (#913). A host is trusted like this computer, and
+ * removing it ends its access. Holds no password and no key material: a key lives in a file.
+ */
+export interface SshHost {
+  id: string;
+  /** What the user calls it. */
+  name: string;
+  /** What `ssh` is given: a name from the user's SSH config, `user@host`, or an `ssh://` URL. */
+  destination: string;
+  /** A private key file this host signs in with (a chosen key, copied, or one Kangentic created), or null for the user's own SSH setup. */
+  key_path: string | null;
+  /** Kangentic made the key at `key_path` and deletes it, and its line on the host, when the host is removed. */
+  key_created: boolean;
+  created_at: string;
+  /** Set when the host was removed: its row is kept so adding the same address again brings its projects back. Null for a host in use. */
+  removed_at: string | null;
+  /** Added back after a removal, with its projects not started yet: they start with its first connection, a restart between included. */
+  reveal_pending: boolean;
+}
+
+/**
+ * Where a host's connection stands, for the settings row and a project's chip. `unreachable` is a
+ * connection that has not come up for a while (or a setup step that failed), with the reason in `detail`.
+ */
+export type SshHostConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'unreachable' | 'stopped';
+
+export interface SshHostStatus {
+  host: SshHost;
+  state: SshHostConnectionState;
+  /** ssh's or the helper's own words about the state, shown as given, or null. */
+  detail: string | null;
+  /** UTC ISO time the state last changed, or null before the first. */
+  since: string | null;
+  /** How many Kangentic projects live on this host. */
+  projectCount: number;
+}
+
+/** The Kangentic program on a host: which version, how long it has run, how many terminals it holds. */
+export interface SshHostProgram {
+  /** The program's version, or null when the host cannot tell. */
+  version: string | null;
+  /** This app's version, so the row can say when the host's program is an older one. */
+  appVersion: string | null;
+  /** UTC ISO time the program started. */
+  startedAt: string;
+  /** Terminals the program holds that are still running. */
+  liveSessions: number;
+  /** Versions of the program installed on the host, oldest first. */
+  installedVersions: string[];
+}
+
+export interface SshClientStatus {
+  found: boolean;
+  /** ssh's own version line, such as `OpenSSH_9.5p1`. */
+  version: string | null;
+  error: string | null;
+}
+
+export interface SshHostKeyProbe {
+  hostname: string;
+  port: number;
+  keyType: string;
+  /** `SHA256:...`, the form a terminal prints. */
+  fingerprint: string;
+  /** For a host whose key changed: the fingerprint the user trusted before, when known. */
+  previousFingerprint?: string | null;
+}
+
+/** How Kangentic signs in to a host. None of these asks for a passphrase. */
+export type SshSignIn =
+  /** The user's own SSH setup: their config, agent and keys, exactly as a terminal uses them. */
+  | { method: 'config' }
+  /** A private key file the user chose; Kangentic keeps a copy in its own folder. */
+  | { method: 'key-file'; keyFilePath: string }
+  /** Make a key for this host and add it using the host's password, which is used once and never stored. */
+  | { method: 'create-key'; password: string };
+
+export interface SshHostAddInput {
+  name: string;
+  destination: string;
+  signIn: SshSignIn;
+  /** The fingerprint the user saw and agreed to. The host must still present it. */
+  expectedFingerprint: string;
+}
+
+/** What the host row's edit form saves. The name alone saves at once; a new address or a new sign-in is a change of how the host is reached. */
+export interface SshHostUpdateInput {
+  name: string;
+  destination: string;
+  /** Required with a new address: the fingerprint the user saw and agreed to for it. */
+  expectedFingerprint?: string;
+  /** Set to change how Kangentic signs in. Left out, the current sign-in stays. */
+  signIn?: SshSignIn;
+}
+
+/** A named host in the user's `~/.ssh/config`, offered as an address in Add host. */
+export interface SshConfigHost {
+  /** What the `Host` line names: the address to type, which `ssh` resolves. */
+  alias: string;
+  /** Its `HostName`, when the block has one. */
+  hostName: string | null;
+  /** Its `User`, when the block has one. */
+  user: string | null;
+}
+
+/** One folder inside a listed directory on a host. */
+export interface SshDirectoryEntry {
+  name: string;
+  /** Whether it is a git repository, so the picker can tag it. */
+  isGitRepo: boolean;
+}
+
+/** The folders directly inside one directory on a host, for the Directory field's suggestions and its Browse list. */
+export interface SshDirectoryListing {
+  /** The directory as the host resolved it. */
+  path: string;
+  /** False for a directory outside the user's home, which Kangentic does not work in and does not list. */
+  insideHome: boolean;
+  /** False when the directory is not there, as a half-typed path is not. */
+  exists: boolean;
+  /** Visible folders only, sorted by name. */
+  entries: SshDirectoryEntry[];
+  /** True when the directory holds more folders than `entries` shows. */
+  truncated: boolean;
+}
+
+export interface SshRemoteFolderProbe {
+  exists: boolean;
+  /** The folder as the host resolved it, when it exists. */
+  path: string;
+  isGitRepo: boolean;
+}
+
+export interface SshHostCreateInput {
+  name: string;
+  destination: string;
+  key_path?: string | null;
+  key_created?: boolean;
 }
 
 /**
@@ -206,7 +366,27 @@ export interface AgentCallUsage {
  * `\\wsl.localhost\<distro>\...` path. The main process resolves the full
  * target (`src/main/agent/shared/cli-target.ts`) from this.
  */
-export interface StoredCliTarget {
+export type StoredCliTarget = StoredWslCliTarget | StoredSshCliTarget;
+
+/**
+ * A session that ran on a remote host over SSH (#913), as its row keeps it: enough to tell which host
+ * ran it (a conversation lives in that host's home, so only that host can resume it) and to map paths
+ * back to this computer afterwards.
+ */
+export interface StoredSshCliTarget {
+  kind: 'ssh';
+  hostId: string;
+  /** The user's home on the host. */
+  home: string;
+  shellName: string;
+  /** This computer's folder standing in for the host's home, for readers; empty until a mirror exists. */
+  localHome: string;
+  /** Local folder to host folder pairs, the shell folder first. */
+  roots: Array<{ local: string; host: string }>;
+  linuxCliPath?: string;
+}
+
+export interface StoredWslCliTarget {
   kind: 'wsl';
   distro: string;
   /**
@@ -243,6 +423,14 @@ export interface AgentDetectionInfo {
   unsupportedTarget?: boolean;
   /** True when this agent can run a CLI installed inside a WSL distro. */
   supportsWslCli?: boolean;
+  /** Set when the inventory was read for a remote project: the host the CLI was looked for on,
+   *  in place of this computer. `path` is then the CLI's name there, and `version` the host's. */
+  hostId?: string;
+  /** What the host said of this CLI: found, not installed there, or unknown because the ask failed
+   *  (`detectionError` holds the reason). Only set with `hostId`. */
+  hostStatus?: 'found' | 'missing' | 'unknown';
+  /** True when this agent cannot run on a host yet (it declares no CLI name there). */
+  unsupportedOnHost?: boolean;
   /** True = logged in, false = installed but not authenticated, null/undefined = N/A or not probed. */
   authenticated?: boolean | null;
   permissions: AgentPermissionEntry[];
@@ -1581,6 +1769,14 @@ export interface SessionRecord {
   total_output_tokens: number | null;
   model_id: string | null;
   model_display_name: string | null;
+  /**
+   * Context occupancy the session last reported (the card's percent), captured
+   * with the other metrics. An agent a host kept running writes nothing until
+   * it next acts, so a take-back seeds the bar from this rather than 0%. Null
+   * when occupancy was never known. Distinct from `total_input_tokens`, which
+   * is a token count some CLIs never paint.
+   */
+  used_percentage: number | null;
   /**
    * Model the session was spawned or resumed with (the `--model` flag value;
    * null = agent default / no flag). Ground truth for the column-transition
@@ -6509,6 +6705,8 @@ export interface WorkflowSummary {
   agent: WorkflowAgentSummary | null;
   /** The tasks a running workflow is stalled on, and why, for the header. Empty otherwise. */
   stalledTasks: WorkflowStalledTask[];
+  /** Projects holding its tasks that are hidden because their SSH host was removed: why it is paused and cannot resume. */
+  hiddenBoards: string[];
 }
 
 /** A task a running workflow is stalled on. */
@@ -6744,6 +6942,8 @@ export interface ProjectCreateInput {
   default_agent?: string;
   default_model?: string | null;
   default_effort?: string | null;
+  /** A project whose repo is on an SSH host (#913): `path` is its local shell folder. */
+  remote?: ProjectRemote | null;
 }
 
 /** Optional overrides for project creation at open-by-path time (the Add project dialog). */
@@ -6758,6 +6958,14 @@ export interface SelectFolderOptions {
   buttonLabel?: string;
   /** macOS only; ignored on Windows/Linux. */
   message?: string;
+  defaultPath?: string;
+}
+
+/** Optional native file-picker dialog customization (dialog.selectFile). */
+export interface SelectFileOptions {
+  title?: string;
+  buttonLabel?: string;
+  /** The folder the dialog opens in. A leading `~` is the home folder. A folder that is not there falls back to home. */
   defaultPath?: string;
 }
 
@@ -6798,6 +7006,57 @@ export interface ProjectEnsureGitResult {
   /** True only when `git init` actually ran. */
   created: boolean;
   error: string | null;
+}
+
+/** Runs a program on an SSH host to completion. A non-zero exit is an answer, not a rejection. */
+export type RemoteProgramRunner = (file: string, args: readonly string[]) => Promise<{ code: number | null; stdout: string }>;
+
+/** A file a CLI on an SSH host lists its sessions in. See `AgentParser.remoteTranscriptIndex`. */
+export interface RemoteTranscriptIndex {
+  /** The file, as the path its reader builds in this computer's mirror of the host's home. */
+  path: string;
+  /** The folder on the host this session runs in. Two sessions in one folder cannot tell their new lines apart. */
+  folder: string;
+  /** The ids of the live sessions in `folder` that lines of the file name. A torn last line is skipped. */
+  sessionIdsIn(text: string): readonly string[];
+}
+
+/** How to export a transcript on an SSH host. See `AgentParser.remoteTranscriptSnapshot`. */
+export interface RemoteTranscriptSnapshot {
+  /** The CLI, as the host's shell finds it. Its standard output is the export. */
+  file: string;
+  args: readonly string[];
+  /** The folder on the host it runs in. */
+  cwd: string;
+  /** Where the copy goes, in this computer's mirror of the host's home. */
+  localPath: string;
+}
+
+/**
+ * A transcript whose name only the host can say: the CLI puts a timestamp in it that the session's id does
+ * not give. The host walks `directory`, newest name first, for a file `fileName` matches, and sends its bytes
+ * to `localPath`. The host never says what it found, so nothing it sends picks a path on this computer.
+ */
+export interface RemoteTranscriptSearch {
+  /** The folder to search, as the path its reader builds in this computer's mirror of the host's home. */
+  directory: string;
+  /** How many levels of subfolders below `directory` are searched. */
+  depth: number;
+  /** The source of a regular expression, tested against a file's name. */
+  fileName: string;
+  /** Where the copy goes on this computer, under a name the agent's own readers match. */
+  localPath: string;
+}
+
+/** A transcript file by its path, or the search that finds it. See `AgentParser.remoteTranscriptFiles`. */
+export type RemoteTranscriptFile = string | RemoteTranscriptSearch;
+
+/** A folder on the host to copy before the agent starts. See `AgentParser.remoteResumeSeed`. */
+export interface RemoteResumeSeed {
+  /** The folder to copy, as this computer names it. */
+  source: string;
+  /** Where the copy goes, as this computer names it. Left alone when it is already there. */
+  target: string;
 }
 
 /**
@@ -6871,6 +7130,50 @@ export interface AgentParser {
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
   /**
+   * Optional: files this agent's command reads from the session's own folder beyond the three the
+   * remote session relay always sends (`settings.json`, `mcp.json`, the hook script), as plain paths
+   * relative to that folder with `/` separators (`copilot-config/config.json`). For a CLI on an SSH
+   * host the relay writes each one that exists to the same place on the host before the agent starts
+   * (#913). Absent for an agent whose command needs nothing more.
+   */
+  remoteSessionFiles?(): readonly string[];
+  /**
+   * Optional: the files this agent keeps appending to for a conversation (its transcript), as the path
+   * its own readers build: in this computer's mirror of the host's home, or under the project's shell folder
+   * for a file the CLI keeps in the session or working folder (#913). The host sends each one's bytes as they
+   * are written, and they land at the same offset here, so the conversation viewer, the search index and the
+   * token ledger read a remote conversation as they read a local one. A file whose name the id does not give
+   * is declared as a search (`RemoteTranscriptSearch`). `cwd` is the session's working folder as this computer
+   * names it, `sessionDirectory` its own session folder, and `cliTarget` the host. Absent for an agent whose
+   * transcript is not one plain file. Asked again whenever the session's id arrives or its index grows, so a
+   * file named only after the session starts is picked up then, and `[]` means nothing is known yet.
+   */
+  remoteTranscriptFiles?(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget; sessionDirectory: string }): readonly RemoteTranscriptFile[];
+  /**
+   * Optional: a folder to copy on the host before the agent starts, for a CLI whose resume needs what an
+   * earlier session left in that session's own folder. Null when there is nothing to bring over. A failed
+   * copy is logged and the session still starts.
+   */
+  remoteResumeSeed?(options: { agentSessionId: string; cliTarget: StoredCliTarget; sessionDirectory: string }): RemoteResumeSeed | null;
+  /**
+   * Optional: a file the CLI lists its sessions in, which says where a transcript is and what a fresh
+   * session's id is, for an agent that prints neither while it runs. It is tailed from the session's start,
+   * with or without an id.
+   */
+  remoteTranscriptIndex?(options: { cwd: string; cliTarget: StoredCliTarget }): RemoteTranscriptIndex | null;
+  /**
+   * Optional: how to copy a transcript that is no plain file, for an agent that keeps it in a database
+   * shared by every session. The CLI's own export runs on the host and the result is copied whole, each time
+   * it changes. `runProgram` runs a program on the host, for what the command depends on (the CLI's major
+   * version). Null while no export can be named, and asked again later.
+   */
+  remoteTranscriptSnapshot?(options: {
+    agentSessionId: string;
+    cwd: string;
+    cliTarget: StoredCliTarget;
+    runProgram: RemoteProgramRunner;
+  }): Promise<RemoteTranscriptSnapshot | null>;
+  /**
    * Optional: the keys that move the agent's prompt cursor to the end of the
    * input, measured on the real CLI. See `AgentAdapter.promptEndKeys`.
    */
@@ -6919,6 +7222,12 @@ export interface AgentParser {
    * `AgentAdapter.attachSession` for full contract.
    */
   attachSession?(context: SessionContext): SessionAttachment | void;
+  /**
+   * Optional: occupancy and live model from a chunk of the agent's own
+   * output (the current screen on a take-back). Returns a usage patch or
+   * null when this chunk names none. See `AgentAdapter.usageFromOutput`.
+   */
+  usageFromOutput?(data: string): SessionUsagePatch | null;
 }
 
 /**
@@ -7338,6 +7647,15 @@ export interface SessionContext {
    * produces parseable output.
    */
   applyUsage(usage: Partial<SessionUsage>): void;
+
+  /**
+   * This process is taking back an agent it did not start (a quit left it
+   * running on a host). Adapters whose `attachSession` asks this computer's
+   * CLI for a seed (`agent about`) must skip that: the answer is this
+   * account's default, not the live session, and would replace the model the
+   * record last saw.
+   */
+  readonly takingBack?: boolean;
 }
 
 /**
@@ -7677,6 +7995,14 @@ export interface QueueSnapshot {
   global: QueueTask[];
 }
 
+/** Where a spawn runs when it is on a remote host, resolved by the caller from the host's own answers. */
+export interface SpawnRemote {
+  hostId: string;
+  /** The folder on the host the PTY starts in, verbatim: nothing here checks it exists. */
+  cwd: string;
+  /** The host's login shell by program name (zsh, fish, nu, ...), which decides how a typed command is quoted. */
+  shellName: string;
+}
 /**
  * What started a session, as a launch failure report tags it. A fixed list, so
  * the value is safe on an event. `retry` is the one automatic second launch a
@@ -7843,6 +8169,13 @@ export interface SpawnSessionInput {
    * readers and its reap.
    */
   cliTarget?: StoredCliTarget | null;
+  /**
+   * The session runs on a remote host over SSH (#913), as resolved by the caller before the spawn.
+   * `performSpawn` then sends the host a login shell, a path on the host and an environment of its
+   * own making, and never this computer's shell, cwd or environment (see `planRemoteSpawn`). `cwd`
+   * stays the local shell folder, where the session's own files live.
+   */
+  remote?: SpawnRemote;
   /**
    * Start the session idle rather than seeded as thinking, for a fresh task
    * spawn that carries no prompt: an agent launched while its worktree's setup
@@ -9179,6 +9512,8 @@ export interface ElectronAPI {
   // Dialog
   dialog: {
     selectFolder: (options?: SelectFolderOptions) => Promise<string | null>;
+    /** OS file picker for one file. Returns the path, or null on cancel. */
+    selectFile: (options?: SelectFileOptions) => Promise<string | null>;
   };
 
   // Notifications
@@ -9520,6 +9855,56 @@ export interface ElectronAPI {
      *  xterm that would fit the PTY to its strip. */
     getTerminalStreams: () => Promise<string[]>;
     onTerminalStreamsChanged: (callback: (sessionIds: string[]) => void) => () => void;
+  };
+
+  // SSH hosts (#913): machine-global, like the mobile bridge, not project-scoped.
+  ssh: {
+    /** The `ssh` program on this computer, or the raw error when it cannot be started. */
+    detectClient: () => Promise<SshClientStatus>;
+    /** Every host with its connection state, in the order they were added. */
+    listHosts: () => Promise<SshHostStatus[]>;
+    /**
+     * Learn the key a host presents, without trusting it, so the user can compare its fingerprint.
+     * Rejects with ssh's own words when the host cannot be reached.
+     */
+    probeHostKey: (destination: string) => Promise<SshHostKeyProbe>;
+    /** The named hosts in this computer's `~/.ssh/config`, for the address field's suggestions. No file reads as none. */
+    listConfigHosts: () => Promise<SshConfigHost[]>;
+    /**
+     * Add a host: trust the key the user was shown (refused if it changed), set up the way Kangentic
+     * signs in, install Kangentic's small program on the host, and start its connection. Rejects with
+     * the failing step's own words, having changed nothing that step cannot undo.
+     */
+    addHost: (input: SshHostAddInput) => Promise<SshHostStatus>;
+    /** Remove a host: its projects are hidden and their agents suspended, and nothing is deleted. Adding the same address again brings them back. */
+    removeHost: (hostId: string) => Promise<void>;
+    /** Delete Kangentic's boards, tasks and history for a host's projects. Local only, so it works with the host down. The host stays, and nothing on it is touched. */
+    clearHostData: (hostId: string) => Promise<void>;
+    /**
+     * Change a host's name, address or sign-in in place. Its projects keep their directories. A new address needs the
+     * key the user was shown for it, and an address or sign-in change is refused while terminals run on the host.
+     * Rejects with the failing step's words, having kept the old address and sign-in.
+     */
+    updateHost: (hostId: string, input: SshHostUpdateInput) => Promise<SshHostStatus>;
+    /** Try the connection again now, installing Kangentic's program on the host first if it is not there. */
+    reconnectHost: (hostId: string) => Promise<SshHostStatus>;
+    /** What the host's program reports. Rejects while the host is not connected, with the reason. */
+    hostProgram: (hostId: string) => Promise<SshHostProgram>;
+    /** Whether a key file the user chose can be used. Rejects with the reason, such as a passphrase. */
+    checkKeyFile: (keyFilePath: string) => Promise<void>;
+    /** The key a host whose key changed presents now, and the fingerprint trusted before when it can be read. Trusts nothing. */
+    probeChangedKey: (hostId: string) => Promise<SshHostKeyProbe>;
+    /** Trust the key the user was shown for a host whose key changed: forget the old one, record the new one, connect. */
+    trustNewKey: (hostId: string, shownFingerprint: string) => Promise<SshHostStatus>;
+    /** Whether a folder exists on a host, for the Add project dialog. Rejects with the reason when it cannot say. */
+    probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
+    /**
+     * The folders directly inside a directory on a host (`~/` is its home). A directory that is not there reads
+     * as `exists: false`, not an error, since a half-typed path is not there; a host that cannot be asked rejects
+     * with the reason.
+     */
+    listDirectories: (hostId: string, directoryPath: string) => Promise<SshDirectoryListing>;
+    onHostsChanged: (callback: () => void) => () => void;
   };
 
   // Board Config
@@ -10678,7 +11063,9 @@ export type SearchHit =
     })
   | (SearchHitBase & {
       kind: 'project';
+      /** The project's folder as `location` names it: on a remote project, the host's path. */
       projectPath: string;
+      location: ValueLocation;
     })
   | (SearchHitBase & {
       kind: 'conversation';
@@ -11108,8 +11495,12 @@ export interface IpcLogEntry {
  * Includes the main checkout plus every git worktree. Pure read-only.
  */
 export interface WorktreeRecord {
-  /** Absolute path to the worktree root. */
+  /** Absolute path to the worktree root, as `location` names it: on a remote project, the host's path. */
   path: string;
+  /** Which machine `path` is on. */
+  location: ValueLocation;
+  /** This computer's empty stand-in for the worktree. Only on a remote project, and absent for a worktree it has none for. */
+  localPath?: string;
   /** Currently checked-out branch name, or null for detached HEAD. */
   branch: string | null;
   /**
@@ -11149,8 +11540,14 @@ export interface WorktreeRecord {
 export interface ProjectWorktrees {
   projectId: string;
   projectName: string;
+  /** The project's folder as `location` names it: on a remote project, the host's path. */
   projectPath: string;
+  location: ValueLocation;
+  /** This computer's folder for a remote project. Only on a remote project. */
+  shellFolder?: string;
   worktrees: WorktreeRecord[];
+  /** Why a remote project's host could not list them. An empty `worktrees` with this set says nothing about the host. */
+  error?: string;
 }
 
 

@@ -85,6 +85,8 @@ describe('the workflow engine host and links to gone tasks', () => {
   let engine: ReturnType<typeof registerWorkflowEngine>;
   let projects: Array<{ id: string; name: string; path: string }>;
   let emitBoardChanged: ReturnType<typeof vi.fn>;
+  /** Boards hidden because their SSH host was removed: out of the list, with their database still there. */
+  let hidden: Set<string>;
 
   function database(projectId: string): Database.Database {
     const projectDatabase = openTestDatabase();
@@ -159,10 +161,13 @@ describe('the workflow engine host and links to gone tasks', () => {
       { id: 'mobile', name: 'kangentic-mobile', path: '/mock/mobile' },
     ];
     emitBoardChanged = vi.fn();
+    hidden = new Set();
     const context = {
       projectRepo: {
-        list: () => projects,
-        getById: (id: string) => projects.find((project) => project.id === id),
+        list: () => projects.filter((project) => !hidden.has(project.id)),
+        listHidden: () => projects.filter((project) => hidden.has(project.id)),
+        getById: (id: string) => projects.find((project) => project.id === id && !hidden.has(id)),
+        isHidden: (id: string) => hidden.has(id),
       },
       sessionManager: Object.assign(new EventEmitter(), { getFreeAgentSlots: () => 10 }),
       boardEvents: { onBoardChanged: vi.fn(), emitBoardChanged },
@@ -180,6 +185,59 @@ describe('the workflow engine host and links to gone tasks', () => {
     vi.restoreAllMocks();
     for (const projectDatabase of harness.dbs.values()) (projectDatabase as Database.Database).close();
     harness.dbs.clear();
+  });
+
+  describe('a task on a board hidden because its host was removed', () => {
+    const doneOf = (projectId: string) => laneOf(projectId, (lane) => lane.role === 'done');
+
+    /** A running workflow whose one visible task is Done, and whose other task waits on the hidden mobile board. */
+    function workflowFinishedButForHiddenTask(): { workflowId: string; hiddenTaskId: string } {
+      const workflows = new WorkflowRepository(dbOf('home'));
+      const workflowId = workflows.create({ title: 'Usage budgets' }).id;
+      createTask('home', workflowId, 'Budget page', doneOf('home').id);
+      const hiddenTaskId = createTask('mobile', workflowId, 'Budget API', planningOf('mobile').id);
+      workflows.markStarted(workflowId);
+      hidden.add('mobile');
+      return { workflowId, hiddenTaskId };
+    }
+
+    it('never completes the workflow while that task is unfinished, running or paused', async () => {
+      const { workflowId } = workflowFinishedButForHiddenTask();
+      const workflows = new WorkflowRepository(dbOf('home'));
+
+      await advance(DEBOUNCE_MS);
+      expect(workflows.getById(workflowId)?.state).toBe('running');
+
+      workflows.setState(workflowId, 'paused');
+      engine.wake();
+      await advance(DEBOUNCE_MS);
+      expect(workflows.getById(workflowId)?.state).toBe('paused');
+    });
+
+    it('completes it once the host is back and the task is done', async () => {
+      const { workflowId, hiddenTaskId } = workflowFinishedButForHiddenTask();
+      await advance(DEBOUNCE_MS);
+
+      hidden.delete('mobile');
+      dbOf('mobile').prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(doneOf('mobile').id, hiddenTaskId);
+      engine.wake();
+      await advance(DEBOUNCE_MS);
+
+      expect(new WorkflowRepository(dbOf('home')).getById(workflowId)?.state).toBe('done');
+    });
+
+    it('starts nothing on the visible boards of a workflow it holds', async () => {
+      const workflows = new WorkflowRepository(dbOf('home'));
+      const workflowId = workflows.create({ title: 'Usage budgets' }).id;
+      const readyTaskId = createTask('home', workflowId, 'Budget page', todoOf('home').id);
+      createTask('mobile', workflowId, 'Budget API', planningOf('mobile').id);
+      workflows.markStarted(workflowId);
+      hidden.add('mobile');
+
+      await advance(DEBOUNCE_MS);
+
+      expect(startsOf(readyTaskId)).toHaveLength(0);
+    });
   });
 
   it('holds a task while its blocker is on a board and not done', async () => {

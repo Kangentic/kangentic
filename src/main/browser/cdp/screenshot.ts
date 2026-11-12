@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { WebContents } from 'electron';
+import type { ValueLocation } from '../../../shared/types';
 import {
   captureScreenshot,
   decodeImageDimensions,
@@ -141,6 +142,10 @@ export interface FileScreenshotResponse extends ScreenshotResponseBase {
   fileUri: string;
   /** Why the image is a file: past a byte budget, or the caller asked (`saveToFile`). */
   reason: 'over-inline-ceiling' | 'over-max-bytes' | 'requested';
+  /** Which machine `filePath` is on: the host, for a capture delivered to a remote project's agent. */
+  location?: ValueLocation;
+  /** This computer's copy of a capture delivered to a host. */
+  localFilePath?: string;
 }
 
 export type ScreenshotResponse = InlineScreenshotResponse | FileScreenshotResponse;

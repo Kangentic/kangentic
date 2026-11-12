@@ -18,6 +18,7 @@ import {
   TASK_TEMPLATE_VARS,
   TEMPLATE_VARIABLE_PATTERN,
   templateVarsFor,
+  templateUsesVar,
 } from '../../src/shared/task-template-vars';
 import { TASK_TEMPLATE_RESOLVERS, resolveTaskTemplateVars } from '../../src/main/agent/shared/task-template-resolvers';
 import { interpolateTaskTemplate } from '../../src/main/agent/shared/template-utils';
@@ -138,6 +139,23 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
       undocumented,
       `These chips are not documented in docs/architecture/system-overview.md:\n${undocumented.join('\n')}`,
     ).toEqual([]);
+  });
+});
+
+describe('templateUsesVar', () => {
+  it('is true for a template that names the keyword, wherever it sits', () => {
+    expect(templateUsesVar('Read {{attachments}} first', 'attachments')).toBe(true);
+    expect(templateUsesVar('{{task_xml}}{{attachments}}', 'attachments')).toBe(true);
+  });
+
+  it('is false for a template that does not name it', () => {
+    expect(templateUsesVar('Work on {{title}}', 'attachments')).toBe(false);
+    expect(templateUsesVar('no keywords at all', 'attachments')).toBe(false);
+  });
+
+  it('is false for a longer keyword that holds the same letters', () => {
+    expect(templateUsesVar('Read {{attachmentsList}}', 'attachments')).toBe(false);
+    expect(templateUsesVar('Read {{myattachments}}', 'attachments')).toBe(false);
   });
 });
 

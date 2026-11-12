@@ -21,6 +21,9 @@ export function formatWorkflow(view: WorkflowView): string {
     `Workflow "${workflow.title}" (id ${workflow.id}), ${describeState(workflow)}, revision ${workflow.revision}.`,
   ];
   if (workflow.brief) lines.push(`Brief: ${workflow.brief}`);
+  if (view.hiddenBoards.length > 0) {
+    lines.push(`Held: it has tasks on ${view.hiddenBoards.join(', ')}, whose SSH host was removed. Only adding the host again brings them back, and it cannot resume or complete until then. The tasks below are the ones that can be read.`);
+  }
   lines.push(describePlanApproval(view));
   if (view.tasks.length === 0) {
     lines.push('No tasks yet.');

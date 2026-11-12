@@ -126,6 +126,10 @@ msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task 
 msgstr "{value, select, automatic {Automatikus} other {Manuális}}, ehhez a feladathoz beállítva (a(z) {boardName} tábla {columnName} oszlopa: {columnValue, select, automatic {automatikus} other {manuális}})."
 
 #: src/shared/workflow-refusals.ts
+msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task cannot wait for itself."
 msgstr "Egy feladat nem várhat önmagára."
@@ -471,20 +475,24 @@ msgid "Give up after"
 msgstr "Feladás ennyi idő után"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Ugrás a következő futó ügynök- vagy parancsterminálhoz ebben a projektben."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Ugrás a következő futó ügynök- vagy parancsterminálhoz, projektet váltva, ha az egy másik projektben van."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Ugrás az előző futó ügynök- vagy parancsterminálhoz ebben a projektben."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Ugrás az előző futó ügynök- vagy parancsterminálhoz, projektet váltva, ha az egy másik projektben van."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -694,16 +702,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "Az első lehetőség a Következő oszlop: a feladat útvonalán vagy a táblán következő oszlop."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "Következő projekt"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "Következő terminál bármely projektben"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "Következő terminál ebben a projektben"
 
 #: src/shared/automation-describe.ts
 #, fuzzy
@@ -751,12 +762,14 @@ msgid "Notifies \"{title}\""
 msgstr "Értesít: „{title}”"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "Értesítést küld az asztalon és a telefonon."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "Értesítést küld az asztalon és a telefonon. Megnyitásakor megnyílik a feladat."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -867,12 +880,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "Az Új feladat párbeszédpanel megnyitása a táblán."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "A következő projekt megnyitása az oldalsáv sorrendjében."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "Az előző projekt megnyitása az oldalsáv sorrendjében."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -949,16 +964,19 @@ msgid "Previous column"
 msgstr "Előző oszlop"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "Előző projekt"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "Előző terminál bármely projektben"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "Előző terminál ebben a projektben"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

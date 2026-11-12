@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
-import type { CliTarget } from '../../shared/cli-target';
+import { pulledProjectRoot, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { buildHooks } from './hook-manager';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1, openCodeSupportsAutoApprove } from './version';
@@ -62,7 +62,13 @@ export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<st
  * run OpenCode 1 plugins, so a V2 spawn gets its own (`buildHooks`).
  */
 export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'eventsOutputPath' | 'executionTarget'>): boolean {
+  // A host over SSH installs it too: its events ride the hook folder (see the plugin script).
   return Boolean(options.eventsOutputPath) && !options.executionTarget;
+}
+
+/** The folder whose `.opencode/plugins/` gets the activity plugin. */
+export function activityPluginRoot(options: Pick<OpenCodeCommandOptions, 'projectRoot' | 'cwd' | 'cliTarget'>): string {
+  return pulledProjectRoot(options);
 }
 
 /**
@@ -140,8 +146,7 @@ export class OpenCodeCommandBuilder {
     // CLI flag or `opencode.json` mutation is required. Mirrors the
     // `buildHooks` side effect in CodexCommandBuilder.buildCodexCommand.
     if (installsActivityPlugin(options)) {
-      const projectRoot = options.projectRoot || options.cwd;
-      buildHooks(projectRoot, openCode2);
+      buildHooks(activityPluginRoot(options), openCode2);
     }
 
     const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell)];

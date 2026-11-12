@@ -52,6 +52,11 @@ msgstr "{count, plural, other {# 个工具运行中}}"
 msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
 msgstr ""
 
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "{hostName} is unreachable. Its agents keep running."
+msgstr "无法访问 {hostName}。其代理仍在运行。"
+
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, other {工作流，# 个运行中}}"
@@ -333,6 +338,21 @@ msgstr "已暂停"
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
 msgstr "排队中..."
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "重新连接"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect to {hostName}"
+msgstr "重新连接到 {hostName}"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnecting to {hostName}. Its agents keep running."
+msgstr "正在重新连接到 {hostName}。其代理仍在运行。"
 
 #: src/renderer/components/board/Swimlane.tsx
 msgid "Removed from team config"

@@ -242,6 +242,7 @@ describe('the workflow engine at boot', () => {
     register(PROJECT_IDS);
     context = {
       projectRepo: {
+        listHidden: () => [],
         list: () => registered,
         getById: (id: string) => registered.find((project) => project.id === id),
       },
@@ -710,6 +711,114 @@ describe('the workflow engine at boot', () => {
 
     expect(harness.handleTaskMove.mock.calls.map(([, input, , projectId]) => [projectId, (input as MoveInput).taskId])).toEqual([['idle', joined]]);
   });
+
+  describe('a workflow with a task on a hidden board (its SSH host was removed)', () => {
+    let hiddenIds: string[];
+    const hiddenProbes = () => probedProjectIds().filter((projectId) => projectId === 'hid').length;
+    const hiddenWarnings = () => vi.mocked(console.warn).mock.calls
+      .filter(([message]) => typeof message === 'string' && message.includes('Could not read hidden project'));
+
+    /**
+     * A workflow homed at `home`, with a task of it on `hid`, a board that is hidden and not open (it is not in
+     * the registered list). `idle` is a second hidden board, so the engine keeps asking about hidden boards
+     * after `hid` is shown again.
+     */
+    function workflowWithHiddenMember(laneAtHome: 'Done' | 'Executing'): string {
+      for (const file of dbFiles('hid')) fs.rmSync(file, { force: true });
+      register(['home']);
+      const running = workflowIn('home');
+      workflowTask('home', laneAtHome, running, 'home');
+      workflowTask('hid', 'To Do', running, 'home');
+      getProjectDb('idle');
+      hiddenIds = ['hid', 'idle'];
+      vi.spyOn(context.projectRepo, 'listHidden').mockImplementation(
+        () => hiddenIds.map((id) => ({ id, name: id, path: `/mock/${id}` })) as never,
+      );
+      return running;
+    }
+
+    it('reads a hidden board that is not open once across several passes, and holds the workflow from the answer each time', async () => {
+      // Every task the pass can see is Done, so only the hidden board's task keeps the workflow from completing.
+      const running = workflowWithHiddenMember('Done');
+
+      const engine = boot();
+      await pass();
+      expect(hiddenProbes()).toBe(1);
+      expect(harness.announceWorkflowComplete).not.toHaveBeenCalled();
+
+      for (let extraPass = 0; extraPass < 3; extraPass += 1) {
+        engine.wake();
+        await pass();
+        expect(harness.announceWorkflowComplete).not.toHaveBeenCalled();
+      }
+
+      expect(hiddenProbes()).toBe(1);
+      expect(new WorkflowRepository(getProjectDb('home')).getById(running)!.state).toBe('running');
+    });
+
+    it('forgets the answer on a pass that finds the board no longer hidden, so hiding it again reads it again', async () => {
+      workflowWithHiddenMember('Executing');
+
+      const engine = boot();
+      await pass();
+      expect(hiddenProbes()).toBe(1);
+
+      hiddenIds = ['idle'];
+      engine.wake();
+      await pass();
+      expect(hiddenProbes()).toBe(1);
+
+      hiddenIds = ['hid', 'idle'];
+      engine.wake();
+      await pass();
+      expect(hiddenProbes()).toBe(2);
+    });
+
+    it('forgets the answer when the last hidden board comes back too', async () => {
+      workflowWithHiddenMember('Executing');
+
+      const engine = boot();
+      await pass();
+      expect(hiddenProbes()).toBe(1);
+
+      hiddenIds = [];
+      engine.wake();
+      await pass();
+
+      hiddenIds = ['hid'];
+      engine.wake();
+      await pass();
+      expect(hiddenProbes()).toBe(2);
+    });
+
+    it('does not cache a read that fails with a SQLite error, and tries the board again on the next pass', async () => {
+      workflowWithHiddenMember('Executing');
+      const realProbe = vi.mocked(probeWorkflowProject).getMockImplementation()!;
+      let hiddenAttempts = 0;
+      vi.mocked(probeWorkflowProject).mockImplementation((projectId) => {
+        if (projectId === 'hid') {
+          hiddenAttempts += 1;
+          if (hiddenAttempts === 1) throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+        }
+        return realProbe(projectId);
+      });
+
+      const engine = boot();
+      await pass();
+      expect(hiddenProbes()).toBe(1);
+      expect(hiddenWarnings()).toHaveLength(1);
+
+      engine.wake();
+      await pass();
+      expect(hiddenProbes()).toBe(2);
+
+      // Read now, so it is cached from here.
+      engine.wake();
+      await pass();
+      expect(hiddenProbes()).toBe(2);
+      expect(hiddenWarnings()).toHaveLength(1);
+    });
+  });
 });
 
 describe('the Workflows view across boards', () => {
@@ -726,7 +835,7 @@ describe('the Workflows view across boards', () => {
     const running = workflowIn('home');
     const homeTask = workflowTask('home', 'To Do', running, 'home');
     const projects = ['home', 'missing'].map((id) => ({ id, name: id, path: `/mock/${id}` }));
-    const context = { projectRepo: { list: () => projects } } as unknown as IpcContext;
+    const context = { projectRepo: { listHidden: () => [], list: () => projects } } as unknown as IpcContext;
 
     expect(workflowTasks(context, 'home', running).map(({ task }) => task.id)).toEqual([homeTask]);
     expect(listWorkflowSummaries(context, 'missing')).toEqual([]);

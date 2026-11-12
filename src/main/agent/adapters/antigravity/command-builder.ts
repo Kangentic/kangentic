@@ -199,6 +199,8 @@ export class AntigravityCommandBuilder {
     if (wslHooks) {
       // An agy in a WSL distro may have no node: its hooks publish through the
       // WSL hook transport, the session's script named by a space-free token.
+      // A host over SSH gets the same relative token: the shell folder mirrors the project's folder on
+      // the host, and a relative token holds only segments both share, so it never names this computer.
       const scriptToken = spaceFreeAgentsToken(cwd, wslHooks.script);
       bridgeToken = scriptToken;
       eventsToken = scriptToken;

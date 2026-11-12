@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { openSimpleGit } from '../../git/simple-git-client';
 import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
+import { remoteWorktreeBackendForWorktree } from '../../git/remote-worktree';
 import { DiffSubscriptionRegistry } from '../../git/diff-subscription-registry';
 import { readWorktreeHead, readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { getBranchSummary } from '../../git/branch-summary';
@@ -57,6 +58,18 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
   // Default to true (conservative): a caller that omits it is treated as if the
   // branch will be deleted, so only-local commits are surfaced rather than hidden.
   const autoCleanup = opts?.autoCleanup ?? true;
+  // A worktree on an SSH host: the host's git counts what a removal would destroy. The branch is always
+  // kept there, so nothing is at risk but the uncommitted files. A host that cannot answer is the safe
+  // default below (assume there are changes), never a clean tree.
+  const hostBackend = remoteWorktreeBackendForWorktree(checkPath);
+  if (hostBackend) {
+    try {
+      const { uncommittedFileCount, currentBranch } = await hostBackend.pendingChanges(checkPath);
+      return { hasPendingChanges: uncommittedFileCount > 0, uncommittedFileCount, unpushedCommitCount: 0, currentBranch };
+    } catch {
+      return { hasPendingChanges: true, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
+    }
+  }
   // Dev-only step timing. The probe gates a Done drop's completion (the card has
   // landed, the archive waits on this), and it measured 640 to 1150ms on the
   // dogfooding instance in the 2026-09-16 drag audit; this line says which step.

@@ -52,6 +52,13 @@ export interface StatusFileAttachOptions {
   statusOutputPath: string | null;
   eventsOutputPath: string | null;
   /**
+   * Read the events file from where it ends now, not from its start. A fresh launch emptied the file first, so
+   * its whole content is the new run's. An agent taken back from a host (#913) has the earlier part of its run
+   * in it, which the app already handled before the quit: reading it again would fire its turn ends and
+   * notifications a second time.
+   */
+  eventsFromEnd?: boolean;
+  /**
    * Adapter-supplied hook (from `runtime.statusFile`) used to decode
    * status.json and events.jsonl content. Optional: when null, the
    * reader skips the status watcher since there's nothing to parse (the
@@ -176,6 +183,15 @@ export class StatusFileReader {
       eventsGeneration: 0,
       wslInbox: null,
     };
+    if (options.eventsFromEnd && eventsOutputPath) {
+      try {
+        // sync-read-ok: once per rejoin of an agent a quit left on a host. `attach` is synchronous, and the offset
+        // must be the file's size before the first read can run, or that read would replay the earlier run.
+        state.eventsFileOffset = fs.statSync(eventsOutputPath).size;
+      } catch {
+        // No file yet: whatever the agent writes first is new.
+      }
+    }
     // Registered before the first read below, which looks the state up: an
     // agent that wrote its status before this attach is read now, not at its
     // next write.

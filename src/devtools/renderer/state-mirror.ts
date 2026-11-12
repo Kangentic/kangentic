@@ -12,6 +12,7 @@ import { useMonitorStore } from '../../renderer/stores/monitor-store';
 import { usePopOutStore } from '../../renderer/stores/pop-out-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useSessionStore } from '../../renderer/stores/session-store';
+import { useSshStore } from '../../renderer/stores/ssh-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
 import { useUpdaterStore } from '../../renderer/stores/updater-store';
 import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-store';
@@ -95,6 +96,7 @@ const PREVIEW_STORES: Record<string, ReadableStore> = {
   'pop-out': usePopOutStore,
   project: useProjectStore,
   session: useSessionStore,
+  ssh: useSshStore,
   toast: useToastStore,
   updater: useUpdaterStore,
   // Quoted because the file stem is kebab-case (usage-dashboard-store.ts);

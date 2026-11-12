@@ -109,6 +109,42 @@ export function runGlobalMigrations(db: Database.Database): void {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_dev_ports_task ON dev_ports(task_id)');
 
+  // Migration: SSH hosts and remote projects (#913).
+  //
+  // GLOBAL because a host serves every project and must be addable with no project open. A host row
+  // holds a destination and, at most, the path of a key file. Never a password and never key
+  // material: the key is a file under Kangentic's own folder, deleted with the host.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ssh_hosts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      destination TEXT NOT NULL,
+      key_path TEXT DEFAULT NULL,
+      key_created INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // A removed host keeps its row, with the time it was removed (UTC ISO 8601). Its projects are hidden,
+  // not deleted, and adding the same address again restores this row, so they come back as they were.
+  const sshHostColumns = db.pragma('table_info(ssh_hosts)') as Array<{ name: string }>;
+  if (!sshHostColumns.some((column) => column.name === 'removed_at')) {
+    db.exec('ALTER TABLE ssh_hosts ADD COLUMN removed_at TEXT DEFAULT NULL');
+  }
+  if (!sshHostColumns.some((column) => column.name === 'reveal_pending')) {
+    db.exec('ALTER TABLE ssh_hosts ADD COLUMN reveal_pending INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // A project on a host names it and the repo's folder there. Both are NULL for every project that
+  // existed before this, which is every project on this computer: nothing is backfilled.
+  const remoteProjectColumns = db.pragma('table_info(projects)') as Array<{ name: string }>;
+  if (!remoteProjectColumns.some((col) => col.name === 'remote_host_id')) {
+    db.exec('ALTER TABLE projects ADD COLUMN remote_host_id TEXT DEFAULT NULL');
+  }
+  if (!remoteProjectColumns.some((col) => col.name === 'remote_path')) {
+    db.exec('ALTER TABLE projects ADD COLUMN remote_path TEXT DEFAULT NULL');
+  }
+
   // Migration: agent accounts (task #1057). GLOBAL because an account is a machine-wide login,
   // shared by every project. One row per account; `position` is the run order within its agent.
   // The `default` row is the agent's own home and has no folder of Kangentic's. Key-file rows hold

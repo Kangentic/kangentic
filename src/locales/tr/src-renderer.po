@@ -163,20 +163,24 @@ msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 msgstr "\"{taskTitle}\": \"{automationName}\", {columnName} sütununda başarısız oldu."
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": {detail}"
-msgstr ""
+msgstr "\"{taskTitle}\": {detail}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": exited with code {exitCode}."
-msgstr ""
+msgstr "\"{taskTitle}\": {exitCode} koduyla çıkıldı."
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{minutes, plural, one {\"{taskTitle}\": # dakika sonra zaman aşımına uğradı.} other {\"{taskTitle}\": # dakika sonra zaman aşımına uğradı.}}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
-msgstr ""
+msgstr "{seconds, plural, one {\"{taskTitle}\": # saniye sonra zaman aşımına uğradı.} other {\"{taskTitle}\": # saniye sonra zaman aşımına uğradı.}}"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "{agentName} sessions continue {resetMoment}, when the first account resets."
@@ -1372,8 +1376,9 @@ msgid "Other work uses it too. Stopping it can break that work."
 msgstr "Başka işler de bunu kullanıyor. Durdurmak bu işleri bozabilir."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Part of it runs outside this task's folders. Stopping it stops that too."
-msgstr ""
+msgstr "Bir kısmı bu görevin klasörlerinin dışında çalışıyor. Durdurmak onu da durdurur."
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1679,8 +1684,9 @@ msgid "Still running: {tasks}."
 msgstr "Hâlâ çalışıyor: {tasks}."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Stop script failed"
-msgstr ""
+msgstr "Durdurma betiği başarısız oldu"
 
 #: src/renderer/lib/account-toasts.ts
 msgid "Switched account"

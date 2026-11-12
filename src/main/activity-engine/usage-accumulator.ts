@@ -519,15 +519,7 @@ export class UsageAccumulator {
         && event.type !== EventType.Interrupted) {
       return;
     }
-    let state = this.toolStats.get(sessionId);
-    if (!state) {
-      state = {
-        byTool: new Map<string, ToolAccumulator>(),
-        pendingById: new Map<string, PendingToolStart>(),
-        turnStartTs: Number.NEGATIVE_INFINITY,
-      };
-      this.toolStats.set(sessionId, state);
-    }
+    const state = this.toolStateFor(sessionId);
 
     if (event.type === EventType.ToolStart) {
       const startName = event.tool ?? 'unknown';
@@ -579,6 +571,48 @@ export class UsageAccumulator {
       accumulator.outputTokens += event.outputTokens;
       accumulator.hasOutputTokens = true;
     }
+  }
+
+  private toolStateFor(sessionId: string): SessionToolState {
+    let state = this.toolStats.get(sessionId);
+    if (!state) {
+      state = {
+        byTool: new Map<string, ToolAccumulator>(),
+        pendingById: new Map<string, PendingToolStart>(),
+        turnStartTs: Number.NEGATIVE_INFINITY,
+      };
+      this.toolStats.set(sessionId, state);
+    }
+    return state;
+  }
+
+  /**
+   * Add what a run counted before this process took it over: an agent taken back from a host (#913) goes on in
+   * the same run and the same record, and this process reads its events from their end. Added to, never in place
+   * of, since the agent's next events can arrive first.
+   */
+  restoreRunTotals(sessionId: string, toolBreakdown: readonly PerToolStat[], compactionCount: number): void {
+    const state = this.toolStateFor(sessionId);
+    for (const row of toolBreakdown) {
+      const accumulator = this.accumulatorFor(state, row.toolName);
+      accumulator.callCount += row.callCount;
+      accumulator.interruptedCount += row.interruptedCount;
+      accumulator.totalDurationMs += row.totalDurationMs;
+      accumulator.waitedCount += row.waitedCount ?? 0;
+      if (row.costUsd !== undefined) {
+        accumulator.costUsd += row.costUsd;
+        accumulator.hasCost = true;
+      }
+      if (row.inputTokens !== undefined) {
+        accumulator.inputTokens += row.inputTokens;
+        accumulator.hasInputTokens = true;
+      }
+      if (row.outputTokens !== undefined) {
+        accumulator.outputTokens += row.outputTokens;
+        accumulator.hasOutputTokens = true;
+      }
+    }
+    if (compactionCount > 0) this.compactionCounts.set(sessionId, this.getCompactionCount(sessionId) + compactionCount);
   }
 
   /**

@@ -6,6 +6,8 @@ import { getProcessMetrics } from '../../diagnostics/process-metrics';
 import { PATHS } from '../../config/paths';
 import { ROTATED_FILE_SUFFIX } from '../../diagnostics/async-file-queue';
 import { enumerateWorktrees } from '../../git/worktree-list';
+import { agentPathsOf } from '../../remote/host-paths';
+import type { CommandContext } from '../commands';
 import type { CrashRecord, IpcLogEntry, LogEntry } from '../../../shared/types';
 import { PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
 import { READ_ONLY_ANNOTATIONS } from './annotations';
@@ -65,6 +67,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       if ('error' in resolved) {
         return errorResult(resolved.error);
       }
+      // host-value-ok: Kangentic's own logs, on this computer and labeled local
       const projectPath = resolved.context.getProjectPath();
       const targetDate = date ?? today();
       // Two files: the per-project one (the normal case), and the app's
@@ -85,12 +88,13 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       });
       const tail = filtered.slice(-(limit ?? 200));
       if (tail.length === 0) {
-        return textResult(
+        return localTextResult(
+          resolved.context,
           `No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath} or ${fallbackFilePath}.`,
-          { items: [] },
+          [],
         );
       }
-      return textResult(tail.map(formatLogLine).join('\n'), { items: tail });
+      return localTextResult(resolved.context, tail.map(formatLogLine).join('\n'), tail);
     },
   );
 
@@ -121,6 +125,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       if ('error' in resolved) {
         return errorResult(resolved.error);
       }
+      // host-value-ok: Kangentic's own logs, on this computer and labeled local
       const projectPath = resolved.context.getProjectPath();
       // Two directories: the per-project one (the normal case), and the
       // app's global config dir, where crash-capture.ts falls back when no
@@ -142,7 +147,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         }
       }
       if (files.length === 0) {
-        return textResult(`No crashes recorded${project ? ` for project ${project}` : ''}.`);
+        return localTextResult(resolved.context, `No crashes recorded${project ? ` for project ${project}` : ''}.`, []);
       }
       // Filenames are derived from ISO timestamps with `:` and `.` swapped to
       // `-`. Lexicographic descending sort matches reverse-chronological,
@@ -162,9 +167,9 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         }
       }
       if (records.length === 0) {
-        return textResult('No matching crashes.', { items: [] });
+        return localTextResult(resolved.context, 'No matching crashes.', []);
       }
-      return textResult(JSON.stringify(records, null, 2), { items: records });
+      return localTextResult(resolved.context, JSON.stringify(records, null, 2), records);
     },
   );
 
@@ -173,12 +178,12 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_get_process_metrics',
     {
       description:
-        'Snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility, etc.) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads live state from the running app; not project-scoped.',
+        'Snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility, etc.) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads live state from the running app on the user\'s computer, never a remote host; not project-scoped.',
       inputSchema: z.object({}),
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async () => {
-      const metrics = getProcessMetrics();
+      const metrics = { location: 'local', ...getProcessMetrics() };
       return textResult(JSON.stringify(metrics, null, 2), metrics as unknown as Record<string, unknown>);
     },
   );
@@ -218,6 +223,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       if ('error' in resolved) {
         return errorResult(resolved.error);
       }
+      // host-value-ok: Kangentic's own logs, on this computer and labeled local
       const projectPath = resolved.context.getProjectPath();
       const targetDate = date ?? today();
       const filePath = path.join(projectPath, '.kangentic', 'logs', `ipc-${targetDate}.jsonl`);
@@ -234,12 +240,13 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       });
       const tail = filtered.slice(-(limit ?? 200));
       if (tail.length === 0) {
-        return textResult(
+        return localTextResult(
+          resolved.context,
           `No IPC entries${date ? ` for ${date}` : ''}${channel ? ` on channel ${channel}` : ''}. Settings -> Developer -> Record IPC Traffic must be on; the recorder writes only while the toggle is enabled.`,
-          { items: [] },
+          [],
         );
       }
-      return textResult(tail.map((entry) => JSON.stringify(entry)).join('\n'), { items: tail });
+      return localTextResult(resolved.context, tail.map((entry) => JSON.stringify(entry)).join('\n'), tail);
     },
   );
 
@@ -281,6 +288,16 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** What an agent on a host reads first from a tool about Kangentic itself. Nothing for a local project. */
+function appLocationNote(context: CommandContext): string {
+  return agentPathsOf(context).location === 'host' ? '[From Kangentic on the user\'s computer, not your host]\n' : '';
+}
+
+/** A local answer with both things an agent on a host needs: the note it reads and the label in the data. */
+function localTextResult(context: CommandContext, text: string, items: unknown[]): ReturnType<typeof textResult> {
+  return textResult(`${appLocationNote(context)}${text}`, { items, location: 'local' });
 }
 
 function readJsonLines<T>(filePath: string): T[] {

@@ -288,7 +288,7 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
     if (context.sessionManager.getSession(sessionId)?.transient) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!projectId) return;
-    chain(async () => {
+    const indexFinished = (): void => chain(async () => {
       // Finished: the worker also walks the subagents' token usage, which
       // happens HERE and in the project-open sweep, never on the live
       // turn-boundary path (a running fan-out rewrites its subagent directory
@@ -300,6 +300,17 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
       // does NOT embed inline - that is the whole point of the split.
       embedEngine.markDirty(projectId);
     });
+    // A session on a host whose transcript is an export has its last one on the
+    // way. Waited for outside the chain, which is one queue for every project:
+    // inside it, a release held up on a dropped link would hold all indexing.
+    const settled = context.sessionManager.remoteTranscriptSettled(sessionId);
+    if (settled) {
+      void settled.then(() => {
+        if (!disposed) indexFinished();
+      });
+    } else {
+      indexFinished();
+    }
   }, FINALIZE_DEBOUNCE_MS);
   timer.unref();
   pendingTimers.add(timer);
@@ -408,8 +419,9 @@ function scheduleArchiveSweep(context: IpcContext, projectId: string): void {
   });
 }
 
-/** False once a project is deleted. A context that cannot say counts it as
- *  present, so a missing repository never silently stops indexing. */
+/** False once a project is deleted, or hidden because its host was removed: a
+ *  hidden one's index waits for it to come back. A context that cannot say
+ *  counts it as present, so a missing repository never silently stops indexing. */
 function projectStillExists(context: IpcContext, projectId: string): boolean {
   try {
     return context.projectRepo.getById(projectId) != null;

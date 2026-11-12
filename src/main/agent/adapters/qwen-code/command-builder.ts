@@ -12,7 +12,7 @@ import {
   shippedHintBridgePath,
   wslBackgroundShellHintCommandFor,
 } from '../../shared/background-command-hooks';
-import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, pulledProjectRoot, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { copyWslHookScriptInto, prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
 import {
@@ -377,7 +377,9 @@ export class QwenCommandBuilder {
    * `mcpServers` are preserved either way.
    */
   private createMergedSettings(options: QwenCommandOptions, mcpDelivery: QwenMcpDelivery, kangenticServer: KangenticMcpServer | null): void {
-    const projectRoot = options.projectRoot || options.cwd;
+    // On a host only the working folder's files are pulled, so it is the root (`pulledProjectRoot`); the base
+    // directory then reads the same folder.
+    const projectRoot = pulledProjectRoot(options);
     const baseSettings = this.readBaseSettings(settingsBaseDirectory(options.cwd, projectRoot, '.qwen'));
 
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;

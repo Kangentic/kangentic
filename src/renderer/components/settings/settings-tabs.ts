@@ -99,6 +99,8 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'mcpServer', label: msg`MCP Server`, category: 'system', tier: 'advanced' },
   { id: 'browserAutomation', label: msg`Browser automation`, category: 'system', tier: 'advanced' },
   { id: 'mobile', label: msg`Mobile Devices`, category: 'system', tier: 'advanced' },
+  // A host serves every project and must be addable with no project open, so this is a system tab (#913).
+  { id: 'ssh', label: msg`SSH`, category: 'system', tier: 'advanced' },
   // -- Shared settings: Other tier --
   { id: 'privacy', label: msg`Privacy`, category: 'system', tier: 'other' },
   { id: 'developer', label: msg`Developer`, category: 'system', tier: 'other' },

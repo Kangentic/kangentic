@@ -11,6 +11,7 @@ import { textMatchRule } from '../../../shared/automation-describe';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
 import { placeOfRecord } from '../shared/cli-target';
+import { agentPathsOf } from '../../remote/host-paths';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
@@ -451,7 +452,9 @@ export const handleListSessions: CommandHandler = (
     return { success: false, error: `Task "${taskId}" not found` };
   }
 
+  // host-value-ok: the events file is this computer's on any project, labeled local below
   const projectRoot = context.getProjectPath();
+  const paths = agentPathsOf(context);
   const records = db.prepare(
     `SELECT * FROM sessions WHERE task_id = ? ORDER BY started_at ASC`
   ).all(task.id) as Array<{
@@ -522,10 +525,15 @@ export const handleListSessions: CommandHandler = (
     data: records.map((record) => ({
       id: record.id,
       agentSessionId: record.agent_session_id,
-      cwd: record.cwd,
+      cwd: paths.toAgent(record.cwd),
+      location: paths.location,
+      // host-value-ok: the stand-in, in the field named for it
+      ...(paths.location === 'host' ? { localCwd: record.cwd } : {}),
+      // Written here from what a host relays: this computer's file on any project.
       eventsJsonlPath: sessionOutputPaths(
         path.join(projectRoot, '.kangentic', 'sessions', record.id),
       ).eventsOutputPath,
+      eventsLocation: 'local' as const,
       sessionType: record.session_type,
       status: record.status,
       exitCode: record.exit_code,
@@ -593,6 +601,7 @@ export async function handleGetSessionHistory(
   }
 
   const filePath = await adapter.locateSessionHistoryFile(
+    // host-value-ok: the adapter reads this computer's copy by the folder the row records
     record.agent_session_id, record.cwd, placeOfRecord(record), record.transcript_path,
   );
   if (!filePath) {
@@ -603,6 +612,11 @@ export async function handleGetSessionHistory(
     };
   }
 
+  // On a host this reads this computer's copy, which holds what has arrived so far. The agent can open the original.
+  const paths = agentPathsOf(context);
+  const onHost = paths.location === 'host';
+  const originalPath = paths.sessionFileToAgent(filePath, record);
+
   // Read the file, truncating from the beginning if too large
   let content: string;
   try {
@@ -611,16 +625,24 @@ export async function handleGetSessionHistory(
       ? `[Truncated - showing last ${Math.round(MAX_SESSION_HISTORY_BYTES / 1024)}KB of ${Math.round(tailResult.totalBytes / 1024)}KB]\n${tailResult.content}`
       : tailResult.content;
   } catch (readError) {
-    return { success: false, error: `Failed to read session file at ${filePath}: ${readError instanceof Error ? readError.message : String(readError)}` };
+    const reason = readError instanceof Error ? readError.message : String(readError);
+    return {
+      success: false,
+      error: onHost
+        ? `This computer has no readable copy of ${originalPath} on the host yet: ${reason}`
+        : `Failed to read session file at ${filePath}: ${reason}`,
+    };
   }
 
   return {
     success: true,
-    message: content,
+    message: onHost ? `[A copy of ${originalPath} on the host, as far as it has arrived]\n${content}` : content,
     data: {
       agentSessionId: record.agent_session_id,
       agent: adapter.name,
-      filePath,
+      filePath: originalPath,
+      location: paths.location,
+      ...(onHost ? { localFilePath: filePath, copy: true } : {}),
     },
   };
 }

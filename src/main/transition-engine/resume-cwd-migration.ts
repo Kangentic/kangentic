@@ -94,7 +94,7 @@ export async function migrateResumeCwdIfRenamed(params: {
       : await adapter.locateSessionHistoryFile(agentSessionId, newCwd, place);
     if (reachable) return;
     if (place) {
-      console.warn(`[RESUME_MIGRATE] Session history ${oldCwd} -> ${newCwd} is in WSL distro ${place.distro}; not migrated`);
+      console.warn(`[RESUME_MIGRATE] Session history ${oldCwd} -> ${newCwd} is in ${place.kind === 'ssh' ? `host ${place.hostId}` : `WSL distro ${place.distro}`}; not migrated`);
       return;
     }
 

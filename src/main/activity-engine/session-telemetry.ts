@@ -24,6 +24,7 @@ import { UserInterruptCoordinator } from './user-interrupt-coordinator';
 import { OpenWorkLedger, type OpenWork } from './open-work-ledger';
 import { ConversationSwitchGate } from './conversation-switch-gate';
 import { sessionStartOfLine } from '../agent/shared/session-start-hook';
+import { isContextOccupancyKnown } from '../../shared/context-occupancy';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -118,7 +119,7 @@ interface SessionTelemetryCallbacks {
    * (`runtime.sessionId.followsSessionStartMoves`), so the listener re-points
    * what it tails at the new conversation.
    */
-  onAgentSessionId?(sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean }): void;
+  onAgentSessionId?(sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean; inferred?: boolean }): void;
   /**
    * A SessionStart named the CLI's own background session: did the session's
    * conversation `fromAgentSessionId` move there, rather than a copy start
@@ -141,6 +142,12 @@ interface SessionTelemetryCallbacks {
    * conversation with it. Optional: a missing answer means the sweep applies.
    */
   isIdleTimeoutExempt?(sessionId: string): boolean;
+  /**
+   * Nothing can reach the engine for this session right now, so its silence proves nothing: it runs
+   * on an SSH host and the link is down (#913). The stale-thinking watchdog waits instead of forcing
+   * idle. Optional: a missing answer means the watchdog applies.
+   */
+  isActivityHeld?(sessionId: string): boolean;
   /**
    * Returns the OS PID of the agent CLI for the session, used by the
    * bg-shell watcher to enumerate descendant processes. Returns
@@ -344,7 +351,10 @@ export class SessionTelemetry {
       // and the session shows as waiting on the user, as it is.
       release: (sessionId, event) => this.processAdmittedEvents(sessionId, [event]),
     });
-    const activityEngineOptions = options.activityEngineOptions ?? {};
+    const activityEngineOptions: ActivityEngineOptions = {
+      ...options.activityEngineOptions,
+      isHeld: (sessionId) => callbacks.isActivityHeld?.(sessionId) ?? false,
+    };
     // Two equivalent forms: a literal string path (legacy / test usage) or
     // a resolver function (production hookup, lets the path follow a
     // runtime toggle). Static strings are normalized into a resolver so
@@ -593,6 +603,22 @@ export class SessionTelemetry {
     if (minutes > 0) {
       this.idleTimeoutInterval = setInterval(() => this.checkIdleTimeouts(), 60_000);
       this.idleTimeoutInterval.unref();
+    }
+  }
+
+  /**
+   * A host's link came back (#913). The time it was down is not idle time and not silence: an idle
+   * session starts its idle clock again, so the sweep does not suspend it for the outage, and a
+   * thinking one gets a fresh liveness anchor, so the watchdog measures from now rather than from the
+   * last signal before the drop.
+   */
+  noteLinkRestored(sessionIds: Iterable<string>): void {
+    const now = Date.now();
+    for (const sessionId of sessionIds) {
+      const state = this.activityEngine.getState(sessionId);
+      if (!state) continue;
+      if (state.activity === 'idle' && state.idleTimestamp) state.idleTimestamp = now;
+      this.activityEngine.markThinkingSignal(sessionId);
     }
   }
 
@@ -1023,6 +1049,17 @@ export class SessionTelemetry {
       this.recordReportedId(sessionId, agentReportedId);
       this.callbacks.onAgentSessionId?.(sessionId, agentReportedId);
     }
+  }
+
+  /**
+   * An id worked out rather than reported (a new line in a CLI's session index, for a session on a host). It
+   * goes where a captured id goes, so the transcript starts copying, but it closes no capture channel: the
+   * agent's own report still lands, and replaces it when the two differ. A clean exit therefore corrects a
+   * wrong guess before anything resumes it.
+   */
+  notifyInferredAgentSessionId(sessionId: string, inferredId: string): void {
+    if (this.agentSessionIdChecked.has(sessionId)) return;
+    this.callbacks.onAgentSessionId?.(sessionId, inferredId, { inferred: true });
   }
 
   /**
@@ -1506,6 +1543,39 @@ export class SessionTelemetry {
    */
   getToolCallCount(sessionId: string): number {
     return this.usage.getToolCallCount(sessionId);
+  }
+
+  /** What a run counted before this process took it over (`UsageAccumulator.restoreRunTotals`). */
+  restoreRunTotals(sessionId: string, toolBreakdown: readonly PerToolStat[], compactionCount: number): void {
+    this.usage.restoreRunTotals(sessionId, toolBreakdown, compactionCount);
+  }
+
+  /**
+   * The model a run was showing before this process took it over, for a session that has reported none
+   * since. An agent a host kept running writes nothing until it next acts, and a context bar and a card
+   * footer with no model say "Resuming agent..." for as long as it stays quiet. Never replaces a model the
+   * agent has reported, so a status line that was read a moment earlier wins.
+   */
+  seedModelIfUnreported(sessionId: string, model: { id: string; displayName: string }): void {
+    if (this.usage.getSessionUsage(sessionId)?.model.displayName) return;
+    this.setSessionUsage(sessionId, { model });
+  }
+
+  /**
+   * Occupancy a run was showing before this process took it over, for a session
+   * that has reported none since. Same reason as `seedModelIfUnreported`: an
+   * idle agent on a host writes no status bar until it next acts, so the card
+   * would sit at 0%. Never replaces occupancy that is already known.
+   */
+  seedOccupancyIfUnknown(sessionId: string, usedPercentage: number): void {
+    if (!Number.isFinite(usedPercentage) || usedPercentage <= 0) return;
+    const existing = this.usage.getSessionUsage(sessionId);
+    if (existing && isContextOccupancyKnown(
+      existing.contextWindow.contextWindowSize,
+      existing.contextWindow.usedTokens,
+      existing.contextWindow.usedPercentage,
+    )) return;
+    this.setSessionUsage(sessionId, { contextWindow: { usedPercentage } });
   }
 
   /** This run's per-tool rows only, for the same reason as `getToolCallCount`. */

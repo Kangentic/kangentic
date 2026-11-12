@@ -14,6 +14,7 @@ import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
 import { stopAccounts } from './ipc/handlers/accounts';
 import { recordAbandonedLaunches } from './pty/abandoned-launches';
+import { hostOfRecord } from './remote/record-host';
 import type { SessionManager } from './pty/session-manager';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
 import type { BoardConfigManager } from './config/board-config-manager';
@@ -224,6 +225,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
                 record.started_at,
                 record.session_type,
               );
+              // An agent on a remote host (#913) is not ended by the quit, so its record is not suspended: it
+              // stays `running` and the task keeps pointing at it. The next launch asks the host and takes the
+              // agent back (`rejoin-sessions.ts`); only the host's own word that it is gone sends it down the
+              // resume path. Suspended here, the next launch would resume a second agent beside the live one.
+              if (hostOfRecord(record) !== null) continue;
               markRecordSuspended(sessionRepo, record.id, 'system');
               taskRepo.update({ id: session.taskId, session_id: null });
             } else if (record && record.status === 'queued') {

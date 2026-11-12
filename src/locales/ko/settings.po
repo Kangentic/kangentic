@@ -32,6 +32,10 @@ msgstr "{agentName}은(는) Kangentic을 시작한 환경에 설정된 이 변�
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. 문서 페이지를 엽니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
@@ -122,6 +126,10 @@ msgstr "{eventName} 소리: {valueName}"
 msgid "{eventName} toast"
 msgstr "{eventName} 토스트"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{hostname} now presents a different key."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -131,6 +139,10 @@ msgstr "{hours, plural, other {#시간 남음}}"
 #, fuzzy
 msgid "{label}, always on"
 msgstr "{label}, 항상 켜짐"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -161,6 +173,11 @@ msgstr "{percent}%, {displayName}"
 #, fuzzy
 msgid "{percent}%, {timeLeft}"
 msgstr "{percent}%, {timeLeft}"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "{projectCount, plural, one {# project} other {# projects}}"
+msgstr "{projectCount, plural, other {프로젝트 #개}}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -196,10 +213,24 @@ msgstr ""
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "각 세션의 활동 상태와 최근 전환을 보여 주는 플로팅 패널로, .kangentic/debug에도 기록됩니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A name from your SSH config works too, which is how a jump host or a port is set."
+msgstr "SSH 구성의 이름도 사용할 수 있으며, 점프 호스트나 포트는 이 방법으로 설정합니다."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
 msgstr "프리셋은 라이브 모델과 보정 모델을 자동으로 선택합니다. 사용자 지정에서는 직접 선택할 수 있습니다."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A private key file; Kangentic keeps a copy in its own folder"
+msgstr "개인 키 파일. Kangentic이 자체 폴더에 사본을 보관합니다"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -274,10 +305,20 @@ msgstr "활동 엔진 디버그 오버레이"
 msgid "Add account"
 msgstr "계정 추가"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Add host"
+msgstr "호스트 추가"
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Add shortcut"
 msgstr "바로 가기 추가"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Address"
+msgstr "주소"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -584,6 +625,10 @@ msgstr "막대"
 msgid "Basic accuracy"
 msgstr "기본 정확도"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr ""
+
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Behavior"
@@ -593,6 +638,11 @@ msgstr "동작"
 #, fuzzy
 msgid "Best accuracy"
 msgstr "최고 정확도"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Beta"
+msgstr "베타"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -650,8 +700,14 @@ msgstr "브라우저 데이터"
 msgid "Browser data cleared"
 msgstr "브라우저 데이터를 삭제했습니다"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Build server"
+msgstr "빌드 서버"
+
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Cancel"
 msgstr "취소"
@@ -691,6 +747,11 @@ msgstr "전경 변경"
 msgid "Changes"
 msgstr "변경 사항"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Checking"
+msgstr "확인 중"
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "Checking..."
@@ -712,6 +773,10 @@ msgstr "모델 선택"
 msgid "Choose an agent"
 msgstr "에이전트 선택"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Claude 5h / weekly quota bars"
@@ -728,6 +793,7 @@ msgid "Clear browser data?"
 msgstr "브라우저 데이터를 삭제하시겠습니까?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Clear data"
 msgstr "데이터 삭제"
@@ -893,6 +959,7 @@ msgid "Connect a phone over an end-to-end encrypted relay."
 msgstr "종단 간 암호화 릴레이로 휴대폰을 연결합니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connected"
 msgstr "연결됨"
@@ -904,6 +971,7 @@ msgid "Connected"
 msgstr "연결됨"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connecting…"
 msgstr "연결 중…"
@@ -918,6 +986,11 @@ msgstr "컨텍스트 막대"
 #, fuzzy
 msgid "Context window"
 msgstr "컨텍스트 창"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Continue"
+msgstr "계속"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 #, fuzzy
@@ -1273,6 +1346,11 @@ msgstr "드래그하여 순서 변경"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "각 에이전트 세션은 로컬 MCP 서버를 받아 이 도구들을 자동으로 찾습니다. 에이전트가 만든 작업은 알림과 함께 보드에 표시됩니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Editors"
@@ -1397,6 +1475,11 @@ msgstr ""
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
 msgstr "의미로 작업을 찾고 질문에 답합니다."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Fingerprint"
+msgstr "지문"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1543,6 +1626,11 @@ msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys
 msgstr "누르고 있으면 녹음되고, 놓으면 변환된 텍스트가 삽입됩니다. 단축키에서 다시 지정할 수 있습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Hosts"
+msgstr "호스트"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1568,6 +1656,11 @@ msgstr "공유 보드 구성의 변경 사항을 적용하는 방식입니다."
 #, fuzzy
 msgid "How it works"
 msgstr "작동 방식"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "How Kangentic signs in"
+msgstr "Kangentic 로그인 방식"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
@@ -1765,10 +1858,19 @@ msgstr "Kangentic이 새 세션에서 이 계정을 더 이상 사용하지 않�
 msgid "Kangentic turned this off after repeated failures."
 msgstr "반복된 오류로 인해 Kangentic이 이 기능을 껐습니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Kangentic uses your SSH config, agent and keys, the way a terminal does."
+msgstr "Kangentic은 터미널처럼 SSH 구성, 에이전트, 키를 사용합니다."
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "Kangentic-operated relay"
 msgstr "Kangentic 운영 릴레이"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1779,6 +1881,15 @@ msgstr "키를 놓은 후에도 잠시 녹음을 계속해 마지막 단어가 �
 #, fuzzy
 msgid "Keep editing"
 msgstr "계속 편집"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Key file"
+msgstr "키 파일"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1889,6 +2000,11 @@ msgctxt "settings card"
 msgid "Links"
 msgstr ""
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Linux machines Kangentic runs agents on over SSH."
+msgstr "Kangentic이 SSH로 에이전트를 실행하는 Linux 머신입니다."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "Live model"
@@ -1920,6 +2036,11 @@ msgstr "로컬 모델"
 #, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
 msgstr "각 IPC 호출을 .kangentic/logs에 기록하며 변경 채널은 가려집니다. /preview에서만 기본으로 켜집니다."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Looking for ssh…"
+msgstr "ssh 찾는 중…"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -2018,6 +2139,16 @@ msgstr "작업 창 간 이동 및 정렬입니다."
 msgid "Mute notifications"
 msgstr "알림 음소거"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "My SSH config"
+msgstr "내 SSH 구성"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Name"
+msgstr "이름"
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "sort files by"
@@ -2061,6 +2192,10 @@ msgstr "Knowledge Graph 필요"
 msgid "New account"
 msgstr "새 계정"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "No agents with accounts"
@@ -2080,6 +2215,11 @@ msgstr "아직 페어링된 기기가 없습니다."
 #, fuzzy
 msgid "No Done tasks yet"
 msgstr "아직 완료된 작업 없음"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "No hosts yet."
+msgstr "아직 호스트가 없습니다."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
@@ -2118,9 +2258,17 @@ msgid "None"
 msgstr "없음"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not checked"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Not found"
 msgstr "찾을 수 없음"
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not on hosts yet"
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
 #, fuzzy
@@ -2154,6 +2302,10 @@ msgstr "아직 커밋된 항목 없음"
 #, fuzzy
 msgid "Notifications"
 msgstr "알림"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
@@ -2266,9 +2418,15 @@ msgid "Pairing QR code"
 msgstr "페어링 QR 코드"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Password"
 msgstr "비밀번호"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Password for the host"
+msgstr "호스트 비밀번호"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2279,6 +2437,11 @@ msgstr "이 수를 넘으면 시간 제한이 있는 가장 오래된 알림이 
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "이 프로젝트의 작업에 사용할 서버상의 경로입니다. 서버 자체의 기본 디렉터리를 사용하려면 비워 두세요"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Path to the private key"
+msgstr "개인 키 경로"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2390,10 +2553,26 @@ msgstr "말하는 동안 미리 보기: 스트리밍은 즉각적이고 청크 �
 msgid "Privacy"
 msgstr "개인정보"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
 msgstr "주 프로세스를 프로파일링하여 이벤트 루프 보고서에 지연의 가장 무거운 함수를 표시합니다. 켜져 있는 동안 CPU를 사용합니다."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version} (this app is {appVersion})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program version unknown"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2531,7 +2710,13 @@ msgctxt "card preview"
 msgid "Recent"
 msgstr "최근"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "다시 연결"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Reconnecting…"
 msgstr "다시 연결 중…"
@@ -2602,6 +2787,7 @@ msgstr "원격"
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Remove"
 msgstr "제거"
@@ -2616,10 +2802,23 @@ msgstr "{accountToRemoveName}을(를) 제거하시겠습니까?"
 msgid "Remove a task's worktree when the task completes."
 msgstr "작업이 완료되면 작업의 작업 트리를 제거합니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Remove host"
+msgstr "호스트 제거"
+
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "Remove this account?"
 msgstr "이 계정을 제거하시겠습니까?"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2750,6 +2949,7 @@ msgstr "작업 트리가 생성된 후 실행됩니다. Windows에서는 cmd.exe
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "클라우드 보정을 선택하지 않으면 이 컴퓨터에서 실행됩니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 #, fuzzy
 msgid "Save"
@@ -2948,6 +3148,11 @@ msgstr "이 컴퓨터에서 로그인됨"
 msgid "Silences all notifications on this machine until turned off."
 msgstr "끌 때까지 이 컴퓨터의 모든 알림을 음소거합니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "since {since}"
+msgstr "{since}부터"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "since {sinceTime}"
@@ -2996,6 +3201,26 @@ msgstr "소스 코드 임베딩됨"
 msgid "Spawn stalled"
 msgstr "생성 지연"
 
+#: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
+msgid "SSH"
+msgstr "SSH"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "SSH client"
+msgstr "SSH 클라이언트"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh found"
+msgstr "ssh 찾음"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh not found"
+msgstr "ssh를 찾을 수 없음"
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "diff scope"
@@ -3033,6 +3258,11 @@ msgstr "중지 스크립트"
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "작업이 완료되거나, To Do로 돌아가거나, 삭제되거나, Command Terminal이 종료되면 에이전트가 폴더에서 실행 중으로 남겨 둔 항목을 중지합니다."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "중지됨"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3229,6 +3459,10 @@ msgstr "새 워크플로에서 에이전트가 받는 첫 메시지입니다."
 msgid "The Kangentic relay"
 msgstr "Kangentic 릴레이"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy
 msgid "The language of menus, settings and dialogs."
@@ -3284,6 +3518,11 @@ msgstr "모든 터미널에서 사용하는 셸, 글꼴, 커서 및 색상입니
 msgid "The sign-in did not finish."
 msgstr "로그인이 완료되지 않았습니다."
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "The ssh program on this computer that Kangentic connects with."
+msgstr "Kangentic이 연결에 사용하는 이 컴퓨터의 ssh 프로그램입니다."
+
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
 msgid "The task's description"
@@ -3310,6 +3549,12 @@ msgstr "이 계정의 폴더는 다른 드라이브에 있으므로 프롬프트
 #, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "이 단축키는 고정되어 있어 다시 지정할 수 없습니다"
+
+#. placeholder {0}: editProbe.hostname
+#. placeholder {0}: probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "This is the key {0} presents."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3375,6 +3620,27 @@ msgstr "음성 변환"
 msgid "Transition and motion effects."
 msgstr "전환 및 모션 효과입니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Trust this key"
+msgstr "이 키 신뢰"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr ""
+
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
 msgid "Try a different search term"
@@ -3385,6 +3651,11 @@ msgstr "다른 검색어를 입력해 보세요."
 msgid "Turn on Toast or Desktop to hear a sound"
 msgstr "소리를 들으려면 토스트 또는 데스크톱 알림을 켜세요"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Type"
+msgstr "유형"
+
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
 msgctxt "cursor style"
@@ -3392,6 +3663,7 @@ msgid "Underline"
 msgstr "밑줄"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Unreachable"
 msgstr "연결 불가"
@@ -3431,10 +3703,25 @@ msgstr "{TERMINAL_FONT_SIZE_MIN}~{TERMINAL_FONT_SIZE_MAX} 사이의 값을 사�
 msgid "Use one theme when the system is light and another when it is dark."
 msgstr "시스템이 밝은 모드일 때와 어두운 모드일 때 서로 다른 테마를 사용합니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use the password once to add a key Kangentic makes. It is never stored"
+msgstr "비밀번호를 한 번 사용하여 Kangentic이 만든 키를 추가합니다. 비밀번호는 저장되지 않습니다"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use your own ssh setup: its config, agent and keys, as a terminal does"
+msgstr "터미널처럼 사용자의 ssh 설정, 에이전트, 키를 그대로 사용합니다"
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Used / total tokens"
 msgstr "사용 / 전체 토큰"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Used once to add a key Kangentic makes for this host. It is never stored."
+msgstr "Kangentic이 이 호스트용으로 만든 키를 추가할 때 한 번 사용됩니다. 저장되지 않습니다."
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #, fuzzy

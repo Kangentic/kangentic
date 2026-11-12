@@ -1096,6 +1096,14 @@ describe('CursorAdapter', () => {
       expect(aboutCallLog).toHaveLength(1);
     });
 
+    it('does not ask `about` when taking back an agent this process did not start', async () => {
+      const { context, applied } = makeContext();
+      adapter.attachSession!({ ...context, takingBack: true });
+      await flushPromises();
+      expect(aboutCallLog).toHaveLength(0);
+      expect(applied).toHaveLength(0);
+    });
+
     it('still asks `about` for a resume, which carries no --model', async () => {
       adapter.buildCommand(makeOptions({ model: 'gpt-5', sessionId: 'chat-1', resume: true, ptySessionId: 'test-session-id' }));
       const { context, applied } = makeContext();
@@ -1263,6 +1271,22 @@ describe('CursorAdapter', () => {
       // usage must have been applied.
       expect(applied).toHaveLength(1);
       expect(applied[0]).toHaveProperty('model');
+    });
+  });
+
+  describe('usageFromOutput', () => {
+    it('reads occupancy and the live model from a TUI status bar, and ignores events', () => {
+      const usage = adapter.usageFromOutput!('thinking...\nAuto \u00b7 9.2% \u00b7 1 file edited\n');
+      expect(usage?.contextWindow?.usedPercentage).toBe(9.2);
+      expect(usage?.model).toEqual({
+        id: 'Auto',
+        displayName: 'Auto',
+        reportedByAgent: true,
+      });
+    });
+
+    it('returns null when the chunk names no occupancy', () => {
+      expect(adapter.usageFromOutput!('ready\n')).toBeNull();
     });
   });
 

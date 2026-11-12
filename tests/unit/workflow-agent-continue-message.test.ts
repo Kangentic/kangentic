@@ -58,7 +58,7 @@ function plannedTask(title: string) {
 
 beforeEach(() => {
   harness.readFails = false;
-  harness.view = { workflow, tasks: [plannedTask('Token table'), plannedTask('Budget alerts')] };
+  harness.view = { workflow, tasks: [plannedTask('Token table'), plannedTask('Budget alerts')], hiddenBoards: [] };
 });
 
 describe('buildWorkflowAgentContinueMessage', () => {
@@ -74,7 +74,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
   });
 
   it('is null when nothing is saved yet, so the caller sends the plain first message', async () => {
-    harness.view = { workflow, tasks: [] };
+    harness.view = { workflow, tasks: [], hiddenBoards: [] };
     expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed')).toBeNull();
   });
 
@@ -88,7 +88,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
   // shell); a long plan would leave the recovering start unable to start.
   it('points the agent at its saved plan instead of sending a long one', async () => {
     const longTitle = 'A task whose title runs on for a while to make the plan long'.repeat(2);
-    harness.view = { workflow, tasks: Array.from({ length: 40 }, (_unused, index) => plannedTask(`${longTitle} ${index}`)) };
+    harness.view = { workflow, tasks: Array.from({ length: 40 }, (_unused, index) => plannedTask(`${longTitle} ${index}`)), hiddenBoards: [] };
 
     const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'not-resumed');
 
@@ -113,7 +113,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
 
     it('says the same when the plan is too long to send and the agent reads it itself', async () => {
       const longTitle = 'A task whose title runs on for a while to make the plan long'.repeat(2);
-      harness.view = { workflow, tasks: Array.from({ length: 40 }, (_unused, index) => plannedTask(`${longTitle} ${index}`)) };
+      harness.view = { workflow, tasks: Array.from({ length: 40 }, (_unused, index) => plannedTask(`${longTitle} ${index}`)), hiddenBoards: [] };
 
       const message = await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'saved-elsewhere');
 
@@ -123,7 +123,7 @@ describe('buildWorkflowAgentContinueMessage', () => {
     });
 
     it('is null when nothing is saved yet, whichever reason it is given', async () => {
-      harness.view = { workflow, tasks: [] };
+      harness.view = { workflow, tasks: [], hiddenBoards: [] };
 
       expect(await buildWorkflowAgentContinueMessage(context, 'home', workflow, 'FIRST MESSAGE', 'saved-elsewhere')).toBeNull();
     });

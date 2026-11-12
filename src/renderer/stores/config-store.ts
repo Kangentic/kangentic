@@ -222,6 +222,13 @@ interface ConfigStore {
   projectSettingsProjectName: string | null;
   projectSettingsInitialTab: string | null;
   openProjectSettings: (projectPath: string, projectName: string, initialTab?: string) => void;
+  /**
+   * Drops the project the panel is editing, for when that project is removed while the panel is
+   * open (a host deleted from the SSH tab removes its projects). The panel stays open on the
+   * system tabs; without this it kept listing the project tabs with the removed project's
+   * overrides.
+   */
+  clearProjectSettingsTarget: () => void;
 
   // -- Project overrides --
   projectOverrides: DeepPartial<AppConfig> | null;
@@ -685,6 +692,15 @@ const configStoreInitializer: StateCreator<ConfigStore> = (set, get) => {
         if (get().projectSettingsPath === projectPath) {
           set({ projectOverrides: overrides });
         }
+      });
+    },
+
+    clearProjectSettingsTarget: () => {
+      set({
+        projectSettingsPath: null,
+        projectSettingsProjectName: null,
+        projectSettingsInitialTab: null,
+        projectOverrides: null,
       });
     },
 

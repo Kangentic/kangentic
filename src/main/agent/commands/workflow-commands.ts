@@ -7,6 +7,7 @@ import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
 import { requestWorkflowAgentProjectAccess } from '../../workflows/workflow-agent';
+import { agentPathsOf } from '../../remote/host-paths';
 import { describeState, formatWorkflow } from '../../workflows/workflow-format';
 import {
   WorkflowRequestError,
@@ -526,8 +527,9 @@ export const handleRequestProjectAccess: CommandHandler = (params, context) => {
       now: `Granted: ${access.name}, at ${access.path}. Kangentic is restarting you on this conversation with it readable.`,
       'next-start': `Granted: ${access.name}, at ${access.path}. The workflow's agent reads it from its next start.`,
       unsupported: `Granted: ${access.name}, but this agent cannot read another project's checkout, so the grant takes effect only for an agent that can.`,
+      elsewhere: `${access.name} is on another machine than this workflow's agent, so its checkout cannot be read from here. Nothing was granted.`,
     };
-    return { success: true, message: messages[access.when], data: { projectId, path: access.path } };
+    return { success: true, message: messages[access.when], data: { projectId, path: access.path, location: agentPathsOf(context).location } };
   } catch (error) {
     return fail(error);
   }

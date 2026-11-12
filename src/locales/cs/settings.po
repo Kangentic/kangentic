@@ -32,6 +32,10 @@ msgstr "{agentName} používá tuto proměnnou, nastavenou tam, kde byl Kangenti
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Otevře stránku dokumentace."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
@@ -122,6 +126,10 @@ msgstr "Zvuk pro {eventName}: {valueName}"
 msgid "{eventName} toast"
 msgstr "{eventName}: oznámení v aplikaci"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{hostname} now presents a different key."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -131,6 +139,10 @@ msgstr "{hours, plural, one {zbývá # h} few {zbývají # h} many {zbývá # h}
 #, fuzzy
 msgid "{label}, always on"
 msgstr "{label}, vždy zapnuto"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -161,6 +173,11 @@ msgstr "{percent} %, {displayName}"
 #, fuzzy
 msgid "{percent}%, {timeLeft}"
 msgstr "{percent} %, {timeLeft}"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "{projectCount, plural, one {# project} other {# projects}}"
+msgstr "{projectCount, plural, one {# projekt} few {# projekty} many {# projektu} other {# projektů}}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -196,10 +213,24 @@ msgstr ""
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Plovoucí panel se stavem aktivity každé relace a posledními přechody, zapisovaný také do .kangentic/debug."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A name from your SSH config works too, which is how a jump host or a port is set."
+msgstr "Funguje i název z vaší konfigurace SSH, takto lze nastavit jump host nebo port."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
 msgstr "Předvolba za vás vybere živý a zpřesňující model. Ve vlastním režimu je vyberete sami."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A private key file; Kangentic keeps a copy in its own folder"
+msgstr "Soubor privátního klíče; Kangentic si ponechá kopii ve vlastní složce"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -274,10 +305,20 @@ msgstr "Ladicí překryv modulu aktivity"
 msgid "Add account"
 msgstr "Přidat účet"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Add host"
+msgstr "Přidat hostitele"
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Add shortcut"
 msgstr "Přidat zkratku"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Address"
+msgstr "Adresa"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -584,6 +625,10 @@ msgstr "Svislá čára"
 msgid "Basic accuracy"
 msgstr "Základní přesnost"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr ""
+
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Behavior"
@@ -593,6 +638,11 @@ msgstr "Chování"
 #, fuzzy
 msgid "Best accuracy"
 msgstr "Nejlepší přesnost"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Beta"
+msgstr "Beta"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -650,8 +700,14 @@ msgstr "Data prohlížeče"
 msgid "Browser data cleared"
 msgstr "Data prohlížeče byla vymazána"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Build server"
+msgstr "Sestavovací server"
+
 #: src/renderer/components/settings/accounts/AccountLoginDialog.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Cancel"
 msgstr "Zrušit"
@@ -691,6 +747,11 @@ msgstr "Změnit popředí"
 msgid "Changes"
 msgstr "Změny"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Checking"
+msgstr "Ověřování"
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "Checking..."
@@ -712,6 +773,10 @@ msgstr "Vyberte model"
 msgid "Choose an agent"
 msgstr "Vyberte agenta"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Claude 5h / weekly quota bars"
@@ -728,6 +793,7 @@ msgid "Clear browser data?"
 msgstr "Vymazat data prohlížeče?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Clear data"
 msgstr "Vymazat data"
@@ -893,6 +959,7 @@ msgid "Connect a phone over an end-to-end encrypted relay."
 msgstr "Připojte telefon přes relay s koncovým šifrováním."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connected"
 msgstr "Připojeno"
@@ -904,6 +971,7 @@ msgid "Connected"
 msgstr "Připojeno"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connecting…"
 msgstr "Připojování…"
@@ -918,6 +986,11 @@ msgstr "Pruh kontextu"
 #, fuzzy
 msgid "Context window"
 msgstr "Kontextové okno"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Continue"
+msgstr "Pokračovat"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 #, fuzzy
@@ -1273,6 +1346,11 @@ msgstr "Přetažením změníte pořadí"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "Každá relace agenta získá místní server MCP a tyto nástroje si najde sama. Úlohy vytvořené agentem se zobrazí na tabuli s oznámením."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Editors"
@@ -1397,6 +1475,11 @@ msgstr ""
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
 msgstr "Najde vaši práci podle významu a odpovídá na otázky."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Fingerprint"
+msgstr "Otisk"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1543,6 +1626,11 @@ msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys
 msgstr "Podržením spustíte nahrávání, uvolněním vložíte přepis. Klávesu změníte v Klávesových zkratkách."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Hosts"
+msgstr "Hostitelé"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1568,6 +1656,11 @@ msgstr "Způsob použití změn sdílené konfigurace nástěnky."
 #, fuzzy
 msgid "How it works"
 msgstr "Jak to funguje"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "How Kangentic signs in"
+msgstr "Jak se Kangentic přihlašuje"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
@@ -1765,10 +1858,19 @@ msgstr "Kangentic jej přestane používat pro nové relace."
 msgid "Kangentic turned this off after repeated failures."
 msgstr "Kangentic tuto funkci vypnul po opakovaných selháních."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Kangentic uses your SSH config, agent and keys, the way a terminal does."
+msgstr "Kangentic používá vaši konfiguraci SSH, agenta a klíče stejně jako terminál."
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "Kangentic-operated relay"
 msgstr "Relay provozovaný Kangentic"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1779,6 +1881,15 @@ msgstr "Po uvolnění ještě chvíli nahrávat, aby se neuřízlo poslední slo
 #, fuzzy
 msgid "Keep editing"
 msgstr "Pokračovat v úpravách"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Key file"
+msgstr "Soubor klíče"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1889,6 +2000,11 @@ msgctxt "settings card"
 msgid "Links"
 msgstr ""
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Linux machines Kangentic runs agents on over SSH."
+msgstr "Linuxové počítače, na kterých Kangentic spouští agenty přes SSH."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "Live model"
@@ -1920,6 +2036,11 @@ msgstr "Lokální model"
 #, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
 msgstr "Zaznamenává každé volání IPC do .kangentic/logs se skrytím měnících kanálů; ve výchozím stavu zapnuto jen v /preview."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Looking for ssh…"
+msgstr "Hledání ssh…"
 
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
@@ -2018,6 +2139,16 @@ msgstr "Přepínání mezi okny úloh a jejich uspořádání."
 msgid "Mute notifications"
 msgstr "Ztlumit oznámení"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "My SSH config"
+msgstr "Moje konfigurace SSH"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Name"
+msgstr "Název"
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "sort files by"
@@ -2061,6 +2192,10 @@ msgstr "Vyžaduje znalostní graf"
 msgid "New account"
 msgstr "Nový účet"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "No agents with accounts"
@@ -2080,6 +2215,11 @@ msgstr "Zatím nejsou spárována žádná zařízení."
 #, fuzzy
 msgid "No Done tasks yet"
 msgstr "Zatím žádné dokončené úlohy"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "No hosts yet."
+msgstr "Zatím žádní hostitelé."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
@@ -2118,9 +2258,17 @@ msgid "None"
 msgstr "Žádný"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not checked"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Not found"
 msgstr "Nenalezeno"
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not on hosts yet"
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
 #, fuzzy
@@ -2154,6 +2302,10 @@ msgstr "Zatím žádné commity"
 #, fuzzy
 msgid "Notifications"
 msgstr "Oznámení"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
@@ -2266,9 +2418,15 @@ msgid "Pairing QR code"
 msgstr "QR kód pro spárování"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Password"
 msgstr "Heslo"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Password for the host"
+msgstr "Heslo pro hostitele"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2279,6 +2437,11 @@ msgstr "Po překročení uvolní nejstarší časované oznámení místo novém
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "Cesta na serveru pro úkoly tohoto projektu. Ponechte prázdné pro použití výchozího adresáře serveru"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Path to the private key"
+msgstr "Cesta k privátnímu klíči"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2390,10 +2553,26 @@ msgstr "Náhled během mluvení: streamování je okamžité, po částech je p�
 msgid "Privacy"
 msgstr "Soukromí"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
 msgstr "Profiluje hlavní proces a v hlášení smyčky událostí uvede nejnáročnější funkce zaseknutí; za běhu zatěžuje CPU."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version} (this app is {appVersion})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program version unknown"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2531,7 +2710,13 @@ msgctxt "card preview"
 msgid "Recent"
 msgstr "Nedávné"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "Znovu připojit"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Reconnecting…"
 msgstr "Opětovné připojování…"
@@ -2602,6 +2787,7 @@ msgstr "Vzdálené"
 #: src/renderer/components/settings/accounts/AccountRow.tsx
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Remove"
 msgstr "Odebrat"
@@ -2616,10 +2802,23 @@ msgstr "Odebrat {accountToRemoveName}?"
 msgid "Remove a task's worktree when the task completes."
 msgstr "Odebrat pracovní strom úlohy po jejím dokončení."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Remove host"
+msgstr "Odebrat hostitele"
+
 #: src/renderer/components/settings/tabs/AccountsTab.tsx
 #, fuzzy
 msgid "Remove this account?"
 msgstr "Odebrat tento účet?"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2750,6 +2949,7 @@ msgstr "Spustí se po vytvoření pracovního stromu. Ve Windows běží přes c
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "Běží na tomto počítači, pokud nezvolíte zpřesnění v cloudu."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 #, fuzzy
 msgid "Save"
@@ -2948,6 +3148,11 @@ msgstr "Přihlášeno na tomto počítači"
 msgid "Silences all notifications on this machine until turned off."
 msgstr "Ztlumí všechna oznámení na tomto počítači až do vypnutí."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "since {since}"
+msgstr "od {since}"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "since {sinceTime}"
@@ -2996,6 +3201,26 @@ msgstr "Zdrojový kód vektorizován"
 msgid "Spawn stalled"
 msgstr "Spuštění se zaseklo"
 
+#: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
+msgid "SSH"
+msgstr "SSH"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "SSH client"
+msgstr "Klient SSH"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh found"
+msgstr "ssh nalezeno"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh not found"
+msgstr "ssh nenalezeno"
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "diff scope"
@@ -3033,6 +3258,11 @@ msgstr "Skript pro zastavení"
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Ukončí, co agent nechal běžet ve své složce, když je jeho úloha hotová, vrácená do To Do nebo smazaná, nebo když skončí jeho Command Terminal."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Zastaveno"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3229,6 +3459,10 @@ msgstr "První zpráva, kterou dostane pro nový pracovní postup."
 msgid "The Kangentic relay"
 msgstr "Relay Kangentic"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy
 msgid "The language of menus, settings and dialogs."
@@ -3284,6 +3518,11 @@ msgstr "Shell, písmo, kurzor a barvy, které používají všechny terminály."
 msgid "The sign-in did not finish."
 msgstr "Přihlášení nebylo dokončeno."
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "The ssh program on this computer that Kangentic connects with."
+msgstr "Program ssh v tomto počítači, přes který se Kangentic připojuje."
+
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
 msgid "The task's description"
@@ -3310,6 +3549,12 @@ msgstr "Složka tohoto účtu je na jiné jednotce, takže si účet ponechává
 #, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "Tato klávesová zkratka je pevná a nelze ji přemapovat"
+
+#. placeholder {0}: editProbe.hostname
+#. placeholder {0}: probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "This is the key {0} presents."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3375,6 +3620,27 @@ msgstr "Přepis"
 msgid "Transition and motion effects."
 msgstr "Efekty přechodů a pohybu."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Trust this key"
+msgstr "Důvěřovat tomuto klíči"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr ""
+
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
 msgid "Try a different search term"
@@ -3385,6 +3651,11 @@ msgstr "Zkuste jiný hledaný výraz"
 msgid "Turn on Toast or Desktop to hear a sound"
 msgstr "Pro přehrání zvuku zapněte Toast nebo Desktop"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Type"
+msgstr "Typ"
+
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
 msgctxt "cursor style"
@@ -3392,6 +3663,7 @@ msgid "Underline"
 msgstr "Podtržení"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Unreachable"
 msgstr "Nedostupné"
@@ -3431,10 +3703,25 @@ msgstr "Použijte hodnotu {TERMINAL_FONT_SIZE_MIN} až {TERMINAL_FONT_SIZE_MAX}.
 msgid "Use one theme when the system is light and another when it is dark."
 msgstr "Použít jeden motiv pro světlý systém a jiný pro tmavý."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use the password once to add a key Kangentic makes. It is never stored"
+msgstr "Heslo se použije jednou k přidání klíče, který Kangentic vytvoří. Nikdy se neukládá"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use your own ssh setup: its config, agent and keys, as a terminal does"
+msgstr "Použít vlastní nastavení ssh: jeho konfiguraci, agenta a klíče, stejně jako terminál"
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Used / total tokens"
 msgstr "Využité / celkové tokeny"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Used once to add a key Kangentic makes for this host. It is never stored."
+msgstr "Použije se jednou k přidání klíče, který Kangentic pro tohoto hostitele vytvoří. Nikdy se neukládá."
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #, fuzzy

@@ -158,6 +158,15 @@ These behaviors were built on 2026-11-03 from Factory's docs (CLI v1.2.0) and Dr
 
 Measuring them needs a signed-in Droid TUI, which the probe machine does not have. Each is built so a Droid that ignores it runs as it did before.
 
+## SSH
+
+A Droid on a remote host over SSH (#913) runs as `droid`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. Its command is checked against a fake host in `tests/unit/droid-ssh-remote.test.ts`. In a Linux container, `droid exec` 1.5.0 with a BYOK model fired its real SessionStart hook through the transport script, and its session file crossed the real helper and relay, a resume by `-s` included (`tests/unit/remote-transcript-real-cli.test.ts`). The TUI needs a Factory sign-in, so `--resume` in a TUI on a host has not been run.
+
+- **Synced files.** `remoteFiles()` declares the project's `.factory/mcp.json`, and the user's `~/.factory/mcp.json`, which is only read so the browser policy sees the servers there. Kangentic's entry is merged beside the user's servers in the project's file on the host, is the WSL hook transport's stdio bridge named by its path on the host, and holds the token only as the `${KANGENTIC_MCP_TOKEN}` reference (the token rides the spawn environment). The file is restored when the session releases, and removed again if Kangentic created it. The pulled copy of the user's file stays in the mirror folder on this computer, and it can hold a server's credentials.
+- **Hooks reach this computer.** `droid-settings.json` goes to the host with the session's files (`remoteSessionFiles()`), `--settings` names the host's copy, and each hook publishes through the WSL hook transport's script on the host. So a session on a host shows the tool calls and waits a local one does, on top of the silence timer.
+- **Resume works over SSH.** The SessionStart hook reports the session's id, which is stored and named by `--resume`. This is the larger visible change: a Droid task on a host now picks its conversation up where it left off, where it used to start fresh. The filesystem pass still answers nothing on a host, so a Droid that ignores `--settings` has no id and starts fresh, with no error and no wait.
+- **The conversation is copied.** Once the id is known, `~/.factory/sessions/<slug>/<id>.jsonl` is copied to this computer's mirror under the slug of the folder on the host, and the Conversation viewer and the search index read it there. A locator looks at what has arrived, once, and never polls. Droid has no token ledger reader, so the copy feeds no totals.
+
 ## Limitations
 
 ### No live telemetry (model, cost, tokens, context window)

@@ -2,7 +2,7 @@ import { identifyAntigravityUserSetupFailure } from './startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import { AntigravityDetector } from './detector';
-import { AntigravityCommandBuilder, antigravityMcpWiringEnabled } from './command-builder';
+import { AGY_SESSION_SETTINGS_FILE, AntigravityCommandBuilder, antigravityMcpWiringEnabled } from './command-builder';
 import { removeHooks as removeAntigravityHooks } from './hook-manager';
 import { ensureWorkspaceTrust, removeWorkspaceTrust } from './trust-manager';
 import { migrateAntigravityProjectData } from './project-relocation';
@@ -20,6 +20,7 @@ import { runAntigravityPrint } from './print-runner';
 import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-name';
 import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
 import {
@@ -49,6 +50,7 @@ import type {
   AdapterRuntimeStrategy,
   PermissionMode,
   PerToolStat,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
   TranscriptToolCounts,
@@ -97,6 +99,20 @@ export class AntigravityAdapter implements AgentAdapter {
   readonly kangenticMcp = 'shared-folder' as const;
   /** An agy installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a remote host over SSH the CLI is `agy` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'agy';
+  /**
+   * The conversation's transcript on a host over SSH (#913): the one file agy appends to,
+   * `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`, in this computer's mirror
+   * of the host's home, where every agy reader already looks for it. agy allocates a NEW conversation's id at
+   * its first turn, so a fresh session names nothing here until its hook reports the id, and the relay asks
+   * again then (`setAgentSessionId`). A resume has the id at spawn. The SQLite file beside it is not copied.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [antigravityTranscriptPath(options.agentSessionId, place)];
+  }
   // Mapped onto agy's native modes in the command builder
   // (https://antigravity.google/docs/cli/modes): --mode plan / accept-edits /
   // auto, and --dangerously-skip-permissions. No flag leaves agy in the mode
@@ -135,6 +151,29 @@ export class AntigravityAdapter implements AgentAdapter {
   // concurrent sessions in one cwd; removeHooks() only strips them when the
   // folder's last session releases. See SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
+
+  /**
+   * What an agy on a remote host has edited on the host (#913): the trust store (ensureTrust), the
+   * workspace hooks file (merged with the user's own) and the Kangentic MCP plugin, wholly ours. The
+   * plugin's `mcp_config.json` holds the session's MCP token in plaintext, so it is written owner-only.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    const mcpConfig = '.agents/plugins/kangentic/mcp_config.json';
+    return {
+      home: ['.gemini/antigravity-cli/settings.json'],
+      project: ['.agents/hooks.json', '.agents/plugins/kangentic/plugin.json', mcpConfig],
+      private: [mcpConfig],
+    };
+  }
+
+  /**
+   * The per-session settings file `--settings` names (the status line that reports live telemetry). It
+   * sits in the session's folder here, so the relay sends it to the same place on the host; a spawn
+   * that wrote none sends nothing.
+   */
+  remoteSessionFiles(): readonly string[] {
+    return [AGY_SESSION_SETTINGS_FILE];
+  }
 
   /** See `startup-failure.ts`. */
   identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
@@ -235,6 +274,10 @@ export class AntigravityAdapter implements AgentAdapter {
   }
 
   async locateSessionHistoryFile(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<string | null> {
+    // An agy on a host (#913): its transcript is copied into this computer's mirror of the host's home
+    // (`remoteTranscriptFiles`), so the readers look at what has arrived, once. Polling would only wait,
+    // since the copy starts with the session and a missing file is a conversation with no turn yet.
+    if (place?.kind === 'ssh') return locateAntigravityTranscriptFile(agentSessionId, place);
     // The brain-dir transcript appears when the first turn starts; poll
     // briefly since callers locate right after id capture.
     for (let attempt = 0; attempt < 10; attempt++) {

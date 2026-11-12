@@ -276,8 +276,9 @@ msgid "Restart Kangentic?"
 msgstr ""
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Resuming terminals..."
-msgstr ""
+msgstr "Reprise des terminaux..."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy

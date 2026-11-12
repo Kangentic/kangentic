@@ -41,9 +41,11 @@ import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { AGENT_READY_CEILING_MS, AGENT_START_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
-import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
+import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn, type RejoinSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary, type SuspendedPlaceholderInput } from './session-registry';
 import { AgentStartRefusedError } from './spawn/pty-spawn';
+import type { RemoteHostRequest, RemoteSessionRoute } from '../remote/protocol/messages';
+import type { RemoteSessionRelay } from '../remote/remote-session-relay';
 import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
 import type { ScrollbackInvokeResult } from '../../shared/pty-port-protocol';
@@ -71,6 +73,7 @@ import type {
   ActivityReason,
   SessionEvent,
   SessionResumer,
+  SpawnRemote,
   SpawnSessionInput,
   PerToolStat,
   PtyResizeOrigin,
@@ -85,7 +88,7 @@ import type {
   TurnStartCause,
 } from '../activity-engine/engine';
 import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
-import { hostPathForTarget, placeFromStored } from '../agent/shared/cli-target';
+import { hostPathForTarget, isPlainIdName, placeFromStored } from '../agent/shared/cli-target';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec, type WslShellSpec } from './process-tag/task-process-tag';
@@ -171,9 +174,12 @@ const ALT_SCREEN_POLL_MS = 100;
  */
 export const TERMINAL_REPAINT_LEG_GAP_MS = 60;
 
-/** A Command Terminal's per-session directory, created by `startCommandTerminal`. */
+/**
+ * A Command Terminal's per-session directory, created by `startCommandTerminal` under the folder its command was
+ * built for. A remote session's `cwd` is the host's folder, which names nothing on this computer.
+ */
 function commandTerminalSessionDirectory(session: ManagedSession): string {
-  return path.join(session.cwd, '.kangentic', 'sessions', session.id);
+  return path.join(session.commandCwd ?? session.cwd, '.kangentic', 'sessions', session.id);
 }
 
 /** Best-effort: the directory only holds the bridges' status and event files. */
@@ -213,6 +219,17 @@ function noteHostStopResult(result: StopProcessResult): void {
   // A Stop never loads the reader (the reap that listed the process did), so no load error rides along.
   reportTaskReapFailure('stop', result.failureCode, null, result.failurePass, result.failureCause);
 }
+
+/** A session a host kept running, and what its record counted of this run before the app last let go of it. */
+export type RemoteSessionAdoption = SpawnSessionInput & {
+  id: string;
+  remote: SpawnRemote;
+  runSoFar?: { toolBreakdown: PerToolStat[]; compactionCount: number };
+  /** The model the record last saw the agent report, shown until the agent reports one again. */
+  modelSoFar?: { id: string; displayName: string };
+  /** Occupancy the record last saw, shown until the agent reports one again. */
+  occupancySoFar?: number;
+};
 
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
 interface InFlightSpawn {
@@ -528,6 +545,12 @@ export class SessionManager extends EventEmitter {
    */
   private readonly hiddenUntilAdopted = new Set<string>();
   /**
+   * SSH hosts whose link is not connected right now (#913). A session on one of them hears nothing, so
+   * its silence is held against it by neither the activity watchdog nor the idle timeout. Only a link
+   * event changes it; a drop never changes a session's own state.
+   */
+  private readonly hostsWithLinkDown = new Set<string>();
+  /**
    * Sessions whose agent draws its input box in the alternate screen
    * (`spawn({ inputInAlternateScreen })`). Until the TUI enters it, any screen
    * on show is one the agent draws first, so `awaitInputReady` holds a
@@ -548,6 +571,8 @@ export class SessionManager extends EventEmitter {
   /** Set by `killAll()`: how long the pty host may wait for exits after
    *  `dispose()`, so it is gone inside the quit drain's deadline. */
   private hostExitWaitMs: number | undefined;
+  /** Keeps a remote session's folder in step with its host's (#913); null until startup sets it. */
+  private remoteSessionRelay: RemoteSessionRelay | null = null;
   /** Main's mirror of each session's alternate-screen state, from the host. */
   private inAltScreen = new Map<string, boolean>();
   /** The column count each session's ring was last sized to, mirroring the
@@ -907,14 +932,24 @@ export class SessionManager extends EventEmitter {
         // agent wrote. A caller-owned id set at spawn never comes this way.
         session.agentIdReportedAt ??= Date.now();
         this.noteAgentRan(session);
-        // The host can stop scanning this session's output for an id.
-        this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
+        // On a host the id comes from the host, and the readers here build paths from it (#913). This is
+        // where every such id enters, so none that could climb out of a folder reaches a row or a reader.
+        // Below the lines above: the agent did run, and a launch read as never started gets a second turn.
+        if (session.hostId && !isPlainIdName(agentReportedId)) {
+          console.warn(`[SESSION] dropped an agent session id from a host for ${sessionId.slice(0, 8)}: it is no plain name`);
+          return;
+        }
+        // The host can stop scanning this session's output for an id, unless this one was only worked
+        // out, when the agent's own report is still wanted to confirm it.
+        if (!options?.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
         // Reflect the captured ID on the live Session so the renderer (and
         // tests) can observe it via sessions.list() without a DB round-trip.
         if (session.agentSessionId !== agentReportedId) {
           session.agentSessionId = agentReportedId;
           this.emit('session-changed', sessionId, toSession(session));
         }
+        // A session on a host starts copying the transcript this id names (#913).
+        this.remoteSessionRelay?.setAgentSessionId(sessionId, agentReportedId);
         this.emit('agent-session-id', sessionId, session.taskId, session.projectId, agentReportedId);
         // Hand off to the session-history reader if the adapter declares
         // a native history hook. Fire-and-forget - the reader logs any
@@ -1001,8 +1036,16 @@ export class SessionManager extends EventEmitter {
         // task's setup script ends, and has no task record to pause.
         if (this.hiddenUntilAdopted.has(sessionId)) return true;
         const session = this.registry.get(sessionId);
+        // A session on a host whose link is down (#913): its silence is the link's, not a stuck agent's.
+        if (session !== undefined && this.isOnHostWithLinkDown(session)) return true;
         return session !== undefined
           && (isCommandTerminalSession(session) || session.idlePauseLosesConversation === true);
+      },
+      // Silence from a session on a host whose link is down is not a stuck agent (#913): no hook and no
+      // output can arrive, and its agent goes on running there.
+      isActivityHeld: (sessionId) => {
+        const session = this.registry.get(sessionId);
+        return session !== undefined && this.isOnHostWithLinkDown(session);
       },
       // The idle sweep's suspend. A task's agent is NOT suspended here: the
       // 'idle-timeout' listener (ipc/handlers/sessions.ts) pauses it through
@@ -1017,7 +1060,8 @@ export class SessionManager extends EventEmitter {
       isSessionRunning: (sessionId) => this.registry.get(sessionId)?.status === 'running',
       getSessionRootPid: (sessionId) => {
         const session = this.registry.get(sessionId);
-        return session?.pty?.pid;
+        // A PTY on a remote host has no pid here, so the watcher has no tree to list (#913).
+        return session?.pty?.pid ?? undefined;
       },
       resolveBackgroundShellOutputFile: (sessionId, shellId) => {
         const session = this.registry.get(sessionId);
@@ -1163,6 +1207,20 @@ export class SessionManager extends EventEmitter {
     });
   }
 
+  /** The session runs on an SSH host whose link is down. */
+  private isOnHostWithLinkDown(session: ManagedSession): boolean {
+    return typeof session.hostId === 'string' && this.hostsWithLinkDown.has(session.hostId);
+  }
+
+  /** A host's link came back: what it was down for is neither idle time nor silence. */
+  private noteLinkRestored(hostId: string): void {
+    const sessionIds: string[] = [];
+    for (const session of this.registry.values()) {
+      if (session.hostId === hostId && session.status === 'running') sessionIds.push(session.id);
+    }
+    this.telemetry.noteLinkRestored(sessionIds);
+  }
+
   /**
    * Apply one event from the pty host. The host runs the per-chunk work; what
    * main needs of it arrives here, in the order the host produced it.
@@ -1293,6 +1351,36 @@ export class SessionManager extends EventEmitter {
       case 'trace':
         recordTerminalTrace(event.sessionId, event.event, event.detail, event.ts, 'pty-host');
         return;
+      case 'remoteLink':
+        // An SSH host's connection changed (#913). Its own event: a drop never ends a session, and the
+        // sessions on the host are neither marked exited nor respawned because of it. It does change what
+        // silence means: while the link is down the activity watchdog and the idle timeout wait.
+        if (event.state === 'connected') {
+          if (this.hostsWithLinkDown.delete(event.hostId)) this.noteLinkRestored(event.hostId);
+        } else {
+          this.hostsWithLinkDown.add(event.hostId);
+        }
+        this.emit('remote-link', { hostId: event.hostId, state: event.state, detail: event.detail });
+        return;
+      case 'hookFile':
+        // A remote agent's hook file, sent across the link (#913). The relay that registered the
+        // session writes it into the hook folder the inbox reads (`remote-session-relay.ts`).
+        this.emit('remote-hook-file', event);
+        return;
+      case 'fileChunk':
+        // A piece of a remote agent's transcript (#913), written at its offset into the copy the
+        // viewer, the search index and the token ledger read.
+        this.emit('remote-file-chunk', event);
+        return;
+      case 'remoteSessions':
+        // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable ones
+        // are live agents on a host that this app holds no session for yet: ones a quit left running,
+        // which startup recovery takes back (`rejoin-sessions.ts`) once the link is up, and any another
+        // computer or an earlier run started. Only logged here; recovery adopts by the session records.
+        if (event.adoptable.length > 0) {
+          console.log(`[remote] host ${event.hostId.slice(0, 8)} runs ${event.adoptable.length} session(s) this app has not taken back`);
+        }
+        return;
       case 'exit':
       case 'rawData':
       case 'rawExit':
@@ -1338,6 +1426,37 @@ export class SessionManager extends EventEmitter {
    *  drain: the host flushes and exits after the PTYs die. */
   getPtyHostPid(): number | null {
     return this.host.hostPid;
+  }
+
+  /**
+   * Give the manager the relay that keeps a remote session's folder in step with its host's (#913). The
+   * host's hook files arrive as `remote-hook-file` events, which it writes into the hook folder the
+   * inbox reads. Set once at startup; without it a spawn onto a host fails with a sentence.
+   */
+  setRemoteSessionRelay(relay: RemoteSessionRelay): void {
+    this.remoteSessionRelay = relay;
+    this.on('remote-hook-file', (event: Extract<PtyHostEvent, { type: 'hookFile' }>) => relay.deliver(event));
+    this.on('remote-file-chunk', (event: Extract<PtyHostEvent, { type: 'fileChunk' }>) => relay.deliverChunk(event));
+    // An id a CLI's index names comes back as `onAgentSessionId`, like any other, and stays open to the agent's own report.
+    relay.onSessionIdFound((sessionId, agentSessionId) => this.telemetry.notifyInferredAgentSessionId(sessionId, agentSessionId));
+  }
+
+  /**
+   * For a reader of an ending session's transcript: resolves once a session on a host has its last export
+   * here, bounded. Null when there is nothing to wait for, which is every session that is not exported.
+   */
+  remoteTranscriptSettled(sessionId: string): Promise<void> | null {
+    return this.remoteSessionRelay?.transcriptSettled(sessionId) ?? null;
+  }
+
+  /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */
+  remoteHostRequest(request: RemoteHostRequest): Promise<unknown> {
+    return this.host.remote(request);
+  }
+
+  /** The live PTYs held on one SSH host, which its `addHost` carries after the pty host restarted. */
+  liveRemotePtys(hostId: string): RemoteSessionRoute[] {
+    return this.host.liveRemotePtys(hostId);
   }
 
   /** Run a one-shot child process in the pty host (`off-main-exec.ts`). */
@@ -1648,9 +1767,10 @@ export class SessionManager extends EventEmitter {
    * before the hangup re-parents them. A WSL shell's agent lives in the distro,
    * where no host listing reaches, so it reads `unknown`.
    */
-  private noteAgentProcessBeforeEnd(session: ManagedSession, shellPid: number): void {
+  private noteAgentProcessBeforeEnd(session: ManagedSession, shellPid: number | null): void {
     if (isShuttingDown() || !this.mayReportAbandoned(session)) return;
-    if (parseWslShellSpec(session.shell) !== null || !(shellPid > 0)) {
+    // A host's PTY has no pid here, so no local listing can name its agent: it reads `unknown`.
+    if (parseWslShellSpec(session.shell) !== null || shellPid === null || !(shellPid > 0)) {
       session.agentProcessAtEnd = Promise.resolve('unknown');
       return;
     }
@@ -2447,6 +2567,8 @@ export class SessionManager extends EventEmitter {
    * (`abandonCancelledSpawn`).
    */
   private readonly spawnsInFlight = new Map<string, InFlightSpawn>();
+  /** Agents being taken back from a host, by session id (`adoptRemoteSession`). */
+  private readonly adoptionsInFlight = new Map<string, Promise<Session | null>>();
 
   /** Restarts in place keeping their column slot: see `holdColumnSlot`. */
   private readonly columnSlotHolds = new Set<ColumnHolder>();
@@ -2791,7 +2913,81 @@ export class SessionManager extends EventEmitter {
     await Promise.all(exits);
   }
 
-  private async doSpawn(input: SpawnSessionInput): Promise<Session> {
+  /**
+   * Take back a session a host kept running while the app was closed (#913). The host's agent is rebound
+   * to a PTY made here and registered as a session under its own id; nothing is started or typed. Null
+   * when the host no longer holds it alive (it exited while nobody was attached), in which case nothing
+   * changed and the caller settles the record. Rejects when the host cannot be asked or the registration
+   * fails: the agent is untouched and the caller leaves the record for a later attempt.
+   *
+   * Two recovery passes can ask for one record, since a project's cold open and its host's first connection
+   * overlap, and a later pass finds it still `running`. A session already held is the answer, and a take under
+   * way is shared. A second take would drain the first as its sibling and release its files off the host.
+   */
+  adoptRemoteSession(input: RemoteSessionAdoption): Promise<Session | null> {
+    const held = this.registry.get(input.id);
+    if (held?.status === 'running') return Promise.resolve(toSession(held));
+    const underWay = this.adoptionsInFlight.get(input.id);
+    if (underWay) return underWay;
+    const adoption = this.takeBackRemoteSession(input).finally(() => this.adoptionsInFlight.delete(input.id));
+    this.adoptionsInFlight.set(input.id, adoption);
+    return adoption;
+  }
+
+  private async takeBackRemoteSession({ runSoFar, modelSoFar, occupancySoFar, ...input }: RemoteSessionAdoption): Promise<Session | null> {
+    const grid = input.restoredGrid ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS };
+    const adopted = await this.host.adoptRemoteSessions(input.remote.hostId, [{ sessionId: input.id, cols: grid.cols, rows: grid.rows }]);
+    const pty = adopted.get(input.id);
+    if (!pty) return null;
+    try {
+      const session = await this.doSpawn({ ...input, command: '', resuming: true, seedIdle: true }, { pty });
+      if (runSoFar) this.telemetry.restoreRunTotals(session.id, runSoFar.toolBreakdown, runSoFar.compactionCount);
+      if (modelSoFar) this.telemetry.seedModelIfUnreported(session.id, modelSoFar);
+      if (occupancySoFar !== undefined) this.telemetry.seedOccupancyIfUnknown(session.id, occupancySoFar);
+      this.markTakenBackAgentRunning(session.id);
+      // The screen is already up. An idle agent writes nothing, so without this
+      // the card sits at the record's seed (or 0%) until the next turn. A TUI
+      // that still holds `Auto · 9.2%` is the live figure, and it also replaces
+      // a seed that a previous `agent about` on this computer had polluted.
+      this.seedUsageFromScreen(session.id, input.agentParser);
+      return session;
+    } catch (error) {
+      // The agent keeps running; only this handle, which nothing will use, is dropped.
+      this.host.forgetRemoteHandle(pty);
+      throw error;
+    }
+  }
+
+  /**
+   * A taken-back agent is on screen the moment it is registered: it ran before the quit and is running
+   * now. Nothing else says so. The launch overlay lifts on the agent's first output, the ready ceiling or
+   * its start hook, and an idle agent writes none of them, so the terminal stayed on "Resuming agent..."
+   * for as long as the agent had nothing to say (a Cursor task the user was not watching). The same
+   * evidence keeps the launch reports from judging a session that never launched here as one whose agent
+   * never started.
+   */
+  private markTakenBackAgentRunning(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    session.agentStartObservedAt ??= Date.now();
+    this.markAgentReady(sessionId);
+  }
+
+  /**
+   * Read occupancy and the live model from the screen the host is already
+   * showing. Fire-and-forget: a missed read leaves the record's seed, and the
+   * agent's next paint fills in. `settle` is false because nothing is resizing.
+   */
+  private seedUsageFromScreen(sessionId: string, parser: SpawnSessionInput['agentParser'] | undefined): void {
+    if (!parser?.usageFromOutput) return;
+    void this.host.getScrollback(sessionId, false).then((screen) => {
+      if (!this.registry.has(sessionId)) return;
+      const usage = parser.usageFromOutput?.(screen ?? '');
+      if (usage) this.telemetry.setSessionUsage(sessionId, usage);
+    }).catch(() => undefined);
+  }
+
+  private async doSpawn(input: SpawnSessionInput, rejoin?: RejoinSpawn): Promise<Session> {
     // The id is fixed here rather than in the spawn flow, so a teardown that
     // lands before the host answers can find this spawn by it.
     const id = input.id ?? uuidv4();
@@ -2810,7 +3006,7 @@ export class SessionManager extends EventEmitter {
       markSettled();
     };
     try {
-      const session = await this.performTrackedSpawn({ ...input, id });
+      const session = await this.performTrackedSpawn({ ...input, id }, rejoin);
       // A failed spawn's row is exited with no PTY, so no exit will release
       // the hold its command took (adapter-lifecycle.releaseCommandHold).
       if (session.status === 'exited') releaseCommandHold(input.agentParser, input.cwd, id);
@@ -2820,14 +3016,15 @@ export class SessionManager extends EventEmitter {
       // debounce (a surface that opens the session inside it cancels the
       // park, as on any switch).
       if (session.status === 'running') this.reconsiderRestingGrid(id);
-      if (session.status === 'running') {
+      // A rejoined agent is long past its launch: no overlay to lift, no first output to wait for.
+      if (session.status === 'running' && !rejoin) {
         const spawned = this.registry.get(id);
         if (spawned) logLaunchStep(spawned, 'spawned');
         this.armAgentReadyCeiling(id);
         this.armUnjudgedLaunchCheck(id);
         this.armLaunchStartBound(id);
       }
-      if (session.status === 'running' && input.resuming && !input.transient) {
+      if (session.status === 'running' && input.resuming && !input.transient && !rejoin) {
         this.announceResumed(id, input.agentSessionId ?? null, input.resumedBy ?? 'user');
       }
       return session;
@@ -2873,7 +3070,7 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private performTrackedSpawn(input: SpawnSessionInput): Promise<Session> {
+  private performTrackedSpawn(input: SpawnSessionInput, rejoin?: RejoinSpawn): Promise<Session> {
     return performSpawn(input, {
       registry: this.registry,
       host: this.host,
@@ -2919,7 +3116,8 @@ export class SessionManager extends EventEmitter {
         this.firstOutputTracker.disarmCeiling(sessionId);
         this.endCommandTerminalAfterPtyExit(sessionId);
       },
-    });
+      ...(this.remoteSessionRelay ? { remoteSessions: this.remoteSessionRelay } : {}),
+    }, rejoin);
   }
 
   /**
@@ -4301,9 +4499,10 @@ export class SessionManager extends EventEmitter {
     if (session?.pty) {
       const ptyRef = session.pty;
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
-      const childPid = ptyRef.pid;
+      // A PTY on a remote host has none: the quit drain probes local pids only.
+      const childPid = ptyRef.pid ?? undefined;
       // Posted ahead of the exit sequence and the kill, and never waited for.
-      this.noteAgentProcessBeforeEnd(session, childPid);
+      this.noteAgentProcessBeforeEnd(session, ptyRef.pid);
       // A renderer's keystrokes stop reaching it now, and anything still
       // queued for it is dropped, as when they crossed this process and found
       // the handle nulled. The exit sequence below is written past the seal.

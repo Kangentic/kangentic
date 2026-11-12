@@ -75,6 +75,17 @@ describe('McpConnectionWatch', () => {
     expect(shell.check).not.toHaveBeenCalled();
   });
 
+  // A host's agent reaches the server through the stdio bridge main relays, so there is nothing to dial.
+  it('runs no check and emits no result for a session on a remote host', async () => {
+    const { check, notify, start } = harness(() => ({ connected: false, error: 'would be a false alarm' }));
+    const sshTarget: StoredCliTarget = { kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'bash', localHome: 'mirror', roots: [] };
+
+    await start('remote-1', { agentName: 'claude', projectId: 'project-1', cliTarget: sshTarget });
+
+    expect(check).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('stops listening once disposed', async () => {
     const { watch, check, start } = harness(() => ({ connected: true }));
     watch.dispose();

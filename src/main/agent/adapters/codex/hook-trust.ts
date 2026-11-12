@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnCli, stopCli } from '../../shared/cli-print';
 import { converseWithAppServer } from './app-server-rpc';
-import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, type CliTarget, type SshCliPlace } from '../../shared/cli-target';
 import { shimFamilyKey } from '../../shared/shim-family-key';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
 import { codexHookDefinitions, codexHookStateOverride, type CodexHookDefinition, type CodexHookTrustEntry } from './hook-manager';
@@ -49,6 +49,14 @@ const FAILED_READ_RETRY_MS = 5 * 60_000;
 /** Longest the scratch folder waits for a stopped app-server to exit before it is removed anyway. */
 const SCRATCH_RELEASE_WAIT_MS = 10_000;
 
+/**
+ * The requests a read on a host pipes in whole (the helper's command runner takes stdin, not a
+ * conversation): Codex's handshake, then the hook listing for one folder.
+ */
+const INITIALIZE_REQUEST = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'kangentic', title: 'Kangentic', version: '0' } } };
+const INITIALIZED_NOTIFICATION = { jsonrpc: '2.0', method: 'initialized' };
+const hooksListRequest = (workingDirectory: string): unknown => ({ jsonrpc: '2.0', id: 2, method: 'hooks/list', params: { cwds: [workingDirectory] } });
+
 /** `hooks/list` for the scratch folder, over one app-server conversation. */
 function listSessionFlagHooks(child: CliChildProcess, workingDirectory: string): Promise<unknown> {
   return converseWithAppServer<unknown>(
@@ -61,6 +69,104 @@ function listSessionFlagHooks(child: CliChildProcess, workingDirectory: string):
       else conversation.resolve(message.result);
     },
   );
+}
+
+/** Longest a read on a host may take. The spawn waits for it no longer than `HOOK_TRUST_SETTLE_MS`. */
+const HOST_TRUST_READ_TIMEOUT_MS = 20_000;
+
+/** The program `codex --version` and the read run as on a host: the CLI's name, found by the host's own shell. */
+const HOST_CODEX_PROGRAM = 'codex';
+
+/**
+ * Makes the read's scratch folders on the host and prints the folder. Under the host's temporary
+ * folder, not its home: the read must touch neither the user's Codex state nor a project, and the
+ * helper's file jobs would leave the empty folders behind. A temporary folder whose name the check
+ * below would refuse is passed over for `/tmp`, and a scratch folder that cannot be finished goes
+ * with the failure: either way nothing is left there that the caller cannot name.
+ */
+const MAKE_SCRATCH_SCRIPT = [
+  'case "${TMPDIR:-/tmp}" in [!/]*|*[!A-Za-z0-9/._-]*) base=/tmp ;; *) base=${TMPDIR:-/tmp} ;; esac',
+  'scratch=$(mktemp -d "$base/kangentic-codex-hooks-XXXXXX") || exit 1',
+  'mkdir "$scratch/home" "$scratch/folder" || { rm -rf "$scratch"; exit 1; }',
+  'printf %s "$scratch"',
+].join('\n');
+
+/** The scratch folder the script above prints: absolute, no quote or space, named by the script. */
+const SCRATCH_FOLDER = /^\/[^\s'"]*kangentic-codex-hooks-[A-Za-z0-9]+$/;
+
+/**
+ * The answer to the `hooks/list` request in everything the app-server printed. Throws when there is
+ * none, which a host's run can produce when the app-server ends at the end of its input before it
+ * answered, and when Codex answered with an error.
+ */
+export function hooksListResultOf(output: string): unknown {
+  for (const rawLine of output.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let message: unknown;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(message) || message.id !== 2) continue;
+    if (message.error) throw new Error('hooks/list failed');
+    return message.result;
+  }
+  throw new Error('app-server did not answer hooks/list');
+}
+
+/**
+ * The version of the Codex on a host, or null when the host has none: the key of the host's trust
+ * read, since the file behind `codex` cannot be stat'ed from here.
+ */
+export async function readHostCodexVersion(place: SshCliPlace): Promise<string | null> {
+  const files = place.files;
+  if (!files) return null;
+  const result = await files.runCommand({ file: HOST_CODEX_PROGRAM, args: ['--version'], timeoutMs: 15_000 });
+  if (result.error || result.timedOut || result.code !== 0) return null;
+  const version = result.stdout.trim();
+  return version.length > 0 ? version : null;
+}
+
+/**
+ * `readCodexHookTrust` for a Codex on an SSH host: the same `app-server` conversation, run on the
+ * host through the helper, which starts a program, writes its standard input and closes it. So the
+ * whole conversation (handshake, then the listing) is sent as one input, and the answer is read from
+ * what the program printed afterwards, whether it ended by itself or was stopped at the bound.
+ * The scratch folders are made and removed on the host.
+ */
+export async function readCodexHookTrustOnHost(
+  place: SshCliPlace,
+  definitions: readonly CodexHookDefinition[],
+): Promise<CodexHookTrustEntry[] | null> {
+  const files = place.files;
+  if (!files) throw new Error('This host has no connection to run a command through.');
+  const made = await files.runCommand({ file: 'sh', args: ['-c', MAKE_SCRATCH_SCRIPT], timeoutMs: 10_000 });
+  const scratch = made.stdout.trim();
+  if (made.error || made.code !== 0 || !SCRATCH_FOLDER.test(scratch)) {
+    throw new Error('could not make a scratch folder on the host');
+  }
+  try {
+    const overrides = definitions.map((definition) => definition.override);
+    const result = await files.runCommand({
+      file: HOST_CODEX_PROGRAM,
+      args: ['app-server', ...overrides.flatMap((override) => ['-c', override])],
+      env: { CODEX_HOME: `${scratch}/home` },
+      stdin: [INITIALIZE_REQUEST, INITIALIZED_NOTIFICATION, hooksListRequest(`${scratch}/folder`)].map((message) => `${JSON.stringify(message)}\n`).join(''),
+      timeoutMs: HOST_TRUST_READ_TIMEOUT_MS,
+    });
+    if (result.error) throw new Error(result.error);
+    const entries = trustEntriesOf(hooksListResultOf(result.stdout), definitions);
+    if (!entries) console.warn('[codex] hook trust read on the host did not list Kangentic\'s hooks as passed; sessions run without hooks');
+    return entries;
+  } catch (error) {
+    console.warn(`[codex] hook trust read on the host failed, sessions run without hooks: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  } finally {
+    // Best effort: a folder left in the host's temporary folder is cleared with it.
+    await files.runCommand({ file: 'rm', args: ['-rf', '--', scratch], timeoutMs: 10_000 }).catch(() => undefined);
+  }
 }
 
 /**
@@ -173,6 +279,11 @@ function binaryStampOf(filePath: string): string | null {
   }
 }
 
+/** The cache key of a host's read. A path never starts with `ssh:`, so it cannot meet a binary's key. */
+function hostReadKey(hostId: string): string {
+  return `ssh:${hostId}`;
+}
+
 interface TrustRead {
   /** The path `detect` found, whose file the stamp describes. */
   detectedPath: string;
@@ -209,6 +320,10 @@ export class CodexHookTrustCheck {
     ) => Promise<CodexHookTrustEntry[] | null> = (codexPath, definitions, target) => readCodexHookTrust(codexPath, definitions, spawnCli, target),
     private readonly stampOf: (filePath: string) => string | null = binaryStampOf,
     private readonly now: () => number = Date.now,
+    private readonly readOnHost: (
+      place: SshCliPlace,
+      definitions: readonly CodexHookDefinition[],
+    ) => Promise<CodexHookTrustEntry[] | null> = readCodexHookTrustOnHost,
   ) {}
 
   /**
@@ -219,13 +334,42 @@ export class CodexHookTrustCheck {
   start(codexPath: string, wsl: CodexTrustReadTarget | null = null): void {
     const stamp = wsl ? `version:${wsl.version}` : this.stampOf(codexPath);
     if (!stamp) return;
-    const key = shimFamilyKey(codexPath);
+    this.begin(
+      shimFamilyKey(codexPath),
+      codexPath,
+      stamp,
+      wsl !== null,
+      () => this.read(codexPath, codexHookDefinitions(wsl ? 'wsl' : 'node'), wsl?.target ?? null),
+    );
+  }
+
+  /**
+   * Begin a read for the Codex on an SSH host, keyed by the host and by the version it reports, since
+   * its binary cannot be stat'ed from here: an update on the host reads again. The hooks are the
+   * transport script's, as in a distro. Nothing is read when the host has no Codex.
+   */
+  startOnHost(place: SshCliPlace, version: string): void {
+    this.begin(hostReadKey(place.hostId), HOST_CODEX_PROGRAM, `version:${version}`, true, () => this.readOnHost(place, codexHookDefinitions('wsl')));
+  }
+
+  /** The `hooks.state` override confirmed for the Codex on this host, or null when it is not. */
+  stateOverrideForHost(hostId: string): string | null {
+    return this.reads.get(hostReadKey(hostId))?.stateOverride ?? null;
+  }
+
+  private begin(
+    key: string,
+    detectedPath: string,
+    stamp: string,
+    stampedByVersion: boolean,
+    run: () => Promise<CodexHookTrustEntry[] | null>,
+  ): void {
     const existing = this.reads.get(key);
-    if (existing && existing.detectedPath === codexPath && existing.stamp === stamp && !this.failedLongAgo(existing)) return;
+    if (existing && existing.detectedPath === detectedPath && existing.stamp === stamp && !this.failedLongAgo(existing)) return;
     const trustRead: TrustRead = {
-      detectedPath: codexPath, stamp, stampedByVersion: wsl !== null, pending: Promise.resolve(), stateOverride: undefined, failedAt: null,
+      detectedPath, stamp, stampedByVersion, pending: Promise.resolve(), stateOverride: undefined, failedAt: null,
     };
-    trustRead.pending = this.read(codexPath, codexHookDefinitions(wsl ? 'wsl' : 'node'), wsl?.target ?? null)
+    trustRead.pending = run()
       .then((entries) => (entries ? codexHookStateOverride(entries) : null))
       .catch(() => {
         trustRead.failedAt = this.now();

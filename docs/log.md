@@ -1,5 +1,42 @@
 # Log
 
+## 2026-11-05
+
+**New audit:** `audits/ssh-transcript-exports-audit.md`, what real Kimi Code, Goose and OpenCode do on a
+Linux host, and the real run of each through the helper and relay
+(`tests/unit/remote-transcript-real-cli.test.ts`, `scripts/probe-ssh-rig/transcript-clis.sh`).
+
+**Changed:** `platforms/ssh-remote.md` Transcripts and Known limits, and the SSH sections of
+`integrations/agents/kimi-code.md`, `goose-cli.md` and `opencode.md`: an index, a late id and a CLI's own
+export now bring those conversations to this computer.
+
+## 2026-11-03
+
+**New concept:** `platforms/ssh-remote.md`, how running agents on a Linux host over SSH works: the
+trust model, adding a host without a terminal, the program installed on the host and `npm run
+build:host`, drop, quit and restart behavior, remote projects, and the known limits. It also adds the
+`ssh:*` channels to `architecture/ipc/app-channels.md`, the `ssh_hosts` table and the two remote
+columns on `projects` to `database/storage-model.md` and `database/migrations.md`, and the SSH tab to
+`user-guide/settings.md`.
+
+**New audit:** `audits/ssh-remote-setup-audit.md`, the real Add host steps against a password-only
+sshd (`scripts/ssh-setup-rig.mjs`): 15 of 15 steps passed.
+
+**New audit:** `audits/ssh-remote-phase-1-audit.md`, the Phase 1 results for running agent CLIs on a
+Linux host over SSH: the frame codec, resume endpoint, helper server and link under
+`src/main/remote/`, and the rig gate (`scripts/ssh-link-rig.mjs`) in which the real link survived 20
+of 20 killed `ssh` connections. It also records two pre-checks of the signed-off design: askpass
+receives only the first line of the host-key question on Windows, so the fingerprint comes from a
+probe, and a chosen key file is copied into Kangentic's folder.
+
+## 2026-11-02
+
+**New audit:** `audits/ssh-remote-phase-0-audit.md`, the Phase 0 measurements for running agent CLIs
+on a Linux host over SSH, with the `scripts/probe-ssh-*` probes and `scripts/probe-ssh-rig/` behind
+its numbers. It covers all five spikes: the helper daemon's survival, the read mirror, sign-in and
+jump hops (which rule out `ssh2`), quit delivery and one stream under a flood. The last two are
+partial, and the audit lists what they did not reach.
+
 ## 2026-10-31
 
 **New audit:** `audits/spare-worktree-audit.md`, the measured decision on keeping a pre-installed

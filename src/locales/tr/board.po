@@ -61,6 +61,11 @@ msgstr "{count, plural, one {# araç çalışıyor} other {# araç çalışıyor
 msgid "{count, plural, one {Expand {columnName} column, # task} other {Expand {columnName} column, # tasks}}"
 msgstr ""
 
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "{hostName} is unreachable. Its agents keep running."
+msgstr "{hostName} ana bilgisayarına erişilemiyor. Aracıları çalışmaya devam ediyor."
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
@@ -402,6 +407,21 @@ msgstr "Duraklatıldı"
 #, fuzzy
 msgid "Queued..."
 msgstr "Sırada..."
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "Yeniden bağlan"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect to {hostName}"
+msgstr "{hostName} ana bilgisayarına yeniden bağlan"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnecting to {hostName}. Its agents keep running."
+msgstr "{hostName} ana bilgisayarına yeniden bağlanılıyor. Aracıları çalışmaya devam ediyor."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy

@@ -37,6 +37,11 @@ msgstr "{count, plural, one {# parancsterminál fut (dolgozik)} other {# parancs
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 msgstr "{groupProjectCount, plural, one {A csoport # projektje csoporton kívülre kerül.} other {A csoport # projektje csoporton kívülre kerül.}}"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "{hostName}: {stateLabel}"
+msgstr "{hostName}: {stateLabel}"
+
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
 msgid "{idleCount} idle"
@@ -87,6 +92,16 @@ msgstr "Biztosan törli a következő projektet: <0>„{projectName}”</0>?"
 #, fuzzy
 msgid "Clear search"
 msgstr "Keresés törlése"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Csatlakozva"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "Csatlakozás…"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
@@ -201,6 +216,11 @@ msgstr "Projektbeállítások"
 msgid "Projects"
 msgstr "Projektek"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Újracsatlakozás…"
+
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy
 msgid "Remove from group"
@@ -222,10 +242,20 @@ msgstr "Projektek keresése..."
 msgid "Show sidebar"
 msgstr "Oldalsáv megjelenítése"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Leállítva"
+
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
 msgstr "Ez eltávolítja a projektet a Kangenticből, de a lemezen lévő fájlokat nem törli."
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "Nem érhető el"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

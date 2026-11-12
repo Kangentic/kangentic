@@ -31,6 +31,10 @@ msgstr "{count, plural, one {# Command Terminal running (working)} other {# Comm
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 msgstr "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "{hostName}: {stateLabel}"
+msgstr "{hostName}: {stateLabel}"
+
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 msgid "{idleCount} idle"
 msgstr "{idleCount} idle"
@@ -71,6 +75,14 @@ msgstr "Are you sure you want to delete <0>\"{projectName}\"</0>?"
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "Clear search"
 msgstr "Clear search"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Connected"
+msgstr "Connected"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Connecting…"
+msgstr "Connecting…"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
@@ -163,6 +175,10 @@ msgstr "Project Settings"
 msgid "Projects"
 msgstr "Projects"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Reconnecting…"
+msgstr "Reconnecting…"
+
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 msgid "Remove from group"
 msgstr "Remove from group"
@@ -180,9 +196,17 @@ msgstr "Search projects..."
 msgid "Show sidebar"
 msgstr "Show sidebar"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Stopped"
+msgstr "Stopped"
+
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
 msgstr "This will remove the project from Kangentic but won't delete any files on disk."
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Unreachable"
+msgstr "Unreachable"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "Use Add project below to open a folder"

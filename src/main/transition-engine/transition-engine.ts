@@ -39,10 +39,14 @@ import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../agent/shared/fresh-agent-session-id';
-import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
+import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../remote/host-file-sync';
+import { resolveRemoteLaunch, resolveSpawnCli } from '../remote/remote-launch';
+import { cliPathForTarget, isSshPlace, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
 import { createEarlyAgentHandle, EARLY_AGENT_INPUT_READY_BUDGET_MS, launchKeyOf, type EarlyAgentHandle } from './early-agent';
 import { mapHandoffSessionPath } from '../agent/shared/prompt-xml';
+import { withAttachmentsOnHost } from '../remote/host-attachments';
+import { hostScriptRunner } from '../remote/host-script';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
@@ -51,7 +55,7 @@ import { retireRecord } from './session-lifecycle';
 import { keepsSessionPermissionMode, resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
-import { freshPromptTypedForLength, resumePromptRidesCommandLine } from './resume-prompt-delivery';
+import { promptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
 import { assessResumeConversationWithEvidence, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
 import { commandLineLength } from '../agent/shared/prompt-budget';
@@ -149,6 +153,19 @@ export interface SpawnOverrides {
    */
   keepSessionMode?: boolean;
 }
+
+/** What an agent spawn takes: the same list on the wrapper that holds its host file pull and on the spawn. */
+type SpawnAgentArguments = [
+  config: ActionConfig,
+  task: Task,
+  vars: Record<string, string>,
+  permissionOverride?: PermissionMode | null,
+  resumePrompt?: string,
+  signal?: AbortSignal,
+  agentOverride?: string,
+  handoffPromptPrefix?: string,
+  spawnOverrides?: SpawnOverrides,
+];
 
 /** What a spawn passes `resolveLaunch`: its decisions so far, the ids, and the command-line prompt. */
 interface LaunchInput {
@@ -649,6 +666,7 @@ export class TransitionEngine {
         // checkout when it has none. The old `workingDir` setting existed to opt
         // INTO the worktree, which is what happens by default here.
         cwd: task.worktree_path || config.projectPath || process.cwd(),
+        runOnHost: hostScriptRunner(config.projectPath, task.worktree_path || config.projectPath || process.cwd()),
         projectId: config.projectId,
         projectPath: config.projectPath,
         projectName: config.projectName ?? null,
@@ -778,17 +796,19 @@ export class TransitionEngine {
       account,
     };
     const inputInAlternateScreen = adapter.firstPromptMayBeTyped?.(commandOptions) === true;
-    // A resume's prompt rides its command line only where it arrives whole
-    // (resume-prompt-delivery.ts), and a fresh spawn's only where the CLI takes
-    // a starting prompt (`freshPromptDelivery`) and the line can hold it
-    // (`freshPromptTypedForLength`). Print mode has no input box to type into.
-    // Kept off, the prompt is handed back, and the caller types it in.
+    // Kept off the line, the prompt is handed back, and the caller types it in.
+    // Print mode has no input box to type into.
     const promptText = input.prompt?.trim() ? input.prompt : null;
-    const typedForLength = promptText !== null && !input.nonInteractive
-      && freshPromptTypedForLength({ prompt: promptText, mayBeTyped: inputInAlternateScreen, agentPath: launch.agentPath, shell });
-    const promptKeptOff = promptText !== null && (input.canResume
-      ? !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt: promptText, launchStrategy: launch.strategy, shell })
-      : adapter.freshPromptDelivery === 'typed' || typedForLength);
+    const promptKeptOff = promptText !== null && !promptRidesCommandLine({
+      prompt: promptText,
+      resuming: input.canResume,
+      adapter,
+      launchStrategy: launch.strategy,
+      agentPath: launch.agentPath,
+      shell,
+      mayBeTyped: inputInAlternateScreen && !input.nonInteractive,
+      onHost: isSshPlace(cliTarget),
+    });
     if (promptKeptOff) commandOptions.prompt = undefined;
     return {
       sessionDir,
@@ -804,7 +824,11 @@ export class TransitionEngine {
     };
   }
 
-  private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
+  private executeSpawnAgent(...args: SpawnAgentArguments): Promise<SpawnOutcome> {
+    return withHostFilePull((hostFilePull) => this.spawnAgentWithPull(hostFilePull, ...args));
+  }
+
+  private async spawnAgentWithPull(hostFilePull: HostFilePull, ...[config, task, vars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides]: SpawnAgentArguments): Promise<SpawnOutcome> {
     const appConfig = this.getConfig();
 
     // Resolve which agent adapter to use.
@@ -815,20 +839,28 @@ export class TransitionEngine {
     const adapter = agentRegistry.getOrThrow(agentName);
     const cliPathOverride = appConfig.cliPathOverrides[agentName] ?? null;
 
-    console.log(`[spawnAgent] Detecting ${agentName} CLI...`);
-    const detection = await adapter.detect(cliPathOverride);
-    if (!detection.found || !detection.path) {
-      throw new AgentCliNotFoundError(agentName, adapter.displayName);
-    }
-    console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
+    const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
+    // A remote project runs its agent on a host (#913): the CLI is not detected here, it is the host's
+    // own, named by the adapter. The launch is the path map to the host and the descriptor performSpawn
+    // takes. Null for a project on this computer, which goes on exactly as before.
     // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
     // once for this spawn. A distro CLI runs in that distro's shell, whatever
     // the Terminal setting says.
-    const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+    const spawnCli = await resolveSpawnCli({ projectPath: appConfig.projectPath, cwd, adapter, cliPathOverride });
+    if (!spawnCli) throw new AgentCliNotFoundError(agentName, adapter.displayName);
+    const { remoteLaunch, cliTarget } = spawnCli;
+    const detectedCliPath = spawnCli.cliPath;
+    console.log(remoteLaunch
+      ? `[spawnAgent] ${agentName} runs on host ${remoteLaunch.remote.hostId.slice(0, 8)} as ${detectedCliPath}`
+      : `[spawnAgent] ${agentName} CLI found at ${detectedCliPath} (v${spawnCli.version})`);
     // A handoff points the receiving agent at the prior session's file; a CLI
     // in a WSL distro opens it by the path the distro sees.
     if (cliTarget && handoffPromptPrefix) {
       handoffPromptPrefix = mapHandoffSessionPath(handoffPromptPrefix, (hostPath) => cliPathForTarget(hostPath, cliTarget));
+    }
+    // A prompt names a remote task's attachments where its agent reads them, so they go there first.
+    if (remoteLaunch) {
+      vars = await withAttachmentsOnHost(appConfig.projectPath, this.attachmentRepo?.getPathsForTask(task.id) ?? [], vars, signal);
     }
 
     // permissionOverride carries the destination lane's mode; the "plan
@@ -837,11 +869,14 @@ export class TransitionEngine {
     const permissionMode = resolveEffectivePermissionMode(
       task.permission_mode, permissionOverride, appConfig.permissionMode as PermissionMode,
     );
-    const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
 
     // Pre-populate trust so the agent doesn't block on the trust dialog.
     // This covers both worktree paths and the main project path (important
     // for demo mode where the project has never been opened in Claude Code).
+    // A CLI on a host edits its trust and hook files there: pulled into the folders the adapter edits
+    // before it runs, pushed back after the command is built (#913). Null for any other spawn.
+    const hostFiles = await pullHostFilesFor(adapter, cwd, cliTarget);
+    hostFilePull.sync = hostFiles;
     await adapter.ensureTrust(cwd, cliTarget);
     console.log(`[spawnAgent] Trust ensured for ${cwd}`);
 
@@ -884,8 +919,9 @@ export class TransitionEngine {
           sessionRepo: this.sessionRepo,
           // The conversation resumes where this spawn's CLI runs.
           place: cliTarget,
-          // Stops the CLI's own background session holding the conversation, if any.
-          cliPath: detection.path,
+          // Stops the CLI's own background session holding the conversation, if any. Not for a host's
+          // CLI: that would run a command on this computer, where the session is not.
+          cliPath: remoteLaunch ? undefined : detectedCliPath,
         })
       : null;
 
@@ -1011,7 +1047,7 @@ export class TransitionEngine {
       task,
       agentName,
       adapter,
-      detectionPath: detection.path,
+      detectionPath: detectedCliPath,
       cliTarget,
       permissionMode,
       cwd,
@@ -1054,11 +1090,12 @@ export class TransitionEngine {
     const agentSessionId = canResume
       ? resumedAgentSessionId
       : await resolveFreshAgentSessionId(adapter, {
-          cliPath: detection.path,
+          cliPath: detectedCliPath,
           workingDirectory: cwd,
           permissionMode,
           nonInteractive: config.nonInteractive,
           signal,
+          place: cliTarget,
         });
     // A move that aborted this spawn while the chat was being created stops
     // here, before the session directory and the command exist.
@@ -1094,6 +1131,8 @@ export class TransitionEngine {
     });
     const { statusOutputPath, eventsOutputPath, shell, promptKeptOff } = launch;
     const { command, extraEnv, rebuildCommand } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
+    // A push that fails means this command never reaches spawn() to own its hold.
+    await pushHostFilesForSpawn(hostFiles, ptySessionId, () => releaseCommandHold(adapter, cwd, ptySessionId));
 
     // Where an isolated column's pass begins, so the main conversation, resumed
     // after it, can be told the commits it made. Read before the spawn: the
@@ -1116,7 +1155,7 @@ export class TransitionEngine {
       rebuildCommand,
       cwd,
       startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
-      agentCliVersion: detection.version,
+      agentCliVersion: spawnCli.version,
       agentCliPath: launch.commandOptions.agentPath,
       resumeEvidence: canResume && resumeEvidence ? { ...resumeEvidence, account: launch.resumeAccount } : null,
       env: extraEnv ?? undefined,
@@ -1140,6 +1179,8 @@ export class TransitionEngine {
       // The shell the command was built for, and where its CLI runs.
       shell,
       cliTarget: toStoredCliTarget(cliTarget),
+      // A remote project's agent runs on its host: the PTY, its cwd and its environment are the host's.
+      ...(remoteLaunch ? { remote: remoteLaunch.remote } : {}),
     });
 
     console.log(`[spawnAgent] PTY session created: id=${session.id.slice(0, 8)} status=${session.status}`);
@@ -1436,6 +1477,17 @@ export class TransitionEngine {
     const agentName = input.agentOverride;
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.firstPromptMayBeTyped) return null;
+    // A remote project's agent starts through the main path only: its files must reach the host before
+    // it runs, and an agent started ahead of its worktree's setup script would have neither. A resolve
+    // that fails (an agent no host can run, a host that did not answer) starts nothing early either:
+    // the main path then reports it.
+    let remoteProject: boolean;
+    try {
+      remoteProject = (await resolveRemoteLaunch({ projectPath: appConfig.projectPath, cwd: input.worktreePath, adapter })) !== null;
+    } catch {
+      remoteProject = true;
+    }
+    if (remoteProject) return null;
     if (this.sessionManager.getFreeAgentSlots() <= 0 || this.sessionManager.hasSessionForTask(task.id)) return null;
     if (this.sessionManager.columnBlocks({ taskId: task.id, projectId: appConfig.projectId })) return null;
 

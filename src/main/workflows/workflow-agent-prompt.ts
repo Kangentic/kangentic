@@ -147,7 +147,8 @@ export function buildWorkflowAgentFirstMessage(
   const projectPath = project ? resolveProjectRoot(project.path) : '';
   const variables: Record<(typeof WORKFLOW_AGENT_VARIABLE_NAMES)[number], string> = {
     projectName: escapeXml(project?.name ?? ''),
-    projectPath: escapeXml(projectPath),
+    // The agent runs on a remote project's host, where the row's path is an empty stand-in on another machine.
+    projectPath: escapeXml(project?.remote?.path ?? projectPath),
     baseBranch: escapeXml(projectPath ? resolveProjectDefaultBaseBranch(context, projectPath) : 'main'),
     columns: describeColumnsForPlanning(homeProjectId),
     brief_xml: briefXmlOf(homeProjectId, workflow),

@@ -104,6 +104,10 @@ msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task 
 msgstr "{value, select, automatic {自動} other {手動}}，已為此任務設定（{boardName} 的 {columnName} 欄為 {columnValue, select, automatic {自動} other {手動}}）。"
 
 #: src/shared/workflow-refusals.ts
+msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 msgid "A task cannot wait for itself."
 msgstr "任務不能等待自己。"
 
@@ -389,20 +393,24 @@ msgid "Give up after"
 msgstr "放棄前等待"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "前往此專案中下一個執行中的代理程式或命令終端機的終端機。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "前往下一個執行中的代理程式或命令終端機的終端機，若位於其他專案則切換專案。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "前往此專案中上一個執行中的代理程式或命令終端機的終端機。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "前往上一個執行中的代理程式或命令終端機的終端機，若位於其他專案則切換專案。"
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"
@@ -573,16 +581,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "第一個選項是「下一欄」：任務路線上的下一欄，或看板上的下一欄。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "下一個專案"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "任何專案中的下一個終端機"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "此專案中的下一個終端機"
 
 #: src/shared/automation-describe.ts
 msgid "No message yet."
@@ -621,12 +632,14 @@ msgid "Notifies \"{title}\""
 msgstr "通知「{title}」"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "在桌面和手機上通知您。"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "在桌面和手機上通知您。開啟通知即可開啟任務。"
 
 #: src/shared/automation-manifest.ts
 msgid "Notify me"
@@ -718,12 +731,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "在看板上開啟新增任務對話方塊。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "依側邊欄順序開啟下一個專案。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "依側邊欄順序開啟上一個專案。"
 
 #: src/shared/keybindings.ts
 msgid "Open the Workflows view; pressed there, return to the view you came from."
@@ -786,16 +801,19 @@ msgid "Previous column"
 msgstr "上一欄"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "上一個專案"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "任何專案中的上一個終端機"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "此專案中的上一個終端機"
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

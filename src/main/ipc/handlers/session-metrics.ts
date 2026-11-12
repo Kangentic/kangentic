@@ -8,6 +8,7 @@ import type { SessionManager } from '../../pty/session-manager';
 import type { SessionRecord, Session, StoredCliTarget } from '../../../shared/types';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { workflowAgentEffort } from '../../workflows/workflow-agent-effort';
+import { isContextOccupancyKnown } from '../../../shared/context-occupancy';
 
 /**
  * Capture session metrics (cost, tokens, model, duration, tool calls,
@@ -71,6 +72,13 @@ export function captureSessionMetrics(
       toolCallCount,
       toolBreakdown: toolBreakdown.length > 0 ? JSON.stringify(toolBreakdown) : null,
       compactionCount,
+      usedPercentage: usage && isContextOccupancyKnown(
+        usage.contextWindow.contextWindowSize,
+        usage.contextWindow.usedTokens,
+        usage.contextWindow.usedPercentage,
+      )
+        ? usage.contextWindow.usedPercentage
+        : null,
     });
 
     if (usage) {
@@ -261,6 +269,20 @@ function locateRunTranscript(
 }
 
 /**
+ * Run a transcript read now, or, for a session on a host whose transcript is an
+ * export, once the session's last export has landed. The run-ending paths get
+ * here before that release does, and the read would total the export before it.
+ */
+function afterRemoteTranscript<Result>(
+  sessionManager: SessionManager,
+  sessionId: string,
+  read: () => Promise<Result>,
+): Promise<Result> {
+  const settled = sessionManager.remoteTranscriptSettled(sessionId);
+  return settled ? settled.then(read) : read();
+}
+
+/**
  * Fire-and-forget refinement of a session record's cumulative token columns from
  * the agent's transcript (the authoritative lifetime token source; the snapshot
  * captured by {@link captureSessionMetrics} is current-context only). Call right
@@ -294,8 +316,8 @@ export function refineTranscriptTokens(
 
     // Read in the retrieval worker: a whole-file parse of a transcript that
     // can run to hundreds of MB, which used to stream through main.
-    void transcriptReadQueue
-      .add(() => retrievalClient.call('transcript.usage', { agentName, transcriptPath, agentSessionId, cwd, cliTarget }, { timeoutMs: null }))
+    void afterRemoteTranscript(sessionManager, sessionId, () => transcriptReadQueue
+      .add(() => retrievalClient.call('transcript.usage', { agentName, transcriptPath, agentSessionId, cwd, cliTarget }, { timeoutMs: null })))
       .then((transcriptUsage) => {
         if (!transcriptUsage) return;
         sessionRepo.updateTranscriptTokens(recordId, {
@@ -743,8 +765,8 @@ export function refineTranscriptToolCounts(
     const untilMs = Date.now();
 
     // Read in the retrieval worker, as in refineTranscriptTokens.
-    void transcriptReadQueue
-      .add(() => retrievalClient.call('transcript.toolCounts', { agentName, transcriptPath, agentSessionId, cwd, cliTarget, sinceMs, untilMs }, { timeoutMs: null }))
+    void afterRemoteTranscript(sessionManager, sessionId, () => transcriptReadQueue
+      .add(() => retrievalClient.call('transcript.toolCounts', { agentName, transcriptPath, agentSessionId, cwd, cliTarget, sinceMs, untilMs }, { timeoutMs: null })))
       .then((counts) => {
         if (!counts) return;
         sessionRepo.updateTranscriptToolCounts(recordId, counts);

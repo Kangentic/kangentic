@@ -919,6 +919,10 @@ export class PtyHostCore {
       case 'devCpuProfile':
         if (!__KANGENTIC_DEV__) throw new Error(`${method} is dev-only`);
         return captureThreadCpuProfile((params as PtyHostRequestMap['devCpuProfile']['params']).durationMs) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'remote':
+        // The SSH links are held by the host router in front of this core (`host-router.ts`); a core
+        // that runs alone, such as the in-process fallback, holds none.
+        throw new Error('SSH hosts are not available here');
       default: {
         const unknownMethod: never = method;
         throw new Error(`unknown pty host method: ${String(unknownMethod)}`);

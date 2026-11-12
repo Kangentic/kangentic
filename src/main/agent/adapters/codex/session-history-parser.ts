@@ -81,6 +81,9 @@ export class CodexSessionHistoryParser {
     // A Codex in a WSL distro writes its rollouts in the distro's home and
     // records the cwd it was given, the `/mnt` form of ours.
     const place = placeFromStored(options.cliTarget ?? null);
+    // A Codex on an SSH host writes its rollouts there, and this computer's mirror of the host's
+    // home is empty, so nothing can appear: answer at once instead of polling for 10 s.
+    if (place?.kind === 'ssh') return null;
     const normalizedCwd = normalizeCwdForCompare(cliPathForTarget(options.cwd, place));
     // rollout-<ISO-timestamp>-<UUID>.jsonl
     const pattern = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
@@ -127,6 +130,8 @@ export class CodexSessionHistoryParser {
   }): Promise<string | null> {
     const { agentSessionId } = options;
     const place = placeFromStored(options.cliTarget ?? null);
+    // As in captureSessionIdFromFilesystem: a host's rollouts are not on this computer.
+    if (place?.kind === 'ssh') return null;
     // UTC date for the directory structure. Codex writes the file under
     // the current UTC date regardless of local timezone.
     const directory = codexSessionsDirForToday(place);

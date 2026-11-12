@@ -273,6 +273,7 @@ indexes it and Cursor gets no copy.
 - `cross-platform-parity.md` - code and tests behave identically on Windows/macOS/Linux/CI.
 - `browser-automation-driver.md` - one shipped CDP driver; every `kangentic_browser_*` tool routes through `withGuest`.
 - `mcp-tool-list-parity.md` - every registered MCP tool stays in sync with `MCP_TOOL_MANIFEST` and has a heading in a `docs/integrations/mcp-server/` concept.
+- `mcp-tool-host-values.md` - an MCP tool answers from the layer its fact belongs to: the host's path, pid or port for where the agent works, a labeled local value for this computer, `location` on each, and an input path is a host path for a remote project.
 - `mcp-column-field-parity.md` - every `Swimlane` field is a parameter of both MCP column tools, or classified unexposed with a reason.
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; call sites index and `markDirty()`, never embed inline.
 - `retrieval-out-of-process.md` - the index and agent transcript reads run in the `kangentic-retrieval` worker; main schedules and relays.
@@ -297,6 +298,7 @@ indexes it and Cursor gets no copy.
 - `task-process-tag.md` - task PTYs carry `KANGENTIC_TASK_ID`; a terminal transition kills only tagged processes in the task's directories, never shared, visible or tmux ones; env text never leaves a reader.
 - `web-demo-parity.md` - the web build is the real renderer over the mock bridge; every `ElectronAPI` method has a mock.
 - `session-replica-contract.md` - the renderer session store is a replica of main's registry, and a removal is its own push.
+- `ssh-remote.md` - a remote PTY has no pid here (`PtyHandle.pid` is null), a spawn names its host, nothing of this computer reaches a host, only the host proves a path absent, a drop is a state, a quit leaves remote agents running and the next launch takes them back.
 - `test-value.md` - what earns a test, which tier it belongs to, and what earns a CI job, against the 20-job and 5-macOS caps.
 - `i18n.md` - UI text goes through Lingui: `.tsx` macros, `msg` plus `i18n._` in `.ts`, translated where it renders, agent text English, one PO file per area.
 

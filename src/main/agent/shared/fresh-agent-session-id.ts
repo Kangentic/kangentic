@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentAdapter } from '../agent-adapter';
 import type { PermissionMode } from '../../../shared/types';
+import type { CliPlace } from './cli-target';
 
 /**
  * A fresh conversation's id.
@@ -25,6 +26,8 @@ export async function resolveFreshAgentSessionId(
     permissionMode: PermissionMode;
     nonInteractive?: boolean;
     signal?: AbortSignal;
+    /** Where the CLI runs when it is not on this computer (a WSL distro, an SSH host): the chat is made there. */
+    place?: CliPlace | null;
   },
 ): Promise<string | null> {
   if (adapter.supportsCallerSessionId) return randomUUID();
@@ -35,7 +38,10 @@ export async function resolveFreshAgentSessionId(
   })) {
     return null;
   }
-  const created = adapter.createSessionId(input.cliPath, input.workingDirectory);
+  // The place goes only when the CLI runs somewhere else, so a spawn on this computer calls it exactly as before.
+  const created = input.place
+    ? adapter.createSessionId(input.cliPath, input.workingDirectory, input.place)
+    : adapter.createSessionId(input.cliPath, input.workingDirectory);
   const { signal } = input;
   if (!signal) return created;
   if (signal.aborted) return null;

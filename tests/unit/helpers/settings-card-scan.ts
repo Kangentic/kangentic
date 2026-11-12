@@ -20,7 +20,7 @@ const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardGroupTile'
 /** Components that render their children in place, so the scan looks through them. */
 const TRANSPARENT_WRAPPERS = new Set(['Fragment', 'React.Fragment', 'DndContext', 'SortableContext']);
 /** What a tab may render at its top level besides cards. */
-const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections', 'WorkflowAgentPromptDialog', 'LanguageRestartDialog', 'AccountLoginDialog']);
+const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections', 'WorkflowAgentPromptDialog', 'LanguageRestartDialog', 'NewHostKeyDialog', 'AccountLoginDialog']);
 /**
  * Components that draw nothing in the flow they are written in, so they are no row among a
  * body's tiles: dnd-kit's `DragOverlay` is empty at rest and a fixed-position layer during a drag.

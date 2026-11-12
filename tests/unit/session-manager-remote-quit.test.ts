@@ -1,0 +1,179 @@
+/**
+ * A quit with agents running on a remote host (#913), through a real SessionManager and the mock PTY
+ * (the in-process core stands in for the pty host, and answers a host spawn with a pid on its own
+ * machine, as the helper does).
+ *
+ * A quit leaves a remote agent running, and the next launch takes it back (`rejoin-sessions.ts`).
+ *
+ * What a user loses if this breaks: the quit signals, types into, seals or kills an agent that was to
+ * keep working overnight, or holds on a pid that never exits, or posts a command that would end it.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
+vi.mock('node-pty', () => ({
+  spawn: vi.fn(),
+}));
+
+vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
+  class MockShellResolver {
+    async getDefaultShell() { return '/bin/bash'; }
+  }
+  return { ShellResolver: MockShellResolver };
+});
+
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: vi.fn(),
+  sanitizeErrorMessage: (message: string) => message,
+}));
+
+import * as pty from 'node-pty';
+import { SessionManager } from '../../src/main/pty/session-manager';
+import type { PtyHostCommand } from '../../src/main/pty/host/protocol';
+import type { RemoteSessionRelay } from '../../src/main/remote/remote-session-relay';
+import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
+
+const EXIT_SEQUENCE = ['\x03', '/exit\r'];
+let tmpDir: string;
+
+function createMockPty(pid: number) {
+  return {
+    pid,
+    cols: 120,
+    rows: 30,
+    onData: vi.fn(),
+    onExit: vi.fn(),
+    write: vi.fn(),
+    resize: vi.fn(),
+    kill: vi.fn(),
+  };
+}
+
+function hostOf(manager: SessionManager): { post: (command: PtyHostCommand) => void } {
+  return (manager as unknown as { host: { post: (command: PtyHostCommand) => void } }).host;
+}
+
+/** Pretend the pty host is a utility process, so the quit counts it. */
+function giveHostAPid(manager: SessionManager, pid: number): void {
+  const transport = (manager as unknown as { host: { transport: object } }).host.transport;
+  Object.defineProperty(transport, 'hostPid', { value: pid });
+}
+
+/** A relay that pushes nothing: this file is about the quit, not the session folder. */
+const quietRelay = { register: async () => undefined, release: async () => undefined, deliver: () => undefined, onSessionIdFound: () => undefined } as unknown as RemoteSessionRelay;
+
+async function spawnRemote(manager: SessionManager, taskId: string, hostId: string, hostPid: number, consoleCloseIsGraceful = false) {
+  const mock = createMockPty(hostPid);
+  vi.mocked(pty.spawn).mockReturnValue(mock as unknown as pty.IPty);
+  manager.setRemoteSessionRelay(quietRelay);
+  const session = await manager.spawn({
+    taskId,
+    command: '',
+    cwd: tmpDir,
+    exitSequence: EXIT_SEQUENCE,
+    statusOutputPath: path.join(tmpDir, '.kangentic', 'sessions', taskId, 'status.json'),
+    cliTarget: toStoredCliTarget({ kind: 'ssh', hostId, home: '/home/dev', shellName: 'bash', localHome: tmpDir, roots: [{ local: tmpDir, host: '/home/dev/project' }] }),
+    remote: { hostId, cwd: '/home/dev/project', shellName: 'bash' },
+    agentParser: { consoleCloseIsGraceful: () => consoleCloseIsGraceful } as never,
+  });
+  return { session, mock };
+}
+
+async function spawnLocal(manager: SessionManager, taskId: string, pid: number) {
+  const mock = createMockPty(pid);
+  vi.mocked(pty.spawn).mockReturnValue(mock as unknown as pty.IPty);
+  const session = await manager.spawn({ taskId, command: '', cwd: tmpDir, exitSequence: EXIT_SEQUENCE });
+  return { session, mock };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers();
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-remote-quit-'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe('killAll with a session on a remote host', () => {
+  it('signals, types into and counts nothing for it, and names no pid to wait for', async () => {
+    const manager = new SessionManager();
+    const { mock } = await spawnRemote(manager, 'task-remote', 'host-a', 77_001);
+    const writesBefore = mock.write.mock.calls.length;
+
+    const report = manager.killAll();
+
+    expect(mock.kill).not.toHaveBeenCalled();
+    expect(mock.write.mock.calls.length).toBe(writesBefore);
+    expect(report).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+  });
+
+  it('posts no command for it at all: no seal, no write, no kill, no plan to end it', async () => {
+    const manager = new SessionManager();
+    const { session } = await spawnRemote(manager, 'task-remote', 'host-a', 77_001, true);
+    const posted: PtyHostCommand[] = [];
+    const host = hostOf(manager);
+    const originalPost = host.post.bind(host);
+    host.post = (command) => {
+      posted.push(command);
+      originalPost(command);
+    };
+
+    manager.killAll();
+
+    // A seal is kept by the host, so it would stop the rejoined agent taking keystrokes.
+    const aboutIt = posted.filter((command) => ('sessionId' in command && command.sessionId === session.id) || command.type === 'sealUserInput' || command.type === 'kill' || command.type === 'write');
+    expect(aboutIt).toEqual([]);
+    expect(posted.map((command) => command.type)).not.toContain('remoteQuitPlan');
+  });
+
+  it('does not delete the remote session\'s folder here, whose files the rejoin reads on', async () => {
+    const manager = new SessionManager();
+    const { session } = await spawnRemote(manager, 'task-remote', 'host-a', 77_001);
+    const statusPath = path.join(tmpDir, '.kangentic', 'sessions', 'task-remote', 'status.json');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(statusPath, '{"kept":true}');
+
+    manager.killAll();
+
+    expect(session.status).toBe('running');
+    expect(fs.readFileSync(statusPath, 'utf8')).toBe('{"kept":true}');
+  });
+
+  it('counts the host process in the drain when only remote agents are running, as for every quit', async () => {
+    const manager = new SessionManager();
+    giveHostAPid(manager, 4_321);
+    await spawnRemote(manager, 'task-remote', 'host-a', 77_001);
+
+    const report = manager.killAll();
+
+    expect(report.pids).toEqual([4_321]);
+    expect(report.killedCount).toBe(1);
+  });
+
+  it('counts the live host process even when nothing at all is running, as main does for every quit', () => {
+    const manager = new SessionManager();
+    giveHostAPid(manager, 4_321);
+
+    // An idle host exits at once, so the wait costs only the drain's settle.
+    expect(manager.killAll()).toEqual({ pids: [4_321], killedCount: 1, deferredCount: 0 });
+  });
+
+  it('still kills and counts a local session beside a remote one', async () => {
+    const manager = new SessionManager();
+    giveHostAPid(manager, 4_321);
+    const remote = await spawnRemote(manager, 'task-remote', 'host-a', 77_001);
+    const local = await spawnLocal(manager, 'task-local', 12_345);
+
+    const report = manager.killAll();
+
+    expect(local.mock.kill).toHaveBeenCalledTimes(1);
+    expect(remote.mock.kill).not.toHaveBeenCalled();
+    expect(report.pids).toEqual([12_345, 4_321]);
+    expect(report.killedCount).toBe(2);
+  });
+});

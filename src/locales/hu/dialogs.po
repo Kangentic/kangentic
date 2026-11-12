@@ -55,6 +55,12 @@ msgstr "„{taskTitle}” a táblán van."
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount} sikertelen)"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr "{0} nem létezik itt: {1}."
+
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
@@ -339,6 +345,10 @@ msgstr ""
 msgid "<0>One per line.</0> Runs on any plain line, never on a ! line."
 msgstr ""
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -369,6 +379,17 @@ msgstr "Automatizálás hozzáadása"
 #, fuzzy
 msgid "Add column"
 msgstr "Oszlop hozzáadása"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "Projekt hozzáadása"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project on {0}"
+msgstr "Projekt hozzáadása itt: {0}"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
@@ -638,6 +659,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Ág"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -671,6 +696,7 @@ msgstr "„{name}” nem távolítható el"
 msgid "Can't update from {baseBranch}"
 msgstr "Nem lehet frissíteni innen: {baseBranch}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -715,6 +741,15 @@ msgstr "A módosítások külön ablakban vannak megnyitva"
 #: src/renderer/components/dialogs/BranchPicker.tsx
 msgid "Checking <0>{trimmedQuery}</0>..."
 msgstr ""
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Choose a folder on this machine"
+msgstr "Mappa kiválasztása ezen a gépen"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -955,6 +990,16 @@ msgstr ""
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 msgid "Conflicts with the base branch"
 msgstr ""
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Csatlakozva"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "Csatlakozás…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -1267,6 +1312,10 @@ msgstr "Eltérés"
 #, fuzzy
 msgid "Diff scope"
 msgstr "Diff hatóköre"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1658,6 +1707,10 @@ msgstr "Kép előnézete"
 msgid "Image sent at lower quality"
 msgstr "A kép gyengébb minőségben lett elküldve"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 #, fuzzy
 msgid "Indexing is off, so no commits are linked"
@@ -1845,6 +1898,7 @@ msgstr "Módosítva"
 msgid "Move to"
 msgstr "Áthelyezés ide"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1996,6 +2050,10 @@ msgstr "Nincs leírás"
 #, fuzzy
 msgid "No files changed"
 msgstr "Nincs módosított fájl"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #, fuzzy
@@ -2188,6 +2246,10 @@ msgstr ""
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Csak egy ügynök CLI található - a választáshoz telepítsen egy másikat"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -2321,6 +2383,10 @@ msgstr "Áttekintés"
 #, fuzzy
 msgid "Page kept"
 msgstr "Oldal megtartva"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2496,6 +2562,11 @@ msgstr ""
 #, fuzzy
 msgid "Rebase or merge it in the session instead."
 msgstr "Inkább a munkamenetben végezzen rebase-t vagy merge-et."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Újracsatlakozás…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -3028,6 +3099,11 @@ msgstr "Leállítás"
 msgid "Stop {label}"
 msgstr "{label} leállítása"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Leállítva"
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
 msgctxt "leftover section"
@@ -3223,6 +3299,15 @@ msgstr "Ez a művelet nem vonható vissza."
 msgid "This commit changed no files"
 msgstr "Ez a commit nem módosított fájlt"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "This computer"
+msgstr "Ez a számítógép"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -3369,6 +3454,11 @@ msgstr ""
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
 msgstr "Módosult képpontok: 0,1% alatt"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "Nem érhető el"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

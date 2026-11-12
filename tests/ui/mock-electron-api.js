@@ -1129,10 +1129,13 @@
         projects.forEach(function (p) { p.position = p.position + 1; });
         var defaultAgentOverride = window.__mockDefaultAgentOverride;
         if (defaultAgentOverride) window.__mockDefaultAgentOverride = null;
+        var projectId = uuid();
         var project = {
-          id: uuid(),
+          id: projectId,
           name: input.name,
-          path: input.path,
+          // A remote project (#913) lives on a host; main gives it a local shell folder in place of a path.
+          path: input.remote ? '/mock/remote-projects/' + projectId : input.path,
+          remote: input.remote || null,
           github_url: input.github_url || null,
           default_agent: defaultAgentOverride || 'claude',
           default_model: null,
@@ -4650,13 +4653,48 @@
             defaultPermission: 'default',
           },
         ];
-        return defaults.map(function (agent) {
+        var inventory = defaults.map(function (agent) {
           var override = overrides[agent.name];
           // What lets a plan column's Plan approval offer Automatic for the agent.
           var withPlanApproval = PLAN_APPROVING_AGENTS.indexOf(agent.name) !== -1
             ? Object.assign({}, agent, { supportsPlanAutoApproval: true })
             : agent;
           return override ? Object.assign({}, withPlanApproval, override) : withPlanApproval;
+        });
+        // A remote project's agents run on its host, so main answers with what the host has: the CLI's
+        // name in place of a path, the host's version, and no capabilities (they come from running the
+        // CLI). Claude is installed there unless a spec sets window.__mockHostAgents =
+        // { codex: 'found', claude: 'missing' | 'unknown' | 'unsupported' }; any other agent is missing.
+        var targetProject = _projectPath
+          ? projects.find(function (project) { return project.path === _projectPath; })
+          : projects.find(function (project) { return project.id === currentProjectId; });
+        if (!targetProject || !targetProject.remote) return inventory;
+        var hostStates = (typeof window !== 'undefined' && window.__mockHostAgents) || {};
+        return inventory.map(function (agent) {
+          var status = hostStates[agent.name] || (agent.name === 'claude' ? 'found' : 'missing');
+          // 'unsupported' is an agent with no CLI name on a host (main's buildHostAgentList): not found, no
+          // hostStatus, and unsupportedOnHost set.
+          if (status === 'unsupported') {
+            var unsupported = Object.assign({}, agent, {
+              hostId: targetProject.remote.hostId,
+              found: false,
+              path: null,
+              version: null,
+              unsupportedOnHost: true,
+            });
+            delete unsupported.capabilities;
+            return unsupported;
+          }
+          var hostEntry = Object.assign({}, agent, {
+            hostId: targetProject.remote.hostId,
+            hostStatus: status,
+            found: status === 'found',
+            path: agent.name,
+            version: status === 'found' ? '2.1.80' : null,
+            detectionError: status === 'unknown' ? 'ssh: connect to host lab port 22: Connection timed out' : undefined,
+          });
+          delete hostEntry.capabilities;
+          return hostEntry;
         });
       },
       // Tests can set window.__mockProbeExecutionServer = function (agentName) { ... }
@@ -5252,6 +5290,17 @@
         }
         return '/mock/path/test-project';
       },
+      // window.__mockFilePath: the path selectFile() returns (consume-once); null is a cancel.
+      // window.__mockFileGate: a promise selectFile() awaits before it answers (a dialog the user has not closed yet).
+      selectFile: async function (_options) {
+        if (window.__mockFileGate) await window.__mockFileGate;
+        var override = window.__mockFilePath;
+        if (override !== undefined) {
+          window.__mockFilePath = undefined;
+          return override;
+        }
+        return '/mock/home/.ssh/id_ed25519';
+      },
     },
 
     backlogAttachments: {
@@ -5643,6 +5692,200 @@
         };
       })(),
     },
+
+    // SSH hosts mock (#913). Stateful: an added host persists into listHosts() for the rest
+    // of the test. Escape hatches for specs:
+    //   - window.__mockSshHosts: overrides listHosts()'s return value
+    //   - window.__mockSshClient: overrides detectClient()'s result
+    //   - window.__mockSshProbeError / __mockSshAddError / __mockSshFolderError / __mockSshListError: a
+    //     string that makes that call reject with it, to drive the error shapes
+    //   - window.__mockSshProbeGate: a promise probeHostKey() awaits before it answers
+    //   - window.__mockSshFolders: { [path]: { exists, isGitRepo } } consulted by probeRemoteFolder
+    //   - window.__mockFireSshHostsChanged(): fires the push the main process sends on a state change
+    ssh: (function () {
+      var hosts = [];
+      // A removed host keeps its id and address, and its projects are hidden, not deleted (main's tombstone):
+      // adding the same address again brings them back.
+      var removedHosts = [];
+      var hiddenProjects = [];
+      var listeners = [];
+      var counter = 0;
+      function fire() { listeners.slice().forEach(function (listener) { listener(); }); }
+      if (typeof window !== 'undefined') window.__mockFireSshHostsChanged = fire;
+      // Forget the removed hosts and their hidden projects, so a spec that adds an address again starts clean.
+      if (typeof window !== 'undefined') window.__mockSshForgetRemoved = function () { removedHosts = []; hiddenProjects = []; };
+      function win() { return typeof window !== 'undefined' ? window : {}; }
+      return {
+        detectClient: async function () {
+          return win().__mockSshClient || { found: true, version: 'OpenSSH_9.6p1', error: null };
+        },
+        listHosts: async function () {
+          if (win().__mockSshListError) throw new Error(win().__mockSshListError);
+          if (win().__mockSshHosts) return win().__mockSshHosts;
+          // Main counts the projects on each host from the project table; so does the mock.
+          return hosts.map(function (status) {
+            var count = projects.filter(function (project) { return project.remote && project.remote.hostId === status.host.id; }).length;
+            return Object.assign({}, status, { projectCount: count });
+          });
+        },
+        // window.__mockSshConfigHosts: the named hosts in the user's ~/.ssh/config, [{ alias, hostName, user }].
+        listConfigHosts: async function () {
+          return win().__mockSshConfigHosts || [
+            { alias: 'build-box', hostName: 'build.example.test', user: 'dev' },
+            { alias: 'gpu-rig', hostName: null, user: null },
+            { alias: 'staging', hostName: 'stage.example.test', user: 'deploy' },
+          ];
+        },
+        probeHostKey: async function (destination) {
+          // A promise a spec holds open, so it can act while the probe is still in flight.
+          if (win().__mockSshProbeGate) await win().__mockSshProbeGate;
+          if (win().__mockSshProbeError) throw new Error(win().__mockSshProbeError);
+          if (win().__mockSshProbeResult) return win().__mockSshProbeResult;
+          return { hostname: String(destination).split('@').pop(), port: 22, keyType: 'ssh-ed25519', fingerprint: 'SHA256:mockFingerprintForTestsOnly000000000000000' };
+        },
+        addHost: async function (input) {
+          if (win().__mockSshAddError) throw new Error(win().__mockSshAddError);
+          // The same address as a removed host: that host comes back under its old id, with its projects.
+          var removed = removedHosts.filter(function (candidate) { return candidate.destination === input.destination; })[0];
+          var hostId;
+          if (removed) {
+            hostId = removed.id;
+            removedHosts = removedHosts.filter(function (candidate) { return candidate.id !== hostId; });
+            var returning = hiddenProjects.filter(function (project) { return project.remote && project.remote.hostId === hostId; });
+            hiddenProjects = hiddenProjects.filter(function (project) { return !(project.remote && project.remote.hostId === hostId); });
+            projects = projects.concat(returning);
+          } else {
+            counter += 1;
+            hostId = 'mock-ssh-host-' + counter;
+          }
+          var status = {
+            host: {
+              id: hostId,
+              name: input.name,
+              destination: input.destination,
+              key_path: input.signIn.method === 'config' ? null : '/mock/ssh/key',
+              key_created: input.signIn.method === 'create-key',
+              created_at: new Date().toISOString(),
+              removed_at: null,
+              reveal_pending: false,
+            },
+            state: 'connected',
+            detail: null,
+            since: new Date().toISOString(),
+            projectCount: 0,
+          };
+          hosts = hosts.concat([status]);
+          fire();
+          return status;
+        },
+        removeHost: async function (hostId) {
+          var gone = hosts.filter(function (status) { return status.host.id === hostId; })[0];
+          hosts = hosts.filter(function (status) { return status.host.id !== hostId; });
+          if (gone) removedHosts = removedHosts.concat([{ id: hostId, destination: gone.host.destination }]);
+          // Main hides the host's projects and deletes nothing: they come back with the host.
+          hiddenProjects = hiddenProjects.concat(projects.filter(function (project) { return project.remote && project.remote.hostId === hostId; }));
+          projects = projects.filter(function (project) { return !(project.remote && project.remote.hostId === hostId); });
+          fire();
+        },
+        // Clear data: Kangentic's own data for the host's projects is deleted, the host stays.
+        clearHostData: async function (hostId) {
+          projects = projects.filter(function (project) { return !(project.remote && project.remote.hostId === hostId); });
+          fire();
+        },
+        // window.__mockSshUpdateError: a string that makes updateHost() reject with it (a refused address, a failed sign-in).
+        updateHost: async function (hostId, input) {
+          if (win().__mockSshUpdateError) throw new Error(win().__mockSshUpdateError);
+          var moved = hosts.filter(function (status) { return status.host.id === hostId; })[0];
+          if (moved && input.destination !== moved.host.destination && !input.expectedFingerprint) {
+            throw new Error('Show the new address\'s key before saving it.');
+          }
+          hosts = hosts.map(function (status) {
+            if (status.host.id !== hostId) return status;
+            var signIn = input.signIn;
+            var changed = { name: input.name, destination: input.destination };
+            if (signIn) {
+              changed.key_path = signIn.method === 'config' ? null : '/mock/ssh/key';
+              changed.key_created = signIn.method === 'create-key';
+            }
+            return Object.assign({}, status, { host: Object.assign({}, status.host, changed) });
+          });
+          fire();
+          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+        },
+        reconnectHost: async function (hostId) {
+          hosts = hosts.map(function (status) {
+            return status.host.id === hostId ? Object.assign({}, status, { state: 'connected', detail: null, since: new Date().toISOString() }) : status;
+          });
+          fire();
+          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+        },
+        // window.__mockSshKeyFileError: a string that makes checkKeyFile() reject with it (a passphrase, not a key).
+        checkKeyFile: async function () {
+          if (win().__mockSshKeyFileError) throw new Error(win().__mockSshKeyFileError);
+        },
+        // A host whose key changed: window.__mockSshProbeResult overrides what it presents now.
+        // window.__mockSshChangedKeyError: a string that makes probeChangedKey() reject with it.
+        probeChangedKey: async function (hostId) {
+          if (win().__mockSshChangedKeyError) throw new Error(win().__mockSshChangedKeyError);
+          if (win().__mockSshProbeResult) return win().__mockSshProbeResult;
+          return {
+            hostname: 'stage.example.com', port: 22, keyType: 'ssh-ed25519',
+            fingerprint: 'SHA256:Zk3Qn8vL0t1mXq5bPcR7yHdE2uWf9aJsKoT4iVgN6xA',
+            previousFingerprint: 'SHA256:b7Hc1nUe5oYw2DpQzR8kLm0XjVt3sAiG9fKq4NxE6yM',
+          };
+        },
+        // window.__mockSshTrustError: a string that makes trustNewKey() reject with it.
+        trustNewKey: async function (hostId, shownFingerprint) {
+          if (win().__mockSshTrustError) throw new Error(win().__mockSshTrustError);
+          win().__mockSshTrustedNewKey = { hostId: hostId, fingerprint: shownFingerprint };
+          hosts = hosts.map(function (status) {
+            return status.host.id === hostId ? Object.assign({}, status, { state: 'connected', detail: null, since: new Date().toISOString() }) : status;
+          });
+          fire();
+          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+        },
+        // window.__mockSshHostProgram: overrides the answer; window.__mockSshHostProgramError: a string that rejects it.
+        hostProgram: async function () {
+          if (win().__mockSshHostProgramError) throw new Error(win().__mockSshHostProgramError);
+          return win().__mockSshHostProgram || {
+            version: '0.53.0',
+            appVersion: '0.53.0',
+            startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+            liveSessions: 2,
+            installedVersions: ['0.53.0'],
+          };
+        },
+        probeRemoteFolder: async function (hostId, folderPath) {
+          if (win().__mockSshFolderError) throw new Error(win().__mockSshFolderError);
+          var known = (win().__mockSshFolders || {})[folderPath];
+          return { exists: known ? known.exists : true, path: folderPath, isGitRepo: known ? !!known.isGitRepo : true };
+        },
+        // window.__mockSshDirectories: { [absolute path]: [{ name, isGitRepo }] } the host holds; the default is a
+        // small home with a code folder of two repositories. window.__mockSshFolderError makes the call reject.
+        listDirectories: async function (hostId, directoryPath) {
+          if (win().__mockSshFolderError) throw new Error(win().__mockSshFolderError);
+          var home = '/home/dev';
+          var tree = win().__mockSshDirectories || {
+            '/home/dev': [{ name: 'code', isGitRepo: false }, { name: 'notes', isGitRepo: false }],
+            '/home/dev/code': [{ name: 'api', isGitRepo: true }, { name: 'web', isGitRepo: true }],
+          };
+          var typed = String(directoryPath).trim();
+          var resolved = typed === '~' ? home : typed.indexOf('~/') === 0 ? home + typed.slice(1) : typed;
+          if (resolved.length > 1) resolved = resolved.replace(/\/+$/, '');
+          var insideHome = resolved === home || resolved.indexOf(home + '/') === 0;
+          if (!insideHome) return { path: resolved, insideHome: false, exists: false, entries: [], truncated: false };
+          var entries = tree[resolved];
+          // A folder its parent lists is there, with nothing in it, even when the tree gives it no entry of its own.
+          var parentEntries = tree[resolved.slice(0, resolved.lastIndexOf('/')) || '/'] || [];
+          var listedByParent = parentEntries.some(function (entry) { return entry.name === resolved.slice(resolved.lastIndexOf('/') + 1); });
+          return { path: resolved, insideHome: true, exists: !!entries || listedByParent, entries: entries || [], truncated: false };
+        },
+        onHostsChanged: function (callback) {
+          listeners.push(callback);
+          return function () { listeners = listeners.filter(function (listener) { return listener !== callback; }); };
+        },
+      };
+    })(),
 
     // Mobile bridge mock. Stateful (pairing a device persists into
     // listDevices() for the rest of the test), with escape hatches for
@@ -6621,7 +6864,7 @@
       function summary(entry) {
         var workflow = entry.workflow;
         if (workflow.state === 'draft') {
-          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, neverStartedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id), stalledTasks: [] };
+          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, neverStartedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id), stalledTasks: [], hiddenBoards: [] };
         }
         var created = createdTasks(workflow.id);
         var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
@@ -6663,6 +6906,7 @@
           neverStartedCount: created.filter(neverStarted).length, boardTasks: boardTasks,
           agent: agentSummary(workflow.id),
           stalledTasks: stalledTasks,
+          hiddenBoards: [],
         };
       }
 

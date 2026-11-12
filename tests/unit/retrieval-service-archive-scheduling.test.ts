@@ -108,6 +108,10 @@ class FakeSessionManager extends EventEmitter {
   getSessionProjectId(sessionId: string): string | undefined {
     return this.projectIdBySession.get(sessionId);
   }
+
+  remoteTranscriptSettled(_sessionId: string): Promise<void> | null {
+    return null;
+  }
 }
 
 interface ContextOptions {

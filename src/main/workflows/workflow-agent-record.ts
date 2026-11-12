@@ -44,6 +44,7 @@ export function workflowAgentSessionRecord(input: {
     total_output_tokens: null,
     model_id: null,
     model_display_name: null,
+    used_percentage: null,
     applied_model: null,
     applied_effort: null,
     total_duration_ms: null,

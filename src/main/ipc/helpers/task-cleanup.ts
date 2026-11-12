@@ -247,7 +247,11 @@ function wslCliDistrosOf(context: IpcContext, projectPath: string | null, taskId
     const db = project ? getOpenProjectDb(project.id) : null;
     if (!db) return [];
     const distros = new SessionRepository(db).listCliTargetsOfTasks(taskIds)
-      .map((raw) => parseStoredCliTarget(raw)?.distro)
+      .map((raw) => {
+        const stored = parseStoredCliTarget(raw);
+        // A host's processes are reaped there (the helper's), not by a WSL scan.
+        return stored?.kind === 'wsl' ? stored.distro : undefined;
+      })
       .filter((distro): distro is string => typeof distro === 'string');
     return [...new Set(distros)];
   } catch (error) {

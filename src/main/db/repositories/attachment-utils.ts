@@ -35,7 +35,26 @@ export interface ReadFileResult {
   sizeBytes: number;
 }
 
-const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024; // 50 MB
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024; // 50 MB
+
+export function attachmentTooLargeMessage(sizeBytes: number): string {
+  return `File too large (${Math.round(sizeBytes / 1024 / 1024)}MB). Maximum attachment size is ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB.`;
+}
+
+/**
+ * A file's bytes as an attachment. `namedPath` gives its name and type, and is a host's path for a file that came
+ * from one, so it is split on either separator rather than this computer's.
+ */
+export function attachmentFromBytes(bytes: Buffer, namedPath: string, overrideFilename?: string): ReadFileResult {
+  const baseName = namedPath.split(/[\\/]/).pop() ?? namedPath;
+  const extension = path.extname(baseName).toLowerCase();
+  return {
+    filename: overrideFilename ?? baseName,
+    base64Data: bytes.toString('base64'),
+    mediaType: EXTENSION_MEDIA_TYPES[extension] ?? 'application/octet-stream',
+    sizeBytes: bytes.length,
+  };
+}
 
 /**
  * Read a file from disk and return it as base64 with metadata.
@@ -43,19 +62,6 @@ const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024; // 50 MB
  */
 export function readFileAsAttachment(filePath: string, overrideFilename?: string): ReadFileResult {
   const stat = fs.statSync(filePath);
-  if (stat.size > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`File too large (${Math.round(stat.size / 1024 / 1024)}MB). Maximum attachment size is ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB.`);
-  }
-
-  const buffer = fs.readFileSync(filePath);
-  const extension = path.extname(filePath).toLowerCase();
-  const mediaType = EXTENSION_MEDIA_TYPES[extension] ?? 'application/octet-stream';
-  const filename = overrideFilename ?? path.basename(filePath);
-
-  return {
-    filename,
-    base64Data: buffer.toString('base64'),
-    mediaType,
-    sizeBytes: buffer.length,
-  };
+  if (stat.size > MAX_ATTACHMENT_BYTES) throw new Error(attachmentTooLargeMessage(stat.size));
+  return attachmentFromBytes(fs.readFileSync(filePath), filePath, overrideFilename ?? path.basename(filePath));
 }

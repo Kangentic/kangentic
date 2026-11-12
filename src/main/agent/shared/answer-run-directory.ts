@@ -64,6 +64,7 @@ export function answerHomeDirectory(root: string = os.tmpdir()): string {
  */
 export function answerHomeForPlace(answerHome: string, place: CliPlace | null): string {
   if (!place) return answerHome;
+  if (place.kind === 'ssh') return `${answerHome}-ssh-${place.hostId.replace(/[^\w.-]/g, '_')}`;
   return `${answerHome}-wsl-${place.distro.replace(/[^\w.-]/g, '_')}`;
 }
 
