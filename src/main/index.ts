@@ -304,7 +304,14 @@ initAnalytics();
 // no console line would start with an allowlisted breadcrumb tag, and every
 // console breadcrumb would silently drop. tests/unit/sentry-breadcrumbs.test.ts
 // pins the order.
-initErrorReporting();
+//
+// The previous run's record is read HERE, once, before initRunUptimeTracking
+// (whenReady) overwrites it with this run's. A native crash dump found at
+// startup is judged against it (native-crash-event.ts's quit_begun), and the
+// SDK's startup scan can land on either side of that overwrite. The graphics
+// decision below reads the same snapshot.
+const PREVIOUS_RUN = peekPreviousRun(RUN_UPTIME_FILE_PATH);
+initErrorReporting({ previousRun: PREVIOUS_RUN });
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -376,10 +383,9 @@ function resolveGraphicsMode(): { software: boolean; engagedNow: boolean } {
     }
     const pending = readPendingGpuEscalation(GPU_HEALTH_FILE_PATH);
     if (!pending) return { software: false, engagedNow: false };
-    const previousRun = peekPreviousRun(RUN_UPTIME_FILE_PATH);
     const killedTheLastRun = gpuEndedPreviousRun(pending, {
-      previousRunExit: previousRun?.exit ?? null,
-      lastKnownAliveAt: previousRun?.lastAliveAt ?? null,
+      previousRunExit: PREVIOUS_RUN?.exit ?? null,
+      lastKnownAliveAt: PREVIOUS_RUN?.lastAliveAt ?? null,
     });
     return { software: killedTheLastRun, engagedNow: killedTheLastRun };
   } catch (error) {

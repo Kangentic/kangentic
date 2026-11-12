@@ -1,6 +1,7 @@
 import type { ErrorEvent } from '@sentry/electron/main';
 import { moduleBasename, reportableModuleName } from './reportable-module-name';
 import { BROWSER_GUEST_RENDERER_NAME } from './renderer-classification';
+import type { PreviousRun, RunExit } from './run-uptime';
 
 /**
  * Reads the two facts a native crash event needs but cannot carry, straight out
@@ -164,6 +165,14 @@ export interface NativeCrashContext {
   appVersion: string;
   /** Whether module paths compare case-insensitively, which is Windows only. */
   caseInsensitivePaths: boolean;
+  /**
+   * How the run before this one ended (run-uptime.ts), read before this run
+   * wrote its own record. A dump found at startup inside that run is judged
+   * against it. Null on a first run or an unreadable record.
+   */
+  previousRun: PreviousRun | null;
+  /** Whether THIS run has begun quitting, which a live crash event describes. */
+  shuttingDown: boolean;
 }
 
 /**
@@ -446,6 +455,64 @@ function withReleaseVersion(release: string, version: string): string {
   return separator === -1 ? release : `${release.slice(0, separator + 1)}${version}`;
 }
 
+/**
+ * Slack on the previous run's start time. Its record holds whole seconds of
+ * uptime, rounded, and the dump's stamp truncates to the second, so each can
+ * be up to a second early.
+ */
+const RUN_START_SLACK_MS = 2 * CRASH_TIME_RESOLUTION_MS;
+
+interface QuitState {
+  /** Absent when nothing says either way. */
+  quitBegun?: boolean;
+  /** How the run the dump belongs to ended. Only for a dump found at startup. */
+  previousRunExit?: RunExit;
+}
+
+/**
+ * Whether the crashed run had begun quitting (DESKTOP-W). gpu-health.ts's
+ * next-boot recovery acts only on a run that ended `abrupt`, so a browser fatal
+ * at quit never engages it. Without this field the two cases look identical,
+ * because a dump found at startup keeps no breadcrumbs.
+ *
+ * A live event is built in the session that crashed, so the shutdown flag
+ * answers it. A dump found at startup is judged by the previous run's record,
+ * but only when the dump falls inside that run: the scan can find a dump left
+ * from an earlier run, and that record says nothing about it.
+ *
+ * - `abrupt`: no quit was recorded, so the run had not begun quitting.
+ * - `clean`: the record's time is the moment performShutdown began, before its
+ *   cleanup, so a crash from then on happened while quitting.
+ * - `failsafe`: the record's time is the hard kill, not the quit's start, so
+ *   only the exit kind is reported.
+ */
+function resolveQuitState(
+  foundAtStartup: boolean,
+  crashTime: Date | undefined,
+  context: NativeCrashContext
+): QuitState {
+  if (!foundAtStartup) return { quitBegun: context.shuttingDown };
+
+  const previousRun = context.previousRun;
+  if (!previousRun || !previousRun.lastAliveAt || !crashTime) return {};
+  const lastAliveAt = Date.parse(previousRun.lastAliveAt);
+  if (Number.isNaN(lastAliveAt)) return {};
+  const runStartedAt = lastAliveAt - previousRun.uptimeSeconds * 1000;
+  const crashedAt = crashTime.getTime();
+  if (crashedAt < runStartedAt - RUN_START_SLACK_MS) return {};
+
+  if (previousRun.exit === 'abrupt') return { quitBegun: false, previousRunExit: 'abrupt' };
+  if (previousRun.exit === 'failsafe') return { previousRunExit: 'failsafe' };
+  // The dump's stamp is whole seconds, so compare it with the second the quit
+  // began in. A crash in that same second counts as quitting.
+  const quitBeganInSecond =
+    Math.floor(lastAliveAt / CRASH_TIME_RESOLUTION_MS) * CRASH_TIME_RESOLUTION_MS;
+  return {
+    quitBegun: crashedAt >= quitBeganInSecond,
+    previousRunExit: 'clean',
+  };
+}
+
 function startedAfterCrash(appStartTime: unknown, crashTime: Date | undefined): boolean {
   if (typeof appStartTime !== 'string' || !crashTime) return false;
   const startedAt = Date.parse(appStartTime);
@@ -662,6 +729,8 @@ export function correctNativeCrashEvent(
     }
   }
 
+  const quitState = resolveQuitState(foundAtStartup, identity.crashTime, context);
+
   event.contexts = {
     ...event.contexts,
     native_crash: {
@@ -673,6 +742,10 @@ export function correctNativeCrashEvent(
       found_at_startup: foundAtStartup,
       release_corrected: releaseCorrected,
       scope_corrected: scopeCorrected,
+      // Spread so an unknown leaves the key out entirely, which reads
+      // differently from `false` when triaging.
+      ...(quitState.quitBegun !== undefined ? { quit_begun: quitState.quitBegun } : {}),
+      ...(quitState.previousRunExit !== undefined ? { previous_run_exit: quitState.previousRunExit } : {}),
     },
   };
 
