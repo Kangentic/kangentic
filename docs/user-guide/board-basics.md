@@ -113,7 +113,7 @@ Create a `kangentic.local.json` in the project root for personal customizations 
 
 ### Applying Changes
 
-When `kangentic.json` or `kangentic.local.json` changes on disk, a reconciliation banner appears at the top of the board. Click "Apply" to reconcile the file into your database, or dismiss to ignore. Enable Auto-apply board config changes in the Board settings tab to apply changes automatically instead.
+When `kangentic.json` changes on disk (for example, after you pull a teammate's commit), a reconciliation banner appears at the top of the board. Click "Apply" to reconcile the file into your database, or dismiss to ignore. Enable Auto-apply board config changes in the Board settings tab to apply changes automatically instead. A change to your own `kangentic.local.json` applies at once, with no banner.
 
 If a teammate removes a column that still has your tasks, the column becomes a "ghost" (hidden but preserved). Once you move all tasks out of the ghost column, it is automatically deleted.
 

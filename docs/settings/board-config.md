@@ -31,7 +31,7 @@ Template variables available in shortcut commands (defined in `src/shared/templa
 | `{{taskTitle}}` | Task title (shell-sanitized to prevent injection) |
 | `{{projectPath}}` | Project root directory path |
 
-IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortcuts`, `boardConfig:setShortcuts`, `boardConfig:shortcutsChanged`.
+IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortcuts` and `boardConfig:setShortcuts`. A change to `kangentic.local.json` is applied to the open board, and `boardConfig:localApplied` tells the renderer to reload the board and its shortcuts.
 
 ## Board Profiles
 
@@ -102,6 +102,31 @@ Kangentic supports shareable board configuration via JSON files in the project r
 
 When both files exist, `kangentic.local.json` is merged over `kangentic.json` by matching columns by ID. Unmatched local entries are appended. A column's automations merge as a WHOLE list, not row by row: a local column that declares `automations` replaces the team file's list for that column outright, because an ordered list has no stable key to merge a row against once names can change.
 
+The database holds the merged board, so the write-back sends each value back to the file it came
+from (`board-config/split-config.ts`). Nothing in `kangentic.local.json` reaches `kangentic.json`:
+
+- **A key a local column entry sets** keeps the team file's value in `kangentic.json`. An edit to
+  that field, from the Column Manager or `kangentic_update_column`, is saved to
+  `kangentic.local.json`. A cleared value is written there explicitly (`null` or `false`), so the
+  merge does not fall back to the team value. A `null` you write by hand clears the field the same
+  way: it goes back to its default. Every other field is saved to `kangentic.json`.
+- **A local entry for a column the team file no longer has** is ignored when it has no `name`,
+  so a teammate removing a column you override leaves your board as it was.
+- **Automations** belong to the local file for a column whose local entry declares them, whether
+  as `automations` or as the legacy `autoCommand`.
+- **A local-only column** (an entry with no team column) lives entirely in `kangentic.local.json`:
+  its edits, and its delete. If the entry has no `id`, the first write-back adds the id the board
+  gave it, so the next open finds the same column instead of creating another one.
+- **A team column that points at a local-only column** (`planExitTarget`, or a Move to column
+  row's `targetColumn`) keeps the team file's value, since teammates do not have that column. The
+  new pointer goes into the column's local entry instead, and for a row that means the column's
+  whole automations list.
+- **Deleting a column** also removes its entry from `kangentic.local.json`.
+
+**Known gap.** The position of a local-only column is not saved. The merge always puts local-only
+columns just before the Done column, so if you drag one somewhere else, it goes back there on the
+next open.
+
 ### Board Config Sync (kangentic.json)
 
 **The sync is bidirectional, and the two directions do not fire on the same events.** Getting
@@ -119,8 +144,9 @@ occurs.
 1. **On project open**, if `kangentic.json` exists, Kangentic applies it to the database
    **before** the export above. On a conflict the file wins. There is no banner and no prompt on
    this path.
-2. **On an external edit while the project is open**, the file watcher raises a reconciliation
-   banner (or applies silently when `skipBoardConfigConfirm` is set).
+2. **On an external edit to `kangentic.json` while the project is open**, the file watcher raises a
+   reconciliation banner (or applies silently when `skipBoardConfigConfirm` is set). An edit to
+   `kangentic.local.json` applies at once, as File Watching and Reconciliation below describes.
 
 The open-time apply is why a hand-edited `kangentic.json` sticks: the app is not merely writing
 to the file, it reads it back as the source of truth for column identity every time the project
@@ -160,7 +186,29 @@ its `profiles[].columns` entries in the same edit.
 
 ### File Watching and Reconciliation
 
-Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes. When a change is detected (e.g., a teammate pulls a new version), a reconciliation banner appears in the UI. The user can apply the changes or dismiss the banner. If `skipBoardConfigConfirm` is enabled, changes are applied automatically without the banner.
+Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes while the project is
+open, and treats them differently.
+
+- **`kangentic.json`.** A change from outside the app (a teammate's commit you pulled) raises a
+  reconciliation banner. You can apply the change or dismiss the banner. With
+  `skipBoardConfigConfirm` set, the change applies without the banner.
+- **`kangentic.local.json`.** A change applies at once, with no banner, because the file is yours
+  and gitignored, so there is no teammate's edit to review. If you remove a key from a column's
+  entry, or delete the file, that field goes back to the team file's value, or to the default
+  when the team file does not set it.
+
+**Known gap.** The app can only notice a removed local key while it is running. It compares the
+file with the version it last applied, and it keeps that version in memory. So if you remove a key
+while the app is closed, and `kangentic.json` does not set that field, the old personal value stays
+on the board. The next write-back then saves it to `kangentic.json`, because no local entry claims
+it any more. Check `git diff kangentic.json` after that kind of edit, or make it while the app is
+open.
+
+**Known gap.** Until the app applies a changed `kangentic.local.json`, a write-back routes each
+value by the version it last applied and leaves the local file as it is, so nothing personal
+reaches `kangentic.json`. Only the open project's file is applied as you save it. For another
+project, an agent's edit to a field its local file sets, made after you edited that file by hand,
+is not saved and is undone when you next open the project.
 
 The same matching rules below also run unprompted on project open, per the sync section above.
 

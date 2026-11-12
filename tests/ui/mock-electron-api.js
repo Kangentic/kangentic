@@ -5864,7 +5864,7 @@
       getLastWarnings: async function (/* projectId */) {
         return Array.isArray(window.__mockLastConfigWarnings) ? window.__mockLastConfigWarnings.slice() : [];
       },
-      onShortcutsChanged: function (/* callback(projectId) */) { return noop; },
+      onLocalApplied: function (/* callback(projectId) */) { return noop; },
       // `projectId` reads another project's board, as main's
       // boardConfig:getBoardProfiles does: seed it with
       // window.__mockBoardProfilesByProject = { [projectId]: BoardProfile[] }.

@@ -138,6 +138,11 @@ export function registerBoardHandlers(context: IpcContext): void {
     // from the DB once the row is.
     const swimlaneToDelete = swimlanes.getById(id);
     swimlanes.delete(id);
+    // A local-only column, or a personal override of this one, would otherwise
+    // come back on the next open. Before the write-back, which reads that file.
+    if (projectId && context.currentProjectPath) {
+      context.boardConfigManager.removeLocalColumn(projectId, context.currentProjectPath, id);
+    }
     // Board Profiles live in kangentic.json with no FK, so nothing else clears a
     // delta keyed to this column or a planExitTarget naming it. Must run BEFORE
     // the write-back, which carries `profiles` across from the on-disk file.

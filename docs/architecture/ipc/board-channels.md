@@ -203,6 +203,6 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `boardConfig:boardProfilesChanged` | on | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | invoke | Get task detail dialog shortcuts |
 | `boardConfig:setShortcuts` | invoke | Update task detail dialog shortcuts |
-| `boardConfig:shortcutsChanged` | on | Event: shortcuts file changed |
+| `boardConfig:localApplied` | on | Event: a `kangentic.local.json` change was applied; reload the board and shortcuts |
 | `boardConfig:setDefaultBaseBranch` | invoke | Set the team-shared default base branch in `kangentic.json` |
 | `boardConfig:setStopScript` | invoke | Set a project's Stop script, named by project id, in `kangentic.json`, or in `kangentic.local.json` when that holds the key. Null or blank removes the team key or leaves an empty local value. Rejects on an unknown project, a file that exists but cannot be read, and a failed write |

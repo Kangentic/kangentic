@@ -2,12 +2,23 @@ import { v4 as uuidv4 } from 'uuid';
 import { SwimlaneRepository, deleteSwimlaneRowWithReferences } from '../../db/repositories/swimlane-repository';
 import { ActionRepository } from '../../db/repositories/action-repository';
 import { getProjectDb } from '../../db/database';
-import type { BoardConfig, PlanApproval, SwimlaneRole } from '../../../shared/types';
+import type { BoardColumnConfig, BoardConfig, PlanApproval, SwimlaneRole } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
 import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { configDeclaresAutomations, configIsAutomationAware, planColumnAutomations } from './apply-automations';
 import { writeTransaction } from '../../db/transaction';
+import { COLUMN_FIELD_DEFAULTS } from './column-field-defaults';
+
+/**
+ * Column keys, by column id, whose value must be reset to the default rather
+ * than kept from the database. Apply reads an absent key as "keep what is
+ * here", so a key removed from `kangentic.local.json` would otherwise leave
+ * the personal value on the lane, and the next write-back would copy it into
+ * `kangentic.json`. Only keys the team column does not set are listed: for the
+ * rest the merge already carries the team value.
+ */
+export type ColumnFieldResets = Map<string, Set<keyof BoardColumnConfig>>;
 
 /**
  * Apply a BoardConfig (already loaded + merged from kangentic.json and
@@ -31,20 +42,26 @@ import { writeTransaction } from '../../db/transaction';
  *
  * Pure in the sense that it touches only the DB (via repositories) and
  * the passed-in config object - no file I/O, no network.
+ *
+ * `applied` is false when nothing reached the database (no config, or one the
+ * validator rejected), so a caller can tell the `resetFields` it passed were
+ * never used.
  */
 export function applyBoardConfigToDb(
   projectId: string,
   effectiveConfig: BoardConfig | null,
-): { warnings: string[] } {
+  options: { resetFields?: ColumnFieldResets } = {},
+): { warnings: string[]; applied: boolean } {
   const warnings: string[] = [];
-  if (!effectiveConfig) return { warnings };
+  if (!effectiveConfig) return { warnings, applied: false };
 
   const fatalError = validateBoardConfig(effectiveConfig);
   if (fatalError) {
-    return { warnings: [fatalError] };
+    return { warnings: [fatalError], applied: false };
   }
 
   const config = effectiveConfig;
+  const resetFields: ColumnFieldResets = options.resetFields ?? new Map();
   const db = getProjectDb(projectId);
   const swimlaneRepo = new SwimlaneRepository(db);
   const actionRepo = new ActionRepository(db);
@@ -154,16 +171,21 @@ export function applyBoardConfigToDb(
         : null;
 
       if (existing) {
+        // The database's value, or the default for a key the local file just
+        // stopped setting (see ColumnFieldResets).
+        const resetKeys = resetFields.get(existing.id);
+        const kept = <Value>(key: keyof typeof COLUMN_FIELD_DEFAULTS, existingValue: Value): Value =>
+          resetKeys?.has(key) ? (COLUMN_FIELD_DEFAULTS[key] as Value) : existingValue;
         swimlaneRepo.update({
           id: existing.id,
           name: columnConfig.name,
-          description: columnConfig.description ?? existing.description,
-          color: columnConfig.color ?? existing.color,
-          icon: columnConfig.icon ?? existing.icon,
+          description: columnConfig.description ?? kept('description', existing.description),
+          color: columnConfig.color ?? kept('color', existing.color),
+          icon: columnConfig.icon ?? kept('icon', existing.icon),
           position: index,
-          is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? existing.is_archived)),
+          is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? kept('archived', existing.is_archived))),
           is_ghost: false,
-          permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? existing.permission_mode),
+          permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? kept('permissionMode', existing.permission_mode)),
           // KNOWN GAP: this write does NOT reconcile the tasks already in the
           // column the way SWIMLANE_UPDATE and the profile writer do (see
           // reconcileAutoSpawnChange), so a `git pull` that flips `autoSpawn`
@@ -171,17 +193,17 @@ export function applyBoardConfigToDb(
           // the kangentic.json file watcher for whichever project changed on
           // disk, which is often not the focused one, making an automatic spawn
           // from here materially riskier than one from a deliberate user edit.
-          auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? existing.auto_spawn),
+          auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? kept('autoSpawn', existing.auto_spawn)),
           // auto_command / auto_command_mode are NOT written from the config
           // any more. The column's message is a `send_message` automation now,
           // applied below; writing the legacy fields here would put the message
           // somewhere nothing reads, which is precisely how it went quiet.
-          agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? existing.agent_override),
-          model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? existing.model_override),
-          effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? existing.effort_override),
-          handoff_context: columnConfig.handoffContext ?? existing.handoff_context,
-          session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? existing.session_target),
-          session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? existing.session_spawn_strategy),
+          agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? kept('agentOverride', existing.agent_override)),
+          model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? kept('modelOverride', existing.model_override)),
+          effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? kept('effortOverride', existing.effort_override)),
+          handoff_context: columnConfig.handoffContext ?? kept('handoffContext', existing.handoff_context),
+          session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? kept('sessionTarget', existing.session_target)),
+          session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? kept('sessionSpawnStrategy', existing.session_spawn_strategy)),
           plan_approval: planApproval,
           max_agents: maxAgents,
         });
@@ -189,22 +211,22 @@ export function applyBoardConfigToDb(
         swimlaneRepo.create({
           id: columnConfig.id,
           name: columnConfig.name,
-          description: columnConfig.description ?? null,
+          description: columnConfig.description ?? COLUMN_FIELD_DEFAULTS.description,
           role: columnConfig.role,
-          color: columnConfig.color ?? '#3b82f6',
-          icon: columnConfig.icon ?? null,
-          is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? false)),
+          color: columnConfig.color ?? COLUMN_FIELD_DEFAULTS.color,
+          icon: columnConfig.icon ?? COLUMN_FIELD_DEFAULTS.icon,
+          is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? COLUMN_FIELD_DEFAULTS.archived)),
           is_ghost: false,
-          permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? null),
-          auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? true),
+          permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? COLUMN_FIELD_DEFAULTS.permissionMode),
+          auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? COLUMN_FIELD_DEFAULTS.autoSpawn),
           auto_command: null,
           auto_command_mode: 'immediate',
-          agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? null),
-          model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? null),
-          effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? null),
-          handoff_context: columnConfig.handoffContext ?? false,
-          session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? 'main'),
-          session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? 'create_or_resume'),
+          agent_override: (isTodo || isDone) ? null : (columnConfig.agentOverride ?? COLUMN_FIELD_DEFAULTS.agentOverride),
+          model_override: (isTodo || isDone) ? null : (columnConfig.modelOverride ?? COLUMN_FIELD_DEFAULTS.modelOverride),
+          effort_override: (isTodo || isDone) ? null : (columnConfig.effortOverride ?? COLUMN_FIELD_DEFAULTS.effortOverride),
+          handoff_context: columnConfig.handoffContext ?? COLUMN_FIELD_DEFAULTS.handoffContext,
+          session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? COLUMN_FIELD_DEFAULTS.sessionTarget),
+          session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? COLUMN_FIELD_DEFAULTS.sessionSpawnStrategy),
           plan_approval: planApproval,
           max_agents: maxAgents,
           position: index,
@@ -222,7 +244,12 @@ export function applyBoardConfigToDb(
     // additive-vs-destructive rule the columns and actions above use. A
     // hand-written file that has never mentioned automations must not silently
     // delete the ones a user built in the app.
-    if (configDeclaresAutomations(config.columns)) {
+    // A column whose local file stopped declaring automations is replanned from
+    // what the merge now holds (the team list, or none), whatever the rest of
+    // the file says.
+    const automationsReset = (columnId: string | undefined): boolean =>
+      columnId !== undefined && resetFields.get(columnId)?.has('automations') === true;
+    if (configDeclaresAutomations(config.columns) || config.columns.some((column) => automationsReset(column.id))) {
       const lanesByName = new Map(swimlaneRepo.list().map((lane) => [lane.name, lane]));
       // Whether an absent `automations` key means "none" or "this writer did not
       // know about them". Only a file that uses the key somewhere earns the
@@ -236,7 +263,7 @@ export function applyBoardConfigToDb(
         // about it rather than said it is empty. A column that does carry an
         // `automations` value here is a malformed one (a well-formed value would
         // have made the file aware), planned only so it is warned about.
-        if (!automationAware && columnConfig.autoCommand === undefined && columnConfig.automations === undefined) continue;
+        if (!automationAware && !automationsReset(lane.id) && columnConfig.autoCommand === undefined && columnConfig.automations === undefined) continue;
         const plan = planColumnAutomations(columnConfig);
         warnings.push(...plan.warnings);
         // A malformed container is reported, not applied. Replacing would
@@ -344,7 +371,14 @@ export function applyBoardConfigToDb(
     const finalLaneByName = new Map(finalLanes.map((lane) => [lane.name, lane]));
 
     for (const columnConfig of config.columns) {
-      if (!columnConfig.planExitTarget) continue;
+      if (!columnConfig.planExitTarget) {
+        // A target the local file stopped setting, with none from the team.
+        const sourceLane = finalLaneByName.get(columnConfig.name);
+        if (sourceLane && resetFields.get(sourceLane.id)?.has('planExitTarget')) {
+          swimlaneRepo.update({ id: sourceLane.id, plan_exit_target_id: null });
+        }
+        continue;
+      }
       const sourceLane = finalLaneByName.get(columnConfig.name);
       const targetLane = finalLaneByName.get(columnConfig.planExitTarget);
       if (sourceLane && targetLane) {
@@ -363,5 +397,5 @@ export function applyBoardConfigToDb(
   });
 
   transaction();
-  return { warnings };
+  return { warnings, applied: true };
 }

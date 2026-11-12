@@ -15,15 +15,16 @@ When you add or change a `swimlanes` column (a field on the `Swimlane` interface
 
 - **team-shared** (a setting a team should share - color, automation, agent/model/effort overrides, permission mode, session target/spawn, ...): it MUST round-trip end to end -
   1. a camelCase key on **`BoardColumnConfig`** (`src/shared/types.ts`),
-  2. serialized in **`src/main/config/board-config/build-config.ts`** (DB->JSON), with default-omission like its siblings (`if (lane.x !== default) column.x = ...`),
-  3. applied in **`src/main/config/board-config/apply-config.ts`** (JSON->DB) in BOTH the `create` and `update` calls, with the `(isTodo || isDone) ? <default> : (columnConfig.x ?? existing.x)` guard.
+  2. serialized in **`src/main/config/board-config/build-config.ts`** (DB->JSON), with default-omission like its siblings (`if (lane.x !== default) column.x = ...`) in `serializeColumn`, and read back with no omission in `COLUMN_FIELD_VALUE_READERS`, which is how an edit to a field a `kangentic.local.json` entry sets is saved to that file,
+  3. applied in **`src/main/config/board-config/apply-config.ts`** (JSON->DB) in BOTH the `create` and `update` calls, with the `(isTodo || isDone) ? <default> : (columnConfig.x ?? kept('x', existing.x))` guard, its default declared once in `COLUMN_FIELD_DEFAULTS` (`column-field-defaults.ts`) so a key removed from the local file resets to it. A field that gets an `(isTodo || isDone)` guard also joins `ROLE_PINNED_FIELDS` in `build-config.ts`, so its value is not read back from a To Do or Done lane.
 - **db-only** (identity / ordering / runtime state / timestamp - `id`, `position`, `is_ghost`, `created_at`): no board-config wiring; it is intentionally per-machine.
 
 The per-column merge in `config-helpers.ts` (`{ ...team, ...local }`) propagates any new `BoardColumnConfig` key automatically - you do not touch the merge.
 
 ## Enforcement (self-maintaining)
 
-- **Test (mechanical, CI):** `tests/unit/board-config-parity.test.ts` declares `SWIMLANE_FIELD_SHARING` and fails when it does not classify exactly the fields the `Swimlane` interface declares, reading them out of `src/shared/types.ts` at runtime (`tests/unit/helpers/shared-type-source.ts`). Classifying a field `'team'` then requires a `ROUNDTRIP_CASES` entry (or `STRUCTURAL_TEAM_FIELDS`), whose build/apply assertions fail until the field is actually wired. Runs in CI via `npm run test:unit`.
+- **Test (mechanical, CI):** `tests/unit/board-config-parity.test.ts` declares `SWIMLANE_FIELD_SHARING` and fails when it does not classify exactly the fields the `Swimlane` interface declares, reading them out of `src/shared/types.ts` at runtime (`tests/unit/helpers/shared-type-source.ts`). Classifying a field `'team'` then requires a `ROUNDTRIP_CASES` entry (or `STRUCTURAL_TEAM_FIELDS`), whose build/apply assertions fail until the field is actually wired, and the same file fails a team field with no `COLUMN_FIELD_VALUE_READERS` entry. Runs in CI via `npm run test:unit`.
+- **Type system:** `kept()` takes only a `COLUMN_FIELD_DEFAULTS` key, so an update that resets through it without a default fails `npm run typecheck`. `ROLE_PINNED_FIELDS` matching the apply guards is review-only.
 
   The map also carries a `Record<keyof Swimlane, 'team' | 'db-only'>` annotation, and until 2026-09-15 this section claimed that annotation made `npm run typecheck` fail on an unclassified field. It never did in CI: `tsconfig.json` includes only `src/**` and `packages/protocol/src/**`, so tsc never reads `tests/unit/`. The annotation is an editor aid; the runtime test is the guarantee. Do not replace it with a type-level check.
 - **Review:** the `migration-safety` agent (`.claude/agents/migration-safety.md`, check #7) flags an unsynced new column field during `/code-review`.
