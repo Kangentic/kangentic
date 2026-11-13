@@ -351,8 +351,8 @@ same patterns against the user's last message in the turn, messages typed while 
 mid-turn included, read from the agent's own transcript at the turn end. Text Kangentic itself
 typed into the session (a column message, a nudge, a move's message, a resume's prompt) never
 counts: Kangentic records a hash of each one it sends (`session_typed_messages`) and drops a
-matching message. A message the phone sent counts; one the phone held for a paused task is typed
-in later as Kangentic's and does not. The read fails closed: a turn with no anchor (a fresh
+matching message. A message the phone sent counts; one the phone held for a task with no running
+agent is typed in later as Kangentic's and does not. The read fails closed: a turn with no anchor (a fresh
 spawn's first turn, Run again), a turn larger than 8 MB, a session whose record could not be
 written, or any read error runs no such row. Only an agent that can report the turn's messages,
 queued input included, runs one (Claude Code today); elsewhere the row is shown off with the
