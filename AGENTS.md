@@ -250,7 +250,7 @@ indexes it and Cursor gets no copy.
 - `synchronous-shutdown.md` - the `before-quit` path is synchronous; only the bounded PTY exit drain may `preventDefault`.
 - `utc-timestamps.md` - DB writes use `new Date().toISOString()`.
 - `guarded-sync-writes.md` - a synchronous write is routed through `safeWriteJson` or marked `// sync-write-ok:` with a reason.
-- `error-reporting.md` - a catch reports, rethrows, or says `// report-ok:` why not; a report sends a fixed message, enum tags and no user text, from main.
+- `error-reporting.md` - a catch reports, rethrows, or says `// report-ok:` why not; a report sends a fixed message, enum tags and no user text, never from a worker.
 - `ipc-7-layer-parity.md` - wire an IPC endpoint through all 7 layers.
 - `project-scoped-ipc.md` - renderer-driven task/session mutations forward an explicit interaction-time `projectId`.
 - `esbuild-cjs-imports.md` - ES `import`, not bare `require()`, in bundled main/preload code.

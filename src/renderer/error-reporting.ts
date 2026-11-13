@@ -58,6 +58,21 @@ function isReportingBoundary(value: unknown): value is ReportingBoundary {
 const MAX_COMPONENT_STACK_CHARACTERS = 4000;
 
 /**
+ * The component names in a React component stack, innermost first, one a line.
+ * React writes each entry as `at Name (location)`, and the location is a URL or,
+ * in a packaged build, a file path under the user's home folder, so only the
+ * name is kept. An entry whose name is not an identifier is dropped.
+ */
+export function componentNamesOf(componentStack: string): string {
+  const names: string[] = [];
+  for (const line of componentStack.split('\n')) {
+    const match = /^\s*at\s+([A-Za-z_$][\w$.]*)/.exec(line);
+    if (match) names.push(match[1]);
+  }
+  return names.join('\n').slice(0, MAX_COMPONENT_STACK_CHARACTERS);
+}
+
+/**
  * Report an error an error boundary caught, from the root's `onCaughtError`
  * (`index.tsx`), the one place React hands over every boundary's catch along with
  * the boundary itself. Boundary-caught errors never reach the SDK's global
@@ -81,7 +96,7 @@ export function reportCaughtRenderError(
     const tags: Record<string, string> = { ...boundaryTags, source: 'react_boundary', error_name: errorNameOf(error) };
     const contexts: RendererErrorContexts = { ...diagnosticContextOf(error) };
     if (errorInfo.componentStack) {
-      contexts.react = { componentStack: errorInfo.componentStack.slice(0, MAX_COMPONENT_STACK_CHARACTERS) };
+      contexts.react = { componentStack: componentNamesOf(errorInfo.componentStack) };
     }
     captureException(pathFreeCopy('render', error), { tags, contexts });
   } catch {

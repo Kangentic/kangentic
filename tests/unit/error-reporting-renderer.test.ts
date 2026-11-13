@@ -99,13 +99,21 @@ describe('reportCaughtRenderError (the root onCaughtError)', () => {
     const error = new TypeError("Cannot read properties of undefined (reading 'title') for Fix Acme billing");
     const panelBoundary = { boundaryReportTags: () => ({ boundary: 'panel' as const, panel: 'agent monitor' }) };
 
-    reportCaughtRenderError(error, { componentStack: '\n    at MonitorBody\n    at PanelErrorBoundary', errorBoundary: panelBoundary });
+    // A packaged build's component stack names files under the user's home folder.
+    const componentStack = [
+      '',
+      '    at MonitorBody (file:///C:/Users/dev/AppData/Local/Programs/Kangentic/resources/app.asar/.vite/renderer/main_window/assets/index.js:12:345)',
+      '    at div (<anonymous>)',
+      '    at PanelErrorBoundary (file:///C:/Users/dev/AppData/Local/Programs/Kangentic/resources/app.asar/.vite/renderer/main_window/assets/index.js:9:87)',
+    ].join('\n');
+    reportCaughtRenderError(error, { componentStack, errorBoundary: panelBoundary });
 
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
     const [sent, context] = mocks.captureException.mock.calls[0] as [Error, { tags: Record<string, string>; contexts: Record<string, Record<string, unknown>> }];
     expect(sent.message).toBe('Handled render failure: TypeError');
     expect(context.tags).toEqual({ boundary: 'panel', panel: 'agent monitor', source: 'react_boundary', error_name: 'TypeError' });
-    expect(context.contexts.react).toEqual({ componentStack: '\n    at MonitorBody\n    at PanelErrorBoundary' });
+    // Names only: no URL, no path, no line number.
+    expect(context.contexts.react).toEqual({ componentStack: 'MonitorBody\ndiv\nPanelErrorBoundary' });
     expect(sent.stack).not.toContain('Acme');
   });
 
