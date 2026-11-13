@@ -339,6 +339,10 @@ describe('every tests/unit scan reads its marker through this module', () => {
       'settings-card-design.test.ts',
       'names choice-select-ok only in fixture snippets and comments; the scan itself lives in helpers/settings-card-scan.ts, which reads the marker through hasJsxOptOutMarker',
     ],
+    [
+      'error-reporting-coverage.test.ts',
+      'names report-ok only in fixture snippets and comments; the scan itself lives in helpers/error-reporting-scan.ts, which reads the marker through hasOptOutMarker',
+    ],
   ]);
 
   type ScannedFile = { name: string; contents: string };

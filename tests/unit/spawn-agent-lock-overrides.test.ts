@@ -43,6 +43,7 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
 }));
 
 import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
+import { isReported } from '../../src/main/analytics/handled-report';
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
 
 const TASK_ID = 'task-lock-001';
@@ -558,7 +559,11 @@ describe('spawnAgent - resume failure analytics', () => {
     expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'resume' });
     expect(mockReportHandledError).toHaveBeenCalledTimes(1);
     const [reported, tags] = mockReportHandledError.mock.calls[0];
-    expect((reported as Error).message).toBe('CLI exited unexpectedly');
+    // A launch report carries a fixed message, never the error's own text, and the
+    // original is marked so the IPC wrap does not send it a second time.
+    expect((reported as Error).message).toBe('Agent launch failed: preflight (agent_start)');
+    expect((reported as Error).message).not.toContain('CLI exited');
+    expect(isReported(resumeError)).toBe(true);
     expect(tags).toMatchObject({ source: 'agent_launch', stage: 'preflight', cause: 'agent_start', agent: 'claude', start_path: 'board' });
   });
 

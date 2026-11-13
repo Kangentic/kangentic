@@ -611,12 +611,17 @@ describe('TASK_CREATE handler', () => {
     expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'default', reason: 'create_spawn' });
     // The report's agent tag is the SAME resolved agent that trackEvent above
     // receives, and the failure is one of the launch stages, under its own cause.
+    // A fixed message, never the error's own text, and the original marked so the
+    // IPC wrap does not send it again.
     expect(mockReportHandledError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'CLI not found' }),
+      expect.objectContaining({ message: 'Agent launch failed: preflight (create_spawn)' }),
       expect.objectContaining({ source: 'agent_launch', stage: 'preflight', cause: 'create_spawn', agent: 'default', start_path: 'board' }),
       {},
       ['agent-launch', 'preflight', 'create_spawn'],
     );
+    expect(JSON.stringify(mockReportHandledError.mock.calls)).not.toContain('CLI not found');
+    const { isReported } = await import('../../src/main/analytics/handled-report');
+    expect(isReported(spawnError)).toBe(true);
   });
 
   // =========================================================================
