@@ -8,7 +8,7 @@ import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/te
 import { countHiddenFrames, isTerminalLayoutLandingFor, nextFrame, noteTerminalFitInLanding } from '../utils/terminal-layout-transition';
 import { motionReduced } from '../utils/motion-reduced';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
-import { resolveTerminalFontSize } from '../utils/terminal-font-size';
+import { resolveTerminalFontSize, resolveTerminalLineHeight } from '../utils/terminal-font-size';
 import { scheduleFontApply, terminalFontMoved } from '../utils/terminal-font-apply';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
@@ -332,6 +332,8 @@ interface UseTerminalOptions {
   sessionId: string | null;
   fontFamily?: string;
   fontSize?: number;
+  /** xterm's line height (`config.terminal.lineHeight`); 1, xterm's own default, when absent. */
+  lineHeight?: number;
   cursorStyle?: 'block' | 'underline' | 'bar';
   /** Global-only setting: per-slot custom terminal colors. Any unset slot
    *  falls back to TERMINAL_DEFAULT_COLORS. */
@@ -858,6 +860,7 @@ export function useTerminal(options: UseTerminalOptions) {
    *  once for the same reason. */
   const configuredFontFamily = options.fontFamily || rendererTerminalDefaults().fontFamily;
   const configuredCursorStyle = options.cursorStyle || rendererTerminalDefaults().cursorStyle;
+  const configuredLineHeight = resolveTerminalLineHeight(options.lineHeight);
   /** The configured font size and the session, updated on every commit, so the
    *  conform callbacks below (stable, ref-reading) scale from the size the user
    *  chose and label their traces with the session they serve. */
@@ -1732,6 +1735,7 @@ export function useTerminal(options: UseTerminalOptions) {
     const terminal = new Terminal({
       fontFamily: configuredFontFamily,
       fontSize: configuredFontSize,
+      lineHeight: configuredLineHeight,
       theme: xtermTheme,
       scrollback: TERMINAL_SCROLLBACK_LINES,
       cursorBlink: true,
@@ -2121,7 +2125,7 @@ export function useTerminal(options: UseTerminalOptions) {
       fitElapsedMs = readClock() - fitStartedAt;
       traceInitTiming('session-less');
     }
-  }, [options.sessionId, configuredFontFamily, configuredFontSize, configuredCursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid, handleRendererChange]);
+  }, [options.sessionId, configuredFontFamily, configuredFontSize, configuredLineHeight, configuredCursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid, handleRendererChange]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -2586,6 +2590,7 @@ export function useTerminal(options: UseTerminalOptions) {
         // While main holds the grid the size is the conformed one; the fit()
         // below re-derives it for the new family's metrics.
         fontSize: applied,
+        lineHeight: configuredLineHeight,
         cursorStyle: configuredCursorStyle,
         // A settings change while the find bar's history view is open keeps its cap.
         scrollback: historyViewOpenRef.current ? HISTORY_VIEW_SCROLLBACK_LINES : TERMINAL_SCROLLBACK_LINES,
@@ -2632,7 +2637,7 @@ export function useTerminal(options: UseTerminalOptions) {
       () => document.fonts.load(`${fontSize}px ${fontFamily}`),
       applyOptions,
     );
-  }, [configuredFontFamily, configuredFontSize, configuredCursorStyle, customBackground, customForeground, customCursor, fit]);
+  }, [configuredFontFamily, configuredFontSize, configuredLineHeight, configuredCursorStyle, customBackground, customForeground, customCursor, fit]);
 
   // Flush a pending (debounced) PTY resize immediately, instead of waiting out
   // PTY_RESIZE_DEBOUNCE_MS. Window-hosted terminals fit synchronously on the

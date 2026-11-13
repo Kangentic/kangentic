@@ -2012,11 +2012,17 @@ export function buildDemoPreConfig(options: {
       function configuredFontSize(terminalConfig) {
         return (terminalConfig && terminalConfig.fontSize) || 14;
       }
-      function terminalDeviceCell(terminalConfig, fontSizeOverride) {
+      // xterm's own line height for a config that names one (it refuses anything under 1).
+      function configuredLineHeight(terminalConfig) {
+        var lineHeight = terminalConfig && terminalConfig.lineHeight;
+        return typeof lineHeight === 'number' && lineHeight >= 1 ? lineHeight : 1;
+      }
+      function terminalDeviceCell(terminalConfig, fontSizeOverride, scaleOverride) {
         var fontSize = fontSizeOverride || configuredFontSize(terminalConfig);
         var fontFamily = (terminalConfig && terminalConfig.fontFamily) || 'Menlo, Consolas, "Courier New", monospace';
-        var scale = window.devicePixelRatio || 1;
-        var key = fontSize + '|' + fontFamily + '|' + scale;
+        var lineHeight = configuredLineHeight(terminalConfig);
+        var scale = scaleOverride || window.devicePixelRatio || 1;
+        var key = fontSize + '|' + fontFamily + '|' + lineHeight + '|' + scale;
         if (key in deviceCellCache) return deviceCellCache[key];
         var cell = null;
         var context = typeof OffscreenCanvas === 'undefined' ? null : new OffscreenCanvas(16, 16).getContext('2d');
@@ -2024,13 +2030,17 @@ export function buildDemoPreConfig(options: {
           context.font = fontSize + 'px ' + fontFamily;
           var metrics = context.measureText('W');
           var height = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
-          if (metrics.width > 0 && height > 0) cell = { width: Math.floor(metrics.width * scale), height: Math.ceil(height * scale), scale: scale };
+          // The row is the glyph box ceiled to device pixels, then times the line height, floored
+          // (WebglRenderer.ts _updateDimensions).
+          if (metrics.width > 0 && height > 0) cell = { width: Math.floor(metrics.width * scale), height: Math.floor(Math.ceil(height * scale) * lineHeight), scale: scale };
         }
         deviceCellCache[key] = cell;
         return cell;
       }
+      // The cell's width in CSS px as the frame lays terminals out: the nominal cell where the web
+      // build holds one grid at every ratio (below), else the cell this display floors to.
       function measuredTerminalCell(terminalConfig) {
-        var cell = terminalDeviceCell(terminalConfig);
+        var cell = terminalDeviceCell(terminalConfig, null, holdsNominalCell ? 1 : null);
         return cell ? cell.width / cell.scale : null;
       }
       function scrollbarGutterWidth() {
@@ -2044,15 +2054,80 @@ export function buildDemoPreConfig(options: {
       // The terminal's own inset (index.css pads the .xterm element), which fit-addon.ts subtracts
       // before it picks the columns, read off a probe carrying the class the way the
       // gutter is.
-      function terminalPaddingWidth() {
+      function terminalPadding() {
         var probe = document.createElement('div');
         probe.className = 'xterm';
         probe.style.cssText = 'position:absolute;left:-1000px;top:-1000px;width:100px;height:100px;visibility:hidden';
         (document.body || document.documentElement).appendChild(probe);
         var style = getComputedStyle(probe);
-        var padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+        var padding = {
+          left: parseFloat(style.paddingLeft) || 0,
+          right: parseFloat(style.paddingRight) || 0,
+          top: parseFloat(style.paddingTop) || 0,
+          bottom: parseFloat(style.paddingBottom) || 0,
+        };
         probe.remove();
         return padding;
+      }
+      function terminalPaddingWidth() {
+        var padding = terminalPadding();
+        return padding.left + padding.right;
+      }
+
+      // ---- one grid at every pixel ratio ------------------------------------------------------
+      // xterm floors its cell to whole device pixels, so Inconsolata's 12px cell is 6 by 14 CSS px
+      // at 100, 150, 200 and 300 percent, and 5.6 by 13.6 at 125 (5.71 by 13.71 at 175). A poster is
+      // shot at a whole ratio, so at a fractional one every terminal would fit more columns and rows
+      // than the poster shows, and wrap and lay out differently from it. In the web build every
+      // terminal is therefore held at the NOMINAL cell, the one a whole ratio gives: the element
+      // xterm opens in is given the size that fits the nominal grid at the cell this display floors
+      // to, then scaled so each cell lands where the poster has it. One rule does it for every
+      // terminal, because the size is a calc() of its host's: fit-addon.ts reads that element's
+      // computed size, which a transform does not change, and picks the nominal grid through every
+      // resize. The translate keeps the first cell at the padding's own offset. The scale is a few
+      // percent at most and per axis, so the text is a little soft there, which was accepted
+      // (task #1079), and the pointer maps off by that much, which the inert embedded frames do not
+      // notice. At a whole ratio the scale is 1 and the rule is empty. A page with no boot script
+      // (the marketing captures) holds nothing.
+      var holdsNominalCell = !!(window.__demoBoot && window.__demoBoot.fontsReady);
+      var cellScaleStyle = null;
+      var followedRatio = null;
+      function applyTerminalCellScale() {
+        if (!holdsNominalCell || !mockState) return;
+        var terminalConfig = mockState.config.terminal;
+        var nominal = terminalDeviceCell(terminalConfig, null, 1);
+        var device = terminalDeviceCell(terminalConfig);
+        if (!cellScaleStyle) {
+          cellScaleStyle = document.createElement('style');
+          cellScaleStyle.setAttribute('data-demo-style', '');
+          cellScaleStyle.setAttribute('data-demo-cell-scale', '');
+          document.head.appendChild(cellScaleStyle);
+        }
+        var scaleX = nominal && device ? nominal.width / (device.width / device.scale) : 1;
+        var scaleY = nominal && device ? nominal.height / (device.height / device.scale) : 1;
+        window.__demoTerminalCellScale = { x: scaleX, y: scaleY, nominal: nominal ? { width: nominal.width, height: nominal.height } : null };
+        if (Math.abs(scaleX - 1) < 1e-6 && Math.abs(scaleY - 1) < 1e-6) {
+          cellScaleStyle.textContent = '';
+        } else {
+          var padding = terminalPadding();
+          var chromeX = padding.left + padding.right + scrollbarGutterWidth();
+          var chromeY = padding.top + padding.bottom;
+          cellScaleStyle.textContent = '[data-terminal-host] > :has(> .xterm) {'
+            + ' width: calc((100% - ' + chromeX + 'px) / ' + scaleX + ' + ' + chromeX + 'px) !important;'
+            + ' height: calc((100% - ' + chromeY + 'px) / ' + scaleY + ' + ' + chromeY + 'px) !important;'
+            + ' transform-origin: 0 0;'
+            + ' transform: translate(' + (-padding.left * (scaleX - 1)) + 'px, ' + (-padding.top * (scaleY - 1)) + 'px) scale(' + scaleX + ', ' + scaleY + '); }';
+        }
+        // A zoom or a move to another display changes the ratio: follow it.
+        var ratio = window.devicePixelRatio || 1;
+        if (followedRatio === ratio || typeof window.matchMedia !== 'function') return;
+        followedRatio = ratio;
+        var query = window.matchMedia('(resolution: ' + ratio + 'dppx)');
+        var onChange = function () {
+          query.removeEventListener('change', onChange);
+          applyTerminalCellScale();
+        };
+        query.addEventListener('change', onChange);
       }
       // One layout blob's windows, with each marked window's width set and its marker removed.
       // The blob is copied, not edited, because it is the scene registry's own object.
@@ -2158,11 +2233,32 @@ export function buildDemoPreConfig(options: {
           config.commandTerminalPanelByShape = fitCommandTerminalPanelPlaces(config.commandTerminalPanelByShape, measure, commandRailWidthOf(config.commandTerminalRail));
         }
       }
+      // The web build's faces (demo/boot.js, fonts): the renderer reads config before it constructs
+      // any terminal, so holding this read until they are in is what makes xterm measure its cell,
+      // and the fit above measure the window, in Inconsolata rather than a fallback. Config is
+      // answered whether or not they loaded: a face that failed is the boot's error card to report,
+      // never an app left waiting. A page with no boot script (the marketing captures) has nothing
+      // to wait for.
+      var demoFontsReady = window.__demoBoot && window.__demoBoot.fontsReady;
+      var cellScaleApplied = false;
       ['get', 'getGlobal'].forEach(function (method) {
         var original = window.electronAPI.config[method];
         window.electronAPI.config[method] = function () {
-          fitMarkedWindows();
-          return original.apply(this, arguments);
+          var receiver = this;
+          var args = arguments;
+          var read = function () {
+            // Before the first terminal is constructed, so its first fit is already on the
+            // nominal grid (one grid at every pixel ratio, above).
+            // Only once the mock's state exists, since applyTerminalCellScale reads it, so a read
+            // that ever came first would not spend the one application.
+            if (!cellScaleApplied && mockState) {
+              cellScaleApplied = true;
+              applyTerminalCellScale();
+            }
+            fitMarkedWindows();
+            return original.apply(receiver, args);
+          };
+          return demoFontsReady ? demoFontsReady.then(read, read) : read();
         };
       });
 
@@ -2273,6 +2369,9 @@ export function buildDemoPreConfig(options: {
         if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
         // A Send playing has its own clock: the note's recording, not the session's.
         if (entry.sending) { scheduleSendClock(sessionId, entry); return; }
+        // Kept so the clock can be armed again when a held session is released at ready.
+        entry.clock = clock;
+        if (entry.clockHeld) return;
         (peekTimelines[sessionId] || []).forEach(function (change) {
           var delay = entry.startedAt + change.t - Date.now();
           if (delay < 0) return;
@@ -2394,6 +2493,8 @@ export function buildDemoPreConfig(options: {
         var head = '';
         recording.stream.forEach(function (chunk) {
           if (chunk.t <= elapsed) { head += chunk.data; return; }
+          // A held clock queues nothing: releaseHeldClocks queues these at ready.
+          if (entry.clockHeld) return;
           replayTimers[sessionId].push(setTimeout(function () { emitBytes(sessionId, chunk.data, entry.projectId); }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
         });
         return head;
@@ -2521,17 +2622,26 @@ export function buildDemoPreConfig(options: {
           if (emulatorGenerations[sessionId] !== generation) return null;
           var state = { emulator: module.createReplayEmulator(recording.cols, recording.rows), recording: recording, file: entry.file, grid: grid, projectId: entry.projectId, pending: null };
           emulators[sessionId] = state;
-          if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
           var elapsed = Date.now() - entry.startedAt;
           var head = '';
           recording.stream.forEach(function (chunk) {
-            if (chunk.t <= elapsed) { head += chunk.data; return; }
-            replayTimers[sessionId].push(setTimeout(function () {
-              if (emulators[sessionId] !== state) return;
-              state.emulator.write(chunk.data).then(function () { repaintSoon(sessionId, state); });
-            }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
+            if (chunk.t <= elapsed) head += chunk.data;
           });
+          queueEmulatorChunks(sessionId, entry, state, elapsed);
           return state.emulator.write(head).then(function () { return emulators[sessionId] === state ? state : null; });
+        });
+      }
+      // The chunks of an emulator's recording still ahead of the session's clock, each written at
+      // its time. A held clock queues nothing: releaseHeldClocks calls this again at ready.
+      function queueEmulatorChunks(sessionId, entry, state, elapsed) {
+        if (entry.clockHeld) return;
+        if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
+        state.recording.stream.forEach(function (chunk) {
+          if (chunk.t <= elapsed) return;
+          replayTimers[sessionId].push(setTimeout(function () {
+            if (emulators[sessionId] !== state) return;
+            state.emulator.write(chunk.data).then(function () { repaintSoon(sessionId, state); });
+          }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
         });
       }
       // Which way each mounted session's terminal is being fed, 'bytes' or 'frames', for the demo
@@ -2596,19 +2706,89 @@ export function buildDemoPreConfig(options: {
       // as an agent's does on the desktop: the recording's end lands at the same moment on the
       // card, in the sidebar count, in the Monitor, and in a window opened later. Where no
       // stream plays (a still frame, the captures' seed) the terminal paints the moment the live
-      // frame would open at, when the recording kept that frame; otherwise it paints the end,
-      // where a recording that ran to the agent's own end reads as finished.
+      // frame would open at, when the recording kept that frame. One that ran to the agent's own
+      // end and is shorter than its tail opens at its first byte, so a still shows it working with
+      // nothing on screen yet. Any other paints its end; the captures' seed, which has no
+      // recordings index, paints the end too, where a recording that finished reads as finished.
+      //
+      // In the web build the clock does not run from page open: it is HELD at the moment it opens
+      // on until the frame reports ready (demo/boot.js, onReady), and runs from there. A host shows
+      // its poster, the still's frame, until that message, and lifts it onto the live frame, so the
+      // two have to be the same moment: run from page open, the boot's few seconds had already
+      // passed at the lift (a spinner read 40s where the poster read 37s). While held, the session's
+      // elapsed time reads its opening moment, a terminal that mounts paints that moment, and
+      // nothing is queued; releaseHeldClocks anchors the clock at ready and queues what the held
+      // calls skipped. The marketing captures' seed has no boot script and runs as before.
       var ends = data.ends || {};
+      var holdClocks = live && !!(window.__demoBoot && typeof window.__demoBoot.onReady === 'function');
+      var heldClocks = [];
+      function holdClockAtOpening(sessionId, entry, openingMs) {
+        var anchoredAt = null;
+        Object.defineProperty(entry, 'startedAt', {
+          configurable: true,
+          enumerable: true,
+          get: function () { return anchoredAt === null ? Date.now() - openingMs : anchoredAt; },
+          set: function (value) { anchoredAt = value; },
+        });
+        entry.clockHeld = true;
+        heldClocks.push({ sessionId: sessionId, entry: entry, openingMs: openingMs });
+      }
+      function releaseHeldClocks(readyAt) {
+        heldClocks.forEach(function (held) {
+          var sessionId = held.sessionId;
+          var entry = held.entry;
+          entry.startedAt = readyAt - held.openingMs;
+          entry.clockHeld = false;
+          clearReplayTimers(sessionId);
+          if (entry.clock) scheduleSessionClock(sessionId, entry, entry.clock);
+          if (!entry.mounted || !recordingCache[entry.file]) return;
+          recordingCache[entry.file].then(function (recording) {
+            if (entry.clockHeld) return;
+            var elapsed = Date.now() - entry.startedAt;
+            if (entry.frameOnly) {
+              var state = emulators[sessionId];
+              if (state && state.file === entry.file) queueEmulatorChunks(sessionId, entry, state, elapsed);
+            } else {
+              // The bytes up to now are on screen already (the mount painted the opening moment);
+              // only what is still ahead is queued.
+              scheduleStreamBytes(sessionId, entry, recording);
+            }
+          });
+        });
+        heldClocks = [];
+      }
+      if (holdClocks) window.__demoBoot.onReady(releaseHeldClocks);
+      // A seeded working session's clock as the demo tier reads it: how far into its recording it
+      // is, the moment it opens on, and whether it is still held for ready.
+      window.__demoSessionClock = function (sessionId) {
+        var entry = replays[sessionId];
+        var end = ends[sessionId];
+        if (!entry || !end || entry.startedAt === null) return null;
+        return { elapsedMs: Date.now() - entry.startedAt, openingMs: Math.max(0, end.durationMs - entry.tail), held: !!entry.clockHeld };
+      };
       data.sessions.forEach(function (session) {
         var end = ends[session.id];
         if (!end || session.activity !== 'thinking') return;
         var entry = replays[session.id];
+        var openingMs = entry ? Math.max(0, end.durationMs - entry.tail) : 0;
         if (!live || !entry) {
-          if (openFrames[session.id]) scrollback[session.id] = openFrames[session.id].serialized;
-          else if (endedOnItsOwn(end)) finishSession(session.id);
+          if (openFrames[session.id]) {
+            scrollback[session.id] = openFrames[session.id].serialized;
+          } else if (entry && recordings && openingMs === 0 && endedOnItsOwn(end)) {
+            // A recording that ran to its agent's own end but is shorter than its tail opens at its
+            // first byte, so the live frame reports ready with this session working and nothing in
+            // its terminal yet. A still is that moment too, never the finished end: a poster that
+            // showed it finished had the card, the sidebar count and the Monitor change at the lift
+            // (kangentic.com #137). One cut mid-work keeps its end, which reads as working anyway.
+            scrollback[session.id] = '';
+            setMonitorPeek(session.id, []);
+          } else if (endedOnItsOwn(end)) {
+            finishSession(session.id);
+          }
           return;
         }
-        entry.startedAt = Date.now() - Math.max(0, end.durationMs - entry.tail);
+        if (holdClocks) holdClockAtOpening(session.id, entry, openingMs);
+        else entry.startedAt = Date.now() - openingMs;
         // A recording shorter than the tail plays from its first byte, so the Monitor row shows
         // no lines yet; the clock's changes and its end timer fill them in.
         if (!openFrames[session.id]) setMonitorPeek(session.id, []);
@@ -3203,6 +3383,11 @@ export function buildDemoPreConfig(options: {
         if (cols >= layout.cols - NEAR_MISS_COLUMNS) return { scale: 1, held: null, cut: Math.max(0, layout.cols - cols) };
         var terminalConfig = mockState && mockState.config ? mockState.config.terminal : null;
         var configured = configuredFontSize(terminalConfig);
+        // Predicted at this display's cell, because the renderer's conform lands at this display's
+        // cell: a hold predicted at the nominal cell kept one grid at every ratio but left the
+        // pane an empty band at 125 and 200 percent. So a HELD terminal's grid still moves with the
+        // display scale (the Changes scenes' terminal is 130 columns at 100 percent and 118 at 200),
+        // which the poster gate reports (demo/README.md, The poster gate).
         var native = terminalDeviceCell(terminalConfig);
         if (!native || cols / layout.cols < HOLD_MIN_SCALE) return { scale: 1, held: null, cut: layout.cols - cols };
         var paneWidth = cols * native.width;

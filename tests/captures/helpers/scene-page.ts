@@ -9,6 +9,7 @@
  * (demo/choreography.ts), so the rig plays nothing itself.
  */
 import { expect, type Page } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 import type { SceneDefinition } from '../scenes';
 
 /** demo/boot.js gives itself 10s to reach the reveal; the cold module load rides on top. */
@@ -28,13 +29,18 @@ export interface OpenSceneOptions {
   /** The served build's base URL, e.g. http://127.0.0.1:PORT/demo/ (a trailing slash). */
   baseUrl: string;
   theme: SceneTheme;
+  /**
+   * `still` (the default) is the poster's frame. `loop` is the frame the site's hero boots, which
+   * the poster gate opens to check that it reports ready on the poster's moment (demo/boot.js).
+   */
+  motion?: 'still' | 'loop';
 }
 
-/** The URL that boots the scene: its name, as the site embeds it, as a still. */
+/** The URL that boots the scene: its name, as the site embeds it, as a still unless asked to loop. */
 export function sceneUrl(scene: SceneDefinition, options: OpenSceneOptions): string {
   const url = new URL(options.baseUrl);
   url.searchParams.set('embed', '1');
-  url.searchParams.set('still', '1');
+  url.searchParams.set(options.motion === 'loop' ? 'loop' : 'still', '1');
   url.searchParams.set('stage', '0');
   url.searchParams.set('theme', options.theme);
   url.searchParams.set('view', scene.name);
@@ -113,6 +119,37 @@ export async function waitForSettled(page: Page, selector: string, timeoutMs: nu
     `${selector} did not settle in ${timeoutMs / 1000}s (${outcome.count} element(s), ${outcome.shown} shown)`
     + (fallbacks.length > 0 ? `: the page shows ${fallbacks.join(', ')}, so it got no WebGL context` : ''),
   );
+}
+
+/**
+ * How often shootWhenStill shoots, and how many tries it gives the frame to stop changing. A scene
+ * that paints after ready (the blame view's Monaco, about half a second on a desktop) settles in a
+ * try or two; 20 seconds leaves room for a loaded runner drawing WebGL in software, inside the
+ * captures project's 60-second test timeout.
+ */
+const STILL_INTERVAL_MS = 500;
+const STILL_TRIES = 40;
+
+/**
+ * The frame as PNG bytes once two shots STILL_INTERVAL_MS apart are identical, which is the frame a
+ * visitor sees: a moment after ready, xterm's scrollbar thumb fades and a terminal's cursor goes,
+ * and a single shot at ready caught both (kangentic.com #137; the site's own capture waits the same
+ * way). Throws naming the URL when the frame is still changing after STILL_TRIES, since then there
+ * is no still to shoot. `path` writes the settled shot as well.
+ */
+export async function shootWhenStill(page: Page, options: { path?: string } = {}): Promise<Buffer> {
+  let shot = await page.screenshot({ type: 'png', fullPage: false });
+  for (let tries = 0; tries < STILL_TRIES; tries++) {
+    await page.waitForTimeout(STILL_INTERVAL_MS);
+    const next = await page.screenshot({ type: 'png', fullPage: false });
+    const settled = next.equals(shot);
+    shot = next;
+    if (settled) {
+      if (options.path) await writeFile(options.path, shot);
+      return shot;
+    }
+  }
+  throw new Error(`${page.url()} was still changing after ${(STILL_TRIES * STILL_INTERVAL_MS) / 1000}s, so there is no still to shoot`);
 }
 
 /**

@@ -30,9 +30,11 @@ const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
  * MB after a forced GC, V8 heap plus array buffers, about 15 percent over what the build read on
  * 2026-10-20: 18.3 MB still and 24.5 MB looping on Windows, 18.2 and 23.9 to 24.4 on Ubuntu 24.04
  * with the same Chromium (demo/README.md, "JS heap after a forced GC"). Repeated reads agree to
- * 0.1 MB still and 0.6 MB looping, so the headroom is for creep, not noise.
+ * 0.1 MB still and 0.6 MB looping, so the headroom is for creep, not noise. The still budget rose
+ * from 21 MB by the 0.4 MB the demo's shipped faces cost a still board frame (20.5 to 20.9 MB,
+ * measured back to back on 2026-11-12; the README names the cause).
  */
-const BOARD_STILL_BUDGET_MB = 21;
+const BOARD_STILL_BUDGET_MB = 21.5;
 const BOARD_LOOP_BUDGET_MB = 29;
 /** Below this the read is broken, not light: a blank page reads about 0.5 MB. */
 const FLOOR_MB = 5;

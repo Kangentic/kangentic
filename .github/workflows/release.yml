@@ -953,8 +953,10 @@ jobs:
   # by version: one 3200 by 2000 still per registry scene in the clay and rust
   # themes, held gestures included, shot by the capture rig from the same dist/demo
   # build the demo deploy publishes (demo/posters.mjs; demo/README.md, "The poster
-  # set"). The job installs Roboto first, so the text renders in a face the app's
-  # font stack names rather than the runner's fallback.
+  # set"), plus the landing page's hero at 1x and 2x under the manifest's `hero`
+  # key. The demo ships its own faces (Roboto, Inconsolata and a cut of Noto
+  # symbols, scripts/lib/demo-fonts.mjs), so the runner needs no font of its own.
+  # It hands the set and the build it was shot from to poster-gate as an artifact.
   #
   # After publish-release on purpose, beside deploy-demo: the release stands, and
   # a failure here marks the run red while the site's own sync fails loudly on the
@@ -1022,33 +1024,6 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      # kangentic.com's landing page shows these posters with no live frame beside
-      # them, so they have to render a face the app's own stack names. The app sets
-      # no UI font; its text is Tailwind's default --font-sans: -apple-system,
-      # BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial.
-      # The runner has none of the first five, so Chromium falls through to Arial's
-      # metric alias, Liberation Sans, which has no medium weight and set an 11px
-      # Column Manager label 17 percent wider than Segoe UI. Roboto is the first
-      # family in the stack a runner can have, so installing it decides the face,
-      # and it ships the medium weight font-medium asks for. Noto Sans would only
-      # fill a later slot. fc-match answers with SOME font for any name (WenQuanYi
-      # Zen Hei for Roboto on a bare image), so the gate compares the family exactly.
-      # tests/unit/release-workflow-gates.test.ts fails if a Tailwind bump drops the
-      # family from the stack, which would otherwise revert the posters silently.
-      - name: Install the poster font
-        env:
-          POSTER_FONT_FAMILY: Roboto
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fontconfig fonts-roboto
-          resolved=$(fc-match --format '%{family[0]}' "$POSTER_FONT_FAMILY")
-          if [ "$resolved" != "$POSTER_FONT_FAMILY" ]; then
-            echo "::error::fontconfig resolves $POSTER_FONT_FAMILY to $resolved after installing fonts-roboto, so the posters would render in the runner's fallback face. Check that the package still ships the $POSTER_FONT_FAMILY family."
-            exit 1
-          fi
-          echo "fontconfig resolves $POSTER_FONT_FAMILY to $resolved; the posters render in it."
-
       # Default base: demo/static-server.mjs reads the base out of index.html, and
       # the pixels do not depend on it. deploy-demo already smoke-tests this ref.
       - name: Build the web demo
@@ -1077,6 +1052,34 @@ jobs:
           fi
           gh release upload "$TAG" "$asset" --clobber --repo "${{ github.repository }}"
           echo "Attached $(basename "$asset") to $TAG."
+
+      # The very bytes the set was shot from, and the set with the layout sidecars
+      # the zip leaves out, for poster-gate to boot and compare on every OS.
+      - name: Hand the set to the poster gate
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-poster-set
+          path: |
+            dist/demo/
+            dist/demo-posters/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Does every poster match its live frame on Windows, macOS and Linux, at 1, 1.25,
+  # 1.5 and 2x (kangentic.com #137)? demo-poster-gate.yml boots each poster's scene
+  # from the artifact above and fails on a wrap, a moved line, a terminal on another
+  # grid, or a pixel that differs beyond antialiasing. After the attach on purpose:
+  # the release and its zip stand, and a mismatch turns the run red, naming the
+  # scene, the scale and the OS. No status function, so the implied success() keeps
+  # it from running when demo-posters failed.
+  poster-gate:
+    needs: [demo-posters]
+    uses: ./.github/workflows/demo-poster-gate.yml
+    with:
+      artifact: demo-poster-set
+      ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
+    permissions:
+      contents: read
 
   publish-npm:
     needs: [publish-release]

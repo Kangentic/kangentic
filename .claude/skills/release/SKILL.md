@@ -441,9 +441,12 @@ Summarize the release:
 
 **Watch the run before opening anything.** Get the run id with `gh run list --repo
 Kangentic/kangentic --workflow=release.yml --limit 1`, then wait on it with `gh run watch <runId>
---repo Kangentic/kangentic --exit-status` (run it in the background; it takes 15 to 25 minutes,
-the last ten of them the `demo-posters` job shooting the docs poster set after the release is
-already published).
+--repo Kangentic/kangentic --exit-status` (run it in the background; it takes 30 to 45 minutes,
+the last part the `demo-posters` job shooting the docs poster set after the release is already
+published, then the `poster-gate` job comparing every poster to its live frame on Windows, macOS
+and Linux). A red `poster-gate` with everything else green means the release and its zip shipped
+and a live frame no longer matches its poster on some OS: read which scene, scale and OS its log
+names, and the frames it uploaded, before the next release.
 
 **Then** verify the end state rather than trusting the exit code, and only after that open the
 releases page in the user's browser with `start

@@ -1,0 +1,152 @@
+{
+  "generatedBy": "node scripts/cut-demo-fonts.mjs",
+  "faces": [
+    {
+      "file": "symbols-noto-sans-math-latin.woff2",
+      "source": "@fontsource/noto-sans-math@5.3.0 files/noto-sans-math-latin-400-normal.woff2",
+      "codepoints": [
+        1055,
+        1056,
+        1072,
+        1077,
+        1079,
+        1080,
+        1081,
+        1082,
+        1085,
+        1088,
+        1089,
+        1090,
+        1091,
+        1095,
+        1100,
+        8592,
+        8593,
+        8594,
+        8595,
+        8776,
+        8886,
+        8942,
+        9472
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-symbols-2-symbols.woff2",
+      "source": "@fontsource/noto-sans-symbols-2@5.3.0 files/noto-sans-symbols-2-symbols-400-normal.woff2",
+      "codepoints": [
+        8679,
+        8984,
+        8997,
+        9205,
+        9208,
+        9632,
+        9635,
+        9671,
+        9672,
+        9673,
+        9675,
+        9678,
+        9679,
+        9680,
+        9681,
+        9702,
+        9711,
+        9744,
+        9995,
+        10003,
+        10004,
+        10006,
+        10018,
+        10022,
+        10033,
+        10035,
+        10038,
+        10043,
+        10045,
+        10095,
+        11037
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-symbols-symbols.woff2",
+      "source": "@fontsource/noto-sans-symbols@5.3.0 files/noto-sans-symbols-symbols-400-normal.woff2",
+      "codepoints": [
+        8963,
+        9095,
+        9151
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-sc-89.woff2",
+      "source": "@fontsource/noto-sans-sc@5.3.1 files/noto-sans-sc-89-400-normal.woff2",
+      "codepoints": [
+        9475
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-sc-119.woff2",
+      "source": "@fontsource/noto-sans-sc@5.3.1 files/noto-sans-sc-119-400-normal.woff2",
+      "codepoints": [
+        20013,
+        26085
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-sc-118.woff2",
+      "source": "@fontsource/noto-sans-sc@5.3.1 files/noto-sans-sc-118-400-normal.woff2",
+      "codepoints": [
+        20307,
+        25991,
+        26412
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-sc-117.woff2",
+      "source": "@fontsource/noto-sans-sc@5.3.1 files/noto-sans-sc-117-400-normal.woff2",
+      "codepoints": [
+        31616
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-sc-113.woff2",
+      "source": "@fontsource/noto-sans-sc@5.3.1 files/noto-sans-sc-113-400-normal.woff2",
+      "codepoints": [
+        32321
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-sc-109.woff2",
+      "source": "@fontsource/noto-sans-sc@5.3.1 files/noto-sans-sc-109-400-normal.woff2",
+      "codepoints": [
+        35486,
+        39636
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-kr-117.woff2",
+      "source": "@fontsource/noto-sans-kr@5.3.1 files/noto-sans-kr-117-400-normal.woff2",
+      "codepoints": [
+        44397
+      ]
+    },
+    {
+      "file": "symbols-noto-sans-kr-118.woff2",
+      "source": "@fontsource/noto-sans-kr@5.3.1 files/noto-sans-kr-118-400-normal.woff2",
+      "codepoints": [
+        50612,
+        54620
+      ]
+    }
+  ],
+  "licences": [
+    "LICENSE-noto-sans-math.txt",
+    "LICENSE-noto-sans-symbols-2.txt",
+    "LICENSE-noto-sans-symbols.txt",
+    "LICENSE-noto-sans-sc.txt",
+    "LICENSE-noto-sans-kr.txt"
+  ],
+  "gaps": [
+    "U+2139",
+    "U+257F"
+  ]
+}

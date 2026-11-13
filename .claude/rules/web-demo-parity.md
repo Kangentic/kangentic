@@ -6,6 +6,10 @@ paths:
   - demo/**
   - tests/captures/**
   - tests/demo/**
+  - scripts/lib/demo-*.mjs
+  - scripts/lib/font-cmap.mjs
+  - scripts/cut-demo-fonts.mjs
+  - .github/workflows/demo-poster-gate.yml
 ---
 
 # Rule: the web build is the real renderer, kept at parity by machinery, not by hand
@@ -29,9 +33,10 @@ three things staying in step, and each is enforced rather than remembered.
   (`tests/captures/scenes.ts`); the fixed-size host a direct visit lands on is `demo/stage.html`.
   Renderer code never reads `location`, never checks a demo flag,
   and never branches on being embedded. The renderer's concessions are `data-testid`s the demo
-  targets by selector: the window-controls cluster it hides, and the `<testId>-confirm` and
+  targets by selector: the window-controls cluster it hides, the `<testId>-confirm` and
   `<testId>-cancel` buttons ConfirmDialog derives, which a scene clicks because their labels
-  change with the language. The in-place language switch (`demo/language.ts`) is demo behaviour
+  change with the language, and DiffViewer's `data-diff-state`, which says when a diff has
+  finished laying out and which the Changes scenes' `ready` waits on. The in-place language switch (`demo/language.ts`) is demo behaviour
   too: boot.js wraps `language.setLanguageAndRestart`, and the renderer is not told.
 - **A visitor's browser extensions stay out of the frame, and `demo/boot.js` keeps them out.**
   Every text field carries each vendor's documented opt-out. A sweep hides what an isolated world
@@ -40,6 +45,27 @@ three things staying in step, and each is enforced rather than remembered.
   own shots are clean because every capture and test launch is Playwright's bundled Chromium with
   its default `--disable-extensions`, and no launch takes that back (`demo/README.md`, Browser
   extensions).
+- **A poster and its live frame are one frame, and the demo ships what that takes.**
+  kangentic.com shows a poster until the frame reports ready and lifts it, so the two must
+  match in face, metrics, wrapping and layout on every OS (kangentic.com #137). The frame draws
+  only in faces the build ships (`scripts/lib/demo-fonts.mjs`): Roboto for `--font-sans`,
+  Inconsolata for xterm and `--font-mono` at line height 1.17 (a 6 by 14 cell, the grid the
+  sessions were recorded at), and a cut of Noto faces for the symbols and native names neither
+  covers (`demo/fonts/`, cut by `scripts/cut-demo-fonts.mjs`). They are demo-only family
+  names, never `local()`, with `font-synthesis: none`. This is a deliberate exception to "the
+  web build is the real renderer": a Windows visitor sees Roboto in the demo and Segoe UI in the
+  installed app. The line height reaches xterm through `config.terminal.lineHeight`, an
+  ordinary optional setting the renderer honors, not a demo flag. `demo/boot.js` reports ready
+  only once the faces are in, and a face that fails is the error card. Every terminal is held at
+  the nominal cell at every pixel ratio (the seed's `applyTerminalCellScale`), and every working
+  session's clock is held at its opening moment until ready (`__demoBoot.onReady`), so a `loop=1`
+  frame starts on the still's frame. The frame keeps its own wall clock too: it opens at a fixed
+  instant on every visit and formats dates, times and numbers in UTC and en-US, so a time on a
+  poster is the time the live frame shows in every visitor's zone and locale. A scene whose
+  subject lays out after it mounts reports ready only once that is done (the Changes scenes wait
+  for DiffViewer's generic `data-diff-state="laid-out"`). The posters are shot in the full Chromium build with its
+  scrollbars, once the frame stops changing, and the poster gate holds every frame to its poster
+  on Windows, macOS and Linux (`demo/README.md`, Fonts and The poster gate).
 - **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
   hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
@@ -404,8 +430,27 @@ three things staying in step, and each is enforced rather than remembered.
 - **Review:** `/code-review` flags a `location` check or a demo flag inside `src/renderer`, a
   scene entry that carries code instead of data, and a timeline action that does something main
   would not.
+- **Test (mechanical, CI):** `tests/unit/demo-fonts.test.ts` reads every recording, the English
+  and German catalogs and the renderer and shared source, and fails on a codepoint no shipped
+  face covers (naming `node scripts/cut-demo-fonts.mjs`), on a named gap
+  (`DEMO_GLYPH_GAPS`) that has gone stale, on a symbol cut whose file does not carry what its
+  manifest claims or that two faces claim, on a weight the board draws with no awaited latin
+  face, and on boot.js running the terminal outside the shipped stack and line height.
+  `tests/unit/poster-gate.test.ts` pins the gate's comparison (a different wrap fails, a box
+  moved within the tolerance passes) and its case list (every scene at every scale, the hero
+  still and looping). `tests/unit/release-workflow-gates.test.ts` pins the `poster-gate` job and
+  its three-OS matrix. Run via `npm run test:unit`.
+- **Gate (release):** `.github/workflows/demo-poster-gate.yml`, called by `release.yml` after
+  the posters are attached and dispatchable on a branch, boots every poster's scene on Windows,
+  macOS and Linux at 1, 1.25, 1.5 and 2x and fails on different text, a different wrap, a
+  terminal on another grid, a line box moved at a scale a poster was shot at, or a pixel beyond
+  antialiasing past the per-OS budget (`tests/captures/helpers/poster-gate.ts`). What it reports
+  without failing is named there: clock and counter text, and `GATE_KNOWN_DIFFERENCES`.
 - **Gap:** the choreography's Firefox and WebKit behavior is checked by hand
   (`demo/README.md`, Choreography and timelines), not in CI: the demo tier runs Chromium only.
+  The poster gate is Chromium only too. Firefox ignores `::-webkit-scrollbar` and draws overlay
+  scrollbars on macOS, so a macOS Firefox visitor lays out a 0px gutter where the poster has 8.
+  Gemini's `ℹ` is in no shipped face and falls back per OS (`DEMO_GLYPH_GAPS`).
 
 ## Scope
 

@@ -4756,6 +4756,10 @@ export interface AppConfig {
     panelCollapsed: boolean; // persisted collapsed state
     cursorStyle: 'block' | 'underline' | 'bar'; // global-only: applies across every project
     colors: TerminalColorOverrides; // global-only: applies across every project
+    /** xterm's line height, a multiple of the font's own (1 when absent, xterm's default). No
+     *  settings row sets it: the web demo does, so Inconsolata draws the 14px rows its
+     *  recordings were made at (demo/README.md, Fonts). */
+    lineHeight?: number;
   };
 
   agent: {

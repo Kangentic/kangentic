@@ -60,6 +60,15 @@ async function roundTrip(cols: number, rows: number, bytes: string, scrollback?:
 }
 
 describe('serializePhysicalRows', () => {
+  it('underlines what the agent underlined, never a hyperlink\'s text', async () => {
+    // xterm reports a cell inside an OSC 8 link as underlined with no underline style, and headless
+    // and browser xterm disagreed on it: the still painted Claude's `/rc` underlined and the live
+    // frame did not (task #1079). A link carries no SGR the agent wrote, so the frame carries none.
+    const { frame } = await roundTrip(30, 3, '\u001b]8;id=1;https://example.com\u001b\\/rc\u001b]8;;\u001b\\ \u001b[4mmarked\u001b[24m');
+    expect(frame).not.toMatch(/\u001b\[[0-9;]*\b4m\/rc/);
+    expect(frame).toMatch(/\u001b\[4mmarked/);
+  });
+
   it('writes a wrapped line as two rows, so a wider terminal keeps them apart', async () => {
     const { source, frame, replayed } = await roundTrip(10, 5, 'abcdefghijklmno');
     expect(parsePhysicalFrame(frame).rows).toEqual(['abcdefghij', 'klmno']);

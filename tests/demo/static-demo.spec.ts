@@ -25,6 +25,7 @@ import { PLANNED_BILLING_PAGE, SCENES, playsCycle, type SceneDefinition } from '
 import INVOICE_PDF_PLAN from '../captures/fixtures/demo/workflow-plans/wf-cw-invoice-pdf.json';
 import DEMO_MANIFEST from '../captures/fixtures/demo/manifest.json';
 import { NO_GPU_FALLBACKS, waitForSettled } from '../captures/helpers/scene-page';
+import { measureFrame, type MeasuredTerminal } from '../captures/helpers/frame-measure';
 import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_DICTATION_RECORDING, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
   SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
@@ -3982,9 +3983,10 @@ test('a held terminal reporting its conformed grid is not a resize, so a finishe
 });
 
 test('a display that fits another grid replays the task window on the grid it shows, and the session keeps streaming', async ({ browser }) => {
-  // A display at 125 percent scaling fits fewer columns in the default-rect window than the
-  // recorded 154 by 37 (143 on Windows, 128 on CI's Linux fonts), and no more rows: the context
-  // bar is one row, so the window holds all 37 where a two-row bar left 36. A recording's bytes
+  // The default-rect window fits fewer columns than the recorded 154 by 37. At 125 percent it
+  // fits the grid it fits at 100, since the web build holds every terminal at the nominal cell
+  // (demo/README.md, One grid at every pixel ratio): before that the floored cell made 125 percent
+  // a grid of its own, which is what this case was written at. A recording's bytes
   // address rows for their own grid. The pane is held at a smaller type, at the
   // grid the WHOLE pane takes there, and the page's emulator plays the recording into it, so the
   // terminal fills the window where the recording held at its own grid left 56px beside it and
@@ -4002,7 +4004,6 @@ test('a display that fits another grid replays the task window on the grid it sh
   await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toHaveLength(0);
   const natural = (await sentGrids(page, 'sess-cw-middleware'))[0];
   expect(natural.cols).toBeLessThan(MIDDLEWARE_RECORDED_GRID.cols);
-  expect(natural.rows).toBeLessThanOrEqual(MIDDLEWARE_RECORDED_GRID.rows);
   await expectFaithfulReplay(page, 'sess-cw-middleware');
   await expectPanesFilled(page, 'the default window at 125 percent');
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
@@ -4720,4 +4721,92 @@ test('the board\'s bottom panel is live, where no grid could ever fit a recordin
   }
   expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+// ---------------------------------------------------------------- posters and the live frame
+// kangentic.com shows a poster of a scene until the frame posts ready, then lifts it, and the bar
+// (kangentic.com #137) is that nothing about the text moves at the lift. Three things the frame
+// does for that are only provable in the built bundle: it waits for the faces it ships before it
+// reports ready, it holds every terminal on the grid a whole display ratio gives, and a looping
+// frame reports ready on the still's moment. The poster gate (demo-poster-gate.yml) compares every
+// scene to its poster on three OSes at release; these hold the mechanisms on every pull request.
+interface DemoSessionClockGlobal {
+  __demoSessionClock(sessionId: string): { elapsedMs: number; openingMs: number; held: boolean } | null;
+}
+
+test.describe('the frame a poster lifts onto', () => {
+  test('ready waits for the shipped faces, and a face that does not load is the error card', async ({ page, browser }) => {
+    // A delayed face holds ready back: nothing is measured or revealed before it is in.
+    let released = false;
+    await page.route('**/fonts/roboto-latin-500-*.woff2', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      released = true;
+      await route.continue();
+    });
+    await page.goto(demoUrl({ view: 'board', embed: '1', still: '1' }));
+    await waitForDemoReady(page);
+    expect(released).toBe(true);
+    const loaded = await page.evaluate(() => {
+      const families = new Set<string>();
+      document.fonts.forEach((face) => { if (face.status === 'loaded') families.add(face.family.replace(/"/g, '')); });
+      return [...families].sort();
+    });
+    expect(loaded).toEqual(['Kangentic Demo Mono', 'Kangentic Demo Sans', 'Kangentic Demo Symbols']);
+    expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(/^"?Kangentic Demo Sans/);
+
+    // A face that never arrives is the error card, never a frame in the visitor's own face.
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    const broken = await context.newPage();
+    await broken.route('**/fonts/inconsolata-latin-400-*.woff2', (route) => route.fulfill({ status: 404, body: '' }));
+    await broken.goto(demoUrl({ view: 'board', embed: '1', still: '1' }));
+    await expect(broken.getByTestId('demo-error')).toContainText('Kangentic Demo Mono 400');
+    await expect(broken.locator('html')).not.toHaveAttribute('data-demo-ready', '1');
+    await context.close();
+  });
+
+  test('every terminal keeps the grid and rect a whole ratio gives, at fractional ratios too', async () => {
+    // xterm floors its cell to device pixels: at 125 and 175 percent Inconsolata's 12px cell is
+    // 5.6 and 5.71 px wide, and the bottom panel fitted 232 columns where the poster shows 216.
+    // With its scrollbars, as the poster rig launches: the 8px gutter is in the poster's grid.
+    const browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] });
+    const terminalsAt = async (deviceScaleFactor: number): Promise<MeasuredTerminal[]> => {
+      const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor });
+      const page = await context.newPage();
+      await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+      await SCENE_MARKERS.board(page);
+      await expect.poll(async () => (await measureFrame(page)).terminals.length).toBeGreaterThan(0);
+      const { terminals } = await measureFrame(page);
+      await context.close();
+      return terminals;
+    };
+    try {
+      const whole = await terminalsAt(1);
+      expect(whole.map((terminal) => [terminal.cols, terminal.rows])).toEqual([[216, 14]]);
+      for (const deviceScaleFactor of [1.25, 1.5, 1.75, 2]) {
+        const terminals = await terminalsAt(deviceScaleFactor);
+        expect(terminals.map((terminal) => [terminal.cols, terminal.rows]), `at ${deviceScaleFactor}x`).toEqual([[216, 14]]);
+        for (const key of ['x', 'y', 'width', 'height'] as const) {
+          expect(Math.abs(terminals[0].rect[key] - whole[0].rect[key]), `${key} at ${deviceScaleFactor}x`).toBeLessThanOrEqual(1);
+        }
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a looping frame reports ready on the moment the still paints, and runs from there', async ({ page }) => {
+    // The hero boots loop=1 and lifts its poster, a still, at ready. Run from page open, the
+    // session's clock had already passed the still's moment by the boot's few seconds there.
+    const readClock = (): Promise<{ elapsedMs: number; openingMs: number; held: boolean } | null> =>
+      page.evaluate((sessionId) => (window as unknown as DemoSessionClockGlobal).__demoSessionClock(sessionId), SESSION_MIDDLEWARE);
+    await page.goto(demoUrl({ view: 'board', embed: '1', loop: '1' }));
+    await waitForDemoReady(page);
+    const atReady = await readClock();
+    expect(atReady?.held).toBe(false);
+    expect((atReady?.elapsedMs ?? Infinity) - (atReady?.openingMs ?? 0)).toBeLessThan(1_000);
+    await expect.poll(async () => {
+      const clock = await readClock();
+      return clock ? clock.elapsedMs - clock.openingMs : 0;
+    }).toBeGreaterThan(1_500);
+  });
 });

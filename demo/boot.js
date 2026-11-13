@@ -3,7 +3,8 @@
  *
  * Runs as a classic script BEFORE tests/ui/mock-electron-api.js, so it owns everything the mock
  * reads at load time (window.__mockConfigOverrides) and everything the demo adds around the
- * renderer: the URL contract, the theme class, the still and embed styles, the focus outline it
+ * renderer: the URL contract, the theme class, the faces the build ships and the wait for them
+ * before ready (scripts/lib/demo-fonts.mjs), the still and embed styles, the focus outline it
  * holds back until a visitor's first input (demo/README.md, Focus rings), the scene applier
  * the seed script calls back into, the in-place language switch that stands in for a restart
  * (demo/language.ts), and the boot-step runner that reveals the frame. On a frame
@@ -36,8 +37,10 @@
  * A scene the registry does not know or a malformed state= blob renders a full-frame error card
  * and boots nothing: a page must never caption a scene the visitor is not looking at. The parent
  * frame is told either way (kangentic-demo-ready / kangentic-demo-error). Ready fires only once
- * the scene's `ready` element exists, and carries the rect around its `focus` elements (fractions
- * of the frame) so a host can crop a dialog scene to the dialog.
+ * the shipped faces have loaded and the scene's `ready` element exists, and carries the rect around
+ * its `focus` elements (fractions of the frame) so a host can crop a dialog scene to the dialog.
+ * At that moment the seed starts its sessions' clocks (onReady), so a host that lifts its poster on
+ * the message lifts it onto the poster's own frame.
  */
 (function () {
   'use strict';
@@ -60,6 +63,70 @@
     pageCreated.add(element);
     return element;
   };
+
+  // ---------------------------------------------------------------- the frame's clock
+  // Every time the frame prints (an activity line, a session's age, a usage total that grows with
+  // it, a date on a completed task) comes from the page's clock, in the visitor's zone and locale.
+  // A poster shot at release time then never read what the live frame reads when a visitor opens
+  // the page, so its text changed at the lift (kangentic.com #137). The frame keeps its own clock
+  // instead: it starts at DEMO_CLOCK_START whenever the page opens and runs at real speed, and
+  // dates, times and numbers format in UTC and en-US unless the caller names another zone or locale
+  // (the display language passes its own, which is kept). The frame's local time is UTC as well:
+  // the local getters and setters, a date built from its parts, and the zone offset, so the app's
+  // today-or-yesterday arithmetic agrees with what it prints in every visitor's zone.
+  var DEMO_CLOCK_START = Date.UTC(2026, 10, 9, 12, 0, 0);
+  var DEMO_TIME_ZONE = 'UTC';
+  var DEMO_LOCALE = 'en-US';
+  (function pinClock() {
+    var NativeDate = window.Date;
+    var openedAt = NativeDate.now();
+    var demoNow = function () { return DEMO_CLOCK_START + (NativeDate.now() - openedAt); };
+    window.Date = new Proxy(NativeDate, {
+      construct: function (target, args, newTarget) {
+        var resolved = args;
+        if (args.length === 0) resolved = [demoNow()];
+        else if (args.length >= 2) resolved = [NativeDate.UTC.apply(null, args)];
+        return Reflect.construct(target, resolved, newTarget);
+      },
+      apply: function () { return new NativeDate(demoNow()).toString(); },
+      get: function (target, key) { return key === 'now' ? demoNow : Reflect.get(target, key); },
+    });
+    ['FullYear', 'Month', 'Date', 'Day', 'Hours', 'Minutes', 'Seconds', 'Milliseconds'].forEach(function (part) {
+      NativeDate.prototype['get' + part] = NativeDate.prototype['getUTC' + part];
+      if (part !== 'Day') NativeDate.prototype['set' + part] = NativeDate.prototype['setUTC' + part];
+    });
+    NativeDate.prototype.getTimezoneOffset = function () { return 0; };
+    var withDefaults = function (options) {
+      var resolved = Object.assign({}, options);
+      if (!resolved.timeZone) resolved.timeZone = DEMO_TIME_ZONE;
+      return resolved;
+    };
+    var NativeDateTimeFormat = Intl.DateTimeFormat;
+    var DemoDateTimeFormat = function (locales, options) {
+      return new NativeDateTimeFormat(locales === undefined ? DEMO_LOCALE : locales, withDefaults(options));
+    };
+    DemoDateTimeFormat.prototype = NativeDateTimeFormat.prototype;
+    DemoDateTimeFormat.supportedLocalesOf = NativeDateTimeFormat.supportedLocalesOf;
+    Intl.DateTimeFormat = DemoDateTimeFormat;
+    ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString'].forEach(function (name) {
+      var native = NativeDate.prototype[name];
+      NativeDate.prototype[name] = function (locales, options) {
+        return native.call(this, locales === undefined ? DEMO_LOCALE : locales, withDefaults(options));
+      };
+    });
+    // Numbers group their digits by locale too (1,234 against 1.234).
+    var NativeNumberFormat = Intl.NumberFormat;
+    var DemoNumberFormat = function (locales, options) {
+      return new NativeNumberFormat(locales === undefined ? DEMO_LOCALE : locales, options);
+    };
+    DemoNumberFormat.prototype = NativeNumberFormat.prototype;
+    DemoNumberFormat.supportedLocalesOf = NativeNumberFormat.supportedLocalesOf;
+    Intl.NumberFormat = DemoNumberFormat;
+    var nativeNumberToLocale = Number.prototype.toLocaleString;
+    Number.prototype.toLocaleString = function (locales, options) {
+      return nativeNumberToLocale.call(this, locales === undefined ? DEMO_LOCALE : locales, options);
+    };
+  })();
 
   // Hand-maintained mirror of ThemeMode in src/shared/types.ts. Nothing ties the two
   // together, so a theme added there has to be added here or ?theme=<id> is refused.
@@ -359,6 +426,16 @@
 
   var effective = mergeStates([scene, urlState]);
 
+  // The faces this build ships (scripts/lib/demo-fonts.mjs): every frame draws in them and never in
+  // the visitor's own, so a poster and the live frame wrap and measure the same text the same way
+  // on every OS. A build that carries none would fall back to whatever the visitor has, which is
+  // the frame no poster can match, so it is refused rather than booted.
+  var demoFonts = window.__demoFonts || null;
+  if (!demoFonts || !Array.isArray(demoFonts.faces) || demoFonts.faces.length === 0 || !demoFonts.stacks) {
+    errors.push('This build carries no fonts (window.__demoFonts); rebuild with "npm run build:demo".');
+    demoFonts = null;
+  }
+
   // ---------------------------------------------------------------- scene-only rows' recordings
   // A scene-only row's recorded sessions (their frames, diff, peeks and trail) are not in the seed,
   // since only a frame that names the row shows them. Each row's script is written here, while the
@@ -396,7 +473,10 @@
     theme: theme,
     terminal: {
       shell: null,
-      fontFamily: 'Consolas, "Courier New", monospace',
+      // Inconsolata, whose advance is exactly half an em: at 12px and line height 1.17 its cell is
+      // 6 by 14, the Consolas grid every session was recorded at (scripts/lib/demo-fonts.mjs).
+      fontFamily: demoFonts ? demoFonts.stacks.mono : 'monospace',
+      lineHeight: demoFonts ? demoFonts.terminalLineHeight : 1,
       fontSize: fontSize || 12,
       showPreview: false,
       panelHeight: 280,
@@ -431,6 +511,42 @@
 
   if (embed) {
     injectStyle('[data-testid="window-controls"] { display: none !important; }');
+  }
+
+  // ---------------------------------------------------------------- fonts
+  // The shipped faces go first in both stacks. This rule is unlayered, so it outranks Tailwind's
+  // theme variables, which compile into @layer theme. `font-synthesis: none` makes a weight the
+  // build does not ship show up as the wrong weight instead of a bolded fake, which would draw
+  // differently on every OS.
+  //
+  // Each face is registered with the FontFace API rather than declared in a stylesheet: a
+  // stylesheet face loads only once text asks for it, and `document.fonts.load()` before that
+  // resolves with nothing rather than failing. `face.load()` fetches now and rejects on a missing
+  // or broken file. Ready waits for every face marked `awaited` (the latin subsets every frame
+  // draws, and the cut symbol faces), and so does the seed's first config read, which no terminal
+  // is constructed before, so xterm measures its cell in Inconsolata. A face not awaited (latin-ext,
+  // Cyrillic) loads when a text first needs it, as a stylesheet face would.
+  var fontsReady = Promise.resolve();
+  if (demoFonts) {
+    injectStyle(':root { --font-sans: ' + demoFonts.stacks.sans + '; --font-mono: ' + demoFonts.stacks.mono + '; font-synthesis: none; }');
+    fontsReady = Promise.all(demoFonts.faces.map(function (spec) {
+      var face = new FontFace(spec.family, 'url("' + spec.url + '") format("woff2")', {
+        weight: String(spec.weight),
+        style: 'normal',
+        unicodeRange: spec.unicodeRange,
+        display: 'block',
+      });
+      document.fonts.add(face);
+      if (!spec.awaited) return null;
+      return face.load().then(null, function (error) {
+        var failure = new Error('The font ' + spec.family + ' ' + spec.weight + ' (' + spec.url + ') did not load: ' + (error && error.message ? error.message : String(error)));
+        failure.demoFontLoad = true;
+        throw failure;
+      });
+    })).then(function () { return undefined; });
+    // The boot chain and the seed both read the outcome; this keeps a frame that errors before
+    // either reaches it from logging an unhandled rejection on top of its error card.
+    fontsReady.then(null, function () {});
   }
 
   // ---------------------------------------------------------------- focus rings
@@ -975,7 +1091,28 @@
     notifyParent({ type: 'kangentic-demo-escape', scene: sceneName });
   }, true);
 
+  // What runs at the moment the frame reports ready, with that moment's time. The seed holds every
+  // working session's clock at its opening moment until then (the frame a still paints) and starts
+  // it here, so the live frame a host lifts its poster onto is the poster's frame, not the boot's
+  // delay past it.
+  var readyAt = null;
+  var readyListeners = [];
+  function onReady(callback) {
+    if (readyAt !== null) callback(readyAt);
+    else readyListeners.push(callback);
+  }
+
   function markReady() {
+    readyAt = Date.now();
+    var listeners = readyListeners;
+    readyListeners = [];
+    listeners.forEach(function (callback) {
+      try {
+        callback(readyAt);
+      } catch (error) {
+        console.error('[kangentic-demo] a ready listener threw:', error && error.message ? error.message : String(error));
+      }
+    });
     document.documentElement.setAttribute('data-demo-ready', '1');
     document.documentElement.setAttribute('data-demo-scene', sceneName || 'state');
     notifyParent({ type: 'kangentic-demo-ready', scene: sceneName, version: version, focus: focusRect() });
@@ -1016,7 +1153,10 @@
     // empty-install scene whose steps are what REVEAL that element, the chain would wait for what
     // the first step is there to produce and time out having clicked nothing. Nothing is lost by
     // the weaker gate, because `scene.ready` is awaited after the steps below either way.
-    var chain = waitForSelector(emptyInstall ? '#root > *' : '[data-swimlane-name]', deadline);
+    // Nothing is measured or revealed before the faces are in (fonts, above).
+    var chain = fontsReady.then(function () {
+      return waitForSelector(emptyInstall ? '#root > *' : '[data-swimlane-name]', deadline);
+    });
     effective.steps.forEach(function (step) {
       chain = chain.then(function () {
         if (typeof step.press === 'string') {
@@ -1074,7 +1214,8 @@
       }
     }).catch(function (error) {
       if (veiled && root) unveil(root);
-      errors.push('Boot step failed: ' + (error && error.message ? error.message : String(error)));
+      var reason = error && error.message ? error.message : String(error);
+      errors.push(error && error.demoFontLoad ? reason : 'Boot step failed: ' + reason);
       console.error('[kangentic-demo]', errors[errors.length - 1]);
       renderErrorCard();
       notifyParent({ type: 'kangentic-demo-error', reason: errors.join(' ') });
@@ -1098,6 +1239,8 @@
     params: { theme: theme, embed: embed, still: still, loop: loop, fontSize: fontSize },
     errors: errors,
     afterSeed: applyScene,
+    fontsReady: fontsReady,
+    onReady: onReady,
     focusRectOf: rectOf,
     pressCombo: pressCombo,
     releaseCombo: releaseCombo,

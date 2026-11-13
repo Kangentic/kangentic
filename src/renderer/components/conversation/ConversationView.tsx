@@ -270,6 +270,12 @@ function useScrollSettle(
           const virtualItem = getVirtualItems().find((item) => item.index === index);
           container.scrollTop = computeSettleScrollTop({ align, index, rows, virtualItem, clientHeight: container.clientHeight });
         }
+        // Rest on a whole pixel. A box of fractional height clamps the end to a fractional
+        // offset (1955.5), and Chromium painted that offset rounded one way on some opens and
+        // the other on the rest, so the same transcript sat a device pixel higher or lower from
+        // one open to the next (task #1079, the web demo's poster gate). The tail check
+        // (isScrolledToBottom) allows the half pixel this leaves below.
+        container.scrollTop = Math.floor(container.scrollTop);
 
         // `instant` (search-result navigation) skips the retry loop entirely:
         // a single synchronous jump, no visible multi-tick correction. This is

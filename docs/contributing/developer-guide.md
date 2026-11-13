@@ -375,9 +375,13 @@ and `rust` themes at the frame's 2x (`CAPTURE_THEMES`, `CAPTURE_RESOLUTIONS`, an
 (every scene at every theme, every PNG 3200 by 2000, the build's version equal to
 `package.json`'s) and zipped with a `manifest.json` as `dist/demo-posters-<version>.zip`. The
 manifest also carries each poster's `focus` rect, which the rig measures on the still and writes
-beside it as a `.focus.json` sidecar. `release.yml`'s `demo-posters` job installs Roboto, runs it
-after `publish-release`, and attaches the zip to the release; `demo/README.md` ("The poster set")
-carries the manifest shape and the reasons.
+beside it as a `.focus.json` sidecar, and under its own `hero` key the landing page's hero at 1x
+and 2x (`hero.capture.ts`). The rig shoots in the full Chromium build with its scrollbars, once the
+frame stops changing, and in the faces the demo ships, so a set shot on any OS is the release set.
+`release.yml`'s `demo-posters` job runs it after `publish-release` and attaches the zip to the
+release, and its `poster-gate` job then runs `npm run demo:poster-gate` on Windows, macOS and
+Linux, which fails when a live frame lays out differently from its poster; `demo/README.md`
+("The poster set", "Fonts", "The poster gate") carries the manifest shape and the reasons.
 
 ### Worktree Dev
 

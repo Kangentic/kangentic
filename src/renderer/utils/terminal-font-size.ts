@@ -30,3 +30,18 @@ export function resolveTerminalFontSize(configured: number | null | undefined): 
   }
   return Math.max(configured, TERMINAL_FONT_SIZE_MIN);
 }
+
+/** xterm's own default, and what a terminal runs at when the config names none. */
+export const TERMINAL_LINE_HEIGHT_DEFAULT = 1;
+
+/**
+ * The line height a terminal runs at, from the configured one. xterm throws on a value below 1
+ * (`OptionsService` refuses `lineHeight < 1`), so anything that is not a finite number of at
+ * least 1 runs at the default rather than reaching the constructor.
+ */
+export function resolveTerminalLineHeight(configured: number | null | undefined): number {
+  if (typeof configured !== 'number' || !Number.isFinite(configured) || configured < 1) {
+    return TERMINAL_LINE_HEIGHT_DEFAULT;
+  }
+  return configured;
+}
