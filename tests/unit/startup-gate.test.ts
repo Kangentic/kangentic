@@ -614,9 +614,12 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     // global-db-degradation.test.ts), so it must be called unconditionally:
     // gating it on the same one-shot flag would silence the user-facing dialog
     // after the very first failure even once a later Retry re-armed it.
-    const guardMarker = 'if (!globalDbFailureReported) {';
+    // The guard also skips an error the open notifier already reported
+    // (`!isReported(error)`): a read that failed because the open did is one
+    // failure, not two. The once-per-process flag is still what debounces.
+    const guardMarker = 'if (!globalDbFailureReported && !isReported(error)) {';
     const guardStart = INDEX_SOURCE.indexOf(guardMarker);
-    expect(guardStart, 'the debounce guard `if (!globalDbFailureReported)` was not found in src/main/index.ts').toBeGreaterThan(-1);
+    expect(guardStart, 'the debounce guard `if (!globalDbFailureReported && !isReported(error))` was not found in src/main/index.ts').toBeGreaterThan(-1);
 
     // The guard's own closing brace is a newline followed by 4-space indent,
     // which is unambiguous here: the only other `}` between the guard opening
