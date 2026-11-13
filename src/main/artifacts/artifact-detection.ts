@@ -27,6 +27,10 @@ import type { MessageTrailTracker } from '../agent/message-trail-tracker';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { TurnEndedPayload } from '../pty/session-manager';
 import { linkArtifacts } from './artifact-linking';
+import { createChokepointReporter } from '../analytics/handled-report';
+
+/** An artifact detection pass that threw: links stop being found with nothing said. */
+const artifactDetectionReporter = createChokepointReporter('artifact_detection');
 
 /** What `SessionManager` emits on `'artifact-links'`: a publish tool's links and title. */
 export interface PublishedArtifactLinks {
@@ -58,6 +62,7 @@ export function registerArtifactDetection(context: IpcContext, messageTrailTrack
       run();
     } catch (error) {
       console.error(`[artifacts] ${label} failed:`, error);
+      artifactDetectionReporter.report(error, { tags: { stage: 'detect' } });
     }
   };
 

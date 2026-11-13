@@ -7,6 +7,10 @@ import { isWorkflowAgentSession } from '../../../shared/session-owner';
 import type { SessionManager } from '../../pty/session-manager';
 import type { Session } from '../../../shared/types';
 import { writeTransaction } from '../../db/transaction';
+import { createChokepointReporter } from '../../analytics/handled-report';
+
+/** The crash-resilience snapshot, which had no log at all. */
+const metricsSnapshotReporter = createChokepointReporter('metrics_snapshot');
 
 /**
  * Crash-resilience snapshot interval. Session metrics otherwise persist only at
@@ -90,19 +94,23 @@ function snapshotRunningSessions(sessionManager: SessionManager): void {
               record.started_at,
               record.session_type,
             );
-          } catch {
+          } catch (error) {
             // Isolate one session's failure (e.g. a transient record read
             // throw) inside the shared transaction so it cannot roll back its
-            // siblings' captures in this batch.
+            // siblings' captures in this batch. Runs every 45 s, so the
+            // reporter's once-per-key latch is what keeps this to one event.
+            metricsSnapshotReporter.report(error, { tags: { stage: 'session' } });
           }
         }
       });
       // A synchronous sqlite transaction on the main thread, on a timer: the
       // dev lag monitor records it when it runs long (see event-loop-lag.ts).
       timeSyncWork('metrics-snapshot', snapshotProjectBatch);
-    } catch {
+    } catch (error) {
       // Best-effort: a project DB may be transiently unavailable. A throw here
-      // aborts only this project's batch; other projects still snapshot.
+      // aborts only this project's batch; other projects still snapshot. A
+      // locked database groups as an environment issue; anything else is a defect.
+      metricsSnapshotReporter.report(error, { tags: { stage: 'batch' } });
     }
   }
 }

@@ -13,7 +13,8 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import { forgetRecentFetches } from '../git/fetch-throttle';
 import { handleTaskMove } from '../ipc/handlers/task-move';
-import { notifySpawnBlocked, spawnFailureOf } from '../ipc/helpers/task-git';
+import { notifySpawnBlocked } from '../ipc/helpers/task-git';
+import { spawnFailureOf } from '../ipc/helpers/spawn-failure';
 import type { IpcContext } from '../ipc/ipc-context';
 import {
   inFlightKey,

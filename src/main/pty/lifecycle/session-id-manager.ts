@@ -62,6 +62,9 @@ export interface SessionIdManagerCallbacks {
   /** The agent session id a session already holds, or null. Read to tell
    *  whether a folder scan's match could be another session's. */
   agentSessionIdOf(sessionId: string): string | null;
+  /** No capture path fired within the diagnostic window. Main reports it; the
+   *  pty host, which bundles this module too, passes nothing. */
+  onSessionIdNotCaptured?(sessionId: string): void;
 }
 
 /** A folder, compared the way the file system compares it. */
@@ -160,6 +163,7 @@ export class SessionIdManager {
             + `${SessionIdManager.DIAGNOSTIC_TIMEOUT_MS / 1000}s for session `
             + `${sessionId.slice(0, 8)} - --resume will not work.`,
           );
+          if (this.callbacks.sessionExists(sessionId)) this.callbacks.onSessionIdNotCaptured?.(sessionId);
         }
       }, SessionIdManager.DIAGNOSTIC_TIMEOUT_MS);
       timer.unref();

@@ -27,6 +27,7 @@ export function PrivacyTab() {
           <ul className="list-disc pl-4 text-sm text-fg-muted space-y-1">
             <li><Trans>App launches, platform, and architecture</Trans></li>
             <li><Trans>App crashes and errors (stack traces with machine-specific paths removed from app code)</Trans></li>
+            <li><Trans>For a handled error, its type, a fixed failure code and, for an interface crash, the names of the components it was in (never the error&apos;s own text)</Trans></li>
             <li><Trans>Task and project creation counts</Trans></li>
             <li><Trans>Agent session starts, exit codes, and duration</Trans></li>
             <li><Trans>Which features get used, as daily counts (never their content)</Trans></li>

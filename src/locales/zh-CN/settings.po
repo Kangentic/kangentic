@@ -1288,6 +1288,10 @@ msgstr "字体"
 msgid "Font size"
 msgstr "字号"
 
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "For a handled error, its type, a fixed failure code and, for an interface crash, the names of the components it was in (never the error's own text)"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgid "Foreground"
 msgstr "前景"

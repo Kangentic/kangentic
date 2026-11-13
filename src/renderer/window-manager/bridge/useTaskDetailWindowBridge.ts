@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { useProjectStore } from '../../stores/project-store';
 import { useWindowStore } from '../store/window-store';
 import { taskDetailWindowInput } from './window-parking';
@@ -182,6 +183,8 @@ export function useTaskDetailWindowBridge(): void {
       }
     }).catch((error) => {
       console.error('[task-detail] Failed to resolve where to open:', error);
+      // A card click that opens nothing, with nothing on screen to say so.
+      reportRendererFailure('task_detail', 'open', error);
     });
   }, [detailTaskId, openWhenLoaded]);
 

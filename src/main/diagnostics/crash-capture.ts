@@ -9,6 +9,7 @@ import { isGpuFaultDeath, recordGpuModeObservation, recordGpuProcessGone } from 
 import { createLinuxGpuZygoteProbe } from './linux-gpu-zygote';
 import { getLastHostMemorySample } from './host-memory';
 import { PATHS } from '../config/paths';
+import { createChokepointReporter } from '../analytics/handled-report';
 
 /**
  * Captures fatal-error events from main, preload, and renderer and persists
@@ -110,6 +111,10 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
         context: null,
         versions: getVersions(),
       });
+      // A preload that threw leaves the window without `window.electronAPI`, a
+      // packaging defect. Our own windows only: the listener is on every
+      // webContents, and a guest's page is the user's.
+      if (isOwnWindow(webContents)) preloadReporter.report(error, { tags: { kind: 'preload_error' } });
     });
   });
 
@@ -200,6 +205,18 @@ function writeRecord(projectRoot: string | null, record: CrashRecord): void {
     fs.writeFileSync(file, JSON.stringify(resolved, null, 2), 'utf-8');
   } catch {
     // Best-effort.
+  }
+}
+
+/** A preload that failed in one of Kangentic's own windows (`preload-error`). */
+const preloadReporter = createChokepointReporter('preload');
+
+/** One of Kangentic's own windows (the main window or a pop-out), not a Browser pane's guest. */
+function isOwnWindow(webContents: Electron.WebContents): boolean {
+  try {
+    return webContents.getType() === 'window';
+  } catch {
+    return false;
   }
 }
 

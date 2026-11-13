@@ -51,6 +51,14 @@ import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { EMPTY_QUEUE_SNAPSHOT, readQueueSnapshot } from '../helpers/queue-snapshot';
 import { RefusalError } from '../../../shared/refusal';
+import { createChokepointReporter } from '../../analytics/handled-report';
+
+/**
+ * The session handlers' background work that only logged: an idle-timeout pause,
+ * the pause after a failed or refused launch, the plan-exit auto-move. The
+ * `stage` tag says which.
+ */
+const sessionHandlersReporter = createChokepointReporter('session_handlers');
 
 /** How long a change to the line for an agent slot waits for the rest of its burst. */
 const QUEUE_PUSH_COALESCE_MS = 100;
@@ -761,6 +769,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       },
       (error: unknown) => {
         console.error('[idle-timeout] pause failed:', error);
+        sessionHandlersReporter.report(error, { tags: { stage: 'idle_pause' } });
       },
     ).finally(() => {
       idlePausesInFlight.delete(sessionId);
@@ -922,6 +931,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       });
     }).catch((error: unknown) => {
       console.warn('[AGENT-LAUNCH] Pause after a failed launch failed:', error);
+      sessionHandlersReporter.report(error, { tags: { stage: 'launch_failure_pause' } });
       retire();
     }).finally(() => {
       releaseResumeController(session.taskId, retryWindow);
@@ -958,6 +968,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       if (task) notifySpawnBlocked(context, task, 'agent', error, projectId);
     }).catch((pauseError: unknown) => {
       console.warn('[SESSION_QUEUE] Pause after a refused start failed:', pauseError);
+      sessionHandlersReporter.report(pauseError, { tags: { stage: 'refused_start_pause' } });
       retire();
     });
   });
@@ -1239,6 +1250,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
     } catch (err) {
       console.error('[plan-exit] Auto-move failed:', err);
+      sessionHandlersReporter.report(err, { tags: { stage: 'plan_exit_move' } });
     }
   });
 }

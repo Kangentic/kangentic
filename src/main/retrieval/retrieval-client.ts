@@ -33,6 +33,7 @@ import { unpacked } from '../utility-process/paths';
 import { UtilityRestartPolicy } from '../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../utility-process/stderr-tail';
 import { resolveVecLoadablePath } from './vec-extension';
+import { sendHandledFailure } from '../analytics/handled-report';
 import type {
   FromWorkerMessage,
   InitMessage,
@@ -219,7 +220,11 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       return;
     }
     if (record.type === 'reply') {
-      this.settle(record.id, record.ok ? null : new Error(record.error), record.ok ? record.result : undefined);
+      this.settle(record.id, record.ok ? null : workerFailure(record), record.ok ? record.result : undefined);
+      return;
+    }
+    if (record.type === 'handledError') {
+      reportRetrievalWorkerFailure(record);
       return;
     }
     if (record.type === 'event') {
@@ -350,6 +355,26 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
 /** A worker log line into main's log. An error also went to the worker's
  *  stderr, which a dev build already passes through, so it is printed here only
  *  in a packaged build, where nothing else would show it. */
+/** The error a failed reply rejects with, its class and errno restored so a caller can classify it. */
+function workerFailure(reply: Extract<FromWorkerMessage, { type: 'reply'; ok: false }>): Error {
+  const error = new Error(reply.error) as NodeJS.ErrnoException;
+  if (reply.errorName) error.name = reply.errorName;
+  if (reply.errorCode) error.code = reply.errorCode;
+  return error;
+}
+
+const reportedWorkerFailures = new Set<string>();
+
+/** A failure the worker relayed by a fixed code (`HandledErrorMessage`), reported once per code per run. */
+function reportRetrievalWorkerFailure(message: Extract<FromWorkerMessage, { type: 'handledError' }>): void {
+  if (reportedWorkerFailures.has(message.code)) return;
+  reportedWorkerFailures.add(message.code);
+  const error = new Error(`The retrieval worker reported ${message.code}`) as NodeJS.ErrnoException;
+  error.name = message.errorName ?? 'Error';
+  if (message.errorCode) error.code = message.errorCode;
+  sendHandledFailure('retrieval_worker', error, { code: message.code }, {}, ['retrieval-worker', message.code, message.errorCode ?? message.errorName ?? 'none']);
+}
+
 function logFromWorker(level: 'log' | 'info' | 'warn' | 'error', text: string): void {
   if (level === 'error' && !app.isPackaged) return;
   console[level](`[retrieval-worker] ${text}`);

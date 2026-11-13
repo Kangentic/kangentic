@@ -5,6 +5,7 @@ import type { Session } from '../../shared/types';
 import type { TurnEndedPayload } from '../pty/session-manager';
 import { MOVE_MESSAGE_MAX_CHARS } from '../agent/commands/move-message-limit';
 import { getProjectDb } from '../db/database';
+import { createChokepointReporter } from '../analytics/handled-report';
 import { SentSessionMessageRepository } from '../db/repositories/sent-session-message-repository';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -196,6 +197,9 @@ const deferredToTurnEnd = new Set<string>();
 /** How long the flush waits after a session first runs, for a recap mark to land. */
 const HELD_FLUSH_SETTLE_MS = 1_000;
 
+/** A held message that could not be read (never delivered) or recorded (left reserved for this run). */
+const heldMessagesReporter = createChokepointReporter('held_messages');
+
 /**
  * Claim the task's held messages that no other delivery holds. Null when there
  * are none. The claim reads the database once; the rows stay `held` until it
@@ -207,6 +211,8 @@ export function claimHeldMessages(context: IpcContext, projectId: string, taskId
     rows = new SentSessionMessageRepository(getProjectDb(projectId)).listHeldForTask(taskId);
   } catch (error) {
     console.error(`[held-messages] Could not read the held messages of task ${taskId.slice(0, 8)}:`, error);
+    // The messages are silently not delivered, so this one reports.
+    heldMessagesReporter.report(error, { tags: { stage: 'read' } });
     return null;
   }
   const inFlight = claimedRowIds.get(taskId) ?? new Set<string>();
@@ -236,6 +242,7 @@ export function claimHeldMessages(context: IpcContext, projectId: string, taskId
       console.log(`[held-messages] ${label}: ${changed} of ${ids.length} for task ${taskId.slice(0, 8)}`);
     } catch (error) {
       console.error(`[held-messages] Could not record ${label} for task ${taskId.slice(0, 8)}:`, error);
+      heldMessagesReporter.report(error, { tags: { stage: 'write' } });
       return;
     }
     unreserve();
