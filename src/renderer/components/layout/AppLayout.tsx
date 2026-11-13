@@ -672,9 +672,13 @@ export function AppLayout() {
       {statsOpen && !statsPopOut.isOpen && <StatsPage />}
       {monitorOpen && !monitorPopOut.isOpen && <MonitorPage />}
       {knowledgeGraphOpen && !knowledgeGraphPopOut.isOpen && <KnowledgeGraphPage />}
-      {settingsOpen && <SurfaceBoundary surface="settings"><SettingsPanel /></SurfaceBoundary>}
+      {settingsOpen && (
+        <SurfaceBoundary surface="settings" onDismiss={() => useConfigStore.getState().setSettingsOpen(false)}>
+          <SettingsPanel />
+        </SurfaceBoundary>
+      )}
       {commandBar.isOpen && !commandTerminalPopOut.isOpen && (
-        <SurfaceBoundary surface="command-terminal">
+        <SurfaceBoundary surface="command-terminal" onDismiss={commandBar.close}>
           <CommandTerminalLayer onHide={commandBar.close} />
         </SurfaceBoundary>
       )}
@@ -685,7 +689,11 @@ export function AppLayout() {
           open_pane reaches a hidden panel. */}
       <CommandTerminalBrowserBridge />
       <CommandTerminalBrowserHost />
-      {searchPalette.isOpen && <SurfaceBoundary surface="search"><SearchPalette onClose={searchPalette.close} /></SurfaceBoundary>}
+      {searchPalette.isOpen && (
+        <SurfaceBoundary surface="search" onDismiss={searchPalette.close}>
+          <SearchPalette onClose={searchPalette.close} />
+        </SurfaceBoundary>
+      )}
       <ProjectPathMissingDialog />
       <AddProjectDialogs />
       <LeftoverProcessesDialog />

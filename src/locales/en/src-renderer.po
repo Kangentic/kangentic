@@ -444,6 +444,11 @@ msgstr "Click"
 msgid "Close"
 msgstr "Close"
 
+#: src/renderer/components/PanelErrorBoundary.tsx
+msgctxt "Action"
+msgid "Close"
+msgstr "Close"
+
 #: src/renderer/window-manager/components/ConversationWindow.tsx
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #: src/renderer/window-manager/components/WindowTitleBar.tsx

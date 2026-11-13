@@ -29,14 +29,14 @@ describe('main window surfaces each have their own boundary', () => {
     ['command-terminal', 'CommandTerminalLayer'],
     ['search', 'SearchPalette'],
   ])('%s wraps <%s>', (surface, component) => {
-    const pattern = new RegExp(`<SurfaceBoundary surface="${surface}">\\s*<${component}[\\s/>]`);
+    const pattern = new RegExp(`<SurfaceBoundary surface="${surface}"[^\\n]*>\\s*<${component}[\\s/>]`);
     expect(layout).toMatch(pattern);
   });
 
   it('names every surface it declares, and each has a translated failure line', () => {
     const boundary = read('src/renderer/components/layout/SurfaceBoundary.tsx');
-    const declared = [...boundary.matchAll(/^\s+'?([a-z-]+)'?: \{ panel: '[^']+', message: msg`[^`]+` \},$/gm)].map((match) => match[1]);
-    const used = [...layout.matchAll(/<SurfaceBoundary surface="([a-z-]+)">/g)].map((match) => match[1]);
+    const declared = [...boundary.matchAll(/^\s+'?([a-z-]+)'?: \{ panel: '[^']+', layout: '(?:fill|bar|overlay)', message: msg`[^`]+` \},$/gm)].map((match) => match[1]);
+    const used = [...layout.matchAll(/<SurfaceBoundary surface="([a-z-]+)"/g)].map((match) => match[1]);
     expect(new Set(used)).toEqual(new Set(declared));
   });
 
