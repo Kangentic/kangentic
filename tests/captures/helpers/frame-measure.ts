@@ -167,8 +167,14 @@ export interface FrameTolerances { x: number; y: number }
 /** The bar the owner signed off on (task #1079): wraps exact, a line's box within half a pixel across and one pixel down. */
 export const FRAME_TOLERANCES: FrameTolerances = { x: 0.5, y: 1 };
 
+/**
+ * How far a terminal's rect may move or resize, in CSS px, on both axes. Looser across than a
+ * line of text: the terminal's width is a whole number of cells, each floored to device pixels,
+ * so it rounds as a line's height does, not as a line's advance does.
+ */
+const TERMINAL_TOLERANCE_PX = 1;
+
 export interface CompareOptions {
-  tolerances?: FrameTolerances;
   /**
    * Whether line boxes are held to the poster's positions. True at the scale the poster was shot
    * at. At any other scale Chromium snaps each line box and border to whole device pixels, so text
@@ -214,7 +220,7 @@ function boxMoved(reference: MeasuredBox, actual: MeasuredBox, tolerances: Frame
  * its line count is held and its width is not, since digits are not all one width.
  */
 export function compareFrameMeasures(reference: FrameMeasure, actual: FrameMeasure, options: CompareOptions = {}): string[] {
-  const tolerances = options.tolerances ?? FRAME_TOLERANCES;
+  const tolerances = FRAME_TOLERANCES;
   const comparePositions = options.comparePositions ?? true;
   const problems: string[] = [];
   let more = 0;
@@ -266,11 +272,11 @@ export function compareFrameMeasures(reference: FrameMeasure, actual: FrameMeasu
       }
       // The rect's place on the page drifts with the same device-pixel snapping as the text above
       // it, so off the poster's scale only its size is held, as only a line's wrap is.
-      const position = comparePositions ? tolerances.y : Number.POSITIVE_INFINITY;
+      const position = comparePositions ? TERMINAL_TOLERANCE_PX : Number.POSITIVE_INFINITY;
       const rectMoved = Math.abs(expected.rect.x - found.rect.x) > position
         || Math.abs(expected.rect.y - found.rect.y) > position
-        || Math.abs(expected.rect.width - found.rect.width) > tolerances.y
-        || Math.abs(expected.rect.height - found.rect.height) > tolerances.y;
+        || Math.abs(expected.rect.width - found.rect.width) > TERMINAL_TOLERANCE_PX
+        || Math.abs(expected.rect.height - found.rect.height) > TERMINAL_TOLERANCE_PX;
       if (rectMoved) {
         report(`${label} draws at ${describeBox(found.rect)}, the poster's at ${describeBox(expected.rect)}`);
       }

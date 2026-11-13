@@ -102,8 +102,10 @@ test('an Activity tab activated after being hidden paints at its last event on t
 
   // The tab is mounted but hidden: its list has not been shown yet, so it is not the active tab.
   const hiddenWrapperCount = await page.evaluate(() => {
-    const list = document.querySelector('div.overflow-y-auto.leading-5');
-    return list !== null && list.parentElement !== null && getComputedStyle(list.closest('[style*="display"]') as Element).display === 'none' ? 1 : 0;
+    const list = document.querySelector('[data-testid="activity-log-list"]');
+    if (list === null) return 0;
+    // Hidden means not laid out: a display:none ancestor gives the list no box at all.
+    return list.getClientRects().length === 0 ? 1 : 0;
   });
   expect(hiddenWrapperCount, 'the Activity list must be mounted and hidden before activation').toBe(1);
 
@@ -112,7 +114,8 @@ test('an Activity tab activated after being hidden paints at its last event on t
     if (!button) throw new Error('no Activity tab button');
     button.click();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    const list = document.querySelector('div.overflow-y-auto.leading-5') as HTMLElement;
+    const list = document.querySelector('[data-testid="activity-log-list"]');
+    if (!(list instanceof HTMLElement)) throw new Error('no Activity list after activation');
     const listRect = list.getBoundingClientRect();
     const lastRow = Array.from(list.querySelectorAll('[data-index]')).find((row) => row.textContent?.includes('evt-299'));
     const lastRowRect = lastRow ? lastRow.getBoundingClientRect() : null;

@@ -259,6 +259,7 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
       ) : (
         <div
           ref={containerRef}
+          data-testid="activity-log-list"
           onScroll={handleScroll}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}

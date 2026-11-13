@@ -81,5 +81,8 @@ describe('resolveTerminalLineHeight', () => {
       const hostSource = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'renderer', 'components', host), 'utf-8');
       expect(hostSource, host).toContain('lineHeight: config.terminal.lineHeight,');
     }
+    // The sign-in terminal builds its own xterm instead of going through useTerminal.
+    const loginSource = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'renderer', 'components', 'settings', 'accounts', 'LoginTerminal.tsx'), 'utf-8');
+    expect(loginSource).toContain('lineHeight: resolveTerminalLineHeight(settings?.lineHeight),');
   });
 });

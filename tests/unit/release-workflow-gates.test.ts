@@ -372,7 +372,14 @@ describe('release.yml job graph', () => {
     // Every shard runs: the shard count in the matrix is the one each leg passes to Playwright.
     const shards = gateWorkflow.match(/^ {8}shard: \[(.+)\]$/m)?.[1]?.split(',').map((entry) => entry.trim());
     expect(shards).toEqual(['1', '2']);
-    expect(gateWorkflow).toContain(`npm run demo:poster-gate -- --shard=\${{ matrix.shard }}/${shards?.length}`);
+    const compareStep = gateWorkflow.match(/- name: Compare every poster to its live frame\n((?: {8}.+\n)+)/)?.[1] ?? '';
+    expect(compareStep).toContain(`npm run demo:poster-gate -- --shard=\${{ matrix.shard }}/${shards?.length}`);
+    // bash on every leg: on Windows the default pwsh runs npm.ps1, which can drop the bare --.
+    expect(compareStep).toContain('shell: bash');
+    // And each shard gets cases: Playwright shards by test group, and a file in the default mode is
+    // one group, so the second shard would run nothing and exit 0.
+    const gateRig = fs.readFileSync(path.join(REPO_ROOT, 'tests', 'captures', 'features', 'poster-gate.capture.ts'), 'utf8');
+    expect(gateRig).toMatch(/test\.describe\.configure\(\{ mode: 'parallel' \}\)/);
   });
 
   // electron-updater skips an update only when latest-mac.yml carries minimumSystemVersion, and

@@ -31,6 +31,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const outputDir = path.join(repoRoot, DEMO_SYMBOL_FONTS_DIR);
 /** Where a cut is written until it is whole, beside outputDir so the swap is a rename on one disk. */
 const stagingDir = `${outputDir}.cut`;
+/** Where the committed faces wait while the cut moves in, removed once it has. */
+const retiredDir = `${outputDir}.old`;
 
 /** Where each missing codepoint is looked for, in order: symbols first, then the CJK faces. */
 const SOURCES = [
@@ -153,12 +155,21 @@ async function main() {
       gaps: uncovered.map(hex),
     };
     fs.writeFileSync(path.join(stagingDir, DEMO_SYMBOL_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
-    // Whole now: swap it in for the committed faces.
-    fs.rmSync(outputDir, REMOVE_OPTIONS);
-    fs.renameSync(stagingDir, outputDir);
+    // Whole now: swap it in for the committed faces. The committed faces move aside first and are
+    // removed only once the cut is in place, so a rename Windows refuses (a scanner holding a
+    // fresh file) leaves the committed faces where they were.
+    fs.rmSync(retiredDir, REMOVE_OPTIONS);
+    if (fs.existsSync(outputDir)) fs.renameSync(outputDir, retiredDir);
+    try {
+      fs.renameSync(stagingDir, outputDir);
+    } catch (error) {
+      if (fs.existsSync(retiredDir)) fs.renameSync(retiredDir, outputDir);
+      throw error;
+    }
     log(`Wrote ${faces.length} faces and ${DEMO_SYMBOL_MANIFEST} to ${outputDir}`);
   } finally {
     fs.rmSync(stagingDir, REMOVE_OPTIONS);
+    fs.rmSync(retiredDir, REMOVE_OPTIONS);
     fs.rmSync(scratchDir, REMOVE_OPTIONS);
   }
 }
