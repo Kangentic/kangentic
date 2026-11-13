@@ -60,7 +60,8 @@ describe('handleSendUserMessage', () => {
 
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({ delivered: true });
-    expect(submitContent).toHaveBeenCalledWith('sess-1', 'please continue', { source: 'mobile-bridge' });
+    // Origin 'person': the phone's own words, so a Text match on the user's message may read them.
+    expect(submitContent).toHaveBeenCalledWith('sess-1', 'please continue', { source: 'mobile-bridge', origin: 'person' });
     expect(hoisted.holdTaskMessage).not.toHaveBeenCalled();
   });
 
