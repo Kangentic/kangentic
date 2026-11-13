@@ -375,7 +375,7 @@ Terminals. Global-only. How each agent is chosen and started is in
 
 ## Settings rows with no AppConfig key
 
-Not every id in `settings-registry.ts` is a key in this file. These four rows write no key here, and no other section covers them:
+Not every id in `settings-registry.ts` is a key in this file. These six rows write no key here, and no other section covers them:
 
 | Registry id | Tab | Where its value lives |
 |-------------|-----|-----------------------|
@@ -383,6 +383,8 @@ Not every id in `settings-registry.ts` is a key in this file. These four rows wr
 | `shortcuts` | Shortcuts | `shortcuts` in `kangentic.json` and `kangentic.local.json` (see [Shortcuts](board-config.md#shortcuts)) |
 | `mcpServer.connection` | MCP Server | Nothing is stored. The row runs a live connection check each time the tab opens, and Test connection runs it again |
 | `privacy.info` | Privacy | Nothing is stored. The row is a notice |
+| `ssh.hosts` | SSH | Rows in the global database's `ssh_hosts` table (see [Storage model](../database/storage-model.md#ssh_hosts-table)) |
+| `ssh.client` | SSH | Nothing is stored. The row reads the `ssh` program on this computer through `ssh:detectClient` |
 
 The other ids that are not keys fall into three groups:
 

@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.58.0] - 2026-11-13
+
+### Features
+- Posters match the live frame 1:1, held by a release gate (c278d7e6)
+- Catch a throwing push callback the renderer SDK cannot see (e1d147ce)
+- Require every caught error to report, rethrow, or say why (965f6097)
+- Keep the pty host and utility process lines as breadcrumbs (df0e1858)
+- Give each main window surface its own error boundary (31d59737)
+- Report the feature failures the chokepoints missed (7530bfb5)
+- Report task-move, resume, recovery, DB and pty host failures (89de065e)
+- Report defects from every dispatcher chokepoint (4781b9f6)
+- A Text match can read the user's message (688e12f1)
+- Run agent CLIs on a remote host over SSH (#718) (90a2848f)
+- The card's artifact chip fills the link row (69cb840e)
+- A leading ! and one pattern per line in a Text match (8cf5563b)
+
+### Fixes
+- Draw the task-mcp terminal in the demo's own face (14d234df)
+- Write the recording the held clock's release used to skip (61d701d2)
+- Keep the demo faces on a refused swap and pin the tokenize limit (cc76d865)
+- Split the poster gate's shards and bound the diff's up-front tokenize (74c1a3b0)
+- Keep a host download defect reporting, mark latched account errors (92e5bf1b)
+- Send no error text, keep wrapped defects reporting, fill coverage holes (f28a1987)
+- Send a boundary's component names, not their locations (b6f16ef5)
+- Keep a crashed bar or overlay from taking the whole window (4ce763c7)
+- Keep wrapped and untyped refusals out of the chokepoints (fbc104fa)
+- Stop sending task titles and free text in existing reports (2b743182)
+- Pass the signature report failure as an Error argument, not text (85cf7392)
+- Report a refused Mac update signature as one issue and tell the user (3add8577)
+- Demote a gone worktree on every start, and name worktree failures in reports (cdc7ecd9)
+- Mark quit-time native crashes, drop the quit-time GPU launch-failed duplicate (84621c68)
+- Seed preview automations in the condition shape the board file writes (0449c731)
+
+### Other
+- Lift queueEmulatorChunks in the emulator disposal test (e2ded049)
+- Name the shipped faces and scope terminal.lineHeight (01235c75)
+- Pin the diff laid-out state and the Activity tab's first frame (b2c64709)
+- Count the user-message Text match catches in the allowlist (2f82e1dd)
+- Update the launch report tests and allowlist the coverage scan (ab9170a5)
+- Update three tests for the preload guard and the DB notifier (ab8eda17)
+- Document what a handled error and a worktree path send (e091e75d)
+- Drive the remote projects recovery report (f2441472)
+- Drive each report site instead of reading its source (8a6638e2)
+- The user-message Text match on Run again, and its run reasons (eb3cddcc)
+- The phone's send passes origin person (a36daf62)
+- Pin the Text match on the user's message (8216abcc)
+- Open the artifacts flyout by hover, not by click (41596038)
+- Pin the Team ID the updater hands the signing reader (113a0ece)
+- Say the gone-worktree demotion skips SSH host projects (e0336a4b)
+- Note that a gone worktree is never demoted for an SSH host project (c0363751)
+- Pin the Post-Worktree Script error type through the real throw site (00b3fbd6)
+- Give the Changes panel isolation spec the 45 s budget (4f2f7a2e)
+- Pin the artifact count chip's step choice (2d2b090b)
+- Pin the Text match field's keyboard and paste paths (012e735b)
+
 ## [v0.57.1] - 2026-11-12
 
 ### Features
