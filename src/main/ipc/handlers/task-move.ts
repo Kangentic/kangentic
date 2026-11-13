@@ -78,6 +78,11 @@ import { abortInFlightMove, registerMoveController, releaseMoveController } from
 import { markOwnCallSession, waitForOwnAgentTurn } from './own-call-turn-wait';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
 import { RefusalError } from '../../../shared/refusal';
+import { reportMoveSpawnFailure } from '../helpers/task-git';
+import { createChokepointReporter } from '../../analytics/handled-report';
+
+/** A move's rollback that failed after the move did: the task may sit in the wrong column. Once per run. */
+const taskMoveReporter = createChokepointReporter('task_move');
 
 /** What a session did when the move ends it, for the wait's log line. */
 const OWN_MOVE_CALL = 'moved its own task';
@@ -1844,6 +1849,7 @@ export async function handleTaskMove(
           }
         } catch (rollbackError) {
           console.error('[TASK_MOVE] Rollback after move failure failed:', rollbackError);
+          taskMoveReporter.report(rollbackError, { tags: { stage: 'rollback' } });
         }
       });
       context.sessionManager.drainQueue();
@@ -1852,6 +1858,11 @@ export async function handleTaskMove(
         console.log(`[TASK_MOVE] Aborted stale move for task ${task.id.slice(0, 8)}`);
         return;
       }
+      // A worktree or checkout failure rejects the invoke for the renderer to
+      // toast, so it is reported here: a drag, MCP move_task, the phone,
+      // auto-move, a turn-end Move row and a workflow start all pass this catch.
+      // The report marks it, so the IPC wrap does not send the rethrow again.
+      reportMoveSpawnFailure(task, error);
       throw error;
     }
   } finally {

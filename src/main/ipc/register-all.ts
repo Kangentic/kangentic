@@ -1,6 +1,7 @@
 import { app, type BrowserWindow, ipcMain } from 'electron';
 import * as path from 'node:path';
 import { readHostAssets } from '../remote/host-assets';
+import { reportRecoveryPassFailure } from './helpers/recovery-report';
 import { IPC } from '../../shared/ipc-channels';
 import type { ProjectOpenByPathOverrides, RendererErrorContext, Session } from '../../shared/types';
 import {
@@ -173,7 +174,12 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     },
     // A project opened before its host connected kept its paused tasks resumable; resume them now.
     onHostFirstConnected: (hostId) => {
-      void recoverRemoteProjectsOnHost(requireContext(), hostId);
+      // Its per-project catch does not cover the passes around it, and a throw
+      // there used to be an untagged unhandled rejection.
+      recoverRemoteProjectsOnHost(requireContext(), hostId).catch((error: unknown) => {
+        console.error('[remote] recovering the projects on a host that connected failed:', error);
+        reportRecoveryPassFailure('remote_projects', error);
+      });
     },
   });
   // After startup, not before the window: a host that is down must never delay it.

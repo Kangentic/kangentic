@@ -59,6 +59,7 @@ import type { ProjectRepository } from '../../db/repositories/project-repository
 import type { ConfigManager } from '../../config/config-manager';
 import { pickOverridableSubset } from '../../config/config-manager';
 import { RefusalError } from '../../../shared/refusal';
+import { reportRecoveryPassFailure } from '../helpers/recovery-report';
 
 /**
  * Sync the project-level MCP config file with the current settings.
@@ -576,7 +577,10 @@ function runStartupCleanup(
     return;
   }
   cleanupStaleResourcesAsync(standing.ownership, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, onRunsInterrupted, leftoverSweepOptions(context, project.path))
-    .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
+    .catch((error) => {
+      console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error);
+      reportRecoveryPassFailure('resource_cleanup', error);
+    });
   sweepSpareWorktreesAtOpen(context, standing.ownership, taskRepo);
 }
 
@@ -609,6 +613,7 @@ async function runColdOpenPasses(
   } catch (error) {
     if (stopOnFailure) throw error;
     console.error('[PROJECT_OPEN] Session recovery failed:', error);
+    reportRecoveryPassFailure('session_recovery', error);
   } finally {
     // After the resume, so tasks keep first claim on the session cap, and not
     // awaited: it never rejects, and a task's first agent need not wait on it.
@@ -622,6 +627,7 @@ async function runColdOpenPasses(
   } catch (error) {
     if (stopOnFailure) throw error;
     console.error('[PROJECT_OPEN] Session reconciliation failed:', error);
+    reportRecoveryPassFailure('session_reconcile', error);
   }
 }
 
@@ -655,6 +661,7 @@ export async function recoverRemoteProjectsOnHost(context: IpcContext, hostId: s
       });
     } catch (error) {
       console.error(`[remote] Recovery for ${project.name} after its host connected failed:`, error);
+      reportRecoveryPassFailure('host_connected', error);
     }
   }
   await endUnownedHostSessions(context, hostId);
@@ -779,6 +786,7 @@ function deferBoardConfigReconcile(context: IpcContext, projectId: string, proje
         context.boardConfigManager.exportFromDb();
       } catch (error) {
         console.error('[PROJECT_OPEN] Deferred board config work failed:', error);
+        reportRecoveryPassFailure('deferred_board_config', error);
         // The error itself goes to the log above, not to the banner: its message
         // can carry an absolute path, and the banner is on screen in demos and
         // screen shares.
@@ -929,7 +937,10 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     runWithProjectLogContext(project.name, async () => {
       await runColdOpenPasses(context, openedProject, repositories, { stopOnFailure: false });
       startToolBreakdownRepair(openedProject);
-    }).catch((error) => console.error('[PROJECT_OPEN] Cold open failed:', error));
+    }).catch((error) => {
+      console.error('[PROJECT_OPEN] Cold open failed:', error);
+      reportRecoveryPassFailure('cold_open', error);
+    });
   }
 
   return project;
@@ -1096,6 +1107,7 @@ async function recoverTasksAfterPtyHostLoss(
       });
     } catch (error) {
       console.error(`[pty-host] recovering sessions in ${project.name} after the host restarted failed:`, error);
+      reportRecoveryPassFailure('pty_host_loss', error);
     }
   }
 }
@@ -1180,7 +1192,10 @@ export async function activateProjects(context: IpcContext, projects: Project[])
     projects.map((project) => runWithProjectLogContext(project.name, () => activateProject(context, project))),
   );
   results.forEach((result, index) => {
-    if (result.status === 'rejected') console.error(`[PROJECT_OPEN] Failed to activate project ${projects[index].name}:`, result.reason);
+    if (result.status === 'rejected') {
+      console.error(`[PROJECT_OPEN] Failed to activate project ${projects[index].name}:`, result.reason);
+      reportRecoveryPassFailure('activate_project', result.reason);
+    }
   });
 }
 
@@ -1219,7 +1234,9 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
 
   for (let index = 0; index < results.length; index++) {
     if (results[index].status === 'rejected') {
-      console.error(`[PROJECT_OPEN] Failed to activate project ${otherProjects[index].name}:`, (results[index] as PromiseRejectedResult).reason);
+      const reason = (results[index] as PromiseRejectedResult).reason;
+      console.error(`[PROJECT_OPEN] Failed to activate project ${otherProjects[index].name}:`, reason);
+      reportRecoveryPassFailure('activate_project', reason);
     }
   }
 }

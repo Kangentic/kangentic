@@ -96,6 +96,8 @@ import { worktreeCopyClient } from './git/worktree-copy/worktree-copy-client';
 import { retrievalClient } from './retrieval/retrieval-client';
 import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
+import { setDbOpenFailureNotifier } from './db/database';
+import { createChokepointReporter, isEnvironmentFailure, isReported } from './analytics/handled-report';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
 import { ProjectRepository } from './db/repositories/project-repository';
 import { createWindowNotifier, setSyncWriteFailureNotifier } from './config/write-failure-notice';
@@ -162,6 +164,10 @@ const PROCESS_START_ISO = new Date().toISOString();
  * on read, so a renderer reload does not re-toast.
  */
 let pendingGpuNotice = false;
+
+/** A database open that failed (`database.ts`), and a migration that failed as a defect. */
+const dbOpenReporter = createChokepointReporter('db_open');
+const dbMigrationReporter = createChokepointReporter('db_migration');
 
 // Report a defect from any `ipcMain.handle` handler (ipc-handler-report.ts).
 // Its own patch, installed before the diagnostics recorder and every
@@ -1858,8 +1864,17 @@ app.whenReady().then(async () => {
   // condition, not one event per read, so an undebounced report would send a
   // burst of identical events for a fault Sentry already has.
   let globalDbFailureReported = false;
+  // An open or a migration that fails, either database. An environment code
+  // (SQLITE_BUSY, an errno) groups as one issue whatever the call path; a
+  // migration that fails any other way is a defect in the migration.
+  setDbOpenFailureNotifier((error, failure) => {
+    const migrationDefect = failure.stage === 'migrate' && !isEnvironmentFailure(error);
+    (migrationDefect ? dbMigrationReporter : dbOpenReporter).report(error, { tags: { database: failure.database, stage: failure.stage } });
+  });
   setGlobalDbFailureNotifier((error, operation) => {
-    if (!globalDbFailureReported) {
+    // A read that failed because the open did is already reported, by the
+    // notifier above.
+    if (!globalDbFailureReported && !isReported(error)) {
       globalDbFailureReported = true;
       reportHandledError(error, { source: 'global_db_read', operation });
     }

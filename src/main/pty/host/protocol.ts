@@ -78,10 +78,28 @@ export interface PtyHostSpawnParams {
 /** A thrown error, flattened for the wire. */
 export interface PtyHostError {
   message: string;
+  /** The error's class name (`PtyHostTimeoutError`, `TypeError`). Optional: the
+   *  SSH helper on a host speaks this protocol too, and an older one sends none. */
+  name?: string;
   code?: string;
   errno?: number;
   stack?: string;
 }
+
+/**
+ * A failure the host handled and main should hear of, by a fixed code. The host
+ * cannot import Sentry (`pty-host-boundary.test.ts`), so it relays the code and
+ * the error's shape, and main reports it (`pty-host-report.ts`). Each code is
+ * sent once per host run (`host-handled-error.ts`).
+ */
+export type PtyHostHandledErrorCode =
+  | 'transcript_flush'
+  | 'root_pin'
+  | 'cli_pin'
+  | 'orphan_cleanup'
+  | 'pty_kill'
+  | 'spawn_worker_fallback'
+  | 'uncaught';
 
 /** A short-lived PTY with no session behind it (the Claude model picker
  *  probe, the Antigravity print runner): its output goes back to main raw,
@@ -443,7 +461,10 @@ export type PtyHostEvent =
   /** A piece of a file a remote agent keeps appending to on its host, its transcript (#913). `data` is
    *  base64 and goes at `offset` in Kangentic's copy; `reset` empties the copy first (the file was
    *  replaced or shortened). `key` is the name the app gave the file when it asked for it. */
-  | { type: 'fileChunk'; sessionId: string; key: string; offset: number; reset: boolean; size: number; data: string };
+  | { type: 'fileChunk'; sessionId: string; key: string; offset: number; reset: boolean; size: number; data: string }
+  /** A failure the host handled, by a fixed code, for main to report. Never the message's text: main
+   *  sends only the name, code and frames. The in-process core emits it the same way. */
+  | { type: 'handledError'; code: PtyHostHandledErrorCode; error: PtyHostError };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }
@@ -496,6 +517,7 @@ export function toPtyHostError(error: unknown): PtyHostError {
     const errno = error as NodeJS.ErrnoException;
     return {
       message: error.message,
+      name: error.name,
       code: typeof errno.code === 'string' ? errno.code : undefined,
       errno: typeof errno.errno === 'number' ? errno.errno : undefined,
       stack: error.stack,
@@ -504,10 +526,11 @@ export function toPtyHostError(error: unknown): PtyHostError {
   return { message: String(error) };
 }
 
-/** Rebuild a thrown-looking Error from its wire form, keeping code and errno
- *  for callers that classify on them. */
+/** Rebuild a thrown-looking Error from its wire form, keeping name, code and
+ *  errno for callers that classify on them. */
 export function fromPtyHostError(wire: PtyHostError): Error {
   const error = new Error(wire.message) as NodeJS.ErrnoException;
+  if (typeof wire.name === 'string' && /^[A-Za-z_$][\w$]{0,63}$/.test(wire.name)) error.name = wire.name;
   if (wire.code !== undefined) error.code = wire.code;
   if (wire.errno !== undefined) error.errno = wire.errno;
   if (wire.stack !== undefined) error.stack = wire.stack;

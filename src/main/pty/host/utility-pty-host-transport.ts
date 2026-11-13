@@ -48,6 +48,7 @@ import {
   fromPtyHostError,
 } from './protocol';
 import { PtyHostExitedError, PtyHostTimeoutError } from './pty-host-request-errors';
+import { reportPtyHostHeartbeatStall } from './pty-host-report';
 
 const SERVICE_NAME = 'kangentic-pty-host';
 /** VS Code's pty host restart cap. */
@@ -123,6 +124,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     service: SERVICE_NAME,
     maxCrashes: MAX_CRASHES,
     backoffMs: RESTART_BACKOFF_MS,
+    // Each host crash ends every terminal, so the first one of a run reports,
+    // not only the fifth inside the window.
+    reportFirstCrash: true,
   });
   /** Set once the crash cap is reached: the host core runs in main from then on. */
   private fallback: PtyHostTransport | null = null;
@@ -457,6 +461,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
       const startedAt = Date.now();
       const warnTimer = setTimeout(() => {
         console.warn(`[pty-host] has not answered a heartbeat for ${HEARTBEAT_UNRESPONSIVE_MS / 1000} s; terminals may be stalled`);
+        reportPtyHostHeartbeatStall(HEARTBEAT_UNRESPONSIVE_MS);
       }, HEARTBEAT_UNRESPONSIVE_MS);
       warnTimer.unref();
       this.request('ping', {}).then(() => {

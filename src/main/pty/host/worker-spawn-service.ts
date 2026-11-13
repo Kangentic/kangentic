@@ -26,6 +26,7 @@ import { recordRelayedSyncSpan } from '../../diagnostics/event-loop-lag';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { LocalSpawnService, type HostSpawnService, type ProcessTableProbe, type SpawnServiceHooks } from './host-spawn-service';
 import type { HostExecRequest, HostExecResult, PtyHostCliSpawnParams } from './protocol';
+import { HostHandledErrors } from './host-handled-error';
 import type { FromSpawnWorkerMessage, SpawnWorkerData, ToSpawnWorkerMessage } from './spawn-worker/protocol';
 import type { ProcessInfo } from '../../activity-engine/background-shell/process-tree';
 
@@ -217,6 +218,7 @@ export class WorkerSpawnService implements HostSpawnService {
       // A missing bundle does not come back on a retry.
       this.crashes = MAX_WORKER_CRASHES;
       console.warn('[pty-host] the spawn worker could not start; child processes start on the terminal thread:', error instanceof Error ? error.message : String(error));
+      this.reportFallback(error);
       return null;
     }
     // The host exits on its own schedule (its shutdown), never held open by this.
@@ -229,6 +231,18 @@ export class WorkerSpawnService implements HostSpawnService {
     this.worker = worker;
     return worker;
   }
+
+  /**
+   * The service gave up on its worker, so every child process starts on the
+   * terminal thread from here on, which is what the worker exists to prevent.
+   * Relayed to main, which reports it (`host-handled-error.ts`).
+   */
+  private reportFallback(error: unknown): void {
+    this.handledErrors ??= new HostHandledErrors(this.options.emit);
+    this.handledErrors.report('spawn_worker_fallback', error);
+  }
+
+  private handledErrors: HostHandledErrors | null = null;
 
   private send(worker: SpawnWorkerHandle, message: ToSpawnWorkerMessage): void {
     try {
@@ -354,6 +368,11 @@ export class WorkerSpawnService implements HostSpawnService {
     if (this.disposed) return;
     this.crashes += 1;
     console.warn(`[pty-host] the spawn worker exited (code ${exitCode}); ${this.crashes >= MAX_WORKER_CRASHES ? 'child processes start on the terminal thread from now on' : 'it starts again on the next use'}`);
+    if (this.crashes >= MAX_WORKER_CRASHES) {
+      const exited = new Error(`The spawn worker exited with code ${exitCode}`);
+      exited.name = 'SpawnWorkerExitedError';
+      this.reportFallback(exited);
+    }
     const lost = 'The pty host spawn worker exited';
     this.failPendingRequests(lost);
     for (const pid of [...this.pins.keys()]) this.releasePin(pid);

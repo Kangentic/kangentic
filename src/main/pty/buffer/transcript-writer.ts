@@ -109,9 +109,17 @@ export class TranscriptWriter {
    *   its database is not open (a deleted project: the flush is dropped
    *   rather than creating the file again)
    */
+  /** A flush that failed is logged once per writer: a database that refuses one refuses them all. */
+  private flushFailureLogged = false;
+
+  /**
+   * @param onFlushFailed told of every failed flush, for the host to relay to main
+   *   (`host-handled-error.ts`), which reports it once
+   */
   constructor(
     private readonly projectOf: (sessionId: string) => string | null,
     private readonly sinkFor: (projectId: string) => TranscriptSink | null,
+    private readonly onFlushFailed: (error: unknown) => void = () => undefined,
   ) {}
 
   /**
@@ -180,8 +188,17 @@ export class TranscriptWriter {
       const sink = timeSyncWork('transcript:open', () => this.sinkFor(projectId));
       timeSyncWork('transcript:flush', () => sink?.appendChunk(sessionId, chunk));
     } catch (error) {
-      // Best effort - don't crash the session if DB write fails
-      console.error(`[TranscriptWriter] Failed to flush transcript for ${sessionId.slice(0, 8)}:`, error);
+      // Best effort - don't crash the session if DB write fails. The chunk is
+      // lost to the viewer, search and the token ledger, so main hears of it.
+      if (!this.flushFailureLogged) {
+        this.flushFailureLogged = true;
+        console.error(`[TranscriptWriter] Failed to flush transcript for ${sessionId.slice(0, 8)}:`, error);
+      }
+      try {
+        this.onFlushFailed(error);
+      } catch {
+        // A report must not replace the failure it reports.
+      }
     }
   }
 

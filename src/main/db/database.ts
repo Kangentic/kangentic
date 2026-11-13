@@ -74,6 +74,37 @@ export function setProjectDbInitializer(initializer: (db: Database.Database) => 
   projectDbInitializer = initializer;
 }
 
+/** Which step of opening a database failed: its pragmas, its migrations, or the injected initializer. */
+export type DbOpenStage = 'pragma' | 'migrate' | 'initialize';
+
+/** What `getGlobalDb` / `getProjectDb` tell the notifier when an open fails, before they rethrow. */
+export interface DbOpenFailure {
+  database: 'global' | 'project';
+  stage: DbOpenStage;
+}
+
+export type DbOpenFailureNotifier = (error: unknown, failure: DbOpenFailure) => void;
+
+/**
+ * Told of every open that fails past `new Database`, before the error is
+ * rethrown. Injected, as `soft-db.ts` does, so this module's graph stays free of
+ * Sentry: the pty host and the retrieval worker load it too, and only main
+ * registers one (`src/main/index.ts`), which reports.
+ */
+let dbOpenFailureNotifier: DbOpenFailureNotifier | null = null;
+
+export function setDbOpenFailureNotifier(notify: DbOpenFailureNotifier | null): void {
+  dbOpenFailureNotifier = notify;
+}
+
+function notifyOpenFailure(error: unknown, failure: DbOpenFailure): void {
+  try {
+    dbOpenFailureNotifier?.(error, failure);
+  } catch {
+    // A report must not replace the failure it reports.
+  }
+}
+
 /**
  * Close a connection we are abandoning, swallowing a close that itself fails.
  *
@@ -111,6 +142,7 @@ export function getGlobalDb(): Database.Database {
   if (!globalDb) {
     ensureDirs();
     const db = new Database(PATHS.globalDb);
+    let stage: DbOpenStage = 'pragma';
     try {
       // busy_timeout FIRST. It is a connection setting, so it only covers
       // statements that run after it, and `journal_mode = WAL` is a
@@ -129,9 +161,11 @@ export function getGlobalDb(): Database.Database {
       db.pragma('busy_timeout = 5000');
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
+      stage = 'migrate';
       runGlobalMigrations(db);
     } catch (error) {
       closeQuietly(db);
+      notifyOpenFailure(error, { database: 'global', stage });
       throw error;
     }
     globalDb = db;
@@ -159,6 +193,7 @@ export function getProjectDb(projectId: string): Database.Database {
   if (!db) {
     if (projectDbAccess.migrate) ensureDirs();
     db = new Database(projectDbPath(projectId), { fileMustExist: !projectDbAccess.migrate });
+    let stage: DbOpenStage = 'pragma';
     try {
       // busy_timeout before the WAL switch, for the same reason as the global
       // database above.
@@ -167,10 +202,12 @@ export function getProjectDb(projectId: string): Database.Database {
       db.pragma('foreign_keys = ON');
       db.pragma(`journal_size_limit = ${JOURNAL_SIZE_LIMIT_BYTES}`);
       applyWalAutoCheckpoint(db);
+      stage = 'migrate';
       if (projectDbAccess.migrate) runProjectMigrations(db);
       // Load optional extensions (sqlite-vec) after migrations. Never throws:
       // the initializer swallows a load failure and the engine falls back to
       // lexical-only search.
+      stage = 'initialize';
       projectDbInitializer?.(db);
     } catch (error) {
       // This path never had the global cache bug (the map is written below,
@@ -178,6 +215,7 @@ export function getProjectDb(projectId: string): Database.Database {
       // connection keeps the file locked by US, so the retry fights our own
       // lock on top of whatever caused the failure.
       closeQuietly(db);
+      notifyOpenFailure(error, { database: 'project', stage });
       throw error;
     }
     projectDbs.set(projectId, db);
