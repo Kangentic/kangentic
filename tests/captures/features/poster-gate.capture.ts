@@ -70,9 +70,9 @@ test.describe('Poster gate', () => {
       }
       const resolution = { name: `gate-${gateCase.scale}x`, viewport: gateCase.viewport, scale: gateCase.scale };
       const { browser, page } = await launchCaptureBrowser({ resolution });
-      await hideDevOnlyChrome(page);
-      const stem = gateCase.title.replace(/[^a-z0-9.-]+/gi, '_');
       try {
+        await hideDevOnlyChrome(page);
+        const stem = gateCase.title.replace(/[^a-z0-9.-]+/gi, '_');
         await openScene(page, scene, { baseUrl: server.url, theme: gateCase.theme as SceneTheme, motion: gateCase.motion });
         // The layout at READY, which is the moment a host lifts its poster: a scene that paints
         // after ready (an editor still laying out) differs from its poster exactly then, and a

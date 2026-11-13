@@ -80,7 +80,9 @@ describe('the faces the demo ships', () => {
 describe('the cut symbol faces (demo/fonts/)', () => {
   const manifest = readSymbolManifest(REPO_ROOT) as { faces: Array<{ file: string; codepoints: number[] }>; licences: string[] };
 
-  it('carry exactly the codepoints the manifest names, which the unicode-range then claims', () => {
+  // Every, not exactly: the subsetter keeps a glyph a layout feature reaches (U+22B7, U+276E), and
+  // the unicode-range is built from the manifest, so a face's extra glyph is never drawn from it.
+  it('carry every codepoint the manifest names, which the unicode-range then claims', () => {
     for (const face of manifest.faces) {
       const covered = woff2FileCodepoints(path.join(REPO_ROOT, DEMO_SYMBOL_FONTS_DIR, face.file));
       for (const code of face.codepoints) expect(covered.has(code), `${face.file} ${hex(code)}`).toBe(true);

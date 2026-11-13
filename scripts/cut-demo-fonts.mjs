@@ -26,12 +26,13 @@ import { fileURLToPath } from 'node:url';
 import { woff2Codepoints, woff2FileCodepoints } from './lib/font-cmap.mjs';
 import { DEMO_SYMBOL_FONTS_DIR, DEMO_SYMBOL_MANIFEST, demoFontFaces } from './lib/demo-fonts.mjs';
 import { DEMO_GLYPH_GAPS, collectDemoCodepoints } from './lib/demo-glyphs.mjs';
+import { REMOVE_OPTIONS, swapDirectoryIn } from './lib/directory-swap.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(repoRoot, DEMO_SYMBOL_FONTS_DIR);
 /** Where a cut is written until it is whole, beside outputDir so the swap is a rename on one disk. */
 const stagingDir = `${outputDir}.cut`;
-/** Where the committed faces wait while the cut moves in, removed once it has. */
+/** Where the committed faces wait while the cut moves in (swapDirectoryIn), removed once it has. */
 const retiredDir = `${outputDir}.old`;
 
 /** Where each missing codepoint is looked for, in order: symbols first, then the CJK faces. */
@@ -55,9 +56,6 @@ class CutRefused extends Error {}
 function fail(message) {
   throw new CutRefused(message);
 }
-
-/** Windows can hold a handle on a fresh node_modules for a moment (Defender, the indexer). */
-const REMOVE_OPTIONS = { recursive: true, force: true, maxRetries: 10, retryDelay: 200 };
 
 function hex(code) {
   return `U+${code.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -155,21 +153,13 @@ async function main() {
       gaps: uncovered.map(hex),
     };
     fs.writeFileSync(path.join(stagingDir, DEMO_SYMBOL_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
-    // Whole now: swap it in for the committed faces. The committed faces move aside first and are
-    // removed only once the cut is in place, so a rename Windows refuses (a scanner holding a
-    // fresh file) leaves the committed faces where they were.
-    fs.rmSync(retiredDir, REMOVE_OPTIONS);
-    if (fs.existsSync(outputDir)) fs.renameSync(outputDir, retiredDir);
-    try {
-      fs.renameSync(stagingDir, outputDir);
-    } catch (error) {
-      if (fs.existsSync(retiredDir)) fs.renameSync(retiredDir, outputDir);
-      throw error;
-    }
+    // Whole now, so swap it in for the committed faces. A rename Windows refuses (a scanner holding
+    // a fresh file) leaves the committed faces in place, or in retiredDir if even putting them back
+    // is refused, and the error names where.
+    swapDirectoryIn({ stagingDir, outputDir, retiredDir });
     log(`Wrote ${faces.length} faces and ${DEMO_SYMBOL_MANIFEST} to ${outputDir}`);
   } finally {
     fs.rmSync(stagingDir, REMOVE_OPTIONS);
-    fs.rmSync(retiredDir, REMOVE_OPTIONS);
     fs.rmSync(scratchDir, REMOVE_OPTIONS);
   }
 }

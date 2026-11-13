@@ -4757,8 +4757,8 @@ export interface AppConfig {
     cursorStyle: 'block' | 'underline' | 'bar'; // global-only: applies across every project
     colors: TerminalColorOverrides; // global-only: applies across every project
     /** xterm's line height, a multiple of the font's own (1 when absent, xterm's default). No
-     *  settings row sets it, so no project file carries it either: the web demo sets it, so
-     *  Inconsolata draws the 14px rows its recordings were made at (demo/README.md, Fonts). */
+     *  settings row writes it, so no project file carries it. The web demo sets it so Inconsolata
+     *  draws the 14px rows its recordings were made at (demo/README.md, Fonts). */
     lineHeight?: number;
   };
 

@@ -220,7 +220,6 @@ function boxMoved(reference: MeasuredBox, actual: MeasuredBox, tolerances: Frame
  * its line count is held and its width is not, since digits are not all one width.
  */
 export function compareFrameMeasures(reference: FrameMeasure, actual: FrameMeasure, options: CompareOptions = {}): string[] {
-  const tolerances = FRAME_TOLERANCES;
   const comparePositions = options.comparePositions ?? true;
   const problems: string[] = [];
   let more = 0;
@@ -252,7 +251,7 @@ export function compareFrameMeasures(reference: FrameMeasure, actual: FrameMeasu
       continue;
     }
     if (!comparePositions) continue;
-    const lineTolerances = clock ? { x: Number.POSITIVE_INFINITY, y: tolerances.y } : tolerances;
+    const lineTolerances = clock ? { x: Number.POSITIVE_INFINITY, y: FRAME_TOLERANCES.y } : FRAME_TOLERANCES;
     expected.lines.forEach((line, lineIndex) => {
       if (boxMoved(line, found.lines[lineIndex], lineTolerances)) {
         report(`${label} line ${lineIndex + 1} is at ${describeBox(found.lines[lineIndex])}, the poster's at ${describeBox(line)}`);

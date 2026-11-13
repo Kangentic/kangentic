@@ -109,12 +109,18 @@ export function woff2Codepoints(bytes, label = 'font') {
   const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const cmap = woff2CmapBytes(buffer, label);
   const covered = new Set();
-  const subtableCount = cmap.readUInt16BE(2);
-  for (let index = 0; index < subtableCount; index++) {
-    const subtableOffset = cmap.readUInt32BE(4 + index * 8 + 4);
-    const format = cmap.readUInt16BE(subtableOffset);
-    if (format === 4) addFormat4(cmap, subtableOffset, covered);
-    else if (format === 12) addFormat12(cmap, subtableOffset, covered);
+  try {
+    const subtableCount = cmap.readUInt16BE(2);
+    for (let index = 0; index < subtableCount; index++) {
+      const subtableOffset = cmap.readUInt32BE(4 + index * 8 + 4);
+      const format = cmap.readUInt16BE(subtableOffset);
+      if (format === 4) addFormat4(cmap, subtableOffset, covered);
+      else if (format === 12) addFormat12(cmap, subtableOffset, covered);
+    }
+  } catch (error) {
+    // A read past the table's end throws a RangeError that names no file.
+    if (!(error instanceof RangeError)) throw error;
+    throw new Error(`${label} has a cmap table that points past its own end (${error.message})`, { cause: error });
   }
   return covered;
 }

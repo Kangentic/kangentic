@@ -1167,9 +1167,9 @@ virtualizer had measured the list while the tab was hidden, at no height, and re
 only from a ResizeObserver a frame later. `ActivityLog` now hands the virtualizer its scroll
 element only while the tab shows, so it reads the height when the tab opens, and scrolls to the
 end once the rows exist, before the first paint. And a still painted Claude's `/rc` underlined
-where the live frame did not: xterm reports a hyperlink's cells as
-underlined with no underline style, headless and browser xterm disagreed on it, and the frame
-serializer now draws only an underline the agent wrote (the frames rebuilt with
+where the live frame did not. xterm reports a hyperlink's cells as underlined with no underline
+style, headless and browser xterm disagreed on it, and the frame serializer now draws only an
+underline the agent wrote (the frames rebuilt with
 `node scripts/backfill-demo-timelines.mjs --force`). The looping hero's terminal is held to the
 still's grid and layout at ready, not its pixels: a shot right after ready races the spinner.
 

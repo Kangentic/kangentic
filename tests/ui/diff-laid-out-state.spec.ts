@@ -188,6 +188,9 @@ for (const collapseUnchanged of [false, true]) {
       const logLengthBeforeSwap = (await readLog()).length;
 
       await page.locator('button', { hasText: SECOND_FILE }).first().click();
+      // The swap sets pending from an effect after the click, so the attribute can still read the
+      // first file's laid-out here. Wait until the log shows the swap went pending first.
+      await expect.poll(async () => (await readLog()).slice(logLengthBeforeSwap).some((entry) => entry.state === 'pending'), { timeout: 15000 }).toBe(true);
       await expect(area).toHaveAttribute('data-diff-state', 'laid-out', { timeout: 15000 });
       // laid-out must describe the NEW file: its diff has landed, not the previous file's.
       expect(await readModifiedFirstChangeLine(page)).toBe(SECOND_CHANGE_LINE);
