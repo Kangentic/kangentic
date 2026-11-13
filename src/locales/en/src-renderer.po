@@ -797,6 +797,10 @@ msgstr "Failed to load the File diff"
 msgid "Failed to load the panel"
 msgstr "Failed to load the panel"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr "Failed to load this task"
+
 #: src/renderer/components/NumberStepper.tsx
 msgid "Fewer: {ariaLabel}"
 msgstr "Fewer: {ariaLabel}"

@@ -115,6 +115,42 @@ msgstr "Dismiss"
 msgid "Each task runs on its own branch, so two agents never edit the same files"
 msgstr "Each task runs on its own branch, so two agents never edit the same files"
 
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load search"
+msgstr "Failed to load search"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load settings"
+msgstr "Failed to load settings"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the backlog"
+msgstr "Failed to load the backlog"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the board"
+msgstr "Failed to load the board"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the Command Terminal panel"
+msgstr "Failed to load the Command Terminal panel"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the sidebar"
+msgstr "Failed to load the sidebar"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the status bar"
+msgstr "Failed to load the status bar"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the terminal panel"
+msgstr "Failed to load the terminal panel"
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the title bar"
+msgstr "Failed to load the title bar"
+
 #: src/renderer/components/layout/TitleBar.tsx
 msgid "Focus agent monitor window"
 msgstr "Focus agent monitor window"

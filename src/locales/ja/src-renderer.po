@@ -976,6 +976,10 @@ msgstr "ファイルの差分を読み込めませんでした"
 msgid "Failed to load the panel"
 msgstr "パネルを読み込めませんでした"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr ""
+
 #: src/renderer/components/NumberStepper.tsx
 #, fuzzy
 msgid "Fewer: {ariaLabel}"

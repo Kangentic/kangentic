@@ -976,6 +976,10 @@ msgstr "Impossibile caricare il diff del file"
 msgid "Failed to load the panel"
 msgstr "Impossibile caricare il pannello"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr ""
+
 #: src/renderer/components/NumberStepper.tsx
 #, fuzzy
 msgid "Fewer: {ariaLabel}"

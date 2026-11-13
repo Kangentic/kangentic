@@ -976,6 +976,10 @@ msgstr "Nie udało się załadować różnic pliku"
 msgid "Failed to load the panel"
 msgstr "Nie udało się załadować panelu"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr ""
+
 #: src/renderer/components/NumberStepper.tsx
 #, fuzzy
 msgid "Fewer: {ariaLabel}"

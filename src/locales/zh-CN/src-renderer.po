@@ -810,6 +810,10 @@ msgstr "无法加载文件差异"
 msgid "Failed to load the panel"
 msgstr "无法加载面板"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr ""
+
 #: src/renderer/components/NumberStepper.tsx
 msgid "Fewer: {ariaLabel}"
 msgstr "减少：{ariaLabel}"
