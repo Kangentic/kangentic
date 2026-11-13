@@ -55,6 +55,8 @@ import type { LaunchStartPath, Session, Task } from '../../../shared/types';
 import type { SpawnFailureStep } from '../helpers/task-git';
 import type { IpcContext } from '../ipc-context';
 import { RefusalError } from '../../../shared/refusal';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
+import { worktreeFailureCause } from '../../git/worktree-errors';
 
 /**
  * The move that put the task in its current column, when it came after the
@@ -196,8 +198,18 @@ export function resumeTaskSession(
   registerResumeController(taskId, resumeController);
   const { signal } = resumeController;
 
-  // A throwing hook must not replace the failure it reports.
+  // Reported here first, for every caller: the Resume button passes no
+  // `onFailed`, so a worktree or engine failure from it reached Sentry nowhere.
+  // The callers that do pass one (`notifySpawnBlocked`) then find the error
+  // marked and send nothing more. A throwing hook must not replace the failure
+  // it reports.
   const reportFailure = (step: ResumeFailureStep, error: unknown, task: Task): void => {
+    reportPreflightFailure({
+      cause: step === 'worktree' ? worktreeFailureCause(error) : 'resume',
+      error,
+      agent: task.agent_override ?? task.agent,
+      startPath: options.startPath ?? 'board',
+    });
     try {
       options.onFailed?.(step, error, task);
     } catch (hookError) {

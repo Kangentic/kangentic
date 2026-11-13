@@ -31,6 +31,7 @@ import { DeferredKillRegistry, KILL_GRACE_MS, isYoungSession } from './lifecycle
 import { AGENT_EXIT_REQUEST_TIMEOUT_MS } from './host/exited-root-wait';
 import { PTY_EXIT_DRAIN_DEADLINE_MS } from './shutdown/exit-callback-drain';
 import { HostProcessTreeProbe } from './host/host-process-tree-probe';
+import { reportPtyHostHandledError } from './host/pty-host-report';
 import type { OffMainPty, OffMainPtyOptions } from '../utility-process/off-main-pty';
 import type { CliChildProcess, OffMainCliOptions } from '../utility-process/off-main-cli';
 
@@ -1380,6 +1381,10 @@ export class SessionManager extends EventEmitter {
         if (event.adoptable.length > 0) {
           console.log(`[remote] host ${event.hostId.slice(0, 8)} runs ${event.adoptable.length} session(s) this app has not taken back`);
         }
+        return;
+      case 'handledError':
+        // A failure the host handled, relayed by a fixed code for main to report.
+        reportPtyHostHandledError(event);
         return;
       case 'exit':
       case 'rawData':

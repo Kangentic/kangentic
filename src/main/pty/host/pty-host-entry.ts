@@ -69,6 +69,23 @@ for (const level of ['log', 'info', 'warn', 'error'] as const) {
   };
 }
 
+/** How long an uncaught throw waits for its report to leave before the host exits. */
+const UNCAUGHT_REPORT_GRACE_MS = 100;
+
+// A throw nothing caught (a command's handler, an output detector) ends the host,
+// which ends every terminal. Main sees only the exit code, so the stack goes to it
+// first, as a `handledError` it reports (`pty-host-report.ts`). The host still
+// exits, as it did before the hook, after a short wait for the message to leave.
+process.on('uncaughtException', (error) => {
+  try {
+    post({ type: 'handledError', code: 'uncaught', error: toPtyHostError(error) });
+  } catch {
+    // The port is gone: the host is exiting anyway.
+  }
+  console.error('[pty-host] uncaught exception; the host exits:', error);
+  setTimeout(() => process.exit(1), UNCAUGHT_REPORT_GRACE_MS);
+});
+
 const transcriptRepositories = new WeakMap<Database.Database, TranscriptRepository>();
 
 /**

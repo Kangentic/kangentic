@@ -57,7 +57,17 @@ export interface UtilityRestartPolicyOptions {
   decayMs?: number;
   /** Injectable clock for tests. */
   now?: () => number;
+  /**
+   * Also report the FIRST crash of a run, not only the latch. For a worker whose
+   * every crash costs the user something the latch would hide: each pty host
+   * crash ends every terminal. Its own issue, fingerprinted
+   * `['utility-process-first-crash', service, cause]`; the latch keeps its own.
+   */
+  reportFirstCrash?: boolean;
 }
+
+/** Services whose first crash was reported this run. Module scope, like `trackedCrashPhases`. */
+const firstCrashReported = new Set<string>();
 
 const DEFAULT_MAX_CRASHES = 3;
 /**
@@ -124,6 +134,7 @@ const trackedCrashPhases = new Map<string, Set<CrashPhase>>();
 /** Forget the per-run phase latches (vitest shares module instances). */
 export function resetUtilityCrashTelemetryForTests(): void {
   trackedCrashPhases.clear();
+  firstCrashReported.clear();
 }
 
 export class UtilityRestartPolicy {
@@ -132,6 +143,7 @@ export class UtilityRestartPolicy {
   private readonly backoffMs: readonly number[];
   private readonly decayMs: number;
   private readonly now: () => number;
+  private readonly reportFirstCrash: boolean;
 
   private crashCount = 0;
   private lastCrashAt: number | null = null;
@@ -147,6 +159,7 @@ export class UtilityRestartPolicy {
     this.backoffMs = options.backoffMs ?? DEFAULT_BACKOFF_MS;
     this.decayMs = options.decayMs ?? DEFAULT_DECAY_MS;
     this.now = options.now ?? Date.now;
+    this.reportFirstCrash = options.reportFirstCrash === true;
   }
 
   /**
@@ -213,9 +226,15 @@ export class UtilityRestartPolicy {
       this.trackCrashOnce('latched', record);
     }
 
+    // Decided now, like the latch, so a crash recorded while the stderr drains
+    // cannot take the first report's place.
+    const reportsFirstCrash = this.reportFirstCrash && !latchesNow && !firstCrashReported.has(this.service);
+    if (reportsFirstCrash) firstCrashReported.add(this.service);
+
     const emit = (): void => {
       this.logCrash(record, crashNumber);
       if (latchesNow) this.reportLatch(record, crashNumber, crashesAtLatch);
+      else if (reportsFirstCrash) this.reportFirst(record, crashNumber);
     };
 
     // The dying worker's stderr can still be arriving (see
@@ -291,6 +310,30 @@ export class UtilityRestartPolicy {
       // One issue per service and cause. The message carries the exit code,
       // which would otherwise split one service's latch across codes.
       ['utility-process-latched', this.service, cause],
+    );
+  }
+
+  /** The first crash of a run, for a service that asked (`reportFirstCrash`). */
+  private reportFirst({ exitCode, cause }: UtilityCrashRecord, crashNumber: number): void {
+    reportHandledError(
+      new Error(`${this.service} worker exited (exit code ${exitCode ?? 'unknown'})`),
+      {
+        source: 'utility_process',
+        service: this.service,
+        exitCode: String(exitCode ?? 'unknown'),
+        crashCount: String(crashNumber),
+        cause,
+        phase: 'first',
+      },
+      {
+        utility_process: {
+          service: this.service,
+          exitCode: exitCode ?? null,
+          crashCount: crashNumber,
+          stderrTail: redactEventText(this.latestStderr() ?? '(no stderr captured)'),
+        },
+      },
+      ['utility-process-first-crash', this.service, cause],
     );
   }
 

@@ -89,6 +89,7 @@ import {
   type RendererPort,
   type SeedFrameResult,
 } from './protocol';
+import { HostHandledErrors } from './host-handled-error';
 
 /** A renderer's port message, checked before it is trusted: the renderer is
  *  another process, and a malformed message is dropped, never thrown on. */
@@ -354,8 +355,11 @@ export class PtyHostCore {
   private orphanApiLoad: Promise<DeadRootOrphanApi | null> | null = null;
   /** A failed load is logged once per host. */
   private orphanApiLoadFailureLogged = false;
+  /** Failures main should hear of, relayed by a fixed code (`host-handled-error.ts`). */
+  private readonly handledErrors: HostHandledErrors;
 
   constructor(private readonly deps: PtyHostCoreDeps) {
+    this.handledErrors = new HostHandledErrors((event) => this.deps.emit(event));
     this.spawnPty = deps.spawnPty ?? nodePty.spawn;
     this.now = deps.now ?? Date.now;
     // Loaded ahead, so the first PTY is pinned in the turn its pid is known.
@@ -411,6 +415,7 @@ export class PtyHostCore {
         return session && !session.transient ? session.projectId : null;
       },
       (projectId) => this.deps.transcriptSinkFor(projectId),
+      (error) => this.handledErrors.report('transcript_flush', error),
     );
     this.backpressure = new BackpressureController(
       (sessionId) => {
@@ -1200,6 +1205,7 @@ export class PtyHostCore {
         holder.rootPin = timeSyncWork('pty:pinRoot', () => api.pinRoot(holder.pty.pid, holder.spawnedAtMs - SPAWN_CLOCK_SLACK_MS));
       } catch (error) {
         console.warn('[pty-host] could not pin a PTY root:', error instanceof Error ? error.message : String(error));
+        this.handledErrors.report('root_pin', error);
         return;
       }
       if (holder.rootPin) holder.rootStartedAtMs = holder.rootPin.startedAtMs;
@@ -1220,6 +1226,7 @@ export class PtyHostCore {
       return pin ? () => pin.release() : null;
     } catch (error) {
       console.warn('[pty-host] could not pin a CLI run:', error instanceof Error ? error.message : String(error));
+      this.handledErrors.report('cli_pin', error);
       return null;
     }
   }
@@ -1421,7 +1428,10 @@ export class PtyHostCore {
       entry.pty.kill();
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
-      if (code !== 'EACCES' && code !== 'ESRCH') console.warn('[pty-host] pty.kill() failed:', error);
+      if (code !== 'EACCES' && code !== 'ESRCH') {
+        console.warn('[pty-host] pty.kill() failed:', error);
+        this.handledErrors.report('pty_kill', error);
+      }
     }
   }
 
@@ -1752,6 +1762,7 @@ export class PtyHostCore {
       }
     } catch (error) {
       console.warn(`[pty-host] could not end what session ${shortSessionId}'s exited shell left running:`, error instanceof Error ? error.message : String(error));
+      this.handledErrors.report('orphan_cleanup', error);
     } finally {
       this.releaseExitedPty(entry.pty);
     }
