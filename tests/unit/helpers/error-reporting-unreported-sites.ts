@@ -1,6 +1,8 @@
 /**
  * Catch sites that neither report, rethrow, nor say why, by file, as they
- * stood when .claude/rules/error-reporting.md landed (2466 sites in 762 files).
+ * stood when .claude/rules/error-reporting.md landed (2475 sites in 765 files,
+ * counting the user-message Text match that reached main while the rule was in
+ * review: best-effort transcript and ledger reads that log and degrade).
  *
  * Shrink-only. tests/unit/error-reporting-coverage.test.ts fails when a file's
  * count grows, when a file not listed here gains a site, and when a count drops
@@ -44,7 +46,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/agent/adapters/claude/background-task-output.ts': 2,
   'src/main/agent/adapters/claude/browser-servers.ts': 2,
   'src/main/agent/adapters/claude/capability-discovery.ts': 2,
-  'src/main/agent/adapters/claude/claude-adapter.ts': 2,
+  'src/main/agent/adapters/claude/claude-adapter.ts': 3,
   'src/main/agent/adapters/claude/claude-json-lock.ts': 3,
   'src/main/agent/adapters/claude/command-builder.ts': 4,
   'src/main/agent/adapters/claude/diff-panel.ts': 3,
@@ -54,6 +56,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/agent/adapters/claude/physical-path.ts': 2,
   'src/main/agent/adapters/claude/plan-carry.ts': 7,
   'src/main/agent/adapters/claude/project-relocation.ts': 3,
+  'src/main/agent/adapters/claude/queued-user-messages.ts': 2,
   'src/main/agent/adapters/claude/remote-trust.ts': 1,
   'src/main/agent/adapters/claude/session-history-parser.ts': 1,
   'src/main/agent/adapters/claude/slash-command-verifier.ts': 1,
@@ -239,9 +242,10 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/automations/stopped-mark.ts': 1,
   'src/main/automations/turn-end/agent-message-delivery.ts': 3,
   'src/main/automations/turn-end/deliver-message.ts': 2,
-  'src/main/automations/turn-end/final-reply-reader.ts': 1,
+  'src/main/automations/turn-end/final-reply-reader.ts': 3,
   'src/main/automations/turn-end/hold-move-message.ts': 1,
   'src/main/automations/turn-end/turn-end-runner.ts': 2,
+  'src/main/automations/turn-end/typed-message-ledger.ts': 2,
   'src/main/background-calls/record-background-call.ts': 1,
   'src/main/boards/adapters/asana/adapter.ts': 2,
   'src/main/boards/adapters/asana/client.ts': 6,
@@ -485,6 +489,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/pty/spawn/shell-launch.ts': 1,
   'src/main/pty/spawn/shell-resolver.ts': 6,
   'src/main/pty/spawn/spawn-helper-permissions.ts': 2,
+  'src/main/pty/terminal-submit.ts': 1,
   'src/main/pty/terminal-trace.ts': 1,
   'src/main/pty/write-queue.ts': 1,
   'src/main/remote/helper/file-tail.ts': 5,
@@ -556,7 +561,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/retrieval/worker/index-status.ts': 1,
   'src/main/retrieval/worker/methods.ts': 6,
   'src/main/retrieval/worker/retrieval-worker.ts': 2,
-  'src/main/retrieval/worker/transcript-methods.ts': 2,
+  'src/main/retrieval/worker/transcript-methods.ts': 3,
   'src/main/retrieval/write-budget.ts': 2,
   'src/main/safe-write.ts': 1,
   'src/main/search/search-core.ts': 5,
