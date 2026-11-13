@@ -138,7 +138,7 @@ describe('a refused agent start', () => {
     ['a gone project folder', '/Users/dev/acme', 'folder-missing'],
     ['a gone worktree on a Windows path', 'C:\\Users\\dev\\acme\\.kangentic\\worktrees\\1003', 'worktree-missing'],
   ])('names %s by its fixed reason, and no path', (_label, cwd, reason) => {
-    reportPreflightFailure({ cause: 'agent_start', error: new AgentCwdMissingError(cwd), agent: 'claude', startPath: 'board', keepMessage: true });
+    reportPreflightFailure({ cause: 'agent_start', error: new AgentCwdMissingError(cwd), agent: 'claude', startPath: 'board' });
 
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     const [error, tags] = reportHandledError.mock.calls[0];
@@ -152,7 +152,7 @@ describe('a refused agent start', () => {
   });
 
   it('names a prompt too long for the agent by its fixed reason', () => {
-    reportPreflightFailure({ cause: 'agent_start', error: new AgentCommandTooLongError(), agent: 'claude', startPath: 'board', keepMessage: true });
+    reportPreflightFailure({ cause: 'agent_start', error: new AgentCommandTooLongError(), agent: 'claude', startPath: 'board' });
 
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     expect(reportHandledError.mock.calls[0][1]).toMatchObject({
@@ -163,7 +163,7 @@ describe('a refused agent start', () => {
   });
 
   it('sends no reason for an error that is not a refusal', () => {
-    reportPreflightFailure({ cause: 'agent_start', error: new Error('spawn failed'), agent: 'claude', startPath: 'board', keepMessage: true });
+    reportPreflightFailure({ cause: 'agent_start', error: new Error('spawn failed'), agent: 'claude', startPath: 'board' });
     expect(reportHandledError.mock.calls[0][1]).not.toHaveProperty('start_refused_reason');
   });
 });

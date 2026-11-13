@@ -42,6 +42,7 @@ class ModelDownloadError extends Error {
 
   constructor(modelId: string, cause: unknown) {
     super(cause instanceof Error ? cause.message : 'Model download failed', { cause });
+    this.name = 'ModelDownloadError';
     this.modelId = modelId;
   }
 }

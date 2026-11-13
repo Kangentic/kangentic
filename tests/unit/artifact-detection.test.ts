@@ -120,6 +120,21 @@ describe('reporting unrecognised artifact domains', () => {
     expect(mocks.reportHandledMessage.mock.calls[1][1]).toEqual({ artifact_domain: 'example.net', artifact_source: 'agent' });
   });
 
+  it('collapses a tenant label, which names the organization, and reports the site once', () => {
+    reportUnrecognisedArtifactDomains(
+      ['https://acme.tenant-host.example.com/x', 'https://globex.tenant-host.example.com/y', 'https://acme.example.co.uk/z'],
+      'agent',
+    );
+    expect(mocks.reportHandledMessage).toHaveBeenCalledTimes(2);
+    expect(mocks.reportHandledMessage.mock.calls[0]).toEqual([
+      'Unrecognised artifact domain',
+      { artifact_domain: '*.example.com', artifact_source: 'agent' },
+      ['unrecognised-artifact-domain', '*.example.com'],
+    ]);
+    expect(mocks.reportHandledMessage.mock.calls[1][1]).toEqual({ artifact_domain: '*.example.co.uk', artifact_source: 'agent' });
+    expect(JSON.stringify(mocks.reportHandledMessage.mock.calls)).not.toMatch(/acme|globex/);
+  });
+
   it('reports nothing for a recognised or private host', () => {
     reportUnrecognisedArtifactDomains([FIGMA, 'http://localhost:3000/x', 'https://wiki.internal/y'], 'user');
     expect(mocks.reportHandledMessage).not.toHaveBeenCalled();

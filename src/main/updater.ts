@@ -8,6 +8,7 @@ import appleTeam from '../shared/apple-team-id.json';
 import type { LocalizedText } from '../shared/i18n/text';
 import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { reportHandledError } from './analytics/error-reporting';
+import { errorCodeOf, errorNameOf, markReported } from './analytics/handled-report';
 import { translateText } from './i18n/main-i18n';
 import { normalizeReleaseNotes } from './updater-release-notes';
 import {
@@ -718,6 +719,8 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   // (2026-04-16), so it is a telemetry decision rather than a cleanup.
   //
   // A NEW gate goes below trackEvent unless there is a reason to lose the count.
+  /** `name:code` of each structural updater failure reported since this init. */
+  const reportedUpdaterErrors = new Set<string>();
   autoUpdater.on('error', (error) => {
     console.error('[UPDATER] Error:', error);
     if (checkRetrying || downloadRetrying) return;
@@ -814,7 +817,14 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     }
     // Handled, so Sentry's global handlers never see it; forward the real
     // error so structural updater failures are diagnosable, not just counted.
-    reportHandledError(withoutUrlQueries(error), { source: 'updater' });
+    // The updater retries every check interval, so each name and code reports
+    // once per run, fingerprinted so one cause is one issue whatever path hit it.
+    const updaterErrorKey = [errorNameOf(error), errorCodeOf(error) ?? 'none'];
+    const latchKey = updaterErrorKey.join(':');
+    if (reportedUpdaterErrors.has(latchKey)) return;
+    reportedUpdaterErrors.add(latchKey);
+    reportHandledError(withoutUrlQueries(error), { source: 'updater' }, {}, ['updater', ...updaterErrorKey]);
+    markReported(error);
   });
 
   // Schedule checks

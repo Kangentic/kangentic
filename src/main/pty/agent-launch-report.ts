@@ -26,10 +26,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { trackEvent } from '../analytics/analytics';
 import { reportHandledError } from '../analytics/error-reporting';
+import { isReported, markReported, pathFreeCopy } from '../analytics/handled-report';
 import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
-import { redactPaths } from '../../shared/sentry-breadcrumbs';
 import { shellProgramName } from '../../shared/shell-quote';
 import type { LaunchStartPath } from '../../shared/types';
 import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
@@ -308,11 +308,13 @@ export interface LaunchFailure {
   /** Short session id for the local line. Absent when the launch had no session. */
   sessionLabel?: string;
   /**
-   * An error to report instead of a built one, for a stage whose grouping or
-   * message the caller owns. It is sent with its paths redacted. A caller holding
-   * text that may name a branch or a task leaves this out.
+   * The error that failed the launch. Its name and frames are sent, never its
+   * message: an error's text here held branch names, task titles and URLs, and
+   * `redactPaths` removed only the paths. The message sent is the built one.
    */
   error?: Error;
+  /** The error's message is the caller's own fixed sentence, so it may go as written. */
+  messageIsFixed?: boolean;
 }
 
 function builtError(stage: LaunchStage, cause: string): Error {
@@ -321,14 +323,17 @@ function builtError(stage: LaunchStage, cause: string): Error {
   return error;
 }
 
-/** Longer than this is a dump of something, not an error's message. */
-const MAX_MESSAGE_CHARACTERS = 500;
-
-/** A copy with its message path-free and its frames kept. */
-function redactedCopyOf(error: Error): Error {
-  const copy = new Error(redactPaths(error.message).slice(0, MAX_MESSAGE_CHARACTERS));
-  copy.name = error.name;
-  copy.stack = error.stack;
+/**
+ * The built error, fixed name and message, carrying the original's frames. The
+ * original's class goes as the `error_type` tag (`errorShapeTags`), so the issue
+ * title stays the stage's whatever threw.
+ */
+function fixedMessageCopyOf(error: Error, stage: LaunchStage, cause: string): Error {
+  const copy = builtError(stage, cause);
+  const original = pathFreeCopy('agent_launch', error);
+  const newline = original.stack?.indexOf('\n') ?? -1;
+  const frames = newline === -1 ? '' : original.stack?.slice(newline) ?? '';
+  if (frames) copy.stack = `${copy.name}: ${copy.message}${frames}`;
   return copy;
 }
 
@@ -386,12 +391,17 @@ export function claimLaunchReport(failure: LaunchFailure): Record<string, string
  * on as itself, since a copy would lose the type that decides.
  */
 export function reportLaunchFailure(failure: LaunchFailure): void {
+  const { stage, cause, error, messageIsFixed } = failure;
+  // Marked whether or not this class already reported, so a chokepoint further up
+  // (the IPC wrap, a caller's own catch) never sends the same failure again.
+  if (error) markReported(error);
   const eventTags = claimLaunchReport(failure);
   if (!eventTags) return;
-  const { stage, cause, error } = failure;
-  const sent = error
-    ? (isUserConfigurationError(error) ? error : redactedCopyOf(error))
-    : builtError(stage, cause);
+  const sent = !error
+    ? builtError(stage, cause)
+    : isUserConfigurationError(error) || messageIsFixed === true
+      ? error
+      : fixedMessageCopyOf(error, stage, cause);
   reportHandledError(sent, eventTags, {}, ['agent-launch', stage, cause]);
 }
 
@@ -421,11 +431,6 @@ export interface PreflightFailure {
   agent?: string | null;
   agentCliVersion?: string | null;
   startPath: LaunchStartPath;
-  /**
-   * Whether the error's text may go, with its paths redacted. Leave off for
-   * anything git wrote: its text holds branch names, which come from task titles.
-   */
-  keepMessage?: boolean;
   /** The caller counted this `spawn_failed` itself, so an excluded failure is not counted twice. */
   alreadyCounted?: boolean;
 }
@@ -433,15 +438,21 @@ export interface PreflightFailure {
 /**
  * A launch that failed before it had a PTY. The start was taken over rather than
  * failed when the error is an abort, and a user configuration error is the
- * user's to resolve, so neither reaches Sentry.
+ * user's to resolve, so neither reaches Sentry. An error already reported (a
+ * `spawnAgent` failure its caller catches again after the rethrow) is skipped, so
+ * one failure is one event.
+ *
+ * The event carries the error's name, errno and frames under a fixed message,
+ * never the error's text (`fixedMessageCopyOf`).
  *
  * Called from catch blocks that go on to rethrow or notify, so it never throws:
  * a report must not replace the failure it reports.
  */
 export function reportPreflightFailure(failure: PreflightFailure): void {
   try {
-    const { cause, error, agent, agentCliVersion, startPath, keepMessage, alreadyCounted } = failure;
+    const { cause, error, agent, agentCliVersion, startPath, alreadyCounted } = failure;
     if (isAbortError(error)) return;
+    if (isReported(error)) return;
     const tags = {
       ...preflightTagsOf({ agent, agentCliVersion, startPath }),
       ...errorShapeTags(error),
@@ -452,8 +463,7 @@ export function reportPreflightFailure(failure: PreflightFailure): void {
       stage: 'preflight',
       cause,
       tags,
-      // An excluded error goes as itself, so its type can exclude it.
-      ...((keepMessage === true || excluded) && error instanceof Error ? { error } : {}),
+      ...(error instanceof Error ? { error } : {}),
     });
   } catch (reportError) {
     console.warn('[AGENT-LAUNCH] A preflight report failed:', reportError);
@@ -542,6 +552,7 @@ export function reportLaunchRecovered(session: ManagedSession): void {
     tags: { ...launchTagsOf(session), retry: 'recovered' },
     sessionLabel: session.id.slice(0, 8),
     error,
+    messageIsFixed: true,
   });
 }
 

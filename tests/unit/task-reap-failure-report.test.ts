@@ -138,11 +138,12 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
       expect.objectContaining({ message: 'Task leftover reap failed: reader_load' }),
       { source: 'task_reap', stage: 'reap', code: 'reader_load' },
       { task_reap: { loadError: 'Cannot find module koffi' } },
+      ['task-reap', 'reap', 'reader_load'],
     );
 
     const scanFailure = managerWithHost({ reapTaggedProcesses: async () => failed('reap_error', 'parse failed near SECRET=1') });
     await scanFailure.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: false });
-    expect(reportHandledError).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'Task leftover reap failed: reap_error' }), expect.anything(), {});
+    expect(reportHandledError).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'Task leftover reap failed: reap_error' }), expect.anything(), {}, ['task-reap', 'reap', 'reap_error']);
     warn.mockRestore();
   });
 
@@ -155,6 +156,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
       expect.objectContaining({ message: 'Task leftover reap failed: window_list' }),
       { source: 'task_reap', stage: 'reap', code: 'window_list', pass: 'second', cause: 'timeout' },
       {},
+      ['task-reap', 'reap', 'window_list'],
     );
     expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('lsappinfo');
     // The text stays in the local log.
@@ -170,6 +172,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
       expect.objectContaining({ message: 'Task leftover reap failed: connection_list' }),
       { source: 'task_reap', stage: 'reap', code: 'connection_list', pass: 'first' },
       {},
+      ['task-reap', 'reap', 'connection_list'],
     );
     expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('GetExtendedTcpTable');
     warn.mockRestore();
@@ -186,6 +189,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
       expect.objectContaining({ message: 'Task leftover stop failed: window_list' }),
       { source: 'task_reap', stage: 'stop', code: 'window_list', pass: 'second', cause: 'signal' },
       {},
+      ['task-reap', 'stop', 'window_list'],
     );
     expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('lsappinfo');
     expect(warn).toHaveBeenCalledWith('[TASK-REAP] stop failed (non-fatal): lsappinfo list did not run: signal');

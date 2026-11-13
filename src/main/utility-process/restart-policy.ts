@@ -1,5 +1,6 @@
 import { trackEvent } from '../analytics/analytics';
 import { reportHandledError } from '../analytics/error-reporting';
+import { redactEventText } from '../analytics/redact-event-paths';
 import { summarizeStderrTail, watchdogLine, type StderrSource } from './stderr-tail';
 
 /**
@@ -279,12 +280,17 @@ export class UtilityRestartPolicy {
           service: this.service,
           exitCode: exitCode ?? null,
           crashCount: crashNumber,
-          stderrTail: this.latestStderr() ?? '(no stderr captured)',
+          // Free worker stderr, home-redacted at capture only, so it still held
+          // project roots, worktree slugs (task titles) and transcript folders.
+          stderrTail: redactEventText(this.latestStderr() ?? '(no stderr captured)'),
           // One line per crash, not one object: Sentry normalizes contexts to
           // depth 3, which turns an object inside this list into "[Object]".
-          crashes: crashes.map(describeCrashRecord),
+          crashes: crashes.map(describeCrashRecord).map((line) => redactEventText(line)),
         },
       },
+      // One issue per service and cause. The message carries the exit code,
+      // which would otherwise split one service's latch across codes.
+      ['utility-process-latched', this.service, cause],
     );
   }
 

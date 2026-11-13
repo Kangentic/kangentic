@@ -355,7 +355,16 @@ describe("autoUpdater.on('error') listener", () => {
     // trackEvent gets), so a structural updater failure is diagnosable in
     // Sentry beyond a bare count.
     expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledError).toHaveBeenCalledWith(structuralError, { source: 'updater' });
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(
+      structuralError,
+      { source: 'updater' },
+      {},
+      ['updater', 'Error', 'ERR_UPDATER_INVALID_SIGNATURE'],
+    );
+
+    // The updater retries every interval: the same name and code report once.
+    errorListener(makeError('ERR_UPDATER_INVALID_SIGNATURE', 'ERR_UPDATER_INVALID_SIGNATURE'));
+    expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
   });
 
   describe('a download failure, which arrives with a signed URL and no code (DESKTOP-24)', () => {
@@ -906,7 +915,7 @@ describe("autoUpdater.on('error') listener", () => {
 
     expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
     expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledError).toHaveBeenCalledWith(noVersions, { source: 'updater' });
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(noVersions, { source: 'updater' }, {}, expect.any(Array));
   });
 
   it('still reports a genuine install failure on a prerelease build', () => {
@@ -924,7 +933,7 @@ describe("autoUpdater.on('error') listener", () => {
 
     expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
     expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledError).toHaveBeenCalledWith(signatureFailure, { source: 'updater' });
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(signatureFailure, { source: 'updater' }, {}, expect.any(Array));
   });
 
   it('still reports an install failure that came back through the same front-end', () => {
@@ -939,7 +948,7 @@ describe("autoUpdater.on('error') listener", () => {
 
     expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
     expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledError).toHaveBeenCalledWith(installFailure, { source: 'updater' });
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(installFailure, { source: 'updater' }, {}, expect.any(Array));
   });
 
   it('still reports a feed error with no transient cause (a real broken feed)', () => {
@@ -954,7 +963,7 @@ describe("autoUpdater.on('error') listener", () => {
 
     expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
     expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledError).toHaveBeenCalledWith(malformed, { source: 'updater' });
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(malformed, { source: 'updater' }, {}, expect.any(Array));
   });
 
   it('classifies the FIRST download failure, before downloadRetrying is set', async () => {

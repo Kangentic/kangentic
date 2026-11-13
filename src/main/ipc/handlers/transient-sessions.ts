@@ -530,7 +530,6 @@ export async function startCommandTerminal(
         error,
         agent: project.default_agent,
         startPath: commandTerminalStartPath(input, restore),
-        keepMessage: true,
       });
     }
     throw error;

@@ -195,7 +195,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
               // the override chain is the best available approximation here.
               const failedAgent = task.agent_override ?? toLane.agent_override ?? 'default';
               trackEvent('spawn_failed', { agent: failedAgent, reason: 'create_spawn' });
-              reportPreflightFailure({ cause: 'create_spawn', error: err, agent: failedAgent, startPath: 'board', keepMessage: true, alreadyCounted: true });
+              reportPreflightFailure({ cause: 'create_spawn', error: err, agent: failedAgent, startPath: 'board', alreadyCounted: true });
             }
           } finally {
             clearSpawnProgress(context.mainWindow, task.id);

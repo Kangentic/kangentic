@@ -39,7 +39,13 @@ export interface OffMainPty {
 export type OffMainPtySpawner = (file: string, args: string[] | string, options: OffMainPtyOptions) => Promise<OffMainPty>;
 
 /** The host could not be asked: fall back to a local spawn. */
-export class HostUnavailableError extends Error {}
+export class HostUnavailableError extends Error {
+  constructor(message?: string) {
+    super(message);
+    // Set explicitly: the main bundle is minified, and `isExpectedFailure` matches by name.
+    this.name = 'HostUnavailableError';
+  }
+}
 
 let spawner: OffMainPtySpawner | null = null;
 

@@ -70,7 +70,9 @@ export function reportTaskReapFailure(
   const tags: Record<string, string> = { source: 'task_reap', stage, code };
   if (pass) tags.pass = pass;
   if (cause) tags.cause = cause;
-  reportHandledError(new Error(`Task leftover ${stage} failed: ${code}`), tags, contexts);
+  // Fingerprinted: the stack differs per caller (a Done move, the startup sweep, a Stop),
+  // which split one cause into several issues.
+  reportHandledError(new Error(`Task leftover ${stage} failed: ${code}`), tags, contexts, ['task-reap', stage, code]);
 }
 
 /** Forget what this launch reported. Tests only. */

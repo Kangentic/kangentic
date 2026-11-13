@@ -368,8 +368,11 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know. |
 
 Only fixed facts are sent: the agent, the problem, an entry's name, a count. Never a folder path,
-an email or a key. A provider's own error text is cut to a line with addresses, home folders and
-long ids removed (`scrubFailureDetail`). An adapter marks itself `unproven` while its declaration
+an email or a key. A provider's own error text is never sent, because its words can name the
+user's organization: a `detail` fact goes as its class (`classifyFailureDetail`: `usage_limit`,
+`auth`, `network`, `server`, `refused`, `empty` or `other`) and its length. A caller's error goes
+as its class and errno only. Each problem reports once per agent per run, whatever its facts,
+fingerprinted `['agent-accounts', problem, agent]`. An adapter marks itself `unproven` while its declaration
 has not been run with real accounts: Codex, Gemini CLI and Grok Build do, so the two sign-in
 reports are in place for the day each is enabled.
 
