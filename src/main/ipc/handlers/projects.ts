@@ -644,6 +644,18 @@ async function runColdOpenPasses(
  * that overlaps the cold open's own does not start a second agent.
  */
 export async function recoverRemoteProjectsOnHost(context: IpcContext, hostId: string): Promise<void> {
+  // Each project's own catch does not cover the passes around it (the reveal,
+  // the unowned-session sweep), and the caller is a host-connected callback with
+  // no one to hand a rejection to, so the whole pass reports here and resolves.
+  try {
+    await recoverRemoteProjectsOnHostPasses(context, hostId);
+  } catch (error) {
+    console.error('[remote] recovering the projects on a host that connected failed:', error);
+    reportRecoveryPassFailure('remote_projects', error);
+  }
+}
+
+async function recoverRemoteProjectsOnHostPasses(context: IpcContext, hostId: string): Promise<void> {
   if (isRevealPending(context, hostId)) {
     await startRevealedProjects(context, hostId);
     return;
