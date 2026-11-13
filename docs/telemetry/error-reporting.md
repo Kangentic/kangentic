@@ -408,7 +408,7 @@ in one Sentry org, one triage surface.
   message is `Handled <source> failure: <ErrorName>` over the original frames (`pathFreeCopy`),
   never `error.message`, a runtime error's included: V8 quotes the property it could not read and
   Node's `ERR_INVALID_ARG_*` quotes the value it got, either of which can be a title. Tags are `source`,
-  `error_name`, `errno` when there is one, and the chokepoint's own short enums. It skips what is
+  `error_name`, `errno` and `syscall` when the error carries them, and the chokepoint's own short enums. It skips what is
   not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
   `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
   cause), skips an error another reporter already sent (`markReported` and `isReported`, which
