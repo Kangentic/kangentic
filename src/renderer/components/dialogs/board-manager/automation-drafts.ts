@@ -22,7 +22,7 @@ import { msg, plural } from '@lingui/core/runtime-macro';
 import { describeAutomation } from '../../../../shared/automation-describe';
 import { englishText } from '../../../../shared/i18n/english';
 import { translateText } from '../../../i18n/translate';
-import { conditionKindsAsStored } from '../../../../shared/final-line-match';
+import { conditionKindsAsStored, textMatchSourceOf } from '../../../../shared/final-line-match';
 import { TEMPLATE_VARIABLE_PATTERN } from '../../../../shared/task-template-vars';
 import type {
   AutomationConfig,
@@ -31,6 +31,7 @@ import type {
   AutomationWriteInput,
   ColumnAutomation,
   Swimlane,
+  TextMatchSource,
 } from '../../../../shared/types';
 
 /**
@@ -54,6 +55,12 @@ export interface AutomationDraft {
    * longer while the dialog keeps it for a Trigger switched back.
    */
   final_line: string | null;
+  /**
+   * Whose message the Text match reads (#1078): the agent's last line, or the
+   * user's last message in the turn. Meaningless without a Text match; the
+   * save forces it to `'agent'` then.
+   */
+  text_match_source: TextMatchSource;
   /** Frequency: the most runs on one task. Null: no limit. */
   max_runs: number | null;
 }
@@ -95,6 +102,8 @@ export function toDraft(automation: ColumnAutomation): AutomationDraft {
     // match switched on (it tests `!== null`). A dev renderer reloads ahead of
     // its main process, so that pairing is real for one restart.
     final_line: automation.final_line ?? null,
+    // A main process from before #1078 sends no field, which is the agent's line.
+    text_match_source: textMatchSourceOf(automation),
     max_runs: automation.max_runs,
   };
 }
@@ -148,6 +157,7 @@ export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigg
     // Every guard starts off, so a new row runs the way every row did before they existed.
     condition: null,
     final_line: null,
+    text_match_source: 'agent',
     max_runs: null,
   };
 }
@@ -167,6 +177,7 @@ export function copyAutomation(source: AutomationDraft, trigger: AutomationTrigg
     config: { ...source.config },
     condition: source.condition,
     final_line: source.final_line,
+    text_match_source: source.text_match_source,
     max_runs: source.max_runs,
   };
 }
@@ -294,14 +305,21 @@ export function takenNamesFor(drafts: AutomationDraft[], exceptId?: string): str
  * optional, and absent means "cannot tell", which allows: the board glyph's
  * counts are computed in a store that does not resolve the column's agent.
  */
-export type AutomationColumnInput = Pick<Swimlane, 'auto_spawn' | 'role'> & { reportsTurnEnd?: boolean };
+export type AutomationColumnInput = Pick<Swimlane, 'auto_spawn' | 'role'> & { reportsTurnEnd?: boolean; reportsUserMessages?: boolean };
 
 export function columnFacts(column: AutomationColumnInput): AutomationColumnFacts {
-  return { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd: column.reportsTurnEnd };
+  return {
+    autoSpawn: column.auto_spawn,
+    role: column.role,
+    reportsTurnEnd: column.reportsTurnEnd,
+    reportsUserMessages: column.reportsUserMessages,
+  };
 }
 
 export function canRunRow(draft: AutomationDraft, column: AutomationColumnInput): AutomationRunnability {
-  return canColumnRun(draft.type, columnFacts(column), draft.trigger);
+  return canColumnRun(draft.type, columnFacts(column), draft.trigger, {
+    textMatchSource: draftConditionKinds(draft).text_match_source,
+  });
 }
 
 /** Every row, by group. What EXISTS. */
@@ -383,9 +401,10 @@ export function normalizeDraftCondition(condition: string | null): string | null
  * dialog keeps the line in its own state until Done, which is what lets a
  * Trigger switched back restore it.
  */
-export function draftConditionKinds(draft: Pick<AutomationDraft, 'condition' | 'final_line' | 'trigger'>): {
+export function draftConditionKinds(draft: Pick<AutomationDraft, 'condition' | 'final_line' | 'trigger'> & { text_match_source?: TextMatchSource }): {
   condition: string | null;
   final_line: string | null;
+  text_match_source: TextMatchSource;
 } {
   // The repository's own rule, so the saved draft is the row a read returns.
   return conditionKindsAsStored(draft);

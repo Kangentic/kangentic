@@ -12,7 +12,7 @@
     {
       "id": "3c7e9a52-1f4b-4d8e-9a6c-5b2d0e8f7a14",
       "name": "Design",
-      "description": "Draws a design canvas and revises it until the owner signs it off. For work whose result someone looks at: app UI, a demo frame, a docs figure. Only a person moves a card out of it.",
+      "description": "Draws a design canvas and revises it until the owner signs it off, by typing \"signed off\" or moving the card. For work whose result someone looks at: app UI, a demo frame, a docs figure. Only a person moves a card out of it.",
       "icon": "brush",
       "color": "#ec4899",
       "autoSpawn": true,
@@ -24,7 +24,7 @@
           {
             "name": "Design contract",
             "type": "send_message",
-            "message": "Design phase. Draw the design canvas for this task as a Claude artifact, render-check it, and revise it from the owner's feedback. Write no feature code and make no commits. Before you write to the worktree, call kangentic_get_current_task: while the card is in Design, write only the canvas and its temporary capture spec. End each turn with the open decisions by number and the canvas link. The owner signs off by moving this card to Planning. A mode switch, or a reply that answers every open item, is not sign-off. Never move this card yourself. If the owner asks to shelve the design, append the canvas link to the task description with kangentic_update_task, then end your turn with the line \"Design: shelved\".",
+            "message": "Design phase. Draw the design canvas for this task as a Claude artifact, render-check it, and revise it from the owner's feedback. Write no feature code and make no commits. Before you write to the worktree, call kangentic_get_current_task: while the card is in Design, write only the canvas and its temporary capture spec. End each turn with the open decisions by number, the canvas link, then the line \"To sign off, type signed off or move the card to Planning.\" The owner signs off by typing \"signed off\" or by moving this card to Planning. A mode switch, or a reply that answers every open item, is not sign-off. When the owner's message signs off, record the picks on the canvas, take your recommendation on any decision still open, delete the temporary capture spec, append the signed-off design to the task description with kangentic_update_task, and end your turn. The board moves the card. Never move this card yourself. If the owner asks to shelve the design, append the canvas link to the task description with kangentic_update_task, then end your turn with the line \"Design: shelved\", and leave the sign-off line off that turn.",
             "mode": "immediate"
           }
         ],
@@ -32,8 +32,31 @@
           {
             "name": "Shelved",
             "type": "move_to_column",
-            "finalLine": "Design: shelved",
+            "condition": {
+              "text": "Design: shelved"
+            },
             "targetColumn": "To Do"
+          },
+          {
+            "name": "On to Planning",
+            "type": "move_to_column",
+            "condition": {
+              "text": {
+                "from": "user",
+                "patterns": [
+                  "*signed off*",
+                  "*design approved*",
+                  "*design is approved*",
+                  "!*not signed off*",
+                  "!*not approved*",
+                  "!*type signed off*",
+                  "!*typing signed off*",
+                  "!*signed off except*"
+                ]
+              }
+            },
+            "maxRuns": 1,
+            "targetColumn": "Planning"
           }
         ],
         "onExit": [
@@ -73,7 +96,9 @@
           {
             "name": "On to Code Review",
             "type": "move_to_column",
-            "finalLine": "Findings: applied",
+            "condition": {
+              "text": "Findings: applied"
+            },
             "maxRuns": 4,
             "targetColumn": "Code Review"
           },
@@ -110,7 +135,9 @@
           {
             "name": "Back for revisions",
             "type": "move_to_column",
-            "finalLine": "Verdict: Blocked",
+            "condition": {
+              "text": "Verdict: Blocked"
+            },
             "maxRuns": 3,
             "targetColumn": "Executing",
             "message": "Code Review sent this back. Do the numbered steps above its verdict, commit, then end your turn.\n\n{{agentReply}}"
@@ -118,7 +145,9 @@
           {
             "name": "On to Testing",
             "type": "move_to_column",
-            "finalLine": "Verdict: Ready",
+            "condition": {
+              "text": "Verdict: Ready"
+            },
             "maxRuns": 1,
             "targetColumn": "Testing"
           }
@@ -148,7 +177,9 @@
           {
             "name": "On to Merge",
             "type": "move_to_column",
-            "finalLine": "PR: ready to merge",
+            "condition": {
+              "text": "PR: ready to merge"
+            },
             "maxRuns": 3,
             "targetColumn": "Merge"
           }
@@ -179,14 +210,18 @@
           {
             "name": "Finish",
             "type": "move_to_column",
-            "finalLine": "PR: merged",
+            "condition": {
+              "text": "PR: merged"
+            },
             "maxRuns": 1,
             "targetColumn": "Done"
           },
           {
             "name": "Back to Testing",
             "type": "move_to_column",
-            "finalLine": "PR: checks red",
+            "condition": {
+              "text": "PR: checks red"
+            },
             "maxRuns": 2,
             "targetColumn": "Testing"
           }

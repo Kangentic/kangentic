@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { canColumnRun, EXIT_GROUP_BUDGET_MS } from '../../shared/automation-manifest';
 import { englishText } from '../../shared/i18n/english';
-import { matchFinalLine, type FinalLineMatch } from '../../shared/final-line-match';
+import { matchFinalLine, matchUserMessage, type FinalLineMatch, type UserMessageRead } from '../../shared/final-line-match';
 import type { AutomationRunStatus, ColumnAutomation, Swimlane } from '../../shared/types';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
 import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig } from './interpolate-config';
-import { hasCondition, hasFinalLine, hasFrequencyLimit } from './row-guards';
+import { hasCondition, hasFinalLine, hasFrequencyLimit, textMatchSourceOf } from './row-guards';
 import type { AutomationContext } from './shared/automation-adapter';
 import {
   AutomationTimeoutError,
@@ -171,6 +171,19 @@ export interface RunAutomationsOptions {
    */
   agentReply?: string | null;
   /**
+   * Turn end only: the user's last message in the turn (#1078), read for the
+   * rows whose Text match is on it (`hasUserTextMatch`). Absent or unreadable,
+   * such a row does not run: it fails closed.
+   */
+  userMessage?: UserMessageRead;
+  /**
+   * Turn end only: whether the agent that ended the turn can report the
+   * messages a person sends it (`canReadTurnUserMessages`). False makes
+   * `canColumnRun` refuse a row on the user's message with its own reason, as
+   * the board does. Undefined leaves that to the read, which fails closed.
+   */
+  reportsUserMessages?: boolean;
+  /**
    * Turn end of a running workflow's task only: why a row that moves the task
    * (its manifest's `endsGroup`) does not move it now, when its guards passed.
    * Set while background work the agent left is still open: a move suspends
@@ -236,6 +249,9 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
   if (automations.length === 0) return summary;
   const needsAgent = (automation: ColumnAutomation): boolean =>
     registry.get(automation.type)?.manifest.needs.includes('agent') === true;
+  // What `canColumnRun` reads, the same facts the board gives it.
+  const columnFacts = { autoSpawn: column.auto_spawn, role: column.role, reportsUserMessages: options.reportsUserMessages };
+  const rowFactsOf = (automation: ColumnAutomation) => ({ textMatchSource: textMatchSourceOf(automation) });
 
   const groupBudgetMs = options.groupBudgetMs
     ?? (context.trigger === 'exit' ? EXIT_GROUP_BUDGET_MS : null);
@@ -267,7 +283,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     && registry.get(automation.type) !== undefined
     // A row a paused agent cannot take is skipped before its Condition is asked.
     && !(options.agentPaused && needsAgent(automation))
-    && canColumnRun(automation.type, { autoSpawn: column.auto_spawn, role: column.role }, automation.trigger).ok
+    && canColumnRun(automation.type, columnFacts, automation.trigger, rowFactsOf(automation)).ok
     && frequencyLimitReason(automation, runs, context.task.id) === null);
   if (unanswered.length > 0 && options.checkConditions) {
     // The check is bounded: enter and exit groups run inside the move's task
@@ -328,7 +344,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       continue;
     }
 
-    const runnable = canColumnRun(automation.type, { autoSpawn: column.auto_spawn, role: column.role }, automation.trigger);
+    const runnable = canColumnRun(automation.type, columnFacts, automation.trigger, rowFactsOf(automation));
     if (!runnable.ok) {
       // Stored for kangentic_get_automation_runs, which an agent reads: English.
       const reason = englishText(runnable.reason);
@@ -372,7 +388,12 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
         record('skipped', TEXT_MATCH_NO_TURN_REASON);
         continue;
       }
-      const match = matchFinalLine(automation.final_line, options.agentReply);
+      // A Text match on the user's message reads their last message in the
+      // turn instead (#1078). A caller that did not read it gives nothing,
+      // which fails closed: the row does not run.
+      const match = textMatchSourceOf(automation) === 'user'
+        ? matchUserMessage(automation.final_line, options.userMessage ?? { readable: false })
+        : matchFinalLine(automation.final_line, options.agentReply);
       started.finalLine = match;
       if (!match.met) {
         const reason = textMatchNotMetReason(match);

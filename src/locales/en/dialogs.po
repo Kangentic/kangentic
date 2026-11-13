@@ -390,6 +390,10 @@ msgstr "Agent runtime"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "Agent: {agentOverrideLabel}"
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Agent's message"
+msgstr "Agent's message"
+
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "All columns"
 msgstr "All columns"
@@ -1532,6 +1536,10 @@ msgstr "Mark as viewed"
 msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
 msgstr "Matches the last line the agent writes when its turn ends, with * and ! supported."
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Matches your last message in the turn, with * and ! supported."
+msgstr "Matches your last message in the turn, with * and ! supported."
+
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"
 msgstr "Maximize dialog"
@@ -2631,7 +2639,6 @@ msgctxt "file type"
 msgid "Text File"
 msgstr "Text File"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match"
 msgstr "Text match"
@@ -3021,3 +3028,7 @@ msgstr "Your Board Profile changes will be discarded."
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Your column order changes will be discarded."
 msgstr "Your column order changes will be discarded."
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Your message"
+msgstr "Your message"

@@ -17,8 +17,13 @@ import {
   stableAutomationTypes,
 } from '../../../../shared/automation-manifest';
 import type { AutomationField } from '../../../../shared/automation-manifest';
-import { TEXT_MATCH_PLACEHOLDER, TEXT_MATCH_UNAVAILABLE_REASON } from '../../../../shared/final-line-match';
-import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
+import {
+  TEXT_MATCH_PLACEHOLDER,
+  TEXT_MATCH_UNAVAILABLE_REASON,
+  TEXT_MATCH_USER_PLACEHOLDER,
+  TEXT_MATCH_USER_UNSUPPORTED_REASON,
+} from '../../../../shared/final-line-match';
+import type { AutomationTrigger, AutomationType, Swimlane, TextMatchSource } from '../../../../shared/types';
 import { BaseDialog, DialogFooterActions } from '../BaseDialog';
 import { Select, ToggleSwitch } from '../../settings/shared';
 import { InfoTip } from '../../settings/settings-card';
@@ -69,54 +74,76 @@ const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
 
 /**
  * How the Condition is checked: the Automation agent judging prose, or a Text
- * match in code against the agent's last line. A row holds one at a time.
+ * match in code, against the agent's last line or against the user's last
+ * message in the turn (#1078). A row holds one at a time.
  */
-type ConditionKind = 'agent' | 'text';
+type ConditionKind = 'agent' | 'agent-message' | 'user-message';
+
+/** Whose message a Text match kind reads, or null for Agent evaluation. */
+function textMatchSourceOfKind(kind: ConditionKind): TextMatchSource | null {
+  if (kind === 'agent-message') return 'agent';
+  if (kind === 'user-message') return 'user';
+  return null;
+}
 
 /**
  * Agent evaluation first: it runs on every trigger and is what a Condition has
- * always meant, so the one option that can be unavailable (Text match, off a
- * turn end) sits last. Cached until the catalog changes, for the same
- * ResizeObserver reason as `allTriggerOptions` below, one array per state.
- * The labels are descriptors resolved when the arrays are built, at render and
- * after the catalog has loaded, never at module load.
+ * always meant, so the two options that can be unavailable (the message tabs,
+ * off a turn end) sit after it. Both message tabs carry Text match's icon, so
+ * the pair reads as one kind with two sources (signed off on the #1078 canvas).
+ * Cached until the catalog changes, for the same ResizeObserver reason as
+ * `allTriggerOptions` below, one array per state. The labels are descriptors
+ * resolved when the arrays are built, at render and after the catalog has
+ * loaded, never at module load.
  */
 const AGENT_KIND_LABEL = msg`Agent evaluation`;
-const TEXT_KIND_LABEL = msg`Text match`;
-interface ConditionKindOptionSets {
-  withText: SegmentedControlOption<ConditionKind>[];
-  /** Off a turn end there is no final message, so Text match is shown and disabled, with the reason as its tip. */
-  withoutText: SegmentedControlOption<ConditionKind>[];
-}
-const conditionKindOptions = cachePerCatalog((): ConditionKindOptionSets => {
-  const agentOption: SegmentedControlOption<ConditionKind> = {
-    value: 'agent',
-    label: translateText(AGENT_KIND_LABEL),
-    icon: <Bot size={14} />,
-    testId: 'edit-automation-condition-kind-agent',
-  };
-  const textOption: SegmentedControlOption<ConditionKind> = {
-    value: 'text',
-    label: translateText(TEXT_KIND_LABEL),
-    icon: <TextSearch size={14} />,
-    testId: 'edit-automation-condition-kind-text',
-  };
-  return {
-    withText: [agentOption, textOption],
-    withoutText: [agentOption, { ...textOption, disabled: true, disabledReason: translateText(TEXT_MATCH_UNAVAILABLE_REASON) }],
-  };
+const AGENT_MESSAGE_KIND_LABEL = msg`Agent's message`;
+const USER_MESSAGE_KIND_LABEL = msg`Your message`;
+/**
+ * Keyed by why each message tab is disabled (the empty string for none), so
+ * the array keeps its identity across renders. Off a turn end both message
+ * tabs are disabled with one reason; an agent that cannot report the user's
+ * messages disables Your message alone, with that agent's and column's names.
+ */
+const conditionKindOptions = cachePerCatalogBy((key: string): SegmentedControlOption<ConditionKind>[] => {
+  const { textReason, userReason } = JSON.parse(key) as { textReason: string; userReason: string };
+  const disabledBy = (reason: string): Partial<SegmentedControlOption<ConditionKind>> => (
+    reason ? { disabled: true, disabledReason: reason } : {}
+  );
+  return [
+    {
+      value: 'agent',
+      label: translateText(AGENT_KIND_LABEL),
+      icon: <Bot size={14} />,
+      testId: 'edit-automation-condition-kind-agent',
+    },
+    {
+      value: 'agent-message',
+      label: translateText(AGENT_MESSAGE_KIND_LABEL),
+      icon: <TextSearch size={14} />,
+      testId: 'edit-automation-condition-kind-text',
+      ...disabledBy(textReason),
+    },
+    {
+      value: 'user-message',
+      label: translateText(USER_MESSAGE_KIND_LABEL),
+      icon: <TextSearch size={14} />,
+      testId: 'edit-automation-condition-kind-user',
+      ...disabledBy(textReason || userReason),
+    },
+  ];
 });
 
 /**
  * The kind a Condition opens on. A saved one keeps its own; a new one starts
  * on the first kind that can run here, so Text match is a deliberate pick
  * wherever an Automation agent can evaluate instead. Without one, a turn end
- * starts on Text match, the kind that works with no agent at all.
+ * starts on the agent's message, the kind that works with no agent at all.
  */
 function initialConditionKind(draft: AutomationDraft, automationAgentReady: boolean): ConditionKind {
-  if (draft.final_line !== null) return 'text';
+  if (draft.final_line !== null) return draft.text_match_source === 'user' ? 'user-message' : 'agent-message';
   if (draft.condition !== null) return 'agent';
-  return !automationAgentReady && draft.trigger === 'turn_end' ? 'text' : 'agent';
+  return !automationAgentReady && draft.trigger === 'turn_end' ? 'agent-message' : 'agent';
 }
 /** How tall a growing prose field may get before it scrolls. */
 const PROSE_MAX_ROWS = 8;
@@ -219,6 +246,13 @@ export interface EditAutomationDialogProps {
   /** Whether the column's agent reports a turn end. Undefined while unknown. */
   reportsTurnEnd?: boolean;
   /**
+   * Whether the column's agent reports the messages a person sends it, which
+   * Your message reads. Undefined while unknown, which allows the tab.
+   */
+  reportsUserMessages?: boolean;
+  /** The column's agent's name, for Your message's disabled reason. */
+  agentDisplayName?: string;
+  /**
    * The board's other columns in board order, for a Column field, valued by
    * NAME: the Board Manager's drafts, so a column added, recolored or given a
    * new icon in this unsaved session shows its own glyph.
@@ -248,7 +282,6 @@ export interface EditAutomationDialogProps {
 
 export function EditAutomationDialog(props: EditAutomationDialogProps) {
   const { t } = useLingui();
-  const conditionKindSets = conditionKindOptions();
   // A LOCAL copy: Done applies it to the board draft, Cancel discards it. That
   // is what makes the dialog safe to experiment in.
   const [local, setLocal] = useState<AutomationDraft>(props.draft);
@@ -319,16 +352,43 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
   // waits in `finalLineDraft`, back if the Trigger returns before Done. With no
   // Automation agent the switch still works: Text match needs none, and an
   // Agent evaluation shows the setup notice in its own field.
+  //
+  // Both message tabs share one pattern field (`finalLineDraft`): flipping
+  // between them changes whose message it reads, never what it says.
   const textMatchAvailable = local.trigger === 'turn_end';
-  const conditionKind: ConditionKind = conditionKindChoice === 'text' && !textMatchAvailable ? 'agent' : conditionKindChoice;
-  const conditionOn = conditionKind === 'text' ? local.final_line !== null : local.condition !== null;
+  const userMessageAvailable = props.reportsUserMessages !== false;
+  const columnName = props.column.name;
+  const agentName = props.agentDisplayName ?? '';
+  const userUnsupportedReason = userMessageAvailable
+    ? ''
+    : translateText(TEXT_MATCH_USER_UNSUPPORTED_REASON, { agentName, columnName });
+  const conditionKindSet = conditionKindOptions(JSON.stringify({
+    textReason: textMatchAvailable ? '' : translateText(TEXT_MATCH_UNAVAILABLE_REASON),
+    userReason: userUnsupportedReason,
+  }));
+  const kindIsAvailable = (kind: ConditionKind): boolean => {
+    if (kind === 'agent') return true;
+    if (!textMatchAvailable) return false;
+    // A saved row on the user's message stays on its tab even where the agent
+    // cannot serve it, so the row reads what it is; the pane shows it off.
+    return kind !== 'user-message' || userMessageAvailable || props.draft.text_match_source === 'user';
+  };
+  const conditionKind: ConditionKind = kindIsAvailable(conditionKindChoice) ? conditionKindChoice : 'agent';
+  const conditionKindIsText = conditionKind !== 'agent';
+  const conditionOn = conditionKindIsText ? local.final_line !== null : local.condition !== null;
   // An empty value while on is kept as '' so the switch stays on mid-edit; the
   // save normalizes a blank one to none.
-  const withCondition = (current: AutomationDraft, kind: ConditionKind, on: boolean): AutomationDraft => ({
-    ...current,
-    condition: on && kind === 'agent' ? conditionDraft : null,
-    final_line: on && kind === 'text' ? finalLineDraft : null,
-  });
+  const withCondition = (current: AutomationDraft, kind: ConditionKind, on: boolean): AutomationDraft => {
+    const source = textMatchSourceOfKind(kind);
+    return {
+      ...current,
+      condition: on && source === null ? conditionDraft : null,
+      final_line: on && source !== null ? finalLineDraft : null,
+      // The tab picked is kept even while the Condition is off, so switching
+      // it on lands where it was left.
+      text_match_source: source ?? current.text_match_source,
+    };
+  };
   const setConditionOn = (on: boolean): void => {
     setConditionKindChoice(conditionKind);
     setLocal((current) => withCondition(current, conditionKind, on));
@@ -449,7 +509,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               fullWidth
               ariaLabel={t`Condition kind`}
               testId="edit-automation-condition-kind"
-              options={textMatchAvailable ? conditionKindSets.withText : conditionKindSets.withoutText}
+              options={conditionKindSet}
               value={conditionKind}
               onChange={changeConditionKind}
             />
@@ -506,13 +566,14 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
                 </div>
               )}
             </ConditionKindBody>
-            <ConditionKindBody active={conditionKind === 'text'} testId="edit-automation-condition-text-body">
+            <ConditionKindBody active={conditionKindIsText} testId="edit-automation-condition-text-body">
               {/* One pattern per line, kept raw (blank lines too) while editing
-                  so a line survives a Trigger switch; Done drops the blanks. */}
+                  so a line survives a Trigger switch; Done drops the blanks.
+                  The same field for both message tabs. */}
               <PatternLinesField
                 testId="edit-automation-final-line"
-                value={conditionOn && conditionKind === 'text' ? (local.final_line ?? '') : ''}
-                placeholder={TEXT_MATCH_PLACEHOLDER}
+                value={conditionOn && conditionKindIsText ? (local.final_line ?? '') : ''}
+                placeholder={conditionKind === 'user-message' ? TEXT_MATCH_USER_PLACEHOLDER : TEXT_MATCH_PLACEHOLDER}
                 disabled={!conditionOn}
                 onChange={(next) => {
                   setFinalLineDraft(next);
@@ -521,7 +582,11 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               />
               {/* The template picker's height, so the two bodies line up. */}
               <span className={`flex min-h-7 items-center gap-1.5 ${SETTING_DESCRIPTION_CLASS} ${conditionOn ? '' : 'opacity-50'}`}>
-                <span data-testid="edit-automation-final-line-hint">{t`Matches the last line the agent writes when its turn ends, with * and ! supported.`}</span>
+                <span data-testid="edit-automation-final-line-hint">
+                  {conditionKind === 'user-message'
+                    ? t`Matches your last message in the turn, with * and ! supported.`
+                    : t`Matches the last line the agent writes when its turn ends, with * and ! supported.`}
+                </span>
                 <TextMatchPatternsTip />
               </span>
             </ConditionKindBody>

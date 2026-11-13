@@ -4,6 +4,7 @@ import type {
   AutomationType,
   BoardAutomationConfig,
   BoardColumnConfig,
+  TextMatchSource,
 } from '../../../shared/types';
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
 import { isWholeMaxRuns, normalizeCondition, normalizeMaxRuns } from '../../db/repositories/automation-repository';
@@ -164,6 +165,7 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
       enabled: true,
       config: { message: legacyMessage, mode: column.autoCommandMode ?? 'immediate' },
       final_line: null,
+      text_match_source: 'agent',
     });
   }
 
@@ -233,7 +235,7 @@ function readRow(
       + (readAs === null ? 'It runs without a limit.' : `Its limit is read as ${readAs}.`),
     );
   }
-  const { condition, finalLine } = readCondition(entry, trigger, `Automation "${name}" on "${columnName}"`, warnings);
+  const { condition, finalLine, source } = readCondition(entry, trigger, `Automation "${name}" on "${columnName}"`, warnings);
   return {
     name,
     type: type as AutomationType,
@@ -242,6 +244,7 @@ function readRow(
     config: readConfig(entry, type as AutomationType),
     condition: finalLine === null ? condition : null,
     final_line: finalLine,
+    text_match_source: finalLine === null ? 'agent' : source,
     max_runs: normalizeMaxRuns(typeof rawMaxRuns === 'number' ? rawMaxRuns : null),
   };
 }
@@ -265,11 +268,12 @@ function readCondition(
   trigger: AutomationTrigger,
   rowLabel: string,
   warnings: string[],
-): { condition: string | null; finalLine: string | null } {
+): { condition: string | null; finalLine: string | null; source: TextMatchSource } {
   const rawCondition: unknown = entry.condition;
   const rawFinalLine: unknown = entry.finalLine;
   let condition: string | null = null;
   let objectText: string | null = null;
+  let source: TextMatchSource = 'agent';
   const conditionIsObject = isJsonObject(rawCondition);
 
   if (typeof rawCondition === 'string') {
@@ -282,11 +286,17 @@ function readCondition(
       if (typeof value === 'string') condition = normalizeCondition(value);
       else warnings.push(`${rowLabel} has a condition.agent that is not text. It runs without a condition.`);
     } else if (kind === 'text') {
-      const lines = textMatchValueLines(value);
+      // The long form says whose message it reads (#1078):
+      // `{ "from": "user" | "agent", "patterns": "..." | [...] }`.
+      const longForm = isJsonObject(value) ? readTextMatchLongForm(value) : null;
+      const lines = isJsonObject(value) ? longForm?.lines ?? null : textMatchValueLines(value);
       if (lines === null) {
-        warnings.push(`${rowLabel} has a condition.text that is not text or a list of text. It runs without a condition.`);
+        warnings.push(isJsonObject(value)
+          ? `${rowLabel} has a condition.text that is not { "from": "agent" | "user", "patterns": ... }. It runs without a condition.`
+          : `${rowLabel} has a condition.text that is not text or a list of text. It runs without a condition.`);
       } else {
         objectText = readTextMatch(lines.join('\n'), 'condition.text', trigger, rowLabel, warnings);
+        if (objectText !== null) source = longForm?.source ?? 'agent';
       }
     } else {
       warnings.push(`${rowLabel} has a condition that is not { "text": ... } or { "agent": ... }. It runs without one.`);
@@ -312,7 +322,23 @@ function readCondition(
     warnings.push(`${rowLabel} has both a condition and a finalLine. A row holds one kind of condition, so it keeps ${kept}.`);
   }
   const finalLine = objectText ?? (objectGaveCondition ? null : legacyText);
-  return { condition: finalLine === null ? condition : null, finalLine };
+  // A legacy finalLine is always the agent's line.
+  return { condition: finalLine === null ? condition : null, finalLine, source: objectText !== null ? source : 'agent' };
+}
+
+/**
+ * The long form of `condition.text`: whose message it reads and its patterns.
+ * Null when `from` is missing or unknown, a key is extra, or `patterns` is not
+ * text or a list of text: the row then runs without a condition, as any other
+ * malformed condition does.
+ */
+function readTextMatchLongForm(value: Record<string, unknown>): { source: TextMatchSource; lines: string[] } | null {
+  const keys = Object.keys(value);
+  if (keys.some((key) => key !== 'from' && key !== 'patterns')) return null;
+  const from: unknown = value.from;
+  if (from !== 'agent' && from !== 'user') return null;
+  const lines = textMatchValueLines(value.patterns);
+  return lines === null ? null : { source: from, lines };
 }
 
 /** A `condition.text` value as pattern lines: a string, or a list of strings, else null. */

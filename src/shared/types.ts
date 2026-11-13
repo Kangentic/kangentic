@@ -454,6 +454,10 @@ export interface AgentDetectionInfo {
   /** True if the agent says when its turn ended (`AdapterRuntimeStrategy.reportsTurnEnd`), which
    *  is what a column's On agent turn end automations and a workflow task's step check need. */
   reportsTurnEnd?: boolean;
+  /** True if Kangentic can read one turn's user messages back from the agent's own transcript,
+   *  which a Text match on Your message needs (`text_match_source: 'user'`). Derived from the
+   *  adapter having a windowed transcript reader (`canReadTurnUserMessages`), never from its name. */
+  reportsUserMessages?: boolean;
   /** True if the adapter can answer a question over supplied context (used by the
    *  Knowledge Graph's Ask). Read instead of the agent's name, per
    *  `.claude/rules/agent-adapters-boundary.md`. */
@@ -1435,6 +1439,14 @@ export interface ColumnAutomation {
    */
   final_line: string | null;
   /**
+   * Whose message the Text match reads: the agent's last line (`'agent'`, the
+   * only kind before #1078) or the user's last message in the turn
+   * (`'user'`). Always `'agent'` when the row has no Text match. A `'user'` row
+   * is never an agent exit (`workflow-step-condition.ts`): it is the user's way
+   * on, so a forward one keeps the column a person's gate.
+   */
+  text_match_source: TextMatchSource;
+  /**
    * The most times this row may run on one task, counted across every visit
    * to the column since a person last moved the task to another column, or it
    * last left Done (`AutomationRunRepository.countRuns`). The board's own moves
@@ -1445,6 +1457,14 @@ export interface ColumnAutomation {
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * Whose message a Text match reads. The Edit automation dialog shows the two
+ * as the Agent's message and Your message tabs, and the board file and the MCP
+ * tools write them as `condition.text` (short form, the agent) or
+ * `condition.text.from` (`'agent' | 'user'`).
+ */
+export type TextMatchSource = 'agent' | 'user';
 
 /** What the renderer sends when saving a column's list. `id` is kept when supplied. */
 export interface AutomationWriteInput {
@@ -1463,6 +1483,12 @@ export interface AutomationWriteInput {
    * firing at every turn end. Required, the compiler names each such caller.
    */
   final_line: string | null;
+  /**
+   * See `ColumnAutomation.text_match_source`. REQUIRED for the same reason as
+   * `final_line`: a writer that dropped it would turn a row on the user's
+   * message into one on the agent's line, which a workflow reads as an exit.
+   */
+  text_match_source: TextMatchSource;
   /** See `ColumnAutomation.max_runs`. Omitted or null: no limit. */
   max_runs?: number | null;
 }
@@ -8372,8 +8398,21 @@ export interface BoardColumnConfig {
  * `tests/unit/automation-manifest-reserved-keys.test.ts` fails an adapter that
  * declares one of them.
  */
-/** A `kangentic.json` row's Condition, as written: exactly one kind. */
-export type BoardAutomationCondition = { text: string | string[] } | { agent: string };
+/**
+ * A `kangentic.json` row's Condition, as written: exactly one kind. A Text
+ * match on the agent's line is the short form, `{ "text": ... }`; one on the
+ * user's message is the long form, `{ "text": { "from": "user", "patterns":
+ * ... } }`, which also takes `"from": "agent"`.
+ */
+export type BoardAutomationCondition =
+  | { text: string | string[] | BoardTextMatchCondition }
+  | { agent: string };
+
+/** The long form of a `condition.text`: whose message it reads, and its patterns. */
+export interface BoardTextMatchCondition {
+  from: TextMatchSource;
+  patterns: string | string[];
+}
 
 export type BoardAutomationConfig = {
   name: string;
@@ -8386,6 +8425,8 @@ export type BoardAutomationConfig = {
    * judges, or `{ "text": "..." | ["...", ...] }`, a Text match checked in code
    * against the last line the agent writes when its turn ends (one pattern per
    * item, `*` a wildcard, a leading `!` meaning not; `onTurnEnd` rows only).
+   * `{ "text": { "from": "user", "patterns": ... } }` matches the user's last
+   * message in the turn instead.
    * A plain string is what older builds wrote, read as an Agent evaluation.
    * Omitted means the row always runs.
    */

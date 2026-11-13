@@ -236,13 +236,45 @@ describe('what a step that is not done is stuck on', () => {
  */
 describe('stepExitVerdict', () => {
   const codeReview = columnNamed('Code Review');
-  const exitTo = (finalLine: string, targetName: string | null): StepExitRow => ({
+  const exitTo = (finalLine: string, targetName: string | null, source: StepExitRow['source'] = 'agent'): StepExitRow => ({
     finalLine,
+    source,
     target: targetName === null ? null : columnNamed(targetName),
   });
   const BACK_FOR_REVISIONS = exitTo('Verdict: Blocked', 'Executing');
   const ON_TO_TESTING = exitTo('Verdict: Ready', 'Testing');
   const REVIEW_ROWS = [BACK_FOR_REVISIONS, ON_TO_TESTING];
+
+  // #1078: a forward row on the user's message is the person's way on. The agent's line never
+  // takes it, the column is a person's gate, and the step stops the card rather than moving it.
+  describe('a forward row on the user\'s message', () => {
+    const ON_TO_TESTING_BY_USER = exitTo('*signed off*', 'Testing', 'user');
+
+    it('is a person\'s gate with no agent exit at all', () => {
+      expect(isSendBackOnly(codeReview, [ON_TO_TESTING_BY_USER])).toBe(true);
+      expect(stepExitVerdict(codeReview, [ON_TO_TESTING_BY_USER], 'All done, the canvas is ready.')).toEqual({ accepted: true, stopsHere: true });
+    });
+
+    it('never accepts the agent\'s line, even one that names the sign-off', () => {
+      expect(stepExitVerdict(codeReview, [ON_TO_TESTING_BY_USER], 'To sign off, type signed off')).toEqual({ accepted: true, stopsHere: true });
+    });
+
+    it('refuses an empty reply as a stall', () => {
+      expect(stepExitVerdict(codeReview, [ON_TO_TESTING_BY_USER], null)).toMatchObject({ accepted: false });
+    });
+
+    it('keeps a send-back row on the agent\'s line working beside it', () => {
+      const rows = [exitTo('Design: shelved', 'Executing'), ON_TO_TESTING_BY_USER];
+      expect(isSendBackOnly(codeReview, rows)).toBe(true);
+      expect(stepExitVerdict(codeReview, rows, 'Design: shelved')).toMatchObject({ accepted: false });
+      expect(stepExitVerdict(codeReview, rows, 'Here is the canvas.')).toEqual({ accepted: true, stopsHere: true });
+    });
+
+    it('leaves a user row that sends the task back out of the gate', () => {
+      expect(isSendBackOnly(codeReview, [exitTo('*start over*', 'Executing', 'user')])).toBe(false);
+      expect(stepExitVerdict(codeReview, [exitTo('*start over*', 'Executing', 'user')], 'Done.')).toBeNull();
+    });
+  });
 
   it('refuses a reply neither row matches (task 916)', () => {
     expect(stepExitVerdict(codeReview, REVIEW_ROWS, 'The branch is identical to main.\n\nNo changes to review.')).toEqual({
@@ -418,8 +450,14 @@ describe('columnExitRows', () => {
 
   it('keeps a move row with a final line, resolved to the board column it names', () => {
     expect(columnExitRows([row({})], FULL_BOARD, REVIEW, null)).toEqual([
-      { finalLine: 'Verdict: Ready', target: FULL_BOARD[3] },
+      { finalLine: 'Verdict: Ready', source: 'agent', target: FULL_BOARD[3] },
     ]);
+  });
+
+  // #1078: a row on the user's message keeps its source, so the step check never reads it as an exit.
+  it('marks a row whose Text match reads the user\'s message', () => {
+    const [exit] = columnExitRows([row({ final_line: '*signed off*', text_match_source: 'user' })], FULL_BOARD, REVIEW, null);
+    expect(exit.source).toBe('user');
   });
 
   it('drops a move row with no final line, since it moves on every turn end', () => {
@@ -434,7 +472,7 @@ describe('columnExitRows', () => {
   it('records a null target for a row whose column name matches no column', () => {
     const dangling = row({ config: { targetColumn: 'Nowhere' } });
     expect(columnExitRows([dangling], FULL_BOARD, REVIEW, null)).toEqual([
-      { finalLine: 'Verdict: Ready', target: null },
+      { finalLine: 'Verdict: Ready', source: 'agent', target: null },
     ]);
   });
 

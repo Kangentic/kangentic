@@ -28,6 +28,7 @@ import { FontResolver } from '../font-resolver';
 import { TerminalSubmitScheduler } from '../transition-engine/terminal-submit-scheduler';
 import { createPasteEngine } from '../pty/paste-engine';
 import { TerminalSubmit } from '../pty/terminal-submit';
+import { recordKangenticTyped } from '../automations/turn-end/typed-message-ledger';
 import {
   registerProjectHandlers,
   cleanupProject as cleanupProjectImpl,
@@ -233,7 +234,13 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     listHolders: () => sessionManager.listColumnHolders(),
   }));
   const pasteEngine = createPasteEngine(sessionManager);
-  const terminalSubmit = new TerminalSubmit(sessionManager, pasteEngine);
+  // Every text Kangentic types into a session is recorded, so a Text match on
+  // the user's message never reads Kangentic's own words as theirs (#1078).
+  const terminalSubmit = new TerminalSubmit(
+    sessionManager,
+    pasteEngine,
+    (sessionId, text) => recordKangenticTyped(sessionManager, sessionId, text),
+  );
   const terminalSubmitScheduler = new TerminalSubmitScheduler(sessionManager, terminalSubmit);
   const transcriptionService = new TranscriptionService();
   const boardConfigManager = new BoardConfigManager({

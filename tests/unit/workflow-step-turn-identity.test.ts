@@ -197,6 +197,19 @@ describe('the workflow step and the turn it judged', () => {
     );
   });
 
+  // #1078: a column's row (On to Planning, on the user's message) moved the task at this turn end
+  // before the step ran. The step judges the column the turn ended in, so it must not act a second
+  // time on a task that has already left it.
+  it('asks nothing, moves nothing and writes nothing when a row already moved the task out of the column', async () => {
+    moveTaskTo('lane-review');
+
+    await runStep('lane-executing');
+
+    expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
+    expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+  });
+
   it('moves nothing and writes nothing when a newer turn failed back to idle during the check', async () => {
     // The user typed "continue" while the check was out, and that turn ended
     // in an API error: idle again, with no turn end of its own.

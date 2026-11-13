@@ -394,6 +394,10 @@ msgstr "智能体运行时长"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "智能体：{agentOverrideLabel}"
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Agent's message"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "All columns"
 msgstr "所有列"
@@ -1542,6 +1546,10 @@ msgstr "标记为已查看"
 msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
 msgstr ""
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Matches your last message in the turn, with * and ! supported."
+msgstr ""
+
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"
 msgstr "最大化对话框"
@@ -2650,7 +2658,6 @@ msgctxt "file type"
 msgid "Text File"
 msgstr "文本文件"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match"
 msgstr "文本匹配"
@@ -3045,3 +3052,7 @@ msgstr "你对看板配置的更改将被放弃。"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Your column order changes will be discarded."
 msgstr "你对列顺序的更改将被放弃。"
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Your message"
+msgstr ""

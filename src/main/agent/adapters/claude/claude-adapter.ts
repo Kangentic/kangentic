@@ -7,6 +7,7 @@ import { CommandBuilder, claudeMcpServerEntry } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { findClaudeResumeTranscriptFile, findClaudeTranscriptFile, resolveClaudeTranscriptFile } from './transcript-locator';
+import { readClaudeQueuedUserMessages } from './queued-user-messages';
 import {
   parseClaudeTranscript,
   parseClaudeTranscriptWindow,
@@ -734,6 +735,22 @@ export class ClaudeAdapter implements AgentAdapter {
       filePath, startByte, maxBytes, attributedMessageIds,
     );
     return { ...window, sourcePath: filePath };
+  }
+
+  /** What a person typed while Claude was mid-turn: queued-user-messages.ts. */
+  async readQueuedUserMessages(
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<Array<{ text: string; ts: number }> | null> {
+    try {
+      const filePath = await resolveClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath });
+      return await readClaudeQueuedUserMessages(filePath, startByte);
+    } catch {
+      return null;
+    }
   }
 
   /** One page of the transcript's history for the Conversation viewer. */

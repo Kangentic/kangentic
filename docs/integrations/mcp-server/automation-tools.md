@@ -41,6 +41,12 @@ Every row also takes guards, a Condition of one kind or the other and a Frequenc
     runs when the line matches any plain pattern and no `!` pattern, in any order; with only `!`
     patterns, on any line but those. `turn_end` rows only, up to 20 patterns of 500 characters.
     A turn with no message runs none, `!` included.
+  - `{ "text": { "from": "user", "patterns": ["*signed off*", "!*not signed off*"] } }`: the same
+    Text match against the user's last message in the turn instead (#1078), queued messages
+    included and text Kangentic typed left out. It fails closed: a turn it cannot read exactly runs
+    no such row. A forward row of this kind makes the column a person's gate for a workflow.
+    `"from": "agent"` is the short form, and a row reads back in the short form for it. An unknown
+    `from` or an extra key is refused, naming the long form.
 - **`finalLine`**: the old key for `condition: { "text": ... }`, still accepted: one pattern, its
   leading `!` taken off as it meant nothing then. A row gives this or `condition`, not both. A
   blank sentence or an empty `{ "text": [] }` is no condition, so either may sit beside it.

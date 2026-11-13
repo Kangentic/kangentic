@@ -345,10 +345,35 @@ line but those. A `!` is safe to read as syntax because punctuation never reache
 so no line can contain one. A Text match needs a final message, so it works in `onTurnEnd` only,
 and a turn with no message runs none, `!` included.
 
+**A Text match can read the user's message instead (#1078).** Its long form names the source:
+`{ "text": { "from": "user", "patterns": ["*signed off*", "!*not signed off*"] } }`. It matches the
+same patterns against the user's last message in the turn, messages typed while the agent was
+mid-turn included, read from the agent's own transcript at the turn end. Text Kangentic itself
+typed into the session (a column message, a nudge, a move's message, a resume's prompt) never
+counts: Kangentic records a hash of each one it sends (`session_typed_messages`) and drops a
+matching message. A message the phone sent counts; one the phone held for a paused task is typed
+in later as Kangentic's and does not. The read fails closed: a turn with no anchor (a fresh
+spawn's first turn, Run again), a turn larger than 8 MB, a session whose record could not be
+written, or any read error runs no such row. Only an agent that can report the turn's messages,
+queued input included, runs one (Claude Code today); elsewhere the row is shown off with the
+reason. `"from": "agent"` is the short form's meaning, and the export writes the short form for
+it. A forward row of this kind makes its column a person's gate for a workflow: the agent's line
+never moves the card out, the person's message or drag does. An unknown `from`, an extra key, or
+`patterns` that are not text or a list of text read as off with a warning, as any malformed
+condition does.
+
+A build from before #1078 reads the long form that way too: its warning says the row runs
+without a condition, so a Move to column row on the user's message moves the card at every turn
+end there. The file carries no version gate, so everyone who shares a board that uses the long
+form runs a build that knows it. The database has the same split: an older build reads a stored
+`text_match_source` of `user` as the agent's line, and its next save of the column clears it.
+
 **What older builds wrote still reads.** A plain string under `condition` is an Agent evaluation,
 and a `finalLine` key is a Text match of one pattern whose leading `!` is taken off, since it
 meant nothing when that key was written. The export writes neither, so the first save after
-upgrading rewrites each Condition into the nested shape, a one-time diff in a tracked file.
+upgrading rewrites each Condition into the nested shape, a one-time diff in a tracked file. This
+repo's own `kangentic.json` carries no `finalLine` since #1078, and
+`board-turn-end-contracts.test.ts` keeps it that way.
 
 **Keys this build does not know are kept.** When the export rebuilds a column's `automations`, it
 carries over any automation list, row type, or row key it does not recognize from the file it last

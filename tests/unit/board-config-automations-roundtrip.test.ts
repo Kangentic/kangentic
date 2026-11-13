@@ -295,6 +295,43 @@ describe('kangentic.json automations round-trip', () => {
         expect(build().columns).toEqual(first.columns);
       });
 
+      // #1078: the long form says the Text match reads the user's message, and round-trips.
+      it('writes a Text match on the user\'s message in the long form and round-trips it', () => {
+        const { lanes, automations } = freshDatabase();
+        const executing = lanes.list().find((lane) => lane.name === 'Executing')!;
+        automations.replaceForColumn(executing.id, [
+          {
+            name: 'On to Code Review', type: 'move_to_column', trigger: 'turn_end', enabled: true,
+            config: { targetColumn: 'Code Review' }, final_line: '*signed off*\n!*not signed off*', text_match_source: 'user', max_runs: 1,
+          },
+        ]);
+
+        const first = build();
+        expect(columnNamed(first, 'Executing')?.automations?.onTurnEnd?.[0]).toMatchObject({
+          condition: { text: { from: 'user', patterns: ['*signed off*', '!*not signed off*'] } },
+        });
+        applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(first)) as BoardConfig);
+        expect(automations.listForColumn(executing.id)[0]).toMatchObject({ final_line: '*signed off*\n!*not signed off*', text_match_source: 'user' });
+        expect(build().columns).toEqual(first.columns);
+      });
+
+      it('reads the long form from the agent as the agent\'s line, and an unknown from as no condition, said so', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onTurnEnd: [
+              { name: 'Agent long', type: 'notify', condition: { text: { from: 'agent', patterns: 'Verdict: Ready' } } },
+              { name: 'Unknown from', type: 'notify', condition: { text: { from: 'owner', patterns: 'signed off' } } as unknown as { text: string } },
+            ],
+          },
+        });
+        expect(plan.rows.map((row) => [row.name, row.final_line, row.text_match_source])).toEqual([
+          ['Agent long', 'Verdict: Ready', 'agent'],
+          ['Unknown from', null, 'agent'],
+        ]);
+        expect(plan.warnings.join('\n')).toContain('Unknown from');
+      });
+
       it('reads what older builds wrote: a string condition as an Agent evaluation, finalLine as text with its ! taken off', () => {
         const plan = planColumnAutomations({
           name: 'Code Review',
@@ -458,6 +495,47 @@ describe('kangentic.json automations round-trip', () => {
           'Automation "Object" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the condition.',
           'Automation "String" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.',
         ]);
+      });
+
+      it('reads a malformed long form (an extra key, non-text patterns) as no condition and names the long form', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onTurnEnd: [
+              { name: 'Extra key', type: 'notify', condition: { text: { from: 'user', patterns: 'x', other: 1 } } as unknown as { text: string } },
+              { name: 'Number patterns', type: 'notify', condition: { text: { from: 'user', patterns: 5 } } as unknown as { text: string } },
+            ],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.name, row.condition, row.final_line, row.text_match_source])).toEqual([
+          ['Extra key', null, null, 'agent'],
+          ['Number patterns', null, null, 'agent'],
+        ]);
+        expect(plan.warnings).toEqual([
+          'Automation "Extra key" on "Code Review" has a condition.text that is not { "from": "agent" | "user", "patterns": ... }. It runs without a condition.',
+          'Automation "Number patterns" on "Code Review" has a condition.text that is not { "from": "agent" | "user", "patterns": ... }. It runs without a condition.',
+        ]);
+      });
+
+      it('keeps a user long form over a legacy finalLine, source included, and falls back to the agent line when the long form is unreadable', () => {
+        const plan = planColumnAutomations({
+          name: 'Code Review',
+          automations: {
+            onTurnEnd: [
+              { name: 'User wins', type: 'notify', condition: { text: { from: 'user', patterns: 'Ready' } } as unknown as { text: string }, finalLine: 'Done' },
+              { name: 'Bad long form', type: 'notify', condition: { text: { from: 'user', patterns: 5 } } as unknown as { text: string }, finalLine: 'Done' },
+            ],
+          },
+        });
+
+        expect(plan.rows.map((row) => [row.name, row.final_line, row.text_match_source])).toEqual([
+          ['User wins', 'Ready', 'user'],
+          ['Bad long form', 'Done', 'agent'],
+        ]);
+        expect(plan.warnings).toContain(
+          'Automation "User wins" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the condition.',
+        );
       });
 
       it('warns naming condition.text for a pattern of only punctuation, and keeps it', () => {

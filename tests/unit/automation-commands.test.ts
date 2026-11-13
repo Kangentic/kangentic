@@ -36,7 +36,7 @@ import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { AutomationRunAgainResult, BoardProfile } from '../../src/shared/types';
 
 /** What an agent reads over MCP, written out here rather than derived from the code under test. */
-const TEXT_MATCH_UNAVAILABLE_ENGLISH = 'Text match reads the agent\'s last message, so it runs on agent turn end only.';
+const TEXT_MATCH_UNAVAILABLE_ENGLISH = 'Matching a message runs on agent turn end only.';
 
 /** A fake French rendering of the same message. No apostrophes: ICU can read one as quoting. */
 const TEXT_MATCH_UNAVAILABLE_FRENCH = 'La correspondance de texte lit le dernier message, donc elle ne tourne qu en fin de tour.';
@@ -512,6 +512,36 @@ describe('automation MCP commands', () => {
         });
         const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
         expect(saved.condition).toEqual({ text: ['!Design: waiting on you', '!Design: shelved'] });
+      });
+
+      // #1078: the long form says whose message it reads, and round-trips as written.
+      it('stores a Text match on the user\'s message from the long form and reads it back the same', () => {
+        const response = setOne({ condition: { text: { from: 'user', patterns: ['*signed off*', '!*not signed off*'] } } });
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({
+          final_line: '*signed off*\n!*not signed off*',
+          text_match_source: 'user',
+        });
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.condition).toEqual({ text: { from: 'user', patterns: ['*signed off*', '!*not signed off*'] } });
+      });
+
+      it('reads the long form from the agent as the short form', () => {
+        const response = setOne({ condition: { text: { from: 'agent', patterns: 'Findings: applied' } } });
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({ text_match_source: 'agent' });
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.condition).toEqual({ text: 'Findings: applied' });
+      });
+
+      it('refuses a long form with an unknown from or key, saying what it takes', () => {
+        const unknownFrom = setOne({ condition: { text: { from: 'owner', patterns: 'x' } } });
+        expect(unknownFrom.success).toBe(false);
+        expect(unknownFrom.error).toContain('condition.text.from');
+        const extraKey = setOne({ condition: { text: { from: 'user', patterns: 'x', mode: 'any' } } });
+        expect(extraKey.success).toBe(false);
+        expect(extraKey.error).toContain('"mode"');
       });
 
       it('stores one pattern as text and reads it back as a string', () => {

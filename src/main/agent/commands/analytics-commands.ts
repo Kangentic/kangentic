@@ -731,7 +731,9 @@ export const handleGetColumnDetail: CommandHandler = (
       const textRule = row.trigger === 'turn_end' ? textMatchRule(row.final_line, englishI18n) : null;
       const guards = [
         textRule === null && row.condition ? `only if: ${row.condition}` : null,
-        textRule !== null ? `only if the last line ${textRule}` : null,
+        // Whose message it reads (#1078): an agent reading this must not take a
+        // row on the user's message for one its own last line can trigger.
+        textRule !== null ? `only if ${row.text_match_source === 'user' ? "the user's message" : 'the last line'} ${textRule}` : null,
         row.max_runs !== null ? `at most ${row.max_runs} per task` : null,
       ].filter((guard): guard is string => guard !== null);
       lines.push(

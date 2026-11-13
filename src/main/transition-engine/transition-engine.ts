@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import type { UserMessageRead } from '../../shared/final-line-match';
+import { recordKangenticTypedInProject } from '../automations/turn-end/typed-message-ledger';
 import type {
   Task,
   ActionConfig,
@@ -323,6 +325,10 @@ interface AutomationGroupOptions {
   groupBudgetMs?: number;
   /** Turn end only: the agent's final message of the turn, for `{{agentReply}}` and Conditions. */
   agentReply?: string | null;
+  /** Turn end only: the user's last message in the turn, for a Text match on it (see `RunAutomationsOptions`). */
+  userMessage?: UserMessageRead;
+  /** Turn end only: whether the turn's agent reports the user's messages (see `RunAutomationsOptions`). */
+  reportsUserMessages?: boolean;
   /** Turn end only: Conditions the caller already answered (see `RunAutomationsOptions`). */
   conditionAnswers?: ReadonlyMap<string, RunConditionAnswer>;
   /** Turn end only: why a Condition without an answer could not be checked. */
@@ -640,6 +646,8 @@ export class TransitionEngine {
       // A Text match reads it in code. Left undefined, not null, on enter and
       // exit: there is no final message there, rather than one that failed to read.
       agentReply: options.agentReply,
+      userMessage: options.userMessage,
+      reportsUserMessages: options.reportsUserMessages,
       holdMoves: options.holdMoves,
       releaseHeldMoves: options.releaseHeldMoves,
       // Enter and exit check their Conditions here, once for the group. The
@@ -1336,6 +1344,11 @@ export class TransitionEngine {
       start_head_sha: record.startHeadSha,
       account_id: record.accountId ?? null,
     });
+    // The prompt is Kangentic's own text, whether it rides the command line or
+    // is typed in later (#1078). A resume's first turn is anchored, so without
+    // this its prompt (a column message naming "signed off") would read as the
+    // user's message. Recorded as the original, before any shim flattening.
+    if (record.prompt) recordKangenticTypedInProject(this.getConfig().projectId, record.sessionId, record.prompt);
     // Record the model/effort this spawn/resume actually applied via the CLI
     // flags (the same `spawnOverrides` that fed `commandOptions`). This is the
     // ground truth a later column transition diffs against, so a move into a

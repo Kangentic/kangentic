@@ -87,8 +87,8 @@ export function useColumnAutomationSentence(swimlaneId: string): string | null {
     // ends, the same answer the Column Manager gives.
     const lane = swimlanes.find((candidate) => candidate.id === swimlaneId);
     const agentName = lane?.agent_override ?? projectDefaultAgent;
-    const reportsTurnEnd = agentList.find((agent) => agent.name === agentName)?.reportsTurnEnd;
-    return selectAutomationCounts({ automations, swimlanes }, swimlaneId, reportsTurnEnd);
+    const agentInfo = agentList.find((agent) => agent.name === agentName);
+    return selectAutomationCounts({ automations, swimlanes }, swimlaneId, agentInfo?.reportsTurnEnd, agentInfo?.reportsUserMessages);
   }, [automations, swimlanes, swimlaneId, agentList, projectDefaultAgent]);
   const total = counts.enter + counts.turn_end + counts.exit;
   if (total === 0) return null;

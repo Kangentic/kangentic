@@ -61,6 +61,11 @@ export interface AutomationsPaneProps {
    * blocking it on a guess.
    */
   reportsTurnEnd?: boolean;
+  /**
+   * Whether that agent reports the messages a person sends it, which a Text
+   * match on the user's message reads (#1078). Undefined while the list loads.
+   */
+  reportsUserMessages?: boolean;
   drafts: AutomationDraft[];
   /**
    * Read-only under a profile: a list belongs to the COLUMN, not to a profile
@@ -349,6 +354,7 @@ function AutomationRow({
   index,
   column,
   reportsTurnEnd,
+  reportsUserMessages,
   readOnly,
   onEdit,
   onDelete,
@@ -359,7 +365,7 @@ function AutomationRow({
   const { t } = useLingui();
   const name = draft.name;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: draft.id });
-  const runnable = canRunRow(draft, { ...column, reportsTurnEnd });
+  const runnable = canRunRow(draft, { ...column, reportsTurnEnd, reportsUserMessages });
   const entry = AUTOMATION_MANIFEST[draft.type];
   const legacy = entry.status === 'legacy';
   // Each mark's tooltip leads with its editor card's name, so a first hover

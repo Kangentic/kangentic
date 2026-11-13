@@ -20,13 +20,15 @@ import {
   frequencyLimitReason,
   CONDITION_CHECK_WAIT_MS,
   TEXT_MATCH_NO_TURN_REASON,
+  textMatchNotMetReason,
   type ConditionCheckResult,
 } from '../../src/main/automations/automation-runner';
 import { hasCondition, hasFinalLine, hasGuard } from '../../src/main/automations/row-guards';
-import { TEXT_MATCH_NO_REPLY_REASON } from '../../src/shared/final-line-match';
+import { TEXT_MATCH_NO_REPLY_REASON, USER_TEXT_MATCH_UNREADABLE_REASON } from '../../src/shared/final-line-match';
+import { englishText } from '../../src/shared/i18n/english';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
 import type { ConditionCheckLimits } from '../../src/main/automations/condition-check/condition-check';
-import { AUTOMATION_MANIFEST, EXIT_GROUP_BUDGET_MS } from '../../src/shared/automation-manifest';
+import { AUTOMATION_MANIFEST, EXIT_GROUP_BUDGET_MS, USER_MESSAGES_UNREPORTED_REASON } from '../../src/shared/automation-manifest';
 import type { AutomationAdapter, AutomationContext } from '../../src/main/automations/shared/automation-adapter';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../src/main/db/repositories/automation-run-repository';
 import type { AutomationRunStatus, AutomationType, ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
@@ -315,6 +317,53 @@ describe('Text match', () => {
     expect(repository.countRuns('a1', 'task-1')).toBe(0);
   });
 
+  // #1078: a row on the user's message reads their message, never the agent's line, and fails
+  // closed when the caller read none. The reason never quotes the user.
+  describe('on the user\'s message', () => {
+    const runUserRow = async (userMessage: Parameters<typeof runAutomations>[0]['userMessage']) => {
+      const executed = vi.fn(async () => ({ detail: 'Moved to Planning.' }));
+      const { rows, repository } = fakeRuns();
+      await runAutomations({
+        automations: [automation({ final_line: '*signed off*\n!*not signed off*', text_match_source: 'user' })],
+        column: COLUMN,
+        context: context(),
+        runs: repository,
+        signal: new AbortController().signal,
+        registry: registryOf(adapter('webhook', executed)),
+        // The agent's own line names the phrase: it must not count.
+        agentReply: 'To sign off, type signed off or move the card to Planning.',
+        userMessage,
+      });
+      return { executed, rows };
+    };
+
+    it('runs when the user\'s message matches', async () => {
+      const { executed, rows } = await runUserRow({ readable: true, message: 'Design is signed off' });
+      expect(executed).toHaveBeenCalledTimes(1);
+      expect(rows[0]).toMatchObject({ status: 'succeeded', finalLine: { met: true } });
+      expect(JSON.stringify(rows[0])).not.toContain('Design is signed off');
+    });
+
+    it('never runs on the agent\'s line alone', async () => {
+      const { executed } = await runUserRow({ readable: true, message: null });
+      expect(executed).not.toHaveBeenCalled();
+    });
+
+    it('skips, not met, when the user\'s message rules it out', async () => {
+      const { executed, rows } = await runUserRow({ readable: true, message: 'not signed off yet' });
+      expect(executed).not.toHaveBeenCalled();
+      expect(rows[0]).toMatchObject({ status: 'skipped' });
+    });
+
+    it('fails closed when the turn could not be read, or the caller read nothing', async () => {
+      for (const read of [{ readable: false as const }, undefined]) {
+        const { executed, rows } = await runUserRow(read);
+        expect(executed).not.toHaveBeenCalled();
+        expect(rows[0]).toMatchObject({ status: 'skipped' });
+      }
+    });
+  });
+
   it('reads a reply that could not be read as not met, with why', async () => {
     const { rows, repository } = fakeRuns();
     await runAutomations({
@@ -416,6 +465,72 @@ describe('Text match', () => {
 // CONDITION_CHECK_WAIT_MS, and the move's own abort. Without the bound a slow
 // Automation agent, or a queue of turn-end checks ahead of it, held that
 // task's lock for minutes.
+// #1078: `reportsUserMessages` feeds canColumnRun with the row's source, so the engine
+// refuses a user-source row exactly as the board shows it, with its own reason.
+describe('Text match on the user\'s message: reportsUserMessages', () => {
+  const USER_ROW = { final_line: '*signed off*', text_match_source: 'user' as const };
+  const AGENT_NAMES_PHRASE = 'To sign off, type signed off to continue.';
+
+  async function runRow(
+    row: Partial<ColumnAutomation>,
+    extra: Partial<Parameters<typeof runAutomations>[0]>,
+  ) {
+    const executed = vi.fn(async () => ({ detail: 'Moved.' }));
+    const { rows, repository } = fakeRuns();
+    await runAutomations({
+      automations: [automation(row)],
+      column: COLUMN,
+      context: context(),
+      runs: repository,
+      signal: new AbortController().signal,
+      registry: registryOf(adapter('webhook', executed)),
+      agentReply: AGENT_NAMES_PHRASE,
+      ...extra,
+    });
+    return { executed, rows };
+  }
+
+  it('skips a user-source row with the unreported-messages reason when the agent cannot report them', async () => {
+    const { executed, rows } = await runRow(USER_ROW, {
+      reportsUserMessages: false,
+      userMessage: { readable: true, message: 'Signed off.' },
+    });
+    expect(executed).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'skipped', detail: englishText(USER_MESSAGES_UNREPORTED_REASON), finalLine: null });
+  });
+
+  it('still runs an agent-source row when the agent cannot report user messages', async () => {
+    const { executed } = await runRow(
+      { final_line: 'Verdict: Ready', text_match_source: 'agent' },
+      { reportsUserMessages: false, agentReply: 'All done.\n\nVerdict: Ready' },
+    );
+    expect(executed).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips with the unreadable reason when reportsUserMessages is unknown and no message was read', async () => {
+    const { executed, rows } = await runRow(USER_ROW, {});
+    expect(executed).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({
+      status: 'skipped',
+      detail: textMatchNotMetReason({ met: false, reason: USER_TEXT_MATCH_UNREADABLE_REASON }),
+    });
+  });
+
+  it('runs a user-source row on a matching, readable user message', async () => {
+    const { executed, rows } = await runRow(USER_ROW, {
+      userMessage: { readable: true, message: 'Signed off.' },
+    });
+    expect(executed).toHaveBeenCalledTimes(1);
+    expect(rows[0]).toMatchObject({ status: 'succeeded', finalLine: { met: true } });
+  });
+
+  it('never runs a user-source row off the agent reply, even when the reply matches', async () => {
+    const { executed } = await runRow(USER_ROW, { agentReply: 'Signed off.', reportsUserMessages: true });
+    expect(executed).not.toHaveBeenCalled();
+  });
+});
+
 describe('the bound on a group Condition check', () => {
   /** Run one group with a guarded row and return the limits its single check was given. */
   async function limitsGiven(

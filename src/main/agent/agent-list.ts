@@ -23,6 +23,7 @@ import { createCachedSingleton, type CachedSingleton } from '../shared/cached-si
 import { agentRegistry } from './agent-registry';
 import { invalidateWslDistroFacts } from './shared/wsl-distro';
 import { canBeWorkflowAgent } from './shared/workflow-agent-capability';
+import { canReadTurnUserMessages } from './shared/transcript-reader-capability';
 import type { AgentAdapter } from './agent-adapter';
 import type { HostAgentProbe } from '../remote/host-agent-probe';
 import type { AgentDetectionInfo } from '../../shared/types';
@@ -138,6 +139,7 @@ function adapterFacts(agentName: string, adapter: AgentAdapter): Omit<AgentDetec
     pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
     supportsSummarize: typeof adapter.summarize === 'function',
     reportsTurnEnd: adapter.runtime.reportsTurnEnd,
+    reportsUserMessages: canReadTurnUserMessages(adapter),
     supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
     answerCapabilities: adapter.answerCapabilities,
     kangenticMcp: adapter.kangenticMcp,

@@ -1,11 +1,11 @@
 import { automationMovesTask } from '../../../shared/automation-manifest';
-import { matchFinalLine } from '../../../shared/final-line-match';
+import { matchFinalLine, matchUserMessage, type UserMessageRead } from '../../../shared/final-line-match';
 import type { ColumnAutomation } from '../../../shared/types';
 import { needsOwnerQuestion } from '../../../shared/workflow-needs-owner';
 import type { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { frequencyLimitReason } from '../automation-runner';
 import type { ConditionCheckOutcome } from '../condition-check/condition-check';
-import { hasCondition, hasFinalLine } from '../row-guards';
+import { hasCondition, hasFinalLine, hasUserTextMatch, textMatchSourceOf } from '../row-guards';
 
 /**
  * Has the board stopped this card? Asked at the end of a turn-end pass in a
@@ -73,6 +73,11 @@ export interface JudgeColumnStopInput {
   runs: AutomationRunRepository;
   visitStartedAt: string | null;
   readReply: () => Promise<string | null>;
+  /**
+   * The user's last message in the turn, for a spent row whose Text match is
+   * on it (#1078). Absent, such a row reads as not met (fail closed).
+   */
+  readUserMessage?: () => Promise<UserMessageRead>;
   check: ColumnStopCheck;
   /** Whether the turn this judges is still the task's latest, in this column. */
   stillCurrent: () => boolean;
@@ -123,7 +128,16 @@ export async function judgeColumnStop(input: JudgeColumnStopInput): Promise<void
   const reply = await input.readReply();
   if (!input.stillCurrent()) return;
   const spent = spentMoveRows(input);
-  const wouldHaveRun = spent.find(({ row }) => !hasCondition(row) && (!hasFinalLine(row) || matchFinalLine(row.final_line, reply).met));
+  // A spent row on the user's message would have run when their message
+  // matches. Read only if such a row is spent, and unreadable is no match.
+  const userMessage = spent.some(({ row }) => hasUserTextMatch(row)) && input.readUserMessage
+    ? await input.readUserMessage()
+    : { readable: false as const };
+  if (!input.stillCurrent()) return;
+  const textMatchMet = (row: ColumnAutomation & { final_line: string }): boolean => (textMatchSourceOf(row) === 'user'
+    ? matchUserMessage(row.final_line, userMessage).met
+    : matchFinalLine(row.final_line, reply).met);
+  const wouldHaveRun = spent.find(({ row }) => !hasCondition(row) && (!hasFinalLine(row) || textMatchMet(row)));
   if (wouldHaveRun) {
     input.runs.recordColumnStop({ taskId: input.taskId, swimlaneId: input.swimlaneId, cause: 'spent-row', reason: spentReason(wouldHaveRun) });
     return;

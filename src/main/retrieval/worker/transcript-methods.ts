@@ -21,7 +21,7 @@ import {
 } from '../../agent/transcript-service';
 import { formatConversationTail } from '../../agent/shared/conversation-tail';
 import { renderStructuredTranscript, type StructuredTranscriptRequest } from '../../agent/commands/structured-transcript';
-import { readFinalReply, readTrail } from '../../agent/message-trail-read';
+import { readFinalReply, readTrail, readTurnUserMessages } from '../../agent/message-trail-read';
 import type { AgentReply } from '../../agent/shared/agent-reply';
 import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
 import type { MessageTrailReadFacts, TrailRead } from '../../agent/message-trail-tracker';
@@ -127,6 +127,17 @@ export interface TranscriptMethods {
   'transcript.finalReply': {
     params: { facts: MessageTrailReadFacts; since?: TranscriptAnchor | null; remoteTargets: RemoteTargets };
     result: AgentReply | null;
+  };
+  /**
+   * The user's messages in the turn that began at `since`, oldest first, for a
+   * Text match on the user's message (`readTurnUserMessages`). Null when the
+   * turn cannot be read exactly: the caller treats that as unreadable and
+   * the row does not run. Kangentic's own typed text is still in it; main
+   * drops it against its typed-message record.
+   */
+  'transcript.turnUserMessages': {
+    params: { facts: MessageTrailReadFacts; since: TranscriptAnchor | null; remoteTargets: RemoteTargets };
+    result: string[] | null;
   };
   /**
    * The newest turns of a conversation whose file the agent deleted, as plain
@@ -378,6 +389,17 @@ export const transcriptHandlers: TranscriptHandlers = {
     const adapter = agentRegistry.getBySessionType(facts.sessionType);
     if (!adapter) return null;
     return readFinalReply(adapter, facts, since ?? null);
+  },
+
+  'transcript.turnUserMessages': async ({ facts, since, remoteTargets }) => {
+    adoptRemoteTargets(agentRegistry, remoteTargets);
+    const adapter = agentRegistry.getBySessionType(facts.sessionType);
+    if (!adapter) return null;
+    try {
+      return await readTurnUserMessages(adapter, facts, since ?? null);
+    } catch {
+      return null;
+    }
   },
 
   'transcript.recapTail': async ({ projectId, agentSessionId, maxChars }, context) => {

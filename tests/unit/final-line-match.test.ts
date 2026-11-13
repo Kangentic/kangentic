@@ -19,6 +19,7 @@ import {
   legacyTextMatch,
   lineMatchesPattern,
   matchFinalLine,
+  matchUserMessage,
   normalizeForMatch,
   normalizeTextMatch,
   parseTextMatch,
@@ -382,22 +383,45 @@ describe('pattern lines: line breaks and the file value', () => {
 describe('conditionKindsAsStored', () => {
   it('keeps a Text match on a turn end and stores no Condition beside it', () => {
     expect(conditionKindsAsStored({ trigger: 'turn_end', condition: 'CI is green', final_line: ' Verdict: Ready ' }))
-      .toEqual({ condition: null, final_line: 'Verdict: Ready' });
+      .toEqual({ condition: null, final_line: 'Verdict: Ready', text_match_source: 'agent' });
   });
 
   it('drops a Text match off a turn end and keeps the Condition', () => {
     expect(conditionKindsAsStored({ trigger: 'enter', condition: ' CI is green ', final_line: 'Verdict: Ready' }))
-      .toEqual({ condition: 'CI is green', final_line: null });
+      .toEqual({ condition: 'CI is green', final_line: null, text_match_source: 'agent' });
   });
 
   it('stores a Text match one pattern per line, blank lines dropped', () => {
     expect(conditionKindsAsStored({ trigger: 'turn_end', condition: null, final_line: '!Design: waiting on you\n\n !Design: shelved ' }))
-      .toEqual({ condition: null, final_line: '!Design: waiting on you\n!Design: shelved' });
+      .toEqual({ condition: null, final_line: '!Design: waiting on you\n!Design: shelved', text_match_source: 'agent' });
   });
 
   it('reads a blank of either kind as none', () => {
     expect(conditionKindsAsStored({ trigger: 'turn_end', condition: '  ', final_line: '  ' }))
-      .toEqual({ condition: null, final_line: null });
-    expect(conditionKindsAsStored({ trigger: 'turn_end' })).toEqual({ condition: null, final_line: null });
+      .toEqual({ condition: null, final_line: null, text_match_source: 'agent' });
+    expect(conditionKindsAsStored({ trigger: 'turn_end' })).toEqual({ condition: null, final_line: null, text_match_source: 'agent' });
+  });
+
+  // #1078: a source means nothing without a Text match, so it is stored only beside one.
+  it('keeps the user\'s source only beside a turn-end Text match', () => {
+    expect(conditionKindsAsStored({ trigger: 'turn_end', final_line: '*signed off*', text_match_source: 'user' }).text_match_source).toBe('user');
+    expect(conditionKindsAsStored({ trigger: 'enter', final_line: '*signed off*', text_match_source: 'user' }).text_match_source).toBe('agent');
+    expect(conditionKindsAsStored({ trigger: 'turn_end', condition: 'CI is green', text_match_source: 'user' }).text_match_source).toBe('agent');
+  });
+});
+
+describe('matchUserMessage', () => {
+  // The reasons are stored on the run and read by agents, and never quote the user's text.
+  it('says whether the user\'s message matched, never what it said', () => {
+    const met = matchUserMessage('*signed off*', { readable: true, message: 'Design is signed off' });
+    expect(met.met).toBe(true);
+    expect(met.reason).not.toContain('Design is signed off');
+    expect(matchUserMessage('*signed off*', { readable: true, message: 'the rest look good' }).met).toBe(false);
+  });
+
+  it('fails closed on an unreadable turn and on a turn with no message from the user', () => {
+    expect(matchUserMessage('*', { readable: false }).met).toBe(false);
+    expect(matchUserMessage('*', { readable: true, message: null }).met).toBe(false);
+    expect(matchUserMessage('!*not*', { readable: true, message: '   ' }).met).toBe(false);
   });
 });

@@ -1163,6 +1163,28 @@ export interface AgentAdapter {
   ): Promise<ParsedTranscriptWindow>;
 
   /**
+   * Optional: the messages a person typed while the agent was mid-turn, from
+   * `startByte` to the end of the transcript, for a Text match on the user's
+   * message (#1078). Some agents record such input apart from their user turns
+   * (Claude: a `queued_command` attachment that the transcript parse leaves
+   * out, so the conversation viewer and `{{agentReply}}` do not change). An
+   * agent that writes queued input as an ordinary user turn implements this
+   * as an empty list. An agent without it reports no user messages
+   * (`canReadTurnUserMessages`), so the Your message tab is off for it: an
+   * unread mid-turn message could be the one that overrules the turn's first.
+   *
+   * `ts` orders them among the turn's user entries. Null when the read failed,
+   * which the caller treats as unreadable (fail closed). Must not throw.
+   */
+  readQueuedUserMessages?(
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<Array<{ text: string; ts: number }> | null>;
+
+  /**
    * Optional: read ONE page of the conversation's history for the
    * Conversation viewer, before a cursor, after it, or around a position,
    * retaining nothing between calls.

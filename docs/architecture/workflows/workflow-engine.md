@@ -220,6 +220,13 @@ src/main/workflows/
     "Only a person moves a card out of it." on that column's `{{columns}}` line, so a route through
     it is a stop the planner chose. The default planning prompt has it choose each route from the
     columns' purposes (the "Its purpose:" on a line) before the visit counts.
+  - **A row on the user's message is never an agent exit, and a forward one is a person's gate**
+    (#1078). `columnExitRows` records each row's `source`. `stepExitVerdict` matches the agent's
+    line against agent-source rows only, so a reply that names the sign-off phrase ("To sign off,
+    type signed off") cannot take the user's row. `isSendBackOnly` is true when a live user-source
+    row moves the task forward, whatever the agent rows do, and with no agent exit at all such a
+    column still answers `stopsHere`, never null, so the step cannot move the card past the
+    person's message. The Design column's On to Planning row is this shape.
   - **Only the agent's own word stops a task, bar one column shape** (owner's decision, 2026-10-31). A reply whose last
     line is `Needs owner: <question>` is `waiting`, matched in code before any check runs
     (`needsOwnerQuestion`, `src/shared/workflow-needs-owner.ts`). It costs no check, and it works

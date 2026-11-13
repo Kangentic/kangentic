@@ -72,10 +72,29 @@ export type CommandVerifier = (
 ) => Promise<boolean>;
 
 /**
- * Free-form-content delivery options. Forwarded verbatim to PasteEngine.
- * Re-exported here as the public shape for `submitContent` callers.
+ * Who a typed text is from (#1078). `'kangentic'` (the default) is text the
+ * app writes itself: a column or automation message, a nudge, a move's
+ * message, another agent's message, the opening prompt. `'person'` is text a
+ * person sent through the app: the phone, dictation, a Browser pane Send.
+ *
+ * Kangentic's own text is recorded so a Text match on the user's message
+ * never reads it as theirs. The default is Kangentic's on purpose: a caller
+ * that forgets to say leaves its text out of the user's messages, which can
+ * only keep a row from running, never make one run.
  */
-export type SubmitContentOptions = PasteOptions;
+export type TypedOrigin = 'kangentic' | 'person';
+
+/**
+ * Records a text Kangentic typed into a session (`recordKangenticTyped`).
+ * Optional so the byte layer's tests need no database.
+ */
+export type TypedTextRecorder = (sessionId: string, text: string) => void;
+
+/**
+ * Free-form-content delivery options. Forwarded to PasteEngine. Re-exported
+ * here as the public shape for `submitContent` callers.
+ */
+export type SubmitContentOptions = PasteOptions & { origin?: TypedOrigin };
 
 /** Terminal state of one `submitKeystrokes` call. */
 export type InjectionOutcome = 'confirmed' | 'unconfirmed' | 'failed' | 'aborted';
@@ -141,6 +160,8 @@ export interface SubmitKeystrokesResult {
 
 /** Manual-keystroke delivery options. */
 export interface SubmitKeystrokesOptions {
+  /** Who the commands are from. See `TypedOrigin`; Kangentic's by default. */
+  origin?: TypedOrigin;
   /**
    * Explicit override for the leading clear. When unset the policy is
    * derived (see `shouldClearPrompt`): clear unless this is a fresh spawn
@@ -291,7 +312,24 @@ export class TerminalSubmit {
   constructor(
     private sessionManager: SessionManager,
     private pasteEngine: PasteEngine,
+    private recordTyped: TypedTextRecorder | null = null,
   ) {}
+
+  /**
+   * Record Kangentic's own text before it is typed, so a turn that ends at
+   * once still finds it. Never throws: the recorder marks a session whose
+   * record failed, and that session's user messages then read as unreadable.
+   */
+  private noteTyped(sessionId: string, texts: ReadonlyArray<string>, origin: TypedOrigin | undefined): void {
+    if (origin === 'person' || this.recordTyped === null) return;
+    for (const text of texts) {
+      try {
+        this.recordTyped(sessionId, text);
+      } catch (error) {
+        console.warn(`[terminal-submit] could not record typed text for session ${sessionId.slice(0, 8)}:`, error);
+      }
+    }
+  }
 
   /**
    * Bracketed-paste delivery for free-form content. Delegates to PasteEngine
@@ -306,7 +344,9 @@ export class TerminalSubmit {
   ): Promise<void> {
     // Pasted content is something sent into the conversation, whoever sent it.
     this.sessionManager.markUserInput(sessionId);
-    return this.pasteEngine.pasteAndSubmit(sessionId, text, opts);
+    const { origin, ...pasteOptions } = opts;
+    this.noteTyped(sessionId, [text], origin);
+    return this.pasteEngine.pasteAndSubmit(sessionId, text, pasteOptions);
   }
 
   /**
@@ -341,6 +381,7 @@ export class TerminalSubmit {
   ): Promise<SubmitKeystrokesResult> {
     const sanitized = normalizeCommands(commands);
     const source = opts.source ?? 'unknown';
+    this.noteTyped(sessionId, sanitized.map((command) => command.text), opts.origin);
     const pendingDraft = opts.pendingDraft && opts.pendingDraft.length > 0 ? opts.pendingDraft : null;
 
     if (sanitized.length === 0) {

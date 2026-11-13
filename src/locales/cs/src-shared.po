@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: cs\n"
 
+#: src/shared/final-line-match.ts
+msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
+msgstr ""
+
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr ""
@@ -306,6 +310,10 @@ msgstr "Podmínka: pouze pokud {condition}."
 msgid "Condition: only if the last line {rule}."
 msgstr ""
 
+#: src/shared/automation-describe.ts
+msgid "Condition: only if your message {rule}."
+msgstr ""
+
 #: src/shared/keybindings.ts
 #, fuzzy
 msgctxt "hotkey"
@@ -597,6 +605,10 @@ msgstr "Cesta k hlavnímu checkoutu projektu. Vždy jde o základní úložišt�
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
 msgstr "Ručně, protože Kangentic nemůže schvalovat plány agenta {agentName}."
 
+#: src/shared/final-line-match.ts
+msgid "Matching a message runs on agent turn end only."
+msgstr ""
+
 #: src/shared/keybindings.ts
 #, fuzzy
 msgctxt "hotkey"
@@ -831,6 +843,14 @@ msgstr ""
 
 #: src/shared/automation-describe.ts
 msgid "Only if the last line {rule}."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "only if your message {rule}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Only if your message {rule}."
 msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
@@ -1338,11 +1358,6 @@ msgstr "UUID úlohy."
 msgid "Terminal names"
 msgstr "Názvy terminálů"
 
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr "Shoda textu čte poslední zprávu agenta, proto se spouští jen na konci tahu agenta."
-
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
@@ -1416,6 +1431,10 @@ msgstr "Štítky úlohy oddělené čárkami."
 #, fuzzy
 msgid "This column's agent can't report when it finishes a turn."
 msgstr "Agent tohoto sloupce nedokáže oznámit dokončení tahu."
+
+#: src/shared/automation-manifest.ts
+msgid "This column's agent doesn't report the messages you send."
+msgstr ""
 
 #: src/shared/session-resume-eligibility.ts
 #, fuzzy
