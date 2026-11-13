@@ -6,7 +6,7 @@ import { buildTerminalTheme } from '../../../hooks/useTerminal';
 import { useConfigStore } from '../../../stores/config-store';
 import { rendererTerminalDefaults } from '../../../utils/native-terminal-defaults';
 import { copySelectionToClipboard } from '../../../utils/terminal-clipboard';
-import { resolveTerminalFontSize } from '../../../utils/terminal-font-size';
+import { resolveTerminalFontSize, resolveTerminalLineHeight } from '../../../utils/terminal-font-size';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../../../utils/terminal-query-replies';
 import { activateUnicode11 } from '../../../../shared/xterm-unicode11';
 
@@ -33,6 +33,7 @@ export function LoginTerminal({ loginId, label }: { loginId: string; label: stri
     const terminal = new Terminal({
       fontFamily: settings?.fontFamily || rendererTerminalDefaults().fontFamily,
       fontSize: resolveTerminalFontSize(settings?.fontSize),
+      lineHeight: resolveTerminalLineHeight(settings?.lineHeight),
       theme: buildTerminalTheme(settings?.colors),
       cursorBlink: true,
       allowProposedApi: true,
