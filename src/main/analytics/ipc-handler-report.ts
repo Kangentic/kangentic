@@ -1,8 +1,12 @@
 /**
- * Reports a defect thrown by any `ipcMain.handle` handler, about 329 of them, from
- * one wrap. Before it, a rejected handler reached Sentry only as Electron's
+ * Reports a defect thrown by any `ipcMain.handle` handler, from one wrap. Before
+ * it, a rejected handler reached Sentry only as Electron's
  * `Error occurred in handler for '<channel>'` breadcrumb, or as the renderer's
  * `Error invoking remote method` event with main's stack lost.
+ *
+ * Only `handle` is wrapped. An `ipcMain.on` listener (a fire-and-forget send:
+ * audio chunks, window controls, a diff subscription) has no caller to reject to,
+ * so its throw is an uncaught exception, which Sentry's own handler reports.
  *
  * It patches `ipcMain.handle` itself, in its own module, rather than living in the
  * IPC recorder (`diagnostics/ipc-recorder.ts`). The recorder is diagnostics and
@@ -26,20 +30,27 @@ import { createChokepointReporter, type ChokepointReporter } from './handled-rep
 
 export const IPC_HANDLER_REPORT_SOURCE = 'ipc_handler';
 
-/** The one reporter for every handler; exported for tests. */
-export const ipcHandlerReporter: ChokepointReporter = createChokepointReporter(IPC_HANDLER_REPORT_SOURCE);
+/**
+ * The most distinct keys the wrap reports in a run. Higher than other chokepoints'
+ * 25 because the renderer drops its own copy of a rejection main saw
+ * (`isIpcRejectionMainSaw`), so a defect past this cap reaches Sentry from nowhere.
+ */
+export const IPC_HANDLER_KEY_CAP = 100;
 
-type HandleListener = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+/** The one reporter for every handler; exported for tests. */
+export const ipcHandlerReporter: ChokepointReporter = createChokepointReporter(IPC_HANDLER_REPORT_SOURCE, { cap: IPC_HANDLER_KEY_CAP });
+
+type HandleListener = (event: IpcMainInvokeEvent, ...handlerArguments: unknown[]) => unknown;
 
 /** Run `listener`, report a throw or a rejection, and rethrow it unchanged. */
 export async function runReportedHandler(
   channel: string,
   listener: HandleListener,
   event: IpcMainInvokeEvent,
-  args: unknown[],
+  handlerArguments: unknown[],
 ): Promise<unknown> {
   try {
-    return await listener(event, ...args);
+    return await listener(event, ...handlerArguments);
   } catch (error) {
     ipcHandlerReporter.report(error, { tags: { channel } });
     throw error;
@@ -58,7 +69,7 @@ export function installIpcHandlerReporting(target: Pick<IpcMain, 'handle'>): voi
   installed = true;
   const originalHandle = target.handle.bind(target);
   (target as { handle: IpcMain['handle'] }).handle = ((channel: string, listener: HandleListener): void => {
-    originalHandle(channel, (event, ...args) => runReportedHandler(channel, listener, event, args));
+    originalHandle(channel, (event, ...handlerArguments) => runReportedHandler(channel, listener, event, handlerArguments));
   }) as IpcMain['handle'];
 }
 

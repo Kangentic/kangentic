@@ -4,6 +4,8 @@
  * aborts and the network out of Sentry, and the latched chokepoint reporter. A
  * regression here either ships a task title in an event or floods the project.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const reportHandledError = vi.fn();
@@ -11,16 +13,17 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError 
 
 const {
   createChokepointReporter,
-  isAllowlistedDefect,
   isExpectedFailure,
   isReported,
   markReported,
   pathFreeCopy,
   sendHandledFailure,
   EXPECTED_FAILURE_NAMES,
+  NETWORK_ERRNOS,
 } = await import('../../src/main/analytics/handled-report');
 const { setShuttingDown } = await import('../../src/main/shutdown-state');
 const { RefusalError } = await import('../../src/shared/refusal');
+const { isRuntimeDefect } = await import('../../src/shared/handled-error-copy');
 
 function errnoError(code: string, message = `${code}: failed, open 'C:\\Users\\dev\\project\\file'`): NodeJS.ErrnoException {
   const error = new Error(message) as NodeJS.ErrnoException;
@@ -65,6 +68,40 @@ describe('isExpectedFailure', () => {
     }
   });
 
+  it('names every expected class in source: each name is set by a class under src/ (AbortError is Node\'s, exempt)', () => {
+    const sources: string[] = [];
+    const walk = (directory: string): void => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (/\.tsx?$/.test(entry.name)) sources.push(fs.readFileSync(full, 'utf8'));
+      }
+    };
+    walk(path.join(__dirname, '../../src'));
+    const missing = [...EXPECTED_FAILURE_NAMES]
+      // Node's own `AbortError` (fs, fetch) is not declared in this repo.
+      .filter((name) => name !== 'AbortError')
+      .filter((name) => {
+        const declaration = new RegExp(`\\bname\\s*(?::\\s*[\\w'"]+\\s*)?=\\s*['"]${name}['"]`);
+        return !sources.some((text) => declaration.test(text));
+      });
+    expect(missing).toEqual([]);
+  });
+
+  it.each([...NETWORK_ERRNOS])('skips the network errno %s', (code) => {
+    expect(isExpectedFailure(errnoError(code))).toBe(true);
+  });
+
+  // Literal list, so dropping an entry from NETWORK_ERRNOS fails rather than shrinking the table above.
+  it.each(['EADDRNOTAVAIL', 'ENETRESET', 'ESHUTDOWN', 'EPROTO'])('keeps %s in NETWORK_ERRNOS', (code) => {
+    expect(NETWORK_ERRNOS.has(code)).toBe(true);
+  });
+
+  it('skips a bare fetch failure with no cause and a destroyed stream', () => {
+    expect(isExpectedFailure(new TypeError('fetch failed'))).toBe(true);
+    expect(isExpectedFailure(errnoError('ERR_STREAM_DESTROYED'))).toBe(true);
+  });
+
   it('skips a refusal, an abort and the network', () => {
     expect(isExpectedFailure(new RefusalError('No project is currently open'))).toBe(true);
     expect(isExpectedFailure(new DOMException('aborted', 'AbortError'))).toBe(true);
@@ -89,18 +126,6 @@ describe('isExpectedFailure', () => {
   });
 });
 
-describe('isAllowlistedDefect', () => {
-  it('passes runtime errors, SQLite codes and non-network errnos, and nothing else', () => {
-    expect(isAllowlistedDefect(new RangeError('Invalid array length'))).toBe(true);
-    expect(isAllowlistedDefect(errnoError('ENOSPC'))).toBe(true);
-    const sqlite = Object.assign(new Error('database is locked'), { name: 'SqliteError', code: 'SQLITE_BUSY' });
-    expect(isAllowlistedDefect(sqlite)).toBe(true);
-    expect(isAllowlistedDefect(errnoError('ETIMEDOUT'))).toBe(false);
-    expect(isAllowlistedDefect(new Error('Task is not in this column'))).toBe(false);
-    expect(isAllowlistedDefect(new SyntaxError('Unexpected token'))).toBe(false);
-  });
-});
-
 describe('sendHandledFailure', () => {
   beforeEach(() => reportHandledError.mockReset());
 
@@ -115,17 +140,19 @@ describe('sendHandledFailure', () => {
     expect(isReported(original)).toBe(true);
   });
 
-  it('puts a TypeError message in contexts, paths removed, and leaves grouping to the stack', () => {
-    sendHandledFailure('ipc', new TypeError('x is not a function at C:\\Users\\dev\\a\\b.ts'));
-    const [, , contexts, fingerprint] = reportHandledError.mock.calls[0] as [Error, unknown, { error_detail: { message: string } }, string[] | undefined];
-    expect(contexts.error_detail.message).toBe('x is not a function at <path>');
+  it.each([
+    ['a V8 TypeError naming the property it read', new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')")],
+    ['a Node ERR_INVALID_ARG_TYPE quoting its value', Object.assign(
+      new TypeError("The \"path\" argument must be of type string. Received type string ('Fix Acme billing')"),
+      { code: 'ERR_INVALID_ARG_TYPE' },
+    )],
+    ['a SyntaxError quoting its JSON', new SyntaxError('Unexpected token "Fix Acme billing" in JSON')],
+  ])('never sends the message of %s, and leaves a code defect to stack grouping', (_label, error) => {
+    sendHandledFailure('ipc', error);
+    const [sent, tags, contexts, fingerprint] = reportHandledError.mock.calls[0] as [Error, unknown, Record<string, unknown>, string[] | undefined];
+    expect(contexts).toEqual({});
+    expect(JSON.stringify([sent.message, sent.stack, tags, contexts])).not.toContain('Acme');
     expect(fingerprint).toBeUndefined();
-  });
-
-  it('never puts a SyntaxError message anywhere', () => {
-    sendHandledFailure('ipc', new SyntaxError('Unexpected token "my secret title" in JSON'));
-    const [sent, , contexts] = reportHandledError.mock.calls[0] as [Error, unknown, Record<string, unknown>];
-    expect(JSON.stringify([sent.message, sent.stack, contexts])).not.toContain('secret');
   });
 });
 
@@ -148,10 +175,47 @@ describe('createChokepointReporter', () => {
   });
 
   it('applies its own filter after the expected-failure skip', () => {
-    const reporter = createChokepointReporter('ipc', { shouldReport: isAllowlistedDefect });
+    const reporter = createChokepointReporter('ipc', { shouldReport: isRuntimeDefect });
     expect(reporter.report(new Error('Task is not in this column'))).toBe(false);
     expect(reporter.report(new RefusalError('No project is currently open'))).toBe(false);
     expect(reporter.report(new TypeError('defect'))).toBe(true);
+  });
+
+  it.each(['UNKNOWN', 'SQLITE_BUSY'])('groups the %s code as an environment failure with an errno tag', (code) => {
+    const reporter = createChokepointReporter('ipc');
+    expect(reporter.report(errnoError(code))).toBe(true);
+    const [, tags, , fingerprint] = reportHandledError.mock.calls[0] as [Error, Record<string, string>, unknown, string[] | undefined];
+    expect(fingerprint).toEqual(['handled-env', 'Error', code]);
+    expect(tags.errno).toBe(code);
+  });
+
+  it.each(['spawn C:\\Users\\dev\\git.exe', 'a_syscall_name_that_is_longer_than_32_chars'])('drops the syscall %s from the tags', (syscall) => {
+    const error = errnoError('ENOSPC');
+    error.syscall = syscall;
+    createChokepointReporter('ipc').report(error);
+    const [, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(tags).not.toHaveProperty('syscall');
+    expect(tags.errno).toBe('ENOSPC');
+  });
+
+  it('lets reportOptions.fingerprint override the default', () => {
+    createChokepointReporter('preload').report(errnoError('ENOSPC'), { fingerprint: ['preload-callback', 'method'] });
+    const [, , , fingerprint] = reportHandledError.mock.calls[0] as [Error, unknown, unknown, string[] | undefined];
+    expect(fingerprint).toEqual(['preload-callback', 'method']);
+  });
+
+  it('does not mark an error the cap turned away, and marks a repeat of a reported key', () => {
+    const reporter = createChokepointReporter('ipc', { cap: 1 });
+    const make = (): TypeError => new TypeError('same line');
+    const first = make();
+    const repeat = make();
+    expect(reporter.report(first)).toBe(true);
+    expect(reporter.report(repeat)).toBe(false);
+    expect(isReported(repeat)).toBe(true);
+
+    const turnedAway = new RangeError('another key');
+    expect(reporter.report(turnedAway)).toBe(false);
+    expect(isReported(turnedAway)).toBe(false);
   });
 
   it('reports nothing while the app quits', () => {

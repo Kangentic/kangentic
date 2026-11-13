@@ -329,7 +329,8 @@ export function reconcileTaskSessionRef(
     );
     tasks.update({ id: taskId, session_id: liveByTaskId.id });
     const refreshed = tasks.getById(taskId);
-    if (!refreshed) throw new RefusalError(`Task ${taskId} not found`);
+    // Read back right after the update above, so a miss is a defect, never a refusal.
+    if (!refreshed) throw new Error(`Task ${taskId} not found`);
     return { task: refreshed, liveSession: liveByTaskId };
   }
 
@@ -349,6 +350,6 @@ export function reconcileTaskSessionRef(
   // consistent for downstream code that mutates the task in place
   // (e.g. ensureTaskWorktree's Object.assign).
   const refreshed = tasks.getById(taskId);
-  if (!refreshed) throw new RefusalError(`Task ${taskId} not found`);
+  if (!refreshed) throw new Error(`Task ${taskId} not found`);
   return { task: refreshed, liveSession: null };
 }

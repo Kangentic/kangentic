@@ -1248,9 +1248,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       );
 
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
-    } catch (err) {
-      console.error('[plan-exit] Auto-move failed:', err);
-      sessionHandlersReporter.report(err, { tags: { stage: 'plan_exit_move' } });
+    } catch (error) {
+      console.error('[plan-exit] Auto-move failed:', error);
+      sessionHandlersReporter.report(error, { tags: { stage: 'plan_exit_move' } });
     }
   });
 }

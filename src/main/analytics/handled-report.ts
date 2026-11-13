@@ -20,17 +20,9 @@ import { reportHandledError, type ErrorReportContexts } from './error-reporting'
 import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
-import {
-  diagnosticContextOf,
-  errorCodeOf,
-  errorNameOf,
-  framesOf,
-  hasDiagnosticMessage,
-  pathFreeCopy,
-} from '../../shared/handled-error-copy';
+import { errorCodeOf, errorNameOf, framesOf, pathFreeCopy } from '../../shared/handled-error-copy';
 
-export { diagnosticContextOf, errorCodeOf, errorNameOf, pathFreeCopy } from '../../shared/handled-error-copy';
-export { MAX_DIAGNOSTIC_MESSAGE_CHARACTERS } from '../../shared/handled-error-copy';
+export { errorCodeOf, errorNameOf, pathFreeCopy } from '../../shared/handled-error-copy';
 
 /** The most distinct keys one chokepoint reports in a run. */
 export const DEFAULT_CHOKEPOINT_KEY_CAP = 25;
@@ -94,6 +86,10 @@ export const NETWORK_ERRNOS: ReadonlySet<string> = new Set([
   'ENETDOWN',
   'EHOSTUNREACH',
   'EHOSTDOWN',
+  'EADDRNOTAVAIL',
+  'ENETRESET',
+  'ESHUTDOWN',
+  'EPROTO',
   'UND_ERR_CONNECT_TIMEOUT',
   'UND_ERR_SOCKET',
   'UND_ERR_HEADERS_TIMEOUT',
@@ -168,27 +164,13 @@ function isExpectedOwnClass(error: unknown): boolean {
 }
 
 /**
- * True for an environment failure: an errno (`ENOSPC`, `EACCES`) or a SQLite code.
- * It groups on `['handled-env', name, code]`, never on the call path.
+ * True for an environment failure: an errno (`ENOSPC`, `EACCES`), libuv's Windows
+ * `UNKNOWN`, or a SQLite code. It groups on `['handled-env', name, code]`, never
+ * on the call path.
  */
 export function isEnvironmentFailure(error: unknown): boolean {
   const code = errorCodeOf(error);
-  return code !== undefined && (/^E[A-Z0-9]{2,}$/.test(code) || code.startsWith('SQLITE_'));
-}
-
-/**
- * Classes whose throw is a defect whatever the message, because the runtime
- * raised them. This was the IPC wrap's interim allowlist; with the IPC refusals
- * typed (`RefusalError`) the wrap reports every unexpected class. A chokepoint
- * whose path still carries untyped plain-`Error` refusals passes this as its
- * `shouldReport` filter.
- */
-export function isAllowlistedDefect(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (hasDiagnosticMessage(error)) return true;
-  const code = errorCodeOf(error);
-  if (error.name === 'SqliteError') return code !== undefined && code.startsWith('SQLITE_');
-  return code !== undefined && /^E[A-Z0-9]{2,}$/.test(code) && !isNetworkFailure(error);
+  return code !== undefined && (/^E[A-Z0-9]{2,}$/.test(code) || code === 'UNKNOWN' || code.startsWith('SQLITE_'));
 }
 
 /** The fingerprint for `error`: environment failures group by name and code, the rest by stack. */
@@ -223,15 +205,13 @@ export function sendHandledFailure(
   const syscall = syscallOf(error);
   if (syscall) allTags.syscall = syscall;
   markReported(error);
-  reportHandledError(pathFreeCopy(source, error), allTags, { ...diagnosticContextOf(error), ...contexts }, fingerprint);
+  reportHandledError(pathFreeCopy(source, error), allTags, contexts, fingerprint);
 }
 
 export interface ChokepointReportOptions {
   /** Short enums only (`channel`, `tool`, `verb`, `stage`). Never a title, path or message. */
   tags?: Record<string, string>;
   contexts?: ErrorReportContexts;
-  /** Extra latch key parts, never sent. Defaults to the tags. */
-  latchKey?: string;
   /**
    * Only for a source whose frames cannot split an issue (a preload callback,
    * whose error crossed the context bridge and kept only the preload's own
@@ -273,7 +253,7 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
         if (options.shouldReport && !options.shouldReport(error)) return false;
         const tags = reportOptions.tags ?? {};
         const key = [
-          reportOptions.latchKey ?? Object.entries(tags).map(([tagKey, value]) => `${tagKey}=${value}`).join(','),
+          Object.entries(tags).map(([tagKey, value]) => `${tagKey}=${value}`).join(','),
           errorNameOf(error),
           errorCodeOf(error) ?? '',
           firstFrameOf(error),

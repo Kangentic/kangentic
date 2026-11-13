@@ -74,8 +74,11 @@ export function setProjectDbInitializer(initializer: (db: Database.Database) => 
   projectDbInitializer = initializer;
 }
 
-/** Which step of opening a database failed: its pragmas, its migrations, or the injected initializer. */
-export type DbOpenStage = 'pragma' | 'migrate' | 'initialize';
+/**
+ * Which step of opening a database failed: the file itself (`new Database`, a lock
+ * or a missing file), its pragmas, its migrations, or the injected initializer.
+ */
+export type DbOpenStage = 'open' | 'pragma' | 'migrate' | 'initialize';
 
 /** What `getGlobalDb` / `getProjectDb` tell the notifier when an open fails, before they rethrow. */
 export interface DbOpenFailure {
@@ -86,8 +89,8 @@ export interface DbOpenFailure {
 export type DbOpenFailureNotifier = (error: unknown, failure: DbOpenFailure) => void;
 
 /**
- * Told of every open that fails past `new Database`, before the error is
- * rethrown. Injected, as `soft-db.ts` does, so this module's graph stays free of
+ * Told of every open that fails, `new Database` itself included, before the
+ * error is rethrown. Injected, as `soft-db.ts` does, so this module's graph stays free of
  * Sentry: the pty host and the retrieval worker load it too, and only main
  * registers one (`src/main/index.ts`), which reports.
  */
@@ -102,6 +105,16 @@ function notifyOpenFailure(error: unknown, failure: DbOpenFailure): void {
     dbOpenFailureNotifier?.(error, failure);
   } catch {
     // report-ok: the notifier is the report; its own throw must not replace the open failure.
+  }
+}
+
+/** `new Database(...)`, telling the notifier when the file itself cannot be opened. */
+function openDatabaseFile(filePath: string, options: Database.Options, database: DbOpenFailure['database']): Database.Database {
+  try {
+    return new Database(filePath, options);
+  } catch (error) {
+    notifyOpenFailure(error, { database, stage: 'open' });
+    throw error;
   }
 }
 
@@ -141,7 +154,7 @@ function closeQuietly(db: Database.Database): void {
 export function getGlobalDb(): Database.Database {
   if (!globalDb) {
     ensureDirs();
-    const db = new Database(PATHS.globalDb);
+    const db = openDatabaseFile(PATHS.globalDb, {}, 'global');
     let stage: DbOpenStage = 'pragma';
     try {
       // busy_timeout FIRST. It is a connection setting, so it only covers
@@ -192,7 +205,7 @@ export function getProjectDb(projectId: string): Database.Database {
   let db = projectDbs.get(projectId);
   if (!db) {
     if (projectDbAccess.migrate) ensureDirs();
-    db = new Database(projectDbPath(projectId), { fileMustExist: !projectDbAccess.migrate });
+    db = openDatabaseFile(projectDbPath(projectId), { fileMustExist: !projectDbAccess.migrate }, 'project');
     let stage: DbOpenStage = 'pragma';
     try {
       // busy_timeout before the WAL switch, for the same reason as the global

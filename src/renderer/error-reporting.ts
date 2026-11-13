@@ -1,7 +1,7 @@
 import { init as sentryInit, captureException } from '@sentry/electron/renderer';
 import { filterBreadcrumb } from '../shared/sentry-breadcrumbs';
 import { SENTRY_DATA_COLLECTION } from '../shared/sentry-data-collection';
-import { diagnosticContextOf, errorNameOf, pathFreeCopy } from '../shared/handled-error-copy';
+import { errorNameOf, pathFreeCopy } from '../shared/handled-error-copy';
 import { setRendererFailureSink } from './utils/renderer-failure';
 
 /**
@@ -94,13 +94,13 @@ export function reportCaughtRenderError(
       ? errorInfo.errorBoundary.boundaryReportTags()
       : { boundary: 'unknown' };
     const tags: Record<string, string> = { ...boundaryTags, source: 'react_boundary', error_name: errorNameOf(error) };
-    const contexts: RendererErrorContexts = { ...diagnosticContextOf(error) };
+    const contexts: RendererErrorContexts = {};
     if (errorInfo.componentStack) {
       contexts.react = { componentStack: componentNamesOf(errorInfo.componentStack) };
     }
     captureException(pathFreeCopy('render', error), { tags, contexts });
   } catch {
-    // Error reporting must never cascade into the boundary's own render path.
+    // report-ok: this is the reporter; its own throw must never cascade into the boundary's render path.
   }
 }
 
@@ -111,7 +111,7 @@ export function reportCaughtRenderError(
  * reportHandledError (src/main/analytics/error-reporting.ts): tags hold short
  * enum-like values and never content, and the diagnosis goes in `contexts`,
  * which Sentry shows as named blocks and never groups on. captureException
- * marks the event handled. Like reportBoundaryError it is a safe no-op when
+ * marks the event handled. Like reportCaughtRenderError it is a safe no-op when
  * the SDK did not initialize, and it never throws, because its callers sit in
  * catch blocks of their own.
  */

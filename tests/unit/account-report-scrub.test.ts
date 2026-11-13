@@ -5,7 +5,7 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: (...reportArguments: unknown[]) => reportHandledError(...reportArguments),
 }));
 
-import { reportAccountProblem, resetAccountProblemReports, scrubFailureDetail } from '../../src/main/accounts/account-report';
+import { classifyFailureDetail, reportAccountProblem, resetAccountProblemReports, scrubFailureDetail } from '../../src/main/accounts/account-report';
 
 beforeEach(() => {
   reportHandledError.mockClear();
@@ -52,6 +52,39 @@ describe('reportAccountProblem', () => {
     const [sent, , contexts] = reportHandledError.mock.calls[0] as [Error, unknown, Record<string, unknown>];
     expect(sent.message).toBe('Agent account problem: folder-link-failed (test-agent)');
     expect(contexts.cause).toEqual({ name: 'Error' });
+  });
+});
+
+describe('reportAccountProblem cause context', () => {
+  it('sends the class "Error" for a free-text name and no errno for a code that is not a constant', () => {
+    const cause = Object.assign(new Error('x'), { name: 'Acme Corp failure', code: 'acme corp' });
+    reportAccountProblem('folder-link-failed', 'test-agent', {}, cause);
+    const contexts = reportHandledError.mock.calls[0][2] as { cause: Record<string, unknown> };
+    expect(contexts.cause).toEqual({ name: 'Error' });
+    expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('Acme');
+  });
+
+  it('sends a constant errno', () => {
+    const cause = Object.assign(new Error('x'), { code: 'EACCES' });
+    reportAccountProblem('folder-link-failed', 'test-agent', {}, cause);
+    const contexts = reportHandledError.mock.calls[0][2] as { cause: Record<string, unknown> };
+    expect(contexts.cause).toEqual({ name: 'Error', errno: 'EACCES' });
+  });
+});
+
+describe('classifyFailureDetail', () => {
+  it.each([
+    ['usage_limit', 'Weekly usage limit reached'],
+    ['auth', 'Please log in again'],
+    ['network', 'getaddrinfo ENOTFOUND host'],
+    ['server', 'Service unavailable'],
+    ['refused', 'Request denied by policy'],
+    ['empty', '   '],
+    ['other', 'Something odd happened'],
+    ['usage_limit', '429 Too Many Requests'],
+    ['auth', 'token expired, network down'],
+  ])('classifies as %s: %s', (expected, detail) => {
+    expect(classifyFailureDetail(detail)).toBe(expected);
   });
 });
 

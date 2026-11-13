@@ -57,6 +57,7 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError:
 vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordRelayedSyncSpan: vi.fn() }));
 
 import { UtilityPtyHostTransport, ptyHostEntryPath, ptyHostSpawnWorkerPath } from '../../src/main/pty/host/utility-pty-host-transport';
+import { reportHandledError } from '../../src/main/analytics/error-reporting';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { MessagePortMain } from 'electron';
 import { UtilityRestartPolicy, resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
@@ -181,6 +182,20 @@ describe('UtilityPtyHostTransport', () => {
     second.emit('message', { type: 'ready' });
     expect(lifecycle.onHostUp).toHaveBeenLastCalledWith(true);
     expect(transport.hostPid).toBe(1001);
+  });
+
+  it('reports the first host crash of a run, since each one ends every terminal and the latch alone would hide it', () => {
+    vi.mocked(reportHandledError).mockClear();
+    const { transport } = makeTransport();
+    transport.start();
+    latestChild().emit('message', { type: 'ready' });
+    latestChild().emit('exit', 1);
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [error, tags, , fingerprint] = vi.mocked(reportHandledError).mock.calls[0];
+    expect((error as Error).message).toBe('kangentic-pty-host worker exited (exit code 1)');
+    expect(tags).toMatchObject({ service: 'kangentic-pty-host', phase: 'first' });
+    expect(fingerprint).toEqual(['utility-process-first-crash', 'kangentic-pty-host', 'exit']);
   });
 
   it('announces a restart when the first host exited before it ever said ready', async () => {

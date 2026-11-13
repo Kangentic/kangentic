@@ -9,11 +9,15 @@ import { EventEmitter } from 'node:events';
  * line-count-client.test.ts.
  */
 
-const { mockFork } = vi.hoisted(() => ({ mockFork: vi.fn() }));
+const { mockFork, mockSendHandledFailure } = vi.hoisted(() => ({ mockFork: vi.fn(), mockSendHandledFailure: vi.fn() }));
 
 vi.mock('electron', () => ({
   app: { isPackaged: false },
   utilityProcess: { fork: mockFork },
+}));
+
+vi.mock('../../src/main/analytics/handled-report', () => ({
+  sendHandledFailure: mockSendHandledFailure,
 }));
 
 import { RetrievalClient, RetrievalUnavailableError, INTERACTIVE_TIMEOUT_MS, READY_TIMEOUT_MS } from '../../src/main/retrieval/retrieval-client';
@@ -97,6 +101,56 @@ describe('RetrievalClient', () => {
     child.emit('message', { type: 'reply', id: request.id, ok: false, error: 'no such table: memory_chunks' });
     await expect(call).rejects.toThrow('no such table: memory_chunks');
     client.dispose();
+  });
+
+  it('restores the worker error\'s name and code on a failed reply', async () => {
+    const client = new RetrievalClient();
+    const call = client.call('projects.summaries', { projectIds: [] });
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+    const [request] = sent(child, 'request');
+    child.emit('message', { type: 'reply', id: request.id, ok: false, error: 'disk I/O error', errorName: 'SqliteError', errorCode: 'SQLITE_IOERR' });
+    const rejection = await call.then(() => null, (error: unknown) => error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect(rejection).toMatchObject({ message: 'disk I/O error', name: 'SqliteError', code: 'SQLITE_IOERR' });
+    client.dispose();
+  });
+
+  // The latch is module-level (once per code per run), so each test uses codes of its own.
+  describe('a handledError the worker relays', () => {
+    it('is reported once per code, with the code as a tag and a fingerprint that prefers errorCode', async () => {
+      const client = new RetrievalClient();
+      void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+      const child = lastChild();
+
+      child.emit('message', { type: 'handledError', code: 'index_failed_a', errorName: 'SqliteError', errorCode: 'SQLITE_FULL' });
+      child.emit('message', { type: 'handledError', code: 'index_failed_a', errorName: 'SqliteError', errorCode: 'SQLITE_FULL' });
+
+      expect(mockSendHandledFailure).toHaveBeenCalledTimes(1);
+      const [source, error, tags, contexts, fingerprint] = mockSendHandledFailure.mock.calls[0];
+      expect(source).toBe('retrieval_worker');
+      expect(error).toMatchObject({ name: 'SqliteError', code: 'SQLITE_FULL' });
+      expect(tags).toEqual({ code: 'index_failed_a' });
+      expect(contexts).toEqual({});
+      expect(fingerprint).toEqual(['retrieval-worker', 'index_failed_a', 'SQLITE_FULL']);
+      client.dispose();
+    });
+
+    it('falls back to the error name, then "none", in the fingerprint, and a new code reports again', async () => {
+      const client = new RetrievalClient();
+      void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+      const child = lastChild();
+
+      child.emit('message', { type: 'handledError', code: 'index_failed_b', errorName: 'RangeError' });
+      child.emit('message', { type: 'handledError', code: 'index_failed_c' });
+
+      expect(mockSendHandledFailure).toHaveBeenCalledTimes(2);
+      expect(mockSendHandledFailure.mock.calls[0][4]).toEqual(['retrieval-worker', 'index_failed_b', 'RangeError']);
+      expect(mockSendHandledFailure.mock.calls[1][4]).toEqual(['retrieval-worker', 'index_failed_c', 'none']);
+      expect(mockSendHandledFailure.mock.calls[1][1]).toMatchObject({ name: 'Error' });
+      client.dispose();
+    });
   });
 
   it('kills a worker that does not answer in time, and counts it as a crash', async () => {

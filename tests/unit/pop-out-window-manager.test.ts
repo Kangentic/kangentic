@@ -16,7 +16,8 @@ import type { PopOutChangesFileParams } from '../../src/shared/pop-out';
 // vi.mock() calls are hoisted above every other statement in this file, so any
 // outer variable a factory references must be declared through vi.hoisted() -
 // otherwise the factory would run before its own `const` initializer.
-const { mockApplyDevTaskbarIdentity, mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererIndexPath, mockResolvePopOutBounds, mockSavePopOutBounds, mockTrackFeatureUsed, mockIsErrorReportingActive } = vi.hoisted(() => ({
+const { mockApplyDevTaskbarIdentity, mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererIndexPath, mockResolvePopOutBounds, mockSavePopOutBounds, mockTrackFeatureUsed, mockIsErrorReportingActive, mockReportHandledError } = vi.hoisted(() => ({
+  mockReportHandledError: vi.fn(),
   mockApplyDevTaskbarIdentity: vi.fn(),
   mockResolveBackgroundColor: vi.fn(() => '#18181b'),
   mockResolveIconPath: vi.fn(() => '/mock/icon.png'),
@@ -42,6 +43,7 @@ vi.mock('../../src/main/analytics/usage', () => ({
 }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({
   isErrorReportingActive: mockIsErrorReportingActive,
+  reportHandledError: mockReportHandledError,
 }));
 
 const { MOCK_WORK_AREA, MOCK_DEFAULT_POSITION } = vi.hoisted(() => ({
@@ -223,6 +225,25 @@ describe('PopOutWindowManager.open()', () => {
     const noSavedBoundsWindow = asMockWindow(manager.open('changes-file', noSavedBoundsParams));
     noSavedBoundsWindow.emit('ready-to-show');
     expect(noSavedBoundsWindow.maximize).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports only a main-frame did-fail-load that is not ERR_ABORTED, and the earlier events do not use the listener up', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const popOutWindow = asMockWindow(manager.open('changes-file', makeChangesFileParams({ filePath: 'src/fail-load.tsx' })));
+    const webContents = (popOutWindow as unknown as { webContents: { emit: (event: string, ...args: unknown[]) => boolean } }).webContents;
+
+    // A subframe failure, then Chromium's ERR_ABORTED on the main frame: neither is the page failing.
+    webContents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'http://localhost/frame', false);
+    webContents.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'http://localhost/page', true);
+    expect(mockReportHandledError).not.toHaveBeenCalled();
+    expect(popOutWindow.show).not.toHaveBeenCalled();
+
+    webContents.emit('did-fail-load', {}, -6, 'ERR_FILE_NOT_FOUND', 'file:///mock/renderer/index.html', true);
+    expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+    const [sent, tags] = mockReportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(tags).toMatchObject({ kind: 'changes-file', error_code: '-6' });
+    expect(JSON.stringify([sent.message, tags])).not.toContain('file:///');
+    expect(popOutWindow.show).toHaveBeenCalledTimes(1);
   });
 
   it('does not maximize on reveal when saved bounds exist and are not maximized', () => {

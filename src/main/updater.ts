@@ -9,6 +9,7 @@ import type { LocalizedText } from '../shared/i18n/text';
 import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { reportHandledError } from './analytics/error-reporting';
 import { errorCodeOf, errorNameOf, markReported } from './analytics/handled-report';
+import { framesOf } from '../shared/handled-error-copy';
 import { translateText } from './i18n/main-i18n';
 import { normalizeReleaseNotes } from './updater-release-notes';
 import {
@@ -817,13 +818,19 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     }
     // Handled, so Sentry's global handlers never see it; forward the real
     // error so structural updater failures are diagnosable, not just counted.
-    // The updater retries every check interval, so each name and code reports
-    // once per run, fingerprinted so one cause is one issue whatever path hit it.
-    const updaterErrorKey = [errorNameOf(error), errorCodeOf(error) ?? 'none'];
-    const latchKey = updaterErrorKey.join(':');
+    // The updater retries every check interval, so each failure reports once per
+    // run. A coded failure is keyed and fingerprinted on its name and code, so one
+    // cause is one issue whatever path hit it. A failure with no code has nothing
+    // to key on but where it was thrown: it latches on its first frame too, and
+    // Sentry groups it by stack, or every code-less failure after the first would
+    // be dropped as a repeat of it.
+    const code = errorCodeOf(error);
+    const name = errorNameOf(error);
+    const firstFrame = framesOf(error.stack).split('\n').find((line) => line.trim().length > 0)?.trim() ?? '';
+    const latchKey = code ? `${name}:${code}` : `${name}:none:${firstFrame}`;
     if (reportedUpdaterErrors.has(latchKey)) return;
     reportedUpdaterErrors.add(latchKey);
-    reportHandledError(withoutUrlQueries(error), { source: 'updater' }, {}, ['updater', ...updaterErrorKey]);
+    reportHandledError(withoutUrlQueries(error), { source: 'updater' }, {}, code ? ['updater', name, code] : undefined);
     markReported(error);
   });
 

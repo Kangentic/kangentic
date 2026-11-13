@@ -20,7 +20,7 @@ import { logDrive } from './drive-telemetry';
 import { touchLane } from './browser-lane-manager';
 import { isLoopbackHost } from './loopback-host';
 import { createChokepointReporter } from '../analytics/handled-report';
-import { hasDiagnosticMessage } from '../../shared/handled-error-copy';
+import { isRuntimeDefect } from '../../shared/handled-error-copy';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
@@ -56,7 +56,7 @@ const REPORTED_DRIVER_ERROR_NAMES: ReadonlySet<string> = new Set([
 
 export const browserDriverReporter = createChokepointReporter('browser_driver', {
   shouldReport: (error) => error instanceof Error
-    && (REPORTED_DRIVER_ERROR_NAMES.has(error.name) || hasDiagnosticMessage(error)),
+    && (REPORTED_DRIVER_ERROR_NAMES.has(error.name) || isRuntimeDefect(error)),
 });
 
 /** A fixed error for a debugger that would not attach, which `attachDebugger` reports as `false`. */

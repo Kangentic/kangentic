@@ -577,12 +577,12 @@ export async function resumeSuspendedSessions(
       }
 
       spawnInputs.push({ record, task, ...prep.data });
-    } catch (err) {
+    } catch (error) {
       console.error(
         `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}); ${giveUpOutcome()}:`,
-        err,
+        error,
       );
-      reportPreflightFailure({ cause: 'recovery_prepare', error: err, startPath: 'startup_recovery' });
+      reportPreflightFailure({ cause: 'recovery_prepare', error, startPath: 'startup_recovery' });
       try {
         await giveUpPreparation();
       } catch (updateErr) {

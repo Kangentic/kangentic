@@ -948,7 +948,63 @@ describe("autoUpdater.on('error') listener", () => {
 
     expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
     expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
-    expect(mocks.reportHandledError).toHaveBeenCalledWith(installFailure, { source: 'updater' }, {}, expect.any(Array));
+    // No code, so no custom fingerprint: Sentry groups it by its stack.
+    expect(mocks.reportHandledError).toHaveBeenCalledWith(installFailure, { source: 'updater' }, {}, undefined);
+  });
+
+  describe('a structural error with no code latches on where it was thrown', () => {
+    // Built in two named functions so the first stack frame differs, with the same
+    // name and message, which is all a code-less error has to key on.
+    function failInCheck(): Error {
+      return new Error('Update state is inconsistent');
+    }
+    function failInInstall(): Error {
+      return new Error('Update state is inconsistent');
+    }
+
+    it('reports two code-less errors thrown from different places, each with no fingerprint', () => {
+      const fromCheck = failInCheck();
+      const fromInstall = failInInstall();
+      // The premise: nothing but the frame tells them apart.
+      expect(fromCheck.message).toBe(fromInstall.message);
+      expect(fromCheck.stack?.split('\n')[1]).not.toBe(fromInstall.stack?.split('\n')[1]);
+
+      const errorListener = getRegisteredListener('error');
+      errorListener(fromCheck);
+      errorListener(fromInstall);
+
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(2);
+      const calls = mocks.reportHandledError.mock.calls as unknown as Array<
+        [Error, Record<string, string>, Record<string, unknown>, string[] | undefined]
+      >;
+      // No code, so no custom fingerprint: Sentry groups each on its own stack.
+      expect(calls[0][3]).toBeUndefined();
+      expect(calls[1][3]).toBeUndefined();
+      expect(calls[0][1]).toEqual({ source: 'updater' });
+    });
+
+    it('reports the same code-less error once, however often the 4-hour check rediscovers it', () => {
+      const errorListener = getRegisteredListener('error');
+      const rediscovered = failInCheck();
+      errorListener(rediscovered);
+      errorListener(rediscovered);
+      // A second error from the same place is the same cause.
+      errorListener(failInCheck());
+
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError.mock.calls[0][3]).toBeUndefined();
+    });
+
+    it('keeps a coded error on its name and code, whatever frame threw it', () => {
+      const errorListener = getRegisteredListener('error');
+      const coded = (): Error => Object.assign(new Error('refused'), { code: 'ERR_UPDATER_X' });
+      const otherCoded = (): Error => Object.assign(new Error('refused again'), { code: 'ERR_UPDATER_X' });
+      errorListener(coded());
+      errorListener(otherCoded());
+
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError.mock.calls[0][3]).toEqual(['updater', 'Error', 'ERR_UPDATER_X']);
+    });
   });
 
   it('still reports a feed error with no transient cause (a real broken feed)', () => {
