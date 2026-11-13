@@ -13,6 +13,7 @@ import {
   isAutomationType,
   isRetiredActionType,
   stableAutomationTypes,
+  USER_MESSAGES_UNREPORTED_REASON,
 } from '../../src/shared/automation-manifest';
 import type { AutomationColumnFacts } from '../../src/shared/automation-manifest';
 import { englishText } from '../../src/shared/i18n/english';
@@ -224,6 +225,36 @@ describe('canColumnRun', () => {
   it('allows a type that needs nothing on a column with no agent', () => {
     for (const type of ['run_script', 'webhook', 'notify'] satisfies AutomationType[]) {
       expect(canColumnRun(type, NO_AGENT_COLUMN, 'enter').ok, type).toBe(true);
+    }
+  });
+});
+
+/** #1078: a Text match on the user's message needs an agent that reports what the user sent. */
+describe('canColumnRun: a Text match on the user\'s message', () => {
+  const USER_ROW = { textMatchSource: 'user' as const };
+
+  it('refuses a turn-end user-source row when the column\'s agent does not report user messages', () => {
+    const result = canColumnRun('move_to_column', { ...AGENT_COLUMN, reportsUserMessages: false }, 'turn_end', USER_ROW);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.reason).toBe(USER_MESSAGES_UNREPORTED_REASON);
+    expect(!result.ok && englishText(result.reason)).toBe("This column's agent doesn't report the messages you send.");
+  });
+
+  it('allows it when reportsUserMessages is true or not known yet', () => {
+    expect(canColumnRun('move_to_column', { ...AGENT_COLUMN, reportsUserMessages: true }, 'turn_end', USER_ROW).ok).toBe(true);
+    expect(canColumnRun('move_to_column', AGENT_COLUMN, 'turn_end', USER_ROW).ok).toBe(true);
+  });
+
+  it('allows an agent-source row, or one with no row facts, whatever the agent reports', () => {
+    const column = { ...AGENT_COLUMN, reportsUserMessages: false };
+    expect(canColumnRun('move_to_column', column, 'turn_end', { textMatchSource: 'agent' }).ok).toBe(true);
+    expect(canColumnRun('move_to_column', column, 'turn_end').ok).toBe(true);
+  });
+
+  it('does not apply on enter or exit, which have no turn to read', () => {
+    const column = { ...AGENT_COLUMN, reportsUserMessages: false };
+    for (const trigger of ['enter', 'exit'] as const) {
+      expect(canColumnRun('run_script', column, trigger, USER_ROW).ok, trigger).toBe(true);
     }
   });
 });

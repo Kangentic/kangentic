@@ -115,6 +115,29 @@ describe('listAgents - supportsWorkflowAgent and kangenticMcp', () => {
   });
 });
 
+// A Text match on the user's message is offered only for an agent the entry flags, and the flag
+// is the same check the turn-end read makes (`canReadTurnUserMessages`): all three readers.
+describe('listAgents - reportsUserMessages', () => {
+  it('is true for an adapter with every reader and false for one without the queued-input reader', async () => {
+    const readers = {
+      parseTranscriptWindow: async () => ({}),
+      locateSessionHistoryFile: async () => null,
+      readQueuedUserMessages: async () => [],
+    };
+    const adaptersByName: Record<string, object> = {
+      'all-readers': { ...buildFakeAdapter(), ...readers },
+      'no-queued-reader': { ...buildFakeAdapter(), ...readers, readQueuedUserMessages: undefined },
+    };
+    mockRegistryList.mockReturnValue(Object.keys(adaptersByName));
+    mockGetOrThrow.mockImplementation((name: string) => adaptersByName[name]);
+
+    const agents = await listAgents({});
+
+    const flagByName = Object.fromEntries(agents.map((entry) => [entry.name, entry.reportsUserMessages]));
+    expect(flagByName).toEqual({ 'all-readers': true, 'no-queued-reader': false });
+  });
+});
+
 // A plan column's Plan approval offers Automatic only for an agent the entry
 // flags. The flag is the adapter's own declaration as a strict boolean, so an
 // adapter that does not declare it reads false rather than a missing key.

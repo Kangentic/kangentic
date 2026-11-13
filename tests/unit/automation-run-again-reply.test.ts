@@ -11,6 +11,7 @@ import type { AutomationTrigger } from '../../src/shared/types';
 const hoisted = vi.hoisted(() => ({
   trigger: 'turn_end' as AutomationTrigger,
   finalLine: 'Verdict: Ready' as string | null,
+  textMatchSource: 'agent' as 'agent' | 'user',
   sessionId: 'session-live-1' as string | null,
   /** The task's session once the lock is held, when a queued move changed it. */
   sessionIdInLock: undefined as string | null | undefined,
@@ -56,6 +57,7 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
         config: {},
         condition: null,
         final_line: hoisted.finalLine,
+        text_match_source: hoisted.textMatchSource,
       }]),
     },
     swimlanes: { getById: vi.fn(() => ({ id: 'lane-review', name: 'Code Review' })) },
@@ -102,6 +104,7 @@ describe('runAutomationAgain: the reply a turn-end row is judged against', () =>
     vi.clearAllMocks();
     hoisted.trigger = 'turn_end';
     hoisted.finalLine = 'Verdict: Ready';
+    hoisted.textMatchSource = 'agent';
     hoisted.sessionId = 'session-live-1';
     hoisted.sessionIdInLock = undefined;
     hoisted.taskReads = 0;
@@ -168,6 +171,21 @@ describe('runAutomationAgain: the reply a turn-end row is judged against', () =>
 
     expect(hoisted.readFinalReply).not.toHaveBeenCalled();
     expect(agentReplyPassed()).toBeNull();
+  });
+
+  // #1078: a re-run has no turn anchor to isolate the user's message by, so a Text match on
+  // it gets no message and fails closed in the runner. It must never be judged on the
+  // agent's text, which matches here.
+  it('reads no agent reply and passes no user message for a Text match on the user\'s message', async () => {
+    hoisted.textMatchSource = 'user';
+    hoisted.finalLine = 'Verdict: Ready';
+
+    await runAutomationAgain(makeContext() as never, 'proj-test', 'task-rerun-0002', 'row-move');
+
+    expect(hoisted.readFinalReply).not.toHaveBeenCalled();
+    expect(agentReplyPassed()).toBeNull();
+    const [, , , options] = hoisted.executeSingleAutomation.mock.calls[0] as [unknown, unknown, unknown, { userMessage?: unknown }];
+    expect(options.userMessage).toBeUndefined();
   });
 
   it('passes null when a move queued ahead of the re-run replaced the session the message came from', async () => {

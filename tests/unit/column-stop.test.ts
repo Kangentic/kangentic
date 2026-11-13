@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type DatabaseType from 'better-sqlite3';
 import type { ColumnAutomation } from '../../src/shared/types';
+import type { UserMessageRead } from '../../src/shared/final-line-match';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 import { judgeColumnStop, NEEDS_A_PERSON_CHECK_ID, type ColumnStopCheck } from '../../src/main/automations/turn-end/column-stop';
@@ -158,6 +159,84 @@ describe('judgeColumnStop', () => {
         })(),
       });
       expect(stop()).toBeNull();
+    });
+  });
+
+  // #1078: a spent row whose Text match is on the user's message would have run when
+  // their message matched, so that is what stops the card, never the agent's own line.
+  describe('a spent row on the user\'s message', () => {
+    const userRow = () => row({ final_line: '*signed off*', text_match_source: 'user' });
+    const AGENT_NAMES_PHRASE = 'To continue, type signed off or move the card.';
+
+    function judgeWithUserReader(
+      rows: ColumnAutomation[],
+      readUserMessage: (() => Promise<UserMessageRead>) | undefined,
+      reply: string | null = AGENT_NAMES_PHRASE,
+    ) {
+      return judgeColumnStop({
+        taskId: TASK_ID,
+        swimlaneId: SWIMLANE_ID,
+        rows,
+        runs,
+        visitStartedAt: null,
+        readReply: async () => reply,
+        readUserMessage,
+        check: answered([[NEEDS_A_PERSON_CHECK_ID, { met: false, reason: 'It can go on.' }]]),
+        stillCurrent: () => true,
+      });
+    }
+
+    it('records the spent-row stop when the user\'s message matches', async () => {
+      const spent = userRow();
+      spend(spent);
+      await judgeWithUserReader([spent], async () => ({ readable: true, message: 'Signed off.' }));
+      expect(stop()).toMatchObject({ cause: 'spent-row' });
+    });
+
+    it('records no stop from the row when the user\'s message does not match', async () => {
+      const spent = userRow();
+      spend(spent);
+      await judgeWithUserReader([spent], async () => ({ readable: true, message: 'Not yet' }));
+      expect(stop()).toBeNull();
+    });
+
+    it('records no stop from the row when the message is unreadable', async () => {
+      const spent = userRow();
+      spend(spent);
+      await judgeWithUserReader([spent], async () => ({ readable: false }));
+      expect(stop()).toBeNull();
+    });
+
+    it('records no stop from the row when there is no reader', async () => {
+      const spent = userRow();
+      spend(spent);
+      await judgeWithUserReader([spent], undefined);
+      expect(stop()).toBeNull();
+    });
+
+    it('does not stop on an agent line that names the phrase', async () => {
+      const spent = userRow();
+      spend(spent);
+      await judgeWithUserReader([spent], async () => ({ readable: true, message: null }), 'signed off');
+      expect(stop()).toBeNull();
+    });
+
+    it('does not read the user\'s message when no spent row is on it', async () => {
+      const readUserMessage = vi.fn(async (): Promise<UserMessageRead> => ({ readable: true, message: 'Signed off.' }));
+      const agentRow = row({ final_line: 'Status: more work' });
+      spend(agentRow);
+      // An unspent user row never reads either: it was not going to stop the card.
+      await judgeWithUserReader([agentRow, row({ id: 'row-unspent-user', final_line: 'signed off', text_match_source: 'user' })], readUserMessage, 'Status: more work');
+      expect(readUserMessage).not.toHaveBeenCalled();
+      expect(stop()).toMatchObject({ cause: 'spent-row' });
+    });
+
+    it('reads it once when a spent user row is present', async () => {
+      const readUserMessage = vi.fn(async (): Promise<UserMessageRead> => ({ readable: true, message: 'Signed off.' }));
+      const spent = userRow();
+      spend(spent);
+      await judgeWithUserReader([spent], readUserMessage);
+      expect(readUserMessage).toHaveBeenCalledTimes(1);
     });
   });
 
