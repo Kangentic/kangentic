@@ -214,7 +214,10 @@ Each run carries its status (`running`, `succeeded`, `failed`, `skipped`, `inter
 `exit 0`), the attempt count, and its timestamps. A run whose row has a Condition also shows whether
 the Automation agent found it met or not met, and the agent's one-line reason. A run whose row has a
 Text match shows `[text match met: ...]` or `[text match not met: ...]` with the line it read
-(`The final line reads "Verdict: Blocked".`), and no check line, since no agent was asked. The log denormalizes the automation's name and
+(`The final line reads "Verdict: Blocked".`), and no check line, since no agent was asked. For a
+Text match on the user's message the reason says whether it matched and never quotes the message:
+`Your message matched.`, `Your message matched no pattern.`, `No message from you in this turn.`, or
+the unreadable reason. The log denormalizes the automation's name and
 type and takes no foreign key to the automation, so renaming or deleting one does not empty its
 history.
 
@@ -253,7 +256,10 @@ failure, so `{{toColumn}}` resolves against where it is now, while `{{fromColumn
 `{{trigger}}` resolve empty because there is no move. It writes a fresh run row either way. A
 `turn_end` row whose Text match, Condition or `{{agentReply}}` reads the final message is judged
 against the newest one the task's session wrote, read before the run. A row that reads no message
-skips the read, and a message from a session a move has since replaced counts as none.
+skips the read, and a message from a session a move has since replaced counts as none. A Text match
+on the user's message (`from: "user"`) is never read here: a re-run has no turn to read the
+user's messages from, so such a row skips with "Kangentic couldn't read your messages for this turn,
+so the row did not run."
 
 It will not start an agent: a `send_message` automation against a task with no live session is
 recorded skipped rather than spawning one. It takes the task lock and is capped at five minutes, so
