@@ -94,6 +94,8 @@ describe('every other gap reports at the site that only logged', () => {
     ['src/main/ipc/handlers/sessions.ts', "sessionHandlersReporter.report(error, { tags: { stage: 'idle_pause' } });"],
     ['src/main/git/worktree-manager.ts', 'reportWorktreeRemovalFailure({ profile, timedOut, holders: holders.length > 0, attempt: lastAttempt });'],
     ['src/main/diagnostics/crash-capture.ts', "if (isOwnWindow(webContents)) preloadReporter.report(error, { tags: { kind: 'preload_error' } });"],
+    ['src/main/diagnostics/crash-capture.ts', 'if (isOwnWindow(event.sender)) reportPushCallbackRecord(record);'],
+    ['src/preload/preload.ts', "contextBridge.exposeInMainWorld('electronAPI', guardPushCallbacks(api, reportPushCallbackFailure));"],
     ['src/main/pop-out/pop-out-window-manager.ts', 'popOutLoadReporter.report(failed, { tags: { kind, error_code: String(errorCode) } });'],
     ['src/main/accounts/account-continuation.ts', "accountsReporter.report(error, { tags: { stage: 'continuation' } });"],
     ['src/main/ipc/handlers/metrics-snapshot-timer.ts', "metricsSnapshotReporter.report(error, { tags: { stage: 'batch' } });"],

@@ -6,7 +6,8 @@ import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
 import { readLocaleArgument, type AppLocale } from '../shared/i18n/locales';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
-import { installConsoleCapture } from './diagnostics/console-capture';
+import { installConsoleCapture, reportPushCallbackFailure } from './diagnostics/console-capture';
+import { guardPushCallbacks } from './push-callback-guard';
 import { PtyPortClient } from './pty-port-client';
 import type { ScrollbackInvokeResult } from '../shared/pty-port-protocol';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
@@ -1116,4 +1117,6 @@ if (__KANGENTIC_DEV__) {
   };
 }
 
-contextBridge.exposeInMainWorld('electronAPI', api);
+// A push callback's throw is an error of this isolated world, which the
+// renderer's Sentry SDK cannot see (push-callback-guard.ts).
+contextBridge.exposeInMainWorld('electronAPI', guardPushCallbacks(api, reportPushCallbackFailure));

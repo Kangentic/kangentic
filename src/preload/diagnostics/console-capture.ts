@@ -96,6 +96,26 @@ export function installConsoleCapture(): void {
   });
 }
 
+/**
+ * A renderer callback the preload called on a push threw (push-callback-guard.ts).
+ * The local record keeps the message, as every crash record does; main sends
+ * Sentry only the error's type and frames, tagged with `method`.
+ */
+export function reportPushCallbackFailure(method: string, error: unknown): void {
+  const errorName = error instanceof Error && typeof error.name === 'string' ? error.name : 'Error';
+  console.error(`[preload] a ${method} callback threw:`, error);
+  reportCrash({
+    ts: new Date().toISOString(),
+    kind: 'renderer-window-error',
+    source: 'preload',
+    message: error instanceof Error ? error.message : String(error),
+    stack: extractStack(error),
+    origin: window.location?.href || null,
+    context: { pushCallback: method, errorName },
+    versions: getVersions(),
+  });
+}
+
 function reportCrash(record: CrashRecord): void {
   try {
     ipcRenderer.invoke(IPC.CRASH_REPORT, record).catch(() => {

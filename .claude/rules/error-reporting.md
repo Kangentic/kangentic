@@ -38,7 +38,9 @@ new report from carrying what a user wrote. The design and every source: [docs/t
 - **Fingerprint environment failures, leave code defects to stack grouping.** An errno or
   `SQLITE_` failure groups as `['handled-env', name, code]`. A code defect gets no custom
   fingerprint: Sentry groups it on its in-app frames. Never put an IPC channel or a tool name in
-  a fingerprint.
+  a fingerprint. The one exception is a source whose frames cannot split an issue: a preload push
+  callback's error crosses the context bridge with only the preload's frames, so it groups by
+  API method (`['preload-callback', method]`).
 - **Latch once per key per run, at most about 25 keys per chokepoint.** The reporter does it.
 - **Dedupe through `markReported(original)`.** A reporter marks the error it was handed, and a
   wrapper that sees it again (the IPC wrap, a caller's catch) skips it through `isReported`,

@@ -10,6 +10,7 @@ import { createLinuxGpuZygoteProbe } from './linux-gpu-zygote';
 import { getLastHostMemorySample } from './host-memory';
 import { PATHS } from '../config/paths';
 import { createChokepointReporter } from '../analytics/handled-report';
+import { reportPushCallbackRecord } from './push-callback-report';
 
 /**
  * Captures fatal-error events from main, preload, and renderer and persists
@@ -177,8 +178,11 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
   });
 
   // Renderer-side error capture forwards through the preload script.
-  ipcMain.handle(IPC.CRASH_REPORT, (_event, record: CrashRecord) => {
+  ipcMain.handle(IPC.CRASH_REPORT, (event, record: CrashRecord) => {
     writeRecord(options.getProjectRoot(), record);
+    // A push callback the preload's guard caught: an error of the preload's
+    // world, which the renderer's SDK cannot see. Our own windows only.
+    if (isOwnWindow(event.sender)) reportPushCallbackRecord(record);
   });
 }
 
