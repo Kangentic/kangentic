@@ -14,24 +14,24 @@
  * later and on a reopen), and a user wheel or a next/prev-change press that lands after the
  * file's diff arrives but BEFORE laid-out is not put back over by the re-apply.
  *
+ * Hole C: the up-front pass has a size limit. A spy on the reused models' forceTokenization shows a
+ * 1200-line TypeScript diff reaches laid-out without being forced to its last line, while a
+ * 1000-line one is.
+ *
  * The interleave is driven with no production change: the page subscribes to the live diff
  * editor's onDidUpdateDiff AFTER the first file settled, so on the file switch that listener runs
  * after DiffViewer's own (which already armed the re-apply and queued the settle's setTimeout 0)
  * and before the settle's timeout and frame fire. The input it issues is therefore between "file
  * opened" and "laid-out" every run.
  *
- * Red checks (each run once, then restored): removing `reveal?.apply()` fails the "put back"
- * case; emptying dropAppliedReveal fails the wheel case; removing
- * `appliedRevealRef.current = null` in revealChangeLine fails the previous-change case.
- * The token-colour case did NOT go red with readModelTokenization returning null, nor with the
- * view-zone toggle removed as well, nor with a 900-line file: monaco's Monarch TypeScript
- * tokenizer is synchronous in this headless run, so the deleted block is coloured at the stamp
- * either way. It guards the end state (and a monaco bump that stops drawing coloured deleted
- * lines), not the up-front timing, which needs a tokenizer that loads late.
- *
- * Hole C: the up-front pass has a size limit. A spy on the reused models' forceTokenization shows a
- * 1200-line TypeScript diff reaches laid-out without being forced to its last line, while a
- * 1000-line one is. Red check (run once, then restored): UPFRONT_TOKENIZE_LINE_LIMIT set to 3000
+ * Red checks (each run once, then restored). Hole A: the token-colour case did NOT go red with
+ * readModelTokenization returning null, nor with the view-zone toggle removed as well, nor with a
+ * 900-line file: monaco's Monarch TypeScript tokenizer is synchronous in this headless run, so the
+ * deleted block is coloured at the stamp either way. It guards the end state (and a monaco bump
+ * that stops drawing coloured deleted lines), not the up-front timing, which needs a tokenizer
+ * that loads late. Hole B: removing `reveal?.apply()` fails the "put back" case; emptying
+ * dropAppliedReveal fails the wheel case; removing `appliedRevealRef.current = null` in
+ * revealChangeLine fails the previous-change case. Hole C: UPFRONT_TOKENIZE_LINE_LIMIT set to 3000
  * fails the over-limit case.
  */
 import { test, expect, chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -92,33 +92,26 @@ function preConfig(): string {
 // offsets, and a deletion-free file keeps the two cases independent.
 const fixture = `
   (function () {
-    function source(prefix) {
-      var lines = [];
-      for (var lineNumber = 1; lineNumber <= ${FILE_LINES}; lineNumber++) {
-        lines.push('export const ' + prefix + lineNumber + ': number = ' + lineNumber + ';');
-      }
-      return lines;
-    }
-    var firstOriginal = source('alpha');
-    var firstModified = firstOriginal.slice();
-    firstModified.splice(49, 5);
-    var secondOriginal = source('beta');
-    var secondModified = secondOriginal.slice();
-    secondModified[49] = 'export const betaChangedFirst: string = "first";';
-    secondModified[109] = 'export const betaChangedLast: string = "last";';
-    // Two long files for the up-front tokenize limit: one line of each is changed, so each is a
-    // real diff, and both sides keep the same line count.
-    function sized(prefix, lineCount) {
+    function source(prefix, lineCount) {
       var lines = [];
       for (var lineNumber = 1; lineNumber <= lineCount; lineNumber++) {
         lines.push('export const ' + prefix + lineNumber + ': number = ' + lineNumber + ';');
       }
       return lines;
     }
-    var overLimitOriginal = sized('gamma', ${OVER_LIMIT_LINES});
+    var firstOriginal = source('alpha', ${FILE_LINES});
+    var firstModified = firstOriginal.slice();
+    firstModified.splice(49, 5);
+    var secondOriginal = source('beta', ${FILE_LINES});
+    var secondModified = secondOriginal.slice();
+    secondModified[49] = 'export const betaChangedFirst: string = "first";';
+    secondModified[109] = 'export const betaChangedLast: string = "last";';
+    // Two long files for the up-front tokenize limit: one line of each is changed, so each is a
+    // real diff, and both sides keep the same line count.
+    var overLimitOriginal = source('gamma', ${OVER_LIMIT_LINES});
     var overLimitModified = overLimitOriginal.slice();
     overLimitModified[499] = 'export const ${OVER_LIMIT_MARKER}: string = "changed";';
-    var atLimitOriginal = sized('delta', ${AT_LIMIT_LINES});
+    var atLimitOriginal = source('delta', ${AT_LIMIT_LINES});
     var atLimitModified = atLimitOriginal.slice();
     atLimitModified[499] = 'export const ${AT_LIMIT_MARKER}: string = "changed";';
     window.__mockGitDiff = {
@@ -148,6 +141,27 @@ const stampSnapshot = `
     }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-diff-state'] });
   })();
 `;
+
+/** The slice of the live monaco diff editor the page-side helpers below reach through `window.__monaco`. */
+interface MonacoTestEditor {
+  getScrollTop(): number;
+  setScrollTop(top: number): void;
+  getModel(): { getValue(): string } | null;
+  getOption(option: number): unknown;
+}
+interface MonacoTestDiffEditor {
+  onDidUpdateDiff(listener: () => void): { dispose(): void };
+  getContainerDomNode(): HTMLElement;
+  getLineChanges(): unknown[] | null;
+  getOriginalEditor(): { getModel(): unknown };
+  getModifiedEditor(): MonacoTestEditor;
+}
+interface MonacoTestWindow {
+  __monaco: { editor: { getDiffEditors(): MonacoTestDiffEditor[]; EditorOption: { lineHeight: number } } };
+  __interleaved?: string;
+  __forceCalls?: number[];
+  __stampSnapshot?: string[] | null;
+}
 
 let browser: Browser;
 let context: BrowserContext;
@@ -199,8 +213,16 @@ async function waitForLaidOut(): Promise<void> {
 
 async function modifiedScrollTop(): Promise<number> {
   return page.evaluate(() => {
-    const monaco = (window as unknown as { __monaco?: { editor: { getDiffEditors(): Array<{ getModifiedEditor(): { getScrollTop(): number } }> } } }).__monaco;
+    const monaco = (window as unknown as Partial<MonacoTestWindow>).__monaco;
     return monaco?.editor.getDiffEditors()[0]?.getModifiedEditor().getScrollTop() ?? -1;
+  });
+}
+
+/** The modified editor's line height, as monaco lays it out in this run. */
+async function modifiedLineHeight(): Promise<number> {
+  return page.evaluate(() => {
+    const monaco = (window as unknown as MonacoTestWindow).__monaco;
+    return Number(monaco.editor.getDiffEditors()[0].getModifiedEditor().getOption(monaco.editor.EditorOption.lineHeight));
   });
 }
 
@@ -211,10 +233,7 @@ async function modifiedScrollTop(): Promise<number> {
  */
 async function armInterleave(action: 'drift' | 'wheel' | 'previous-change'): Promise<void> {
   await page.evaluate((actionName) => {
-    const pageWindow = window as unknown as {
-      __monaco: { editor: { getDiffEditors(): Array<{ onDidUpdateDiff(listener: () => void): { dispose(): void }; getContainerDomNode(): HTMLElement; getLineChanges(): unknown[] | null; getModifiedEditor(): { setScrollTop(top: number): void; getModel(): { getValue(): string } | null } }> } };
-      __interleaved?: string;
-    };
+    const pageWindow = window as unknown as MonacoTestWindow;
     const diffEditor = pageWindow.__monaco.editor.getDiffEditors()[0];
     const subscription = diffEditor.onDidUpdateDiff(() => {
       // Only the update that carries the SECOND file's diff: an earlier one (the detached swap)
@@ -246,15 +265,13 @@ async function installForceTokenizationSpy(): Promise<boolean> {
   return page.evaluate(() => {
     type TokenizationPart = { forceTokenization: (lineNumber: number) => void };
     type SpyModel = { tokenization?: TokenizationPart };
-    const pageWindow = window as unknown as {
-      __monaco: { editor: { getDiffEditors(): Array<{ getOriginalEditor(): { getModel(): unknown }; getModifiedEditor(): { getModel(): unknown } }> } };
-      __forceCalls?: number[];
-    };
+    const pageWindow = window as unknown as MonacoTestWindow;
     const diffEditor = pageWindow.__monaco.editor.getDiffEditors()[0];
     const calls: number[] = [];
     pageWindow.__forceCalls = calls;
     let wrapped = 0;
-    for (const model of [diffEditor.getOriginalEditor().getModel(), diffEditor.getModifiedEditor().getModel()] as Array<SpyModel | null>) {
+    const models: unknown[] = [diffEditor.getOriginalEditor().getModel(), diffEditor.getModifiedEditor().getModel()];
+    for (const model of models as Array<SpyModel | null>) {
       const part = model?.tokenization;
       if (!part || typeof part.forceTokenization !== 'function') continue;
       const original = part.forceTokenization;
@@ -271,18 +288,18 @@ async function installForceTokenizationSpy(): Promise<boolean> {
 /** Opens `fileName` from the file list and returns the line numbers forced while it laid out. */
 async function forcedLinesWhileOpening(fileName: string, marker: string): Promise<number[]> {
   await page.evaluate(() => {
-    (window as unknown as { __forceCalls: number[] }).__forceCalls.length = 0;
+    (window as unknown as MonacoTestWindow).__forceCalls?.splice(0);
   });
   await page.locator('button', { hasText: fileName }).first().click();
   // Laid-out AND the new file's text in the modified model. The state attribute alone could still
   // be the previous file's until React commits the reset.
   await expect.poll(() => page.evaluate((markerText) => {
     const area = document.querySelector('[data-testid="diff-editor-area"]');
-    const diffEditor = (window as unknown as { __monaco: { editor: { getDiffEditors(): Array<{ getModifiedEditor(): { getModel(): { getValue(): string } | null } }> } } }).__monaco.editor.getDiffEditors()[0];
+    const diffEditor = (window as unknown as MonacoTestWindow).__monaco.editor.getDiffEditors()[0];
     const modifiedText = diffEditor.getModifiedEditor().getModel()?.getValue() ?? '';
     return area?.getAttribute('data-diff-state') === 'laid-out' && modifiedText.includes(markerText);
   }, marker), { timeout: 15000 }).toBe(true);
-  return page.evaluate(() => [...(window as unknown as { __forceCalls: number[] }).__forceCalls]);
+  return page.evaluate(() => [...((window as unknown as MonacoTestWindow).__forceCalls ?? [])]);
 }
 
 test.describe('DiffViewer up-front tokenize limit', () => {
@@ -368,7 +385,8 @@ test.describe('DiffViewer laid-out on a tokenized file', () => {
     // The press goes to the LAST change (line 110), well below the first position (line 50). The
     // smooth scroll finishes on its own, so poll for it; a re-apply of the first position would
     // cancel it and rest near line 50.
-    const lineHeight = 18;
+    const lineHeight = await modifiedLineHeight();
+    expect(lineHeight, 'monaco reports a line height').toBeGreaterThan(0);
     await expect.poll(modifiedScrollTop, { timeout: 5000 }).toBeGreaterThan(80 * lineHeight);
   });
 });
