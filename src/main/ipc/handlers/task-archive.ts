@@ -22,6 +22,7 @@ import type { TaskRepository } from '../../db/repositories/task-repository';
 import type { SwimlaneRole, Task, TaskUnarchiveInput } from '../../../shared/types';
 import { restoredLaneOrder } from '../../../shared/restore-lane-order';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Restoring an archived task into a To Do lane is a full reset, exactly as
@@ -93,7 +94,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.TASK_UNARCHIVE, async (event, input: TaskUnarchiveInput, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-    if (!resolvedProjectId) throw new Error('No project is currently open');
+    if (!resolvedProjectId) throw new RefusalError('No project is currently open');
 
     const { tasks, swimlanes, automations, automationRuns, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
 
@@ -221,7 +222,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.TASK_BULK_UNARCHIVE, async (event, ids: string[], targetSwimlaneId: string, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-    if (!resolvedProjectId) throw new Error('No project is currently open');
+    if (!resolvedProjectId) throw new RefusalError('No project is currently open');
 
     const { tasks, swimlanes, automations, automationRuns, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
     const toLane = swimlanes.getById(targetSwimlaneId);

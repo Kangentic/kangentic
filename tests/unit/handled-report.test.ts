@@ -20,7 +20,7 @@ const {
   EXPECTED_FAILURE_NAMES,
 } = await import('../../src/main/analytics/handled-report');
 const { setShuttingDown } = await import('../../src/main/shutdown-state');
-const { Refusal } = await import('../../src/shared/refusal');
+const { RefusalError } = await import('../../src/shared/refusal');
 
 function errnoError(code: string, message = `${code}: failed, open 'C:\\Users\\dev\\project\\file'`): NodeJS.ErrnoException {
   const error = new Error(message) as NodeJS.ErrnoException;
@@ -66,7 +66,7 @@ describe('isExpectedFailure', () => {
   });
 
   it('skips a refusal, an abort and the network', () => {
-    expect(isExpectedFailure(new Refusal('No project is currently open'))).toBe(true);
+    expect(isExpectedFailure(new RefusalError('No project is currently open'))).toBe(true);
     expect(isExpectedFailure(new DOMException('aborted', 'AbortError'))).toBe(true);
     expect(isExpectedFailure(errnoError('ECONNRESET'))).toBe(true);
     expect(isExpectedFailure(errnoError('ERR_STREAM_PREMATURE_CLOSE'))).toBe(true);
@@ -141,7 +141,7 @@ describe('createChokepointReporter', () => {
   it('applies its own filter after the expected-failure skip', () => {
     const reporter = createChokepointReporter('ipc', { shouldReport: isAllowlistedDefect });
     expect(reporter.report(new Error('Task is not in this column'))).toBe(false);
-    expect(reporter.report(new Refusal('No project is currently open'))).toBe(false);
+    expect(reporter.report(new RefusalError('No project is currently open'))).toBe(false);
     expect(reporter.report(new TypeError('defect'))).toBe(true);
   });
 

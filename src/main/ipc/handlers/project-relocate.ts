@@ -19,6 +19,7 @@ import { replacePathPrefix } from '../../../shared/paths';
 import { discardProjectSpares } from '../helpers/spare-worktrees';
 import type { ProjectRelocateOptions, ProjectRelocateResult, ProjectRelocateWarning } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Platform-correct path equality via `path.relative` (case-insensitive on
@@ -80,7 +81,7 @@ export async function relocateProject(
   const mode = options.mode ?? 'repoint';
   const warnings: ProjectRelocateWarning[] = [];
   const project = context.projectRepo.getById(projectId);
-  if (!project) throw new Error(`Project ${projectId} not found`);
+  if (!project) throw new RefusalError(`Project ${projectId} not found`);
 
   const resolved = path.resolve(newPath);
   // Capture before updatePath: worktree queues are keyed by the stored
@@ -92,10 +93,10 @@ export async function relocateProject(
   // Mode-aware validation of the source and destination.
   if (mode === 'move') {
     if (!fs.existsSync(oldPath) || !fs.statSync(oldPath).isDirectory()) {
-      throw new Error(`Project folder no longer exists: ${oldPath}. Use Locate Folder to re-point it.`);
+      throw new RefusalError(`Project folder no longer exists: ${oldPath}. Use Locate Folder to re-point it.`);
     }
     if (fs.existsSync(resolved)) {
-      throw new Error(`Destination already exists: ${resolved}`);
+      throw new RefusalError(`Destination already exists: ${resolved}`);
     }
     // The destination cannot be the source itself or nested inside it (would
     // recurse the folder into its own subtree). Checked before the parent
@@ -103,20 +104,20 @@ export async function relocateProject(
     // either, and "inside the project folder" is the more precise error.
     // replacePathPrefix is non-null exactly when resolved is oldPath or under it.
     if (replacePathPrefix(resolved, oldPath, oldPath) !== null) {
-      throw new Error(`Destination is inside the project folder: ${resolved}`);
+      throw new RefusalError(`Destination is inside the project folder: ${resolved}`);
     }
     const destinationParent = path.dirname(resolved);
     if (!fs.existsSync(destinationParent) || !fs.statSync(destinationParent).isDirectory()) {
-      throw new Error(`Destination folder does not exist: ${destinationParent}`);
+      throw new RefusalError(`Destination folder does not exist: ${destinationParent}`);
     }
   } else if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error(`New project location is not a directory: ${resolved}`);
+    throw new RefusalError(`New project location is not a directory: ${resolved}`);
   }
 
   const duplicate = context.projectRepo.list()
     .find((candidate) => candidate.id !== projectId && isSamePath(path.resolve(candidate.path), resolved));
   if (duplicate) {
-    throw new Error(`Another project ("${duplicate.name}") already points at ${resolved}`);
+    throw new RefusalError(`Another project ("${duplicate.name}") already points at ${resolved}`);
   }
 
   // Suspend live sessions so they resume at the new cwd after reopen.

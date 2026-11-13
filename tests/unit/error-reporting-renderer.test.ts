@@ -21,7 +21,12 @@ vi.mock('@sentry/electron/renderer', () => ({
   captureException: mocks.captureException,
 }));
 
-import { initRendererErrorReporting, reportBoundaryError } from '../../src/renderer/error-reporting';
+import {
+  initRendererErrorReporting,
+  reportCaughtRenderError,
+  reportRendererFailure,
+  resetRendererFailureReports,
+} from '../../src/renderer/error-reporting';
 import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
 describe('initRendererErrorReporting', () => {
@@ -89,18 +94,28 @@ describe('initRendererErrorReporting', () => {
   });
 });
 
-describe('reportBoundaryError', () => {
+describe('reportCaughtRenderError (the root onCaughtError)', () => {
   afterEach(() => {
     mocks.captureException.mockReset();
   });
 
-  it('forwards the error to Sentry.captureException', () => {
-    const error = new Error('boundary caught this');
+  it('sends a path-free copy tagged with the boundary that caught it and its component stack', () => {
+    const error = new TypeError("Cannot read properties of undefined (reading 'title') for Fix Acme billing");
+    const panelBoundary = { boundaryReportTags: () => ({ boundary: 'panel' as const, panel: 'agent monitor' }) };
 
-    reportBoundaryError(error);
+    reportCaughtRenderError(error, { componentStack: '\n    at MonitorBody\n    at PanelErrorBoundary', errorBoundary: panelBoundary });
 
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
-    expect(mocks.captureException).toHaveBeenCalledWith(error);
+    const [sent, context] = mocks.captureException.mock.calls[0] as [Error, { tags: Record<string, string>; contexts: Record<string, Record<string, unknown>> }];
+    expect(sent.message).toBe('Handled render failure: TypeError');
+    expect(context.tags).toEqual({ boundary: 'panel', panel: 'agent monitor', source: 'react_boundary', error_name: 'TypeError' });
+    expect(context.contexts.react).toEqual({ componentStack: '\n    at MonitorBody\n    at PanelErrorBoundary' });
+    expect(sent.stack).not.toContain('Acme');
+  });
+
+  it('tags an unknown boundary when React hands over none', () => {
+    reportCaughtRenderError(new Error('x'), {});
+    expect((mocks.captureException.mock.calls[0][1] as { tags: Record<string, string> }).tags.boundary).toBe('unknown');
   });
 
   it('never throws even when captureException itself throws', () => {
@@ -108,6 +123,30 @@ describe('reportBoundaryError', () => {
       throw new Error('sentry transport exploded');
     });
 
-    expect(() => reportBoundaryError(new Error('boundary caught this'))).not.toThrow();
+    expect(() => reportCaughtRenderError(new Error('boundary caught this'), {})).not.toThrow();
+  });
+});
+
+describe('reportRendererFailure', () => {
+  afterEach(() => {
+    mocks.captureException.mockReset();
+    resetRendererFailureReports();
+  });
+
+  it('reports once per area, op and error class, fingerprinted on them', () => {
+    expect(reportRendererFailure('board', 'load', new RangeError('Invalid time value'))).toBe(true);
+    expect(reportRendererFailure('board', 'load', new RangeError('Invalid time value'))).toBe(false);
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+    const [sent, context] = mocks.captureException.mock.calls[0] as [Error, { tags: Record<string, string>; fingerprint: string[] }];
+    expect(sent.message).toBe('Handled board_load failure: RangeError');
+    expect(context.tags).toEqual({ source: 'renderer', area: 'board', op: 'load', error_name: 'RangeError' });
+    expect(context.fingerprint).toEqual(['renderer', 'board', 'load', 'RangeError']);
+  });
+
+  it('skips a rejected IPC call, which main reported, an abort and the network', () => {
+    expect(reportRendererFailure('board', 'load', new Error("Error invoking remote method 'board:get': TypeError: x"))).toBe(false);
+    expect(reportRendererFailure('board', 'load', new DOMException('aborted', 'AbortError'))).toBe(false);
+    expect(reportRendererFailure('board', 'load', new TypeError('Failed to fetch'))).toBe(false);
+    expect(mocks.captureException).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import { toForwardSlash } from '../../../shared/paths';
 import { stopChildTree } from '../../shared/child-tree-stop';
 import { mapWithConcurrency } from '../../shared/map-with-concurrency';
 import type { ProjectSearchEntry, ProjectSearchEntriesInput, ProjectSearchEntriesResult } from '../../../shared/types';
+import { RefusalError } from '../../../shared/refusal';
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
@@ -316,7 +317,7 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
           return { relativeDir, dirents };
         } catch (error) {
           if (!relativeDir) {
-            throw new Error(
+            throw new RefusalError(
               `Unable to scan workspace entries at '${cwd}': ${error instanceof Error ? error.message : 'unknown error'}`,
               { cause: error },
             );

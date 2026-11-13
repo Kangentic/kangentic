@@ -19,6 +19,7 @@
 import { agentPathsForProjectPath } from './host-paths';
 import { hostAccessFor } from './host-transfer';
 import type { HostCommandResult } from './protocol/messages';
+import { RefusalError } from '../../shared/refusal';
 
 /** The script is `$1`, an argument and never part of this text. */
 const WRAPPER = 'sh -c "$1" kangentic-script </dev/null >/dev/null 2>&1';
@@ -68,7 +69,7 @@ export function hostScriptRunner(projectPath: string | null | undefined, localFo
   if (!hostId) return null;
   return async ({ script, environment, timeoutMs }) => {
     const access = hostAccessFor(hostId);
-    if (!access) throw new Error('This project\'s host is not available, so the script did not run.');
+    if (!access) throw new RefusalError('This project\'s host is not available, so the script did not run.');
     const { fits, omitted } = boundedHostEnvironment(environment);
     const result = await access.runCommand({
       file: 'sh',

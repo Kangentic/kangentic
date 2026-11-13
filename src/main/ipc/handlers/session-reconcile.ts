@@ -16,6 +16,7 @@ import { decideSuspendDbAction, isLiveSession } from '../../pty/session-registry
 import { isAbortError } from '../../../shared/abort-utils';
 import type { Session, SuspendedBy, Task } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Persist the DB side of a session suspend: capture metrics, mark the latest
@@ -295,7 +296,7 @@ export function reconcileTaskSessionRef(
 ): { task: Task; liveSession: Session | null } {
   const { tasks } = getProjectRepos(context, projectId);
   const task = tasks.getById(taskId);
-  if (!task) throw new Error(`Task ${taskId} not found`);
+  if (!task) throw new RefusalError(`Task ${taskId} not found`);
 
   // Read the registry entry pointed at by task.session_id once, up front.
   // Reused by both the primary path (live check) and the stale-clear log
@@ -328,7 +329,7 @@ export function reconcileTaskSessionRef(
     );
     tasks.update({ id: taskId, session_id: liveByTaskId.id });
     const refreshed = tasks.getById(taskId);
-    if (!refreshed) throw new Error(`Task ${taskId} not found`);
+    if (!refreshed) throw new RefusalError(`Task ${taskId} not found`);
     return { task: refreshed, liveSession: liveByTaskId };
   }
 
@@ -348,6 +349,6 @@ export function reconcileTaskSessionRef(
   // consistent for downstream code that mutates the task in place
   // (e.g. ensureTaskWorktree's Object.assign).
   const refreshed = tasks.getById(taskId);
-  if (!refreshed) throw new Error(`Task ${taskId} not found`);
+  if (!refreshed) throw new RefusalError(`Task ${taskId} not found`);
   return { task: refreshed, liveSession: null };
 }

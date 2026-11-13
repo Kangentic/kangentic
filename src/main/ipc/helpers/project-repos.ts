@@ -9,6 +9,7 @@ import { TaskLinkRepository } from '../../db/repositories/task-link-repository';
 import { BackgroundCallRepository } from '../../db/repositories/background-call-repository';
 import { getProjectDb } from '../../db/database';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 export function getProjectRepos(context: IpcContext, projectId?: string | null): {
   tasks: TaskRepository;
@@ -22,7 +23,7 @@ export function getProjectRepos(context: IpcContext, projectId?: string | null):
   backgroundCalls: BackgroundCallRepository;
 } {
   const resolvedProjectId = projectId ?? context.currentProjectId;
-  if (!resolvedProjectId) throw new Error('No project is currently open');
+  if (!resolvedProjectId) throw new RefusalError('No project is currently open');
   const db = getProjectDb(resolvedProjectId);
   return {
     tasks: new TaskRepository(db),

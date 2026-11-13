@@ -54,6 +54,7 @@ import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
 import { isAnswerCaller, workflowIdOfCaller } from './mcp-http/caller-url';
 import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
+import { mcpRequestReporter, withToolReporting } from './mcp-http/tool-reporting';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import { resolveMcpCaller, callerBrowserOwner } from './mcp-http/caller-task';
@@ -243,6 +244,8 @@ export async function startMcpHttpServer(
     handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig, networkConfig, resolveSteering, resolveBrowser, resolveBackgroundShells)
       .catch((error) => {
         console.error('[mcp-http] Request handler crashed:', error);
+        // A client that disconnected (ECONNRESET, EPIPE, ERR_STREAM_*) is skipped by the reporter.
+        mcpRequestReporter.report(error, { tags: { stage: 'request' } });
         if (!res.headersSent) {
           res.statusCode = 500;
           res.end();
@@ -416,10 +419,12 @@ export function buildConfiguredMcpServer(
 ): McpServer {
   const browserAutomationEnabled = getBrowserAutomationConfig().enabled;
   const instructions = buildServerInstructions(resolver, browserAutomationEnabled);
-  const mcpServer = new McpServer(
+  const createdServer = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions },
   );
+  // Every tool registered below reports a defect its callback throws (tool-reporting.ts).
+  const mcpServer = withToolReporting(createdServer);
   // The calling agent's task, looked up once for the request: the browser
   // tools scope their default pane to it, and the move tool's workflow lock
   // lets a task's own agent move it while its workflow runs. Its session goes
@@ -458,7 +463,7 @@ export function buildConfiguredMcpServer(
     registerDevtoolsMcpTools(mcpServer, resolver);
   }
 
-  return mcpServer;
+  return createdServer;
 }
 
 /**
@@ -483,7 +488,7 @@ export function buildAnswerMcpServer(resolver: RequestResolver, callerSessionId?
     },
   );
   // The caller rides along so the run's searches reach the Knowledge Graph trace.
-  registerSearchTools(mcpServer, resolver, callerSessionId);
+  registerSearchTools(withToolReporting(mcpServer), resolver, callerSessionId);
   return mcpServer;
 }
 
@@ -519,7 +524,7 @@ export function buildWorkflowAgentMcpServer(
     + 'its reply says: it tells you whether and when that checkout becomes readable. Do not search the disk '
     + 'for another project\'s folder.';
   const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions });
-  const scoped = scopeServerToWorkflowAgent(mcpServer, workflowId);
+  const scoped = scopeServerToWorkflowAgent(withToolReporting(mcpServer), workflowId);
   registerTaskTools(scoped, resolver, taskCounter, toolArgumentNotices, null);
   registerProfileTools(scoped, resolver);
   registerAutomationTools(scoped, resolver);
@@ -681,6 +686,7 @@ async function handleHttpRequest(
     // committed, write a 500 so the client doesn't hang waiting for a
     // body that will never arrive.
     console.error('[mcp-http] Per-request dispatch failed:', error);
+    mcpRequestReporter.report(error, { tags: { stage: 'dispatch' } });
     if (!res.headersSent) {
       res.statusCode = 500;
       res.end();

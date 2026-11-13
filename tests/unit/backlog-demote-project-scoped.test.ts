@@ -20,6 +20,7 @@
  * test whose stamped id equalled the current one.
  */
 
+import { RefusalError } from '../../src/shared/refusal';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
@@ -573,7 +574,7 @@ describe('BACKLOG_DEMOTE refuses without announcing', () => {
     doublesIn(OTHER_PROJECT_ID).tasks.getById.mockReturnValue(taskRow(true));
 
     await expect(invokeDemote(FROM_OTHER_WINDOW, OTHER_PROJECT_ID))
-      .rejects.toThrow(new Error(refusalSentence()));
+      .rejects.toThrow(new RefusalError(refusalSentence()));
 
     expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
     expect(otherWindowPushes()).toEqual([]);
@@ -597,7 +598,7 @@ describe('BACKLOG_DEMOTE refuses without announcing', () => {
       // lock never settles, and the absence of a settlement cannot be polled.
       await new Promise((resolve) => { setTimeout(resolve, 0); });
       expect(outcome.settled).toBe(true);
-      expect(outcome.error).toEqual(new Error(refusalSentence()));
+      expect(outcome.error).toEqual(new RefusalError(refusalSentence()));
     } finally {
       releaseLock();
       await holder;
@@ -620,7 +621,7 @@ describe('BACKLOG_DEMOTE refuses without announcing', () => {
     const holder = withTaskLock(TASK_ID, () => lockHeld);
 
     const refused = expect(invokeDemote(FROM_OTHER_WINDOW, OTHER_PROJECT_ID))
-      .rejects.toThrow(new Error(refusalSentence()));
+      .rejects.toThrow(new RefusalError(refusalSentence()));
     await new Promise((resolve) => { setTimeout(resolve, 0); });
     // Parked on the lock, so the body has not run yet.
     expect(shared.cleanupTaskResources).not.toHaveBeenCalled();

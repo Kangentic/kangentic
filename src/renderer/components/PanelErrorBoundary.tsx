@@ -2,7 +2,7 @@ import React from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { isChunkLoadError } from '../utils/chunk-load-error';
-import { reportBoundaryError } from '../error-reporting';
+import type { BoundaryReportTags } from '../error-reporting';
 
 interface PanelErrorBoundaryProps {
   children: React.ReactNode;
@@ -63,11 +63,16 @@ export class PanelErrorBoundary extends React.Component<
     return { hasError: true, error };
   }
 
+  /** Read by the root's `onCaughtError`, which reports this boundary's catch (`reportCaughtRenderError`). */
+  boundaryReportTags(): BoundaryReportTags {
+    const panel = this.props.panel ?? this.props.label;
+    return panel ? { boundary: 'panel', panel } : { boundary: 'panel' };
+  }
+
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('PanelErrorBoundary caught:', error, info.componentStack);
-    // Boundary-caught errors never reach Sentry's global handlers (React
-    // swallows them); see ErrorBoundary.componentDidCatch.
-    reportBoundaryError(error);
+    // Sentry hears of it from the root's onCaughtError (index.tsx), which
+    // reads boundaryReportTags above, so it is not reported here too.
     window.electronAPI?.analytics?.trackRendererError(error.message, {
       boundary: 'panel',
       panel: this.props.panel ?? this.props.label,

@@ -15,6 +15,7 @@ import {
 } from './pr-registry';
 import type { PRResolveOptions } from './pr-registry';
 import { createDeferredDegrade } from './shared/pr-dispatch';
+import { prReporter } from './pr-report';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { AppConfig, Task, PRState, PRMergeReadiness, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
@@ -804,6 +805,8 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       } else {
         resolveFailed = true;
         console.error(`[pr-linking] resolve failed for task ${taskId.slice(0, 8)}:`, error);
+        // Unavailable and transient resolvers degrade above; this branch is a defect.
+        prReporter.report(error, { tags: { stage: 'resolve' } });
       }
     }
 

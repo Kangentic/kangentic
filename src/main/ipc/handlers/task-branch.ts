@@ -25,6 +25,7 @@ import { classifyBaseRef, isFixedBase } from '../../git/base-ref';
 import { gitAt } from '../../git/git-client';
 import type { IpcContext } from '../ipc-context';
 import type { Task, TaskSwitchBranchInput, TaskUpdateFromBaseInput, TaskUpdateFromBaseResult } from '../../../shared/types';
+import { RefusalError } from '../../../shared/refusal';
 
 export interface CarryResult {
   carriedTracked: boolean;
@@ -122,18 +123,18 @@ function assertNoActiveTaskSession(context: IpcContext, task: Task, action: stri
   const activeSession = context.sessionManager.listSessions()
     .find(session => session.id === task.session_id && (session.status === 'running' || session.status === 'queued'));
   if (activeSession) {
-    throw new Error(`Cannot ${action} while a session is running. Suspend the session first.`);
+    throw new RefusalError(`Cannot ${action} while a session is running. Suspend the session first.`);
   }
 }
 
 export function registerTaskBranchHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.TASK_SWITCH_BRANCH, async (event, input: TaskSwitchBranchInput, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-    if (!resolvedProjectId) throw new Error('No project is currently open');
+    if (!resolvedProjectId) throw new RefusalError('No project is currently open');
 
     const { tasks } = getProjectRepos(context, resolvedProjectId);
     const task = tasks.getById(input.taskId);
-    if (!task) throw new Error(`Task ${input.taskId} not found`);
+    if (!task) throw new RefusalError(`Task ${input.taskId} not found`);
 
     // Guard: must not have a running PTY session
     assertNoActiveTaskSession(context, task, 'switch branch');
@@ -147,7 +148,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
     try {
       if (input.enableWorktree && !task.worktree_path) {
         // --- Path B: Enable worktree ---
-        if (!resolvedProjectPath) throw new Error('No project path available');
+        if (!resolvedProjectPath) throw new RefusalError('No project path available');
 
         // Update base branch and use_worktree before creating the worktree
         tasks.update({
@@ -207,7 +208,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
       if (task.worktree_path) {
         // --- Path A: Switch base branch (worktree exists) ---
         if (!fs.existsSync(task.worktree_path)) {
-          throw new Error(`Worktree directory not found: ${task.worktree_path}`);
+          throw new RefusalError(`Worktree directory not found: ${task.worktree_path}`);
         }
 
         tasks.update({ id: task.id, base_branch: input.newBaseBranch || null });
@@ -234,7 +235,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.TASK_UPDATE_FROM_BASE, async (event, input: TaskUpdateFromBaseInput, projectId?: string | null): Promise<TaskUpdateFromBaseResult> => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-    if (!resolvedProjectId || !resolvedProjectPath) throw new Error('No project is currently open');
+    if (!resolvedProjectId || !resolvedProjectPath) throw new RefusalError('No project is currently open');
     const projectPath = resolvedProjectPath;
 
     // withTaskLock so a concurrent move cannot spawn an agent into the tree
@@ -243,7 +244,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
     const update = withTaskLock(input.taskId, async (): Promise<TaskUpdateFromBaseResult> => {
       const { tasks } = getProjectRepos(context, resolvedProjectId);
       const task = tasks.getById(input.taskId);
-      if (!task) throw new Error(`Task ${input.taskId} not found`);
+      if (!task) throw new RefusalError(`Task ${input.taskId} not found`);
 
       // A running or queued PTY session owns the tree, and fast-forwarding
       // files under a live agent is exactly the "silently move an agent's
@@ -255,7 +256,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
       // SHARED checkout on demand would additionally need an "is the main
       // checkout currently on this task's branch" guard.
       if (!task.worktree_path || !fs.existsSync(task.worktree_path)) {
-        throw new Error('This task has no worktree to update.');
+        throw new RefusalError('This task has no worktree to update.');
       }
       const worktreePath = task.worktree_path;
 
@@ -302,7 +303,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
         if (task.branch_name) {
           const headBranch = (await worktreeGit.revparse(['--abbrev-ref', 'HEAD'])).trim();
           if (headBranch !== task.branch_name) {
-            throw new Error(`The worktree is checked out to '${headBranch}', not the task's branch '${task.branch_name}'. Check the task's branch out first.`);
+            throw new RefusalError(`The worktree is checked out to '${headBranch}', not the task's branch '${task.branch_name}'. Check the task's branch out first.`);
           }
         }
         const status = await worktreeGit.status();
@@ -324,7 +325,7 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
         // but has not written `task.session_id` yet.
         const occupant = findLiveSessionInDirectory(context, worktreePath);
         if (occupant) {
-          throw new Error('Cannot update from base while an agent is running in this worktree. Stop it first.');
+          throw new RefusalError('Cannot update from base while an agent is running in this worktree. Stop it first.');
         }
 
         try {

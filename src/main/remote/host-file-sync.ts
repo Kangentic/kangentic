@@ -27,6 +27,7 @@ import * as path from 'node:path';
 import { isUnderLocalRoot, localPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { isPlainRelativePath, type RemoteFileDeclaration } from '../agent/shared/remote-files';
 import type { HostFileWrite } from './protocol/messages';
+import { RefusalError } from '../../shared/refusal';
 
 const LOG_TAG = '[HOST_FILES]';
 /** The helper's read cap. A file this size may have been cut short, so it is never edited or pushed back. */
@@ -95,12 +96,12 @@ export class HostFileSync {
   /** Read the declared files from the host into the folders the adapter edits. */
   static async pull(declaration: RemoteFileDeclaration, workingDirectory: string, place: SshCliPlace): Promise<HostFileSync> {
     const files = place.files;
-    if (!files) throw new Error('This host has no connection to edit its files through.');
+    if (!files) throw new RefusalError('This host has no connection to edit its files through.');
     const resolvedDirectory = path.resolve(workingDirectory);
     const secrets = new Set(declaration.private ?? []);
     for (const relative of secrets) {
       if (!declaration.home.includes(relative) && !declaration.project.includes(relative)) {
-        throw new Error(`${relative} is marked private but is not a declared host file.`);
+        throw new RefusalError(`${relative} is marked private but is not a declared host file.`);
       }
     }
     const tracked: TrackedFile[] = [
@@ -357,7 +358,7 @@ function clearBeingEdited(key: string, file: TrackedFile): void {
 
 function assertRelative(relative: string): void {
   if (!isPlainRelativePath(relative)) {
-    throw new Error(`${relative} is not a plain relative path, so it cannot be declared as a host file.`);
+    throw new RefusalError(`${relative} is not a plain relative path, so it cannot be declared as a host file.`);
   }
 }
 

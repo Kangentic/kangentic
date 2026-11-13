@@ -25,6 +25,7 @@
  * resolveSpawnOverrides resolve against the real project instead of null.
  */
 
+import { RefusalError } from '../../src/shared/refusal';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 
@@ -786,7 +787,7 @@ describe('BACKLOG_DEMOTE refuses a task in a workflow', () => {
     if (!handler) throw new Error('BACKLOG_DEMOTE handler not registered');
 
     await expect(Promise.resolve(handler(null, { taskId: 'task-unreadable-home' })))
-      .rejects.toThrow(new Error(WORKFLOW_REFUSALS.removeFirst('#414', 'its workflow')));
+      .rejects.toThrow(new RefusalError(WORKFLOW_REFUSALS.removeFirst('#414', 'its workflow')));
     expect(taskRepoMock.delete).not.toHaveBeenCalled();
   });
 
@@ -813,7 +814,7 @@ describe('BACKLOG_DEMOTE refuses a task in a workflow', () => {
     if (!handler) throw new Error('BACKLOG_DEMOTE handler not registered');
 
     await expect(Promise.resolve(handler(null, { taskId: 'task-in-workflow' })))
-      .rejects.toThrow(new Error(WORKFLOW_REFUSALS.removeFirst('#414', WORKFLOW_TITLE)));
+      .rejects.toThrow(new RefusalError(WORKFLOW_REFUSALS.removeFirst('#414', WORKFLOW_TITLE)));
 
     expect(mockCleanupTaskResources).not.toHaveBeenCalled();
     expect(backlogRepoMock.createFromTask).not.toHaveBeenCalled();

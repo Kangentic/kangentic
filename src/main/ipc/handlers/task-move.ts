@@ -77,6 +77,7 @@ import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './sess
 import { abortInFlightMove, registerMoveController, releaseMoveController } from './task-move-controllers';
 import { markOwnCallSession, waitForOwnAgentTurn } from './own-call-turn-wait';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
+import { RefusalError } from '../../../shared/refusal';
 
 /** What a session did when the move ends it, for the wait's log line. */
 const OWN_MOVE_CALL = 'moved its own task';
@@ -371,7 +372,7 @@ export async function handleTaskMove(
       origin,
       moverIsTaskAgent: options?.moverIsTaskAgent === true,
     });
-    if (refusal) throw new Error(refusal);
+    if (refusal) throw new RefusalError(refusal);
   };
   const precheckProjectId = projectId ?? context.currentProjectId;
   if (precheckProjectId) {
@@ -474,7 +475,7 @@ export async function handleTaskMove(
       const resolvedProjectId = projectId ?? context.currentProjectId;
       // Use !== undefined (not ??) to distinguish "caller passed null" from "caller omitted the arg"
       const resolvedProjectPath = projectPath !== undefined ? projectPath : context.currentProjectPath;
-      if (!resolvedProjectId) throw new Error('No project is currently open');
+      if (!resolvedProjectId) throw new RefusalError('No project is currently open');
 
       const { tasks, swimlanes, attachments } = getProjectRepos(context, resolvedProjectId);
       // The pointer every Priority branch below keys on, reconciled against the
@@ -499,7 +500,7 @@ export async function handleTaskMove(
       const expectedFromSwimlaneId = options?.expectedFromSwimlaneId;
       if (expectedFromSwimlaneId !== undefined && fromSwimlaneId !== expectedFromSwimlaneId) {
         const expectedName = swimlanes.getById(expectedFromSwimlaneId)?.name ?? 'its column';
-        throw new Error(`The task left ${expectedName} before it could be moved.`);
+        throw new RefusalError(`The task left ${expectedName} before it could be moved.`);
       }
       const originalPosition = task.position;
       const fromLane = swimlanes.getById(fromSwimlaneId);

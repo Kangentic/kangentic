@@ -3,6 +3,7 @@ import type { Swimlane, Task, Workflow } from '../../shared/types';
 import { startColumn } from '../../shared/workflow-route';
 import { getExistingProjectDb, getOpenProjectDb, getProjectDb } from '../db/database';
 import { isSqliteError } from '../db/sqlite-error';
+import { createChokepointReporter } from '../analytics/handled-report';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { setHomeLinkRemover } from '../db/repositories/workflow-home-links';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -111,6 +112,13 @@ interface FailedStart {
 }
 
 const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * One report per defect in the engine's own work: an evaluation pass, a start
+ * nothing else reported, dropping links, completing a workflow, ending its agent.
+ * The `stage` tag says which. Exported for tests.
+ */
+export const workflowEngineReporter = createChokepointReporter('workflow_engine');
 
 export class WorkflowEngineHost {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -232,6 +240,10 @@ export class WorkflowEngineHost {
     this.failedStarts.set(key, failure);
     console.error(`[WORKFLOW] Start of task ${intent.taskId.slice(0, 8)} failed (attempt ${attempts}, retrying in ${Math.round(delayMs / 1000)}s):`, error);
     if (previous?.reason !== reason) this.toastFailedStart(intent, error);
+    // The toast's notifySpawnBlocked reports a worktree or checkout failure, and
+    // spawnAgent reports an agent one, each marking the error. Only a start that
+    // failed some other way reaches the reporter, once, on its first attempt.
+    if (attempts === 1) workflowEngineReporter.report(error, { tags: { stage: 'start' } });
     if (!failure.stallNoticeSent && Date.now() - failure.firstFailedAt >= START_STALL_NOTICE_MS) {
       failure.stallNoticeSent = true;
       this.announceStalledStart(intent, reason);
@@ -294,6 +306,9 @@ export class WorkflowEngineHost {
       this.retryUnreadLater(unreadProjectIds.size > 0);
     } catch (error) {
       console.error('[WORKFLOW] Evaluation failed:', error);
+      // A throw that repeats fails every pass and skips retryUnreadLater, so
+      // every running workflow stops advancing.
+      workflowEngineReporter.report(error, { tags: { stage: 'evaluate' } });
     } finally {
       this.evaluating = false;
       if (this.dirtyAgain) {
@@ -599,6 +614,7 @@ export class WorkflowEngineHost {
       if (!this.failedDrops.has(intent.workflowId)) {
         this.failedDrops.add(intent.workflowId);
         console.error(`[WORKFLOW] Could not drop the links to removed tasks of workflow ${intent.workflowId.slice(0, 8)}:`, error);
+        workflowEngineReporter.report(error, { tags: { stage: 'drop_links' } });
       }
     }
     if (dropped === 0) return;
@@ -619,11 +635,13 @@ export class WorkflowEngineHost {
         // it. Its conversation stays recorded on the workflow.
         endWorkflowAgent(this.context, intent.workflowId).catch((error: unknown) => {
           console.error(`[WORKFLOW] Could not end the agent of ${intent.workflowId.slice(0, 8)}:`, error);
+          workflowEngineReporter.report(error, { tags: { stage: 'end_agent' } });
         });
         announceWorkflowComplete(this.context, intent.homeProjectId, intent.workflowId, taskCounts.get(intent.workflowId) ?? 0);
         notifyWorkflowChanged(intent.homeProjectId, intent.workflowId);
       } catch (error) {
         console.error(`[WORKFLOW] Could not complete workflow ${intent.workflowId.slice(0, 8)}:`, error);
+        workflowEngineReporter.report(error, { tags: { stage: 'complete' } });
       }
       return;
     }

@@ -20,14 +20,18 @@ import { reportHandledError, type ErrorReportContexts } from './error-reporting'
 import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
-import { redactPaths } from '../../shared/sentry-breadcrumbs';
+import {
+  diagnosticContextOf,
+  errorCodeOf,
+  errorNameOf,
+  framesOf,
+  hasDiagnosticMessage,
+  pathFreeCopy,
+} from '../../shared/handled-error-copy';
 
-/** A class name: `TypeError`, `HttpError`. A slug or a sentence cannot pass. */
-const ERROR_NAME = /^[A-Za-z_$][\w$]{0,63}$/;
-/** An errno or code constant: `ENOENT`, `SQLITE_BUSY`, `ERR_STREAM_DESTROYED`. */
-const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
-/** The longest built-in error message kept in `contexts`. */
-export const MAX_DIAGNOSTIC_MESSAGE_CHARACTERS = 200;
+export { diagnosticContextOf, errorCodeOf, errorNameOf, pathFreeCopy } from '../../shared/handled-error-copy';
+export { MAX_DIAGNOSTIC_MESSAGE_CHARACTERS } from '../../shared/handled-error-copy';
+
 /** The most distinct keys one chokepoint reports in a run. */
 export const DEFAULT_CHOKEPOINT_KEY_CAP = 25;
 
@@ -99,9 +103,6 @@ export const NETWORK_ERRNOS: ReadonlySet<string> = new Set([
   'SELF_SIGNED_CERT_IN_CHAIN',
 ]);
 
-/** Built-in classes whose message is a fixed sentence the runtime wrote, never user data. */
-const DIAGNOSTIC_MESSAGE_NAMES: ReadonlySet<string> = new Set(['TypeError', 'RangeError', 'ReferenceError']);
-
 const reportedErrors = new WeakSet<object>();
 
 /**
@@ -113,20 +114,16 @@ export function markReported(error: unknown): void {
   if (error !== null && typeof error === 'object') reportedErrors.add(error);
 }
 
+/**
+ * True when `error`, or the error it wraps (`cause`, one level), was marked. A
+ * wrapper (`wrapWorktreeSetupError`) is rethrown past a reporter that marked the
+ * cause it was handed, so the wrapper alone would look unreported.
+ */
 export function isReported(error: unknown): boolean {
-  return error !== null && typeof error === 'object' && reportedErrors.has(error);
-}
-
-/** The error's `name` when it is a class name, else `Error`. */
-export function errorNameOf(error: unknown): string {
-  if (!(error instanceof Error)) return 'NonError';
-  return ERROR_NAME.test(error.name) ? error.name : 'Error';
-}
-
-/** The error's `code` when it is a constant (`ENOENT`, `SQLITE_BUSY`), else undefined. */
-export function errorCodeOf(error: unknown): string | undefined {
-  const code = (error as { code?: unknown } | null | undefined)?.code;
-  return typeof code === 'string' && ERROR_CODE.test(code) ? code : undefined;
+  if (error === null || typeof error !== 'object') return false;
+  if (reportedErrors.has(error)) return true;
+  const cause = (error as { cause?: unknown }).cause;
+  return cause !== null && typeof cause === 'object' && reportedErrors.has(cause);
 }
 
 /** The syscall of a Node system error (`open`, `rename`), else undefined. */
@@ -172,48 +169,18 @@ export function isEnvironmentFailure(error: unknown): boolean {
 }
 
 /**
- * The interim IPC allowlist: classes whose throw is a defect whatever the message,
- * because the runtime raised them. Plain `Error` is left out until the refusals it
- * still carries are typed (`Refusal`).
+ * Classes whose throw is a defect whatever the message, because the runtime
+ * raised them. This was the IPC wrap's interim allowlist; with the IPC refusals
+ * typed (`RefusalError`) the wrap reports every unexpected class. A chokepoint
+ * whose path still carries untyped plain-`Error` refusals passes this as its
+ * `shouldReport` filter.
  */
 export function isAllowlistedDefect(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  if (DIAGNOSTIC_MESSAGE_NAMES.has(error.name)) return true;
+  if (hasDiagnosticMessage(error)) return true;
   const code = errorCodeOf(error);
   if (error.name === 'SqliteError') return code !== undefined && code.startsWith('SQLITE_');
   return code !== undefined && /^E[A-Z0-9]{2,}$/.test(code) && !isNetworkFailure(error);
-}
-
-/** The original stack's frames, from the first `    at ` line, or '' when it has none. */
-function framesOf(stack: string | undefined): string {
-  if (typeof stack !== 'string') return '';
-  const firstFrame = stack.search(/\n\s+at /);
-  return firstFrame === -1 ? '' : stack.slice(firstFrame);
-}
-
-/**
- * A copy of `error` that carries no user content: `Handled <source> failure: <Name>`,
- * the same `name`, and the original frames. The frames are cut at the first `at`
- * line, so a multi-line message (a path on its second line) never rides along in the
- * stack's header.
- */
-export function pathFreeCopy(source: string, error: unknown): Error {
-  const name = errorNameOf(error);
-  const copy = new Error(`Handled ${source} failure: ${name}`);
-  copy.name = name;
-  const frames = framesOf(error instanceof Error ? error.stack : undefined);
-  copy.stack = `${name}: ${copy.message}${frames || framesOf(copy.stack)}`;
-  return copy;
-}
-
-/**
- * The runtime's own message for a `TypeError`, `RangeError` or `ReferenceError`,
- * paths removed and cut to 200 characters, as a context. Never a `SyntaxError`'s:
- * `JSON.parse` quotes its input.
- */
-export function diagnosticContextOf(error: unknown): ErrorReportContexts {
-  if (!(error instanceof Error) || !DIAGNOSTIC_MESSAGE_NAMES.has(error.name)) return {};
-  return { error_detail: { message: redactPaths(error.message).slice(0, MAX_DIAGNOSTIC_MESSAGE_CHARACTERS) } };
 }
 
 /** The fingerprint for `error`: environment failures group by name and code, the rest by stack. */

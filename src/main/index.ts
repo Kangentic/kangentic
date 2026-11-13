@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import { relaunchApp, devRestartFileFrom, isRestartRequested } from './app-relaunch';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
+import { installIpcHandlerReporting } from './analytics/ipc-handler-report';
 import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
@@ -161,6 +162,11 @@ const PROCESS_START_ISO = new Date().toISOString();
  * on read, so a renderer reload does not re-toast.
  */
 let pendingGpuNotice = false;
+
+// Report a defect from any `ipcMain.handle` handler (ipc-handler-report.ts).
+// Its own patch, installed before the diagnostics recorder and every
+// registration, so production reporting never depends on the recorder.
+installIpcHandlerReporting(ipcMain);
 
 // Install product diagnostics (log mirror, crash capture, IPC recorder,
 // debug-dump path resolver) BEFORE any IPC handler registers. The recorder

@@ -19,6 +19,8 @@ import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-dri
 import { logDrive } from './drive-telemetry';
 import { touchLane } from './browser-lane-manager';
 import { isLoopbackHost } from './loopback-host';
+import { createChokepointReporter } from '../analytics/handled-report';
+import { hasDiagnosticMessage } from '../../shared/handled-error-copy';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
@@ -37,6 +39,32 @@ import { isLoopbackHost } from './loopback-host';
  */
 
 export type BrowserCapability = 'observe' | 'interact' | 'navigate' | 'eval';
+
+/**
+ * The driver's two failures that should never happen, reported by name: the
+ * guest's view tiled a capture (`cdp/screenshot.ts`) and a capture got no frame
+ * (`cdp/cdp.ts`). Everything else a `driver-error` carries is the page, a
+ * selector or the agent's own mistake, so only these and the runtime's own
+ * classes (`TypeError`, `RangeError`, `ReferenceError`) report. `detail` is never
+ * sent: it holds page content, selectors and URLs.
+ */
+const REPORTED_DRIVER_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'CaptureExceedsSurface',
+  'ScreenshotNotComposited',
+  'CdpAttachFailedError',
+]);
+
+export const browserDriverReporter = createChokepointReporter('browser_driver', {
+  shouldReport: (error) => error instanceof Error
+    && (REPORTED_DRIVER_ERROR_NAMES.has(error.name) || hasDiagnosticMessage(error)),
+});
+
+/** A fixed error for a debugger that would not attach, which `attachDebugger` reports as `false`. */
+function cdpAttachFailure(): Error {
+  const error = new Error('The CDP debugger would not attach to the Browser pane');
+  error.name = 'CdpAttachFailedError';
+  return error;
+}
 
 export interface DriverError {
   kind: string;
@@ -59,7 +87,7 @@ const PANE_NOT_FOCUSED_DETAIL =
  * driver's own default answer, so the page is where it was and anything an agent
  * does next runs against it. Its own kind, because the fix is specific.
  */
-class NavigationRefusedByPageError extends Error {
+export class NavigationRefusedByPageError extends Error {
   constructor(url: string) {
     super(
       `The page stayed open because its beforeunload dialog was dismissed, so ${url} did not load. `
@@ -156,6 +184,7 @@ export async function withGuest<T>(
     // The pane exposes no DevTools, so a re-attach can never steal a
     // connection from the user; attaching is always safe here.
     if (!attachDebugger(webContents)) {
+      browserDriverReporter.report(cdpAttachFailure(), { tags: { capability: options.capability, kind: 'cdp-attach-failed' } });
       return {
         ok: false,
         error: {
@@ -278,6 +307,7 @@ export async function withGuest<T>(
           } as DriverResult<T>;
         }
         report('driver-error');
+        browserDriverReporter.report(error, { tags: { capability: options.capability, kind: 'driver-error' } });
         return {
           ok: false,
           error: {
@@ -304,6 +334,7 @@ export async function withGuest<T>(
       return { ok: false, error: { kind: 'pane-busy', detail: error.message } };
     }
     report('driver-error');
+    browserDriverReporter.report(error, { tags: { capability: options.capability, kind: 'acquire-error' } });
     return {
       ok: false,
       error: {

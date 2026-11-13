@@ -6,10 +6,15 @@ paths:
 # Rule: dev tooling is build-time excluded from production
 
 Dev and debug tooling for Kangentic (the inspection HTTP bridge, MCP devtools tools, debug
-overlays, IPC recorders, log mirrors, the activity-engine overlay) must be physically removed
-from production builds, not shipped behind a runtime toggle. Production users drive Claude Code
-on their own projects; they never debug Kangentic itself, so dev tooling is pure surface area,
-bundle bloat, and confusing UX.
+overlays, the activity-engine overlay) must be physically removed from production builds, not
+shipped behind a runtime toggle. Production users drive Claude Code on their own projects; they
+never debug Kangentic itself, so dev tooling is pure surface area, bundle bloat, and confusing UX.
+
+Product diagnostics under `src/main/diagnostics/` are not dev tooling and ship: the IPC traffic
+recorder (`ipc-recorder.ts`, off until `developer.recordIpcTraffic`), the log mirror and crash
+capture. Production error reporting does not depend on any of them. The IPC report wrap is its own
+patch of `ipcMain.handle` (`src/main/analytics/ipc-handler-report.ts`), so a later dev gate on the
+recorder cannot turn reporting off (`tests/unit/ipc-handler-report.test.ts` pins the install).
 
 ## The rule
 

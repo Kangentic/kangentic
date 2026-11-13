@@ -50,6 +50,7 @@ import { registerArtifactDetection } from '../../artifacts/artifact-detection';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { EMPTY_QUEUE_SNAPSHOT, readQueueSnapshot } from '../helpers/queue-snapshot';
+import { RefusalError } from '../../../shared/refusal';
 
 /** How long a change to the line for an agent slot waits for the rest of its burst. */
 const QUEUE_PUSH_COALESCE_MS = 100;
@@ -104,7 +105,7 @@ export function registerSessionHandlers(context: IpcContext): void {
   // === Sessions ===
   ipcMain.handle(IPC.SESSION_SPAWN, (_, input, projectId?: string | null) => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
-    if (!resolvedProjectId) throw new Error('Cannot spawn session: no project is currently open');
+    if (!resolvedProjectId) throw new RefusalError('Cannot spawn session: no project is currently open');
     // Set after the spread: the renderer never names a start path, and never
     // supplies the resume check's evidence, which only a spawn chokepoint reads.
     return context.sessionManager.spawn({ ...input, projectId: resolvedProjectId, startPath: 'board', resumeEvidence: null });
@@ -213,11 +214,11 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
 
     return withTaskLock(taskId, async () => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
-      if (!resolvedProjectId) throw new Error('No project is currently open');
+      if (!resolvedProjectId) throw new RefusalError('No project is currently open');
 
       const { tasks } = getProjectRepos(context, resolvedProjectId);
       const task = tasks.getById(taskId);
-      if (!task) throw new Error(`Task ${taskId} not found`);
+      if (!task) throw new RefusalError(`Task ${taskId} not found`);
 
       // Kill PTY if running
       if (task.session_id) {

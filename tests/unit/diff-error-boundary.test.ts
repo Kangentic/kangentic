@@ -1,24 +1,17 @@
 /**
- * Unit coverage for DiffErrorBoundary.componentDidCatch's Sentry reporting.
- * Mirrors panel-error-boundary.test.ts's "componentDidCatch analytics wiring"
- * describe block: this project's vitest config has no jsdom environment (see
- * that file's header for the established rationale), so the REAL production
- * class is instantiated directly (`new DiffErrorBoundary(props)`, no
- * reconciler) and `componentDidCatch` is invoked as a plain instance method.
+ * Every error boundary reaches Sentry through the root's `onCaughtError`
+ * (`src/renderer/index.tsx` -> `reportCaughtRenderError`), which React hands the
+ * boundary instance. These pin, for the three real boundary classes, that the
+ * boundary names itself through `boundaryReportTags` and that its own
+ * `componentDidCatch` sends nothing, so a caught error is one event, not two.
  *
- * Unlike PanelErrorBoundary and the root ErrorBoundary, DiffErrorBoundary's
- * componentDidCatch does not call window.electronAPI.analytics.trackRendererError
- * at all - it forwards only through reportBoundaryError (src/renderer/error-reporting.ts),
- * which itself calls @sentry/electron/renderer's captureException. So the
- * "global the reporter ultimately calls" here is that SDK export, mocked the
- * same way tests/unit/error-reporting-renderer.test.ts mocks it, rather than
- * window.electronAPI. Coverage hole this closes: if the
- * `reportBoundaryError(error)` line in DiffErrorBoundary.componentDidCatch
- * were ever dropped, no existing test would fail - it would only reach
- * Sentry through the async, out-of-band monaco crash class the boundary's own
- * comment says it does NOT cover.
+ * This project's vitest config has no jsdom environment (see
+ * panel-error-boundary.test.ts's header), so each REAL class is instantiated
+ * directly and `componentDidCatch` is called as a plain method.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import React from 'react';
 
 const mocks = vi.hoisted(() => ({
@@ -31,26 +24,42 @@ vi.mock('@sentry/electron/renderer', () => ({
 }));
 
 import { DiffErrorBoundary } from '../../src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary';
+import { PanelErrorBoundary } from '../../src/renderer/components/PanelErrorBoundary';
+import { ErrorBoundary } from '../../src/renderer/components/ErrorBoundary';
+import { reportCaughtRenderError } from '../../src/renderer/error-reporting';
 
-describe('DiffErrorBoundary componentDidCatch analytics wiring', () => {
-  afterEach(() => {
-    mocks.captureException.mockReset();
+const children = React.createElement('span', null, 'child content');
+
+describe('a boundary reports once, through the root onCaughtError', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('window', { electronAPI: { analytics: { trackRendererError: vi.fn() }, sessions: { setFocused: vi.fn() } } });
   });
 
-  it('forwards the caught error to Sentry via reportBoundaryError', () => {
-    // componentDidCatch also calls console.error; silence it so the test's
-    // own output stays clean, matching the established pattern.
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  afterEach(() => {
+    mocks.captureException.mockReset();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
-    const children = React.createElement('span', null, 'child content');
-    const instance = new DiffErrorBoundary({ children });
-
+  it.each([
+    ['DiffErrorBoundary', () => new DiffErrorBoundary({ children }), { boundary: 'diff' }],
+    ['PanelErrorBoundary', () => new PanelErrorBoundary({ children, panel: 'agent monitor' }), { boundary: 'panel', panel: 'agent monitor' }],
+    ['ErrorBoundary', () => new ErrorBoundary({ children }), { boundary: 'root' }],
+  ])('%s sends nothing itself and is tagged by the root handler', (_name, build, expectedTags) => {
+    const instance = build();
     const error = new Error('Illegal value for lineNumber');
-    instance.componentDidCatch(error, { componentStack: '\n    at Foo (x)\n    at Bar (y)' });
+    instance.componentDidCatch(error, { componentStack: '\n    at Foo (x)' });
+    expect(mocks.captureException).not.toHaveBeenCalled();
 
+    reportCaughtRenderError(error, { componentStack: '\n    at Foo (x)', errorBoundary: instance });
     expect(mocks.captureException).toHaveBeenCalledTimes(1);
-    expect(mocks.captureException).toHaveBeenCalledWith(error);
+    expect((mocks.captureException.mock.calls[0][1] as { tags: Record<string, string> }).tags).toMatchObject(expectedTags);
+  });
 
-    consoleErrorSpy.mockRestore();
+  it('is wired on the one createRoot', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/renderer/index.tsx'), 'utf8');
+    expect(source.match(/createRoot\(/g)).toHaveLength(1);
+    expect(source).toMatch(/createRoot\(document\.getElementById\('root'\)!, \{[\s\S]*?onCaughtError:[\s\S]*?reportCaughtRenderError\(error, errorInfo\)/);
   });
 });

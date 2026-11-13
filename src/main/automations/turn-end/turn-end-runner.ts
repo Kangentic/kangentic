@@ -15,6 +15,14 @@ import { showAutomationNotification } from '../shared/show-automation-notificati
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { frequencyLimitReason } from '../automation-runner';
+import { createChokepointReporter } from '../../analytics/handled-report';
+
+/**
+ * One report per defect that fails a whole turn-end pass. Every On agent turn end
+ * row and every workflow step check passes through here, so a throw here stops
+ * them all for that task.
+ */
+export const turnEndReporter = createChokepointReporter('turn_end');
 import { hasCondition, hasFinalLine, hasUserTextMatch, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
@@ -413,6 +421,7 @@ function scheduleReclaim(context: IpcContext, sessionId: string): void {
   setImmediate(() => {
     reclaimAbandonedTurn(context, sessionId, newerWork).catch((error: unknown) => {
       console.error(`[turn-end] Could not judge session ${sessionId.slice(0, 8)}'s earlier turn end:`, error);
+      turnEndReporter.report(error, { tags: { stage: 'reclaim' } });
     });
   });
 }
@@ -532,6 +541,8 @@ async function schedulePass(context: IpcContext, request: PassRequest): Promise<
         else await (next.catchUp ? runCatchUp(context, next.payload, next.resumedBy ?? 'user') : runPass(context, next));
       } catch (error) {
         console.error(`[turn-end] Pass failed for task ${next.payload.taskId.slice(0, 8)}:`, error);
+        const kind = next.recovery ? 'recovery' : next.catchUp ? 'catch_up' : 'pass';
+        turnEndReporter.report(error, { tags: { stage: kind } });
       }
       next = state.pending;
     }

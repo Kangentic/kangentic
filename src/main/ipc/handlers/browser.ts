@@ -52,6 +52,7 @@ import {
   saveAnnotationCapture,
   saveAnnotationDraft,
 } from '../../browser/annotation-drafts';
+import { RefusalError } from '../../../shared/refusal';
 
 // Embedded webview capture-and-send. Persists the composited PNG
 // under the session's existing on-disk directory at
@@ -311,7 +312,7 @@ export function registerBrowserHandlers(context: IpcContext): void {
     resolveProjectContext(context, projectId).projectPath;
   const writableDraftProjectPath = (projectId?: string | null): string => {
     const projectPath = draftProjectPath(projectId);
-    if (!projectPath) throw new Error('No project open');
+    if (!projectPath) throw new RefusalError('No project open');
     return projectPath;
   };
   ipcMain.handle(IPC.BROWSER_ANNOTATIONS_LOAD, (_event, taskId: string, projectId?: string | null) => {
@@ -359,8 +360,8 @@ export function registerBrowserHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.BROWSER_URL_SET_TASK, (_event, taskId: string, url: string, projectId?: string | null) => {
     const { projectPath } = resolveProjectContext(context, projectId);
-    if (!projectPath) throw new Error('No project open');
-    if (!url) throw new Error('URL is required');
+    if (!projectPath) throw new RefusalError('No project open');
+    if (!url) throw new RefusalError('URL is required');
     browserUrlStore.set(projectPath, taskId, url);
   });
 

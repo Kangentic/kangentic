@@ -1,7 +1,7 @@
 import React from 'react';
 import { Power, RefreshCw, RotateCcw } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
-import { reportBoundaryError } from '../error-reporting';
+import type { BoundaryReportTags } from '../error-reporting';
 import { syncFocusedTerminals } from '../utils/focused-terminals';
 import { describeIpcError, asSentence } from '../lib/ipc-error';
 
@@ -62,12 +62,17 @@ export class ErrorBoundary extends React.Component<Props, State> {
     syncFocusedTerminals(new Set());
     console.error('ErrorBoundary caught:', error, info.componentStack);
     // Boundary-caught errors never reach Sentry's global handlers (React
-    // swallows them), so hand the real Error over explicitly; the IPC funnel
-    // below keeps Aptabase's coarse app_error pulse alongside it.
-    reportBoundaryError(error);
+    // swallows them). The root's onCaughtError (index.tsx) reports every
+    // boundary's catch with its tags and component stack, so it is not reported
+    // here too; the IPC funnel below keeps Aptabase's coarse app_error pulse.
     window.electronAPI?.analytics?.trackRendererError(error.message, {
       boundary: 'root',
     });
+  }
+
+  /** Read by the root's `onCaughtError` (`reportCaughtRenderError`). */
+  boundaryReportTags(): BoundaryReportTags {
+    return { boundary: 'root' };
   }
 
   handleRetry = () => {

@@ -1,6 +1,7 @@
 import { commandHandlers } from '../commands';
 import type { CommandContext, CommandResponse } from '../commands';
 import type { RequestResolver, ResolvedProject } from './project-resolver';
+import { mcpCommandReporter } from './tool-reporting';
 
 /**
  * Shape of an MCP tool result: JSON-serialisable content blocks plus an
@@ -87,6 +88,9 @@ export async function runHandler(
     }
     return await Promise.resolve(handler(params, context));
   } catch (error) {
+    // Reported here, while the original error and its stack still exist: the
+    // response below keeps only its message (tool-reporting.ts).
+    mcpCommandReporter.report(error, { tags: { command: String(handlerName) } });
     const errorMessage = error instanceof Error ? error.message : String(error);
     return { success: false, error: errorMessage };
   }

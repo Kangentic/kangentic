@@ -12,6 +12,7 @@ import {
   type RosterDeviceEntry,
 } from '@kangentic/protocol';
 import type { BridgeIdentity } from './identity';
+import { RefusalError } from '../../shared/refusal';
 
 /**
  * Persists the signed device roster to a global JSON file (like the
@@ -134,7 +135,7 @@ export function addOrReplaceDevice(identity: BridgeIdentity, input: AddDeviceInp
 export function setDeviceCapabilities(identity: BridgeIdentity, deviceId: string, capabilities: CapabilityVerb[]): DeviceRoster {
   const roster = loadRoster(identity);
   const existing = roster.devices.find((device) => device.deviceId === deviceId);
-  if (!existing) throw new Error(`No such paired device: ${deviceId}`);
+  if (!existing) throw new RefusalError(`No such paired device: ${deviceId}`);
   return replaceDeviceEntry(identity, {
     deviceId: existing.deviceId,
     staticPublicKey: existing.staticPublicKey,
@@ -149,7 +150,7 @@ export function setDeviceCapabilities(identity: BridgeIdentity, deviceId: string
 export function setDeviceDisplayName(identity: BridgeIdentity, deviceId: string, displayName: string): DeviceRoster {
   const roster = loadRoster(identity);
   const existing = roster.devices.find((device) => device.deviceId === deviceId);
-  if (!existing) throw new Error(`No such paired device: ${deviceId}`);
+  if (!existing) throw new RefusalError(`No such paired device: ${deviceId}`);
   return replaceDeviceEntry(identity, {
     deviceId: existing.deviceId,
     staticPublicKey: existing.staticPublicKey,
