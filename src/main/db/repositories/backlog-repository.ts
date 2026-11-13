@@ -6,6 +6,7 @@ import type {
   BacklogTaskUpdateInput,
 } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * How many external ids one dedup query binds. The clause binds two parameters
@@ -114,7 +115,7 @@ export class BacklogRepository {
 
   update(input: BacklogTaskUpdateInput): BacklogTask {
     const existing = this.getById(input.id);
-    if (!existing) throw new Error(`Backlog task ${input.id} not found`);
+    if (!existing) throw new RefusalError(`Backlog task ${input.id} not found`);
 
     const now = new Date().toISOString();
     const title = input.title ?? existing.title;

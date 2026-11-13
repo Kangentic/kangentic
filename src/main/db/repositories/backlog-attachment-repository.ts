@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { BacklogAttachment } from '../../../shared/types';
 import { attachmentDiskName } from '../../../shared/attachment-filename';
+import { RefusalError } from '../../../shared/refusal';
 
 export class BacklogAttachmentRepository {
   constructor(private db: Database.Database) {}
@@ -109,7 +110,7 @@ export class BacklogAttachmentRepository {
 
   getDataUrl(id: string): string {
     const attachment = this.getById(id);
-    if (!attachment) throw new Error(`Backlog attachment ${id} not found`);
+    if (!attachment) throw new RefusalError(`Backlog attachment ${id} not found`);
 
     const buffer = fs.readFileSync(attachment.file_path);
     const base64 = buffer.toString('base64');

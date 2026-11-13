@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type { Action, ActionCreateInput, ActionUpdateInput, SwimlaneTransition } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
+import { RefusalError } from '../../../shared/refusal';
 
 /** Raw row shape returned by better-sqlite3 for the actions table. */
 interface ActionRow {
@@ -43,7 +44,7 @@ export class ActionRepository {
 
   update(input: ActionUpdateInput): Action {
     const existing = this.getById(input.id);
-    if (!existing) throw new Error(`Action ${input.id} not found`);
+    if (!existing) throw new RefusalError(`Action ${input.id} not found`);
 
     const updated = { ...existing };
     if (input.name !== undefined) updated.name = input.name;

@@ -153,6 +153,14 @@ export function isNetworkFailure(error: unknown): boolean {
  */
 export function isExpectedFailure(error: unknown): boolean {
   if (isShuttingDown()) return true;
+  if (isExpectedOwnClass(error)) return true;
+  // A wrapper is judged by what it wraps, one level: `wrapWorktreeSetupError`
+  // wraps a dirty tree (`GitUserStateError`) in a plain Error with `cause`.
+  const cause = (error as { cause?: unknown } | null | undefined)?.cause;
+  return cause !== undefined && cause !== error && isExpectedOwnClass(cause);
+}
+
+function isExpectedOwnClass(error: unknown): boolean {
   if (isAbortError(error)) return true;
   if (isUserConfigurationError(error)) return true;
   if (error instanceof Error && EXPECTED_FAILURE_NAMES.has(error.name)) return true;

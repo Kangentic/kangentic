@@ -293,7 +293,7 @@ export function registerBrowserHandlers(context: IpcContext): void {
       });
     } catch (caught) {
       if (caught instanceof PasteSubmitError) {
-        const error = new Error(translatePasteSubmitError(caught));
+        const error = new RefusalError(translatePasteSubmitError(caught));
         (error as Error & { cause?: unknown }).cause = caught;
         throw error;
       }

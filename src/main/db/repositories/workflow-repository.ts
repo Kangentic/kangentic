@@ -11,6 +11,7 @@ import type {
 import { readRunSettings } from '../../../shared/workflow-run-settings';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { cachedStatement } from '../statement-cache';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * The `workflows` table: a set of linked tasks with its own agent, stored in
@@ -173,8 +174,8 @@ export class WorkflowRepository {
    */
   saveDraft(id: string, draft: WorkflowDraft, options: { title?: string | null; expectedRevision?: number | null } = {}): Workflow {
     const existing = this.getById(id);
-    if (!existing) throw new Error(`Workflow ${id} not found`);
-    if (existing.state !== 'draft') throw new Error('Only a workflow that has not started has a plan to replace.');
+    if (!existing) throw new RefusalError(`Workflow ${id} not found`);
+    if (existing.state !== 'draft') throw new RefusalError('Only a workflow that has not started has a plan to replace.');
     if (options.expectedRevision != null && options.expectedRevision !== existing.revision) {
       throw new StaleWorkflowRevisionError(existing.revision);
     }
@@ -195,10 +196,10 @@ export class WorkflowRepository {
 
   rename(id: string, title: string): Workflow {
     const trimmed = title.trim();
-    if (!trimmed) throw new Error('A workflow needs a name.');
+    if (!trimmed) throw new RefusalError('A workflow needs a name.');
     this.db.prepare('UPDATE workflows SET title = ?, revision = revision + 1 WHERE id = ?').run(trimmed, id);
     const workflow = this.getById(id);
-    if (!workflow) throw new Error(`Workflow ${id} not found`);
+    if (!workflow) throw new RefusalError(`Workflow ${id} not found`);
     return workflow;
   }
 

@@ -183,7 +183,7 @@ export function resumeTaskSession(
   const refusal = precheckProjectId ? resumeRefusalBeforeLock(context, precheckProjectId, taskId) : null;
   if (refusal) {
     console.log(`[SESSION_RESUME] Refused resume for task ${taskId.slice(0, 8)} before the task lock: ${refusal}`);
-    return Promise.reject(new Error(refusal));
+    return Promise.reject(new RefusalError(refusal));
   }
 
   // Cancel any in-flight resume BEFORE queueing on the lock. Moving this

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { RefusalError } from '../../../shared/refusal';
 
 const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -62,6 +63,6 @@ export function attachmentFromBytes(bytes: Buffer, namedPath: string, overrideFi
  */
 export function readFileAsAttachment(filePath: string, overrideFilename?: string): ReadFileResult {
   const stat = fs.statSync(filePath);
-  if (stat.size > MAX_ATTACHMENT_BYTES) throw new Error(attachmentTooLargeMessage(stat.size));
+  if (stat.size > MAX_ATTACHMENT_BYTES) throw new RefusalError(attachmentTooLargeMessage(stat.size));
   return attachmentFromBytes(fs.readFileSync(filePath), filePath, overrideFilename ?? path.basename(filePath));
 }

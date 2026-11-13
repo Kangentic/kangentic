@@ -17,9 +17,6 @@
 export const IPC_REJECTION_DUPLICATE_PATTERN =
   /^Error invoking remote method '[^']*': (?!Error: (?:No handler registered for |An object could not be cloned))/;
 
-/** Any rejected `invoke`, whatever main did with it. */
-export const IPC_REJECTION_PREFIX_PATTERN = /^Error invoking remote method '[^']*': /;
-
 /** True for a rejection main's wrap already saw: its report, if any, came from main. */
 export function isIpcRejectionMainSaw(message: string): boolean {
   return IPC_REJECTION_DUPLICATE_PATTERN.test(message);

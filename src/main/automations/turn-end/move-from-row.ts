@@ -4,6 +4,7 @@ import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import { handleTaskMove } from '../../ipc/handlers/task-move';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { deliverMessageAfterMove } from './deliver-message';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * A Move to column row's move (`AutomationContext.moveTask`), shared by the
@@ -39,11 +40,11 @@ export async function moveTaskFromRow(
   const { projectId, projectPath, task, fromColumn, move } = input;
   const repos = getProjectRepos(context, projectId);
   if (repos.tasks.getById(task.id)?.swimlane_id !== fromColumn.id) {
-    throw new Error(`The task left ${fromColumn.name} before it could be moved.`);
+    throw new RefusalError(`The task left ${fromColumn.name} before it could be moved.`);
   }
   // A workflow task's Next column is the next one on its route.
   const target = resolveMoveTarget(repos.swimlanes.list(), fromColumn.id, move.column, routeOf(task));
-  if (!target.ok) throw new Error(target.reason);
+  if (!target.ok) throw new RefusalError(target.reason);
   const message = move.message?.trim() ?? '';
 
   await handleTaskMove(
@@ -62,7 +63,7 @@ export async function moveTaskFromRow(
 
   const moved = repos.tasks.getById(task.id);
   if (!moved || moved.swimlane_id !== target.column.id) {
-    throw new Error(`The move to ${target.column.name} did not complete.`);
+    throw new RefusalError(`The move to ${target.column.name} did not complete.`);
   }
 
   if (message) {

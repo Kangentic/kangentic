@@ -1,4 +1,5 @@
 import { app, safeStorage } from 'electron';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Credential storage helpers built on Electron's safeStorage, through its ASYNC
@@ -148,7 +149,7 @@ export async function decryptSecret(ciphertext: string): Promise<DecryptedSecret
   }
   if (sentinel === 'e') {
     if (!(await safeStorage.isAsyncEncryptionAvailable())) {
-      throw new Error('Stored credential is encrypted but safeStorage is unavailable in this session');
+      throw new RefusalError('Stored credential is encrypted but safeStorage is unavailable in this session');
     }
     const decrypted = await safeStorage.decryptStringAsync(Buffer.from(body, 'base64'));
     return { plaintext: decrypted.result, shouldRewrite: decrypted.shouldReEncrypt };

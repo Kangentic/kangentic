@@ -5,6 +5,7 @@ import { normalizeSwimlaneRole } from '../../../shared/types';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { writeTransaction } from '../transaction';
 import { renameAutomationColumnReferences } from './automation-repository';
+import { RefusalError } from '../../../shared/refusal';
 
 /** Raw row shape returned by better-sqlite3 for the swimlanes table. */
 interface SwimlaneRow {
@@ -145,7 +146,7 @@ export class SwimlaneRepository {
 
   update(input: SwimlaneUpdateInput): Swimlane {
     const existing = this.getById(input.id);
-    if (!existing) throw new Error(`Swimlane ${input.id} not found`);
+    if (!existing) throw new RefusalError(`Swimlane ${input.id} not found`);
 
     const updated = { ...existing };
     if (input.name !== undefined) updated.name = input.name;
@@ -199,12 +200,12 @@ export class SwimlaneRepository {
     // 1. 'todo' must be at position 0
     const todoId = allLanes.find((lane) => lane.role === 'todo')?.id;
     if (todoId && ids[0] !== todoId) {
-      throw new Error('To Do column must remain at position 0.');
+      throw new RefusalError('To Do column must remain at position 0.');
     }
 
     // 2. Custom columns (role=null) cannot be at position 0 (To Do slot)
     if (!roleById.get(ids[0])) {
-      throw new Error('Custom columns cannot be at the first position.');
+      throw new RefusalError('Custom columns cannot be at the first position.');
     }
 
     const tx = writeTransaction(this.db, () => {
@@ -220,12 +221,12 @@ export class SwimlaneRepository {
     // Cannot delete system columns (backlog, done)
     const lane = this.getById(id);
     if (lane && lane.role) {
-      throw new Error(`Cannot delete the ${lane.role} column.`);
+      throw new RefusalError(`Cannot delete the ${lane.role} column.`);
     }
 
     const taskCount = this.db.prepare('SELECT COUNT(*) as c FROM tasks WHERE swimlane_id = ?').get(id) as { c: number };
     if (taskCount.c > 0) {
-      throw new Error('Cannot delete swimlane with tasks. Move or delete tasks first.');
+      throw new RefusalError('Cannot delete swimlane with tasks. Move or delete tasks first.');
     }
     deleteSwimlaneRowWithReferences(this.db, id);
   }

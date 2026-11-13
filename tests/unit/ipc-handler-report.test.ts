@@ -87,6 +87,28 @@ describe('the production install', () => {
     const lineStart = indexSource.lastIndexOf('\n', install) + 1;
     expect(indexSource.slice(lineStart, install)).toBe('');
   });
+
+  it('wraps every handler: none registers at import time, ahead of the patch, and none uses handleOnce', () => {
+    const offenders: string[] = [];
+    const walk = (directory: string): void => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!/\.tsx?$/.test(entry.name)) continue;
+        const text = fs.readFileSync(full, 'utf8');
+        if (/\bipcMain\.handleOnce\(/.test(text)) offenders.push(`${full}: handleOnce, which the patch does not wrap`);
+        // A column-0 registration runs when the module is imported, which is before
+        // index.ts's body installs the patch, except in index.ts itself after it.
+        if (!full.endsWith(path.join('src', 'main', 'index.ts')) && /^ipcMain\.handle\(/m.test(text)) {
+          offenders.push(`${full}: registers at import time`);
+        }
+      }
+    };
+    walk(path.join(__dirname, '../../src/main'));
+    expect(offenders).toEqual([]);
+    const firstTopLevelHandle = indexSource.search(/^ipcMain\.handle\(/m);
+    expect(firstTopLevelHandle).toBeGreaterThan(indexSource.indexOf('installIpcHandlerReporting(ipcMain);'));
+  });
 });
 
 describe('the renderer duplicate filter', () => {

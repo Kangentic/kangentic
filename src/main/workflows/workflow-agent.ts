@@ -35,6 +35,7 @@ import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } fro
 import { workflowTasks } from './workflow-tasks';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { forgetWorkflowAgentEffort, recordWorkflowAgentEffort } from './workflow-agent-effort';
+import { RefusalError } from '../../shared/refusal';
 
 /**
  * A workflow's own agent: the agent that plans it, in the Workflows view's left
@@ -195,11 +196,11 @@ export function requestWorkflowAgentProjectAccess(
   projectId: string,
 ): ProjectAccessResult {
   const project = context.projectRepo.getById(projectId);
-  if (!project) throw new Error('That project is no longer in Kangentic.');
+  if (!project) throw new RefusalError('That project is no longer in Kangentic.');
   if (projectId === homeProjectId) return { name: project.name, path: agentFolderOf(project), when: 'home' };
   // The home is the id the agent's scope names, which can outlive its project.
   const homeDb = getExistingProjectDb(homeProjectId);
-  if (!homeDb) throw new Error('This workflow no longer exists.');
+  if (!homeDb) throw new RefusalError('This workflow no longer exists.');
   const checkout = readableCheckout(context.projectRepo.getById(homeProjectId), project);
   if (!checkout) return { name: project.name, path: agentFolderOf(project), when: 'elsewhere' };
   new WorkflowRepository(homeDb).addAgentReadProject(workflowId, projectId);
@@ -336,7 +337,7 @@ export function requireWorkflowAgentIdle(context: IpcContext, workflowId: string
   const session = findWorkflowAgentSession(context, workflowId);
   if (!session || session.status !== 'running') return;
   if (isActive(context.sessionManager.getActivityCache()[session.id])) {
-    throw new Error(`${WORKFLOW_REFUSALS.agentWorking}.`);
+    throw new RefusalError(`${WORKFLOW_REFUSALS.agentWorking}.`);
   }
 }
 
