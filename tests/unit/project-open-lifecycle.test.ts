@@ -1621,7 +1621,9 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
 
       expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A', 'project-B']);
       expect(errorSpy).toHaveBeenCalledTimes(1);
-      expect(String(errorSpy.mock.calls[0][0])).toContain('Project A');
+      // By id, not name: a `[pty-host]` line is a Sentry breadcrumb, and a project name is user text.
+      expect(String(errorSpy.mock.calls[0][0])).toContain('project-A');
+      expect(String(errorSpy.mock.calls[0][0])).not.toContain('Project A');
     } finally {
       // Restored on a failed assertion too, or every later test runs with
       // console.error silenced and hides its own failure output.

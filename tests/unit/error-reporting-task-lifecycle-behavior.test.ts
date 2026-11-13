@@ -431,6 +431,7 @@ describe('project recovery pass failures', () => {
 
   let openProjectByPath: typeof import('../../src/main/ipc/handlers/projects').openProjectByPath;
   let recoverSessionsAfterPtyHostLoss: typeof import('../../src/main/ipc/handlers/projects').recoverSessionsAfterPtyHostLoss;
+  let recoverRemoteProjectsOnHost: typeof import('../../src/main/ipc/handlers/projects').recoverRemoteProjectsOnHost;
   let resetRecoveryPassReports: typeof import('../../src/main/ipc/helpers/recovery-report').resetRecoveryPassReports;
   let isReported: typeof import('../../src/main/analytics/handled-report').isReported;
 
@@ -570,7 +571,7 @@ describe('project recovery pass failures', () => {
         endWorkflowAgentsOfProject: vi.fn(async () => undefined),
       }),
     });
-    ({ openProjectByPath, recoverSessionsAfterPtyHostLoss } = await import('../../src/main/ipc/handlers/projects'));
+    ({ openProjectByPath, recoverSessionsAfterPtyHostLoss, recoverRemoteProjectsOnHost } = await import('../../src/main/ipc/handlers/projects'));
     ({ resetRecoveryPassReports } = await import('../../src/main/ipc/helpers/recovery-report'));
     ({ isReported } = await import('../../src/main/analytics/handled-report'));
   });
@@ -616,25 +617,20 @@ describe('project recovery pass failures', () => {
     expect(JSON.stringify(reportHandledError.mock.calls)).not.toContain('agent_session_id');
     expect(isReported(defect)).toBe(true);
   });
-});
 
-// ---------------------------------------------------------------------------
-// register-all.ts: the one site that stays a source read
-// ---------------------------------------------------------------------------
+  it('a host-connected recovery that throws outside its per-project catch reports as remote_projects and never rejects', async () => {
+    // The reveal check runs before any project's own catch, so a throw there is
+    // the whole pass failing, which the host-connected callback cannot catch.
+    const defect = new TypeError("Cannot read properties of undefined (reading 'reveal_pending')");
+    const context = Object.assign(makeContext() as object, {
+      remoteHosting: { hosts: { getById: () => { throw defect; } } },
+    }) as never;
 
-describe('the remote projects recovery in register-all.ts', () => {
-  // register-all.ts wires every handler, the pty host transport, the mobile
-  // bridge and the config manager at import, and no unit test loads it without
-  // mocking about forty modules (register-all-idempotency.test.ts needs
-  // that to run it at all). The callback is also a closure inside that function, so
-  // there is no export to drive. This one site stays a source read. Rebuild it as a
-  // behavior test if `onHostFirstConnected` moves to an importable module.
-  it('hands a failed recoverRemoteProjectsOnHost to reportRecoveryPassFailure as remote_projects', () => {
-    // Comment lines are dropped first, so a commented-out call does not satisfy the pin.
-    const source = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/register-all.ts'), 'utf8')
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('//'))
-      .join('\n');
-    expect(source).toMatch(/recoverRemoteProjectsOnHost\([^\n]*\)\.catch\(\(error: unknown\) => \{[\s\S]*?reportRecoveryPassFailure\('remote_projects', error\);/);
+    await expect(recoverRemoteProjectsOnHost(context, 'host-lab')).resolves.toBeUndefined();
+
+    const calls = reportedCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].tags).toMatchObject({ source: 'project_recovery', pass: 'remote_projects', error_name: 'TypeError' });
+    expect(isReported(defect)).toBe(true);
   });
 });
