@@ -34,6 +34,9 @@ vi.mock('../../src/main/fs/directory-move', async (importOriginal) => {
 import { SshHostAdmin, parseDirectoryListing, resolveHostFolder, type SshHostAdminDeps } from '../../src/main/remote/ssh-host-admin';
 import { HostStatusBook } from '../../src/main/remote/host-status';
 import type { Project, SshHost } from '../../src/shared/types';
+import { RefusalError } from '../../src/shared/refusal';
+import { isExpectedFailure } from '../../src/main/analytics/handled-report';
+import { HostUnreachableError } from '../../src/main/remote/link/link-hub';
 import type { RunProgram, SshSetupDeps } from '../../src/main/remote/ssh-setup';
 
 const KEY_BLOB = Buffer.from('a real looking public key blob, long enough to hash').toString('base64');
@@ -51,7 +54,7 @@ interface Rig {
   /** Projects whose hide step ran, in order. */
   hiddenProjects: string[];
   /** Make `removeProject` fail for this project, as a locked database does. Null lets every project through again. */
-  failRemoveProject: (projectId: string | null) => void;
+  failRemoveProject: (projectId: string | null, failure?: Error) => void;
   expectFirstConnect: ReturnType<typeof vi.fn>;
   removeHomeMirror: ReturnType<typeof vi.fn>;
   hosts: SshHost[];
@@ -118,7 +121,7 @@ function makeRig(runOptions: { keyBlob?: string; installFails?: boolean } = {}):
   const projectsChanged = vi.fn();
   const liveSessions = { running: false };
   const hiddenProjects: string[] = [];
-  const failingProjects = new Set<string>();
+  const failingProjects = new Map<string, Error>();
   const failingSuspends = new Set<string>();
   const events: string[] = [];
   const restoreFindsNothing = { value: false };
@@ -200,7 +203,8 @@ function makeRig(runOptions: { keyBlob?: string; installFails?: boolean } = {}):
     projects: { listOnHost: (hostId: string) => projects.filter((project) => project.remote?.hostId === hostId) },
     setup,
     removeProject: async (project) => {
-      if (failingProjects.has(project.id)) throw new Error('database is locked');
+      const failure = failingProjects.get(project.id);
+      if (failure) throw failure;
       removedProjects.push(project.id);
     },
     hideProject: (project) => { hiddenProjects.push(project.id); },
@@ -217,7 +221,7 @@ function makeRig(runOptions: { keyBlob?: string; installFails?: boolean } = {}):
     appVersion: () => '0.54.0',
     removeHomeMirror,
   };
-  return { admin: new SshHostAdmin(deps), liveSessions, hiddenProjects, failRemoveProject: (projectId) => { if (projectId) failingProjects.add(projectId); else failingProjects.clear(); }, expectFirstConnect, removeHomeMirror, hosts, projects, removedProjects, suspendedProjects, revealedHosts, projectsChanged, run, hostService, status, connectHost, setup, events, restoreFindsNothing, failSuspend: (projectId) => { if (projectId) failingSuspends.add(projectId); else failingSuspends.clear(); } };
+  return { admin: new SshHostAdmin(deps), liveSessions, hiddenProjects, failRemoveProject: (projectId, failure = new Error('database is locked')) => { if (projectId) failingProjects.set(projectId, failure); else failingProjects.clear(); }, expectFirstConnect, removeHomeMirror, hosts, projects, removedProjects, suspendedProjects, revealedHosts, projectsChanged, run, hostService, status, connectHost, setup, events, restoreFindsNothing, failSuspend: (projectId) => { if (projectId) failingSuspends.add(projectId); else failingSuspends.clear(); } };
 }
 
 function project(id: string, hostId: string, shellFolder: string): Project {
@@ -580,6 +584,19 @@ describe('clearing a host\'s data', () => {
     expect(rig.projectsChanged).toHaveBeenCalled();
   });
 
+  it('wraps a local failure in a plain Error with its cause, so a defect still reports and is not read as a refusal', async () => {
+    const { rig, hostId } = await rigWithHost();
+    const defect = new TypeError('cannot read properties of undefined');
+    rig.failRemoveProject('p1', defect);
+
+    const rejection = await rig.admin.clearHostData(hostId).then(() => null, (error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(Error);
+    expect(rejection).not.toBeInstanceOf(RefusalError);
+    expect((rejection as Error).cause).toBe(defect);
+    expect(isExpectedFailure(rejection)).toBe(false);
+  });
+
   it('keeps the copy of the transcripts while a project that reads it is left, and a second try removes it', async () => {
     const { rig, hostId } = await rigWithHost();
     rig.failRemoveProject('p1');
@@ -779,6 +796,24 @@ describe('listing the folders in a directory on a host', () => {
 
     rig.hostService.runCommand.mockResolvedValueOnce({ code: 2, stdout: '', stderr: 'sh: oops\n', timedOut: false });
     await expect(rig.admin.listDirectories(hostId, '~/')).rejects.toThrow('sh: oops');
+  });
+
+  it('wraps a failed ask in a plain Error with its cause: a defect still reports, a down link is skipped by its cause', async () => {
+    const { rig, hostId } = await rigWithHost();
+
+    const defect = new TypeError('cannot read properties of undefined');
+    rig.hostService.runCommand.mockRejectedValueOnce(defect);
+    const defectRejection = await rig.admin.listDirectories(hostId, '~/').then(() => null, (error: unknown) => error);
+    expect(defectRejection).toBeInstanceOf(Error);
+    expect(defectRejection).not.toBeInstanceOf(RefusalError);
+    expect((defectRejection as Error).cause).toBe(defect);
+    expect(isExpectedFailure(defectRejection)).toBe(false);
+
+    const downLink = new HostUnreachableError(hostId, 'The link to the host is down.');
+    rig.hostService.runCommand.mockRejectedValueOnce(downLink);
+    const downRejection = await rig.admin.listDirectories(hostId, '~/').then(() => null, (error: unknown) => error);
+    expect((downRejection as Error).cause).toBe(downLink);
+    expect(isExpectedFailure(downRejection)).toBe(true);
   });
 
   it('reads a marker only as the first line: the same text later is a folder name holding a newline, not an answer', () => {

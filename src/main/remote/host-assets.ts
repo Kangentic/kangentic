@@ -155,13 +155,16 @@ async function fetchVerified(options: DownloadOptions): Promise<void> {
 
   await fs.promises.mkdir(path.dirname(options.destination), { recursive: true });
   const partial = `${options.destination}.part`;
+  const downloadHost = new URL(options.url).host;
   let response: Response;
   try {
     response = await options.fetchImpl(options.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   } catch (error) {
-    throw new RefusalError(`Could not download the host program from ${new URL(options.url).host}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    // A plain Error with the cause, never a RefusalError: the reporter skips a network
+    // failure or a timeout by what it wraps, and a defect in the fetch still reports.
+    throw new Error(`Could not download the host program from ${downloadHost}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
-  if (!response.ok) throw new RefusalError(`Could not download the host program: ${new URL(options.url).host} answered ${response.status}.`);
+  if (!response.ok) throw new RefusalError(`Could not download the host program: ${downloadHost} answered ${response.status}.`);
   const bytes = Buffer.from(await response.arrayBuffer());
   if (options.expectedSize !== null && bytes.length !== options.expectedSize) {
     throw new Error(`The host program downloaded is ${bytes.length} bytes and its manifest says ${options.expectedSize}, so it was not kept.`);

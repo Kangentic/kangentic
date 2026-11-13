@@ -8,13 +8,13 @@ import { cascadePopOutPosition } from './cascade';
 import { trackFeatureUsed } from '../analytics/usage';
 import { isErrorReportingActive } from '../analytics/error-reporting';
 import { createChokepointReporter } from '../analytics/handled-report';
+import { localeArgument } from '../i18n/main-i18n';
 
 /** A pop-out whose own page failed to load (`did-fail-load`), by kind and Chromium's code. */
 const popOutLoadReporter = createChokepointReporter('pop_out_load');
 
 /** Chromium's `ERR_ABORTED`: a load cancelled before it finished, not a failure of the page. */
 const CHROMIUM_ERR_ABORTED = -3;
-import { localeArgument } from '../i18n/main-i18n';
 
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
 

@@ -68,11 +68,15 @@ new report from carrying what a user wrote. The design and every source: [docs/t
   higher than the file now has, so the list only shrinks. It pins each name in the reporter set to
   a real declaration and every `createChokepointReporter` binding to a `*Reporter` name, and drives
   the detector over known source. Runs in CI via `npm run test:unit`.
-- **Test (chokepoints):** `tests/unit/error-reporting-chokepoints.test.ts` and
-  `tests/unit/ipc-handler-report.test.ts` pin each chokepoint's call to its reporter and the IPC
-  wrap's install in `index.ts`; `tests/unit/error-reporting-feature-gaps.test.ts` pins the feature
-  sites; `tests/unit/handled-report.test.ts` pins the message, the latch, the cap, the dedupe and
-  the expected-failure filter.
+- **Test (chokepoints and feature sites):** the `tests/unit/error-reporting-*-behavior.test.ts`
+  files, `pr-report-behavior.test.ts`, `automation-runner-report-behavior.test.ts`,
+  `db-open-failure-notifier.test.ts` and `dictation-failure-report.test.ts` run each report site
+  for real: a dependency throws, and the test asserts the report's tags and that no user text
+  left. `tests/unit/ipc-handler-report.test.ts` drives the IPC wrap and pins its install in
+  `index.ts`. `tests/unit/error-reporting-chokepoints.test.ts` keeps the MCP tool proxy and the
+  phone router, and `tests/unit/error-reporting-feature-gaps.test.ts` keeps the sites no test can
+  import. `tests/unit/handled-report.test.ts` pins the message, the latch, the cap, the dedupe
+  and the expected-failure filter.
 - **Test (breadcrumbs):** `tests/unit/sentry-breadcrumbs.test.ts` scans every line under a kept
   console tag for interpolated user content.
 - **Review:** `/code-review` judges what a scan cannot: whether a `report-ok:` reason is true,

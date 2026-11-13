@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project, Swimlane, Task } from '../../src/shared/types';
 
 const reportHandledError = vi.fn();
@@ -171,7 +171,7 @@ describe('handleTaskMove failures', () => {
       '../../src/main/db/repositories/attachment-repository': () => ({ AttachmentRepository: class {} }),
       '../../src/main/git/worktree-manager': () => ({
         WorktreeManager: class {
-          withLock = vi.fn(async (fn: () => Promise<unknown>) => fn());
+          withLock = vi.fn(async (work: () => Promise<unknown>) => work());
           removeWorktree = vi.fn(async () => true);
           pruneWorktrees = vi.fn(async () => {});
           removeBranch = vi.fn(async () => {});
@@ -199,8 +199,8 @@ describe('handleTaskMove failures', () => {
         execVersion: vi.fn(async () => '1.0.0'),
       }),
       '../../src/main/ipc/helpers/index': () => ({
-        getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
-        ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...args),
+        getProjectRepos: (...callArguments: unknown[]) => mockGetProjectRepos(...callArguments),
+        ensureTaskWorktree: (...callArguments: unknown[]) => mockEnsureTaskWorktree(...callArguments),
         ensureTaskBranchCheckout: vi.fn(async () => {}),
         spawnAgent: vi.fn(async () => {}),
         createTransitionEngine: vi.fn(() => ({ executeTransition: vi.fn(async () => ({ failures: [] })) })),
@@ -370,6 +370,10 @@ describe('resumeTaskSession failures', () => {
     taskId = harness.tasks.create({ title: 'Fix Acme billing export', description: '', swimlane_id: harness.laneId }).id;
   });
 
+  afterEach(() => {
+    database.close();
+  });
+
   function fakeContext() {
     return {
       currentProjectId: PROJECT_ID,
@@ -403,7 +407,6 @@ describe('resumeTaskSession failures', () => {
     expect(onFailed).toHaveBeenCalledTimes(1);
     expect(onFailed.mock.calls[0]).toEqual(['worktree', gitFailure, expect.objectContaining({ id: taskId })]);
     expect(isReported(gitFailure)).toBe(true);
-    database.close();
   });
 
   it('reports an engine failure under the fixed cause resume, and not a worktree one', async () => {
@@ -417,7 +420,6 @@ describe('resumeTaskSession failures', () => {
     expect(calls[0].tags).toMatchObject({ source: 'agent_launch', stage: 'preflight', cause: 'resume' });
     expect(calls[0].sent.message).toBe('Agent launch failed: preflight (resume)');
     expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('agent\'');
-    database.close();
   });
 });
 
@@ -546,7 +548,7 @@ describe('project recovery pass failures', () => {
       '../../src/main/analytics/analytics': () => ({ trackEvent: vi.fn(), sanitizeErrorMessage: (text: string) => text }),
       '../../src/main/shutdown-state': () => ({ isShuttingDown: vi.fn(() => false) }),
       '../../src/main/diagnostics/project-log-context': () => ({
-        runWithProjectLogContext: vi.fn((_name: string, fn: () => unknown) => fn()),
+        runWithProjectLogContext: vi.fn((_name: string, work: () => unknown) => work()),
       }),
       '../../src/main/pr/pr-refresh-scheduler': () => ({ prRefreshScheduler: { startForProject: vi.fn(), stop: vi.fn() } }),
       '../../src/main/git/git-fetch-scheduler': () => ({ gitFetchScheduler: { startForProject: vi.fn(), stop: vi.fn() } }),

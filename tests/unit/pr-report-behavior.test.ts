@@ -14,7 +14,7 @@ const { reportHandledError } = vi.hoisted(() => ({ reportHandledError: vi.fn() }
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
 vi.mock('../../src/main/diagnostics/project-log-context', () => ({
-  runWithProjectLogContext: <T>(_name: string, fn: () => T): T => fn(),
+  runWithProjectLogContext: <T>(_name: string, work: () => T): T => work(),
 }));
 
 const scheduling = vi.hoisted(() => ({

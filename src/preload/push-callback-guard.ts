@@ -21,7 +21,7 @@ export type PushCallbackFailureSink = (method: string, error: unknown) => void;
 
 const PUSH_METHOD_NAME = /^on[A-Z]/;
 
-type AnyFunction = (...args: unknown[]) => unknown;
+type AnyFunction = (...functionArguments: unknown[]) => unknown;
 
 function sendFailure(method: string, error: unknown, onFailure: PushCallbackFailureSink): void {
   try {

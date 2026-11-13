@@ -6,6 +6,7 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
 }));
 
 import { classifyFailureDetail, reportAccountProblem, resetAccountProblemReports, scrubFailureDetail } from '../../src/main/accounts/account-report';
+import { isReported } from '../../src/main/analytics/handled-report';
 
 beforeEach(() => {
   reportHandledError.mockClear();
@@ -38,6 +39,18 @@ describe('reportAccountProblem', () => {
     resetAccountProblemReports();
     reportAccountProblem('usage-read-unreadable', 'test-agent', { keys: 'a,b' });
     expect(reportHandledError).toHaveBeenCalledTimes(3);
+  });
+
+  it('marks the error of a repeat report too, so a chokepoint it is rethrown into skips it', () => {
+    const firstError = new Error('first');
+    const secondError = new Error('second');
+
+    reportAccountProblem('folder-link-failed', 'test-agent', {}, firstError);
+    reportAccountProblem('folder-link-failed', 'test-agent', {}, secondError);
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    expect(isReported(firstError)).toBe(true);
+    expect(isReported(secondError)).toBe(true);
   });
 
   it("sends a provider's detail as a class and a length, never its words", () => {
