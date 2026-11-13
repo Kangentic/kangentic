@@ -395,7 +395,7 @@ describe('the workflow engine host reports a defect in its own work', () => {
     expect(reportedTags()).toMatchObject({ source: 'workflow_engine', stage: 'evaluate', error_name: 'TypeError' });
   });
 
-  it('reports stage start for a start that fails, on its first attempt only', async () => {
+  it('reports nothing for a start whose first attempt aborts and whose retry throws a defect', async () => {
     workflowWithWaitingTask();
     // The first attempt fails with an expected abort, which is skipped, and the
     // retry fails with a defect, which is attempt 2 and so is not reported.

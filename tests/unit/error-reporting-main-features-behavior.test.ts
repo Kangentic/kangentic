@@ -37,7 +37,7 @@ vi.mock('../../src/main/ipc/handlers/session-pause', () => ({
   pauseTaskSession: vi.fn(async () => { throw pauseControl.error; }),
 }));
 
-const capturedSessionEventHandlers = new Map<string, (...args: unknown[]) => unknown>();
+const capturedSessionEventHandlers = new Map<string, (...handlerArguments: unknown[]) => unknown>();
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn(), on: vi.fn() },
   MessageChannelMain: class {},
@@ -132,7 +132,7 @@ describe('idle pause', () => {
         getActivityCache: vi.fn(() => ({ 'sess-idle': 'idle' })),
         getPendingDraft: vi.fn(() => null),
         getOpenWork: vi.fn(() => ({ backgroundShells: [], toolCalls: [] })),
-        on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
+        on: vi.fn((event: string, handler: (...handlerArguments: unknown[]) => unknown) => {
           capturedSessionEventHandlers.set(event, handler);
         }),
         off: vi.fn(),

@@ -24,8 +24,8 @@ vi.mock('better-sqlite3', () => ({
 }));
 
 vi.mock('../../src/main/db/migrations', () => ({
-  runGlobalMigrations: (...args: unknown[]) => runGlobalMigrationsMock(...args),
-  runProjectMigrations: (...args: unknown[]) => runProjectMigrationsMock(...args),
+  runGlobalMigrations: (...callArguments: unknown[]) => runGlobalMigrationsMock(...callArguments),
+  runProjectMigrations: (...callArguments: unknown[]) => runProjectMigrationsMock(...callArguments),
 }));
 
 vi.mock('../../src/main/config/paths', () => ({
@@ -189,17 +189,84 @@ describe('db open failure notifier', () => {
     expect(notifier).not.toHaveBeenCalled();
   });
 
-  it('a notifier that throws does not replace the original error, on every stage', async () => {
-    const { getGlobalDb, getProjectDb, setDbOpenFailureNotifier } = await freshDatabaseModule();
-    setDbOpenFailureNotifier(() => { throw new Error('notifier exploded'); });
+  type DatabaseModule = Awaited<ReturnType<typeof freshDatabaseModule>>;
 
-    const openError = new Error('open failed');
-    openDatabase.mockImplementationOnce(() => { throw openError; });
-    expect(() => getGlobalDb()).toThrow(openError);
+  const everyStage: Array<{ label: string; arrange: (originalError: Error) => void; open: (databaseModule: DatabaseModule) => unknown }> = [
+    {
+      label: 'global open',
+      arrange: (originalError) => { openDatabase.mockImplementationOnce(() => { throw originalError; }); },
+      open: (databaseModule) => databaseModule.getGlobalDb(),
+    },
+    {
+      label: 'global pragma',
+      arrange: (originalError) => { openDatabase.mockReturnValueOnce(connectionFailingPragma(originalError)); },
+      open: (databaseModule) => databaseModule.getGlobalDb(),
+    },
+    {
+      label: 'global migrate',
+      arrange: (originalError) => {
+        openDatabase.mockReturnValueOnce(healthyConnection());
+        runGlobalMigrationsMock.mockImplementationOnce(() => { throw originalError; });
+      },
+      open: (databaseModule) => databaseModule.getGlobalDb(),
+    },
+    {
+      label: 'project open',
+      arrange: (originalError) => { openDatabase.mockImplementationOnce(() => { throw originalError; }); },
+      open: (databaseModule) => databaseModule.getProjectDb('project-1'),
+    },
+    {
+      label: 'project pragma',
+      arrange: (originalError) => { openDatabase.mockReturnValueOnce(connectionFailingPragma(originalError)); },
+      open: (databaseModule) => databaseModule.getProjectDb('project-1'),
+    },
+    {
+      label: 'project migrate',
+      arrange: (originalError) => {
+        openDatabase.mockReturnValueOnce(healthyConnection());
+        runProjectMigrationsMock.mockImplementationOnce(() => { throw originalError; });
+      },
+      open: (databaseModule) => databaseModule.getProjectDb('project-1'),
+    },
+    {
+      label: 'project initialize',
+      // The initializer every case installs throws the original error, and only this stage reaches it.
+      arrange: () => { openDatabase.mockReturnValueOnce(healthyConnection()); },
+      open: (databaseModule) => databaseModule.getProjectDb('project-1'),
+    },
+  ];
 
-    const pragmaError = new Error('pragma failed');
-    openDatabase.mockReturnValueOnce(connectionFailingPragma(pragmaError));
-    expect(() => getProjectDb('project-1')).toThrow(pragmaError);
+  it.each(everyStage)('a notifier that throws does not replace the original error: $label', async ({ arrange, open }) => {
+    const originalError = new Error('original failure');
+    const databaseModule = await freshDatabaseModule();
+    const notifier = vi.fn(() => { throw new Error('notifier exploded'); });
+    databaseModule.setDbOpenFailureNotifier(notifier);
+    databaseModule.setProjectDbInitializer(() => { throw originalError; });
+    arrange(originalError);
+
+    let thrown: unknown;
+    try { open(databaseModule); } catch (error) { thrown = error; }
+
+    expect(thrown).toBe(originalError);
+    expect(notifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows the original error and still notifies once when closing the broken handle throws', async () => {
+    const pragmaError = new Error('disk I/O error');
+    const broken = connectionFailingPragma(pragmaError);
+    broken.close.mockImplementation(() => { throw new Error('close exploded'); });
+    openDatabase.mockReturnValueOnce(broken);
+    const { getGlobalDb, setDbOpenFailureNotifier } = await freshDatabaseModule();
+    const notifier = vi.fn();
+    setDbOpenFailureNotifier(notifier);
+
+    let thrown: unknown;
+    try { getGlobalDb(); } catch (error) { thrown = error; }
+
+    expect(thrown).toBe(pragmaError);
+    expect(broken.close).toHaveBeenCalledTimes(1);
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(notifier).toHaveBeenCalledWith(pragmaError, { database: 'global', stage: 'pragma' });
   });
 
   it('setting the notifier to null stops notification', async () => {

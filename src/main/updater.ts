@@ -8,8 +8,7 @@ import appleTeam from '../shared/apple-team-id.json';
 import type { LocalizedText } from '../shared/i18n/text';
 import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { reportHandledError } from './analytics/error-reporting';
-import { errorCodeOf, errorNameOf, markReported } from './analytics/handled-report';
-import { framesOf } from '../shared/handled-error-copy';
+import { errorCodeOf, errorNameOf, firstFrameOf, markReported } from './analytics/handled-report';
 import { translateText } from './i18n/main-i18n';
 import { normalizeReleaseNotes } from './updater-release-notes';
 import {
@@ -826,7 +825,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     // be dropped as a repeat of it.
     const code = errorCodeOf(error);
     const name = errorNameOf(error);
-    const firstFrame = framesOf(error.stack).split('\n').find((line) => line.trim().length > 0)?.trim() ?? '';
+    const firstFrame = firstFrameOf(error);
     const latchKey = code ? `${name}:${code}` : `${name}:none:${firstFrame}`;
     if (reportedUpdaterErrors.has(latchKey)) return;
     reportedUpdaterErrors.add(latchKey);

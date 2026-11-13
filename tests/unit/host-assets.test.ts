@@ -12,6 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readHostAssets } from '../../src/main/remote/host-assets';
+import { RefusalError } from '../../src/shared/refusal';
+import { isExpectedFailure } from '../../src/main/analytics/handled-report';
 
 const SHA_X64 = 'a'.repeat(64);
 const SHA_ARM = 'b'.repeat(64);
@@ -261,6 +263,37 @@ describe('a build that carries only the manifest and downloads the archive on fi
 
     const [offline] = readHostAssets(directory, '0.52.0', { cacheDirectory, fetchImpl: fakeFetch(() => new Error('getaddrinfo ENOTFOUND example.test')).impl }).assets;
     await expect(offline.prepare!()).rejects.toThrow('ENOTFOUND');
+  });
+
+  it('wraps a failed fetch in a plain Error with its cause: a defect still reports, a network failure is skipped', async () => {
+    manifestOnly();
+    const prepareRejection = async (failure: Error): Promise<unknown> => {
+      const [asset] = readHostAssets(directory, '0.52.0', { cacheDirectory, fetchImpl: fakeFetch(() => failure).impl }).assets;
+      return asset.prepare!().then(() => null, (error: unknown) => error);
+    };
+
+    const defect = new TypeError('boom');
+    const defectRejection = await prepareRejection(defect);
+    expect(defectRejection).toBeInstanceOf(Error);
+    expect(defectRejection).not.toBeInstanceOf(RefusalError);
+    expect((defectRejection as Error).cause).toBe(defect);
+    expect(isExpectedFailure(defectRejection)).toBe(false);
+
+    const networkFailure = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect'), { code: 'ECONNREFUSED' }) });
+    const networkRejection = await prepareRejection(networkFailure);
+    expect(networkRejection).not.toBeInstanceOf(RefusalError);
+    expect((networkRejection as Error).cause).toBe(networkFailure);
+    expect(isExpectedFailure(networkRejection)).toBe(true);
+  });
+
+  it('refuses an error status with a RefusalError, which is expected', async () => {
+    manifestOnly();
+    const [refused] = readHostAssets(directory, '0.52.0', { cacheDirectory, fetchImpl: fakeFetch(() => ({ status: 404 })).impl }).assets;
+
+    const rejection = await refused.prepare!().then(() => null, (error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(RefusalError);
+    expect(isExpectedFailure(rejection)).toBe(true);
   });
 
   it('refuses a download address that is not https, and leaves the entry out', () => {

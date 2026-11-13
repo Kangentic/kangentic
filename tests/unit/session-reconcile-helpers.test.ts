@@ -91,6 +91,17 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 
 // Import under test AFTER all mocks are registered.
 import { reconcileTaskSessionRef } from '../../src/main/ipc/handlers/session-reconcile';
+import { RefusalError } from '../../src/shared/refusal';
+import { isExpectedFailure } from '../../src/main/analytics/handled-report';
+
+function thrownBy(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('expected the action to throw');
+}
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -404,5 +415,46 @@ describe('reconcileTaskSessionRef', () => {
     expect(() => {
       reconcileTaskSessionRef(context as never, 'proj-1', 'task-missing');
     }).toThrow('Task task-missing not found');
+  });
+
+  it('refuses with a RefusalError when the first read finds no task: the caller asked for a task that is not there', () => {
+    taskRepo.getById.mockReturnValue(undefined);
+    const context = makeContext(taskRepo, getSession, findLiveSessionByTaskId);
+
+    const thrown = thrownBy(() => reconcileTaskSessionRef(context as never, 'proj-1', 'task-missing'));
+
+    expect(thrown).toBeInstanceOf(RefusalError);
+    expect(isExpectedFailure(thrown)).toBe(true);
+  });
+
+  it('throws a plain Error, a defect that reports, when the task is gone right after the re-link update', () => {
+    taskRepo.getById
+      .mockReturnValueOnce(makeTask({ session_id: null }))
+      .mockReturnValueOnce(undefined); // vanished between the update and the read back
+    findLiveSessionByTaskId.mockReturnValue({ ...makeSession('running'), id: 'sess-alive' });
+    const context = makeContext(taskRepo, getSession, findLiveSessionByTaskId);
+
+    const thrown = thrownBy(() => reconcileTaskSessionRef(context as never, 'proj-1', 'task-1'));
+
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-1', session_id: 'sess-alive' });
+    expect((thrown as Error).message).toBe('Task task-1 not found');
+    expect(thrown).not.toBeInstanceOf(RefusalError);
+    expect(isExpectedFailure(thrown)).toBe(false);
+  });
+
+  it('throws a plain Error, a defect that reports, when the task is gone right after the stale-pointer clear', () => {
+    taskRepo.getById
+      .mockReturnValueOnce(makeTask({ session_id: 'sess-placeholder' }))
+      .mockReturnValueOnce(undefined);
+    getSession.mockReturnValue(makeSession('suspended'));
+    findLiveSessionByTaskId.mockReturnValue(undefined);
+    const context = makeContext(taskRepo, getSession, findLiveSessionByTaskId);
+
+    const thrown = thrownBy(() => reconcileTaskSessionRef(context as never, 'proj-1', 'task-1'));
+
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-1', session_id: null });
+    expect((thrown as Error).message).toBe('Task task-1 not found');
+    expect(thrown).not.toBeInstanceOf(RefusalError);
+    expect(isExpectedFailure(thrown)).toBe(false);
   });
 });

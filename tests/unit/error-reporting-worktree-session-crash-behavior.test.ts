@@ -19,8 +19,7 @@ import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { CrashRecord } from '../../src/shared/types';
-import type { AgentParser } from '../../src/shared/types';
+import type { AgentParser, CrashRecord } from '../../src/shared/types';
 
 type SpawnBehavior = { exitCode: number; stderr?: string };
 
@@ -31,8 +30,8 @@ const hoisted = vi.hoisted(() => ({
     async (): Promise<Array<{ pid: number; image: string; commandLine: string }>> => [],
   ),
   spawnBehavior: { current: { exitCode: 0 } as SpawnBehavior },
-  ipcHandlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
-  appListeners: new Map<string, (...args: unknown[]) => unknown>(),
+  ipcHandlers: new Map<string, (event: unknown, ...handlerArguments: unknown[]) => unknown>(),
+  appListeners: new Map<string, (...listenerArguments: unknown[]) => unknown>(),
 }));
 
 vi.mock('../../src/main/analytics/error-reporting', () => ({
@@ -42,13 +41,13 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
 // Worktree removal: real git is replaced by a spawn that fails the `worktree remove`.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
-  const mockSpawn = vi.fn((_command: string, args: readonly string[]) => {
+  const mockSpawn = vi.fn((_command: string, commandArguments: readonly string[]) => {
     const child = Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
       kill: vi.fn(),
     });
-    const isRemove = args[0] === 'worktree' && args[1] === 'remove';
+    const isRemove = commandArguments[0] === 'worktree' && commandArguments[1] === 'remove';
     const behavior: SpawnBehavior = isRemove ? hoisted.spawnBehavior.current : { exitCode: 0 };
     queueMicrotask(() => {
       if (behavior.stderr) child.stderr.emit('data', Buffer.from(behavior.stderr, 'utf8'));
@@ -86,12 +85,12 @@ vi.mock('electron', () => ({
   app: {
     getVersion: vi.fn(() => '1.2.3'),
     getGPUFeatureStatus: vi.fn(() => ({})),
-    on: vi.fn((eventName: string, handler: (...args: unknown[]) => unknown) => {
+    on: vi.fn((eventName: string, handler: (...listenerArguments: unknown[]) => unknown) => {
       hoisted.appListeners.set(eventName, handler);
     }),
   },
   ipcMain: {
-    handle: vi.fn((channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => {
+    handle: vi.fn((channel: string, handler: (event: unknown, ...handlerArguments: unknown[]) => unknown) => {
       hoisted.ipcHandlers.set(channel, handler);
     }),
     on: vi.fn(),
@@ -123,7 +122,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
-  fs.rmSync(tempDirectory, { recursive: true, force: true });
+  fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 describe('worktree removal failure report', () => {

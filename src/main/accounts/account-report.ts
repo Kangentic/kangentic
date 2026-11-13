@@ -69,6 +69,9 @@ export function reportAccountProblem(
   facts: AccountProblemFacts = {},
   error?: unknown,
 ): void {
+  // Mark the caller's error first, so a chokepoint it is rethrown into skips it even
+  // when this problem already reported and the latch below returns early.
+  if (error !== undefined) markReported(error);
   const key = `${problem}:${agent}`;
   if (reported.has(key)) return;
   reported.add(key);
@@ -86,7 +89,6 @@ export function reportAccountProblem(
     // One issue per problem and agent, whatever call path found it.
     ['agent-accounts', problem, agent],
   );
-  if (error !== undefined) markReported(error);
 }
 
 /**

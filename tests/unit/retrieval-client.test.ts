@@ -21,6 +21,7 @@ vi.mock('../../src/main/analytics/handled-report', () => ({
 }));
 
 import { RetrievalClient, RetrievalUnavailableError, INTERACTIVE_TIMEOUT_MS, READY_TIMEOUT_MS } from '../../src/main/retrieval/retrieval-client';
+import { errorShapeOf } from '../../src/main/retrieval/worker/protocol';
 import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
 import {
   HEARTBEAT_INTERVAL_MS,
@@ -151,6 +152,29 @@ describe('RetrievalClient', () => {
       expect(mockSendHandledFailure.mock.calls[1][1]).toMatchObject({ name: 'Error' });
       client.dispose();
     });
+  });
+
+  // Not a made-up code: the one message the worker really sends (retrieval-worker.ts posts
+  // `{ type: 'handledError', code: 'sqlite_vec_load', ...errorShapeOf(error) }`), built through the
+  // worker's own errorShapeOf. This is the only test that uses the code, so the module latch is clear.
+  it('reports the sqlite_vec_load message the worker really sends, grouped by its errno', async () => {
+    const client = new RetrievalClient();
+    void client.call('projects.summaries', { projectIds: [] }).catch(() => undefined);
+    const child = lastChild();
+    const loadFailure = Object.assign(new Error('The specified module could not be found: C:\\Users\\dev\\vec0.dll'), { name: 'Error', code: 'ERR_DLOPEN_FAILED' });
+
+    child.emit('message', { type: 'handledError', code: 'sqlite_vec_load', ...errorShapeOf(loadFailure) });
+
+    expect(mockSendHandledFailure).toHaveBeenCalledTimes(1);
+    const [source, error, tags, contexts, fingerprint] = mockSendHandledFailure.mock.calls[0];
+    expect(source).toBe('retrieval_worker');
+    expect(error).toMatchObject({ name: 'Error', code: 'ERR_DLOPEN_FAILED', message: 'The retrieval worker reported sqlite_vec_load' });
+    expect(tags).toEqual({ code: 'sqlite_vec_load' });
+    expect(contexts).toEqual({});
+    expect(fingerprint).toEqual(['retrieval-worker', 'sqlite_vec_load', 'ERR_DLOPEN_FAILED']);
+    // The worker's own message never crosses the wire, so none of its path reaches the report.
+    expect(JSON.stringify(mockSendHandledFailure.mock.calls[0])).not.toContain('Users');
+    client.dispose();
   });
 
   it('kills a worker that does not answer in time, and counts it as a crash', async () => {

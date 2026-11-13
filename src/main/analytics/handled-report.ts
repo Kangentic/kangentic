@@ -180,7 +180,7 @@ export function fingerprintOf(error: unknown): string[] | undefined {
 }
 
 /** The first frame of the error's stack, for a latch key only (never sent). */
-function firstFrameOf(error: unknown): string {
+export function firstFrameOf(error: unknown): string {
   const frames = framesOf(error instanceof Error ? error.stack : undefined);
   const firstLine = frames.split('\n').find((line) => line.trim().length > 0);
   return firstLine?.trim() ?? '';

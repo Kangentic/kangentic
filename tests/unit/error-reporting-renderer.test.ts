@@ -115,6 +115,9 @@ describe('reportCaughtRenderError (the root onCaughtError)', () => {
     // Names only: no URL, no path, no line number.
     expect(context.contexts.react).toEqual({ componentStack: 'MonitorBody\ndiv\nPanelErrorBoundary' });
     expect(sent.stack).not.toContain('Acme');
+    // The boundary sends the component names and nothing else: no error text rides along in contexts.
+    expect(Object.keys(context.contexts)).toEqual(['react']);
+    expect(JSON.stringify(mocks.captureException.mock.calls[0])).not.toContain('Acme');
   });
 
   it('tags an unknown boundary when React hands over none', () => {

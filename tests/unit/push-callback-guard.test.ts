@@ -137,6 +137,25 @@ describe('reportPushCallbackRecord', () => {
     expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toMatch(/acme/i);
   });
 
+  it('falls back to the generic name when the record carries a free-text errorName, sending none of it', () => {
+    const hostileName = 'Fix Acme billing /Users/dev';
+    const hostile = record({
+      context: { pushCallback: 'config.onChanged', errorName: hostileName },
+      stack: `${hostileName}: boom\n    at onConfigChanged (index.js:1:2)`,
+    });
+
+    expect(reportPushCallbackRecord(hostile)).toBe(true);
+
+    const [sent, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(sent.message).toBe('Handled preload_callback failure: Error');
+    expect(sent.name).toBe('Error');
+    expect(tags.error_name).toBe('Error');
+    expect(sent.stack).toContain('at onConfigChanged');
+    const serialized = JSON.stringify(reportHandledError.mock.calls[0]) + String(sent.stack);
+    expect(serialized).not.toMatch(/acme/i);
+    expect(serialized).not.toContain('/Users/dev');
+  });
+
   it('ignores a record the guard did not send, and a method that is not an API name', () => {
     expect(reportPushCallbackRecord(record({ source: 'renderer' }))).toBe(false);
     expect(reportPushCallbackRecord(record({ context: null }))).toBe(false);
