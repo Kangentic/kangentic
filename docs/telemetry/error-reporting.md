@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Error reporting (Sentry)
-description: "How Sentry runs in main and the renderer: path scrubbing, ignoreErrors filters, the console breadcrumb tag allowlist, foreign native crash handling, errors counted instead of reported (updater, GPU, workers), the GPU escalation report, and sourcemap and debug file upload."
+description: "How Sentry runs in main and the renderer: path scrubbing, ignoreErrors filters, the console breadcrumb tag allowlist, the handled-failure chokepoints and their sources, error boundaries, foreign native crash handling, errors counted instead of reported (updater, GPU, workers), the GPU escalation report, and sourcemap and debug file upload."
 tags: [sentry, crashes, breadcrumbs, scrubbing]
 sources:
   - resource: src/main/analytics/error-reporting.ts
@@ -32,6 +32,19 @@ sources:
   - resource: src/main/pty/spawn/agent-start-refused.ts
   - resource: src/main/agent/shared/cli-identity.ts
   - resource: scripts/sentry-upload-gate.js
+  - resource: src/main/analytics/handled-report.ts
+  - resource: src/main/analytics/ipc-handler-report.ts
+  - resource: src/shared/handled-error-copy.ts
+  - resource: src/shared/ipc-rejection.ts
+  - resource: src/shared/refusal.ts
+  - resource: src/main/agent/mcp-http/tool-reporting.ts
+  - resource: src/main/ipc/helpers/recovery-report.ts
+  - resource: src/main/ipc/helpers/spawn-failure.ts
+  - resource: src/main/pty/host/pty-host-report.ts
+  - resource: src/main/pty/host/host-handled-error.ts
+  - resource: src/main/pr/pr-report.ts
+  - resource: src/renderer/utils/renderer-failure.ts
+  - resource: src/renderer/components/layout/SurfaceBoundary.tsx
 ---
 # Error reporting (Sentry)
 
@@ -377,10 +390,70 @@ in one Sentry org, one triage surface.
   domain once and at most 100 domains, remembered in `analytics-usage.json`, and nothing is sent
   while error reporting is off. A company's own public domain can still name that company, which is
   the cost of this report, and why Settings > Privacy lists it under what is collected.
-- **Boundary-caught errors** never reach the SDK's global handlers (React swallows them), so
-  all three error boundaries hand the real `Error` to `captureException` explicitly. Two of them
-  also keep the existing Aptabase funnel (`ErrorBoundary` as `boundary: 'root'`,
-  `PanelErrorBoundary` as `boundary: 'panel'`); `DiffErrorBoundary` reports to Sentry only.
+- **Boundary-caught errors** never reach the SDK's global handlers (React swallows them), so the
+  one `createRoot` passes `onCaughtError` (`src/renderer/index.tsx`), which reports every catch
+  once through `reportCaughtRenderError` (`source: react_boundary`). React hands it the boundary
+  instance, whose `boundaryReportTags()` names it: `boundary` (`root`, `panel` or `diff`) and, for a
+  panel, `panel`, the surface's English name. The component stack goes in a context: component
+  names only, never props or text. No boundary reports from its own `componentDidCatch`, so a catch
+  is one event. Each surface of the main window has its own boundary (`SurfaceBoundary`: the
+  board, sidebar, title bar, terminal panel, backlog, status bar, settings, search and the Command
+  Terminal layer), and so does each task window, so one throw no longer unmounts every terminal.
+  `ErrorBoundary` and `PanelErrorBoundary` also keep the Aptabase funnel.
+- **Handled failures report at their chokepoints**
+  (`src/main/analytics/handled-report.ts`, rule `.claude/rules/error-reporting.md`). Each
+  chokepoint holds a `createChokepointReporter(source)`, which sends a copy of the error whose
+  message is `Handled <source> failure: <ErrorName>` over the original frames (`pathFreeCopy`),
+  never `error.message`. A `TypeError`, `RangeError` or `ReferenceError` message goes in a
+  `diagnostic` context cut to 200 characters; a `SyntaxError`'s never does. Tags are `source`,
+  `error_name`, `errno` when there is one, and the chokepoint's own short enums. It skips what is
+  not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
+  `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
+  cause), skips an error another reporter already sent (`markReported` and `isReported`, which
+  reads one level of `cause`), latches once per key per run and stops after 25 keys. An errno or
+  `SQLITE_` failure is fingerprinted `['handled-env', name, code]`; a code defect keeps Sentry's
+  stack grouping. The sources:
+  - `ipc_handler`: every `ipcMain.handle` handler, wrapped once at install
+    (`src/main/analytics/ipc-handler-report.ts`, before `installDiagnostics`). The renderer's copy
+    of the same rejection (`Error invoking remote method '<channel>': ...`) is dropped by main's
+    `ignoreErrors` (`IPC_REJECTION_DUPLICATE_PATTERN`), except `No handler registered for` and an
+    uncloneable result, which only the renderer sees. The channel is never in a fingerprint.
+  - `mcp_tool`, `mcp_command`, `mcp_request`: a tool callback (tag `tool`), a command handler and
+    the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`).
+  - `mobile_verb` (tag `verb`), `automation_runner` (tag `automation_type`), `turn_end`,
+    `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
+    classes and the attach, capture and composite failures only).
+  - `task_move` (a rollback that failed), `project_recovery` (tag `pass`: `resource_cleanup`,
+    `session_recovery`, `session_reconcile`, `host_connected`, `cold_open`,
+    `deferred_board_config`, `pty_host_loss`, `activate_project`, `remote_projects`), `db_open` and
+    `db_migration` (tags `database`, `stage`), `held_messages`, `session_handlers` (tag `stage`),
+    `accounts`, `artifact_detection`, `metrics_snapshot`, `worktree_removal` (tags `profile`,
+    `timed_out`, `holders`, `refused`, `platform`), `preload` (our own windows only),
+    `pop_out_load` (tags `kind`, `error_code`), `dictation`.
+  - `pty_host`: a fixed code the host relays as a `handledError` event (`root_pin`, `cli_pin`,
+    `orphan_cleanup`, `pty_kill`, `transcript_flush`, `spawn_worker_fallback`, `uncaught`), and a
+    heartbeat stall, once per run. The first host crash of a run reports too, fingerprinted
+    `['utility-process-first-crash', service, cause]`, apart from the five-crash latch.
+  - `retrieval`: the worker's reply carries the error's class and code, and a sqlite-vec load
+    failure and an embeddings init failure each report once.
+  - `agent_session_id`: a session whose id no capture path found, once per agent, with
+    `agent_cli_version`.
+  - `renderer` (tags `area`, `op`): `reportRendererFailure` (`src/renderer/utils/renderer-failure.ts`)
+    for the board load, a card that opens nothing, terminal replay and frame hold, session sync in
+    a packaged build, the project list, pop-out boot, the Monitor's task bundle and the WebGL
+    fallback. It is fingerprinted `['renderer', area, op, name]`, latched per key under HMR, and has
+    no Sentry import: `error-reporting.ts` registers its sink at init.
+
+  Settings > Privacy names this data: an error's type, a fixed failure code and, for an interface
+  crash, the names of the components it was in.
+- **Grouping a defect reached through a dispatcher.** The dispatcher frames (the IPC wrap,
+  `runHandler`, the `registerTool` proxy, `capability-router`'s dispatch) are the same for every
+  handler, so they cannot split an issue and stay in the stack. If one ever groups unrelated
+  handlers together, the server-side stack trace rule (Project Settings > Issue Grouping > Stack
+  Trace Rules) is `stack.abs_path:**/ipc-handler-report.ts v-group -group`: `-group` takes the
+  dispatcher's frame out of grouping and `v-group` takes every frame below it, its callers in
+  Electron's IPC plumbing, so only the handler's own frames above it group. The same line with
+  another dispatcher's file covers the rest. It is not set today.
 - **Handled errors are forwarded too** (`reportHandledError`; the renderer counterpart,
   `reportHandledRendererError`, serves the monaco funnel above): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY

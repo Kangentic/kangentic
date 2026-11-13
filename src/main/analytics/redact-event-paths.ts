@@ -170,6 +170,7 @@ export function redactEventText(
     const rewrites = buildRewrites(homeDirectory, caseInsensitive, projectRoots);
     return rewrites.reduce((current, rewrite) => current.replace(rewrite.pattern, rewrite.replacement), text);
   } catch {
+    // report-ok: runs inside beforeSend; reporting from it would recurse.
     return text;
   }
 }

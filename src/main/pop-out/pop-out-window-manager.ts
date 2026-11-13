@@ -234,6 +234,7 @@ export class PopOutWindowManager {
     const loading = openContext.devServerUrl
       ? win.loadURL(`${openContext.devServerUrl}#${kind}`)
       : win.loadFile(resolveRendererIndexPath(openContext.viteName), { hash: kind });
+    // report-ok: did-fail-load above reports the same failure by kind and code.
     void Promise.resolve(loading).catch(() => undefined);
 
     const tracked: TrackedPopOut = {

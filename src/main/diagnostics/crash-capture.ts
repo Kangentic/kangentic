@@ -216,6 +216,7 @@ function isOwnWindow(webContents: Electron.WebContents): boolean {
   try {
     return webContents.getType() === 'window';
   } catch {
+    // report-ok: a destroyed webContents throws here, and is not one of our windows any more.
     return false;
   }
 }
