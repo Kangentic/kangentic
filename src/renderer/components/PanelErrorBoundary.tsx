@@ -23,6 +23,14 @@ interface PanelErrorBoundaryProps {
    * new callers pass `panel` and `message`.
    */
   label?: string;
+  /**
+   * The fallback's own box, in place of one that fills its container. A bar
+   * or an overlay passes one: in the window's full-height column, a filling
+   * fallback takes the whole window and leaves the board no height.
+   */
+  fallbackClassName?: string;
+  /** Closes the surface. An overlay passes it: its own close key went with it. */
+  onDismiss?: () => void;
 }
 
 interface PanelErrorBoundaryState {
@@ -98,7 +106,7 @@ export class PanelErrorBoundary extends React.Component<
       return (
         <div
           data-testid="panel-error-boundary"
-          className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center"
+          className={this.props.fallbackClassName ?? 'flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center'}
         >
           <span className="text-sm text-fg-secondary">
             {failureLine}
@@ -118,6 +126,15 @@ export class PanelErrorBoundary extends React.Component<
               ? <Trans context="Action">Reload</Trans>
               : <Trans context="Action">Retry</Trans>}
           </button>
+          {this.props.onDismiss && (
+            <button
+              onClick={this.props.onDismiss}
+              data-testid="panel-error-dismiss"
+              className="text-xs px-3 py-1 rounded bg-surface-raised hover:bg-surface-raised/80 text-fg-secondary transition-colors"
+            >
+              <Trans context="Action">Close</Trans>
+            </button>
+          )}
         </div>
       );
     }

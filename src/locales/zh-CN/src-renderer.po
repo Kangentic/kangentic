@@ -457,6 +457,11 @@ msgstr ""
 msgid "Close"
 msgstr "关闭"
 
+#: src/renderer/components/PanelErrorBoundary.tsx
+msgctxt "Action"
+msgid "Close"
+msgstr ""
+
 #: src/renderer/window-manager/components/ConversationWindow.tsx
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #: src/renderer/window-manager/components/WindowTitleBar.tsx
