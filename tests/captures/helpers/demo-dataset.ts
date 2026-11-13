@@ -2484,15 +2484,19 @@ export function buildDemoPreConfig(options: {
        * it. A recording that has ENDED behind the clock (its last chunk is behind it, which is
        * where a tiled variant shorter than the session's elapsed stretch sits, or its session has,
        * playedEndMs) returns its final frame rather than the whole stream: the frame is the same
-       * picture, at a tenth of the bytes.
+       * picture, at a tenth of the bytes. paintedThroughMs, from releaseHeldClocks, is how far
+       * the terminal already shows: every chunk after it is queued, the ones already due at once,
+       * so the moments between the held opening and now are written rather than skipped.
        */
-      function scheduleStreamBytes(sessionId, entry, recording) {
+      function scheduleStreamBytes(sessionId, entry, recording, paintedThroughMs) {
         if (!replayTimers[sessionId]) replayTimers[sessionId] = [];
         var elapsed = Date.now() - entry.startedAt;
-        if (playedEndMs(sessionId, recording) <= elapsed && typeof recording.serialized === 'string') return recording.serialized;
+        var releasing = typeof paintedThroughMs === 'number';
+        if (!releasing && playedEndMs(sessionId, recording) <= elapsed && typeof recording.serialized === 'string') return recording.serialized;
+        var shownThrough = releasing ? paintedThroughMs : elapsed;
         var head = '';
         recording.stream.forEach(function (chunk) {
-          if (chunk.t <= elapsed) { head += chunk.data; return; }
+          if (chunk.t <= shownThrough) { head += chunk.data; return; }
           // A held clock queues nothing: releaseHeldClocks queues these at ready.
           if (entry.clockHeld) return;
           replayTimers[sessionId].push(setTimeout(function () { emitBytes(sessionId, chunk.data, entry.projectId); }, Math.max(0, entry.startedAt + chunk.t - Date.now())));
@@ -2744,14 +2748,15 @@ export function buildDemoPreConfig(options: {
           if (!entry.mounted || !recordingCache[entry.file]) return;
           recordingCache[entry.file].then(function (recording) {
             if (entry.clockHeld) return;
-            var elapsed = Date.now() - entry.startedAt;
+            // The mount painted the opening moment and no later. The clock has run since ready, and
+            // this callback runs a moment after it, so a cutoff of now would skip the chunks in
+            // between and leave the terminal out of step with its recording. Everything after the
+            // opening is queued, the ones already due at once.
             if (entry.frameOnly) {
               var state = emulators[sessionId];
-              if (state && state.file === entry.file) queueEmulatorChunks(sessionId, entry, state, elapsed);
+              if (state && state.file === entry.file) queueEmulatorChunks(sessionId, entry, state, held.openingMs);
             } else {
-              // The bytes up to now are on screen already (the mount painted the opening moment);
-              // only what is still ahead is queued.
-              scheduleStreamBytes(sessionId, entry, recording);
+              scheduleStreamBytes(sessionId, entry, recording, held.openingMs);
             }
           });
         });

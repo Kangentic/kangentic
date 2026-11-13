@@ -3,9 +3,11 @@
  * of it. scripts/cut-demo-fonts.mjs swaps its cut in for the committed demo/fonts/ this way.
  *
  * The target's old contents move aside to `retiredDir` first and are removed only once the new
- * directory is in. If the new one cannot be renamed in (Windows refuses a rename while a scanner
- * holds a fresh file), the old contents go back. If even that rename is refused, they stay in
- * `retiredDir`, which the error names, and nothing removes them.
+ * directory is in. If they cannot be moved aside, nothing has changed and the error says so. If
+ * the new one cannot be renamed in (Windows refuses a rename while a scanner holds a fresh file),
+ * the old contents go back. If even that rename is refused, they stay in `retiredDir`, which the
+ * error names, and nothing removes them. Once the new directory is in, the swap has succeeded: a
+ * refused removal of `retiredDir` is a warning, and the next swap clears it.
  */
 import fs from 'node:fs';
 
@@ -28,7 +30,13 @@ export function swapDirectoryIn({ stagingDir, outputDir, retiredDir }, fileSyste
     throw new Error(`${outputDir} is missing and ${retiredDir} holds what a previous swap moved aside. Move it back, or restore ${outputDir} from git, then run again.`);
   }
   fileSystem.rmSync(retiredDir, REMOVE_OPTIONS);
-  if (hadOutput) fileSystem.renameSync(outputDir, retiredDir);
+  if (hadOutput) {
+    try {
+      fileSystem.renameSync(outputDir, retiredDir);
+    } catch (error) {
+      throw new Error(`${outputDir} could not be moved aside to ${retiredDir} (${messageOf(error)}), so nothing was changed. Close what holds a file in it and run again.`, { cause: error });
+    }
+  }
   try {
     fileSystem.renameSync(stagingDir, outputDir);
   } catch (error) {
@@ -41,5 +49,9 @@ export function swapDirectoryIn({ stagingDir, outputDir, retiredDir }, fileSyste
     }
     throw error;
   }
-  fileSystem.rmSync(retiredDir, REMOVE_OPTIONS);
+  try {
+    fileSystem.rmSync(retiredDir, REMOVE_OPTIONS);
+  } catch (error) {
+    console.warn(`${outputDir} now holds the new contents, but ${retiredDir} could not be removed (${messageOf(error)}). The next swap removes it.`);
+  }
 }

@@ -170,10 +170,11 @@ export function gateCases(set: GateSet): GateCase[] {
  * How many pixels that are NOT antialiasing may differ between a frame and its poster, per OS
  * running the gate. The posters are shot on Linux, so Linux holds the bar at none. Windows and
  * macOS rasterize text through their own scalers (DirectWrite, CoreText), and the share of their
- * difference pixelmatch does not classify as antialiasing is measured by a dispatched run of
- * demo-poster-gate.yml (demo/README.md, The poster gate); raise a value here only from such a run,
- * with its number in the comment beside it. Every entry is 0 on purpose until then. A leg over
- * budget fails and prints its count, which is the measurement.
+ * difference pixelmatch does not classify as antialiasing is measured by running the gate there,
+ * a dispatched run of demo-poster-gate.yml (demo/README.md, The poster gate) or a local run of the
+ * whole gate. Raise a value only from such a run, with its number and source in the comment beside
+ * it. An unmeasured entry is 0 on purpose: a leg over budget fails and prints its count, which is
+ * the measurement.
  */
 export const NON_ANTIALIASING_PIXEL_BUDGET: Record<string, number> = {
   linux: 0,

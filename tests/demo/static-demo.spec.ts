@@ -4809,4 +4809,69 @@ test.describe('the frame a poster lifts onto', () => {
       return clock ? clock.elapsedMs - clock.openingMs : 0;
     }).toBeGreaterThan(1_500);
   });
+
+  test('the recording between the held opening and the release reaches the terminal, though the release lands late', async ({ page }) => {
+    // A terminal mounted while the clock is held paints the recording up to the opening moment and
+    // queues nothing. At ready the seed anchors the clock and queues what is still ahead. The cutoff
+    // used to be "now on the session's clock", which is the opening plus however long the release
+    // callback took to run, so every chunk in that gap was never written and the terminal drifted
+    // from its recording. Here the release is made late on purpose: the init script wraps the
+    // seed's onReady listener so that it runs once the terminal has mounted, with a ready moment 300
+    // ms in the past. The chunks in (opening, opening + 300 ms] must still arrive, first and in order.
+    // The grid is exact: a window 4 rows shorter than the fitted one, so its terminal is 154 by 37.
+    const LATE_MS = 300;
+    const { stream } = JSON.parse(readFileSync(path.resolve(__dirname, '..', 'captures', 'fixtures', 'demo', 'contoso-web-claude-middleware.json'), 'utf8')) as { stream: Array<{ t: number; data: string }> };
+    await page.addInitScript(({ sessionId, lateMs }) => {
+      const probe = { received: '' };
+      (window as unknown as { __lateReleaseProbe: typeof probe }).__lateReleaseProbe = probe;
+      let boot: { onReady: (callback: (readyAt: number) => void) => void } | undefined;
+      let listening = false;
+      Object.defineProperty(window, '__demoBoot', {
+        configurable: true,
+        get: () => boot,
+        set: (value) => {
+          boot = value;
+          const original = value.onReady;
+          value.onReady = function onReady(callback: (readyAt: number) => void) {
+            return original.call(value, () => {
+              // The release waits for the session's terminal to have mounted (and so painted the
+              // held opening), then runs with a ready moment lateMs in the past: the same state as
+              // a release callback that took lateMs to get going.
+              const release = () => {
+                const modes = (window as unknown as { __demoReplayMode?: Record<string, string> }).__demoReplayMode;
+                if (modes?.[sessionId] !== 'bytes') { setTimeout(release, 20); return; }
+                if (!listening) {
+                  listening = true;
+                  (window as unknown as { electronAPI: { sessions: { onData: (listener: (id: string, data: string) => void) => void } } })
+                    .electronAPI.sessions.onData((id, data) => { if (id === sessionId) probe.received += data; });
+                }
+                callback(Date.now() - lateMs);
+              };
+              release();
+            });
+          };
+        },
+      });
+    }, { sessionId: SESSION_MIDDLEWARE, lateMs: LATE_MS });
+    const exactGridState = floatingWindowState(TASK_MIDDLEWARE, 'Extract auth middleware', { x: 0.18, y: 0.13, w: 0.64, h: 0.684 });
+    (exactGridState.config.workspaceByProject['proj-contoso-web'].windows[0] as Record<string, unknown>).fitToRecording = SESSION_MIDDLEWARE;
+    await page.goto(demoUrl({ view: 'task', embed: '1', loop: '1', state: encodeState(exactGridState) }));
+    await waitForDemoReady(page);
+    const readClock = () => page.evaluate((sessionId) => (window as unknown as DemoSessionClockGlobal).__demoSessionClock(sessionId), SESSION_MIDDLEWARE);
+    const openingMs = (await readClock())?.openingMs ?? 0;
+    // The window is sized to the recording's own grid, so the terminal is handed bytes (the
+    // emulator path takes the same cutoff, but only this one is readable as raw bytes). The
+    // release then runs once that terminal has mounted.
+    await expect.poll(async () => (await readClock())?.held, { timeout: 15_000, message: 'the clock is released' }).toBe(false);
+    expect((await replayState(page, SESSION_MIDDLEWARE)).mode).toBe('bytes');
+    const lateChunks = stream.filter((chunk) => chunk.t > openingMs && chunk.t <= openingMs + LATE_MS);
+    expect(lateChunks.length, 'the recording has chunks inside the late window').toBeGreaterThan(0);
+    const expected = lateChunks.map((chunk) => chunk.data).join('');
+    await expect.poll(
+      () => page.evaluate(() => (window as unknown as { __lateReleaseProbe: { received: string } }).__lateReleaseProbe.received.length),
+      { timeout: 10_000, message: 'the bytes after the opening arrive' },
+    ).toBeGreaterThanOrEqual(expected.length);
+    const received = await page.evaluate(() => (window as unknown as { __lateReleaseProbe: { received: string } }).__lateReleaseProbe.received);
+    expect(received.slice(0, expected.length)).toBe(expected);
+  });
 });

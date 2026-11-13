@@ -74,6 +74,66 @@ describe('swapDirectoryIn', () => {
     expect(fs.readFileSync(path.join(retiredDir, 'old.woff2'), 'utf8')).toBe('old');
   });
 
+  it('changes nothing and names outputDir when the old contents cannot be moved aside', () => {
+    writeFileIn(outputDir, 'old.woff2', 'old');
+    writeFileIn(stagingDir, 'new.woff2', 'new');
+    const refusingFileSystem = {
+      ...fs,
+      renameSync(): void {
+        throw Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+      },
+    };
+
+    let thrown: unknown = null;
+    try {
+      swapDirectoryIn({ stagingDir, outputDir, retiredDir }, refusingFileSystem);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain(outputDir);
+    expect((thrown as Error).message).toContain('nothing was changed');
+    expect(((thrown as Error).cause as { code?: string }).code).toBe('EBUSY');
+    expect(fs.readFileSync(path.join(outputDir, 'old.woff2'), 'utf8')).toBe('old');
+    expect(fs.readFileSync(path.join(stagingDir, 'new.woff2'), 'utf8')).toBe('new');
+  });
+
+  it('keeps the swap and leaves retiredDir for the next run when its removal is refused', () => {
+    writeFileIn(outputDir, 'old.woff2', 'old');
+    writeFileIn(stagingDir, 'new.woff2', 'new');
+    let removeCalls = 0;
+    const refusingFileSystem = {
+      ...fs,
+      rmSync(target: fs.PathLike, options?: fs.RmOptions): void {
+        removeCalls += 1;
+        if (removeCalls === 1) {
+          fs.rmSync(target, options);
+          return;
+        }
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      },
+    };
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (message: string) => { warnings.push(message); };
+    try {
+      expect(() => swapDirectoryIn({ stagingDir, outputDir, retiredDir }, refusingFileSystem)).not.toThrow();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(fs.readdirSync(outputDir)).toEqual(['new.woff2']);
+    expect(fs.readFileSync(path.join(retiredDir, 'old.woff2'), 'utf8')).toBe('old');
+    expect(warnings.join('\n')).toContain(retiredDir);
+
+    // The next run clears what this one left.
+    writeFileIn(stagingDir, 'newer.woff2', 'newer');
+    swapDirectoryIn({ stagingDir, outputDir, retiredDir });
+    expect(fs.readdirSync(outputDir)).toEqual(['newer.woff2']);
+    expect(fs.existsSync(retiredDir)).toBe(false);
+  });
+
   it('refuses to start when a previous swap left outputDir missing and retiredDir present', () => {
     writeFileIn(retiredDir, 'old.woff2', 'old');
     writeFileIn(stagingDir, 'new.woff2', 'new');

@@ -101,13 +101,12 @@ test('an Activity tab activated after being hidden paints at its last event on t
   await expect(activityTab).toBeVisible({ timeout: 10000 });
 
   // The tab is mounted but hidden: its list has not been shown yet, so it is not the active tab.
-  const hiddenWrapperCount = await page.evaluate(() => {
+  const listIsMountedAndHidden = await page.evaluate(() => {
     const list = document.querySelector('[data-testid="activity-log-list"]');
-    if (list === null) return 0;
     // Hidden means not laid out: a display:none ancestor gives the list no box at all.
-    return list.getClientRects().length === 0 ? 1 : 0;
+    return list !== null && list.getClientRects().length === 0;
   });
-  expect(hiddenWrapperCount, 'the Activity list must be mounted and hidden before activation').toBe(1);
+  expect(listIsMountedAndHidden, 'the Activity list must be mounted and hidden before activation').toBe(true);
 
   const reading = await page.evaluate(async (): Promise<FirstFrameReading> => {
     const button = document.querySelector('[data-testid="terminal-activity-tab"]') as HTMLButtonElement | null;

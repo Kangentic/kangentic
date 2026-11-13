@@ -218,16 +218,22 @@ function readModelTokenization(model: MonacoEditorNamespace.ITextModel | null): 
  * The most lines either side of a diff may have for the diff to tokenize it up front, so its
  * deleted lines and its first screen are coloured when they are drawn. The pass runs in one
  * synchronous task on the renderer thread, so a longer file keeps monaco's own background pass
- * instead and may draw its deleted lines plain at first. The largest side any web demo diff
- * carries is 441 lines, so every Changes scene stays on the up-front path.
+ * instead and may draw its deleted lines plain at first. The web demo's Changes scenes need the
+ * up-front path, so the limit sits above the largest side their diffs carry (demo/README.md).
  */
 const UPFRONT_TOKENIZE_LINE_LIMIT = 1000;
 
 /** How long `laid-out` waits for a language's tokenizer to arrive before it stops waiting. */
 const TOKENIZER_WAIT_MS = 2000;
 
+/** One side of a diff that is tokenized up front, with its model's tokenizer. */
+interface UpfrontTokenizedSide {
+  model: MonacoEditorNamespace.ITextModel;
+  tokenization: ModelTokenization;
+}
+
 /** One side's tokenizer when that side is short enough and in a language to tokenize up front. */
-function readUpfrontTokenization(model: MonacoEditorNamespace.ITextModel | null): { model: MonacoEditorNamespace.ITextModel; tokenization: ModelTokenization } | null {
+function readUpfrontTokenization(model: MonacoEditorNamespace.ITextModel | null): UpfrontTokenizedSide | null {
   if (model === null || model.getLanguageId() === 'plaintext' || model.getLineCount() > UPFRONT_TOKENIZE_LINE_LIMIT) return null;
   const tokenization = readModelTokenization(model);
   return tokenization === null ? null : { model, tokenization };
