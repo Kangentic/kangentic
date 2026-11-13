@@ -187,6 +187,59 @@ interface DisposableViewModel {
  * disposed. A null leaves that one view model alive, as every swap did before
  * Sentry DESKTOP-22, and tests/ui/diff-swap-stale-view-model.spec.ts goes red.
  */
+/**
+ * The tokenizer of one side of a diff, read through the text model's `tokenization` part, which
+ * monaco's public typings leave out. The inline diff draws its deleted lines from the ORIGINAL
+ * text's tokens when it builds them, and rebuilds them on a token change only while its own check
+ * for a finished tokenizer flips. That check reads the state on the token event, and the tokenizer
+ * reports itself finished just after its last one, so a block built early could stay uncoloured
+ * for good, or until something else rebuilt it (task #1079, the web demo's poster gate). The
+ * modified side's lines colour in as the background pass reaches them. `null` when a field is
+ * missing, and the caller then leaves the timing to monaco.
+ */
+interface ModelTokenization {
+  /** Tokenize synchronously up to and including this line. */
+  tokenizeUntil(lineNumber: number): void;
+  /** Whether every line has tokens: monaco's background state, 2 for completed. */
+  isComplete(): boolean;
+  /** A token change on the model: the language's tokenizer arriving, or a background pass. */
+  onDidChangeTokens(listener: () => void): { dispose(): void } | null;
+}
+
+const BACKGROUND_TOKENIZATION_COMPLETED = 2;
+
+function readModelTokenization(model: MonacoEditorNamespace.ITextModel | null): ModelTokenization | null {
+  if (model === null) return null;
+  const tokenizationPart: unknown = Reflect.get(model, 'tokenization');
+  if (typeof tokenizationPart !== 'object' || tokenizationPart === null) return null;
+  const forceTokenization: unknown = Reflect.get(tokenizationPart, 'forceTokenization');
+  const onDidChangeTokens: unknown = Reflect.get(model, 'onDidChangeTokens');
+  if (typeof forceTokenization !== 'function' || typeof onDidChangeTokens !== 'function') return null;
+  return {
+    tokenizeUntil: (lineNumber) => {
+      forceTokenization.call(tokenizationPart, lineNumber);
+    },
+    isComplete: () => Reflect.get(tokenizationPart, 'backgroundTokenizationState') === BACKGROUND_TOKENIZATION_COMPLETED,
+    onDidChangeTokens: (listener) => {
+      const subscription: unknown = onDidChangeTokens(listener);
+      if (typeof subscription !== 'object' || subscription === null) return null;
+      const dispose: unknown = Reflect.get(subscription, 'dispose');
+      if (typeof dispose !== 'function') return null;
+      return { dispose: () => { dispose.call(subscription); } };
+    },
+  };
+}
+
+/**
+ * The most lines either side of a diff may have for the diff to tokenize it up front, so its
+ * deleted lines and its first screen are coloured when they are drawn. The pass is synchronous, so a longer file keeps monaco's own background
+ * pass instead, and may draw its deleted lines plain at first.
+ */
+const UPFRONT_TOKENIZE_LINE_LIMIT = 3000;
+
+/** How long `laid-out` waits for a language's tokenizer to arrive before it stops waiting. */
+const TOKENIZER_WAIT_MS = 2000;
+
 function readAttachedViewModel(diffEditor: MonacoDiffEditor): DisposableViewModel | null {
   const diffModelObservable: unknown = Reflect.get(diffEditor, '_diffModel');
   if (typeof diffModelObservable !== 'object' || diffModelObservable === null) return null;
@@ -563,6 +616,117 @@ export function DiffViewer({
   // too. A flush wipes the decorations monaco tracks them by, and the
   // unfolded result was then refolded.
   const pendingRegionStateRef = useRef<{ modelState: unknown } | null>(null);
+  // Whether the diff on screen has finished laying out: its diff has landed, the unchanged-region
+  // fold, when on, is in place, the deleted lines are drawn with their colours, and the first
+  // position is applied against them. Each of those lands a task or more after the diff and
+  // changes what the diff shows, so anything that waits for the diff to look the way it will stay
+  // (the web demo's Changes scenes, which report ready on it: demo/README.md, The poster gate)
+  // reads this, stamped on the editor area as `data-diff-state`. A content swap sets it back to
+  // pending.
+  const [diffLaidOut, setDiffLaidOut] = useState(false);
+  // The settle in flight (markDiffLaidOut), cancelled by a content swap, a newer settle or unmount.
+  const settleRef = useRef<{ dispose(): void } | null>(null);
+  // The position the file was just given (consumePendingReveal), applied again once its deleted
+  // lines are drawn. An added file's original is one empty line, drawn as a deleted line above
+  // line 1: a reveal that ran before monaco drew it kept line 1 at the top and scrolled past it,
+  // one that ran after showed it, and which came first changed from one open to the next. Dropped
+  // when the user scrolls, clicks or types in the editor first.
+  // A content swap drops it, since it belongs to the content it was applied to.
+  const appliedRevealRef = useRef<{ apply: () => void } | null>(null);
+  const cancelSettle = useCallback(() => {
+    settleRef.current?.dispose();
+    settleRef.current = null;
+  }, []);
+  const markDiffLaidOut = useCallback(() => {
+    const diffEditor = diffEditorRef.current;
+    if (diffEditor === null || diffEditor.getLineChanges() === null) return;
+    cancelSettle();
+    const originalEditor = diffEditor.getOriginalEditor();
+    const originalModel = originalEditor.getModel();
+    const tokenization = originalModel !== null
+      && originalModel.getLanguageId() !== 'plaintext'
+      && originalModel.getLineCount() <= UPFRONT_TOKENIZE_LINE_LIMIT
+      ? readModelTokenization(originalModel)
+      : null;
+    const modifiedModel = diffEditor.getModifiedEditor().getModel();
+    const modifiedTokenization = modifiedModel !== null
+      && modifiedModel.getLanguageId() !== 'plaintext'
+      && modifiedModel.getLineCount() <= UPFRONT_TOKENIZE_LINE_LIMIT
+      ? readModelTokenization(modifiedModel)
+      : null;
+    let disposed = false;
+    let finished = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let frame: number | null = null;
+    let tokenSubscription: { dispose(): void } | null = null;
+    const stopWaiting = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      tokenSubscription?.dispose();
+      tokenSubscription = null;
+    };
+    settleRef.current = {
+      dispose: () => {
+        disposed = true;
+        stopWaiting();
+      },
+    };
+    const finish = () => {
+      if (finished || disposed) return;
+      finished = true;
+      stopWaiting();
+      if (modifiedModel !== null) modifiedTokenization?.tokenizeUntil(modifiedModel.getLineCount());
+      // Any view zone change makes monaco realign the diff on its next task, which rebuilds the
+      // deleted-line blocks from the tokens they have now (diffEditorViewZones.js,
+      // invalidateAlignmentsState). An empty zone added and removed is that change.
+      originalEditor.changeViewZones((accessor) => {
+        accessor.removeZone(accessor.addZone({ afterLineNumber: 0, heightInPx: 0, domNode: document.createElement('div') }));
+      });
+      // Queued after monaco's realign, so the blocks are in when the position goes on again, and
+      // stamped a frame later, after the render monaco queued for the new tokens and position.
+      timer = setTimeout(() => {
+        timer = null;
+        if (disposed || diffEditorRef.current !== diffEditor) return;
+        const reveal = appliedRevealRef.current;
+        appliedRevealRef.current = null;
+        reveal?.apply();
+        frame = requestAnimationFrame(() => {
+          frame = null;
+          if (disposed || diffEditorRef.current !== diffEditor) return;
+          settleRef.current = null;
+          setDiffLaidOut(true);
+        });
+      }, 0);
+    };
+    if (tokenization === null || originalModel === null) {
+      finish();
+      return;
+    }
+    const lineCount = originalModel.getLineCount();
+    let tokenizing = false;
+    const tokenizeAll = () => {
+      if (tokenizing) return;
+      tokenizing = true;
+      try {
+        tokenization.tokenizeUntil(lineCount);
+      } finally {
+        tokenizing = false;
+      }
+      if (tokenization.isComplete()) finish();
+    };
+    tokenizeAll();
+    if (finished) return;
+    // The language's tokenizer has not loaded yet: monaco loads each grammar on first use and
+    // resets the model's tokens when it arrives, which is a token change.
+    tokenSubscription = tokenization.onDidChangeTokens(tokenizeAll);
+    timer = setTimeout(() => {
+      timer = null;
+      finish();
+    }, TOKENIZER_WAIT_MS);
+  }, [cancelSettle]);
+  useEffect(() => cancelSettle, [cancelSettle]);
   const restorePendingRegionState = useCallback((diffEditor: MonacoDiffEditor) => {
     const pending = pendingRegionStateRef.current;
     if (pending === null) return;
@@ -579,6 +743,7 @@ export function DiffViewer({
     if (!collapseUnchangedRef.current) {
       pendingRegionStateRef.current = null;
       diffEditor.updateOptions({ hideUnchangedRegions: { enabled: false } });
+      markDiffLaidOut();
       return;
     }
     // Collapse on. If the diff is ALREADY folded (e.g. a recompute from toggling
@@ -596,6 +761,7 @@ export function DiffViewer({
     const alreadyFolded = diffRoot ? diffRoot.querySelectorAll('.diff-hidden-lines').length > 0 : false;
     if (alreadyFolded) {
       restorePendingRegionState(diffEditor);
+      markDiffLaidOut();
       return;
     }
     diffEditor.updateOptions({ hideUnchangedRegions: { enabled: false } });
@@ -611,8 +777,9 @@ export function DiffViewer({
         }
         restorePendingRegionState(liveEditor);
       }
+      markDiffLaidOut();
     }, 0);
-  }, [restorePendingRegionState]);
+  }, [restorePendingRegionState, markDiffLaidOut]);
 
   // Index of the change region the next/prev navigation last revealed, reset on
   // file change so navigation restarts from the top of each new file.
@@ -792,6 +959,9 @@ export function DiffViewer({
       keptViewState = diffEditor.saveViewState();
     }
     contentSwapInProgressRef.current = true;
+    cancelSettle();
+    appliedRevealRef.current = null;
+    setDiffLaidOut(false);
     try {
       diffEditor.setModel(null);
       // Detached now, so the outgoing view model can go before the flush.
@@ -814,7 +984,7 @@ export function DiffViewer({
       diffEditor.restoreViewState(keptViewState);
       pendingRegionStateRef.current = { modelState: keptViewState.modelState };
     }
-  }, []);
+  }, [cancelSettle]);
 
   // Every change while the editor is mounted. Declared after the ref mirror
   // above, so the swap reads this commit's content.
@@ -844,34 +1014,39 @@ export function DiffViewer({
 
     const modifiedEditor = diffEditor.getModifiedEditor();
     pendingRevealRef.current = null;
-    if (action.kind === 'restore') {
-      // Never hand Monaco an offset the current layout cannot reach. A diff
-      // editor's height depends on the alignment view zones, so the same file
-      // is shorter before its diff is computed and shorter again once
-      // unchanged regions fold - a position saved against a taller layout
-      // saturates at the bottom instead. scrollLeft is left unclamped: it does
-      // not feed the visible-line-range computation this guards.
-      modifiedEditor.setScrollTop(
-        clampDiffScrollTop(
-          action.position.scrollTop,
-          modifiedEditor.getScrollHeight(),
-          modifiedEditor.getLayoutInfo().height,
-        ),
-      );
-      modifiedEditor.setScrollLeft(action.position.scrollLeft);
-    } else if (action.kind === 'revealLineInCenter') {
-      modifiedEditor.revealLineInCenter(action.lineNumber, monacoRef.current?.editor.ScrollType.Immediate);
-    } else {
-      modifiedEditor.setScrollTop(0);
-      modifiedEditor.setScrollLeft(0);
-    }
-    // Seed the tracked position so leaving without further scrolling still
-    // commits the position we just applied.
-    lastScrollRef.current = {
-      key: memoryKey,
-      scrollTop: modifiedEditor.getScrollTop(),
-      scrollLeft: modifiedEditor.getScrollLeft(),
+    const applyPosition = () => {
+      if (action.kind === 'restore') {
+        // Never hand Monaco an offset the current layout cannot reach. A diff
+        // editor's height depends on the alignment view zones, so the same file
+        // is shorter before its diff is computed and shorter again once
+        // unchanged regions fold - a position saved against a taller layout
+        // saturates at the bottom instead. scrollLeft is left unclamped: it does
+        // not feed the visible-line-range computation this guards.
+        modifiedEditor.setScrollTop(
+          clampDiffScrollTop(
+            action.position.scrollTop,
+            modifiedEditor.getScrollHeight(),
+            modifiedEditor.getLayoutInfo().height,
+          ),
+        );
+        modifiedEditor.setScrollLeft(action.position.scrollLeft);
+      } else if (action.kind === 'revealLineInCenter') {
+        modifiedEditor.revealLineInCenter(action.lineNumber, monacoRef.current?.editor.ScrollType.Immediate);
+      } else {
+        modifiedEditor.setScrollTop(0);
+        modifiedEditor.setScrollLeft(0);
+      }
+      // Seed the tracked position so leaving without further scrolling still
+      // commits the position we just applied.
+      lastScrollRef.current = {
+        key: memoryKey,
+        scrollTop: modifiedEditor.getScrollTop(),
+        scrollLeft: modifiedEditor.getScrollLeft(),
+      };
     };
+    applyPosition();
+    // Once more when the deleted lines are drawn (markDiffLaidOut), unless the user moves first.
+    appliedRevealRef.current = { apply: applyPosition };
   }, []);
 
   // When the panel rolled into this file from an adjacent one, jump to its
@@ -940,6 +1115,16 @@ export function DiffViewer({
     });
 
     const modifiedEditor = diffEditor.getModifiedEditor();
+    // A position the user takes over is theirs: markDiffLaidOut re-applies the first one only
+    // until the user scrolls, clicks or types in the editor. Monaco has no public wheel event,
+    // so these listen on its container in the capture phase.
+    const dropAppliedReveal = () => {
+      appliedRevealRef.current = null;
+    };
+    const editorContainer = diffEditor.getContainerDomNode();
+    for (const eventName of ['wheel', 'pointerdown', 'keydown'] as const) {
+      editorContainer.addEventListener(eventName, dropAppliedReveal, { capture: true, passive: true });
+    }
     modifiedEditor.onDidScrollChange(() => {
       // Ignore clamp noise: events fired while the content swap detaches and
       // reattaches the models, while the displayed content belongs to another
@@ -1362,7 +1547,7 @@ export function DiffViewer({
       </div>
 
       {/* Editor area - Monaco stays mounted to avoid expensive re-initialization */}
-      <div className="flex-1 min-h-0 relative" data-testid="diff-editor-area">
+      <div className="flex-1 min-h-0 relative" data-testid="diff-editor-area" data-diff-state={diffLaidOut ? 'laid-out' : 'pending'}>
         {imageViewActive ? (
           // Unlike Monaco, which keeps the previous file's text while the next
           // loads, the image view waits for THIS file's content, so a previous

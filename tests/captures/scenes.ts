@@ -1325,6 +1325,19 @@ const NEW_TASK_LABELS = '[data-testid="new-task-dialog"] [data-testid="task-labe
 const NEW_TASK_FEATURE_LABEL = '[data-testid="new-task-dialog"] [aria-label="Remove feature"]';
 /** A Changes panel file row's select button (the row's first), and its Viewed toggle. */
 const changesFile = (path: string): string => `[data-testid="changes-file-row"][data-path="${path}"] > button:first-child`;
+/**
+ * A Changes scene is ready only once its diff looks the way it will stay: `ready` with this in
+ * front. Monaco draws its lines, tokenizes them, lands the diff and then folds the unchanged
+ * regions a task later, each after the panel mounts, so a frame that reported ready on the panel
+ * alone lifted the site's poster onto a diff still blank, uncoloured, or about to move every line
+ * 15 px (the poster gate, kangentic.com #137). DiffViewer stamps `data-diff-state="laid-out"` once
+ * the diff and its fold are in, its deleted lines are drawn with their colours and its first
+ * position is applied against them, and a token class other than `mtk1`, the default, is a line
+ * the tokenizer has reached. `also` adds what a scene draws on top (the blame gutter). `:has()`
+ * cannot nest, so this wraps the scene's own selector, which may use one, from outside.
+ */
+const diffPainted = (ready: string, also = ''): string =>
+  `html:has([data-testid="diff-editor-area"][data-diff-state="laid-out"] .monaco-editor .view-line span[class*="mtk"]:not(.mtk1))${also ? `:has(${also})` : ''} ${ready}`;
 const changesViewed = (path: string): string => `[data-testid="changes-viewed-toggle"][data-path="${path}"]`;
 const changesScope = (scope: 'working' | 'staged' | 'branch'): string => `[data-testid="changes-scope-${scope}"]`;
 /** A commit in the Changes panel's History, by its place in the list: 1 is the newest. */
@@ -1809,7 +1822,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'branch', changesViewedFiles: ['server/middleware/auth.ts'] }) }],
     // The selected file's row, not the scope tab alone: the tree loads after the tab is checked, and
     // a frame built before it shows an empty panel.
-    ready: '[data-testid="changes-file-tree"]:has([data-testid="changes-scope-branch"][aria-checked="true"]) [data-testid="changes-file-row"][data-path="server/routes.ts"][data-selected="true"]',
+    ready: diffPainted('[data-testid="changes-file-tree"]:has([data-testid="changes-scope-branch"][aria-checked="true"]) [data-testid="changes-file-row"][data-path="server/routes.ts"][data-selected="true"]'),
     // The new middleware file opened, routes.ts again, and routes.ts marked viewed, the last file
     // left. Then the cut, and the mark taken off behind it. Both are the task's own view state,
     // which the cycle leaves as it found it.
@@ -1828,7 +1841,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The Changes panel on the Working tab: the agent\'s unstaged edit to server/routes.ts, open in the diff pane, with the new middleware file listed under Staged instead.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'working' }) }],
-    ready: '[data-testid="changes-scope-working"][aria-checked="true"]',
+    ready: diffPainted('[data-testid="changes-scope-working"][aria-checked="true"]'),
     // The Staged tab looked at, where the new middleware file is, and Working again. The scope is
     // the task's own view state, which the cycle leaves as it found it.
     choreography: [
@@ -1843,7 +1856,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The Changes panel on the Staged tab: the new server/middleware/auth.ts the agent added, shown as an all-new file in the diff pane.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'staged', changesSelectedFile: 'server/middleware/auth.ts' }) }],
-    ready: '[data-testid="changes-scope-staged"][aria-checked="true"]',
+    ready: diffPainted('[data-testid="changes-scope-staged"][aria-checked="true"]'),
     // The Working tab looked at, where the edit to routes.ts is, and Staged again.
     choreography: [
       { click: changesScope('working'), waitFor: `${changesScope('working')}[aria-checked="true"]`, ms: 3000 },
@@ -1857,7 +1870,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The Changes panel with History open: the branch\'s commits with the routes commit selected and named in the bar above the files, the two files that commit added, and the diff pane showing routes.ts as that commit introduced it.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'branch', changesSelectedCommit: ROUTES_COMMIT.hash }) }],
-    ready: '[data-testid="commit-selection-subject"]',
+    ready: diffPainted('[data-testid="commit-selection-subject"]'),
     // The pointer over the rate limiting commit below it, then the commit's other file opened and
     // routes.ts again. It stays on the routes commit, so every cycle ends on the poster's selection.
     choreography: [
@@ -1873,7 +1886,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     alt: 'The Changes panel diff for server/routes.ts with the blame gutter on: each committed line carries the short hash and author of the commit that wrote it, the lines the agent just added carry none, and the View options menu is still open with Show blame checked.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'working' }) }],
-    ready: '[data-testid="diff-blame-toggle"][aria-checked="true"]',
+    ready: diffPainted('[data-testid="diff-blame-toggle"][aria-checked="true"]', '.blame-gutter-annotation'),
     steps: [
       { click: '[data-testid="diff-view-options"]', waitFor: '[data-testid="diff-blame-toggle"]' },
       { click: '[data-testid="diff-blame-toggle"]', waitFor: '[data-testid="diff-blame-toggle"][aria-checked="true"]' },
@@ -1889,7 +1902,7 @@ export const SCENES: Record<string, SceneDefinition> = {
       workspaceByProject: { [PROJECT_CONTOSO]: taskWindowWorkspace(TASK_INTEGRATION, 'Integration test coverage', 'maximized', MAXIMIZED_PLACEMENT) },
     },
     tasks: [{ id: TASK_INTEGRATION, detail_view_state: JSON.stringify({ changesOpen: true, changesViewMode: 'split', changesScope: 'branch', dividerRatio: 0.42 }) }],
-    ready: '[data-testid="changes-pr-toggle"][aria-expanded="true"] [data-testid="changes-pr-fix-count"]',
+    ready: diffPainted('[data-testid="changes-pr-toggle"][aria-expanded="true"] [data-testid="changes-pr-fix-count"]'),
     // The pointer reads the failed checks, rests on Send to agent, and moves on to the passed line.
     // Every row opens its check in a browser and Send reaches the agent, so nothing is pressed.
     choreography: [

@@ -49,10 +49,23 @@ function equalBg(cell, other) {
   return cell.getBgColorMode() === other.getBgColorMode() && cell.getBgColor() === other.getBgColor();
 }
 
+/**
+ * Whether a cell carries an underline the frame should draw. xterm reports a cell inside an OSC 8
+ * hyperlink as underlined, with an underline STYLE of none, because it draws a link's underline
+ * itself. @xterm/headless (the capture and the backfill) and the browser's @xterm/xterm (the
+ * page's replay emulator) did not agree on that cell, so a still painted `/rc` in Claude's footer
+ * underlined and the live frame did not, and the hero's text changed at the lift (task #1079). A
+ * link's underline is no SGR the agent wrote, so only an underline with a style is drawn.
+ */
+function isUnderlined(cell) {
+  if (!cell.isUnderline()) return false;
+  return typeof cell.getUnderlineStyle !== 'function' || cell.getUnderlineStyle() !== 0;
+}
+
 function equalFlags(cell, other) {
   return cell.isInverse() === other.isInverse()
     && cell.isBold() === other.isBold()
-    && cell.isUnderline() === other.isUnderline()
+    && isUnderlined(cell) === isUnderlined(other)
     && cell.isOverline() === other.isOverline()
     && cell.isBlink() === other.isBlink()
     && cell.isInvisible() === other.isInvisible()
@@ -91,7 +104,7 @@ function diffStyle(cell, previous) {
   if (flagsChanged) {
     if (cell.isInverse() !== previous.isInverse()) parameters.push(cell.isInverse() ? 7 : 27);
     if (cell.isBold() !== previous.isBold()) parameters.push(cell.isBold() ? 1 : 22);
-    if (cell.isUnderline() !== previous.isUnderline()) parameters.push(cell.isUnderline() ? 4 : 24);
+    if (isUnderlined(cell) !== isUnderlined(previous)) parameters.push(isUnderlined(cell) ? 4 : 24);
     if (cell.isOverline() !== previous.isOverline()) parameters.push(cell.isOverline() ? 53 : 55);
     if (cell.isBlink() !== previous.isBlink()) parameters.push(cell.isBlink() ? 5 : 25);
     if (cell.isInvisible() !== previous.isInvisible()) parameters.push(cell.isInvisible() ? 8 : 28);

@@ -414,24 +414,31 @@ config, so a settings tab is a click, not a config key; the Monitor's layout doe
 
 Terminal type size is decided per scene by one rule: a terminal that is the SUBJECT of its
 figure is at native type, and a terminal that is context beside a panel may be held. Every task
-recording is 154 columns, and the width 154 columns take depends on the display: xterm's WebGL
-renderer floors the cell to device pixels, so the 12px Consolas cell is 6.0 CSS px at 100
-percent, 6.4 at 125 and 6.5 at 200, and a machine without Consolas draws Courier New or its
-metric clone Liberation Mono (what CI's runner has, and so what the posters are shot with) at
-7.0. No fixed fraction of the frame fits all of them. The floating terminal scenes (`task`,
-`dictation`, `window-dock`, `command-terminal`) therefore mark their window `fitToRecording`
-with the session it shows, and the seed sizes it before the renderer mounts
-(`fitLayoutBlob` in `demo-dataset.ts`): the cell measured the way xterm's `CharSizeService`
-measures it and floored the way its renderer floors it, the scrollbar gutter measured the way
-`fit-addon.ts` measures it (the app's 8px on classic scrollbars, 0 on overlay or hidden ones),
-and the frame's border. The terminal then takes exactly the recording's columns at native
-type, and nothing is left empty on the right. At 100 percent the window comes out at about 0.58
-of the frame, the window manager's own default; at 2x with Liberation Mono, about 0.68. The rect
-carries about a row and a half of margin over the recording's 37 rows, so the recording's rows
-always fit whatever the face's line height; the spare rows show the rows above the recording's
-screen, as a taller terminal on the desktop does (Live replay below). The width is fixed at load,
-and against the 1600px frame the recordings are measured at (or the frame itself when that is
-wider), so a smaller embed keeps the stage's proportions.
+recording is 154 columns. Every terminal draws in Inconsolata at 12px with line height 1.17
+(Fonts, below), whose cell is 6 by 14 CSS px, the Consolas grid the sessions were recorded at.
+The floating terminal scenes (`task`, `dictation`, `window-dock`, `command-terminal`) mark their
+window `fitToRecording` with the session it shows, and the seed sizes it before the renderer mounts
+(`fitLayoutBlob` in `demo-dataset.ts`): the nominal cell times the recording's columns, plus the
+scrollbar gutter measured the way `fit-addon.ts` measures it (the app's 8px on classic scrollbars,
+0 on overlay or hidden ones) and the frame's border. The terminal then takes exactly the
+recording's columns at native type, and nothing is left empty on the right. At the 1600px frame
+the window comes out at about 0.58 of the frame, the window manager's own default. The rect
+carries about a row and a half of margin over the recording's 37 rows; the spare rows show the
+rows above the recording's screen, as a taller terminal on the desktop does (Live replay below).
+The width is fixed at load, and against the 1600px frame the recordings are measured at (or the
+frame itself when that is wider), so a smaller embed keeps the stage's proportions.
+
+**One grid at every pixel ratio.** xterm's WebGL renderer floors the cell to whole device pixels,
+so the same 12px Inconsolata cell is 6 by 14 at 100, 150, 200 and 300 percent but 5.6 by 13.6 at
+125 and 5.71 by 13.71 at 175. Left alone, the bottom panel fits 232 columns at 125 percent where a
+poster shows 216, and every terminal wraps and lays out differently from its poster. The seed
+holds every terminal at the NOMINAL cell instead (`applyTerminalCellScale` in `demo-dataset.ts`):
+one rule sizes the element xterm opens in as a `calc()` of its host, so fit-addon picks the
+nominal grid at the cell this display floors to, and scales it per axis so each cell lands where
+the poster has it. Measured at 125 percent: the bottom panel is 216 by 14, drawn 1296.4 by 195.6
+where the poster draws 1296 by 196. At a whole ratio the rule is empty. The cost, accepted for the
+inert embedded frames: the text there is a few percent soft, and xterm's pointer mapping is off by
+the same few percent, so a selection dragged in a scaled terminal lands a little short.
 
 Before this, the floating scenes opened at 0.64 of the frame, sized for the rig's 2x Consolas
 cell, and two bands followed. At 100 percent the window fitted 170 columns and held 154 at
@@ -969,14 +976,24 @@ demo-posters-<version>.zip
   board.clay.frame.png
   board.rust.frame.png
   ...                       one pair per scene in scenes.json, held gestures included
+  hero.rust.1x.png          the landing page's hero, 1600 by 940
+  hero.rust.2x.png          the same at 2x, 3200 by 1880
 ```
 
 ```json
 { "version": "0.42.0", "frame": { "width": 1600, "height": 1000 }, "scale": 2,
   "scenes": { "board": { "clay": "board.clay.frame.png", "rust": "board.rust.frame.png" }, ... },
   "focus": { "board": { "clay": null, "rust": null },
-             "new-task": { "clay": { "x": 0.2375, "y": 0.1735, "w": 0.525, "h": 0.653 }, "rust": { ... } }, ... } }
+             "new-task": { "clay": { "x": 0.2375, "y": 0.1735, "w": 0.525, "h": 0.653 }, "rust": { ... } }, ... },
+  "hero": { "scene": "board", "theme": "rust", "query": "view=board&theme=rust&embed=1&still=1",
+            "frame": { "width": 1600, "height": 940 }, "files": { "1": "hero.rust.1x.png", "2": "hero.rust.2x.png" } } }
 ```
+
+`hero` is the landing page's hero iframe: the board in rust at 1600 by 940, at 1x and 2x for its
+srcset, with `query` the hero's own still query. It is a key of its own on purpose. The site's
+`readManifest` and `pick()` refuse a `scenes` entry that is not the 1600 by 1000 frame at 1x or
+2x, so a 940-tall still there would fail the site's build; an unknown top-level key they ignore.
+`tests/captures/features/hero.capture.ts` shoots it beside the scenes into `hero/`.
 
 The themes are `clay` and `rust`, the product pair the site embeds with (the rig's own default is
 `night,sand`, which the site does not use). Every poster is the frame at 2x, 3200 by 2000, with
@@ -997,16 +1014,30 @@ so a crop to one row of it is still the site's to choose.
 
 `npm run demo:posters` (`demo/posters.mjs`) is the command. It refuses a missing or stale build
 (`dist/demo/scenes.json` has to carry `package.json`'s version), runs
-`tests/captures/features/scenes.capture.ts` with `CAPTURE_THEMES=clay,rust`,
+`tests/captures/features/scenes.capture.ts` and `hero.capture.ts` with `CAPTURE_THEMES=clay,rust`,
 `CAPTURE_RESOLUTIONS=frame`, and `CAPTURE_OUTPUT_ROOT=dist/demo-posters/` (so the shots land in
 one known directory instead of a timestamped `captures/` run, which a Playwright retry would
 otherwise split), then checks the shots against `scenes.json` (every scene at every theme, every
 PNG exactly 3200 by 2000 by its header and whole by its IEND trailer, every focus sidecar present
-and either `null` or a rect with a positive size, no PNG the manifest would not name) and zips
-them, posters stored rather than deflated and the sidecars folded into the manifest, as
+and either `null` or a rect with a positive size, every layout sidecar present, no PNG the
+manifest would not name, and the two hero stills at their sizes) and zips them, posters stored
+rather than deflated and the focus sidecars folded into the manifest, as
 `dist/demo-posters-<version>.zip`. Nothing decodes a poster along the way; the two ends are what
 a header-only check misses when a shot is cut short. The pure half is
 `scripts/lib/demo-posters.mjs`, covered by `tests/unit/demo-posters.test.ts`.
+
+Each still is the frame a desktop browser paints, which takes three things the default Playwright
+launch does not do (`launchCaptureBrowser`, `shootWhenStill`). It runs the full Chromium build
+(`channel: 'chromium'`), not the headless shell, which rasterizes text differently. It keeps the
+scrollbars, which Playwright hides in headless with `--hide-scrollbars`: without them a poster had
+no bar under the columns, a taller board and a wider terminal than the app lays out around its 8px
+gutters. And it shoots every 500ms until two shots are identical, so xterm's scrollbar thumb has
+faded and the cursor gone, as they are a moment after ready. kangentic.com's own capture script
+found the same three: with them its 1x capture was bit-identical to the frame in a Windows desktop
+browser, without them 1.04 percent of pixels were off by more than 8 levels. Beside each still the
+rig writes `<scene>.<theme>.frame.layout.json` (`tests/captures/helpers/frame-measure.ts`): every
+text node's wraps and line boxes and every terminal's grid and rect, which the poster gate
+compares the live frame against. The zip leaves it out.
 
 `release.yml`'s `demo-posters` job runs it after `publish-release`, beside `deploy-demo`, and
 attaches the zip with `gh release upload --clobber`, so a re-run of a finished release replaces
@@ -1015,25 +1046,10 @@ verified before the job runs, and listing the zip there would fail every release
 publish also means the release stands when the job fails; the run goes red and the site's own
 sync fails on the missing asset.
 
-The posters are shot on `ubuntu-24.04` in Roboto, which the job installs (`fonts-roboto`) before
-it shoots. The app sets no UI font of its own, so its text is Tailwind's default `--font-sans`:
-`-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial`.
-A bare runner has none of the first five, so Chromium fell through to Arial's metric alias,
-Liberation Sans. That face has no medium weight, so every `font-medium` label rendered Regular,
-and it set the Column Manager's 11px Profile label 17 percent wider than Segoe UI does. Since
-kangentic.com's landing page shows the posters with no live frame beside them, that swap was the
-app's face as a visitor saw it. Roboto is the first family in the stack a runner can have, so
-installing it decides the face, and it ships the medium weight. Measured on the same dialog,
-Roboto's labels land within 6 percent of Segoe UI's widths. Noto Sans, the other candidate, ran
-up to 9 percent wide and `fonts-noto-core` rendered medium labels Regular. The job's gate compares
-`fc-match`'s family exactly, because `fc-match` answers with some font for any name, and
-`tests/unit/release-workflow-gates.test.ts` fails when a Tailwind bump drops Roboto from the stack.
-
-No single poster matches every reader's fonts: a reader on Windows or macOS sees Segoe or SF in
-the live frame. The live frame renders Roboto on Android and ChromeOS, and the desktop app renders
-it on Linux when the font is installed. The terminals fill their panes whatever the font (Live
-replay below). A local `npm run demo:posters` on Windows still renders Segoe UI, so a set shot
-there is not the release set.
+The posters are shot in the faces the demo ships (Fonts, below), so the runner needs none of its
+own and a set shot on Windows lays out like the release set. The release job used to install
+`fonts-roboto` so the runner would not fall through Tailwind's stack to Liberation Sans, and a
+Windows visitor still saw Segoe UI in the live frame; shipping the faces closed both.
 
 A scoped run for a look at one scene, from PowerShell at the repository root (a relative
 `CAPTURE_OUTPUT_ROOT` resolves against the shell's working directory, so run it from the root;
@@ -1044,6 +1060,129 @@ $env:CAPTURE_SCENES='board,card-drag'; $env:CAPTURE_THEMES='clay,rust'; $env:CAP
 $env:CAPTURE_OUTPUT_ROOT='dist/demo-posters'
 npx playwright test --project=captures tests/captures/features/scenes.capture.ts
 ```
+
+### Fonts
+
+Whatever a poster shows, the live frame has to show the same: the same face, metrics, wrapping
+and layout, for the hero and for every poster (kangentic.com #137). A frame that draws in the
+visitor's own UI face (Segoe UI, SF, Roboto, Liberation Sans) and in Consolas, which only Windows
+has, wraps and measures differently on every OS, so no poster could match it. The demo therefore
+ships its faces, demo only (`scripts/lib/demo-fonts.mjs`, signed off 2026-11-12):
+
+- **Kangentic Demo Sans** is Roboto at 400, 500, 600 and 700, the weights the board uses, first in
+  `--font-sans`.
+- **Kangentic Demo Mono** is Inconsolata at the same weights, for xterm and every `--font-mono`
+  text, the card previews among them. Its advance is exactly half an em, so with line height 1.17
+  (`config.terminal.lineHeight`, a setting with no row that only the demo sets) the 12px cell is
+  6 by 14, the Consolas grid the sessions were recorded at, and the hero's bottom panel stays
+  216 by 14. Cascadia Mono, JetBrains Mono and IBM Plex Mono advance 0.59 to 0.6 em and fit 185
+  columns in that panel, so they were turned down.
+- **Kangentic Demo Symbols** is what neither covers and the demo shows: an agent's spinner and
+  bullets, its arrows, `⎿`, the language picker's native names. `node scripts/cut-demo-fonts.mjs`
+  cuts exactly those codepoints from OFL Noto faces into `demo/fonts/` (about 19 KB in 11 files,
+  committed with their licences), one face per source file with exactly its codepoints as its
+  `unicode-range`. `tests/unit/demo-fonts.test.ts` reads every recording, catalog and renderer
+  source and fails on a codepoint no shipped face covers, naming that command. Two are named gaps
+  (`DEMO_GLYPH_GAPS`): Gemini's `ℹ`, which no OFL face on Fontsource carries, and a box-drawing
+  glyph that appears only in a source comment.
+
+Every face is a demo-only family name loaded from the build's own hashed file and never `local()`,
+so an installed Roboto with other metrics cannot stand in, and `font-synthesis: none` makes a
+weight the build lacks show up rather than be faked. `demo/boot.js` registers each face with the
+FontFace API and waits for the latin subsets and the symbols before it reports ready; a face that
+does not load is the error card, never a frame in a fallback face. The seed's first config read
+waits too, and no terminal is constructed before it, so xterm measures its cell in Inconsolata.
+
+The trade-off is on record in `.claude/rules/web-demo-parity.md`: a Windows visitor sees Roboto in
+the demo and Segoe UI in the installed app.
+
+### The poster gate
+
+`npm run demo:poster-gate` (`demo/poster-gate.mjs`) boots every poster's scene from `dist/demo` on
+the OS it runs on and compares it to the set in `dist/demo-posters` (or `POSTER_GATE_SET`). Every
+scene runs at 1, 1.25, 1.5 and 2x in rust, and in clay at the posters' 2x; the hero runs at every
+scale as a still and as the site boots it, `loop=1`, which has to be on the still's frame at
+ready (Choreography and timelines). The layout is measured at ready, the moment a host lifts its
+poster, so a scene that paints after ready differs then and fails; the pixels are compared once
+the frame stops changing, as the poster was shot. The site's docs figures boot `loop=1` too, and
+only the hero is checked that way: a scene with a pose shows the pose in its still but reports
+ready at rest when it loops, so booting every figure looping would fail those by design. Each case
+is held to three things (`tests/captures/helpers/poster-gate.ts`):
+
+- **Layout.** Every text node reads the same and wraps at the same characters on the same number
+  of lines, at every scale. At a scale a poster was shot at (2x, and the hero's 1x), each line box
+  also sits within 0.5 CSS px across and 1 px down of the poster's. Not exact, because each OS's
+  text scaler rounds advances its own way. Not at the other scales, because Chromium snaps every
+  line box and border to whole device pixels: measured on Windows on 2026-11-12 with every wrap the
+  same, text drifts up to 8 px down a long list at 125 percent and 13 px at 150, and 1 to 2 px
+  across. That drift is the browser's, and no face or cell the demo ships removes it.
+- **Terminals.** Every terminal is on the poster's grid and its rect is the poster's size within
+  1 px. At a poster's scale its place is held within 1 px too; at another it drifts with the text
+  above it (1.33 px at 150 percent on `workflow-draft`), so only its size is. xterm paints a
+  canvas, so no text node shows a terminal's layout.
+- **Pixels**, where a poster exists at that scale: nothing may differ beyond what pixelmatch reads
+  as antialiasing, up to a per-OS budget (`NON_ANTIALIASING_PIXEL_BUDGET`). Linux, where the
+  posters are shot, holds at none. The Windows and macOS budgets start at none too and are raised
+  only from a measured run, with the number beside the value.
+
+The frame keeps its own clock (`demo/boot.js`, the frame's clock): it opens at 2026-11-09 12:00
+UTC whenever a visitor opens the page, and dates, times and numbers format in UTC and en-US, so a
+time the poster shows is the time the live frame shows in any zone or locale. A text that still
+differs from its poster only in its digits is a counter that moved on between the shot and the
+measure: its line count and position are held, its width is not, and its scene's pixels are not
+compared.
+
+`GATE_KNOWN_DIFFERENCES` names what differs from the poster for a reason the gate knows, and each
+run prints it:
+
+- The Knowledge Graph overview labels a different set of titles on each boot, and the per-project
+  maps settle their camera a little differently.
+- A HELD terminal (the Changes scenes, `task-mcp`, `command-terminal-tiled`) takes another grid at
+  another display scale: the Changes terminal is 130 columns at 100 percent and 118 at 200, since
+  xterm conforms it to the largest type its pane takes at each display's own cell. Its terminals
+  are held at the poster's scale only. Holding one grid instead left the pane an empty band at 125
+  and 200 percent, the posters' own scale included, so the fill was kept.
+- `workflow-draft` and `settings-workflows` break one long text a word differently at 125 or 150
+  percent, where Chromium lays text out with fractional advances. Their text is held at whole
+  scales only.
+
+What the gate found is fixed at the cause. The Changes scenes reported ready before the diff had
+laid out: Monaco lands the diff and folds the unchanged regions a task later, which moved every
+line 15 px, so `DiffViewer` stamps `data-diff-state="laid-out"` and the scenes' `ready` waits for it
+(and for the blame gutter on `changes-blame`). Two more Monaco timings changed the diff from one
+open to the next, and `laid-out` now waits for both. The inline diff draws its deleted lines from
+the original text's tokens when it builds them, and Monaco rebuilds them only when its check for a
+finished tokenizer flips on a token change, which the tokenizer's last pass comes too early for. So
+a deleted block could stay uncoloured for good. And for an added file, Monaco draws the original's
+one empty line as a deleted line above line 1: the first-change reveal ran before or after that
+line appeared, and the editor rested 23 px apart. `DiffViewer` now tokenizes both sides up front
+(up to 3,000 lines each; a longer file keeps Monaco's own background pass), has Monaco rebuild
+the deleted lines from those tokens, applies the file's first position again once they are in
+(unless the user has scrolled, clicked or typed in the editor), and stamps `laid-out` a frame
+after. The Conversation window rested its transcript on a fractional scroll offset (1955.5), which
+Chromium painted a device pixel higher on some opens than on others; its settle loop now rests on a
+whole pixel. The Activity tab painted its oldest events for a frame before jumping to the newest: its virtualizer
+had measured the list while the tab was hidden, at no height, and read the real height only from a
+ResizeObserver a frame later. `ActivityLog` now hands the virtualizer its scroll element only while
+the tab shows, so it reads the height when the tab opens, and scrolls to the end once the rows
+exist, before the first paint. And a still
+painted Claude's `/rc` underlined where the live frame did not: xterm reports a hyperlink's cells as
+underlined with no underline style, headless and browser xterm disagreed on it, and the frame
+serializer now draws only an underline the agent wrote (the frames rebuilt with
+`node scripts/backfill-demo-timelines.mjs --force`). The looping hero's terminal is held to the
+still's grid and layout at ready, not its pixels: a shot right after ready races the spinner.
+
+`.github/workflows/demo-poster-gate.yml` runs it on Windows, macOS and Linux, two shards each.
+`release.yml`'s `poster-gate` job calls it after `demo-posters` has attached the zip, on the build
+and set that job uploads, so a mismatch turns the release run red without pulling an asset. Run
+it by hand (Actions, Demo poster gate, Run workflow) on a branch before a tag: it shoots the set
+on Linux first, and its numbers are the ones a budget is raised from. A failing case uploads its
+frame, its diff and its layout. If a per-OS difference survives, kangentic.com #137 names the
+fallback: one hero poster per platform, picked at the edge by `Sec-CH-UA-Platform`.
+
+What it finds, run on Windows against a set shot there on 2026-11-13: all 413 cases pass, and
+every one of the 156 pixel comparisons is identical to its poster. The macOS and Linux legs, and
+the per-OS pixel budgets, wait on a dispatched run of `demo-poster-gate.yml`.
 
 ### One viewport, one scale
 
@@ -1997,11 +2136,15 @@ The cut is lucide's whole icon map (Before first paint, above). Every case lost 
 2.8 MB on a page's first board frame and 0.8 MB on each frame after it, since frames on a page share
 compiled code.
 
-`tests/demo/heap-budget.spec.ts` holds one board frame to 21 MB still and 29 MB looping, through
-`demo/heap.mjs`. That is about 15 percent over what it reads: 18.3 and 24.5 MB here, and 18.2 and
-23.9 to 24.4 MB on Ubuntu 24.04 with the same Chromium build (Playwright 1.63's headless shell,
-run under WSL, three runs each). Repeated reads agree to 0.1 MB still and 0.6 MB looping, so the
-headroom is for creep rather than noise, and the `demo` job logs CI's own reading on every run. It
+`tests/demo/heap-budget.spec.ts` holds one board frame to 21.5 MB still and 29 MB looping, through
+`demo/heap.mjs`. That was about 15 percent over what it read on 2026-10-20: 18.3 and 24.5 MB here,
+and 18.2 and 23.9 to 24.4 MB on Ubuntu 24.04 with the same Chromium build (Playwright 1.63's
+headless shell, run under WSL, three runs each). Repeated reads agree to 0.1 MB still and 0.6 MB
+looping, so the headroom is for creep rather than noise, and the `demo` job logs CI's own reading on
+every run. The still budget went from 21 to 21.5 MB with the shipped faces (Fonts, above), read back
+to back against the tree before them on 2026-11-12: a still board frame 20.5 MB before and 20.9
+after, a looping one 25.2 and 25.4, four still frames 42.6 and 43.9. A heap snapshot puts the 0.4 MB
+in V8 objects (about 3,800 more `Object`s) and Blink's font resources for the 19 faces it loads. It
 also fails when the frame's terminal draws without WebGL: headless Chromium has WebGL on both
 platforms, as a visitor's browser does, and a runner without it would measure the DOM renderer,
 which no visitor's tab runs. The icon map coming back reads 21.1 MB, right at the still budget, so

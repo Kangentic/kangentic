@@ -88,6 +88,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
+    lineHeight: config.terminal.lineHeight,
     cursorStyle: config.terminal.cursorStyle,
     colors: config.terminal.colors,
     shellName: commandTerminalShell ?? undefined,

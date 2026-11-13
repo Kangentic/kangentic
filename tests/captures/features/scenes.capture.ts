@@ -12,7 +12,11 @@
  * per-run directory the marketing captures use, and beside each still a
  * <scene>.<theme>.<resolution>.focus.json holding the rect of the scene's `focus` element as
  * measured on that still (demo/boot.js's own measure, the one the ready message reports), or
- * null for a scene that names none. demo/posters.mjs reads those into the poster manifest.
+ * null for a scene that names none. demo/posters.mjs reads those into the poster manifest. A third
+ * file, <scene>.<theme>.<resolution>.layout.json, holds what the still lays out
+ * (helpers/frame-measure.ts): the poster gate compares the live frame against it and the zip leaves
+ * it out. Each still is the frame once it stops changing (shootWhenStill), in the full Chromium
+ * build with its scrollbars (launchCaptureBrowser), so it is the frame a desktop browser paints.
  * Axes are env-selectable for a quick single run,
  * and every axis refuses a name it does not know rather than shooting the page's error card:
  *   CAPTURE_SCENES=board,usage        only these scenes (default: all)
@@ -28,7 +32,8 @@ import path from 'node:path';
 import { startDemoServer } from '../../../demo/static-server.mjs';
 import { SCENES } from '../scenes';
 import { hideDevOnlyChrome, launchCaptureBrowser } from '../helpers/capture-page';
-import { NO_GPU_FALLBACKS, openScene, SCENE_THEMES, type SceneTheme } from '../helpers/scene-page';
+import { NO_GPU_FALLBACKS, openScene, SCENE_THEMES, shootWhenStill, type SceneTheme } from '../helpers/scene-page';
+import { measureFrame } from '../helpers/frame-measure';
 import { frame, hero, inline, thumbnail, type Resolution } from '../helpers/resolutions';
 import { getOutputDir } from '../helpers/output-dir';
 
@@ -94,10 +99,13 @@ test.describe('Scene captures', () => {
             for (const fallback of NO_GPU_FALLBACKS) {
               if (await page.locator(fallback).count() > 0) throw new Error(`Scene ${name} shows ${fallback} in ${theme}: the browser gave it no WebGL context`);
             }
-            await page.screenshot({
-              path: path.join(OUTPUT_DIR, `${name}.${theme}.${resolution.name}.png`),
-              fullPage: false,
-            });
+            // The settled frame, not the first one after ready (shootWhenStill), and its layout
+            // beside it: the poster gate (poster-gate.capture.ts) compares the live frame to this.
+            await shootWhenStill(page, { path: path.join(OUTPUT_DIR, `${name}.${theme}.${resolution.name}.png`) });
+            fs.writeFileSync(
+              path.join(OUTPUT_DIR, `${name}.${theme}.${resolution.name}.layout.json`),
+              `${JSON.stringify(await measureFrame(page))}\n`,
+            );
             // Measured on the frame just shot, after any gesture, so a crop fits this still. A
             // named focus that measures nothing throws rather than writing a null that reads as
             // "this scene has no focus".

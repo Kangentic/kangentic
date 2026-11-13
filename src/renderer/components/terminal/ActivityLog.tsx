@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { i18n } from '@lingui/core';
@@ -94,12 +94,17 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
     return events;
   }, [effectiveSessionIds, sessionEvents]);
 
+  // The scroll element is handed over only while the tab is active. The virtualizer reads its
+  // size when it gets an element, and otherwise only from a ResizeObserver a frame later, so a
+  // tab measured while hidden came back with no rows for its first frame and then jumped to its
+  // end on the next (measured by the web demo's poster gate: 312px).
   const virtualizer = useVirtualizer({
     count: allEvents.length,
-    getScrollElement: () => containerRef.current,
+    getScrollElement: () => (active ? containerRef.current : null),
     estimateSize: () => ESTIMATED_ROW_HEIGHT,
     overscan: 12,
   });
+  const rowsRendered = virtualizer.getVirtualItems().length > 0;
 
   // Smooth-scroll back to bottom and re-enable auto-scroll
   const smoothScrollToBottom = () => {
@@ -141,12 +146,14 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
     }
   };
 
-  // Auto-scroll to bottom when new events arrive (only when visible)
-  useEffect(() => {
+  // Auto-scroll to bottom when new events arrive (only when visible). A layout effect that runs
+  // again once the rows exist, so a tab that just turned active paints at its end on its first
+  // frame: before the rows render, the list is no taller than its box and has nowhere to scroll.
+  useLayoutEffect(() => {
     if (active && autoScrollRef.current && allEvents.length > 0) {
       virtualizer.scrollToIndex(allEvents.length - 1, { align: 'end' });
     }
-  }, [active, allEvents.length, virtualizer]);
+  }, [active, allEvents.length, virtualizer, rowsRendered]);
 
   // Clear isSmoothScrollingRef when scroll animation finishes
   useEffect(() => {

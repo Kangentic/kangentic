@@ -16,24 +16,31 @@ import os from 'node:os';
 import path from 'node:path';
 import { strFromU8, unzipSync } from 'fflate';
 import {
+  HERO_POSTER,
+  HERO_SHOTS_DIR,
   POSTER_RESOLUTION,
   POSTER_SCALE,
   POSTER_THEMES,
   buildPosterManifest,
+  expectedHeroStills,
   expectedPosters,
+  heroFileName,
+  heroLayoutFileName,
   inspectPngFile,
   packPosterSet,
   posterFileName,
   posterFocusFileName,
+  posterLayoutFileName,
   posterPixelSize,
   posterZipName,
   readBuildScenes,
   readPngDimensions,
   readPosterFocus,
-  resolvePlaywrightCli,
+  verifyHeroStills,
   verifyPosterSet,
 } from '../../scripts/lib/demo-posters.mjs';
-import { frame } from '../../tests/captures/helpers/resolutions';
+import { resolvePlaywrightCli } from '../../scripts/lib/playwright-cli.mjs';
+import { frame, heroStill, heroStill2x } from '../../tests/captures/helpers/resolutions';
 import { SCENE_THEMES } from '../../tests/captures/helpers/scene-page';
 
 // tests/captures/features/scenes.capture.ts validates CAPTURE_THEMES at module load, before it
@@ -97,14 +104,31 @@ const FIXTURE_FOCUS = {
   'settings-general': { clay: FOCUS_RECT, rust: FOCUS_RECT },
 };
 
-/** Every poster and its focus sidecar, the way the rig leaves a finished run. */
+/** A layout sidecar's contents; the packer and the verifier only need it to exist. */
+const LAYOUT_SIDECAR = `${JSON.stringify({ viewport: { width: 1600, height: 1000 }, textNodes: [], terminals: [] })}\n`;
+
+/** Both hero stills and their layout sidecars, as hero.capture.ts leaves them. */
+function writeHeroStills(heroDir: string): void {
+  fs.mkdirSync(heroDir, { recursive: true });
+  for (const still of expectedHeroStills()) {
+    fs.writeFileSync(path.join(heroDir, still.file), pngFile(still.width, still.height));
+    fs.writeFileSync(path.join(heroDir, still.layoutFile), LAYOUT_SIDECAR);
+  }
+}
+
+/**
+ * Every poster and its two sidecars in `shotsDir`, and the hero beside it in the sibling `hero/`,
+ * the way the rig leaves a finished run.
+ */
 function writeCompleteSet(shotsDir: string, size = { width: 3200, height: 2000 }): void {
   fs.mkdirSync(shotsDir, { recursive: true });
   for (const poster of expectedPosters(FIXTURE_SCENES)) {
     fs.writeFileSync(path.join(shotsDir, poster.file), pngFile(size.width, size.height));
     const focus = poster.scene === FOCUS_SCENE ? FOCUS_RECT : null;
     fs.writeFileSync(path.join(shotsDir, poster.focusFile), `${JSON.stringify(focus)}\n`);
+    fs.writeFileSync(path.join(shotsDir, poster.layoutFile), LAYOUT_SIDECAR);
   }
+  writeHeroStills(path.join(path.dirname(shotsDir), HERO_SHOTS_DIR));
 }
 
 let tempRoot: string;
@@ -123,17 +147,33 @@ function scratch(name: string): string {
   return dir;
 }
 
+/** A fresh set's scenes directory, `<name>/scenes`, so its hero lands in its own `<name>/hero`. */
+function scratchSet(name: string): string {
+  return path.join(scratch(name), 'scenes');
+}
+
 describe('the poster set names and sizes', () => {
   it('names a poster after the scene, the theme, and the rig resolution', () => {
     expect(posterFileName('board', 'clay')).toBe('board.clay.frame.png');
     expect(posterFocusFileName('board', 'clay')).toBe('board.clay.frame.focus.json');
+    expect(posterLayoutFileName('board', 'clay')).toBe('board.clay.frame.layout.json');
     expect(posterZipName('0.43.0')).toBe('demo-posters-0.43.0.zip');
   });
 
-  it('pairs every expected poster with its focus sidecar', () => {
+  it('pairs every expected poster with its focus and layout sidecars', () => {
     for (const poster of expectedPosters(FIXTURE_SCENES)) {
       expect(poster.focusFile).toBe(posterFocusFileName(poster.scene, poster.theme));
+      expect(poster.layoutFile).toBe(posterLayoutFileName(poster.scene, poster.theme));
     }
+  });
+
+  it('names the hero stills by theme and scale, 1600 by 940 at 1x and 2x', () => {
+    expect(expectedHeroStills()).toEqual([
+      { scale: 1, file: 'hero.rust.1x.png', layoutFile: 'hero.rust.1x.layout.json', width: 1600, height: 940 },
+      { scale: 2, file: 'hero.rust.2x.png', layoutFile: 'hero.rust.2x.layout.json', width: 3200, height: 1880 },
+    ]);
+    expect(heroFileName(2)).toBe('hero.rust.2x.png');
+    expect(heroLayoutFileName(1)).toBe('hero.rust.1x.layout.json');
   });
 
   it('expects one poster per scene per theme, scenes in scenes.json order, clay before rust', () => {
@@ -202,7 +242,7 @@ describe('readPngDimensions', () => {
 });
 
 describe('buildPosterManifest', () => {
-  it('is exactly the shape the site reads, scenes keyed by name in scenes.json order, then focus', () => {
+  it('is exactly the shape the site reads, scenes keyed by name in scenes.json order, then focus, then the hero', () => {
     const manifest = buildPosterManifest(FIXTURE_SCENES, FIXTURE_FOCUS);
     expect(manifest).toEqual({
       version: '0.43.0',
@@ -214,15 +254,57 @@ describe('buildPosterManifest', () => {
         'settings-general': { clay: 'settings-general.clay.frame.png', rust: 'settings-general.rust.frame.png' },
       },
       focus: FIXTURE_FOCUS,
+      hero: {
+        scene: 'board',
+        theme: 'rust',
+        query: 'view=board&theme=rust&embed=1&still=1',
+        frame: { width: 1600, height: 940 },
+        files: { 1: 'hero.rust.1x.png', 2: 'hero.rust.2x.png' },
+      },
     });
-    expect(Object.keys(manifest)).toEqual(['version', 'frame', 'scale', 'scenes', 'focus']);
+    expect(Object.keys(manifest)).toEqual(['version', 'frame', 'scale', 'scenes', 'focus', 'hero']);
     expect(Object.keys(manifest.scenes)).toEqual(['board', 'card-drag', 'settings-general']);
+  });
+
+  // The site's readManifest and pick() refuse a `scenes` entry that is not the 1600 by 1000 frame at
+  // 1x or 2x, so the hero's 1600 by 940 stills under `scenes` would fail the site's build.
+  it('keeps the hero out of `scenes`, where the site accepts only the full frame', () => {
+    const manifest = buildPosterManifest(FIXTURE_SCENES, FIXTURE_FOCUS);
+    const sceneFiles = Object.values(manifest.scenes).flatMap((byTheme) => Object.values(byTheme));
+    for (const still of expectedHeroStills()) expect(sceneFiles).not.toContain(still.file);
+  });
+});
+
+describe('verifyHeroStills', () => {
+  it('accepts both stills at their sizes', () => {
+    const heroDir = path.join(scratch('hero-complete'), HERO_SHOTS_DIR);
+    writeHeroStills(heroDir);
+    expect(verifyHeroStills(heroDir)).toEqual([]);
+  });
+
+  it('names a missing still, a still at the full frame\'s size, a missing layout and a stray PNG', () => {
+    const heroDir = path.join(scratch('hero-broken'), HERO_SHOTS_DIR);
+    writeHeroStills(heroDir);
+    fs.rmSync(path.join(heroDir, 'hero.rust.1x.png'));
+    fs.writeFileSync(path.join(heroDir, 'hero.rust.2x.png'), pngFile(3200, 2000));
+    fs.rmSync(path.join(heroDir, 'hero.rust.2x.layout.json'));
+    fs.writeFileSync(path.join(heroDir, 'hero.clay.1x.png'), pngFile(1600, 940));
+    expect(verifyHeroStills(heroDir)).toEqual([
+      'missing hero.rust.1x.png (the hero at 1x)',
+      'missing hero.rust.2x.layout.json (the hero at 2x), which the poster gate compares against',
+      'hero.rust.2x.png is 3200x2000, not 3200x1880 (the 1600x940 hero at 2x)',
+      'unexpected hero.clay.1x.png: not a hero still the manifest names',
+    ]);
+  });
+
+  it('reports both stills and both layouts missing when the directory does not exist', () => {
+    expect(verifyHeroStills(path.join(tempRoot, 'no-hero'))).toHaveLength(4);
   });
 });
 
 describe('readPosterFocus', () => {
   it('reads every sidecar into a map keyed by scene then theme, in manifest order', () => {
-    const shotsDir = scratch('focus-read');
+    const shotsDir = scratchSet('focus-read');
     writeCompleteSet(shotsDir);
     const focus = readPosterFocus(FIXTURE_SCENES, shotsDir);
     expect(focus).toEqual(FIXTURE_FOCUS);
@@ -231,7 +313,7 @@ describe('readPosterFocus', () => {
   });
 
   it('throws naming a missing sidecar rather than reading it as no focus', () => {
-    const shotsDir = scratch('focus-read-missing');
+    const shotsDir = scratchSet('focus-read-missing');
     writeCompleteSet(shotsDir);
     fs.rmSync(path.join(shotsDir, 'board.rust.frame.focus.json'));
     expect(() => readPosterFocus(FIXTURE_SCENES, shotsDir)).toThrow(/missing board\.rust\.frame\.focus\.json \(scene board, theme rust\)/);
@@ -240,13 +322,13 @@ describe('readPosterFocus', () => {
 
 describe('verifyPosterSet', () => {
   it('accepts a complete set at the right size', () => {
-    const shotsDir = scratch('complete');
+    const shotsDir = scratchSet('complete');
     writeCompleteSet(shotsDir);
     expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([]);
   });
 
   it('names every missing poster, not only the first', () => {
-    const shotsDir = scratch('missing-two');
+    const shotsDir = scratchSet('missing-two');
     writeCompleteSet(shotsDir);
     fs.rmSync(path.join(shotsDir, 'card-drag.rust.frame.png'));
     fs.rmSync(path.join(shotsDir, 'settings-general.clay.frame.png'));
@@ -258,12 +340,33 @@ describe('verifyPosterSet', () => {
 
   it('reports every poster and every sidecar missing when the directory does not exist', () => {
     const problems = verifyPosterSet(FIXTURE_SCENES, path.join(tempRoot, 'never-written'));
-    expect(problems).toHaveLength(12);
+    // Six posters, each with a focus and a layout sidecar.
+    expect(problems).toHaveLength(18);
     expect(problems.every((problem) => problem.startsWith('missing '))).toBe(true);
   });
 
+  it('names a missing layout sidecar, which the poster gate needs, even when its poster is present', () => {
+    const shotsDir = scratchSet('layout-missing');
+    writeCompleteSet(shotsDir);
+    fs.rmSync(path.join(shotsDir, 'card-drag.rust.frame.layout.json'));
+    expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([
+      'missing card-drag.rust.frame.layout.json (scene card-drag, theme rust), which the poster gate compares against',
+    ]);
+  });
+
+  it('names a layout sidecar cut short or not a frame layout, which the gate would fail on three OSes', () => {
+    const shotsDir = scratchSet('layout-broken');
+    writeCompleteSet(shotsDir);
+    fs.writeFileSync(path.join(shotsDir, 'card-drag.rust.frame.layout.json'), '{"viewport":{"width":16');
+    fs.writeFileSync(path.join(shotsDir, 'card-drag.clay.frame.layout.json'), '{"viewport":{"width":1600,"height":1000}}\n');
+    expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([
+      'card-drag.clay.frame.layout.json is not a frame layout (no viewport, textNodes and terminals); shoot the set again',
+      'card-drag.rust.frame.layout.json is not valid JSON; shoot the set again',
+    ]);
+  });
+
   it('names a missing focus sidecar even when its poster is present', () => {
-    const shotsDir = scratch('focus-missing');
+    const shotsDir = scratchSet('focus-missing');
     writeCompleteSet(shotsDir);
     fs.rmSync(path.join(shotsDir, 'settings-general.clay.frame.focus.json'));
     expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([
@@ -272,7 +375,7 @@ describe('verifyPosterSet', () => {
   });
 
   it('names a focus sidecar that is neither null nor a rect with a positive size', () => {
-    const shotsDir = scratch('focus-malformed');
+    const shotsDir = scratchSet('focus-malformed');
     writeCompleteSet(shotsDir);
     fs.writeFileSync(path.join(shotsDir, 'board.clay.frame.focus.json'), JSON.stringify({ ...FOCUS_RECT, w: 0 }));
     fs.writeFileSync(path.join(shotsDir, 'board.rust.frame.focus.json'), JSON.stringify({ ...FOCUS_RECT, h: '0.84' }));
@@ -288,7 +391,7 @@ describe('verifyPosterSet', () => {
     // A missing or renamed key is already caught by the every() check in isFocusValue (an
     // absent key reads undefined). An extra key past a fully valid rect is the one shape that
     // check cannot see on its own; only the exact-key-count check catches it.
-    const shotsDir = scratch('focus-extra-key');
+    const shotsDir = scratchSet('focus-extra-key');
     writeCompleteSet(shotsDir);
     fs.writeFileSync(path.join(shotsDir, 'board.clay.frame.focus.json'), JSON.stringify({ ...FOCUS_RECT, label: 'dialog' }));
     expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([
@@ -297,7 +400,7 @@ describe('verifyPosterSet', () => {
   });
 
   it('names a focus sidecar that is not JSON, as a rig killed mid-write leaves one', () => {
-    const shotsDir = scratch('focus-not-json');
+    const shotsDir = scratchSet('focus-not-json');
     writeCompleteSet(shotsDir);
     fs.writeFileSync(path.join(shotsDir, 'card-drag.rust.frame.focus.json'), '{ "x": 0.2,');
     expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([
@@ -306,7 +409,7 @@ describe('verifyPosterSet', () => {
   });
 
   it('names a poster at the wrong size with the size it found', () => {
-    const shotsDir = scratch('wrong-size');
+    const shotsDir = scratchSet('wrong-size');
     writeCompleteSet(shotsDir);
     fs.writeFileSync(path.join(shotsDir, 'board.clay.frame.png'), pngFile(1600, 1000));
     expect(verifyPosterSet(FIXTURE_SCENES, shotsDir)).toEqual([
@@ -315,7 +418,7 @@ describe('verifyPosterSet', () => {
   });
 
   it('names a poster that is not a PNG', () => {
-    const shotsDir = scratch('not-png');
+    const shotsDir = scratchSet('not-png');
     writeCompleteSet(shotsDir);
     fs.writeFileSync(path.join(shotsDir, 'board.rust.frame.png'), 'not a png at all, but long enough to read');
     const problems = verifyPosterSet(FIXTURE_SCENES, shotsDir);
@@ -324,7 +427,7 @@ describe('verifyPosterSet', () => {
   });
 
   it('names a poster cut short after a valid header', () => {
-    const shotsDir = scratch('truncated');
+    const shotsDir = scratchSet('truncated');
     writeCompleteSet(shotsDir);
     fs.writeFileSync(path.join(shotsDir, 'card-drag.clay.frame.png'), pngFile(3200, 2000).subarray(0, 80));
     const problems = verifyPosterSet(FIXTURE_SCENES, shotsDir);
@@ -333,7 +436,7 @@ describe('verifyPosterSet', () => {
   });
 
   it('names a PNG the manifest would not list, so a stale directory cannot pack', () => {
-    const shotsDir = scratch('extra');
+    const shotsDir = scratchSet('extra');
     writeCompleteSet(shotsDir);
     fs.writeFileSync(path.join(shotsDir, 'board.night.frame.png'), pngFile(3200, 2000));
     fs.writeFileSync(path.join(shotsDir, 'retired-scene.clay.frame.png'), pngFile(3200, 2000));
@@ -347,7 +450,7 @@ describe('verifyPosterSet', () => {
     const filePath = path.join(scratch('not-a-dir'), 'scenes');
     fs.writeFileSync(filePath, 'a file, not a directory');
     const problems = verifyPosterSet(FIXTURE_SCENES, filePath);
-    expect(problems).toHaveLength(12);
+    expect(problems).toHaveLength(18);
     expect(problems.every((problem) => problem.startsWith('missing '))).toBe(true);
   });
 });
@@ -411,8 +514,8 @@ describe('readBuildScenes', () => {
 });
 
 describe('packPosterSet', () => {
-  it('zips the manifest first and every poster after it, in manifest order, byte for byte, with no sidecars', () => {
-    const shotsDir = scratch('pack');
+  it('zips the manifest first, every poster after it in manifest order, then the hero, byte for byte, with no sidecars', () => {
+    const shotsDir = scratchSet('pack');
     writeCompleteSet(shotsDir);
     const unzipped = unzipSync(packPosterSet(FIXTURE_SCENES, shotsDir));
     expect(Object.keys(unzipped)).toEqual([
@@ -423,7 +526,10 @@ describe('packPosterSet', () => {
       'card-drag.rust.frame.png',
       'settings-general.clay.frame.png',
       'settings-general.rust.frame.png',
+      'hero.rust.1x.png',
+      'hero.rust.2x.png',
     ]);
+    expect(Buffer.from(unzipped['hero.rust.2x.png'])).toEqual(pngFile(3200, 1880));
     const manifest = JSON.parse(strFromU8(unzipped['manifest.json']));
     expect(manifest).toEqual(buildPosterManifest(FIXTURE_SCENES, FIXTURE_FOCUS));
     expect(manifest.focus[FOCUS_SCENE].clay).toEqual(FOCUS_RECT);
@@ -436,11 +542,12 @@ describe('packPosterSet', () => {
     // packPosterSet so packing does not re-read disk. Proven here by writing no .focus.json
     // sidecars at all: the default parameter would throw "missing ...focus.json" trying to read
     // them, so a passing run only happens on the explicit-focus branch.
-    const shotsDir = scratch('pack-explicit-focus');
+    const shotsDir = scratchSet('pack-explicit-focus');
     fs.mkdirSync(shotsDir, { recursive: true });
     for (const poster of expectedPosters(FIXTURE_SCENES)) {
       fs.writeFileSync(path.join(shotsDir, poster.file), pngFile(3200, 2000));
     }
+    writeHeroStills(path.join(path.dirname(shotsDir), HERO_SHOTS_DIR));
     const unzipped = unzipSync(packPosterSet(FIXTURE_SCENES, shotsDir, FIXTURE_FOCUS));
     const manifest = JSON.parse(strFromU8(unzipped['manifest.json']));
     expect(manifest.focus).toEqual(FIXTURE_FOCUS);
@@ -453,7 +560,7 @@ describe('packPosterSet', () => {
    * manifest.json, a few hundred bytes of JSON, is worth deflating (method 8).
    */
   it('stores every poster uncompressed while deflating the manifest', () => {
-    const shotsDir = scratch('pack-compression');
+    const shotsDir = scratchSet('pack-compression');
     writeCompleteSet(shotsDir);
     const zipBytes = packPosterSet(FIXTURE_SCENES, shotsDir);
     const zipBuffer = Buffer.from(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
@@ -469,10 +576,11 @@ describe('packPosterSet', () => {
       methodByName[name] = compressionMethod;
       offset += 30 + nameLength + extraLength + compressedSize;
     }
-    expect(Object.keys(methodByName)).toEqual(['manifest.json', ...expectedPosters(FIXTURE_SCENES).map((poster) => poster.file)]);
+    const stills = [...expectedPosters(FIXTURE_SCENES).map((poster) => poster.file), ...expectedHeroStills().map((still) => still.file)];
+    expect(Object.keys(methodByName)).toEqual(['manifest.json', ...stills]);
     expect(methodByName['manifest.json']).toBe(8);
-    for (const poster of expectedPosters(FIXTURE_SCENES)) {
-      expect(methodByName[poster.file]).toBe(0);
+    for (const still of stills) {
+      expect(methodByName[still]).toBe(0);
     }
   });
 });
@@ -491,6 +599,16 @@ describe('the packer agrees with the rig', () => {
     });
   });
 
+  it('shoots the hero at the resolutions hero.capture.ts has for each of its scales', () => {
+    expect(HERO_POSTER.scales).toEqual([heroStill.scale, heroStill2x.scale]);
+    for (const resolution of [heroStill, heroStill2x]) expect(resolution.viewport).toEqual(HERO_POSTER.frame);
+    const heroRig = fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/features/hero.capture.ts'), 'utf8');
+    expect(heroRig).toContain('getOutputDir(HERO_SHOTS_DIR)');
+    expect(heroRig).toContain('heroFileName(scale)');
+    const commandSource = fs.readFileSync(path.join(REPO_ROOT, 'demo/posters.mjs'), 'utf8');
+    expect(commandSource).toContain("'tests/captures/features/hero.capture.ts'");
+  });
+
   it('asks the rig only for themes it validates', () => {
     for (const theme of POSTER_THEMES) expect(SCENE_THEMES).toContain(theme);
   });
@@ -499,6 +617,7 @@ describe('the packer agrees with the rig', () => {
     const rigSource = fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/features/scenes.capture.ts'), 'utf8');
     expect(rigSource).toContain('`${name}.${theme}.${resolution.name}.png`');
     expect(rigSource).toContain('`${name}.${theme}.${resolution.name}.focus.json`');
+    expect(rigSource).toContain('`${name}.${theme}.${resolution.name}.layout.json`');
     expect(rigSource).toContain("getOutputDir('scenes')");
     // The rig measures through demo/boot.js's own function, so a poster's rect is the live frame's.
     expect(rigSource).toContain('__demoBoot.focusRectOf(');

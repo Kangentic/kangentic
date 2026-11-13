@@ -80,7 +80,19 @@ export async function launchCaptureBrowser(options: { resolution: Resolution; vi
   // emulated scale leaves at 1x while the renderer draws at the emulated scale, so every terminal
   // showed the bottom 1/scale of its rows enlarged (a short frame rendered blank). A forced
   // scale reaches the compositor, and the observer reports the same pixels a real display would.
-  const browser = await chromium.launch({ headless: true, args: [`--force-device-scale-factor=${options.resolution.scale}`] });
+  //
+  // The full Chromium build (`channel: 'chromium'`), not Playwright's default headless shell, and
+  // with its scrollbars: a poster has to be the frame a visitor's desktop browser paints
+  // (kangentic.com #137). The shell rasterizes text differently, and Playwright passes it
+  // `--hide-scrollbars`, so a poster had no bar under the columns, a taller board and a wider
+  // terminal than the app lays out around its 8px gutters. With both, the site's own 1x capture
+  // came out bit-identical to the frame in a Windows desktop browser.
+  const browser = await chromium.launch({
+    channel: 'chromium',
+    headless: true,
+    ignoreDefaultArgs: ['--hide-scrollbars'],
+    args: [`--force-device-scale-factor=${options.resolution.scale}`],
+  });
 
   const contextOptions: Parameters<Browser['newContext']>[0] = {
     viewport: options.resolution.viewport,

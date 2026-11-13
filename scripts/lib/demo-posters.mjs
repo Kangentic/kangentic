@@ -10,8 +10,9 @@
  * The contract the site implements (kangentic.com, src/utils/figure-posters.ts):
  *
  *   demo-posters-<version>.zip
- *     manifest.json               { version, frame: { width, height }, scale, scenes, focus }
+ *     manifest.json               { version, frame: { width, height }, scale, scenes, focus, hero }
  *     <scene>.<theme>.frame.png   frame.width * scale by frame.height * scale, title bar kept
+ *     hero.rust.<1|2>x.png        the landing page's hero, 1600 by 940 at 1x and 2x (HERO_POSTER)
  *
  * `scenes` maps a scene name to its file per theme. `version` is scenes.json's, the string the
  * site compares against the demo it deploys; a mismatch, a scene the manifest lacks, or a file
@@ -23,7 +24,6 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { strToU8, zipSync } from 'fflate';
 
 /** The product pair the site embeds with, in manifest key order; also the rig's CAPTURE_THEMES. */
@@ -37,8 +37,112 @@ export const POSTER_THEMES = ['clay', 'rust'];
 export const POSTER_RESOLUTION = 'frame';
 export const POSTER_SCALE = 2;
 
+/**
+ * The landing page's hero: the board in rust, in an iframe 1600 by 940, at 1x and 2x for the
+ * hero's srcset. `query` is the hero iframe's own still query, so the site can boot the frame the
+ * poster is of. It rides under the manifest's own `hero` key, never under `scenes`: the site's
+ * readManifest and pick() refuse a `scenes` entry that is not the 1600 by 1000 frame at 1x or 2x.
+ * tests/captures/features/hero.capture.ts shoots it into the `hero/` directory beside `scenes/`.
+ */
+export const HERO_POSTER = {
+  scene: 'board',
+  theme: 'rust',
+  query: 'view=board&theme=rust&embed=1&still=1',
+  frame: { width: 1600, height: 940 },
+  scales: [1, 2],
+};
+export const HERO_SHOTS_DIR = 'hero';
+
 const SCENES_MANIFEST = 'scenes.json';
 const POSTER_MANIFEST = 'manifest.json';
+
+/** A hero still's file name at a scale: `hero.rust.1x.png`. */
+export function heroFileName(scale) {
+  return `hero.${HERO_POSTER.theme}.${scale}x.png`;
+}
+
+/** The layout sidecar the rig writes beside a hero still, as posterLayoutFileName is for a scene's. */
+export function heroLayoutFileName(scale) {
+  return `hero.${HERO_POSTER.theme}.${scale}x.layout.json`;
+}
+
+/**
+ * What is wrong with one layout sidecar, or null when it is whole: missing, or not the measure the
+ * rig writes (frame-measure.ts), as a rig killed mid-write leaves it. The gate parses it on three
+ * OSes, so a bad one is refused here, before the set ships, naming the file.
+ */
+function layoutSidecarProblem(dir, layoutFile, missingProblem) {
+  const filePath = path.join(dir, layoutFile);
+  if (!fs.existsSync(filePath)) return missingProblem;
+  let layout;
+  try {
+    layout = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return `${layoutFile} is not valid JSON; shoot the set again`;
+  }
+  const whole = layout !== null && typeof layout === 'object'
+    && layout.viewport !== null && typeof layout.viewport === 'object'
+    && Array.isArray(layout.textNodes) && Array.isArray(layout.terminals);
+  return whole ? null : `${layoutFile} is not a frame layout (no viewport, textNodes and terminals); shoot the set again`;
+}
+
+/** Every hero still the set must carry, with its size in pixels. */
+export function expectedHeroStills() {
+  return HERO_POSTER.scales.map((scale) => ({
+    scale,
+    file: heroFileName(scale),
+    layoutFile: heroLayoutFileName(scale),
+    width: HERO_POSTER.frame.width * scale,
+    height: HERO_POSTER.frame.height * scale,
+  }));
+}
+
+/**
+ * The hero stills' problems, one line each, as verifyPosterSet reports the scenes': a still that is
+ * missing, not a PNG, cut short, or at the wrong size, and a PNG in the hero directory the manifest
+ * would not name. Empty means both stills are there.
+ */
+export function verifyHeroStills(heroDir) {
+  const problems = [];
+  const expected = expectedHeroStills();
+  for (const still of expected) {
+    const layoutProblem = layoutSidecarProblem(heroDir, still.layoutFile, `missing ${still.layoutFile} (the hero at ${still.scale}x), which the poster gate compares against`);
+    if (layoutProblem !== null) problems.push(layoutProblem);
+    const filePath = path.join(heroDir, still.file);
+    if (!fs.existsSync(filePath)) {
+      problems.push(`missing ${still.file} (the hero at ${still.scale}x)`);
+      continue;
+    }
+    let size;
+    try {
+      size = inspectPngFile(filePath);
+    } catch (error) {
+      problems.push(error instanceof Error ? error.message : String(error));
+      continue;
+    }
+    if (size.width !== still.width || size.height !== still.height) {
+      problems.push(`${still.file} is ${size.width}x${size.height}, not ${still.width}x${still.height} (the ${HERO_POSTER.frame.width}x${HERO_POSTER.frame.height} hero at ${still.scale}x)`);
+    }
+  }
+  const expectedFiles = new Set(expected.map((still) => still.file));
+  const isDirectory = fs.statSync(heroDir, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  const present = isDirectory ? fs.readdirSync(heroDir).filter((name) => name.endsWith('.png')).sort() : [];
+  for (const name of present) {
+    if (!expectedFiles.has(name)) problems.push(`unexpected ${name}: not a hero still the manifest names`);
+  }
+  return problems;
+}
+
+/** The manifest's `hero` entry. */
+export function buildHeroManifestEntry() {
+  return {
+    scene: HERO_POSTER.scene,
+    theme: HERO_POSTER.theme,
+    query: HERO_POSTER.query,
+    frame: { ...HERO_POSTER.frame },
+    files: Object.fromEntries(HERO_POSTER.scales.map((scale) => [String(scale), heroFileName(scale)])),
+  };
+}
 
 export function posterFileName(sceneName, theme) {
   return `${sceneName}.${theme}.${POSTER_RESOLUTION}.png`;
@@ -47,6 +151,14 @@ export function posterFileName(sceneName, theme) {
 /** The rig's sidecar for a poster: the focus rect it measured on that still, or null. */
 export function posterFocusFileName(sceneName, theme) {
   return `${sceneName}.${theme}.${POSTER_RESOLUTION}.focus.json`;
+}
+
+/**
+ * The rig's other sidecar: what the still lays out (tests/captures/helpers/frame-measure.ts), which
+ * the poster gate compares the live frame against. It stays out of the zip.
+ */
+export function posterLayoutFileName(sceneName, theme) {
+  return `${sceneName}.${theme}.${POSTER_RESOLUTION}.layout.json`;
 }
 
 export function posterZipName(version) {
@@ -63,6 +175,7 @@ export function expectedPosters(scenesJson) {
         theme,
         file: posterFileName(scene.name, theme),
         focusFile: posterFocusFileName(scene.name, theme),
+        layoutFile: posterLayoutFileName(scene.name, theme),
       });
     }
   }
@@ -177,6 +290,8 @@ export function verifyPosterSet(scenesJson, shotsDir) {
     } catch (error) {
       problems.push(error instanceof Error ? error.message : String(error));
     }
+    const layoutProblem = layoutSidecarProblem(shotsDir, poster.layoutFile, `missing ${poster.layoutFile} (scene ${poster.scene}, theme ${poster.theme}), which the poster gate compares against`);
+    if (layoutProblem !== null) problems.push(layoutProblem);
     const filePath = path.join(shotsDir, poster.file);
     if (!fs.existsSync(filePath)) {
       problems.push(`missing ${poster.file} (scene ${poster.scene}, theme ${poster.theme})`);
@@ -217,7 +332,8 @@ export function readPosterFocus(scenesJson, shotsDir) {
 
 /**
  * The manifest the site reads: scenes keyed by name, in scenes.json order, then the focus rects
- * in the same order. `focus` is a separate map so each `scenes` entry keeps only theme keys.
+ * in the same order, then the hero. `focus` is a separate map so each `scenes` entry keeps only
+ * theme keys, and `hero` is its own key for the same reason (HERO_POSTER).
  */
 export function buildPosterManifest(scenesJson, focus) {
   const scenes = {};
@@ -232,23 +348,29 @@ export function buildPosterManifest(scenesJson, focus) {
     scale: POSTER_SCALE,
     scenes,
     focus,
+    hero: buildHeroManifestEntry(),
   };
 }
 
 /**
- * The zip's bytes: manifest.json first, then every poster in manifest order. The posters are
- * stored rather than deflated (PNG is already deflate inside), which is also what keeps packing
- * a hundred 3200 by 2000 stills to a copy. The focus sidecars travel inside the manifest, not as
- * entries; pass `focus` when the caller already read them, or it reads them here. Call
- * verifyPosterSet first; this reads what is there.
+ * The zip's bytes: manifest.json first, then every poster in manifest order, then the hero stills.
+ * The posters are stored rather than deflated (PNG is already deflate inside), which is also what
+ * keeps packing a hundred 3200 by 2000 stills to a copy. The focus sidecars travel inside the
+ * manifest, not as entries, and the layout sidecars (the poster gate's) not at all; pass `focus`
+ * when the caller already read them, or it reads them here. The hero stills are read from
+ * `heroDir`, by default the `hero/` directory beside `shotsDir`. Call verifyPosterSet and
+ * verifyHeroStills first; this reads what is there.
  */
-export function packPosterSet(scenesJson, shotsDir, focus = readPosterFocus(scenesJson, shotsDir)) {
+export function packPosterSet(scenesJson, shotsDir, focus = readPosterFocus(scenesJson, shotsDir), heroDir = path.join(path.dirname(shotsDir), HERO_SHOTS_DIR)) {
   const manifest = buildPosterManifest(scenesJson, focus);
   const entries = {
     [POSTER_MANIFEST]: [strToU8(`${JSON.stringify(manifest, null, 2)}\n`), { level: 6 }],
   };
   for (const poster of expectedPosters(scenesJson)) {
     entries[poster.file] = [fs.readFileSync(path.join(shotsDir, poster.file)), { level: 0 }];
+  }
+  for (const still of expectedHeroStills()) {
+    entries[still.file] = [fs.readFileSync(path.join(heroDir, still.file)), { level: 0 }];
   }
   return zipSync(entries);
 }
@@ -289,13 +411,4 @@ export function readBuildScenes({ distDir, packageJsonPath }) {
     throw new Error(`${scenesPath} is version ${scenesJson.version} but package.json is ${packageJson.version}: the build is stale. Run "npm run build:demo" first.`);
   }
   return scenesJson;
-}
-
-/** The Playwright CLI entry, spawned with process.execPath so no shell is involved on any OS. */
-export function resolvePlaywrightCli() {
-  try {
-    return createRequire(import.meta.url).resolve('@playwright/test/cli');
-  } catch {
-    throw new Error('@playwright/test is not installed (its cli entry did not resolve). Run "npm ci" first.');
-  }
 }

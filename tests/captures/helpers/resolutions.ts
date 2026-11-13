@@ -21,6 +21,23 @@ export const frame: Resolution = {
   scale: 2,
 };
 
+/**
+ * kangentic.com's landing-page hero: the board in an iframe 1600 by 940, the frame without the
+ * last 60px. Shot at 1x and 2x for the poster set's `hero` entry (hero.capture.ts), since the hero
+ * serves both from its srcset. Not `hero` above, which is the marketing video's 1080p.
+ */
+export const heroStill: Resolution = {
+  name: 'hero-still',
+  viewport: { width: 1600, height: 940 },
+  scale: 1,
+};
+
+export const heroStill2x: Resolution = {
+  name: 'hero-still-2x',
+  viewport: { width: 1600, height: 940 },
+  scale: 2,
+};
+
 export const inline: Resolution = {
   name: 'inline',
   viewport: { width: 1024, height: 768 },

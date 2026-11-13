@@ -348,6 +348,33 @@ describe('release.yml job graph', () => {
     expect(workflowSource).toContain('It is NOT in scripts/release-assets.js');
   });
 
+  // The poster gate (kangentic.com #137) must compare the very bytes the set was shot from, on
+  // all three OSes, and must fail the run rather than skip: an artifact that never arrived, a
+  // matrix that lost an OS, or a gate that ran a subset would each read as a green release.
+  it('gates the poster set on Windows, macOS and Linux against the build it was shot from', () => {
+    const gate = jobs.find((job) => job.name === 'poster-gate');
+    expect(gate).toBeDefined();
+    expect(gate?.needs).toEqual(['demo-posters']);
+    // No status function: the implied success() keeps it from running after a failed shoot.
+    expect(gate?.condition ?? '').not.toMatch(/always\(\)|cancelled\(\)|failure\(\)/);
+    expect(gate?.body).toMatch(/^ {4}uses: \.\/\.github\/workflows\/demo-poster-gate\.yml$/m);
+    const artifact = gate?.body.match(/^ {6}artifact: (.+)$/m)?.[1];
+    expect(stepBody('demo-posters', 'Hand the set to the poster gate')).toContain(`name: ${artifact}`);
+    const posters = jobs.find((job) => job.name === 'demo-posters');
+    const shotRef = posters?.body.match(/^ {10}ref: (.+)$/m)?.[1];
+    expect(gate?.body).toContain(`      ref: ${shotRef}`);
+
+    const gateWorkflow = fs.readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'demo-poster-gate.yml'), 'utf8');
+    expect(gateWorkflow).toContain('os: [ubuntu-24.04, windows-latest, macos-latest]');
+    expect(gateWorkflow).toContain('fail-fast: false');
+    expect(gateWorkflow).toContain('name: ${{ inputs.artifact || \'demo-poster-set-dispatch\' }}');
+    expect(gateWorkflow).toContain('ref: ${{ inputs.ref || github.ref }}');
+    // Every shard runs: the shard count in the matrix is the one each leg passes to Playwright.
+    const shards = gateWorkflow.match(/^ {8}shard: \[(.+)\]$/m)?.[1]?.split(',').map((entry) => entry.trim());
+    expect(shards).toEqual(['1', '2']);
+    expect(gateWorkflow).toContain(`npm run demo:poster-gate -- --shard=\${{ matrix.shard }}/${shards?.length}`);
+  });
+
   // electron-updater skips an update only when latest-mac.yml carries minimumSystemVersion, and
   // electron-builder never writes it there, so without this step a Mac below the floor installs a
   // build macOS refuses to open. It belongs in publish-release, which runs after every platform
@@ -465,43 +492,18 @@ describe('release.yml job graph', () => {
     }
   });
 
-  // The landing page shows the posters with no live frame beside them, so the job installs a face
-  // the app's own font stack names before it shoots. Two ways that goes quiet: the install
-  // resolving to something else (fc-match answers with SOME font for any name), and a Tailwind
-  // bump dropping the family from the stack, after which the posters revert to the runner's
-  // fallback with every step green. The first is the step's own gate; the second is pinned here.
-  it('installs a font the app stack names before the shoot, and fails when it does not resolve', () => {
+  // The demo ships its own faces (scripts/lib/demo-fonts.mjs), so the posters no longer depend on
+  // what the runner has installed: a face the job installed would be one the visitor does not
+  // have, which is the mismatch the shipped faces exist to remove. The job installs none, and the
+  // demo's override decides the face because the renderer sets no font stack of its own.
+  it('shoots in the faces the demo ships, installing none on the runner', () => {
     const posters = jobs.find((job) => job.name === 'demo-posters');
-    const stepLines = posters?.body.split('\n') ?? [];
-    const fontIndex = stepLines.indexOf('      - name: Install the poster font');
-    const shootIndex = stepLines.indexOf('      - name: Shoot, verify, and pack the poster set');
-    expect(fontIndex, 'the poster job has no "Install the poster font" step').toBeGreaterThan(-1);
-    expect(fontIndex).toBeLessThan(shootIndex);
+    expect(posters?.body).not.toContain('fonts-roboto');
+    expect(posters?.body).not.toContain('fc-match');
 
-    const fontStep = stepBody('demo-posters', 'Install the poster font');
-    expect(fontStep).toContain('set -euo pipefail');
-    expect(fontStep).toContain('fc-match');
-    expect(fontStep).toContain('::error::');
-    expect(fontStep).toContain('exit 1');
-    const family = fontStep.match(/^ {10}POSTER_FONT_FAMILY: (.+)$/m)?.[1]?.trim();
-    expect(family, 'the font step names no POSTER_FONT_FAMILY').toBeDefined();
-
-    // The app sets no UI font of its own, so its text is Tailwind's default --font-sans.
-    const themeSource = fs.readFileSync(path.join(REPO_ROOT, 'node_modules', 'tailwindcss', 'theme.css'), 'utf8');
-    const stackText = themeSource.match(/--font-sans:([^;]+);/)?.[1];
-    expect(stackText, 'tailwindcss/theme.css no longer declares --font-sans').toBeDefined();
-    const stack = (stackText ?? '').split(',').map((entry) => entry.trim().replace(/^['"]|['"]$/g, ''));
-    expect(stack).toContain(family);
-    // Being in the stack is not enough. The family decides the face only while every entry ahead of
-    // it is one a Linux runner cannot have, so a bump that puts system-ui or ui-sans-serif first
-    // fails here and asks for a re-measure instead of shooting the runner's default face.
-    expect(
-      stack.slice(0, stack.indexOf(family ?? '')),
-      'Tailwind changed the families ahead of the poster font; re-measure the posters on a runner',
-    ).toEqual(['-apple-system', 'BlinkMacSystemFont', 'Segoe UI']);
-
-    // ...which holds only while the renderer's CSS overrides neither the stack nor the body
-    // font: every font-family it declares is a monospace one (the terminal and code blocks).
+    // demo/boot.js puts the shipped stack first through --font-sans and --font-mono. That holds
+    // only while the renderer's CSS overrides neither the stack nor the body font: every
+    // font-family it declares is a monospace one (the terminal and code blocks).
     const rendererDir = path.join(REPO_ROOT, 'src', 'renderer');
     const cssFiles = fs.readdirSync(rendererDir, { recursive: true, encoding: 'utf8' }).filter((name) => name.endsWith('.css'));
     expect(cssFiles).toContain('index.css');

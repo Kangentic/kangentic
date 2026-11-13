@@ -129,8 +129,10 @@ function rebuild(record, frames, timelines) {
 
 const manifest = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'manifest.json'), 'utf-8'));
 const files = new Set(manifest.captures.flatMap((entry) => (entry.tiled ? [entry.file, entry.tiled] : [entry.file])));
+// The boots a visitor starts (spawns, Command Terminals), the resumes, and the Browser pane sends
+// are recordings of the same shape, written by the same capture script, so they are rebuilt too.
 for (const file of fs.readdirSync(fixturesDir)) {
-  if (/^(spawn|terminal)-.+\.json$/.test(file)) files.add(file);
+  if (/^(spawn|terminal|resume|send)-.+\.json$/.test(file)) files.add(file);
 }
 const openFrameCuts = tiledOpenFrameCuts();
 

@@ -603,6 +603,7 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
+    lineHeight: config.terminal.lineHeight,
     cursorStyle: config.terminal.cursorStyle,
     colors: config.terminal.colors,
     shellName: shell || undefined,

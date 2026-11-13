@@ -1,0 +1,125 @@
+name: Demo poster gate
+
+# Does every poster in demo-posters-<version>.zip match its live frame on Windows,
+# macOS and Linux? kangentic.com shows a poster of each demo scene until the live
+# frame reports ready, then lifts it, and the owner's bar (kangentic.com #137) is
+# that nothing about the text moves at the lift: the same face, wrapping and layout.
+# Each leg boots every poster's scene from the very build the posters were shot
+# from, at 1, 1.25, 1.5 and 2x, and fails on a different wrap, a line box that moved,
+# a terminal on another grid, or a pixel that differs beyond antialiasing
+# (demo/poster-gate.mjs; tests/captures/helpers/poster-gate.ts says what is compared).
+#
+# What only this catches: the demo tier runs on Linux alone and never compares a
+# frame to its poster, and the posters are shot on Linux, so a face, a scrollbar
+# gutter or a text scaler that lays the frame out differently on Windows or macOS is
+# invisible to every other check.
+#
+# Cost: six legs (three OSes, two shards each), two of them macOS, once per release
+# after the posters are attached, and on demand. Never on a pull request, so it
+# takes no slot from one and is no required check.
+#
+# Two ways in:
+#   workflow_call      release.yml's poster-gate job, with the artifact its
+#                      demo-posters job uploaded (the build and the set it shot).
+#   workflow_dispatch  a run on any branch before a tag: the shoot job builds the
+#                      demo and shoots the set on Linux first. This is also how the
+#                      per-OS pixel budgets in tests/captures/helpers/poster-gate.ts
+#                      are measured (demo/README.md, The poster gate).
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: The artifact holding dist/demo/ and dist/demo-posters/.
+        type: string
+        required: true
+      ref:
+        description: The ref the set was shot from, checked out for the gate's own code.
+        type: string
+        required: true
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# npm ci runs install scripts: skip onnxruntime-node's CUDA download, which the
+# demo never loads (the note above the env: block in ci.yml).
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
+jobs:
+  shoot:
+    if: ${{ inputs.artifact == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the web demo
+        run: npm run build:demo
+
+      - name: Shoot and verify the poster set
+        run: npm run demo:posters
+
+      - name: Hand the set to the gate
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-poster-set-dispatch
+          path: |
+            dist/demo/
+            dist/demo-posters/
+          if-no-files-found: error
+          retention-days: 7
+
+  gate:
+    needs: [shoot]
+    # Called from release.yml the shoot job is skipped and the release's artifact
+    # is used; dispatched, the gate waits for the set the shoot job made.
+    if: ${{ !cancelled() && (needs.shoot.result == 'success' || needs.shoot.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        shard: [1, 2]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Fetch the build and the poster set
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact || 'demo-poster-set-dispatch' }}
+          path: dist/
+
+      - name: Compare every poster to its live frame
+        run: npm run demo:poster-gate -- --shard=${{ matrix.shard }}/2
+
+      - name: Keep the frames that differ
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: poster-gate-${{ matrix.os }}-${{ matrix.shard }}
+          path: dist/poster-gate/
+          if-no-files-found: warn
+          retention-days: 14

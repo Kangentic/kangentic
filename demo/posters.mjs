@@ -3,7 +3,8 @@
  *
  *   npm run build:demo        first: the set is shot from dist/demo, and a stale build is refused
  *   npm run demo:posters      every scene in clay and rust at the frame's 2x, into
- *                             dist/demo-posters/scenes/, verified against dist/demo/scenes.json,
+ *                             dist/demo-posters/scenes/, and the landing page's hero at 1x and 2x
+ *                             into dist/demo-posters/hero/, verified against dist/demo/scenes.json,
  *                             and zipped with manifest.json as dist/demo-posters-<version>.zip
  *
  * The rig is tests/captures/features/scenes.capture.ts, driven through its own env axes
@@ -19,17 +20,21 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
+  HERO_POSTER,
+  HERO_SHOTS_DIR,
   POSTER_RESOLUTION,
   POSTER_THEMES,
+  expectedHeroStills,
   expectedPosters,
   packPosterSet,
   posterPixelSize,
   posterZipName,
   readBuildScenes,
   readPosterFocus,
-  resolvePlaywrightCli,
+  verifyHeroStills,
   verifyPosterSet,
 } from '../scripts/lib/demo-posters.mjs';
+import { resolvePlaywrightCli } from '../scripts/lib/playwright-cli.mjs';
 
 const demoDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(demoDir, '..');
@@ -44,6 +49,9 @@ const shotsDir = path.join(stagingDir, 'scenes');
  * nothing ("No tests found"). A slash matches on every OS.
  */
 const SCENE_RIG = 'tests/captures/features/scenes.capture.ts';
+/** The landing page's hero still, shot beside the scenes into `hero/` (HERO_POSTER). */
+const HERO_RIG = 'tests/captures/features/hero.capture.ts';
+const heroDir = path.join(stagingDir, HERO_SHOTS_DIR);
 
 function log(message) {
   console.log(`[demo:posters] ${message}`);
@@ -77,7 +85,7 @@ function main() {
     CAPTURE_OUTPUT_ROOT: stagingDir,
   };
   delete env.CAPTURE_SCENES;
-  const rig = spawnSync(process.execPath, [playwrightCli, 'test', '--project=captures', SCENE_RIG], {
+  const rig = spawnSync(process.execPath, [playwrightCli, 'test', '--project=captures', SCENE_RIG, HERO_RIG], {
     cwd: repoRoot,
     stdio: 'inherit',
     env,
@@ -86,17 +94,18 @@ function main() {
     fail(`the scene rig exited with ${rig.status ?? rig.signal}; no set was packed.`);
   }
 
-  const problems = verifyPosterSet(scenesJson, shotsDir);
+  const problems = [...verifyPosterSet(scenesJson, shotsDir), ...verifyHeroStills(heroDir)];
   if (problems.length > 0) {
     for (const problem of problems) console.error(`[demo:posters] ${problem}`);
-    fail(`${problems.length} problem(s) with the shots in ${shotsDir}; refusing to pack a partial set.`);
+    fail(`${problems.length} problem(s) with the shots in ${stagingDir}; refusing to pack a partial set.`);
   }
 
   const zipPath = path.join(repoRoot, 'dist', posterZipName(scenesJson.version));
   const focus = readPosterFocus(scenesJson, shotsDir);
-  fs.writeFileSync(zipPath, packPosterSet(scenesJson, shotsDir, focus));
+  fs.writeFileSync(zipPath, packPosterSet(scenesJson, shotsDir, focus, heroDir));
   const megabytes = (fs.statSync(zipPath).size / (1024 * 1024)).toFixed(1);
   log(`${scenesJson.scenes.length} scenes x ${POSTER_THEMES.length} themes = ${posters.length} posters at ${width}x${height}, ${megabytes} MB, ${zipPath}`);
+  log(`hero: ${expectedHeroStills().map((still) => `${still.file} ${still.width}x${still.height}`).join(', ')} (${HERO_POSTER.query}), under the manifest's hero key`);
   const focusRects = Object.values(focus)
     .flatMap((byTheme) => Object.values(byTheme))
     .filter((rect) => rect !== null).length;

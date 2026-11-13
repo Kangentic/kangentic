@@ -28,6 +28,7 @@ import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, lo
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../src/main/agent/message-trail-tracker';
 import { SCENES } from '../tests/captures/scenes';
 import { DEFAULT_CONFIG } from '../src/shared/types';
+import { DEMO_FONT_STACKS, DEMO_TERMINAL_LINE_HEIGHT, demoFontFaces } from '../scripts/lib/demo-fonts.mjs';
 
 // Vite keeps an ambient NODE_ENV, and "development" from a shell or IDE ships React's development
 // build plus every `import.meta.env.DEV` branch while the build still exits 0 (measured: the
@@ -72,7 +73,7 @@ async function flattenPlugins(option: PluginOption): Promise<Plugin[]> {
   return [resolved];
 }
 
-interface PlannedAsset { fileName: string; source: string }
+interface PlannedAsset { fileName: string; source: string | Uint8Array }
 
 /**
  * The five classic scripts run before first paint on every frame, and Vite never sees them, so
@@ -93,7 +94,7 @@ function minifyClassicScript(name: string, source: string): string {
  * old recording: a recording replays only into the grid its seed describes, and a stale one
  * lands two frames' text on one row. index.html and stage.html stay unhashed, as entry points.
  */
-function hashedName(name: string, source: string): string {
+function hashedName(name: string, source: string | Uint8Array): string {
   const hash = createHash('sha256').update(source).digest('hex').slice(0, 8);
   const dot = name.lastIndexOf('.');
   return dot === -1 ? `${name}-${hash}` : `${name.slice(0, dot)}-${hash}${name.slice(dot)}`;
@@ -204,8 +205,20 @@ function planDemoAssets(version: string, base: string): { scripts: string[]; fil
     sendFrameScripts[sessionId] = `${base}${fileName}`;
     console.log(`[demo] browser send rest frame emitted: ${fileName} (${Math.round(source.length / 1024)} KB)`);
   }
+  // The faces every frame draws in (scripts/lib/demo-fonts.mjs), one hashed file each under fonts/.
+  // demo/boot.js registers them from this list, waits for the awaited ones before it reports ready,
+  // and puts the stacks first in --font-sans and --font-mono, so a frame never measures or draws in
+  // the visitor's own faces.
+  const fontFaces = demoFontFaces(repoRoot).map((face) => {
+    const bytes = readFileSync(face.file);
+    const fileName = hashedName(`fonts/${face.name}`, bytes);
+    files.push({ fileName, source: bytes });
+    return { family: face.family, weight: face.weight, url: `${base}${fileName}`, unicodeRange: face.unicodeRange, awaited: face.awaited };
+  });
+  const demoFonts = { faces: fontFaces, stacks: DEMO_FONT_STACKS, terminalLineHeight: DEMO_TERMINAL_LINE_HEIGHT };
+  console.log(`[demo] fonts emitted: ${fontFaces.length} faces, ${fontFaces.filter((face) => face.awaited).length} awaited before ready`);
   const scripts = [
-    { name: 'demo-scenes.js', source: buildScenesScript(version, sceneRowScripts, `window.__demoRecordings = ${JSON.stringify(index)};\nwindow.__demoGuestPages = ${JSON.stringify(guestPages)};\nwindow.__demoSendFrameScripts = ${JSON.stringify(sendFrameScripts)};\n`) },
+    { name: 'demo-scenes.js', source: buildScenesScript(version, sceneRowScripts, `window.__demoRecordings = ${JSON.stringify(index)};\nwindow.__demoGuestPages = ${JSON.stringify(guestPages)};\nwindow.__demoSendFrameScripts = ${JSON.stringify(sendFrameScripts)};\nwindow.__demoFonts = ${JSON.stringify(demoFonts)};\n`) },
     { name: 'demo-boot.js', source: readFileSync(BOOT_SCRIPT_PATH, 'utf8') },
     { name: 'demo-webview.js', source: readFileSync(WEBVIEW_SHIM_PATH, 'utf8') },
     { name: 'mock-electron-api.js', source: readFileSync(MOCK_SCRIPT_PATH, 'utf8') },
