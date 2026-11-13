@@ -110,6 +110,9 @@ const SET_MOUNTED_SOURCE = extractSetMountedAssignment(script);
 const STOP_EMULATOR_SOURCE = extractFunction(script, 'stopEmulator');
 const LOAD_EMULATOR_MODULE_SOURCE = extractFunction(script, 'loadEmulatorModule');
 const START_EMULATOR_SOURCE = extractFunction(script, 'startEmulator');
+// startEmulator hands the chunks still ahead of the clock to this (a held clock queues none), so a
+// lift without it fails the emulator's load and frameScrollback falls through to its stub.
+const QUEUE_EMULATOR_CHUNKS_SOURCE = extractFunction(script, 'queueEmulatorChunks');
 // frameScrollback is the REAL entry point a reopened window calls (getScrollback -> frameScrollback
 // -> startEmulator), so driving the "not rewound" case through it (rather than calling
 // startEmulator directly) also pins frameScrollback's own contribution to that claim: it sets
@@ -170,6 +173,7 @@ function lift(factory: EmulatorFactory, originalSetMounted: ReturnType<typeof vi
     STOP_EMULATOR_SOURCE,
     'var emulatorModule = null;',
     LOAD_EMULATOR_MODULE_SOURCE,
+    QUEUE_EMULATOR_CHUNKS_SOURCE,
     START_EMULATOR_SOURCE,
     // frameScrollback's own remaining dependencies. None of these tests' scenarios reach the
     // "recording already ended" or "emulator failed to load" branches (the recording's last chunk
