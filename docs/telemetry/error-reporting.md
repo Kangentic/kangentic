@@ -45,6 +45,8 @@ sources:
   - resource: src/main/pr/pr-report.ts
   - resource: src/renderer/utils/renderer-failure.ts
   - resource: src/renderer/components/layout/SurfaceBoundary.tsx
+  - resource: src/preload/push-callback-guard.ts
+  - resource: src/main/diagnostics/push-callback-report.ts
 ---
 # Error reporting (Sentry)
 
@@ -438,6 +440,17 @@ in one Sentry org, one triage surface.
     failure and an embeddings init failure each report once.
   - `agent_session_id`: a session whose id no capture path found, once per agent, with
     `agent_cli_version`.
+  - `preload_callback` (tag `method`, such as `config.onChanged`): a renderer callback that threw
+    when the preload called it on a push. That throw is an error of the preload's isolated world,
+    which the renderer's SDK cannot see: measured in Electron 45, the main world's `error` and
+    `unhandledrejection` listeners heard nothing and the preload's own listener got `Script error.`
+    with no stack. `guardPushCallbacks` (`src/preload/push-callback-guard.ts`) wraps every `on*`
+    method's callback once, before the API is exposed, so the throw stops there and the channel's
+    other listeners still run. It sends main a crash record, and
+    `src/main/diagnostics/push-callback-report.ts` reports it for our own windows. The context
+    bridge rethrows the callback's error as a plain `Error` with only the preload's frames, so
+    these are fingerprinted `['preload-callback', method]`: the frames cannot split them. The
+    message stays in the local record only.
   - `renderer` (tags `area`, `op`): `reportRendererFailure` (`src/renderer/utils/renderer-failure.ts`)
     for the board load, a card that opens nothing, terminal replay and frame hold, session sync in
     a packaged build, the project list, pop-out boot, the Monitor's task bundle and the WebGL

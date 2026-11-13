@@ -232,6 +232,13 @@ export interface ChokepointReportOptions {
   contexts?: ErrorReportContexts;
   /** Extra latch key parts, never sent. Defaults to the tags. */
   latchKey?: string;
+  /**
+   * Only for a source whose frames cannot split an issue (a preload callback,
+   * whose error crossed the context bridge and kept only the preload's own
+   * frames). Defaults to the environment fingerprint, or Sentry's stack
+   * grouping for a code defect. Never an IPC channel.
+   */
+  fingerprint?: string[];
 }
 
 export interface ChokepointReporter {
@@ -277,7 +284,7 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
         }
         if (reportedKeys.size >= cap) return false;
         reportedKeys.add(key);
-        sendHandledFailure(source, error, tags, reportOptions.contexts);
+        sendHandledFailure(source, error, tags, reportOptions.contexts, reportOptions.fingerprint ?? fingerprintOf(error));
         return true;
       } catch {
         // report-ok: this is the reporter; a failed send must never break the path that called it.
