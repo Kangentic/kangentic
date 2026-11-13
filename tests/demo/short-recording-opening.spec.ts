@@ -83,7 +83,7 @@ function monitorState(page: Page, sessionId: string): Promise<{ activity: string
 }
 
 test('the sample install has a working session whose recording is shorter than its tail', () => {
-  // Without one, the test below proves nothing: say so instead of passing on an empty loop.
+  // Without one, the test below proves nothing, so say so instead of passing on an empty loop.
   expect(SHORT_SESSIONS.length).toBeGreaterThan(0);
 });
 

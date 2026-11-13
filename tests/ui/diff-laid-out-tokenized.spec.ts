@@ -28,6 +28,11 @@
  * tokenizer is synchronous in this headless run, so the deleted block is coloured at the stamp
  * either way. It guards the end state (and a monaco bump that stops drawing coloured deleted
  * lines), not the up-front timing, which needs a tokenizer that loads late.
+ *
+ * Hole C: the up-front pass has a size limit. A spy on the reused models' forceTokenization shows a
+ * 1200-line TypeScript diff reaches laid-out without being forced to its last line, while a
+ * 1000-line one is. Red check (run once, then restored): UPFRONT_TOKENIZE_LINE_LIMIT set to 3000
+ * fails the over-limit case.
  */
 import { test, expect, chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -44,6 +49,13 @@ const TASK_TITLE = 'Diff Tokenized Task';
 const FIRST_FILE = 'first.ts';
 const SECOND_FILE = 'second.ts';
 const FILE_LINES = 120;
+// DiffViewer tokenizes a side up front only when it has at most 1000 lines.
+const OVER_LIMIT_FILE = 'over-limit.ts';
+const OVER_LIMIT_LINES = 1200;
+const OVER_LIMIT_MARKER = 'gammaChanged';
+const AT_LIMIT_FILE = 'at-limit.ts';
+const AT_LIMIT_LINES = 1000;
+const AT_LIMIT_MARKER = 'deltaChanged';
 
 function preConfig(): string {
   return `
@@ -82,21 +94,39 @@ const fixture = `
   (function () {
     function source(prefix) {
       var lines = [];
-      for (var lineNumber = 1; lineNumber <= ${FILE_LINES};lineNumber++) {
+      for (var lineNumber = 1; lineNumber <= ${FILE_LINES}; lineNumber++) {
         lines.push('export const ' + prefix + lineNumber + ': number = ' + lineNumber + ';');
       }
       return lines;
     }
     var firstOriginal = source('alpha');
     var firstModified = firstOriginal.slice();
-    firstModified.splice(49, 5);    var secondOriginal = source('beta');
+    firstModified.splice(49, 5);
+    var secondOriginal = source('beta');
     var secondModified = secondOriginal.slice();
     secondModified[49] = 'export const betaChangedFirst: string = "first";';
     secondModified[109] = 'export const betaChangedLast: string = "last";';
+    // Two long files for the up-front tokenize limit: one line of each is changed, so each is a
+    // real diff, and both sides keep the same line count.
+    function sized(prefix, lineCount) {
+      var lines = [];
+      for (var lineNumber = 1; lineNumber <= lineCount; lineNumber++) {
+        lines.push('export const ' + prefix + lineNumber + ': number = ' + lineNumber + ';');
+      }
+      return lines;
+    }
+    var overLimitOriginal = sized('gamma', ${OVER_LIMIT_LINES});
+    var overLimitModified = overLimitOriginal.slice();
+    overLimitModified[499] = 'export const ${OVER_LIMIT_MARKER}: string = "changed";';
+    var atLimitOriginal = sized('delta', ${AT_LIMIT_LINES});
+    var atLimitModified = atLimitOriginal.slice();
+    atLimitModified[499] = 'export const ${AT_LIMIT_MARKER}: string = "changed";';
     window.__mockGitDiff = {
       files: [
         { path: '${FIRST_FILE}', status: 'M', insertions: 0, deletions: 5, original: firstOriginal.join('\\n'), modified: firstModified.join('\\n'), language: 'typescript' },
         { path: '${SECOND_FILE}', status: 'M', insertions: 2, deletions: 2, original: secondOriginal.join('\\n'), modified: secondModified.join('\\n'), language: 'typescript' },
+        { path: '${OVER_LIMIT_FILE}', status: 'M', insertions: 1, deletions: 1, original: overLimitOriginal.join('\\n'), modified: overLimitModified.join('\\n'), language: 'typescript' },
+        { path: '${AT_LIMIT_FILE}', status: 'M', insertions: 1, deletions: 1, original: atLimitOriginal.join('\\n'), modified: atLimitModified.join('\\n'), language: 'typescript' },
       ],
     };
   })();
@@ -206,6 +236,73 @@ async function armInterleave(action: 'drift' | 'wheel' | 'previous-change'): Pro
     });
   }, action);
 }
+
+/**
+ * Wraps forceTokenization on both live models (DiffViewer reuses them across file switches, so the
+ * wrap sees the next file's pass) and records every line number it is called with, still calling
+ * the original. Monaco itself forces the lines it draws, so a test reads WHICH lines were asked for.
+ */
+async function installForceTokenizationSpy(): Promise<boolean> {
+  return page.evaluate(() => {
+    type TokenizationPart = { forceTokenization: (lineNumber: number) => void };
+    type SpyModel = { tokenization?: TokenizationPart };
+    const pageWindow = window as unknown as {
+      __monaco: { editor: { getDiffEditors(): Array<{ getOriginalEditor(): { getModel(): unknown }; getModifiedEditor(): { getModel(): unknown } }> } };
+      __forceCalls?: number[];
+    };
+    const diffEditor = pageWindow.__monaco.editor.getDiffEditors()[0];
+    const calls: number[] = [];
+    pageWindow.__forceCalls = calls;
+    let wrapped = 0;
+    for (const model of [diffEditor.getOriginalEditor().getModel(), diffEditor.getModifiedEditor().getModel()] as Array<SpyModel | null>) {
+      const part = model?.tokenization;
+      if (!part || typeof part.forceTokenization !== 'function') continue;
+      const original = part.forceTokenization;
+      part.forceTokenization = function (this: TokenizationPart, lineNumber: number) {
+        calls.push(lineNumber);
+        return original.call(this, lineNumber);
+      };
+      wrapped++;
+    }
+    return wrapped === 2;
+  });
+}
+
+/** Opens `fileName` from the file list and returns the line numbers forced while it laid out. */
+async function forcedLinesWhileOpening(fileName: string, marker: string): Promise<number[]> {
+  await page.evaluate(() => {
+    (window as unknown as { __forceCalls: number[] }).__forceCalls.length = 0;
+  });
+  await page.locator('button', { hasText: fileName }).first().click();
+  // Laid-out AND the new file's text in the modified model. The state attribute alone could still
+  // be the previous file's until React commits the reset.
+  await expect.poll(() => page.evaluate((markerText) => {
+    const area = document.querySelector('[data-testid="diff-editor-area"]');
+    const diffEditor = (window as unknown as { __monaco: { editor: { getDiffEditors(): Array<{ getModifiedEditor(): { getModel(): { getValue(): string } | null } }> } } }).__monaco.editor.getDiffEditors()[0];
+    const modifiedText = diffEditor.getModifiedEditor().getModel()?.getValue() ?? '';
+    return area?.getAttribute('data-diff-state') === 'laid-out' && modifiedText.includes(markerText);
+  }, marker), { timeout: 15000 }).toBe(true);
+  return page.evaluate(() => [...(window as unknown as { __forceCalls: number[] }).__forceCalls]);
+}
+
+test.describe('DiffViewer up-front tokenize limit', () => {
+  test('a diff over 1000 lines reaches laid-out without being force-tokenized to its last line', async () => {
+    await launch();
+    await waitForLaidOut();
+    expect(await installForceTokenizationSpy(), 'both models expose forceTokenization').toBe(true);
+    const forcedLines = await forcedLinesWhileOpening(OVER_LIMIT_FILE, OVER_LIMIT_MARKER);
+    // Monaco forces the lines it draws, which are near line 500; only the up-front pass asks for the end.
+    expect(forcedLines.filter((lineNumber) => lineNumber >= OVER_LIMIT_LINES), `forceTokenization line numbers: ${forcedLines.join(',')}`).toEqual([]);
+  });
+
+  test('a diff of exactly 1000 lines is force-tokenized to its last line', async () => {
+    await launch();
+    await waitForLaidOut();
+    expect(await installForceTokenizationSpy(), 'both models expose forceTokenization').toBe(true);
+    const forcedLines = await forcedLinesWhileOpening(AT_LIMIT_FILE, AT_LIMIT_MARKER);
+    expect(forcedLines, 'the up-front pass reached the last line').toContain(AT_LIMIT_LINES);
+  });
+});
 
 test.describe('DiffViewer laid-out on a tokenized file', () => {
   test('a deleted line is drawn in token colours by the time it is laid out', async () => {

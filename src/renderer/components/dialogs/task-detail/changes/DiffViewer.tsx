@@ -640,7 +640,7 @@ export function DiffViewer({
   // lines are drawn. An added file's original is one empty line, drawn as a deleted line above
   // line 1: a reveal that ran before monaco drew it kept line 1 at the top and scrolled past it,
   // one that ran after showed it, and which came first changed from one open to the next. Dropped
-  // when the user scrolls, clicks or types in the editor first.
+  // when the user scrolls, clicks or types in the editor, or moves to a change, first.
   // A content swap drops it, since it belongs to the content it was applied to.
   const appliedRevealRef = useRef<{ apply: () => void } | null>(null);
   const cancelSettle = useCallback(() => {

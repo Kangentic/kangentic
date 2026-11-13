@@ -65,8 +65,9 @@ three things staying in step, and each is enforced rather than remembered.
   poster is the time the live frame shows in every visitor's zone and locale. A scene whose
   subject lays out after it mounts reports ready only once that is done (the Changes scenes wait
   for DiffViewer's generic `data-diff-state="laid-out"`). The posters are shot in the full
-  Chromium build with its scrollbars, once the frame stops changing, and the poster gate holds every frame to its poster
-  on Windows, macOS and Linux (`demo/README.md`, Fonts and The poster gate).
+  Chromium build with its scrollbars, once the frame stops changing, and the poster gate holds
+  every frame to its poster on Windows, macOS and Linux (`demo/README.md`, Fonts and The poster
+  gate).
 - **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
   hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
