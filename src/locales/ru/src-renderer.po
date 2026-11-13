@@ -976,6 +976,10 @@ msgstr "Не удалось загрузить различия файла"
 msgid "Failed to load the panel"
 msgstr "Не удалось загрузить панель"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr ""
+
 #: src/renderer/components/NumberStepper.tsx
 #, fuzzy
 msgid "Fewer: {ariaLabel}"

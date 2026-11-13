@@ -78,13 +78,20 @@ export function WindowContent({
     );
   }
 
-  return <TaskDetailContent
-    managedWindow={managedWindow}
-    isFocused={isFocused}
-    isMaximized={isMaximized}
-    titleBarPointerDown={titleBarPointerDown}
-    requestClose={requestClose}
-  />;
+  // Its own boundary, so a render throw in one task window costs that window and
+  // not every terminal and Browser guest the app holds. Always present for a task
+  // window, so a dormant window's tree keeps its shape (retained-pane-never-remounts.md).
+  return (
+    <PanelErrorBoundary panel="Task detail" message={t`Failed to load this task`}>
+      <TaskDetailContent
+        managedWindow={managedWindow}
+        isFocused={isFocused}
+        isMaximized={isMaximized}
+        titleBarPointerDown={titleBarPointerDown}
+        requestClose={requestClose}
+      />
+    </PanelErrorBoundary>
+  );
 }
 
 /**

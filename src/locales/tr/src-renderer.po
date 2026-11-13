@@ -976,6 +976,10 @@ msgstr "Dosya farkı yüklenemedi"
 msgid "Failed to load the panel"
 msgstr "Panel yüklenemedi"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr ""
+
 #: src/renderer/components/NumberStepper.tsx
 #, fuzzy
 msgid "Fewer: {ariaLabel}"

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Trans } from '@lingui/react/macro';
 import { TitleBar } from './TitleBar';
+import { SurfaceBoundary } from './SurfaceBoundary';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
 import { CollapsedRail } from '../sidebar/CollapsedRail';
@@ -509,11 +510,13 @@ export function AppLayout() {
   return (
     <div className="h-screen flex flex-col bg-surface">
       <FocusedSessionsSync panelShowsTerminal={panelShowsTerminal} />
-      <TitleBar
-        onQuickSession={handleCommandTerminalButton}
-        onOpenSearch={searchPalette.open}
-        commandBarOpen={commandBar.isOpen}
-      />
+      <SurfaceBoundary surface="title-bar">
+        <TitleBar
+          onQuickSession={handleCommandTerminalButton}
+          onOpenSearch={searchPalette.open}
+          commandBarOpen={commandBar.isOpen}
+        />
+      </SurfaceBoundary>
 
       {/* `data-dismiss-layer`: the board layer owns this whole subtree, so a clean click on
           any dead space in it light-dismisses an open task window (see
@@ -546,7 +549,9 @@ export function AppLayout() {
                   sidebar.ready && !sidebar.suppressTransition ? 'transition-opacity duration-200 ease-in-out' : ''
                 } ${sidebar.open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
               >
-                <ProjectSidebar onToggleSidebar={sidebar.toggle} />
+                <SurfaceBoundary surface="sidebar">
+                  <ProjectSidebar onToggleSidebar={sidebar.toggle} />
+                </SurfaceBoundary>
               </div>
 
               {/* Collapsed strip overlay -- visible when closed */}
@@ -584,7 +589,11 @@ export function AppLayout() {
               {activeView !== 'backlog' ? (
                 <>
                   <div className="flex-1 min-h-0 overflow-hidden">
-                    {activeView === 'workflows' ? <LazyWorkflowsView /> : <KanbanBoard />}
+                    {activeView === 'workflows' ? <LazyWorkflowsView /> : (
+                      <SurfaceBoundary surface="board">
+                        <KanbanBoard />
+                      </SurfaceBoundary>
+                    )}
                   </div>
 
                   {/* Terminal panel -- completely hidden when disabled in Appearance settings,
@@ -623,11 +632,13 @@ export function AppLayout() {
                             : ''
                         } ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
                       >
-                        <TerminalPanel
-                          collapsed={terminal.collapsed}
-                          showContent={terminal.showContent}
-                          onToggleCollapse={terminal.onToggleCollapse}
-                        />
+                        <SurfaceBoundary surface="terminal-panel">
+                          <TerminalPanel
+                            collapsed={terminal.collapsed}
+                            showContent={terminal.showContent}
+                            onToggleCollapse={terminal.onToggleCollapse}
+                          />
+                        </SurfaceBoundary>
                       </div>
                     </>
                   )}
@@ -635,7 +646,9 @@ export function AppLayout() {
               ) : (
                 <>
                   <div className="flex-1 min-h-0 overflow-hidden">
-                    <BacklogView />
+                    <SurfaceBoundary surface="backlog">
+                      <BacklogView />
+                    </SurfaceBoundary>
                   </div>
                   <BacklogDialogs />
                 </>
@@ -655,12 +668,16 @@ export function AppLayout() {
         </div>
       </div>
 
-      {statusBarVisible !== false && <StatusBar />}
+      {statusBarVisible !== false && <SurfaceBoundary surface="status-bar"><StatusBar /></SurfaceBoundary>}
       {statsOpen && !statsPopOut.isOpen && <StatsPage />}
       {monitorOpen && !monitorPopOut.isOpen && <MonitorPage />}
       {knowledgeGraphOpen && !knowledgeGraphPopOut.isOpen && <KnowledgeGraphPage />}
-      {settingsOpen && <SettingsPanel />}
-      {commandBar.isOpen && !commandTerminalPopOut.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
+      {settingsOpen && <SurfaceBoundary surface="settings"><SettingsPanel /></SurfaceBoundary>}
+      {commandBar.isOpen && !commandTerminalPopOut.isOpen && (
+        <SurfaceBoundary surface="command-terminal">
+          <CommandTerminalLayer onHide={commandBar.close} />
+        </SurfaceBoundary>
+      )}
       {/* Always mounted, unlike the layer above: each Command Terminal's Browser
           pane lives here so hiding the panel or switching projects never
           unmounts its page (command-terminal-browser.ts). The bridge takes
@@ -668,7 +685,7 @@ export function AppLayout() {
           open_pane reaches a hidden panel. */}
       <CommandTerminalBrowserBridge />
       <CommandTerminalBrowserHost />
-      {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
+      {searchPalette.isOpen && <SurfaceBoundary surface="search"><SearchPalette onClose={searchPalette.close} /></SurfaceBoundary>}
       <ProjectPathMissingDialog />
       <AddProjectDialogs />
       <LeftoverProcessesDialog />

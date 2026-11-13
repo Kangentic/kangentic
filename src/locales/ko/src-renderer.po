@@ -976,6 +976,10 @@ msgstr "파일 diff를 불러오지 못했습니다"
 msgid "Failed to load the panel"
 msgstr "패널을 불러오지 못했습니다"
 
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load this task"
+msgstr ""
+
 #: src/renderer/components/NumberStepper.tsx
 #, fuzzy
 msgid "Fewer: {ariaLabel}"

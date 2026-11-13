@@ -115,6 +115,42 @@ msgstr "關閉"
 msgid "Each task runs on its own branch, so two agents never edit the same files"
 msgstr "每個任務都在自己的分支上執行，因此兩個代理絕不會編輯相同檔案"
 
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load search"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load settings"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the backlog"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the board"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the Command Terminal panel"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the sidebar"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the status bar"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the terminal panel"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the title bar"
+msgstr ""
+
 #: src/renderer/components/layout/TitleBar.tsx
 msgid "Focus agent monitor window"
 msgstr "聚焦代理監控視窗"

@@ -141,6 +141,42 @@ msgstr "Zavřít"
 msgid "Each task runs on its own branch, so two agents never edit the same files"
 msgstr "Každá úloha běží ve vlastní větvi, takže dva agenti nikdy neupravují stejné soubory"
 
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load search"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load settings"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the backlog"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the board"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the Command Terminal panel"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the sidebar"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the status bar"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the terminal panel"
+msgstr ""
+
+#: src/renderer/components/layout/SurfaceBoundary.tsx
+msgid "Failed to load the title bar"
+msgstr ""
+
 #: src/renderer/components/layout/TitleBar.tsx
 #, fuzzy
 msgid "Focus agent monitor window"
