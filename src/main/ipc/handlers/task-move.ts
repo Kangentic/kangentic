@@ -78,7 +78,7 @@ import { abortInFlightMove, registerMoveController, releaseMoveController } from
 import { markOwnCallSession, waitForOwnAgentTurn } from './own-call-turn-wait';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
 import { RefusalError } from '../../../shared/refusal';
-import { reportMoveSpawnFailure } from '../helpers/task-git';
+import { reportMoveSpawnFailure } from '../helpers/spawn-failure';
 import { createChokepointReporter } from '../../analytics/handled-report';
 
 /** A move's rollback that failed after the move did: the task may sit in the wrong column. Once per run. */

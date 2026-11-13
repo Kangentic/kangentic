@@ -51,7 +51,22 @@ export interface ReadyMessage {
 
 export type ReplyMessage =
   | { type: 'reply'; id: number; ok: true; result: unknown }
-  | { type: 'reply'; id: number; ok: false; error: string };
+  /** `errorName` and `errorCode` keep the failure's class and errno across the
+   *  process line, so main can tell a SQLite lock from a defect. Optional: an
+   *  older worker sends the message alone. */
+  | { type: 'reply'; id: number; ok: false; error: string; errorName?: string; errorCode?: string };
+
+/**
+ * A failure the worker handled and main should hear of, by a fixed code. The
+ * worker cannot import Sentry (`retrieval-out-of-process.md`), so main reports
+ * it. Sent once per worker run.
+ */
+export interface HandledErrorMessage {
+  type: 'handledError';
+  code: 'sqlite_vec_load';
+  errorName?: string;
+  errorCode?: string;
+}
 
 /** Something main should react to that the worker noticed on its own. */
 export type RetrievalEventName =
@@ -84,4 +99,14 @@ export interface LogMessage {
   text: string;
 }
 
-export type FromWorkerMessage = ReadyMessage | ReplyMessage | EventMessage | SlowSpanMessage | LogMessage;
+export type FromWorkerMessage = ReadyMessage | ReplyMessage | EventMessage | SlowSpanMessage | LogMessage | HandledErrorMessage;
+
+/** The class and errno of a thrown value, for the wire. Names that are not class names are left out. */
+export function errorShapeOf(error: unknown): { errorName?: string; errorCode?: string } {
+  if (!(error instanceof Error)) return {};
+  const shape: { errorName?: string; errorCode?: string } = {};
+  if (/^[A-Za-z_$][\w$]{0,63}$/.test(error.name)) shape.errorName = error.name;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)) shape.errorCode = code;
+  return shape;
+}

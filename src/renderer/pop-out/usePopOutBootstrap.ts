@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useConfigStore } from '../stores/config-store';
+import { reportRendererFailure } from '../utils/renderer-failure';
 import { getSurface } from './surface-registry';
 import type { PopOutDescriptor } from '../../shared/pop-out';
 
@@ -26,6 +27,7 @@ import type { PopOutDescriptor } from '../../shared/pop-out';
 function reloadConfig(): void {
   useConfigStore.getState().loadConfig().catch((error: unknown) => {
     console.error('[usePopOutBootstrap] could not load the config', error);
+    reportRendererFailure('pop_out', 'config', error);
   });
 }
 

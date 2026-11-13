@@ -1,5 +1,5 @@
 import { reportHandledError, type ErrorReportContexts } from '../analytics/error-reporting';
-import { markReported } from '../analytics/handled-report';
+import { createChokepointReporter, markReported } from '../analytics/handled-report';
 
 /**
  * Reports an account problem to Sentry (task #1057). Most agents' account support was built from
@@ -89,9 +89,17 @@ export function reportAccountProblem(
   if (error !== undefined) markReported(error);
 }
 
+/**
+ * A defect in the accounts code itself, outside `reportAccountProblem`'s named
+ * problems: a session that could not continue at its usage limit, or move to
+ * another account. The `stage` tag says which.
+ */
+export const accountsReporter = createChokepointReporter('accounts');
+
 /** For tests: forget what this run reported. */
 export function resetAccountProblemReports(): void {
   reported.clear();
+  accountsReporter.reset();
 }
 
 const DETAIL_LIMIT = 200;

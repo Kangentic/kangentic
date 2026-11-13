@@ -36,6 +36,7 @@ import {
 } from './zombie-reaper';
 import { getInstalledGitVersion, isVersionAtLeast } from './git-version';
 import { WORKTREE_SPARSE_PATTERNS } from './sparse-exclusion';
+import { createChokepointReporter } from '../analytics/handled-report';
 
 /**
  * First git whose `sparse-checkout set` accepts `--no-cone`. Older git does
@@ -186,6 +187,45 @@ const GIT_QUEUE_SLOW_WARN_MS = 60_000;
  *              retry pass, which is already deferred to the next open.
  */
 export type WorktreeRemovalProfile = 'thorough' | 'moderate' | 'fast';
+
+/** One removal attempt's outcome (`tryGitRemoval`). */
+interface GitRemovalAttempt {
+  removed: boolean;
+  timedOut: boolean;
+  /** The last errno the manual removal failed on, when there was one. */
+  errno?: string;
+  /** A link inside the folder would not come out, so nothing was removed. */
+  refused?: boolean;
+}
+
+/** One report per removal failure shape per run: a held folder repeats at every retry. */
+const worktreeRemovalReporter = createChokepointReporter('worktree_removal');
+
+/**
+ * A worktree that could not be removed: the folder stays on disk, retried at the
+ * next startup, which can repeat indefinitely. Fixed facts only: the profile,
+ * whether it timed out, whether anything was seen holding it, the errno, and
+ * whether a link refused it. Never a holder's command line or the folder's path.
+ */
+function reportWorktreeRemovalFailure(input: {
+  profile: WorktreeRemovalProfile;
+  timedOut: boolean;
+  holders: boolean;
+  attempt: GitRemovalAttempt;
+}): void {
+  const failure = new Error('A worktree could not be removed') as NodeJS.ErrnoException;
+  failure.name = 'WorktreeRemovalFailedError';
+  if (input.attempt.errno) failure.code = input.attempt.errno;
+  worktreeRemovalReporter.report(failure, {
+    tags: {
+      profile: input.profile,
+      timed_out: String(input.timedOut),
+      holders: input.holders ? 'some' : 'none',
+      refused: String(input.attempt.refused === true),
+      platform: process.platform,
+    },
+  });
+}
 
 /**
  * The outcome of creating (or reusing) a task's worktree. `worktreeFolder` is
@@ -1701,6 +1741,7 @@ export class WorktreeManager {
       return { removed: true, timedOut: false, holders: [] };
     }
     let timedOut = first.timedOut;
+    let lastAttempt = first;
 
     // Removal failed: a process is holding the directory. The usual culprit is
     // an orphaned app-under-test (zombie Electron/node from E2E or /preview)
@@ -1728,6 +1769,7 @@ export class WorktreeManager {
           return { removed: true, timedOut: false, holders: [] };
         }
         timedOut = timedOut || second.timedOut;
+        lastAttempt = second;
       }
     }
 
@@ -1750,6 +1792,7 @@ export class WorktreeManager {
       `[WORKTREE] remove finished: ${worktreePath} removed=false timedOut=${timedOut} `
       + `total=${Date.now() - removeStartedAt}ms${formatHolderLog(holders)}`,
     );
+    reportWorktreeRemovalFailure({ profile, timedOut, holders: holders.length > 0, attempt: lastAttempt });
     return { removed: false, timedOut, holders };
   }
 
@@ -1764,12 +1807,12 @@ export class WorktreeManager {
     profile: WorktreeRemovalProfile,
     timeoutMs: number,
     deadline?: number,
-  ): Promise<{ removed: boolean; timedOut: boolean }> {
+  ): Promise<GitRemovalAttempt> {
     // A link left in place would take `git worktree remove` into its target:
     // measured on Windows, it deleted what a junction pointed at.
     if (!(await clearLinksAndNodeModules(worktreePath, profile, deadline))) {
       console.warn(`[WORKTREE] remove refused: a linked folder in ${worktreePath} would not come out`);
-      return { removed: false, timedOut: false };
+      return { removed: false, timedOut: false, refused: true };
     }
 
     const gitStartedAt = Date.now();
@@ -1812,7 +1855,7 @@ export class WorktreeManager {
         + `(code=${diagnosticError.code ?? 'unknown'} errno=${diagnosticError.errno ?? '?'} `
         + `syscall=${diagnosticError.syscall ?? '?'} path=${diagnosticError.path ?? '?'}): ${diagnosticError.message}`
       );
-      return { removed: false, timedOut };
+      return { removed: false, timedOut, errno: typeof diagnosticError.code === 'string' ? diagnosticError.code : undefined };
     }
   }
 

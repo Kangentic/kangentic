@@ -5,6 +5,7 @@ import { msg } from '@lingui/core/runtime-macro';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
 import { PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../shared/ipc-channels';
 import { describeIpcError, asSentence } from '../lib/ipc-error';
+import { reportRendererFailure } from '../utils/renderer-failure';
 // Not `./session-store` directly: that would close an import cycle whose
 // circular-import invalidate full-reloads the dev page. See the module docblock.
 import { killTransientSessionForProject, markIdleSessionsSeen } from './session-lifecycle-hooks';
@@ -135,6 +136,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       projects = await window.electronAPI.projects.list();
     } catch (error) {
       console.error('[project-store] Failed to load projects:', describeIpcError(error));
+      reportRendererFailure('projects', 'list', error);
     }
     projectModuleState.projectsReady = true;
     set({ projects, loading: false, hydrated: projectModuleState.projectsReady && projectModuleState.currentReady });
@@ -414,6 +416,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       project = await window.electronAPI.projects.getCurrent();
     } catch (error) {
       console.error('[project-store] Failed to load the current project:', describeIpcError(error));
+      reportRendererFailure('projects', 'current', error);
     }
     projectModuleState.currentReady = true;
     set({ currentProject: project, hydrated: projectModuleState.projectsReady && projectModuleState.currentReady });
@@ -438,6 +441,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       set({ groups });
     } catch (error) {
       console.error('[project-store] Failed to load project groups:', describeIpcError(error));
+      reportRendererFailure('projects', 'groups', error);
     }
   },
 

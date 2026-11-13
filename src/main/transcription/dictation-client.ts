@@ -62,6 +62,24 @@ const IDLE_SHUTDOWN_MS = 30 * 60_000;
 const MAX_CRASHES = 3;
 const SERVICE_NAME = 'kangentic-dictation';
 
+/**
+ * The client's rejections, each named so `TranscriptionService` can tell a worker
+ * that went away or was turned off (not defects) from a timeout or a worker's own
+ * error (which report). The message stays as it was: the press shows it.
+ */
+export type DictationErrorName =
+  | 'DictationUnavailableError'
+  | 'DictationTimeoutError'
+  | 'DictationWorkerError'
+  | 'DictationWorkerLostError'
+  | 'DictationTurnedOffError';
+
+function namedDictationError(name: DictationErrorName, message: string): Error {
+  const error = new Error(message);
+  error.name = name;
+  return error;
+}
+
 export type { EnsureEngineRequest };
 /** A createSession request body, derived from the worker's own message shape
  *  (minus the envelope fields `request()` fills in) so the two sides can
@@ -151,7 +169,7 @@ export class DictationClient extends EventEmitter {
    *  worker is unavailable or the load failed. */
   async ensureWarm(request: EnsureEngineRequest): Promise<void> {
     const child = this.ensureSpawned();
-    if (!child) throw new Error(this.unavailableMessage());
+    if (!child) throw namedDictationError('DictationUnavailableError', this.unavailableMessage());
     this.clearIdleTimer();
     // Counted before the reply, so a warm that fails or times out still
     // counts. A timed-out load can keep going in the worker after this
@@ -171,7 +189,7 @@ export class DictationClient extends EventEmitter {
    *  unavailable or the load failed. */
   async createSession(request: CreateSessionRequest): Promise<void> {
     const child = this.ensureSpawned();
-    if (!child) throw new Error(this.unavailableMessage());
+    if (!child) throw namedDictationError('DictationUnavailableError', this.unavailableMessage());
     this.clearIdleTimer();
     this.servedSession = true;
     this.activeSessions.add(request.dictationSessionId);
@@ -216,7 +234,7 @@ export class DictationClient extends EventEmitter {
   /** Flush and finalize a session, returning the committed text. Rejects on
    *  worker unavailability or timeout - dictation has no silent fallback. */
   async finalize(dictationSessionId: string): Promise<string> {
-    if (!this.child) throw new Error(this.unavailableMessage());
+    if (!this.child) throw namedDictationError('DictationUnavailableError', this.unavailableMessage());
     const child = this.child;
     this.clearIdleTimer();
     try {
@@ -302,7 +320,7 @@ export class DictationClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error('The dictation worker did not respond in time'));
+        reject(namedDictationError('DictationTimeoutError', 'The dictation worker did not respond in time'));
       }, timeoutMs);
       timer.unref();
       this.pending.set(requestId, { resolve, reject, timer });
@@ -332,7 +350,7 @@ export class DictationClient extends EventEmitter {
       if (record.type === 'result') {
         entry.resolve({ text: record.text });
       } else {
-        entry.reject(new Error(record.message ?? 'Failed to prepare the dictation engine'));
+        entry.reject(namedDictationError('DictationWorkerError', record.message ?? 'Failed to prepare the dictation engine'));
       }
     }
   }
@@ -355,7 +373,7 @@ export class DictationClient extends EventEmitter {
     this.servedSession = false;
     this.warmedEngineKeys.clear();
     this.activeSessions.clear();
-    const lostSessionError = new Error('The dictation worker exited unexpectedly');
+    const lostSessionError = namedDictationError('DictationWorkerLostError', 'The dictation worker exited unexpectedly');
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(lostSessionError);
@@ -369,7 +387,7 @@ export class DictationClient extends EventEmitter {
    *  later request spawns afresh; `dispose()` is the one that refuses. */
   release(): void {
     this.clearIdleTimer();
-    const turnedOffError = new Error('Dictation was turned off');
+    const turnedOffError = namedDictationError('DictationTurnedOffError', 'Dictation was turned off');
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(turnedOffError);
@@ -485,7 +503,7 @@ export class DictationClient extends EventEmitter {
   dispose(): void {
     this.disposed = true;
     this.clearIdleTimer();
-    const lostSessionError = new Error('The dictation worker was shut down');
+    const lostSessionError = namedDictationError('DictationWorkerLostError', 'The dictation worker was shut down');
     for (const entry of this.pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(lostSessionError);

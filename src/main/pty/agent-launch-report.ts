@@ -564,7 +564,32 @@ export function reportPtyPortFailure(): void {
   reportLaunchFailure({ stage: 'pty_port', cause: 'not_delivered', tags: {} });
 }
 
+/** Agents whose session id went uncaptured this run. */
+const uncapturedSessionIdAgents = new Set<string>();
+
+/**
+ * No capture path found the agent's own session id within the diagnostic window
+ * (`SessionIdManager`), so `--resume` will start a fresh conversation without a
+ * word. Usually an adapter that drifted after a CLI update, so it reports once
+ * per agent per run, with the CLI's version: fixed words only.
+ */
+export function reportAgentSessionIdNotCaptured(session: Pick<ManagedSession, 'agentName' | 'agentCliVersion'>): void {
+  if (isShuttingDown()) return;
+  const agent = agentTag(session.agentName);
+  if (uncapturedSessionIdAgents.has(agent)) return;
+  uncapturedSessionIdAgents.add(agent);
+  const error = new Error(`Agent session id not captured (${agent})`);
+  error.name = 'AgentSessionIdNotCapturedError';
+  reportHandledError(
+    error,
+    { source: 'agent_session_id', agent, agent_cli_version: launchVersionTag(session.agentCliVersion) },
+    {},
+    ['agent-session-id-not-captured', agent],
+  );
+}
+
 /** Forget what this run reported. Tests only. */
 export function resetLaunchReports(): void {
   reported.clear();
+  uncapturedSessionIdAgents.clear();
 }

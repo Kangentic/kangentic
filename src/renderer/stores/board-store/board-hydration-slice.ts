@@ -6,6 +6,7 @@ import { applyTaskListPayload } from './lane-pins';
 import { ARCHIVED_PREVIEW_LIMIT } from './archived-tasks-slice';
 import { ensureIcons } from '../../utils/icon-registry';
 import { useProjectStore } from '../project-store';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 
 /** The open project's id, read when a load starts and again before it publishes. */
 function currentProjectId(): string | null {
@@ -92,6 +93,9 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
       if (keepFull) void get().loadArchivedTasks().catch(() => {});
     } catch (error) {
       console.error('[board-store] Failed to load board:', error);
+      // The user sees an empty or stale board. A rejected IPC call already
+      // reported from main; anything the renderer threw itself reports here.
+      reportRendererFailure('board', 'load', error);
       set({ loading: false, hydrated: true });
     }
 

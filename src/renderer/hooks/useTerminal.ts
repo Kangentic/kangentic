@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { SearchAddon } from '@xterm/addon-search';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
+import { reportRendererFailure } from '../utils/renderer-failure';
 import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/terminal-repaint-wait';
 import { countHiddenFrames, isTerminalLayoutLandingFor, nextFrame, noteTerminalFitInLanding } from '../utils/terminal-layout-transition';
 import { motionReduced } from '../utils/motion-reduced';
@@ -1244,6 +1245,7 @@ export function useTerminal(options: UseTerminalOptions) {
     const endOnAnswer = (sendSequence: number, answer: SessionResizeResult | undefined): void => {
       void finishFrameHold(sendSequence, answer).catch((error: unknown) => {
         console.error('[useTerminal] a frame hold could not end', error);
+        reportRendererFailure('terminal', 'frame_hold_end', error);
         recoverFrameHold('finish-failed');
       });
     };
@@ -1276,6 +1278,7 @@ export function useTerminal(options: UseTerminalOptions) {
         .then((answer) => endOnAnswer(sendSequence, answer));
     } catch (error) {
       console.error('[useTerminal] a frame hold could not send its grid', error);
+      reportRendererFailure('terminal', 'frame_hold_send', error);
       recoverFrameHold('send-failed');
     }
   }, [dropFrameHold, recoverFrameHold, requestGrid, finishFrameHold]);
@@ -2089,11 +2092,13 @@ export function useTerminal(options: UseTerminalOptions) {
             afterWrite();
           }
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           // IPC may reject if session was killed during the async gap.
           // Unblock onData so the terminal isn't permanently silenced.
           if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
           traceReplay('replay-error', { trigger: 'mount', generation: scrollbackGeneration });
+          // A rejected read is skipped (main saw it); a throw in the replay itself reports.
+          reportRendererFailure('terminal', 'replay', error, { replay: { trigger: 'mount' } });
           if (scrollbackWatchdogRef.current) {
             clearTimeout(scrollbackWatchdogRef.current);
             scrollbackWatchdogRef.current = null;
@@ -2887,13 +2892,14 @@ export function useTerminal(options: UseTerminalOptions) {
           afterWrite();
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // IPC may reject if session was killed during the async gap.
         // Unblock onData so the terminal isn't permanently silenced. The
         // terminal is untouched (nothing was reset), so it keeps showing its
         // last good frame rather than going black on a failed read.
         if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
         traceReplay('replay-error', { trigger: 'reload', generation: scrollbackGeneration });
+        reportRendererFailure('terminal', 'replay', error, { replay: { trigger: 'reload' } });
         if (scrollbackWatchdogRef.current) {
           clearTimeout(scrollbackWatchdogRef.current);
           scrollbackWatchdogRef.current = null;

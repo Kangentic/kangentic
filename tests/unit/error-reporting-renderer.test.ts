@@ -9,7 +9,7 @@
  * window.electronAPI fresh, so unlike error-reporting-switch.test.ts's
  * main-process counterpart, no vi.resetModules() dance is needed here.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   init: vi.fn(),
@@ -21,12 +21,8 @@ vi.mock('@sentry/electron/renderer', () => ({
   captureException: mocks.captureException,
 }));
 
-import {
-  initRendererErrorReporting,
-  reportCaughtRenderError,
-  reportRendererFailure,
-  resetRendererFailureReports,
-} from '../../src/renderer/error-reporting';
+import { initRendererErrorReporting, reportCaughtRenderError, reportHandledRendererError } from '../../src/renderer/error-reporting';
+import { reportRendererFailure, resetRendererFailureReports, setRendererFailureSink } from '../../src/renderer/utils/renderer-failure';
 import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
 describe('initRendererErrorReporting', () => {
@@ -128,8 +124,23 @@ describe('reportCaughtRenderError (the root onCaughtError)', () => {
 });
 
 describe('reportRendererFailure', () => {
+  beforeEach(() => {
+    setRendererFailureSink(reportHandledRendererError);
+  });
+
   afterEach(() => {
     mocks.captureException.mockReset();
+    resetRendererFailureReports();
+    vi.unstubAllGlobals();
+  });
+
+  it('sends nothing until error reporting registers its sink, and through it after', () => {
+    setRendererFailureSink(null);
+    expect(reportRendererFailure('board', 'load', new TypeError('x'))).toBe(false);
+    vi.stubGlobal('window', { electronAPI: { analytics: { errorReportingEnabled: true } } });
+    initRendererErrorReporting();
+    expect(reportRendererFailure('board', 'load', new TypeError('x'))).toBe(true);
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
     resetRendererFailureReports();
   });
 

@@ -106,6 +106,7 @@ import {
   launchNeverStarted,
   launchTagsOf,
   logLaunchStep,
+  reportAgentSessionIdNotCaptured,
   reportLaunchRecovered,
   reportSessionLaunchFailure,
   type LaunchEndedBy,
@@ -799,6 +800,10 @@ export class SessionManager extends EventEmitter {
       notifyAgentSessionId: (id, capturedId) => this.telemetry.notifyAgentSessionId(id, capturedId),
       sessionExists: (id) => this.registry.has(id),
       agentSessionIdOf: (id) => this.registry.get(id)?.agentSessionId ?? null,
+      onSessionIdNotCaptured: (id) => {
+        const session = this.registry.get(id);
+        if (session) reportAgentSessionIdNotCaptured(session);
+      },
     });
 
     this.telemetry = new SessionTelemetry({

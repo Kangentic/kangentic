@@ -1,6 +1,7 @@
 import type { Terminal, ITerminalAddon } from '@xterm/xterm';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { traceTerminalRenderer } from './terminal-grid-registry';
+import { reportRendererFailure } from './renderer-failure';
 
 /**
  * WebGL renderer attachment with context-loss recovery and a page-wide
@@ -454,6 +455,12 @@ export function attachWebglRenderer(
       console.warn(`[terminal-webgl] ${what} for ${rendererKey}; retrying in ${delayMs}ms`);
     } else if (failures === retryDelaysMs.length + 1) {
       console.warn(`[terminal-webgl] WebGL still unavailable for ${rendererKey}; retrying every ${delayMs}ms`);
+      // The schedule's first pass failed, so this terminal stays on the DOM
+      // renderer: once per run, whatever terminal hits it (the latch is per area,
+      // op and class), with the failure kind as a fixed word.
+      const fallback = new Error('A terminal fell back to the DOM renderer');
+      fallback.name = 'WebglFallbackError';
+      reportRendererFailure('terminal', 'webgl_fallback', fallback, { webgl: { failure, contextLosses: status.contextLossCount } });
     }
     armRetryTimer(delayMs);
   }

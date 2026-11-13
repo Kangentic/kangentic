@@ -28,6 +28,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useSessionStore } from '../../stores/session-store';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { TaskDetailHostProvider } from '../dialogs/task-detail';
 import type { TaskDetailHostValue } from '../dialogs/task-detail';
 import type { Task, TaskDetailBundle } from '../../../shared/types';
@@ -105,13 +106,17 @@ export function MonitorTaskDetailHost({
       applyBundle(await fetchBundle());
     } catch (error) {
       console.error('[monitor] Failed to load task detail bundle:', error);
+      reportRendererFailure('monitor', 'task_detail_bundle', error);
     }
   }, [fetchBundle, applyBundle]);
 
   useEffect(() => {
     fetchBundle()
       .then(applyBundle)
-      .catch((error) => { console.error('[monitor] Failed to load task detail bundle:', error); });
+      .catch((error) => {
+        console.error('[monitor] Failed to load task detail bundle:', error);
+        reportRendererFailure('monitor', 'task_detail_bundle', error);
+      });
     // Invalidate this fetch on unmount / re-fire, so a reply that lands after the
     // host has moved to another task cannot call setBundle or onUnavailable.
     return () => { requestGenerationRef.current += 1; };

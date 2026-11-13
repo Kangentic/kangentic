@@ -7,6 +7,7 @@ import { commandWindowManager } from '../../window-manager';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { transientKey } from '../../stores/session-store/transient-session-slice';
 import { syncFocusedTerminals } from '../../utils/focused-terminals';
 import type { PopOutProjectParams } from '../../../shared/pop-out';
@@ -58,6 +59,7 @@ function useSeedCommandTerminalWindow(projectId: string): LoadState {
       if (!cancelled) setLoadState(sessionsLoaded ? 'ready' : 'failed');
     })().catch((error: unknown) => {
       console.error('[PopOutCommandTerminalRoot] could not load the window', error);
+      reportRendererFailure('pop_out', 'command_terminal_boot', error);
       if (!cancelled) setLoadState('failed');
     });
     return () => {

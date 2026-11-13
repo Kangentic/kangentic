@@ -2,7 +2,7 @@ import { init as sentryInit, captureException } from '@sentry/electron/renderer'
 import { filterBreadcrumb } from '../shared/sentry-breadcrumbs';
 import { SENTRY_DATA_COLLECTION } from '../shared/sentry-data-collection';
 import { diagnosticContextOf, errorNameOf, pathFreeCopy } from '../shared/handled-error-copy';
-import { isIpcRejectionMainSaw } from '../shared/ipc-rejection';
+import { setRendererFailureSink } from './utils/renderer-failure';
 
 /**
  * Renderer half of Sentry error reporting. The renderer SDK has NO network
@@ -28,6 +28,9 @@ export function initRendererErrorReporting(): void {
   if (!window.electronAPI?.analytics?.errorReportingEnabled) return;
   try {
     sentryInit({ beforeBreadcrumb: filterBreadcrumb, dataCollection: SENTRY_DATA_COLLECTION });
+    // `reportRendererFailure` (utils/renderer-failure.ts) sends through this
+    // module only once the SDK is up; its callers import no SDK themselves.
+    setRendererFailureSink(reportHandledRendererError);
   } catch (error) {
     console.error('[ANALYTICS] Failed to initialize renderer error reporting:', error);
   }
@@ -86,72 +89,6 @@ export function reportCaughtRenderError(
   }
 }
 
-/** The most distinct `area:op:name` keys the renderer reports in a run. */
-const MAX_RENDERER_FAILURE_KEYS = 25;
-
-// Pattern A (hmr-patterns.md): the once-per-key latch survives a Fast Refresh,
-// or every dev save would re-arm each failure.
-// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
-const reportedRendererFailures: Set<string> = import.meta.hot?.data?.reportedRendererFailures ?? new Set<string>();
-// @ts-expect-error -- Vite handles import.meta.hot
-if (import.meta.hot) {
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose((data: Record<string, unknown>) => { data.reportedRendererFailures = reportedRendererFailures; });
-}
-
-/** True for a rejection the renderer should not report itself. */
-function isRendererExpectedFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (error.name === 'AbortError') return true;
-  // A rejected IPC call main's wrap saw, and reported if it was a defect. `No
-  // handler registered for` and a clone failure never reached a handler, so they
-  // still report from here.
-  if (isIpcRejectionMainSaw(error.message)) return true;
-  // The renderer's own network: offline, a server down.
-  if (error instanceof TypeError && /^(Failed to fetch|NetworkError|Load failed)/.test(error.message)) return true;
-  return false;
-}
-
-/**
- * Report a failure the renderer caught and recovered from: a board that did not
- * load, a card that did not open, a terminal replay that failed. `area` and `op`
- * are short fixed words (`board`, `load`), never a title or a path; they are tags
- * and the fingerprint (`['renderer', area, op, <ErrorName>]`), since the renderer's
- * areas are a small known set. The event is a path-free copy. `contexts` hold
- * fixed facts only.
- *
- * Skipped: aborts, the renderer's own network, and any rejected IPC call, because
- * main's wrap reported that one with main's stack. Each `area:op:name` reports
- * once per run, at most 25 of them. Never throws.
- */
-export function reportRendererFailure(
-  area: string,
-  op: string,
-  error: unknown,
-  contexts: RendererErrorContexts = {},
-): boolean {
-  try {
-    if (isRendererExpectedFailure(error)) return false;
-    const name = errorNameOf(error);
-    const key = `${area}:${op}:${name}`;
-    if (reportedRendererFailures.has(key) || reportedRendererFailures.size >= MAX_RENDERER_FAILURE_KEYS) return false;
-    reportedRendererFailures.add(key);
-    reportHandledRendererError(
-      pathFreeCopy(`${area}_${op}`, error),
-      { source: 'renderer', area, op, error_name: name },
-      { ...diagnosticContextOf(error), ...contexts },
-      ['renderer', area, op, name],
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Test-only: forget what this run reported. */
-export function resetRendererFailureReports(): void {
-  reportedRendererFailures.clear();
-}
 
 /**
  * Report an error the renderer CAUGHT and recovered from, with tags for

@@ -13,6 +13,7 @@ import { deleteModel, ensureModel, isModelInstalled, listInstalledModels } from 
 import { getModel, type ModelDef } from './models/model-registry';
 import { buildDictationInfo, primaryModel } from './dictation-info';
 import { trackFeatureUsed } from '../analytics/usage';
+import { createChokepointReporter, isNetworkFailure } from '../analytics/handled-report';
 import type { ResolvedModel } from './engines/transcription-engine';
 import { DictationClient, dictationClient } from './dictation-client';
 
@@ -45,6 +46,31 @@ class ModelDownloadError extends Error {
     this.name = 'ModelDownloadError';
     this.modelId = modelId;
   }
+}
+
+/** One report per dictation failure class per run. */
+const dictationReporter = createChokepointReporter('dictation');
+
+/** Rejections that are not defects: the worker went away (its crash reports itself) or was turned off. */
+const DICTATION_NOT_A_DEFECT: ReadonlySet<string> = new Set([
+  'DictationUnavailableError',
+  'DictationWorkerLostError',
+  'DictationTurnedOffError',
+]);
+
+/**
+ * Report a dictation engine that failed to prepare, start or warm. Left out: the
+ * worker going away or being turned off, a download the network failed, and a
+ * remote engine's own failure (its text names the user's server). A download
+ * that failed some other way reports by its cause, since `ModelDownloadError`
+ * itself is an expected class. A timeout reports: it is a hang.
+ */
+function reportDictationFailure(error: unknown, remote: boolean): void {
+  if (error instanceof Error && DICTATION_NOT_A_DEFECT.has(error.name)) return;
+  if (remote && error instanceof Error && error.name === 'DictationWorkerError') return;
+  const reported = error instanceof ModelDownloadError ? error.cause : error;
+  if (error instanceof ModelDownloadError && isNetworkFailure(reported)) return;
+  dictationReporter.report(reported, { tags: { stage: error instanceof ModelDownloadError ? 'download' : 'prepare' } });
 }
 
 /** The model a `downloadModel` failure names: the one whose download failed,
@@ -194,7 +220,7 @@ export class TranscriptionService extends EventEmitter {
     try {
       prepared = await this.prepareModels(selected, engineKey);
     } catch (error) {
-      throw this.reportPrepareFailure(error);
+      throw this.reportPrepareFailure(error, { remote: selected.isRemote });
     }
 
     const dictationSessionId = `dictation-${++this.counter}`;
@@ -220,7 +246,7 @@ export class TranscriptionService extends EventEmitter {
       // active.set), so send it unconditionally rather than only in the
       // timeout case.
       this.client.cancel(dictationSessionId);
-      throw this.reportPrepareFailure(error);
+      throw this.reportPrepareFailure(error, { remote: selected.isRemote });
     }
 
     return {
@@ -251,9 +277,11 @@ export class TranscriptionService extends EventEmitter {
       return;
     }
     this.warmConfig = config;
+    let remote = false;
     try {
       const profile = await detectHardware();
       const selected = selectEngine(profile, config);
+      remote = selected.isRemote;
       const engineKey = computeEngineKey(selected, config);
       const prepared = await this.prepareModels(selected, engineKey);
       // Superseded during the awaits: by a disable (the worker must stay
@@ -274,7 +302,7 @@ export class TranscriptionService extends EventEmitter {
       // Best-effort: a failed warm only means the next press pays the load,
       // and the next warm or press retries. The log line is the trace.
       console.warn('[transcription] dictation warm failed:', error instanceof Error ? error.message : error);
-      if (!options?.silent) this.reportPrepareFailure(error);
+      if (!options?.silent) this.reportPrepareFailure(error, { remote });
     }
   }
 
@@ -315,11 +343,12 @@ export class TranscriptionService extends EventEmitter {
    *  Dictation tab reads its 'error' as "Download failed" on the model's line.
    *  A failed worker load would name a model that downloaded fine, so it is
    *  reported only through the Error: a press shows it, and a warm logs it. */
-  private reportPrepareFailure(error: unknown): Error {
+  private reportPrepareFailure(error: unknown, context: { remote: boolean } = { remote: false }): Error {
     const message = error instanceof Error ? error.message : 'Failed to prepare the dictation engine';
     if (error instanceof ModelDownloadError) {
       this.emitModelProgress({ modelId: error.modelId, status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
     }
+    reportDictationFailure(error, context.remote);
     return new Error(message);
   }
 

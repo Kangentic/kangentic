@@ -1,4 +1,5 @@
 import { CONTINUE_PROMPT } from './account-continuation';
+import { accountsReporter } from './account-report';
 
 /** A running task session, as a Switch to that moves running sessions needs it. */
 export interface RunningTaskSession {
@@ -42,6 +43,7 @@ export async function moveRunningSessions(
     } catch (error) {
       failed += 1;
       console.warn(`[ACCOUNTS] Could not move task ${session.taskId.slice(0, 8)} to another account:`, error);
+      accountsReporter.report(error, { tags: { stage: 'session_move' } });
     }
   }
   return { moved, failed };

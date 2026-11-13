@@ -7,6 +7,10 @@ import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParam
 import { cascadePopOutPosition } from './cascade';
 import { trackFeatureUsed } from '../analytics/usage';
 import { isErrorReportingActive } from '../analytics/error-reporting';
+import { createChokepointReporter } from '../analytics/handled-report';
+
+/** A pop-out whose own page failed to load (`did-fail-load`), by kind and Chromium's code. */
+const popOutLoadReporter = createChokepointReporter('pop_out_load');
 import { localeArgument } from '../i18n/main-i18n';
 
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
@@ -217,14 +221,20 @@ export class PopOutWindowManager {
     win.webContents.once('did-finish-load', reveal);
     win.webContents.once('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
       console.error(`[pop-out] ${kind} failed to load ${validatedURL}: ${errorCode} ${errorDescription}`);
+      // A packaging defect when it fires: the window's own page did not load.
+      // The kind and Chromium's code only, never the URL.
+      const failed = new Error(`A pop-out window failed to load (${errorCode})`);
+      failed.name = 'PopOutLoadFailedError';
+      popOutLoadReporter.report(failed, { tags: { kind, error_code: String(errorCode) } });
       reveal();
     });
 
-    if (openContext.devServerUrl) {
-      win.loadURL(`${openContext.devServerUrl}#${kind}`);
-    } else {
-      win.loadFile(resolveRendererIndexPath(openContext.viteName), { hash: kind });
-    }
+    // A failed load also rejects these. `did-fail-load` above reports it, so the
+    // rejection is answered here rather than left unhandled with the URL in it.
+    const loading = openContext.devServerUrl
+      ? win.loadURL(`${openContext.devServerUrl}#${kind}`)
+      : win.loadFile(resolveRendererIndexPath(openContext.viteName), { hash: kind });
+    void Promise.resolve(loading).catch(() => undefined);
 
     const tracked: TrackedPopOut = {
       kind,

@@ -1,6 +1,7 @@
 import { create, type StateCreator } from 'zustand';
 import { ACTIVITY_TAB, type Session, type SessionUsage, type SessionEvent } from '../../shared/types';
 import { requiresUserInteraction, isActive } from '../../shared/activity-state';
+import { reportRendererFailure } from '../utils/renderer-failure';
 import { useProjectStore } from './project-store';
 import { useConfigStore } from './config-store';
 import type { SessionStore, PendingTuiAnchor } from './session-store/types';
@@ -168,6 +169,9 @@ async function safeFetch<T>(
     return await fn();
   } catch (error) {
     console.warn(`[syncSessions] ${label} failed (likely HMR / preload skew):`, error);
+    // A packaged build ships its renderer and preload together, so there it is
+    // not skew: the replica stays stale, and it reports.
+    if (!__KANGENTIC_DEV__) reportRendererFailure('session_sync', 'fetch', error, { session_sync: { fetch: label } });
     return undefined;
   }
 }

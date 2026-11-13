@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { PATHS } from '../../config/paths';
+import { sendHandledFailure } from '../../analytics/handled-report';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
 import { unpacked } from '../../utility-process/paths';
@@ -32,6 +33,21 @@ const IDLE_SHUTDOWN_MS = 30 * 60_000;
  *  disable semantic search until restart, with no in-app signal. */
 const MAX_CRASHES = 3;
 const SERVICE_NAME = 'kangentic-embeddings';
+
+let embedInitFailureReported = false;
+
+/**
+ * The embed worker could not load its model or backend, so search falls back to
+ * lexical without a word. Once per run. The worker's own text names the model's
+ * folder, so only a fixed message goes.
+ */
+function reportEmbedInitFailure(): void {
+  if (embedInitFailureReported) return;
+  embedInitFailureReported = true;
+  const error = new Error('The embedding worker could not initialize');
+  error.name = 'EmbedWorkerInitError';
+  sendHandledFailure('embed_worker', error, { stage: 'init' }, {}, ['embed-worker', 'init']);
+}
 
 /**
  * The ordered onnxruntime execution providers to try for an acceleration
@@ -316,6 +332,7 @@ export class EmbedClient implements Embedder {
       // error here is exactly what let a device/version mismatch degrade every
       // search to lexical with no trace. Then fail readiness so callers degrade.
       console.warn('[retrieval] embed worker init failed:', (message as { message?: unknown }).message);
+      reportEmbedInitFailure();
       this.readyResolver?.(false);
       this.readyResolver = null;
       return;

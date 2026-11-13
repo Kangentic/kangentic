@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 import { findSessionForTask } from '../../stores/session-store/session-index';
 import { BrowserPane } from '../../components/browser/BrowserPane';
 import { usePopOutTaskRow } from '../use-pop-out-task-row';
@@ -48,7 +49,10 @@ export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
   useEffect(() => {
     let cancelled = false;
     void useSessionStore.getState().syncSessions()
-      .catch((error: unknown) => console.warn('[pop-out browser] session sync failed:', error))
+      .catch((error: unknown) => {
+        console.warn('[pop-out browser] session sync failed:', error);
+        reportRendererFailure('pop_out', 'browser_boot', error);
+      })
       .finally(() => {
         if (!cancelled) setSessionsSynced(true);
       });

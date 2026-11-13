@@ -32,6 +32,7 @@ import type {
   RetrievalMethod,
   ToWorkerMessage,
 } from './protocol';
+import { errorShapeOf } from './protocol';
 
 const parentPort = process.parentPort;
 
@@ -58,6 +59,8 @@ for (const level of ['log', 'info', 'warn', 'error'] as const) {
 let vecLoadError: string | null = null;
 /** Where sqlite-vec loads from, as main resolved it. */
 let vecLoadablePath: string | null = null;
+/** A failed sqlite-vec load is relayed to main once per worker run. */
+let vecLoadFailureSent = false;
 
 function initialize(message: InitMessage): void {
   // First, so a startup that hangs is named too. Production as well as dev:
@@ -86,6 +89,11 @@ function initialize(message: InitMessage): void {
       // Keywords only for this connection.
       vecLoadError = error instanceof Error ? error.message : String(error);
       console.warn('[retrieval-worker] sqlite-vec unavailable, semantic search disabled:', error);
+      // Semantic search is off for this install from here, so main hears of it, once.
+      if (!vecLoadFailureSent) {
+        vecLoadFailureSent = true;
+        post({ type: 'handledError', code: 'sqlite_vec_load', ...errorShapeOf(error) });
+      }
     }
   });
   if (__KANGENTIC_DEV__) {
@@ -132,7 +140,7 @@ async function dispatch(message: RequestMessage): Promise<void> {
     const result = await timeSyncWork(`method:${method}`, () => handler(message.params, context));
     post({ type: 'reply', id: message.id, ok: true, result });
   } catch (error) {
-    post({ type: 'reply', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) });
+    post({ type: 'reply', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error), ...errorShapeOf(error) });
   }
 }
 

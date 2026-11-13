@@ -1,5 +1,6 @@
 import type { AgentAccount, AgentAccountsConfig } from '../../shared/agent-accounts';
 import { firstReset, hasRoom, nextAccountWithRoom, topAccountWithRoom } from './account-order';
+import { accountsReporter } from './account-report';
 
 /** What a continued session is told, so the turn the limit cut short is picked up. */
 export const CONTINUE_PROMPT = 'Continue.';
@@ -134,6 +135,8 @@ export class AccountContinuation {
       return 'waiting';
     } catch (error) {
       console.warn('[ACCOUNTS] Could not continue a session at its usage limit:', error);
+      // The session stalls at its limit with nothing on screen to say why.
+      accountsReporter.report(error, { tags: { stage: 'continuation' } });
       return 'ignored';
     } finally {
       this.inFlight.delete(session.sessionId);
