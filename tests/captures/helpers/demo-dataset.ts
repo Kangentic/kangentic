@@ -829,12 +829,15 @@ export const DEMO_COMMAND_TERMINAL_EARLIER: DemoCommandTerminalConversation[] = 
  * and the Column Manager reads it: an agent that says nothing when a turn ends has On agent turn
  * end blocked on its column. Codex reports it through its Stop hook (task #859). The mock's own
  * list leaves it out, which reads as runnable everywhere.
+ * `reportsUserMessages` is main's `canReadTurnUserMessages(adapter)`: only an adapter with a
+ * queued-input reader (`readQueuedUserMessages`) can take a Text match on Your message.
  * tests/unit/scene-registry.test.ts holds every entry here to its adapter.
  */
 export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
   claude: {
     version: '2.1.270',
     reportsTurnEnd: true,
+    reportsUserMessages: true,
     capabilities: {
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       supportsModelOverride: true,
@@ -844,13 +847,15 @@ export const DEMO_AGENT_OVERRIDES: Record<string, Record<string, unknown>> = {
   codex: {
     found: true, path: '/usr/local/bin/codex', version: '0.141.0',
     reportsTurnEnd: true,
+    reportsUserMessages: false,
     capabilities: { supportsModelOverride: true, models: [CODEX.id], effortLevels: [] },
   },
-  gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0', reportsTurnEnd: true },
-  opencode: { found: true, path: '/usr/local/bin/opencode', version: '1.18.30', reportsTurnEnd: true },
+  gemini: { found: true, path: '/usr/local/bin/gemini', version: '0.58.0', reportsTurnEnd: true, reportsUserMessages: false },
+  opencode: { found: true, path: '/usr/local/bin/opencode', version: '1.18.30', reportsTurnEnd: true, reportsUserMessages: false },
   copilot: {
     found: true, path: '/usr/local/bin/copilot', version: '1.0.83',
     reportsTurnEnd: true,
+    reportsUserMessages: false,
     capabilities: { supportsModelOverride: true, models: [COPILOT.id], effortLevels: ['low', 'medium', 'high', 'xhigh'] },
   },
 };

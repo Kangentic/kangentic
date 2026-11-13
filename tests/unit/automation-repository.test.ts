@@ -9,7 +9,7 @@
  * cascades, and that the whole-column replace survives a name swap the unique
  * index would reject if it were applied row by row.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AutomationRepository } from '../../src/main/db/repositories/automation-repository';
@@ -253,6 +253,53 @@ describe('AutomationRepository', () => {
         ['Both', null, 'Verdict: Ready'],
         ['Prose only', 'The review is clean', null],
       ]);
+    });
+  });
+
+  describe('a stored Text match source (text_match_source)', () => {
+    function readSourceAfterWriting(stored: string | null, finalLine: string | null): string {
+      const { database, automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [
+        webhook('Ping', { trigger: 'turn_end', final_line: finalLine }),
+      ]);
+      database.prepare('UPDATE column_automations SET text_match_source = ?').run(stored);
+      return automations.listForColumn(columnId)[0].text_match_source;
+    }
+
+    it('reads an unknown stored value on a row with a Text match as the user, and warns', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        expect(readSourceAfterWriting('future', 'Verdict: Ready')).toBe('user');
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"future"'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('reads a stored user source on a row with a Text match as the user, without a warning', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        expect(readSourceAfterWriting('user', 'Verdict: Ready')).toBe('user');
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('reads NULL and the agent value as the agent', () => {
+      expect(readSourceAfterWriting(null, 'Verdict: Ready')).toBe('agent');
+      expect(readSourceAfterWriting('agent', 'Verdict: Ready')).toBe('agent');
+    });
+
+    it('reads any stored source on a row with no Text match as the agent', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        expect(readSourceAfterWriting('user', null)).toBe('agent');
+        expect(readSourceAfterWriting('future', null)).toBe('agent');
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 

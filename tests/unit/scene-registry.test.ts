@@ -17,6 +17,8 @@ import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_LANES_BY_PROJECT, DEMO_SC
 import { loadDemoEnds, loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { nextOnRoute, startColumn, type RouteColumn, type RouteFields } from '../../src/shared/workflow-route';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { canReadTurnUserMessages } from '../../src/main/agent/shared/transcript-reader-capability';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
 
@@ -691,6 +693,40 @@ describe('scene registry', () => {
         expect(override.reportsTurnEnd, `${scene.name}.seeds.__mockAgentListOverrides.${agentName}.reportsTurnEnd`).toBe(reports.get(agentName));
       }
     }
+  });
+
+  it('reports each agent\'s user-message reading as main derives it', () => {
+    // Main reports `reportsUserMessages` as canReadTurnUserMessages(adapter): a windowed
+    // transcript reader plus a queued-input reader. The Column Manager offers a Text match on
+    // Your message only where it is true, so a demo agent that carries another value draws an
+    // option the desktop would refuse (or hides one it offers). Derived from the real adapters.
+    expect(canReadTurnUserMessages(agentRegistry.getOrThrow('claude')), 'Claude no longer reads a turn\'s user messages').toBe(true);
+    expect(canReadTurnUserMessages(agentRegistry.getOrThrow('codex'))).toBe(false);
+    let checked = 0;
+    for (const [agentName, override] of Object.entries(DEMO_AGENT_OVERRIDES)) {
+      const adapter = agentRegistry.get(agentName);
+      expect(adapter, `DEMO_AGENT_OVERRIDES names ${agentName}, which has no registered adapter`).toBeDefined();
+      if (!adapter) continue;
+      checked += 1;
+      expect(override.reportsUserMessages, `DEMO_AGENT_OVERRIDES.${agentName}.reportsUserMessages`).toBe(canReadTurnUserMessages(adapter));
+    }
+    expect(checked).toBeGreaterThanOrEqual(5);
+    for (const scene of scenes) {
+      const agents = (scene.seeds?.__mockAgentListOverrides ?? {}) as Record<string, Record<string, unknown>>;
+      for (const [agentName, override] of Object.entries(agents)) {
+        if (override.reportsUserMessages === undefined) continue;
+        const adapter = agentRegistry.getOrThrow(agentName);
+        expect(override.reportsUserMessages, `${scene.name}.seeds.__mockAgentListOverrides.${agentName}.reportsUserMessages`).toBe(canReadTurnUserMessages(adapter));
+      }
+    }
+  });
+
+  it('keeps the UI mock\'s own Claude agent in step with main on user-message reading', () => {
+    // tests/ui/mock-electron-api.js carries a KEEP IN SYNC copy of the Claude entry.
+    const mockSource = fs.readFileSync(path.join(REPO_ROOT, 'tests/ui/mock-electron-api.js'), 'utf-8');
+    const claudeEntry = mockSource.match(/KEEP IN SYNC with canReadTurnUserMessages[\s\S]{0,400}?reportsUserMessages: (true|false),/)?.[1];
+    expect(claudeEntry, 'the mock no longer declares reportsUserMessages beside its KEEP IN SYNC comment').toBeDefined();
+    expect(claudeEntry === 'true').toBe(canReadTurnUserMessages(agentRegistry.getOrThrow('claude')));
   });
 
   it('links only workflow members the sample install seeds', () => {
