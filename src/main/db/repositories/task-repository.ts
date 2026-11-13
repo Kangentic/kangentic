@@ -10,6 +10,7 @@ import { cachedStatement } from '../statement-cache';
 import { removeLinksInWorkflowHome } from './workflow-home-links';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { TaskMoveRepository, type CappedColumnTask } from './task-move-repository';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Raw row from SQLite - labels and skipped columns stored as JSON strings, the
@@ -658,7 +659,7 @@ export class TaskRepository {
 
   private updateWithinTransaction(input: TaskUpdateInput): Task {
     const existing = this.getById(input.id);
-    if (!existing) throw new Error(`Task ${input.id} not found`);
+    if (!existing) throw new RefusalError(`Task ${input.id} not found`);
 
     // Artifacts are not a column of the generic write below: they have their
     // own read-merge-write, run after it in this same transaction.
@@ -723,7 +724,7 @@ export class TaskRepository {
    */
   updateOverrides(taskId: string, patch: { model_override?: string | null; effort_override?: string | null }): void {
     const existing = this.getById(taskId);
-    if (!existing) throw new Error(`Task ${taskId} not found`);
+    if (!existing) throw new RefusalError(`Task ${taskId} not found`);
     const newModel = patch.model_override !== undefined ? patch.model_override : existing.model_override;
     const newEffort = patch.effort_override !== undefined ? patch.effort_override : existing.effort_override;
     const exclusive = applyProfileExclusivity(
@@ -758,7 +759,7 @@ export class TaskRepository {
   move(input: TaskMoveInput, provenance: TaskMoveProvenance): void {
     const { taskId, targetSwimlaneId, targetPosition } = input;
     const task = this.getById(taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
+    if (!task) throw new RefusalError(`Task ${taskId} not found`);
 
     const tx = writeTransaction(this.db, () => {
       // Remove from old position - shift down tasks above in old swimlane

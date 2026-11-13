@@ -8,6 +8,7 @@ import { PAINT_GIVE_UP_MS } from '../../transition-engine/paint-give-up';
 import { trackMessageDelivery } from './turn-end-passes';
 import { AGENT_READY_CEILING_MS } from '../../pty/lifecycle/agent-output-tracker';
 import { isSlashCommand } from '../../pty/slash-command';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * How a column's message reaches a live agent: typed as keystrokes, or pasted.
@@ -103,8 +104,8 @@ export async function deliverAgentMessageAndWait(
   }
 
   await runInPasteOrder(input.taskId, input.signal, async () => {
-    if (input.signal.aborted) throw new Error(abortReason);
-    if (!isSessionLive(context, input.sessionId)) throw new Error(SESSION_GONE_REASON);
+    if (input.signal.aborted) throw new RefusalError(abortReason);
+    if (!isSessionLive(context, input.sessionId)) throw new RefusalError(SESSION_GONE_REASON);
     if (input.turnWait === 'always' || input.mode === 'deferred') {
       const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
         signal: input.signal,
@@ -112,9 +113,9 @@ export async function deliverAgentMessageAndWait(
         acceptHeld: input.acceptHeld,
         idleWithoutQuietMs: input.idleWithoutQuietMs,
       });
-      if (settled !== 'completed') throw new Error(turnWaitFailure(settled, abortReason));
+      if (settled !== 'completed') throw new RefusalError(turnWaitFailure(settled, abortReason));
     }
-    if (input.signal.aborted) throw new Error(abortReason);
+    if (input.signal.aborted) throw new RefusalError(abortReason);
     try {
       await context.terminalSubmit.submitContent(input.sessionId, input.message, {
         source: 'automation',
@@ -122,7 +123,7 @@ export async function deliverAgentMessageAndWait(
         automated: true,
       });
     } catch (error) {
-      if (input.signal.aborted) throw new Error(abortReason, { cause: error });
+      if (input.signal.aborted) throw new RefusalError(abortReason, { cause: error });
       throw error;
     }
   });

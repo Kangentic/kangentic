@@ -2,7 +2,7 @@ import { init as sentryInit, captureException } from '@sentry/electron/renderer'
 import { filterBreadcrumb } from '../shared/sentry-breadcrumbs';
 import { SENTRY_DATA_COLLECTION } from '../shared/sentry-data-collection';
 import { diagnosticContextOf, errorNameOf, pathFreeCopy } from '../shared/handled-error-copy';
-import { IPC_REJECTION_PREFIX_PATTERN } from '../shared/ipc-rejection';
+import { isIpcRejectionMainSaw } from '../shared/ipc-rejection';
 
 /**
  * Renderer half of Sentry error reporting. The renderer SDK has NO network
@@ -103,8 +103,10 @@ if (import.meta.hot) {
 function isRendererExpectedFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (error.name === 'AbortError') return true;
-  // A rejected IPC call: main's wrap saw it, and reported it if it was a defect.
-  if (IPC_REJECTION_PREFIX_PATTERN.test(error.message)) return true;
+  // A rejected IPC call main's wrap saw, and reported if it was a defect. `No
+  // handler registered for` and a clone failure never reached a handler, so they
+  // still report from here.
+  if (isIpcRejectionMainSaw(error.message)) return true;
   // The renderer's own network: offline, a server down.
   if (error instanceof TypeError && /^(Failed to fetch|NetworkError|Load failed)/.test(error.message)) return true;
   return false;

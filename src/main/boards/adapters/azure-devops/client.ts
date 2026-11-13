@@ -4,6 +4,7 @@ import type { ExternalIssue } from '../../../../shared/types';
 import { extractInlineImageUrls } from '../../shared';
 import { convertHtmlToMarkdown } from './html-to-markdown';
 import { AZURE_CLOSED_STATES, buildWiqlQuery, buildWorkItemIdsWiql } from './wiql';
+import { RefusalError } from '../../../../shared/refusal';
 
 
 /** Raw work item shape from az boards query. */
@@ -492,7 +493,7 @@ export class AzureDevOpsImporter {
     changedSince?: string,
   ): Promise<{ items: AzureDevOpsWorkItemRaw[]; hasNextPage: boolean; totalCount: number }> {
     const available = await this.detect();
-    if (!available) throw new Error('Azure CLI not found');
+    if (!available) throw new RefusalError('Azure CLI not found');
 
     // Check cache to avoid re-fetching the full dataset on every page. changedSince
     // is part of the key so a full reconcile is never served a stale incremental
@@ -590,7 +591,7 @@ export class AzureDevOpsImporter {
     iterationPath?: string,
   ): Promise<number[]> {
     const available = await this.detect();
-    if (!available) throw new Error('Azure CLI not found');
+    if (!available) throw new RefusalError('Azure CLI not found');
 
     const wiql = buildWorkItemIdsWiql(project, iterationPath);
     const organizationUrl = `https://dev.azure.com/${organization}`;

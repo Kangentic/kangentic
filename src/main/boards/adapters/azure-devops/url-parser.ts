@@ -1,3 +1,4 @@
+import { RefusalError } from '../../../../shared/refusal';
 /** Parse an Azure DevOps URL, returning the repository identifier with optional iteration path. */
 export function parseAzureDevOpsUrl(url: string): { repository: string } {
   // Modern format: https://dev.azure.com/{org}/{project}[/any/sub/path...]
@@ -22,7 +23,7 @@ export function parseAzureDevOpsUrl(url: string): { repository: string } {
     return { repository: buildRepository(organization, project, iterationPath) };
   }
 
-  throw new Error('Invalid Azure DevOps URL. Expected format: https://dev.azure.com/org/project');
+  throw new RefusalError('Invalid Azure DevOps URL. Expected format: https://dev.azure.com/org/project');
 }
 
 const LEGACY_HOST_SUFFIX = '.visualstudio.com';

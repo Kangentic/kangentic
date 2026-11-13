@@ -73,6 +73,15 @@ describe('isExpectedFailure', () => {
     expect(isExpectedFailure(new TypeError('fetch failed', { cause: errnoError('ENOTFOUND') }))).toBe(true);
   });
 
+  it('judges a wrapper by what it wraps, as wrapWorktreeSetupError wraps a dirty tree', async () => {
+    const { GitUserStateError } = await import('../../src/main/git/worktree-errors');
+    const { wrapWorktreeSetupError } = await import('../../src/main/ipc/helpers/worktree-setup-error');
+    const wrapped = wrapWorktreeSetupError(new GitUserStateError("Cannot switch to branch 'x': you have uncommitted changes."));
+    expect(wrapped).not.toBeInstanceOf(GitUserStateError);
+    expect(isExpectedFailure(wrapped)).toBe(true);
+    expect(isExpectedFailure(wrapWorktreeSetupError(new TypeError('defect')))).toBe(false);
+  });
+
   it('keeps a defect', () => {
     expect(isExpectedFailure(new TypeError("Cannot read properties of undefined (reading 'id')"))).toBe(false);
     expect(isExpectedFailure(errnoError('EACCES'))).toBe(false);

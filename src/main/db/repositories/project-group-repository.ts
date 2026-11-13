@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getGlobalDb } from '../database';
 import type { ProjectGroup, ProjectGroupCreateInput } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
+import { RefusalError } from '../../../shared/refusal';
 
 interface ProjectGroupRow {
   id: string;
@@ -41,7 +42,7 @@ export class ProjectGroupRepository {
     const db = getGlobalDb();
     db.prepare('UPDATE project_groups SET name = ? WHERE id = ?').run(name, id);
     const row = db.prepare('SELECT * FROM project_groups WHERE id = ?').get(id) as ProjectGroupRow;
-    if (!row) throw new Error(`Project group not found: ${id}`);
+    if (!row) throw new RefusalError(`Project group not found: ${id}`);
     return rowToGroup(row);
   }
 

@@ -1,4 +1,5 @@
 import type { IpcContext } from '../ipc/ipc-context';
+import { RefusalError } from '../../shared/refusal';
 
 /**
  * The IPC context the workflow operations act through, set once when the
@@ -15,7 +16,7 @@ export function setWorkflowRuntimeContext(context: IpcContext | null): void {
 }
 
 export function requireWorkflowRuntimeContext(): IpcContext {
-  if (!runtimeContext) throw new Error('Workflows are not ready yet. Try again in a moment.');
+  if (!runtimeContext) throw new RefusalError('Workflows are not ready yet. Try again in a moment.');
   return runtimeContext;
 }
 

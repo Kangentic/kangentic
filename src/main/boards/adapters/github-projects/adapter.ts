@@ -14,6 +14,7 @@ import {
 } from '../../shared';
 import { GitHubImporter } from '../github-common';
 import { parseGitHubProjectsUrl, buildGitHubProjectsLabel } from './url-parser';
+import { RefusalError } from '../../../../shared/refusal';
 
 registerSourceUrlParser('github_projects', { parse: parseGitHubProjectsUrl, buildLabel: buildGitHubProjectsLabel });
 
@@ -53,7 +54,7 @@ export class GitHubProjectsAdapter implements BoardAdapter {
     const [owner, numberString] = input.repository.split('/');
     const projectNumber = parseInt(numberString, 10);
     if (!owner || isNaN(projectNumber)) {
-      throw new Error(`Invalid project reference: ${input.repository}. Expected format: owner/number`);
+      throw new RefusalError(`Invalid project reference: ${input.repository}. Expected format: owner/number`);
     }
 
     const { items: rawItems } = await this.github.fetchProjectItems(owner, projectNumber);

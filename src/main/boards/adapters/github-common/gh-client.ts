@@ -7,6 +7,7 @@ import {
   DOWNLOAD_CONCURRENCY,
   extractInlineImageUrls,
 } from '../../shared';
+import { RefusalError } from '../../../../shared/refusal';
 
 
 /** Raw issue shape from the GitHub REST API. */
@@ -879,7 +880,7 @@ export class GitHubImporter {
     since?: string,
   ): Promise<{ issues: GitHubIssueRaw[]; hasNextPage: boolean }> {
     const ghPath = await this.detect();
-    if (!ghPath) throw new Error('gh CLI not found');
+    if (!ghPath) throw new RefusalError('gh CLI not found');
 
     const issueState = state ?? 'open';
 
@@ -946,7 +947,7 @@ export class GitHubImporter {
     projectNumber: number,
   ): Promise<{ items: GitHubProjectItemRaw[] }> {
     const ghPath = await this.detect();
-    if (!ghPath) throw new Error('gh CLI not found');
+    if (!ghPath) throw new RefusalError('gh CLI not found');
 
     const { stdout } = await execFileAsync(
       ghPath,

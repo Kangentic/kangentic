@@ -134,14 +134,14 @@ async function runGit(
 
     const timeoutId = setTimeout(() => {
       killProcessTree(child);
-      finish(() => reject(new Error(`git ${args.join(' ')} timed out`)));
+      finish(() => reject(new RefusalError(`git ${args.join(' ')} timed out`)));
     }, 20_000);
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBytes += chunk.length;
       if (stdoutBytes > GIT_MAX_BUFFER_BYTES) {
         killProcessTree(child);
-        finish(() => reject(new Error(`git ${args.join(' ')} exceeded max buffer`)));
+        finish(() => reject(new RefusalError(`git ${args.join(' ')} exceeded max buffer`)));
         return;
       }
       stdoutChunks.push(chunk);
@@ -157,7 +157,7 @@ async function runGit(
         finish(() => resolve({ code: code ?? 1, stdout }));
         return;
       }
-      finish(() => reject(new Error(`git ${args.join(' ')} exited with code ${code ?? 1}`)));
+      finish(() => reject(new RefusalError(`git ${args.join(' ')} exited with code ${code ?? 1}`)));
     });
 
     if (options?.stdin) {

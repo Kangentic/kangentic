@@ -19,6 +19,7 @@ import {
 } from '../../shared';
 import { AzureDevOpsImporter } from './client';
 import { parseAzureDevOpsUrl, buildAzureDevOpsLabel, isAzureDevOpsAuthedDownloadUrl } from './url-parser';
+import { RefusalError } from '../../../../shared/refusal';
 
 registerSourceUrlParser('azure_devops', { parse: parseAzureDevOpsUrl, buildLabel: buildAzureDevOpsLabel });
 
@@ -67,7 +68,7 @@ export class AzureDevOpsAdapter implements BoardAdapter {
     const [orgProject, iterationPath] = input.repository.split('::');
     const [organization, project] = orgProject.split('/');
     if (!organization || !project) {
-      throw new Error(`Invalid Azure DevOps reference: ${input.repository}. Expected format: org/project`);
+      throw new RefusalError(`Invalid Azure DevOps reference: ${input.repository}. Expected format: org/project`);
     }
 
     const { items: rawItems, hasNextPage, totalCount } = await this.azure.fetchWorkItems(
@@ -129,7 +130,7 @@ export class AzureDevOpsAdapter implements BoardAdapter {
     const [orgProject, iterationPath] = input.repository.split('::');
     const [organization, project] = orgProject.split('/');
     if (!organization || !project) {
-      throw new Error(`Malformed Azure DevOps repository reference: ${input.repository}`);
+      throw new RefusalError(`Malformed Azure DevOps repository reference: ${input.repository}`);
     }
     const ids = await this.azure.fetchWorkItemIds(organization, project, iterationPath);
     // Enforce the contract here as well as at the CLI parse: an id that is not a

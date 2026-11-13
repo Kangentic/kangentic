@@ -33,6 +33,7 @@ import {
 import { applyBoardConfigToDb, type ColumnFieldResets } from './board-config/apply-config';
 import { COLUMN_FIELD_DEFAULTS } from './board-config/column-field-defaults';
 import { buildSplitBoardConfigFromDb, jsonEqual } from './board-config/split-config';
+import { RefusalError } from '../../shared/refusal';
 
 /** How often, and how far apart, a write-back retries a file a lock is holding. */
 const WRITE_BACK_LOCK_RETRIES = 3;
@@ -58,7 +59,7 @@ function readErrorReason(code: string | undefined): string {
  */
 function parseConfigObject(raw: string): Record<string, unknown> {
   const parsed = parseConfigJson(raw);
-  if (!isJsonObject(parsed)) throw new Error(NOT_AN_OBJECT_REASON);
+  if (!isJsonObject(parsed)) throw new RefusalError(NOT_AN_OBJECT_REASON);
   return parsed;
 }
 

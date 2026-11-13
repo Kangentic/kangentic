@@ -1,3 +1,4 @@
+import { RefusalError } from '../../../../shared/refusal';
 /**
  * Parse an Asana project URL, returning the numeric project GID as `repository`.
  *
@@ -22,7 +23,7 @@ export function parseAsanaUrl(url: string): { repository: string } {
     return { repository: newerMatch[1] };
   }
 
-  throw new Error('Invalid Asana project URL. Expected format: https://app.asana.com/0/<project_id>/list');
+  throw new RefusalError('Invalid Asana project URL. Expected format: https://app.asana.com/0/<project_id>/list');
 }
 
 /**

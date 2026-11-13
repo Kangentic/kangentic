@@ -6,6 +6,7 @@ import { writeTransaction } from '../transaction';
 import { softly } from '../soft-db';
 import { devPortRepository } from './dev-port-repository';
 import { rememberProjectRoots } from '../../shared/project-roots';
+import { RefusalError } from '../../../shared/refusal';
 
 /** A `projects` row as stored: a remote project's host and folder are two nullable columns. */
 type ProjectRow = Omit<Project, 'remote'> & { remote_host_id: string | null; remote_path: string | null };
@@ -45,7 +46,7 @@ export class ProjectRepository {
 
   private read(id: string): Project {
     const row = getGlobalDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
-    if (!row) throw new Error(`Project ${id} is not registered.`);
+    if (!row) throw new RefusalError(`Project ${id} is not registered.`);
     return toProject(row);
   }
 

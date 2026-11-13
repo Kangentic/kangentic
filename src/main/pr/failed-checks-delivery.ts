@@ -17,6 +17,7 @@ import { agentRegistry } from '../agent/agent-registry';
 import { holdTaskMessage } from '../held-messages/held-messages';
 import { MOVE_MESSAGE_MAX_CHARS } from '../agent/commands/move-message-limit';
 import { listPRChecks, fetchPRCheckLog } from './pr-registry';
+import { RefusalError } from '../../shared/refusal';
 
 /** The most one check's log may take, however few checks failed. */
 export const PER_CHECK_LOG_MAX_CHARS = 6_000;
@@ -120,16 +121,16 @@ export async function sendFailedPrChecks(
   projectId?: string | null,
 ): Promise<PrChecksSendResult> {
   const { projectId: resolvedProjectId, projectPath } = resolveProjectContext(context, projectId);
-  if (!resolvedProjectId || !projectPath) throw new Error('No project is open');
+  if (!resolvedProjectId || !projectPath) throw new RefusalError('No project is open');
   const task = getProjectRepos(context, resolvedProjectId).tasks.getById(taskId);
-  if (!task) throw new Error('Task not found');
-  if (task.pr_number === null) throw new Error('This task has no pull request');
+  if (!task) throw new RefusalError('Task not found');
+  if (task.pr_number === null) throw new RefusalError('This task has no pull request');
 
   const repoCwd = repoCwdFor(task, projectPath);
   const listed = await listPRChecks(repoCwd, task.pr_number);
   const failedChecks = (listed?.checks ?? []).filter((check) => check.status === 'failed');
   const conflicting = task.pr_merge_readiness === 'conflicting';
-  if (failedChecks.length === 0 && !conflicting) throw new Error('Nothing on this pull request needs fixing');
+  if (failedChecks.length === 0 && !conflicting) throw new RefusalError('Nothing on this pull request needs fixing');
 
   const prNumber = task.pr_number;
   const baseBranch = task.base_branch;
@@ -161,7 +162,7 @@ export async function sendFailedPrChecks(
   const sessionId = liveSession && context.sessionManager.isWritable(liveSession.id) ? liveSession.id : null;
   if (!sessionId) {
     const outcome = holdTaskMessage(context, { projectId: resolvedProjectId, taskId, message });
-    if (outcome.status === 'refused') throw new Error(outcome.error);
+    if (outcome.status === 'refused') throw new RefusalError(outcome.error);
     return { outcome: 'held', count };
   }
 
@@ -172,7 +173,7 @@ export async function sendFailedPrChecks(
     await context.terminalSubmit.submitContent(sessionId, message, { bracketed: true, source: 'pr-checks', verifier });
   } catch (caught) {
     if (caught instanceof PasteSubmitError) {
-      const error = new Error(translatePasteSubmitError(caught));
+      const error = new RefusalError(translatePasteSubmitError(caught));
       (error as Error & { cause?: unknown }).cause = caught;
       throw error;
     }

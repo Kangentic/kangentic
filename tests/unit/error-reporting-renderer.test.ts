@@ -149,4 +149,9 @@ describe('reportRendererFailure', () => {
     expect(reportRendererFailure('board', 'load', new TypeError('Failed to fetch'))).toBe(false);
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
+
+  it('still reports a rejection that never reached a handler, which main cannot see', () => {
+    const skew = new Error("Error invoking remote method 'new:channel': Error: No handler registered for 'new:channel'");
+    expect(reportRendererFailure('board', 'load', skew)).toBe(true);
+  });
 });

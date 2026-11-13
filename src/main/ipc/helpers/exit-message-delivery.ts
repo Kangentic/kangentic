@@ -3,6 +3,7 @@ import type { IpcContext } from '../ipc-context';
 import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import type { CommandVerifier } from '../../pty/terminal-submit';
 import { KeysReachedPermissionPromptError } from '../../pty/automated-keys-guard';
+import { RefusalError } from '../../../shared/refusal';
 
 /** What the run log says when the exit group's budget stops a message. */
 export const EXIT_BUDGET_ABORT_REASON = 'The message was not delivered before the exit budget ran out.';
@@ -67,7 +68,7 @@ export function deliverExitMessage(
     // here: the runner already passed this signal down, and the scheduler's
     // own cancel paths belong to the move, not to us.
     function onAbort(): void {
-      finish(new Error(abortReason));
+      finish(new RefusalError(abortReason));
     }
     signal.addEventListener('abort', onAbort, { once: true });
 
@@ -90,7 +91,7 @@ export function deliverExitMessage(
             finish(null);
             return;
           }
-          finish(new Error(report.reason ?? `The message was ${report.outcome}.`));
+          finish(new RefusalError(report.reason ?? `The message was ${report.outcome}.`));
         },
       },
     );

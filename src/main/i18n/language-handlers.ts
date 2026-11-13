@@ -10,6 +10,7 @@ import {
   isAppLocale,
   type AppLocale,
 } from '../../shared/i18n/locales';
+import { RefusalError } from '../../shared/refusal';
 
 export interface LanguageConfigStore {
   load(): AppConfig;
@@ -55,7 +56,7 @@ export function saveLanguageForRestart(
     throw new Error(`setLanguageAndRestart expects a shipped language, got ${JSON.stringify(locale)}`);
   }
   if (!configStore.save({ displayLanguage: locale, hasAnsweredLanguageSuggestion: true })) {
-    throw new Error('The display language could not be saved');
+    throw new RefusalError('The display language could not be saved');
   }
   return locale;
 }

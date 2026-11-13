@@ -20,6 +20,7 @@ import {
   type DownloadedAttachment,
   type FileAttachmentRef,
 } from '../../shared';
+import { RefusalError } from '../../../../shared/refusal';
 
 interface AsanaListResponse<T> {
   data: T[];
@@ -119,7 +120,7 @@ export class AsanaClient {
       this.credential = await loadAsanaCredential();
     }
     if (!this.credential && required) {
-      throw new Error('Not connected to Asana. Click "Connect Asana" to paste a Personal Access Token.');
+      throw new RefusalError('Not connected to Asana. Click "Connect Asana" to paste a Personal Access Token.');
     }
     return this.credential;
   }
@@ -354,7 +355,7 @@ export class AsanaClient {
     const project = await this.getProject(projectGid);
     const workspaceGid = project?.workspace?.gid;
     if (!workspaceGid) {
-      throw new Error(`Unable to resolve Asana workspace for project ${projectGid}.`);
+      throw new RefusalError(`Unable to resolve Asana workspace for project ${projectGid}.`);
     }
     return workspaceGid;
   }
