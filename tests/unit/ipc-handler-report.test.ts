@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const reportHandledError = vi.fn();
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
-const { installIpcHandlerReporting, resetIpcHandlerReportingForTests } = await import('../../src/main/analytics/ipc-handler-report');
+const { installIpcHandlerReporting, resetIpcHandlerReportingForTests, IPC_HANDLER_KEY_CAP } = await import('../../src/main/analytics/ipc-handler-report');
 const { markReported } = await import('../../src/main/analytics/handled-report');
 const { RefusalError } = await import('../../src/shared/refusal');
 const { IPC_REJECTION_DUPLICATE_PATTERN } = await import('../../src/shared/ipc-rejection');
@@ -65,6 +65,18 @@ describe('installIpcHandlerReporting', () => {
       await expect(target.registered.get(`channel:${index}`)?.({})).rejects.toBe(throws[index]);
     }
     expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('reports past the default 25 keys and stops at IPC_HANDLER_KEY_CAP', async () => {
+    const target = fakeIpcMain();
+    installIpcHandlerReporting(target as never);
+    const total = IPC_HANDLER_KEY_CAP + 5;
+    for (let index = 0; index < total; index += 1) {
+      target.handle(`channel:${index}`, () => { throw new TypeError('defect'); });
+      await expect(target.registered.get(`channel:${index}`)?.({})).rejects.toBeInstanceOf(TypeError);
+    }
+    expect(IPC_HANDLER_KEY_CAP).toBeGreaterThan(25);
+    expect(reportHandledError).toHaveBeenCalledTimes(IPC_HANDLER_KEY_CAP);
   });
 
   it('passes a result through untouched', async () => {

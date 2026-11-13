@@ -1,5 +1,5 @@
 import { reportHandledError, type ErrorReportContexts } from '../analytics/error-reporting';
-import { createChokepointReporter, markReported } from '../analytics/handled-report';
+import { createChokepointReporter, errorCodeOf, errorNameOf, markReported } from '../analytics/handled-report';
 
 /**
  * Reports an account problem to Sentry (task #1057). Most agents' account support was built from
@@ -74,10 +74,10 @@ export function reportAccountProblem(
   reported.add(key);
   console.warn(`[ACCOUNTS] ${problem} (${agent})`, facts);
   // A caller's error names what failed, and its message can hold a folder path or an address:
-  // only its class and errno leave, never its text.
-  const errno = (error as NodeJS.ErrnoException | undefined)?.code;
+  // only its class and errno leave, never its text, each through the shared shape checks.
+  const errno = errorCodeOf(error);
   const causeContext: ErrorReportContexts = error instanceof Error
-    ? { cause: { name: error.name, ...(typeof errno === 'string' ? { errno } : {}) } }
+    ? { cause: { name: errorNameOf(error), ...(errno ? { errno } : {}) } }
     : {};
   reportHandledError(
     new Error(`Agent account problem: ${problem} (${agent})`),

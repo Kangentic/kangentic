@@ -34,6 +34,8 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
 }));
 
 import { EventEmitter } from 'node:events';
+import os from 'node:os';
+import { WORKTREE_FOLDER_PLACEHOLDER } from '../../src/main/analytics/redact-event-paths';
 import {
   STDERR_DRAIN_BOUND_MS,
   UtilityRestartPolicy,
@@ -52,14 +54,15 @@ function makeClock(start = 1_000) {
   };
 }
 
-function makePolicy(overrides: Partial<{ maxCrashes: number; decayMs: number }> = {}) {
+function makePolicy(overrides: Partial<{ maxCrashes: number; decayMs: number; reportFirstCrash: boolean; service: string }> = {}) {
   const clock = makeClock();
   const policy = new UtilityRestartPolicy({
-    service: 'kangentic-test-worker',
+    service: overrides.service ?? 'kangentic-test-worker',
     maxCrashes: overrides.maxCrashes ?? 3,
     backoffMs: [1_000, 5_000, 15_000],
     decayMs: overrides.decayMs ?? 300_000,
     now: clock.now,
+    reportFirstCrash: overrides.reportFirstCrash,
   });
   return { policy, clock };
 }
@@ -626,6 +629,125 @@ describe('UtilityRestartPolicy', () => {
 
       const [, , contexts] = mockReportHandledError.mock.calls[1];
       expect(contexts.utility_process.crashes).toEqual(['ready_timeout', 'ready_timeout', 'ready_timeout']);
+    });
+  });
+
+  // A worktree folder is `slugify(task title)-<id>` and the home directory names the user, and a
+  // worker's stderr holds both. The report runs the stderr and the crash lines through
+  // redactEventText, so neither leaves the machine.
+  describe('redaction - worker stderr never carries a task title or a home path', () => {
+    const WORKTREE_PATH = '/home/dev/work/.kangentic/worktrees/fix-acme-billing-1a2b/src';
+    const STDERR = [
+      `Error: ENOENT: no such file or directory, open '${WORKTREE_PATH}'`,
+      '    at read (/home/dev/notes/todo.txt:1:1)',
+      `[retrieval-worker] event loop held 5 s in ${WORKTREE_PATH}`,
+    ].join('\n');
+
+    function expectRedacted(contexts: { utility_process: { stderrTail: string; crashes?: string[] } }): void {
+      const sent = JSON.stringify(contexts);
+      expect(contexts.utility_process.stderrTail).toContain(WORKTREE_FOLDER_PLACEHOLDER);
+      expect(sent).not.toContain('acme');
+      expect(sent).not.toContain('/home/dev');
+    }
+
+    let homedirSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      // redactEventText reads the machine's home directory by default.
+      homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue('/home/dev');
+    });
+
+    afterEach(() => {
+      homedirSpy.mockRestore();
+    });
+
+    it('redacts the latch report\'s stderr tail and its per-crash watchdog lines', () => {
+      const { policy, clock } = makePolicy();
+      policy.recordCrash(1, makeStderrSource(STDERR));
+      clock.advance(4_000);
+      policy.recordCrash(1, makeStderrSource(''));
+      clock.advance(4_000);
+      policy.recordCrash(1, makeStderrSource(''));
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [, , contexts] = mockReportHandledError.mock.calls[0];
+      expectRedacted(contexts);
+      // The watchdog text rides in the crash line, which is redacted on its own.
+      expect(contexts.utility_process.crashes[0]).toContain('watchdog="');
+      expect(contexts.utility_process.crashes[0]).toContain(WORKTREE_FOLDER_PLACEHOLDER);
+    });
+
+    it('redacts the first-crash report\'s stderr tail', () => {
+      const { policy } = makePolicy({ reportFirstCrash: true });
+      policy.recordCrash(1, makeStderrSource(STDERR));
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [, , contexts] = mockReportHandledError.mock.calls[0];
+      expectRedacted(contexts);
+    });
+  });
+
+  describe('first-crash report - reportFirstCrash', () => {
+    it('sends nothing on the first crash unless the service asked', () => {
+      const { policy } = makePolicy();
+      policy.recordCrash(1);
+      expect(mockReportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('reports the first crash once, under its own fingerprint, and the latch separately', () => {
+      const { policy, clock } = makePolicy({ reportFirstCrash: true });
+      policy.recordCrash(1);
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [error, tags, , fingerprint] = mockReportHandledError.mock.calls[0];
+      expect((error as Error).message).toBe('kangentic-test-worker worker exited (exit code 1)');
+      expect(tags).toMatchObject({ phase: 'first', crashCount: '1' });
+      expect(fingerprint).toEqual(['utility-process-first-crash', 'kangentic-test-worker', 'exit']);
+
+      clock.advance(4_000);
+      policy.recordCrash(1);
+      // The second crash is neither the first nor the latch.
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+
+      clock.advance(4_000);
+      policy.recordCrash(1);
+      expect(mockReportHandledError).toHaveBeenCalledTimes(2);
+      expect(mockReportHandledError.mock.calls[1][3]).toEqual(['utility-process-latched', 'kangentic-test-worker', 'exit']);
+    });
+
+    it('sends one report, the latch\'s, when the first crash is also the one that latches', () => {
+      const { policy } = makePolicy({ reportFirstCrash: true, maxCrashes: 1 });
+      policy.recordCrash(1);
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [error, tags, , fingerprint] = mockReportHandledError.mock.calls[0];
+      expect((error as Error).message).toContain('exited repeatedly');
+      expect(tags).not.toHaveProperty('phase');
+      expect(fingerprint).toEqual(['utility-process-latched', 'kangentic-test-worker', 'exit']);
+    });
+
+    it('sends the latch again after a decay, never a first-crash report, when the first crash latched', () => {
+      const { policy, clock } = makePolicy({ reportFirstCrash: true, maxCrashes: 1 });
+      policy.recordCrash(1);
+      clock.advance(300_000);
+      policy.recordCrash(1);
+      const fingerprints = mockReportHandledError.mock.calls.map((call) => call[3][0]);
+      expect(fingerprints).toEqual(['utility-process-latched', 'utility-process-latched']);
+    });
+
+    it('reports a second service\'s first crash separately from the first service\'s', () => {
+      const first = makePolicy({ reportFirstCrash: true });
+      first.policy.recordCrash(1);
+      const second = makePolicy({ reportFirstCrash: true, service: 'kangentic-other-worker' });
+      second.policy.recordCrash(1);
+      // The same service again is the same run: already reported.
+      const repeat = makePolicy({ reportFirstCrash: true });
+      repeat.policy.recordCrash(1);
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(2);
+      expect(mockReportHandledError.mock.calls.map((call) => call[3])).toEqual([
+        ['utility-process-first-crash', 'kangentic-test-worker', 'exit'],
+        ['utility-process-first-crash', 'kangentic-other-worker', 'exit'],
+      ]);
     });
   });
 

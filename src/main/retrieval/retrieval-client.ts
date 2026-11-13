@@ -352,9 +352,6 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
   }
 }
 
-/** A worker log line into main's log. An error also went to the worker's
- *  stderr, which a dev build already passes through, so it is printed here only
- *  in a packaged build, where nothing else would show it. */
 /** The error a failed reply rejects with, its class and errno restored so a caller can classify it. */
 function workerFailure(reply: Extract<FromWorkerMessage, { type: 'reply'; ok: false }>): Error {
   const error = new Error(reply.error) as NodeJS.ErrnoException;
@@ -375,6 +372,9 @@ function reportRetrievalWorkerFailure(message: Extract<FromWorkerMessage, { type
   sendHandledFailure('retrieval_worker', error, { code: message.code }, {}, ['retrieval-worker', message.code, message.errorCode ?? message.errorName ?? 'none']);
 }
 
+/** A worker log line into main's log. An error also went to the worker's
+ *  stderr, which a dev build already passes through, so it is printed here only
+ *  in a packaged build, where nothing else would show it. */
 function logFromWorker(level: 'log' | 'info' | 'warn' | 'error', text: string): void {
   if (level === 'error' && !app.isPackaged) return;
   console[level](`[retrieval-worker] ${text}`);

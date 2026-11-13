@@ -60,6 +60,53 @@ describe('guardPushCallbacks', () => {
   });
 });
 
+describe('guardPushCallbacks, callback outcomes', () => {
+  it('reports an async callback that rejects, and still hands back its promise', async () => {
+    const { api, listeners } = fakeApi();
+    const failures: Array<[string, unknown]> = [];
+    guardPushCallbacks(api, (method, error) => failures.push([method, error]));
+    const rejection = new RangeError('async boom');
+    // Registered through a loose type: the fake's listener returns void, this one a promise.
+    (api.config.onChanged as (callback: () => Promise<void>) => unknown)(async () => { throw rejection; });
+
+    const returned = (listeners[0] as unknown as () => Promise<void>)();
+    expect(returned).toBeInstanceOf(Promise);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0][0]).toBe('config.onChanged');
+    expect(failures[0][1]).toBe(rejection);
+    // The push still sees the callback's own rejection; the guard only observes it.
+    await expect(returned).rejects.toBe(rejection);
+  });
+
+  it('passes a callback return value through unchanged', () => {
+    const api = { widgets: { onTick: (callback: () => unknown) => callback } };
+    guardPushCallbacks(api, () => undefined);
+    const guarded = api.widgets.onTick(() => 42) as () => unknown;
+    expect(guarded()).toBe(42);
+  });
+
+  it('does not let an onFailure that throws escape into the push', () => {
+    const { api, emit } = fakeApi();
+    guardPushCallbacks(api, () => { throw new Error('sink exploded'); });
+    api.config.onChanged(() => { throw new TypeError('boom'); });
+    expect(() => emit('changed')).not.toThrow();
+  });
+
+  it('wraps a top-level on* method and reports it by its unprefixed name', () => {
+    let registered: ((value: string) => void) | undefined;
+    const api = { onSomething: (callback: (value: string) => void) => { registered = callback; } };
+    const failures: Array<[string, unknown]> = [];
+    guardPushCallbacks(api, (method, error) => failures.push([method, error]));
+    api.onSomething(() => { throw new TypeError('top-level boom'); });
+    expect(() => registered?.('x')).not.toThrow();
+    expect(failures).toHaveLength(1);
+    expect(failures[0][0]).toBe('onSomething');
+  });
+});
+
 describe('reportPushCallbackRecord', () => {
   beforeEach(() => {
     reportHandledError.mockReset();

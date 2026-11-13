@@ -414,9 +414,9 @@ export async function autoSpawnTasks(
       }
 
       spawnInputs.push({ task, isolatedSwimlaneId: resolveIsolatedSwimlaneId(lane), ...prep.data });
-    } catch (err) {
-      console.error(`[AUTO_SPAWN] Preparation failed for task ${task.id}:`, err);
-      reportPreflightFailure({ cause: 'recovery_prepare', error: err, startPath: 'startup_recovery' });
+    } catch (error) {
+      console.error(`[AUTO_SPAWN] Preparation failed for task ${task.id}:`, error);
+      reportPreflightFailure({ cause: 'recovery_prepare', error, startPath: 'startup_recovery' });
     }
   }
 

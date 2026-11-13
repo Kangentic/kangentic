@@ -703,7 +703,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/renderer/components/workflows/WorkflowAgentPane.tsx': 1,
   'src/renderer/components/workflows/WorkflowCardMenu.tsx': 2,
   'src/renderer/components/workflows/WorkflowsView.tsx': 3,
-  'src/renderer/error-reporting.ts': 3,
+  'src/renderer/error-reporting.ts': 2,
   'src/renderer/hooks/useAddProject.ts': 3,
   'src/renderer/hooks/useBaseRefKind.ts': 1,
   'src/renderer/hooks/useBoardDragDrop.ts': 3,

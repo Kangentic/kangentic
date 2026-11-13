@@ -19,7 +19,6 @@ export const pushCallbackReporter = createChokepointReporter('preload_callback')
 
 /** `config.onChanged`: a namespace and an `on*` method, nothing else. */
 const API_METHOD = /^(?:[A-Za-z]+\.)?on[A-Z][A-Za-z]*$/;
-const ERROR_NAME = /^[A-Za-z][A-Za-z0-9]*$/;
 
 /** Report a guarded push callback's failure; anything else the record carries is ignored. */
 export function reportPushCallbackRecord(record: CrashRecord): boolean {
@@ -27,11 +26,10 @@ export function reportPushCallbackRecord(record: CrashRecord): boolean {
   const context = record.context ?? {};
   const method = typeof context.pushCallback === 'string' ? context.pushCallback : null;
   if (!method) return false;
-  const errorName = typeof context.errorName === 'string' && ERROR_NAME.test(context.errorName) ? context.errorName : 'Error';
-  // A copy built from the record: the name and the frames, no message, so the
-  // reporter's diagnostic context has nothing of the renderer's text to carry.
+  // A copy built from the record: the name and the frames, no message. The
+  // reporter checks the name's shape (`errorNameOf`) and sends `Error` for anything else.
   const error = new Error('');
-  error.name = errorName;
+  if (typeof context.errorName === 'string') error.name = context.errorName;
   if (record.stack) error.stack = record.stack;
   const methodTag = API_METHOD.test(method) ? method : 'unknown';
   return pushCallbackReporter.report(error, { tags: { method: methodTag }, fingerprint: ['preload-callback', methodTag] });

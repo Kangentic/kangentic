@@ -406,20 +406,23 @@ in one Sentry org, one triage surface.
   (`src/main/analytics/handled-report.ts`, rule `.claude/rules/error-reporting.md`). Each
   chokepoint holds a `createChokepointReporter(source)`, which sends a copy of the error whose
   message is `Handled <source> failure: <ErrorName>` over the original frames (`pathFreeCopy`),
-  never `error.message`. A `TypeError`, `RangeError` or `ReferenceError` message goes in a
-  `diagnostic` context cut to 200 characters; a `SyntaxError`'s never does. Tags are `source`,
+  never `error.message`, a runtime error's included: V8 quotes the property it could not read and
+  Node's `ERR_INVALID_ARG_*` quotes the value it got, either of which can be a title. Tags are `source`,
   `error_name`, `errno` when there is one, and the chokepoint's own short enums. It skips what is
   not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
   `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
   cause), skips an error another reporter already sent (`markReported` and `isReported`, which
-  reads one level of `cause`), latches once per key per run and stops after 25 keys. An errno or
-  `SQLITE_` failure is fingerprinted `['handled-env', name, code]`; a code defect keeps Sentry's
-  stack grouping. The sources:
+  reads one level of `cause`), latches once per key per run and stops after 25 keys. An errno,
+  libuv's Windows `UNKNOWN` or a `SQLITE_` failure is fingerprinted `['handled-env', name, code]`;
+  a code defect keeps Sentry's stack grouping. The sources:
   - `ipc_handler`: every `ipcMain.handle` handler, wrapped once at install
     (`src/main/analytics/ipc-handler-report.ts`, before `installDiagnostics`). The renderer's copy
     of the same rejection (`Error invoking remote method '<channel>': ...`) is dropped by main's
     `ignoreErrors` (`IPC_REJECTION_DUPLICATE_PATTERN`), except `No handler registered for` and an
-    uncloneable result, which only the renderer sees. The channel is never in a fingerprint.
+    uncloneable result, which only the renderer sees. The channel is never in a fingerprint. Its
+    cap is 100 keys, not 25, because a defect past it would reach Sentry from neither process. An
+    `ipcMain.on` listener is not wrapped: it has no caller to reject to, so its throw is uncaught
+    and Sentry's own handler reports it.
   - `mcp_tool`, `mcp_command`, `mcp_request`: a tool callback (tag `tool`), a command handler and
     the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`).
   - `mobile_verb` (tag `verb`), `automation_runner` (tag `automation_type`), `turn_end`,
@@ -428,7 +431,7 @@ in one Sentry org, one triage surface.
   - `task_move` (a rollback that failed), `project_recovery` (tag `pass`: `resource_cleanup`,
     `session_recovery`, `session_reconcile`, `host_connected`, `cold_open`,
     `deferred_board_config`, `pty_host_loss`, `activate_project`, `remote_projects`), `db_open` and
-    `db_migration` (tags `database`, `stage`), `held_messages`, `session_handlers` (tag `stage`),
+    `db_migration` (tags `database`, `stage`: `open`, `pragma`, `migrate`, `initialize`), `held_messages`, `session_handlers` (tag `stage`),
     `accounts`, `artifact_detection`, `metrics_snapshot`, `worktree_removal` (tags `profile`,
     `timed_out`, `holders`, `refused`, `platform`), `preload` (our own windows only),
     `pop_out_load` (tags `kind`, `error_code`), `dictation`.
@@ -454,8 +457,10 @@ in one Sentry org, one triage surface.
   - `renderer` (tags `area`, `op`): `reportRendererFailure` (`src/renderer/utils/renderer-failure.ts`)
     for the board load, a card that opens nothing, terminal replay and frame hold, session sync in
     a packaged build, the project list, pop-out boot, the Monitor's task bundle and the WebGL
-    fallback. It is fingerprinted `['renderer', area, op, name]`, latched per key under HMR, and has
-    no Sentry import: `error-reporting.ts` registers its sink at init.
+    fallback. It is fingerprinted `['renderer', area, op, name]`, the rule's second exception to
+    stack grouping: a renderer catch often holds an IPC rejection only the renderer sees (no handler
+    registered, a clone failure), whose frames are Electron's `ipcRenderer` internals in every area. It is latched
+    per key under HMR, and has no Sentry import: `error-reporting.ts` registers its sink at init.
 
   Settings > Privacy names this data: an error's type, a fixed failure code and, for an interface
   crash, the names of the components it was in.

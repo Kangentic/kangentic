@@ -1714,8 +1714,8 @@ export async function autoSpawnForTask(
         await earlyAgent?.discard();
         clearSpawnProgress(context.mainWindow, fullTask.id);
       }
-    } catch (err) {
-      if (isAbortError(err)) {
+    } catch (error) {
+      if (isAbortError(error)) {
         // A suspend, reset, newer resume, or relocation took the task over.
         // Not a spawn failure: no counter, no Sentry report, no notice. And
         // no session cleanup, deliberately: executeSpawnAgent's last abort
@@ -1732,7 +1732,7 @@ export async function autoSpawnForTask(
         );
         return;
       }
-      console.error('[auto-spawn] Failed:', err);
+      console.error('[auto-spawn] Failed:', error);
       // The task row is scoped to the try, so re-read it here; its override
       // is the best approximation of the agent on this path.
       let failedAgent = 'default';
@@ -1743,7 +1743,7 @@ export async function autoSpawnForTask(
         // DB may be closed; keep the placeholder
       }
       trackEvent('spawn_failed', { agent: failedAgent, reason: 'auto_spawn' });
-      reportPreflightFailure({ cause: 'auto_spawn', error: err, agent: failedAgent, startPath: options.startPath ?? 'board', alreadyCounted: true });
+      reportPreflightFailure({ cause: 'auto_spawn', error, agent: failedAgent, startPath: options.startPath ?? 'board', alreadyCounted: true });
     } finally {
       releaseResumeController(task.id, controller);
     }

@@ -17,7 +17,7 @@
  * Each `area:op:name` reports once per run, at most 25 of them. Never throws.
  */
 
-import { diagnosticContextOf, errorNameOf, pathFreeCopy, type HandledErrorContexts } from '../../shared/handled-error-copy';
+import { errorNameOf, pathFreeCopy, type HandledErrorContexts } from '../../shared/handled-error-copy';
 import { isIpcRejectionMainSaw } from '../../shared/ipc-rejection';
 
 export type RendererFailureSink = (
@@ -75,7 +75,7 @@ export function reportRendererFailure(
     state.sink(
       pathFreeCopy(`${area}_${op}`, error),
       { source: 'renderer', area, op, error_name: name },
-      { ...diagnosticContextOf(error), ...contexts },
+      contexts,
       ['renderer', area, op, name],
     );
     return true;

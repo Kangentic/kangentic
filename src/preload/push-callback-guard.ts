@@ -11,7 +11,9 @@
  *
  * `guardPushCallbacks` wraps each function argument of each `on*` method, once,
  * before the API is exposed, so no call site needs its own try. The callback's
- * return value passes through; a throw goes to `onFailure` and stops there.
+ * return value passes through; a throw goes to `onFailure` and stops there. An
+ * `async` callback rejects instead of throwing, and that rejection goes to
+ * `onFailure` too, or it would be as invisible as the throw was.
  */
 
 /** Hears a push callback that threw, by the API method it was registered through. */
@@ -21,23 +23,36 @@ const PUSH_METHOD_NAME = /^on[A-Z]/;
 
 type AnyFunction = (...args: unknown[]) => unknown;
 
+function sendFailure(method: string, error: unknown, onFailure: PushCallbackFailureSink): void {
+  try {
+    onFailure(method, error);
+  } catch {
+    // report-ok: the sink is the report; its own throw must not escape into the push.
+  }
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return value !== null && (typeof value === 'object' || typeof value === 'function')
+    && typeof (value as { then?: unknown }).then === 'function';
+}
+
 function guardCallback(method: string, callback: AnyFunction, onFailure: PushCallbackFailureSink): AnyFunction {
-  return (...args: unknown[]) => {
+  return (...callbackArguments: unknown[]) => {
     try {
-      return callback(...args);
-    } catch (error) {
-      try {
-        onFailure(method, error);
-      } catch {
-        // report-ok: the sink is the report; its own throw must not escape into the push.
+      const result = callback(...callbackArguments);
+      if (isThenable(result)) {
+        result.then(undefined, (error: unknown) => sendFailure(method, error, onFailure));
       }
+      return result;
+    } catch (error) {
+      sendFailure(method, error, onFailure);
       return undefined;
     }
   };
 }
 
 function guardMethod(method: string, member: AnyFunction, owner: object, onFailure: PushCallbackFailureSink): AnyFunction {
-  return (...args: unknown[]) => member.apply(owner, args.map((argument) =>
+  return (...methodArguments: unknown[]) => member.apply(owner, methodArguments.map((argument) =>
     typeof argument === 'function' ? guardCallback(method, argument as AnyFunction, onFailure) : argument));
 }
 

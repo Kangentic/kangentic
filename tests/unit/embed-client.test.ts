@@ -10,11 +10,15 @@ import { EventEmitter } from 'node:events';
  * callers degrade to lexical-only, and the crash cap must disable the layer.
  */
 
-const { mockFork } = vi.hoisted(() => ({ mockFork: vi.fn() }));
+const { mockFork, mockSendHandledFailure } = vi.hoisted(() => ({ mockFork: vi.fn(), mockSendHandledFailure: vi.fn() }));
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => '/mock/app' },
   utilityProcess: { fork: mockFork },
+}));
+
+vi.mock('../../src/main/analytics/handled-report', () => ({
+  sendHandledFailure: mockSendHandledFailure,
 }));
 
 import { EmbedClient, resolveDeviceChain } from '../../src/main/retrieval/embedder/embed-client';
@@ -149,6 +153,42 @@ describe('EmbedClient', () => {
     child.emit('message', { type: 'error', id: 1 });
 
     await expect(promise).resolves.toBeNull();
+    client.dispose();
+  });
+
+  // The latch is module-level (once per run), so this is the only test here that
+  // sends an init error and it checks both halves in order.
+  it('reports a worker init failure once, with a fixed message and no worker text, and degrades to null', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      // No id: an init error (model load / backend), not a failed request.
+      child.emit('message', { type: 'error', message: 'cannot open C:\\Users\\dev\\models\\test-model' });
+      child.emit('message', { type: 'error', message: 'second init failure' });
+      await expect(promise).resolves.toBeNull();
+
+      expect(mockSendHandledFailure).toHaveBeenCalledTimes(1);
+      const [source, error, tags, contexts, fingerprint] = mockSendHandledFailure.mock.calls[0];
+      expect(source).toBe('embed_worker');
+      expect(error).toMatchObject({ name: 'EmbedWorkerInitError', message: 'The embedding worker could not initialize' });
+      expect(tags).toEqual({ stage: 'init' });
+      expect(contexts).toEqual({});
+      expect(fingerprint).toEqual(['embed-worker', 'init']);
+      client.dispose();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not report a failed request (an error with an id) as an init failure', async () => {
+    const client = new EmbedClient(TEST_MODEL);
+    const { promise, child } = await embedAfterReady(client, ['x']);
+    child.emit('message', { type: 'error', id: 1 });
+    await expect(promise).resolves.toBeNull();
+    // vi.clearAllMocks in beforeEach clears the earlier test's call, so any call here is this one's.
+    expect(mockSendHandledFailure).not.toHaveBeenCalled();
     client.dispose();
   });
 

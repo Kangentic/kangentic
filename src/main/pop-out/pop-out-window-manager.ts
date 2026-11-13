@@ -11,6 +11,9 @@ import { createChokepointReporter } from '../analytics/handled-report';
 
 /** A pop-out whose own page failed to load (`did-fail-load`), by kind and Chromium's code. */
 const popOutLoadReporter = createChokepointReporter('pop_out_load');
+
+/** Chromium's `ERR_ABORTED`: a load cancelled before it finished, not a failure of the page. */
+const CHROMIUM_ERR_ABORTED = -3;
 import { localeArgument } from '../i18n/main-i18n';
 
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
@@ -219,7 +222,10 @@ export class PopOutWindowManager {
     };
     win.once('ready-to-show', reveal);
     win.webContents.once('did-finish-load', reveal);
-    win.webContents.once('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    // `on`, not `once`: a subframe's failure or an aborted load (-3, the window closed
+    // mid-load or a dev reload superseding it) must not use up the main frame's report.
+    win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === CHROMIUM_ERR_ABORTED) return;
       console.error(`[pop-out] ${kind} failed to load ${validatedURL}: ${errorCode} ${errorDescription}`);
       // A packaging defect when it fires: the window's own page did not load.
       // The kind and Chromium's code only, never the URL.

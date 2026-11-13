@@ -21,7 +21,7 @@ vi.mock('@sentry/electron/renderer', () => ({
   captureException: mocks.captureException,
 }));
 
-import { initRendererErrorReporting, reportCaughtRenderError, reportHandledRendererError } from '../../src/renderer/error-reporting';
+import { componentNamesOf, initRendererErrorReporting, reportCaughtRenderError, reportHandledRendererError } from '../../src/renderer/error-reporting';
 import { reportRendererFailure, resetRendererFailureReports, setRendererFailureSink } from '../../src/renderer/utils/renderer-failure';
 import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
@@ -131,6 +131,26 @@ describe('reportCaughtRenderError (the root onCaughtError)', () => {
   });
 });
 
+describe('componentNamesOf', () => {
+  it('keeps the name of "at Foo (location)" and drops a line whose name is not an identifier', () => {
+    const stack = [
+      '',
+      '    at Foo (file:///C:/Users/dev/app/index.js:1:2)',
+      '    at <anonymous>',
+      '    at (http://localhost/x.js:1:2)',
+      '    at Bar.Inner (http://localhost/y.js:3:4)',
+    ].join('\n');
+    expect(componentNamesOf(stack)).toBe('Foo\nBar.Inner');
+  });
+
+  it('cuts the result to 4000 characters', () => {
+    const stack = Array.from({ length: 1000 }, (_, index) => `    at Component${index} (x.js:1:1)`).join('\n');
+    const result = componentNamesOf(stack);
+    expect(result.length).toBe(4000);
+    expect(result.startsWith('Component0\nComponent1\n')).toBe(true);
+  });
+});
+
 describe('reportRendererFailure', () => {
   beforeEach(() => {
     setRendererFailureSink(reportHandledRendererError);
@@ -167,6 +187,38 @@ describe('reportRendererFailure', () => {
     expect(reportRendererFailure('board', 'load', new DOMException('aborted', 'AbortError'))).toBe(false);
     expect(reportRendererFailure('board', 'load', new TypeError('Failed to fetch'))).toBe(false);
     expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it('stops at 25 distinct operations', () => {
+    let sent = 0;
+    for (let index = 0; index < 26; index += 1) {
+      if (reportRendererFailure('board', `op${index}`, new RangeError('x'))) sent += 1;
+    }
+    expect(sent).toBe(25);
+    expect(mocks.captureException).toHaveBeenCalledTimes(25);
+  });
+
+  it('skips a TypeError for a NetworkError or Load failed, and an error named AbortError', () => {
+    expect(reportRendererFailure('board', 'a', new TypeError('NetworkError when attempting to fetch resource.'))).toBe(false);
+    expect(reportRendererFailure('board', 'b', new TypeError('Load failed'))).toBe(false);
+    const aborted = new Error('The operation was aborted');
+    aborted.name = 'AbortError';
+    expect(reportRendererFailure('board', 'c', aborted)).toBe(false);
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it('hands the sink only the caller contexts, never the error message', () => {
+    const sink = vi.fn();
+    setRendererFailureSink(sink);
+    const error = new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')");
+
+    expect(reportRendererFailure('board', 'load', error)).toBe(true);
+    expect(reportRendererFailure('board', 'save', error, { stage: 'write' })).toBe(true);
+
+    expect(sink.mock.calls[0][2]).toEqual({});
+    expect(sink.mock.calls[1][2]).toEqual({ stage: 'write' });
+    expect(JSON.stringify(sink.mock.calls.map(([sent, tags, contexts, fingerprint]) => [sent.message, sent.stack, tags, contexts, fingerprint])))
+      .not.toContain('Acme');
   });
 
   it('still reports a rejection that never reached a handler, which main cannot see', () => {

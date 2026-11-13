@@ -26,22 +26,29 @@ new report from carrying what a user wrote. The design and every source: [docs/t
   error)` (`src/renderer/utils/renderer-failure.ts`). A new named reporter function joins
   `REPORTER_FUNCTIONS` in `tests/unit/helpers/error-reporting-scan.ts`.
 - **The message is fixed: `Handled <source> failure: <ErrorName>`, with the original frames**
-  (`pathFreeCopy`). Never send `error.message`. A `TypeError`, `RangeError` or `ReferenceError`
-  message may go in contexts, cut to 200 characters (`diagnosticContextOf`); a `SyntaxError`'s
-  never goes anywhere, since `JSON.parse` quotes the input.
+  (`pathFreeCopy`). Never send `error.message`, in the event or in contexts, a runtime error's
+  included: V8 quotes the property it could not read, Node's `ERR_INVALID_ARG_*` quotes the value
+  it got, and `JSON.parse` quotes its input.
 - **Tags are short enums.** A stage, a cause, an agent name, an errno. Never a task title, a path,
   a channel's argument, a column or automation name, a URL host (an artifact domain collapses its
   tenant label: `*.sharepoint.com`), or free text.
 - **Skip what is not a defect.** `isExpectedFailure` covers shutdown, aborts,
   `UserConfigurationError` and its `RefusalError`, the named expected classes, and network
   failures. A refusal main throws to the renderer is a `RefusalError`, never a plain `Error`.
+  Never wrap a caught error you did not classify in a `RefusalError`: the wrapper is skipped
+  before its `cause` is read, so a `TypeError` inside goes unreported. Wrap it in a plain `Error`
+  with `cause`, which `isExpectedFailure` judges by what it wraps.
 - **Fingerprint environment failures, leave code defects to stack grouping.** An errno or
   `SQLITE_` failure groups as `['handled-env', name, code]`. A code defect gets no custom
   fingerprint: Sentry groups it on its in-app frames. Never put an IPC channel or a tool name in
-  a fingerprint. The one exception is a source whose frames cannot split an issue: a preload push
-  callback's error crosses the context bridge with only the preload's frames, so it groups by
-  API method (`['preload-callback', method]`).
-- **Latch once per key per run, at most about 25 keys per chokepoint.** The reporter does it.
+  a fingerprint. Two sources are exceptions, because their frames cannot split an issue. A preload
+  push callback's error crosses the context bridge with only the preload's frames, so it groups by
+  API method (`['preload-callback', method]`). A renderer catch often holds an IPC rejection only
+  the renderer sees (no handler registered, a clone failure), whose frames are Electron's
+  `ipcRenderer` internals in every area, so it groups by area and operation
+  (`['renderer', area, op, name]`).
+- **Latch once per key per run, at most about 25 keys per chokepoint.** The reporter does it. The
+  IPC wrap keeps 100, since the renderer drops its own copy of a rejection main saw.
 - **Dedupe through `markReported(original)`.** A reporter marks the error it was handed, and a
   wrapper that sees it again (the IPC wrap, a caller's catch) skips it through `isReported`,
   which also checks one level of `cause`. Never keep a set of the copies that were sent.
@@ -71,7 +78,10 @@ new report from carrying what a user wrote. The design and every source: [docs/t
 - **Review:** `/code-review` judges what a scan cannot: whether a `report-ok:` reason is true,
   whether a tag or context can carry user text, and whether a new data class is disclosed.
 - **Gap:** an error handed to `.then(onFulfilled, onRejected)`, or passed on as a value
-  (`onFailed(error)`), is out of the scan's reach.
+  (`onFailed(error)`), is out of the scan's reach. So is a catch that throws or reports on one
+  branch and swallows on another: the scan passes a catch whose body throws or reports anywhere,
+  because `if (isExpected(error)) return; throw error;` is the shape most catches rightly take.
+  Whether the other branches are expected outcomes is review's call.
 
 ## Scope
 

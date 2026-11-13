@@ -30,6 +30,7 @@ import {
   logLaunchStep,
   preflightTagsOf,
   reportLaunchFailure,
+  reportAgentSessionIdNotCaptured,
   reportLaunchRecovered,
   reportPreflightFailure,
   reportPtyPortFailure,
@@ -697,6 +698,48 @@ describe('reportPtyPortFailure', () => {
   it('reports once per run, so a window that keeps asking cannot fill the quota', () => {
     reportPtyPortFailure();
     reportPtyPortFailure();
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('reportAgentSessionIdNotCaptured', () => {
+  it('sends a fixed message with the agent and its CLI version as tags, grouped per agent', () => {
+    reportAgentSessionIdNotCaptured(session({ agentName: 'codex', agentCliVersion: '0.163.0 (Codex CLI)' }));
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [error, eventTags, contexts, fingerprint] = reportHandledError.mock.calls[0];
+    expect((error as Error).name).toBe('AgentSessionIdNotCapturedError');
+    expect((error as Error).message).toBe('Agent session id not captured (codex)');
+    expect(eventTags).toEqual({ source: 'agent_session_id', agent: 'codex', agent_cli_version: '0.163.0' });
+    expect(contexts).toEqual({});
+    expect(fingerprint).toEqual(['agent-session-id-not-captured', 'codex']);
+  });
+
+  it('keeps a path or an unrecognized name out of the tags', () => {
+    reportAgentSessionIdNotCaptured(session({ agentName: '/Users/dev/agent', agentCliVersion: '/Users/dev/bin/agent' }));
+
+    const [error, eventTags, , fingerprint] = reportHandledError.mock.calls[0];
+    expect(eventTags).toEqual({ source: 'agent_session_id', agent: 'other', agent_cli_version: 'unknown' });
+    expect(fingerprint).toEqual(['agent-session-id-not-captured', 'other']);
+    expect(JSON.stringify([(error as Error).message, eventTags])).not.toContain('/Users/dev');
+  });
+
+  it('reports once per agent per run, and a different agent still reports', () => {
+    reportAgentSessionIdNotCaptured(session({ agentName: 'claude' }));
+    reportAgentSessionIdNotCaptured(session({ agentName: 'claude', agentCliVersion: '9.9.9' }));
+    reportAgentSessionIdNotCaptured(session({ agentName: 'codex' }));
+
+    expect(reportHandledError).toHaveBeenCalledTimes(2);
+    expect(reportHandledError.mock.calls.map((call) => call[1].agent)).toEqual(['claude', 'codex']);
+  });
+
+  it('sends nothing once the quit has started, and does not spend the agent\'s one report on it', () => {
+    shuttingDown.value = true;
+    reportAgentSessionIdNotCaptured(session());
+    expect(reportHandledError).not.toHaveBeenCalled();
+
+    shuttingDown.value = false;
+    reportAgentSessionIdNotCaptured(session());
     expect(reportHandledError).toHaveBeenCalledTimes(1);
   });
 });

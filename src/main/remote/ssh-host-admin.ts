@@ -440,6 +440,7 @@ export class SshHostAdmin {
   async clearHostData(hostId: string): Promise<void> {
     const host = this.requireHost(hostId);
     const failed: string[] = [];
+    let firstFailure: unknown;
     for (const project of this.deps.projects.listOnHost(hostId)) {
       try {
         await this.deps.removeProject(project);
@@ -448,6 +449,7 @@ export class SshHostAdmin {
         const reason = error instanceof Error ? error.message : String(error);
         this.deps.log?.(`[remote] could not clear ${project.name}: ${reason}`);
         failed.push(`${project.name}: ${reason}`);
+        if (firstFailure === undefined) firstFailure = error;
       }
     }
     if (failed.length === 0) {
@@ -457,7 +459,8 @@ export class SshHostAdmin {
       });
     }
     this.deps.projectsChanged?.();
-    if (failed.length > 0) throw new RefusalError(`Could not clear ${failed.join('; ')}`);
+    // A local delete that failed is this computer's database or disk, not the user's request turned down.
+    if (failed.length > 0) throw new Error(`Could not clear ${failed.join('; ')}`, { cause: firstFailure });
   }
 
   /** Whether a folder exists on a host, as the host's helper says: only it can. A link that is down is an error, not "missing". */
@@ -495,7 +498,8 @@ export class SshHostAdmin {
         timeoutMs: LIST_DIRECTORIES_TIMEOUT_MS,
       });
     } catch (error) {
-      throw new RefusalError(`Could not list ${resolved} on the host: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      // A plain Error with `cause`: an unreachable host is judged by its cause and skipped, a defect still reports.
+      throw new Error(`Could not list ${resolved} on the host: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
     if (result.error) throw new RefusalError(`Could not list ${resolved} on the host: ${result.error}`);
     if (result.timedOut) throw new RefusalError(`The host did not list ${resolved} in time.`);

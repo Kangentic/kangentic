@@ -3,25 +3,22 @@
  * (`src/main/analytics/handled-report.ts`) and the renderer
  * (`src/renderer/error-reporting.ts`), so both send the same shape.
  *
- * An error's message is never sent. In this codebase it holds paths, branch
- * names, task and workflow titles, org and repo names, and search queries. The
- * copy is `Handled <source> failure: <Name>`, keeps the name, and keeps the
- * original frames. A `TypeError`, `RangeError` or `ReferenceError` message is the
- * runtime's own sentence, so it may go in `contexts`, paths removed and cut to 200
- * characters. Never a `SyntaxError`'s: `JSON.parse` quotes its input.
+ * An error's message is never sent, a runtime error's included. In this codebase
+ * it holds paths, branch names, task and workflow titles, org and repo names, and
+ * search queries, and a runtime message quotes them too: V8 names the property it
+ * could not read (`reading 'Fix Acme billing'`), Node's `ERR_INVALID_ARG_*` quotes
+ * the value it got, and a failed URL parse prints the URL. The copy is
+ * `Handled <source> failure: <Name>`, keeps the name, and keeps the original
+ * frames, which is what Settings > Privacy promises.
  */
-
-import { redactPaths } from './sentry-breadcrumbs';
 
 /** A class name: `TypeError`, `HttpError`. A slug or a sentence cannot pass. */
 const ERROR_NAME = /^[A-Za-z_$][\w$]{0,63}$/;
 /** An errno or code constant: `ENOENT`, `SQLITE_BUSY`, `ERR_STREAM_DESTROYED`. */
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
-/** The longest built-in error message kept in `contexts`. */
-export const MAX_DIAGNOSTIC_MESSAGE_CHARACTERS = 200;
 
-/** Built-in classes whose message is a fixed sentence the runtime wrote, never user data. */
-const DIAGNOSTIC_MESSAGE_NAMES: ReadonlySet<string> = new Set(['TypeError', 'RangeError', 'ReferenceError']);
+/** Built-in classes the runtime raises for a code defect, whatever the message says. */
+const RUNTIME_DEFECT_NAMES: ReadonlySet<string> = new Set(['TypeError', 'RangeError', 'ReferenceError']);
 
 /** Named context blocks, the shape both processes' reporters take. */
 export type HandledErrorContexts = Record<string, Record<string, unknown>>;
@@ -38,9 +35,9 @@ export function errorCodeOf(error: unknown): string | undefined {
   return typeof code === 'string' && ERROR_CODE.test(code) ? code : undefined;
 }
 
-/** True for a runtime error whose message may go in `contexts`. */
-export function hasDiagnosticMessage(error: unknown): boolean {
-  return error instanceof Error && DIAGNOSTIC_MESSAGE_NAMES.has(error.name);
+/** True for an error the runtime raised for a code defect: a `TypeError`, `RangeError` or `ReferenceError`. */
+export function isRuntimeDefect(error: unknown): boolean {
+  return error instanceof Error && RUNTIME_DEFECT_NAMES.has(error.name);
 }
 
 /** The original stack's frames, from the first `at` line, or '' when it has none. */
@@ -63,10 +60,4 @@ export function pathFreeCopy(source: string, error: unknown): Error {
   const frames = framesOf(error instanceof Error ? error.stack : undefined);
   copy.stack = `${name}: ${copy.message}${frames || framesOf(copy.stack)}`;
   return copy;
-}
-
-/** The runtime's own message for a built-in error, as a context, or nothing. */
-export function diagnosticContextOf(error: unknown): HandledErrorContexts {
-  if (!(error instanceof Error) || !hasDiagnosticMessage(error)) return {};
-  return { error_detail: { message: redactPaths(error.message).slice(0, MAX_DIAGNOSTIC_MESSAGE_CHARACTERS) } };
 }
