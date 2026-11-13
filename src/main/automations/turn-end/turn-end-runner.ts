@@ -6,7 +6,7 @@ import type { IpcContext } from '../../ipc/ipc-context';
 import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
 import { isTurnSettled } from '../../pty/turn-settled';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { getProjectDb } from '../../db/database';
+import { getOpenProjectDb, getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import { planExitTargetFor } from '../../ipc/helpers/plan-exit-target';
 import { createTransitionEngine, resolveInjectionVerifier } from '../../ipc/helpers/agent-spawn';
@@ -15,7 +15,7 @@ import { showAutomationNotification } from '../shared/show-automation-notificati
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { frequencyLimitReason } from '../automation-runner';
-import { hasCondition, hasFinalLine, needsAgentReply } from '../row-guards';
+import { hasCondition, hasFinalLine, hasUserTextMatch, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { heldMoveReason, runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from '../../workflows/workflow-step';
@@ -37,7 +37,7 @@ import {
 import { clearHeldMove, getHeldMove, getRecoveryEntry, setHeldMove, type HeldMove } from '../../workflows/workflow-recovery-state';
 import { needsOwnerQuestion } from '../../../shared/workflow-needs-owner';
 import { noChangesReason } from '../../../shared/workflow-no-changes';
-import { finalMatchLine } from '../../../shared/final-line-match';
+import { finalMatchLine, type UserMessageRead } from '../../../shared/final-line-match';
 import { setWorkflowCatchUp } from '../../workflows/workflow-catch-up';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
@@ -46,7 +46,8 @@ import { refreshStoppedMark } from '../stopped-mark';
 import { judgeColumnStop, NEEDS_A_PERSON_CHECK_ID, NEEDS_A_PERSON_CONDITION } from './column-stop';
 import { deliverMessageToSession } from './deliver-message';
 import { moveTaskFromRow } from './move-from-row';
-import { readSessionFinalReply, tryReadSessionFinalReply } from './final-reply-reader';
+import { readSessionFinalReply, readTurnUserMessage, sessionReportsUserMessages, tryReadSessionFinalReply } from './final-reply-reader';
+import { forgetTypedMessageSession } from './typed-message-ledger';
 import { trackTurnEndGroup } from './turn-end-passes';
 import { isSessionInOwnCall } from '../../ipc/handlers/own-call-turn-wait';
 import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle, noteRecapSessionPrompt, recapKindOf } from './recap-turns';
@@ -345,6 +346,8 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     forgetRecapSession(sessionId, false);
     forgetAbandonedTurnSession(sessionId);
     heldPassesServed.delete(sessionId);
+    // No turn of a removed session ends again, so its unreadable mark has nothing left to guard.
+    forgetTypedMessageSession(sessionId);
   });
 }
 
@@ -735,6 +738,13 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
       replyRead ??= readAgentReply(payload, sessionRepo);
       return replyRead;
     };
+    // The user's last message in the turn, read once and only when a row needs
+    // it (#1078). Fails closed: unreadable unless read exactly.
+    let userMessageRead: Promise<UserMessageRead> | null = null;
+    const readUserMessage = (): Promise<UserMessageRead> => {
+      userMessageRead ??= readTurnUserMessage(payload, sessionRepo, getOpenProjectDb(payload.projectId));
+      return userMessageRead;
+    };
 
     // The agent's word that the task needs no change is read before the rows: a
     // row with no Text match would otherwise message the agent, and a message
@@ -743,7 +753,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
     const endsTaskUnchanged = stepRuns && noChangesReason(await readReply()) !== null;
     const rowsOutcome = pending.length > 0 && !endsTaskUnchanged
       ? await runRows(context, payload, {
-        task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply,
+        task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply, readUserMessage,
         acceptHeld: held,
         holdMovesForBackgroundWork: stepApplies,
       })
@@ -794,6 +804,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
         runs,
         visitStartedAt,
         readReply,
+        readUserMessage,
         check: (conditionRows, askNeedsAPerson) => checkColumnStop(context, payload, subject, readReply(), conditionRows, askNeedsAPerson, controller.signal),
         stillCurrent: () => isTurnStillCurrent(context, payload, column.id) && !controller.signal.aborted,
       });
@@ -905,6 +916,8 @@ async function settleHeldMove(
         visitStartedAt: repos.taskMoves.visitStartedAt(task.id, column.id),
         controller,
         readReply: async () => reply,
+        // A released row's Text match passed when it was held, so nothing reads this.
+        readUserMessage: async () => ({ readable: false }),
         acceptHeld,
         holdMovesForBackgroundWork: true,
         releaseHeldMoves: new Set([row.id]),
@@ -1033,6 +1046,11 @@ async function runRows(
     visitStartedAt: string | null;
     controller: AbortController;
     readReply: () => Promise<string | null>;
+    /**
+     * The user's last message in the turn, for a Text match on it (#1078).
+     * Read only when a pending row needs it. Unreadable fails the row closed.
+     */
+    readUserMessage: () => Promise<UserMessageRead>;
     /** A held turn end's rows: the session may still be held by the background work its turn left. */
     acceptHeld?: boolean;
     /** A running workflow's task: a move waits while background work its agent left is open. */
@@ -1061,6 +1079,14 @@ async function runRows(
 
   const needsReply = pending.some(needsAgentReply);
   const agentReply = needsReply ? await input.readReply() : null;
+  // A Text match on the user's message reads their last message instead. Left
+  // undefined when no pending row needs it; the runner then fails such a row
+  // closed, which cannot happen here since none is pending.
+  const readsUserMessage = pending.some(hasUserTextMatch);
+  const userMessage = readsUserMessage ? await input.readUserMessage() : undefined;
+  // The agent's own answer to "can it report the user's messages", so a row on
+  // them is refused with `canColumnRun`'s reason, as the board shows it.
+  const reportsUserMessages = readsUserMessage ? sessionReportsUserMessages(payload.sessionId, sessionRepo) : undefined;
 
   // Conditions: one paid check for every pending row whose Condition an agent
   // evaluates. A Text match row never joins it: the runner matches it in code
@@ -1122,6 +1148,8 @@ async function runRows(
     signal: controller.signal,
     onlyIds: new Set(runnable.map((row) => row.id)),
     agentReply,
+    userMessage,
+    reportsUserMessages,
     conditionAnswers: answers,
     conditionUnavailableReason,
     conditionUnavailableCallId,

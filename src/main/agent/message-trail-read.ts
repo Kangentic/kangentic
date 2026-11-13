@@ -6,7 +6,8 @@ import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import { placeFromStored, type CliPlace } from './shared/cli-target';
 import { assistantMessagePreviews } from './shared/message-preview';
 import { getCachedTranscript } from './transcript-cache';
-import { finalAgentReply, type AgentReply } from './shared/agent-reply';
+import { finalAgentReply, turnUserMessages, type AgentReply } from './shared/agent-reply';
+import { canReadTurnUserMessages } from './shared/transcript-reader-capability';
 import type { TranscriptAnchor } from './shared/transcript-anchor';
 import {
   MESSAGE_TRAIL_ENTRY_MAX_CHARS,
@@ -116,6 +117,14 @@ const FINAL_REPLY_TAIL_BYTES = 1024 * 1024;
 const FINAL_REPLY_MAX_WINDOWS = 8;
 
 /**
+ * The most windows a read of a turn's user messages takes (8 MB at 256 KB a
+ * window), from the turn's anchor. A turn larger than that is unreadable and
+ * its row does not run: a Design turn that render-checks a canvas carries its
+ * screenshots, so this is set well past the final reply's bound.
+ */
+export const TURN_USER_MESSAGES_MAX_WINDOWS = 32;
+
+/**
  * The session's final reply (`finalAgentReply`) from a bounded tail of its
  * transcript, for `{{agentReply}}`. Runs in the retrieval worker
  * (`transcript.finalReply`). Null for an agent with no transcript reader.
@@ -155,6 +164,58 @@ export async function readFinalReply(
     return replyOf(cached.entries);
   }
   return null;
+}
+
+/**
+ * The user's messages in the turn that began at `since`, oldest first, for a
+ * Text match on the user's message (#1078). Runs in the retrieval worker
+ * (`transcript.turnUserMessages`).
+ *
+ * Fails closed: null (unreadable) unless every condition below holds, because
+ * reading too much could hand an earlier turn's "signed off" to this one, and
+ * reading too little could miss the message that overrules it.
+ *
+ * - The adapter has a windowed reader (`canReadTurnUserMessages`).
+ * - The turn has an anchor in this agent session's history file. A turn with
+ *   none (a fresh spawn's first turn, Run again) is unreadable: its only
+ *   user message is Kangentic's opening anyway.
+ * - The anchor lies within the file, and the read reached the end of it
+ *   without the file being replaced under it.
+ * - The adapter's queued-input read succeeded. An adapter with none is
+ *   unreadable (`canReadTurnUserMessages`): a message typed mid-turn could be
+ *   the one that overrules the turn's first.
+ *
+ * Kangentic's own typed text is still in the result; the caller drops it.
+ */
+export async function readTurnUserMessages(
+  adapter: MessageTrailAdapter & Pick<AgentAdapter, 'readQueuedUserMessages'>,
+  facts: MessageTrailReadFacts,
+  since: TranscriptAnchor | null,
+  fileSize: (filePath: string) => Promise<number> = statSize,
+): Promise<string[] | null> {
+  const parseWindow = adapter.parseTranscriptWindow;
+  const locateFile = adapter.locateSessionHistoryFile;
+  const readQueued = adapter.readQueuedUserMessages;
+  if (!parseWindow || !locateFile || !readQueued || !canReadTurnUserMessages(adapter)) return null;
+  if (since === null || since.agentSessionId !== facts.agentSessionId) return null;
+  const place = placeFromStored(facts.cliTarget ?? null);
+  // From the anchor itself, never a clamped tail: the turn's first user message
+  // sits right after the anchor, and a turn past the tail (screenshots in a
+  // Design turn) would otherwise lose it.
+  const filePath = await locateFile.call(adapter, facts.agentSessionId, facts.cwd, place, facts.transcriptPath ?? null);
+  if (!filePath) return null;
+  const size = await fileSize(filePath);
+  if (since.byteOffset > size) return null;
+  const start = since.byteOffset;
+  // `tailBytes` only shapes a re-anchored read, which is refused below.
+  const read = await readWindows(adapter, parseWindow, locateFile, facts, place, start, fileSize, {
+    tailBytes: FINAL_REPLY_TAIL_BYTES,
+    maxWindows: TURN_USER_MESSAGES_MAX_WINDOWS,
+  });
+  if (!read.reachedEnd || read.reanchored) return null;
+  const queued = await readQueued.call(adapter, facts.agentSessionId, facts.cwd, start, place, facts.transcriptPath ?? null);
+  if (queued === null) return null;
+  return timeSyncWork('transcript:turn-user-messages', () => turnUserMessages(read.entries, queued));
 }
 
 /**
@@ -205,24 +266,27 @@ async function readWindows(
   startCursor: number | null,
   fileSize: (filePath: string) => Promise<number>,
   bounds: { tailBytes: number; maxWindows: number },
-): Promise<{ entries: TranscriptEntry[]; cursor: number | null }> {
+): Promise<{ entries: TranscriptEntry[]; cursor: number | null; reachedEnd: boolean; reanchored: boolean }> {
   const { agentSessionId, cwd } = facts;
   const reportedPath = facts.transcriptPath ?? null;
   let cursor: number;
   if (startCursor === null) {
     const filePath = await locateFile.call(adapter, agentSessionId, cwd, place, reportedPath);
-    if (!filePath) return { entries: [], cursor: null };
+    if (!filePath) return { entries: [], cursor: null, reachedEnd: false, reanchored: false };
     const size = await fileSize(filePath);
     cursor = Math.max(0, size - bounds.tailBytes);
   } else {
     cursor = startCursor;
   }
   const collected: TranscriptEntry[] = [];
+  let reachedEnd = false;
+  let reanchored = false;
   for (let windowIndex = 0; windowIndex < bounds.maxWindows; windowIndex += 1) {
     const window = await parseWindow.call(adapter, agentSessionId, cwd, cursor, MESSAGE_TRAIL_WINDOW_BYTES, undefined, place, reportedPath);
     if (window.totalBytes < cursor) {
       // The file shrank under the cursor (a rotate, or a reused id): re-anchor at the new tail.
       cursor = Math.max(0, window.totalBytes - bounds.tailBytes);
+      reanchored = true;
       continue;
     }
     collected.push(...window.entries);
@@ -233,10 +297,11 @@ async function readWindows(
       // byte makes the next read's drop consume exactly the newline the
       // last record ended with, instead of the whole first appended record.
       cursor = Math.max(0, window.nextByteOffset - 1);
+      reachedEnd = true;
       break;
     }
     if (window.nextByteOffset <= cursor) break;
     cursor = window.nextByteOffset;
   }
-  return { entries: collected, cursor };
+  return { entries: collected, cursor, reachedEnd, reanchored };
 }

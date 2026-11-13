@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ko\n"
 
+#: src/shared/final-line-match.ts
+msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
+msgstr ""
+
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr ""
@@ -306,6 +310,10 @@ msgstr "조건: {condition}인 경우에만 실행됩니다."
 msgid "Condition: only if the last line {rule}."
 msgstr ""
 
+#: src/shared/automation-describe.ts
+msgid "Condition: only if your message {rule}."
+msgstr ""
+
 #: src/shared/keybindings.ts
 #, fuzzy
 msgctxt "hotkey"
@@ -597,6 +605,10 @@ msgstr "기본 프로젝트 체크아웃 경로. 작업에 작업 트리가 있�
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
 msgstr "수동, Kangentic이 {agentName}의 계획을 승인할 수 없기 때문입니다."
 
+#: src/shared/final-line-match.ts
+msgid "Matching a message runs on agent turn end only."
+msgstr ""
+
 #: src/shared/keybindings.ts
 #, fuzzy
 msgctxt "hotkey"
@@ -831,6 +843,14 @@ msgstr ""
 
 #: src/shared/automation-describe.ts
 msgid "Only if the last line {rule}."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "only if your message {rule}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Only if your message {rule}."
 msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
@@ -1338,11 +1358,6 @@ msgstr "작업 UUID."
 msgid "Terminal names"
 msgstr "터미널 이름"
 
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr "텍스트 일치는 에이전트의 마지막 메시지를 읽으므로 에이전트 턴이 끝날 때만 실행됩니다."
-
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
@@ -1416,6 +1431,10 @@ msgstr "작업의 레이블(쉼표로 구분)."
 #, fuzzy
 msgid "This column's agent can't report when it finishes a turn."
 msgstr "이 열의 에이전트는 턴 완료를 보고할 수 없습니다."
+
+#: src/shared/automation-manifest.ts
+msgid "This column's agent doesn't report the messages you send."
+msgstr ""
 
 #: src/shared/session-resume-eligibility.ts
 #, fuzzy

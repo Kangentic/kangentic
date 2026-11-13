@@ -316,8 +316,11 @@ function serializeGroup(
       // One Condition kind per row, written as the dialog's card holds it: the
       // kind inside `condition`. One pattern stays a string, as a reader expects
       // in a diff; several are a list. The old `finalLine` key is never written.
+      // A Text match on the user's message takes the long form, which says so
+      // (#1078); the agent's line keeps the short form.
       const text = textMatchFileValue(automation.final_line);
-      if (text !== null) row.condition = { text };
+      if (text !== null && automation.text_match_source === 'user') row.condition = { text: { from: 'user', patterns: text } };
+      else if (text !== null) row.condition = { text };
       else if (automation.condition) row.condition = { agent: automation.condition };
       if (automation.max_runs !== null) row.maxRuns = automation.max_runs;
 

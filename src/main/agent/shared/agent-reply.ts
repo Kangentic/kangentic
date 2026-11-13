@@ -26,9 +26,14 @@ export interface AgentReply {
   ts: number;
 }
 
+/** Whether a user-side text is a background job's completion notice, never a person's message. */
+export function isTaskNotificationText(text: string): boolean {
+  return text.trimStart().startsWith('<task-notification>');
+}
+
 /** A user entry that starts a turn of the user's, as opposed to a background job's. */
 function isRealPrompt(entry: TranscriptEntry): boolean {
-  if (entry.kind === 'user') return !entry.text.trimStart().startsWith('<task-notification>');
+  if (entry.kind === 'user') return !isTaskNotificationText(entry.text);
   if (entry.kind === 'system') return entry.subtype === 'command' || entry.subtype === 'session_boundary';
   return false;
 }
@@ -39,6 +44,36 @@ function textOf(entry: TranscriptEntry): string {
     .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
     .map((block) => block.text)
     .join('\n\n');
+}
+
+/**
+ * The user's messages in one turn, oldest first: every user entry that starts
+ * a turn of theirs (`isRealPrompt`, so a background job's
+ * `<task-notification>` is not one), plus the messages they typed while the
+ * agent was mid-turn when the agent records those apart (`queued`), merged by
+ * time. A tool result is never a message. `entries` must be the turn's own
+ * (a read from its `TranscriptAnchor`); this does not cut an earlier turn off.
+ *
+ * Kangentic's own typed text is still in here: the transcript cannot tell it
+ * from a person's. The caller drops it (`typed-message-ledger.ts`).
+ */
+export function turnUserMessages(
+  entries: ReadonlyArray<TranscriptEntry>,
+  queued: ReadonlyArray<{ text: string; ts: number }> = [],
+): string[] {
+  const messages: Array<{ text: string; ts: number; order: number }> = [];
+  for (const entry of entries) {
+    if (entry.kind !== 'user' || !isRealPrompt(entry)) continue;
+    messages.push({ text: entry.text, ts: entry.ts, order: messages.length });
+  }
+  for (const message of queued) {
+    // An adapter's reader filters these too; checked here so no adapter can let one through.
+    if (isTaskNotificationText(message.text)) continue;
+    messages.push({ text: message.text, ts: message.ts, order: messages.length });
+  }
+  // Stable: two messages stamped in the same millisecond keep their read order.
+  messages.sort((left, right) => (left.ts - right.ts) || (left.order - right.order));
+  return messages.map((message) => message.text);
 }
 
 export function finalAgentReply(entries: ReadonlyArray<TranscriptEntry>): AgentReply | null {

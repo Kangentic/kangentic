@@ -377,7 +377,7 @@ describe('saving', () => {
   describe('the Condition kinds a Save sends', () => {
     it('sends a turn-end Text match trimmed, and drops the prose a row held before it', () => {
       const row = draft({ trigger: 'turn_end', condition: 'The review is clean', final_line: '  Verdict: Ready  ' });
-      expect(draftConditionKinds(row)).toEqual({ condition: null, final_line: 'Verdict: Ready' });
+      expect(draftConditionKinds(row)).toEqual({ condition: null, final_line: 'Verdict: Ready', text_match_source: 'agent' });
       expect(toWriteInput(row)).toMatchObject({ condition: null, final_line: 'Verdict: Ready' });
     });
 
@@ -385,13 +385,24 @@ describe('saving', () => {
       for (const trigger of ['enter', 'exit'] as const) {
         const row = draft({ trigger, condition: 'Tests pass', final_line: 'Verdict: Ready' });
         expect(toWriteInput(row)).toMatchObject({ condition: 'Tests pass', final_line: null });
-        expect(draftConditionKinds({ trigger, condition: null, final_line: 'Verdict: Ready' })).toEqual({ condition: null, final_line: null });
+        expect(draftConditionKinds({ trigger, condition: null, final_line: 'Verdict: Ready' })).toEqual({ condition: null, final_line: null, text_match_source: 'agent' });
       }
     });
 
     it('reads a blank Text match as none, so the prose stands', () => {
       expect(draftConditionKinds({ trigger: 'turn_end', condition: 'Tests pass', final_line: '   ' }))
-        .toEqual({ condition: 'Tests pass', final_line: null });
+        .toEqual({ condition: 'Tests pass', final_line: null, text_match_source: 'agent' });
+    });
+
+    // #1078: the tab picked rides the save, a copy, and the runnability answer.
+    it('saves and copies a Text match on the user\'s message, and blocks it where the agent cannot report one', () => {
+      const row = draft({ trigger: 'turn_end', final_line: '*signed off*', text_match_source: 'user' });
+      expect(toWriteInput(row)).toMatchObject({ final_line: '*signed off*', text_match_source: 'user' });
+      expect(copyAutomation(row, 'turn_end', []).text_match_source).toBe('user');
+      const column = { auto_spawn: true, role: null };
+      expect(canRunRow(row, { ...column, reportsUserMessages: false }).ok).toBe(false);
+      expect(canRunRow(row, { ...column, reportsUserMessages: true }).ok).toBe(true);
+      expect(canRunRow({ ...row, text_match_source: 'agent' }, { ...column, reportsUserMessages: false }).ok).toBe(true);
     });
 
     it('sees a Text match change as dirty, and a Text match parked off a turn end as no change', () => {

@@ -52,6 +52,7 @@ const AUTOMATION_ROW_SCHEMA = z.object({
     + '- { "agent": "the review found work the implementer can do" }: Agent evaluation, a sentence the Automation agent judges before the row runs. Needs an Automation agent set up in Settings > Workflows.\n'
     + '- { "text": "Ready for *" } or { "text": ["Ready for *", "!Ready for review"] }: Text match, checked in code with no agent call, against the last line the agent writes when its turn ends. "turn_end" rows only. Any case, punctuation and markdown ignored; * matches any text, and without one a pattern must match the whole line; a leading ! means not. The row runs when the line matches any plain pattern and no ! pattern; with only ! patterns, on any line but those. '
     + `Up to ${TEXT_MATCH_MAX_PATTERNS} patterns of ${TEXT_MATCH_MAX_PATTERN_LENGTH} characters.\n`
+    + '- { "text": { "from": "user", "patterns": ["*signed off*", "!*not signed off*"] } }: Text match on the user\'s last message in the turn instead of the agent\'s line, same patterns. Messages Kangentic typed never count. A forward row of this kind makes the column a person\'s gate: the agent never moves the card out of it. "from": "agent" is the same as the short form.\n'
     + 'A plain string is still read as { "agent": ... }.',
   ),
   finalLine: z.string().max(TEXT_MATCH_MAX_PATTERN_LENGTH).nullable().optional().describe('Legacy: the old key for condition: { "text": ... }, one pattern, a leading ! ignored as it was then. Prefer condition.text. Give this or condition, not both.'),

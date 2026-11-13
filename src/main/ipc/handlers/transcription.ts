@@ -163,7 +163,8 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
       const erase = context.sessionManager.getPromptEndKeys(sessionId) + deletes;
       if (erase.length > 0) context.sessionManager.write(sessionId, erase, 'user');
       try {
-        await context.terminalSubmit.submitContent(sessionId, sanitized, { source: 'dictation' });
+        // The person's own dictated words, not Kangentic's (#1078).
+        await context.terminalSubmit.submitContent(sessionId, sanitized, { source: 'dictation', origin: 'person' });
         return true;
       } catch {
         return false;

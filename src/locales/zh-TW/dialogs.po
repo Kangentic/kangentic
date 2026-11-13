@@ -394,6 +394,10 @@ msgstr "代理執行時間"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "代理：{agentOverrideLabel}"
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Agent's message"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "All columns"
 msgstr "所有欄"
@@ -1542,6 +1546,10 @@ msgstr "標示為已檢視"
 msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
 msgstr ""
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Matches your last message in the turn, with * and ! supported."
+msgstr ""
+
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"
 msgstr "最大化對話方塊"
@@ -2650,7 +2658,6 @@ msgctxt "file type"
 msgid "Text File"
 msgstr "文字檔案"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match"
 msgstr "文字比對"
@@ -3045,3 +3052,7 @@ msgstr "你的看板設定檔變更將被捨棄。"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Your column order changes will be discarded."
 msgstr "你的欄順序變更將被捨棄。"
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Your message"
+msgstr ""

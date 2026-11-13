@@ -1102,8 +1102,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         // surface. Every group together: the rail says how much happens here,
         // and the groups on the column page say when.
         automationCount: (() => {
-          const reportsTurnEnd = agentList.find((agent) => agent.name === (overrideName ?? projectDefaultAgent))?.reportsTurnEnd;
-          const counts = runnableAutomationCounts(automationDrafts[id] ?? [], { ...laneDraft, reportsTurnEnd });
+          const laneAgent = agentList.find((agent) => agent.name === (overrideName ?? projectDefaultAgent));
+          const counts = runnableAutomationCounts(automationDrafts[id] ?? [], {
+            ...laneDraft,
+            reportsTurnEnd: laneAgent?.reportsTurnEnd,
+            reportsUserMessages: laneAgent?.reportsUserMessages,
+          });
           return counts.enter + counts.turn_end + counts.exit;
         })(),
       }];
@@ -1162,7 +1166,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       const newerModel = modelOverride ? newerModelFor(modelOverride, laneKnownModels) : null;
 
       const rows = automationDrafts[id] ?? [];
-      const columnInput = { ...laneDraft, reportsTurnEnd: laneAgentInfo?.reportsTurnEnd };
+      const columnInput = {
+        ...laneDraft,
+        reportsTurnEnd: laneAgentInfo?.reportsTurnEnd,
+        reportsUserMessages: laneAgentInfo?.reportsUserMessages,
+      };
       const counts = runnableAutomationCounts(rows, columnInput);
       // The tooltip names exactly the rows the number counts.
       const nameRows = (trigger: AutomationTrigger): string =>
@@ -1956,6 +1964,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // an inline IIFE in the JSX: the compiler rules cannot see through an IIFE
   // to tell the dialog's event handlers apart from render.
   const editingColumn = editing ? drafts[editing.columnId] : undefined;
+  // The agent the edited row's column runs, for the dialog's turn-end and
+  // user-message facts and its name in a disabled reason.
+  const editingAgentInfo = editingColumn
+    ? agentList.find((agent) => agent.name === (editingColumn.agent_override ?? projectDefaultAgent))
+    : undefined;
   const editingRow = editing
     ? rowsForColumn(editing.columnId).find((row) => row.id === editing.rowId)
     : undefined;
@@ -2575,6 +2588,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               <AutomationsPane
                 column={draft}
                 reportsTurnEnd={effectiveAgentInfo?.reportsTurnEnd}
+                reportsUserMessages={effectiveAgentInfo?.reportsUserMessages}
                 drafts={rowsForColumn(draft.id)}
                 readOnly={activeProfileId !== null}
                 isDirty={(row) => {
@@ -2641,7 +2655,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           key={editing.rowId}
           draft={editingRow}
           column={editingColumn}
-          reportsTurnEnd={agentList.find((agent) => agent.name === (editingColumn.agent_override ?? projectDefaultAgent))?.reportsTurnEnd}
+          reportsTurnEnd={editingAgentInfo?.reportsTurnEnd}
+          reportsUserMessages={editingAgentInfo?.reportsUserMessages}
+          agentDisplayName={editingAgentInfo?.displayName ?? editingColumn.agent_override ?? projectDefaultAgent}
           columns={laneOrder
             .filter((id) => id !== editing.columnId)
             .flatMap((id) => {

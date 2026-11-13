@@ -16,7 +16,7 @@
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { NEVER_AUTO_SPAWN_ROLES } from './types';
-import type { AutoCommandMode, AutomationConfig, AutomationTrigger, AutomationType, SwimlaneRole, Task } from './types';
+import type { AutoCommandMode, AutomationConfig, AutomationTrigger, AutomationType, SwimlaneRole, Task, TextMatchSource } from './types';
 import type { LocalizedText } from './i18n/text';
 
 /** A capability an automation needs from its column before it can run. */
@@ -455,7 +455,22 @@ export interface AutomationColumnFacts {
    * the engine only fires a turn end for an agent that reports one anyway.
    */
   reportsTurnEnd?: boolean;
+  /**
+   * Whether the column's agent can report the messages a person sends it
+   * (`AgentDetectionInfo.reportsUserMessages`), which a Text match on the
+   * user's message reads (#1078). Undefined when the caller cannot tell; the
+   * engine's own read fails such a row closed anyway.
+   */
+  reportsUserMessages?: boolean;
 }
+
+/** What `canColumnRun` reads off the row itself, beyond its type: whose message its Text match reads. */
+export interface AutomationRowFacts {
+  textMatchSource?: TextMatchSource;
+}
+
+/** Why a row whose Text match reads the user's message cannot run on this column's agent. */
+export const USER_MESSAGES_UNREPORTED_REASON = msg`This column's agent doesn't report the messages you send.`;
 
 /** A refusal's reason is a descriptor: the renderer shows it with translateText, and
  *  the engine stores it for kangentic_get_automation_runs with englishText. */
@@ -472,6 +487,7 @@ export function canColumnRun(
   type: AutomationType,
   column: AutomationColumnFacts,
   trigger: AutomationTrigger,
+  row: AutomationRowFacts = {},
 ): AutomationRunnability {
   const group = canTriggerRun(column, trigger);
   if (!group.ok) return group;
@@ -480,6 +496,9 @@ export function canColumnRun(
   }
   if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {
     return { ok: false, reason: msg`Start an agent here is off.` };
+  }
+  if (trigger === 'turn_end' && row.textMatchSource === 'user' && column.reportsUserMessages === false) {
+    return { ok: false, reason: USER_MESSAGES_UNREPORTED_REASON };
   }
   return { ok: true };
 }

@@ -6,6 +6,7 @@ import type {
   AutomationType,
   AutomationWriteInput,
   ColumnAutomation,
+  TextMatchSource,
 } from '../../../shared/types';
 import { AUTOMATION_MANIFEST, isAutomationTrigger } from '../../../shared/automation-manifest';
 import { conditionKindsAsStored, normalizeTextMatch } from '../../../shared/final-line-match';
@@ -23,6 +24,7 @@ interface AutomationRow {
   config_json: string;
   condition: string | null;
   final_line: string | null;
+  text_match_source: string | null;
   max_runs: number | null;
   created_at: string;
   updated_at: string;
@@ -87,8 +89,8 @@ export class AutomationRepository {
     const now = new Date().toISOString();
     const insert = this.db.prepare(`
       INSERT INTO column_automations
-        (id, swimlane_id, name, type, trigger, position, enabled, config_json, condition, final_line, max_runs, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, swimlane_id, name, type, trigger, position, enabled, config_json, condition, final_line, text_match_source, max_runs, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const tx = writeTransaction(this.db, () => {
@@ -129,6 +131,9 @@ export class AutomationRepository {
           JSON.stringify(automation.config ?? {}),
           kinds.condition,
           kinds.final_line,
+          // NULL for the agent's line, the column's meaning before #1078, so a
+          // DB an older build opens reads every row it already knew unchanged.
+          kinds.text_match_source === 'user' ? 'user' : null,
           normalizeMaxRuns(automation.max_runs),
           existing.get(id) ?? now,
           now,
@@ -232,6 +237,7 @@ function mapRow(row: AutomationRow): ColumnAutomation | null {
     console.warn(`[automations] skipped automation ${row.id.slice(0, 8)} with an unknown trigger "${row.trigger}"`);
     return null;
   }
+  const finalLine = normalizeFinalLine(row.final_line, row.trigger);
   return {
     id: row.id,
     swimlane_id: row.swimlane_id,
@@ -242,11 +248,27 @@ function mapRow(row: AutomationRow): ColumnAutomation | null {
     enabled: row.enabled === 1,
     config: parseConfig(row.config_json),
     condition: normalizeCondition(row.condition),
-    final_line: normalizeFinalLine(row.final_line, row.trigger),
+    final_line: finalLine,
+    text_match_source: mapTextMatchSource(row.text_match_source, finalLine),
     max_runs: normalizeMaxRuns(row.max_runs),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+/**
+ * Whose message a stored Text match reads. NULL is the agent's line. A value
+ * this build does not know (a newer build's, after a downgrade) reads as the
+ * user's, the fail-closed side: a user-source row needs a person's own words
+ * to run and is never a workflow's agent exit, where reading it as the agent's
+ * could let the agent's own line move the card.
+ */
+function mapTextMatchSource(stored: string | null, finalLine: string | null): TextMatchSource {
+  if (finalLine === null || stored === null || stored === 'agent') return 'agent';
+  if (stored !== 'user') {
+    console.warn(`[automations] read an unknown Text match source "${stored}" as the user's message`);
+  }
+  return 'user';
 }
 
 function parseConfig(configJson: string): AutomationConfig {

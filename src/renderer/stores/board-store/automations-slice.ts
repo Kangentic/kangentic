@@ -89,12 +89,13 @@ export function selectAutomationCounts(
   state: Pick<BoardStore, 'automations' | 'swimlanes'>,
   swimlaneId: string,
   reportsTurnEnd?: boolean,
+  reportsUserMessages?: boolean,
 ): Record<AutomationTrigger, number> {
   const column = state.swimlanes.find((lane) => lane.id === swimlaneId);
   if (!column) return { enter: 0, turn_end: 0, exit: 0 };
   const drafts = state.automations.filter((row) => row.swimlane_id === swimlaneId).map(toDraft);
-  // `reportsTurnEnd` is the column agent's, resolved by the caller from the
-  // agent list. Undefined (the list has not loaded) counts turn-end rows, as
+  // Both facts are the column agent's, resolved by the caller from the agent
+  // list. Undefined (the list has not loaded) counts the rows, as
   // `canColumnRun` allows rather than blocks when it cannot tell.
-  return runnableAutomationCounts(drafts, { ...column, reportsTurnEnd });
+  return runnableAutomationCounts(drafts, { ...column, reportsTurnEnd, reportsUserMessages });
 }

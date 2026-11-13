@@ -932,7 +932,7 @@
     if (!Array.isArray(window.__mockAutomations)) return;
     window.__mockAutomations.forEach(function (row, index) {
       var seeded = Object.assign(
-        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, condition: null, final_line: null, max_runs: null, created_at: now(), updated_at: now() },
+        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, condition: null, final_line: null, text_match_source: 'agent', max_runs: null, created_at: now(), updated_at: now() },
         row,
         { config: Object.assign({}, row.config) },
       );
@@ -942,6 +942,8 @@
       // One Condition kind per row, as `conditionKindsAsStored` stores it: a
       // Text match clears the Agent evaluation, so a seed cannot hold both.
       if (seeded.final_line !== null) seeded.condition = null;
+      // Whose message the Text match reads: the user's only when it says so and has one.
+      seeded.text_match_source = seeded.final_line !== null && seeded.text_match_source === 'user' ? 'user' : 'agent';
       automations.push(seeded);
     });
   }
@@ -2590,6 +2592,7 @@
             // condition or text match as none either way.
             condition: finalLine === null && typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
             final_line: finalLine,
+            text_match_source: finalLine !== null && row.text_match_source === 'user' ? 'user' : 'agent',
             max_runs: Number.isFinite(row.max_runs) && Math.floor(row.max_runs) >= 1 ? Math.floor(row.max_runs) : null,
             created_at: now(),
             updated_at: now(),
@@ -4361,6 +4364,10 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with canReadTurnUserMessages: Claude reads a turn's
+            // window, so a Text match on the user's message can run (#1078).
+            reportsTurnEnd: true,
+            reportsUserMessages: true,
             // KEEP IN SYNC with ClaudeAdapter.answerFromContext: gates the Knowledge
             // Graph's Ask on the capability rather than on the agent's name.
             supportsAnswerFromContext: true,

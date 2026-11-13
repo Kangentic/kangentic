@@ -469,6 +469,10 @@ msgstr "Ügynök futásideje"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "Ágens: {agentOverrideLabel}"
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Agent's message"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #, fuzzy
 msgid "All columns"
@@ -1854,6 +1858,10 @@ msgstr "Megjelölés megtekintettként"
 msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
 msgstr ""
 
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Matches your last message in the turn, with * and ! supported."
+msgstr ""
+
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 #, fuzzy
 msgid "Maximize dialog"
@@ -3195,7 +3203,6 @@ msgctxt "file type"
 msgid "Text File"
 msgstr "Szövegfájl"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 #, fuzzy
 msgid "Text match"
@@ -3667,3 +3674,7 @@ msgstr "A táblaprofil módosításai elvesznek."
 #, fuzzy
 msgid "Your column order changes will be discarded."
 msgstr "Az oszlopsorrend módosításai elvesznek."
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Your message"
+msgstr ""

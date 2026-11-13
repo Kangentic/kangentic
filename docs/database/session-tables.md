@@ -1,12 +1,13 @@
 ---
 type: Reference
 title: Session tables
-description: Schema and invariants for sessions (status, suspended_by, PTY grid, tool_breakdown), usage_history per-leg cost deltas, transcript chunks, handoffs, session_messages_sent, the conversation_turn_usage and turn_spawn_links token ledger, session_activity_intervals, and command_terminal_history.
+description: Schema and invariants for sessions (status, suspended_by, PTY grid, tool_breakdown), usage_history per-leg cost deltas, transcript chunks, handoffs, session_messages_sent, session_typed_messages, the conversation_turn_usage and turn_spawn_links token ledger, session_activity_intervals, and command_terminal_history.
 tags: [database, schema, sessions, usage]
 sources:
   - resource: src/main/db/migrations/project-schema.ts
     title: session, usage and ledger tables
   - resource: src/main/db/repositories/sent-session-message-repository.ts
+  - resource: src/main/db/repositories/session-typed-message-repository.ts
   - resource: src/main/held-messages/held-messages.ts
     title: held messages, the log's held rows
   - resource: src/main/retrieval/conversation/conversation-usage-store.ts
@@ -220,6 +221,23 @@ The three `caller_*` columns are deliberately NOT foreign keys: a cross-project 
 `message` is stored as the caller supplied it, which is how a consumer correlates it to the transcript turn it produced. The delivered text is byte-identical for ordinary prose; the paste path additionally collapses CR/CRLF to LF and strips C0 control characters, so a message carrying those differs from the stored row by exactly that normalization. Reconstructing "which turns arrived this way" means filtering to `delivered` / `queued` / `delivered_from_hold`. A held message reaches its agent inside an opening message, after the column's own and numbered when there are several, so its turn holds more than the stored text.
 
 TypeScript type: `SentSessionMessage` in `src/shared/types.ts`. Repository: `SentSessionMessageRepository` in `src/main/db/repositories/sent-session-message-repository.ts`.
+
+## session_typed_messages table
+
+What Kangentic itself typed into a session, so a Text match on the user's message never reads it as the user's (#1078; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency)). The agent's transcript cannot tell a column message Kangentic pasted from a person's words, so a turn-end read of the user's messages drops every transcript message whose text is recorded here. Only a hash is kept, never the text.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| session_id | TEXT | NOT NULL, FK->sessions ON DELETE CASCADE | |
+| text_hash | TEXT | NOT NULL | |
+| created_at | TEXT | NOT NULL | |
+
+Index: `idx_session_typed_messages_session` on (session_id, created_at).
+
+`text_hash` is a SHA-256 of the whole text after `normalizeForMatch`, with no length cap, so a line break turned into a space on delivery, a Windows shim's flattened prompt, or a changed case still matches, and a long forwarded reply still matches. `TerminalSubmit` records each Kangentic-origin text before it types it, and a spawn or resume records the prompt it put on the command line once the session row exists (`recordKangenticTypedInProject`). A text sent with origin `person` (the phone, dictation, a Browser pane Send) is not recorded. A session keeps its newest 50 rows (`TYPED_MESSAGES_KEPT_PER_SESSION`), which is more than one turn types. A write that fails, or one for a session with no row, marks the session unreliable for the rest of the run, and its user messages then read as unreadable. Rows go with their session through the cascade.
+
+Repository: `SessionTypedMessageRepository` in `src/main/db/repositories/session-typed-message-repository.ts`; the read and the unreliable mark are in `src/main/automations/turn-end/typed-message-ledger.ts`.
 
 ## conversation_turn_usage table
 

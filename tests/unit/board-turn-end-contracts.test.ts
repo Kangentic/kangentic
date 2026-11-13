@@ -2,13 +2,16 @@
  * Pins the final-line contracts between this repo's own board (`kangentic.json`) and the script,
  * skills and message that print the lines its On agent turn end rows read.
  *
- * A Text match row (`condition.text`, or the legacy `finalLine` this file still carries) moves a card only when the WHOLE last line of the agent's final
- * message matches it. When a row and its producer drift apart (a reworded skill, a renamed row, the
+ * A Text match row on the agent's line (`condition.text`, or the legacy `finalLine` this file still
+ * carries) moves a card only when the WHOLE last line of the agent's final message matches it. A
+ * row on the user's message (`condition.text.from: "user"`) reads the owner's last message instead. When a row and its producer drift apart (a reworded skill, a renamed row, the
  * verdict printed above its steps again), nothing errors anywhere: the card just waits in its
  * column. So each row is held to the thing that prints its line:
  *
  * 0. Design: the Design contract, its On task enter message, asks for exactly the Shelved line,
- *    and Shelved is the column's only Move to column row, so Design stays a person's gate.
+ *    and Shelved is the column's only Move to column row on the agent's line. On to Planning
+ *    reads the owner's message instead (#1078), so Design stays a person's gate: the owner's
+ *    "signed off" or drag moves the card on, never the agent.
  * 1. Code Review: scripts/review-verdict.mjs's closing block, and the summary the skill pastes,
  *    END on exactly the Back for revisions and On to Testing lines. Exact equality is stricter than
  *    the matcher on purpose: the script is deterministic, so the matcher's leniency is never what
@@ -38,16 +41,15 @@ import { needsOwnerQuestion } from '../../src/shared/workflow-needs-owner';
 
 const REPOSITORY_ROOT = path.resolve(__dirname, '../..');
 
+type TextMatchValue = string | string[];
+
 interface AutomationRow {
   name: string;
   type: string;
-  /**
-   * The key older builds wrote, still read. This board's own file stays on it until every running
-   * copy reads `condition.text`: a build from before that reads the object as no condition and
-   * would run every guarded row unguarded.
-   */
+  /** The key older builds wrote, still read. This board's file no longer carries it. */
   finalLine?: string;
-  condition?: string | { text?: string | string[]; agent?: string };
+  /** A Text match in short form (the agent's line), or long form saying whose message it reads. */
+  condition?: string | { text?: TextMatchValue | { from: 'agent' | 'user'; patterns: TextMatchValue }; agent?: string };
   targetColumn?: string;
   message?: string;
   maxRuns?: number;
@@ -84,9 +86,17 @@ function turnEndRow(columnName: string, rowName: string): AutomationRow {
 function textMatchOf(row: AutomationRow): string | undefined {
   const condition = row.condition;
   if (typeof condition === 'object' && condition.text !== undefined) {
-    return Array.isArray(condition.text) ? condition.text.join('\n') : condition.text;
+    const text = condition.text;
+    const patterns = typeof text === 'object' && !Array.isArray(text) ? text.patterns : text;
+    return Array.isArray(patterns) ? patterns.join('\n') : patterns;
   }
   return row.finalLine;
+}
+
+/** Whose message a row's Text match reads: the long form's `from`, else the agent's line. */
+function textMatchSourceOf(row: AutomationRow): 'agent' | 'user' {
+  const text = typeof row.condition === 'object' ? row.condition.text : undefined;
+  return typeof text === 'object' && text !== null && !Array.isArray(text) ? text.from : 'agent';
 }
 
 /** The one line a contract row's agent has to end on. */
@@ -122,6 +132,7 @@ function lastLineOf(text: string): string {
  */
 const PINNED_ROWS = new Set([
   'Design/Shelved',
+  'Design/On to Planning',
   'Executing/On to Code Review',
   'Code Review/Back for revisions',
   'Code Review/On to Testing',
@@ -147,13 +158,44 @@ describe('board turn-end contracts: Design', () => {
     expectTextIn(designRow('onEnter', 'Design contract').message ?? '', 'the Design contract', `"${finalLineOf('Design', 'Shelved')}"`);
   });
 
-  // Its only Move to column row sends the card back, which is what makes Design a person's gate:
-  // a workflow never moves a card out of it, and the owner's drag to Planning is the sign-off.
-  it('sends a shelved design back to To Do, and has no row that moves a card forward', () => {
+  // Its only Move to column row on the agent's line sends the card back, which is what makes
+  // Design a person's gate: a workflow never moves a card out of it on the agent's word.
+  it('sends a shelved design back to To Do, and moves a card forward on no agent line', () => {
     expect(turnEndRow('Design', 'Shelved').targetColumn).toBe('To Do');
-    const moveRows = (board.columns.find((column) => column.name === 'Design')?.automations?.onTurnEnd ?? [])
-      .filter((row) => row.type === 'move_to_column');
-    expect(moveRows.map((row) => row.name)).toEqual(['Shelved']);
+    const agentLineMoveRows = (board.columns.find((column) => column.name === 'Design')?.automations?.onTurnEnd ?? [])
+      .filter((row) => row.type === 'move_to_column' && textMatchSourceOf(row) === 'agent');
+    expect(agentLineMoveRows.map((row) => row.name)).toEqual(['Shelved']);
+  });
+
+  // The owner's sign-off is the way on (#1078): their message, never the agent's, at most once.
+  it('moves the card to Planning on the owner\'s sign-off message, once', () => {
+    const onToPlanning = turnEndRow('Design', 'On to Planning');
+    expect(onToPlanning.type).toBe('move_to_column');
+    expect(textMatchSourceOf(onToPlanning)).toBe('user');
+    expect(onToPlanning.targetColumn).toBe('Planning');
+    expect(onToPlanning.maxRuns).toBe(1);
+    const patterns = textMatchOf(onToPlanning) ?? '';
+    expect(matchFinalLine(patterns, 'Signed off, ship it').met, 'a sign-off moves it').toBe(true);
+    expect(matchFinalLine(patterns, 'The design is approved.').met, 'an approval moves it').toBe(true);
+    expect(matchFinalLine(patterns, 'This is not signed off yet').met, 'a refusal must not move it').toBe(false);
+    expect(matchFinalLine(patterns, 'The rest look good').met, 'other feedback must not move it').toBe(false);
+    // A sign-off with an exception still has a decision open, so it waits for a plain one.
+    expect(matchFinalLine(patterns, 'all recommendations are signed off except everyone updates together').met, 'a partial sign-off must not move it').toBe(false);
+  });
+
+  // The contract tells the owner how to sign off and the agent what to do when they have.
+  it('has the Design contract name the sign-off and leave the move to the board', () => {
+    const contract = designRow('onEnter', 'Design contract').message ?? '';
+    expectTextIn(contract, 'the Design contract', 'signed off');
+    expectTextIn(contract, 'the Design contract', 'The board moves the card.');
+    expectTextIn(contract, 'the Design contract', 'Never move this card yourself.');
+  });
+
+  // The agent's own sign-off hint line must not read as Shelved.
+  it('keeps the sign-off hint line from reading as shelved', () => {
+    const hint = 'To sign off, type signed off or move the card to Planning.';
+    expectTextIn(designRow('onEnter', 'Design contract').message ?? '', 'the Design contract', hint);
+    expect(matchFinalLine(finalLineOf('Design', 'Shelved'), hint).met).toBe(false);
   });
 
   // The exit row fires on every move out, and a straight drag to Executing must not enter plan mode.
@@ -290,7 +332,14 @@ describe('board turn-end contracts: row shape', () => {
   );
   const textMatchRows = everyRow.flatMap(({ columnName, trigger, row }) => {
     const finalLine = textMatchOf(row);
-    return finalLine === undefined ? [] : [{ columnName, trigger, row, finalLine }];
+    return finalLine === undefined ? [] : [{ columnName, trigger, row, finalLine, source: textMatchSourceOf(row) }];
+  });
+  // The rows the agent's last line is matched against. A row on the user's message reads other text.
+  const agentLineRows = textMatchRows.filter(({ source }) => source === 'agent');
+
+  // finalLine is sunset (#1078): every build that reads this file reads condition.text.
+  it('writes no legacy finalLine key', () => {
+    expect(everyRow.filter(({ row }) => row.finalLine !== undefined).map(({ columnName, row }) => `${columnName}/${row.name}`)).toEqual([]);
   });
 
   it('pins every Text match row on the board, and finds every row it pins', () => {
@@ -307,8 +356,8 @@ describe('board turn-end contracts: row shape', () => {
   });
 
   it('never lets one row\'s line match another Text match row in its column', () => {
-    for (const { columnName, row, finalLine } of textMatchRows) {
-      for (const { columnName: otherColumn, row: otherRow, finalLine: otherFinalLine } of textMatchRows) {
+    for (const { columnName, row, finalLine } of agentLineRows) {
+      for (const { columnName: otherColumn, row: otherRow, finalLine: otherFinalLine } of agentLineRows) {
         if (otherColumn !== columnName || otherRow === row) continue;
         expect(matchFinalLine(otherFinalLine, finalLine).met, `${columnName}: "${finalLine}" matches "${otherRow.name}"`).toBe(false);
       }

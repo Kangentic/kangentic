@@ -286,6 +286,8 @@ export function registerBrowserHandlers(context: IpcContext): void {
       await context.terminalSubmit.submitContent(input.sessionId, payload, {
         bracketed: true,
         source: 'browser-capture',
+        // A person's Send of their own notes on the page (#1078).
+        origin: 'person',
         verifier,
       });
     } catch (caught) {

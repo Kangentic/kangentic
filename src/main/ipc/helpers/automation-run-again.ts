@@ -69,7 +69,9 @@ export async function runAutomationAgain(
   // is what a turn end reads, except that a re-run before the task's first
   // turn in this column reads the message the last column's turn ended on.
   // Read before the lock: it can take up to 15 s and holds nothing. A row that
-  // reads no message skips it.
+  // reads no message skips it. A Text match on the user's message is never
+  // read here (#1078): a re-run has no turn anchor to isolate the user's
+  // message by, so the runner gets none and the row fails closed.
   const replyRead = automation.trigger === 'turn_end' && needsAgentReply(automation)
     ? await readLatestReply(projectId, repos.tasks.getById(taskId)?.session_id ?? null)
     : null;

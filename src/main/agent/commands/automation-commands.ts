@@ -61,6 +61,7 @@ import type {
   AutomationType,
   BoardAutomationCondition,
   ColumnAutomation,
+  TextMatchSource,
 } from '../../../shared/types';
 
 /** How many run rows one read returns before the caller has to narrow. */
@@ -243,7 +244,7 @@ export const handleSetAutomations: CommandHandler = (
     if ('error' in conditionRead) {
       return { success: false, error: `${where}: ${conditionRead.error} Nothing was saved.` };
     }
-    const { condition, finalLine } = conditionRead;
+    const { condition, finalLine, textMatchSource } = conditionRead;
 
     const runnable = canColumnRun(type as AutomationType, { autoSpawn: swimlane.auto_spawn, role: swimlane.role }, trigger);
     if (!runnable.ok) {
@@ -271,6 +272,7 @@ export const handleSetAutomations: CommandHandler = (
       config: readConfig(entry, type as AutomationType),
       condition,
       final_line: finalLine,
+      text_match_source: textMatchSource,
       max_runs: normalizeMaxRuns(typeof entry.maxRuns === 'number' ? entry.maxRuns : null),
     });
   }
@@ -465,7 +467,7 @@ function readConfig(entry: Record<string, unknown>, type: AutomationType): Autom
   return config as AutomationConfig;
 }
 
-type ConditionParamRead = { condition: string | null; finalLine: string | null } | { error: string };
+type ConditionParamRead = { condition: string | null; finalLine: string | null; textMatchSource: TextMatchSource } | { error: string };
 
 /**
  * A set_automations entry's Condition, read the way kangentic.json reads it:
@@ -478,6 +480,7 @@ export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown,
   let condition: string | null = null;
   let textMatch: string | null = null;
   let textField = 'condition.text';
+  let source: TextMatchSource = 'agent';
 
   if (typeof rawCondition === 'string') {
     if (rawCondition.length > AGENT_CONDITION_MAX_LENGTH) {
@@ -505,10 +508,25 @@ export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown,
       }
       condition = normalizeCondition(value);
     } else {
+      // The long form says whose message it reads (#1078).
+      let patternValue: unknown = value;
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        const longForm = value as Record<string, unknown>;
+        const extra = Object.keys(longForm).find((key) => key !== 'from' && key !== 'patterns');
+        if (extra !== undefined) {
+          return { error: `condition.text has an unknown key "${extra}"; its long form is { "from": "agent" | "user", "patterns": pattern or [patterns] }.` };
+        }
+        if (longForm.from !== 'agent' && longForm.from !== 'user') {
+          return { error: 'condition.text.from must be "agent" (the agent\'s last line) or "user" (your last message in the turn).' };
+        }
+        source = longForm.from;
+        patternValue = longForm.patterns;
+        textField = 'condition.text.patterns';
+      }
       // A string's own line breaks split it into patterns in `normalizeTextMatch`.
-      const patterns = typeof value === 'string' ? [value] : value;
+      const patterns = typeof patternValue === 'string' ? [patternValue] : patternValue;
       if (!Array.isArray(patterns) || !patterns.every((pattern): pattern is string => typeof pattern === 'string')) {
-        return { error: 'condition.text must be a pattern or a list of patterns, each text.' };
+        return { error: `${textField} must be a pattern or a list of patterns, each text.` };
       }
       // An empty text is no Condition, like a blank sentence.
       textMatch = normalizeTextMatch(patterns.join('\n'));
@@ -529,6 +547,7 @@ export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown,
       }
       textMatch = legacy;
       textField = 'finalLine';
+      source = 'agent';
     }
   }
 
@@ -557,12 +576,17 @@ export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown,
       };
     }
   }
-  return { condition: textMatch === null ? condition : null, finalLine: textMatch };
+  return {
+    condition: textMatch === null ? condition : null,
+    finalLine: textMatch,
+    textMatchSource: textMatch === null ? 'agent' : source,
+  };
 }
 
 /** A row's Condition in the shape set_automations takes, or null when it always runs. */
 function conditionParamOf(row: ColumnAutomation): BoardAutomationCondition | null {
   const text = textMatchFileValue(row.final_line);
+  if (text !== null && row.text_match_source === 'user') return { text: { from: 'user', patterns: text } };
   if (text !== null) return { text };
   return row.condition ? { agent: row.condition } : null;
 }

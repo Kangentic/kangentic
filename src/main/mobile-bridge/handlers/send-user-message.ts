@@ -43,7 +43,9 @@ export async function handleSendUserMessage(
   // "Send" affordance uses, not a raw sessionManager.write - this handles
   // drain, chunked write, and submission evidence rather than a bare
   // keystroke injection.
-  await context.terminalSubmit.submitContent(payload.sessionId, payload.text, { source: 'mobile-bridge' });
+  // The person's own words, sent from the phone: a Text match on the user's
+  // message reads them as theirs (#1078).
+  await context.terminalSubmit.submitContent(payload.sessionId, payload.text, { source: 'mobile-bridge', origin: 'person' });
 
   return deliveredResponse(request);
 }

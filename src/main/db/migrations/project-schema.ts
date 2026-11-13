@@ -1940,6 +1940,31 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE automation_runs ADD COLUMN final_line_reason TEXT DEFAULT NULL');
   }
 
+  // Migration: whose message a Text match reads (#1078). NULL is the agent's
+  // last line, every row written before; 'user' is the user's last message in
+  // the turn. No backfill: NULL already means what those rows always meant.
+  const automationColumnsWithSource = new Set(
+    (db.pragma('table_info(column_automations)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!automationColumnsWithSource.has('text_match_source')) {
+    db.exec('ALTER TABLE column_automations ADD COLUMN text_match_source TEXT DEFAULT NULL');
+  }
+
+  // Migration: what Kangentic itself typed into a session (#1078), so a Text
+  // match on the user's message never reads Kangentic's own words as theirs.
+  // A hash of the whole normalized text, never the text: the record answers
+  // "did Kangentic type this", nothing more. Kept per session and pruned to
+  // its newest rows on insert (`SessionTypedMessageRepository`).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_typed_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      text_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_session_typed_messages_session ON session_typed_messages(session_id, created_at)');
+
   // Migration: the transcript path the agent reported for a session (Claude's
   // status line). The resume check reads it to prove a conversation's file is
   // gone, and the session's own folder cannot hold that proof: a quit or a

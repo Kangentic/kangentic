@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/shared/final-line-match.ts
+msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
+msgstr "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
+
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr "{baseName}, frame {frame}"
@@ -252,6 +256,10 @@ msgstr "Condition: only if {condition}."
 msgid "Condition: only if the last line {rule}."
 msgstr "Condition: only if the last line {rule}."
 
+#: src/shared/automation-describe.ts
+msgid "Condition: only if your message {rule}."
+msgstr "Condition: only if your message {rule}."
+
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
 msgid "Copy"
@@ -491,6 +499,10 @@ msgstr "Main project checkout path. Always the base repo, even when the task has
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
 msgstr "Manual, because Kangentic can't approve {agentName}'s plans."
 
+#: src/shared/final-line-match.ts
+msgid "Matching a message runs on agent turn end only."
+msgstr "Matching a message runs on agent turn end only."
+
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
 msgid "Maximize"
@@ -682,6 +694,14 @@ msgstr "only if the last line {rule}"
 #: src/shared/automation-describe.ts
 msgid "Only if the last line {rule}."
 msgstr "Only if the last line {rule}."
+
+#: src/shared/automation-describe.ts
+msgid "only if your message {rule}"
+msgstr "only if your message {rule}"
+
+#: src/shared/automation-describe.ts
+msgid "Only if your message {rule}."
+msgstr "Only if your message {rule}."
 
 #: src/shared/knowledge-graph-task-fields.ts
 msgctxt "task status"
@@ -1100,10 +1120,6 @@ msgstr "Task UUID."
 msgid "Terminal names"
 msgstr "Terminal names"
 
-#: src/shared/final-line-match.ts
-msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr "Text match reads the agent's last message, so it runs on agent turn end only."
-
 #: src/shared/workflow-refusals.ts
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
 msgstr "That link closes a loop. A workflow's links cannot go in a circle."
@@ -1163,6 +1179,10 @@ msgstr "The task's labels, comma-separated."
 #: src/shared/automation-manifest.ts
 msgid "This column's agent can't report when it finishes a turn."
 msgstr "This column's agent can't report when it finishes a turn."
+
+#: src/shared/automation-manifest.ts
+msgid "This column's agent doesn't report the messages you send."
+msgstr "This column's agent doesn't report the messages you send."
 
 #: src/shared/session-resume-eligibility.ts
 msgid "This task is archived. Restore it to the board to continue working on it."

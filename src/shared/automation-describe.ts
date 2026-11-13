@@ -3,7 +3,7 @@ import { msg } from '@lingui/core/runtime-macro';
 import { AUTOMATION_MANIFEST, automationFieldUnavailableReason, automationMoveTargetName } from './automation-manifest';
 import { resolveText } from './i18n/text';
 import { parseTextMatch, patternCanMatch, textMatchCanMatch, textMatchLines } from './final-line-match';
-import type { AutomationConfig, AutomationTrigger, AutomationType } from './types';
+import type { AutomationConfig, AutomationTrigger, AutomationType, TextMatchSource } from './types';
 
 /**
  * The most of a value a row sentence carries.
@@ -45,6 +45,10 @@ const GUARDS = {
   textMatch: msg({ message: 'Only if the last line {rule}.' }),
   textMatchLabel: msg({ message: 'Condition: only if the last line {rule}.' }),
   textMatchPhrase: msg({ message: 'only if the last line {rule}' }),
+  // A Text match on the user's message (#1078). The rule reads the same.
+  userTextMatch: msg({ message: 'Only if your message {rule}.' }),
+  userTextMatchLabel: msg({ message: 'Condition: only if your message {rule}.' }),
+  userTextMatchPhrase: msg({ message: 'only if your message {rule}' }),
   frequency: msg({ message: '{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}' }),
   frequencyLabel: msg({ message: '{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}' }),
   frequencyPhrase: msg({ message: '{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}' }),
@@ -216,6 +220,8 @@ export function describeAutomationMarks(row: {
   config: AutomationConfig;
   condition: string | null;
   final_line: string | null;
+  /** Whose message the Text match reads. Absent reads as the agent's line. */
+  text_match_source?: TextMatchSource;
   max_runs: number | null;
 }, i18n: I18n): AutomationRowMark[] {
   const marks: AutomationRowMark[] = [];
@@ -226,10 +232,12 @@ export function describeAutomationMarks(row: {
   const condition = conditionText(row.condition, 'keep-lines');
   const conditionOneLine = conditionText(row.condition, 'one-line');
   if (rule !== null) {
+    // The same mark for both sources (the canvas's one icon); the words say whose message.
+    const user = row.text_match_source === 'user';
     marks.push({
       kind: 'text-match',
-      label: resolveText(i18n, GUARDS.textMatchLabel, { rule }),
-      phrase: resolveText(i18n, GUARDS.textMatchPhrase, { rule }),
+      label: resolveText(i18n, user ? GUARDS.userTextMatchLabel : GUARDS.textMatchLabel, { rule }),
+      phrase: resolveText(i18n, user ? GUARDS.userTextMatchPhrase : GUARDS.textMatchPhrase, { rule }),
     });
   } else if (condition !== null && conditionOneLine !== null) {
     marks.push({
@@ -413,9 +421,10 @@ export function textMatchRule(finalLine: string | null, i18n: I18n): string | nu
  * last line reads "Verdict: Ready"." Each pattern is quoted whole and as
  * written, its wildcards included, since the exact text is the whole point.
  */
-export function describeAutomationTextMatch(finalLine: string | null, i18n: I18n): string | null {
+export function describeAutomationTextMatch(finalLine: string | null, i18n: I18n, source: TextMatchSource = 'agent'): string | null {
   const rule = textMatchRule(finalLine, i18n);
-  return rule === null ? null : resolveText(i18n, GUARDS.textMatch, { rule });
+  if (rule === null) return null;
+  return resolveText(i18n, source === 'user' ? GUARDS.userTextMatch : GUARDS.textMatch, { rule });
 }
 
 /**
@@ -440,9 +449,12 @@ export function describeAutomationGuards(guards: {
   trigger: AutomationTrigger;
   condition: string | null;
   final_line: string | null;
+  text_match_source?: TextMatchSource;
   max_runs: number | null;
 }, i18n: I18n): string | null {
-  const textMatch = guards.trigger === 'turn_end' ? describeAutomationTextMatch(guards.final_line, i18n) : null;
+  const textMatch = guards.trigger === 'turn_end'
+    ? describeAutomationTextMatch(guards.final_line, i18n, guards.text_match_source ?? 'agent')
+    : null;
   const condition = textMatch ?? describeAutomationCondition(guards.condition, i18n);
   const parts = [condition, describeAutomationFrequency(guards.max_runs, i18n)]
     .filter((part): part is string => part !== null);

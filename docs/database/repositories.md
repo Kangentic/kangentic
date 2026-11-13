@@ -299,6 +299,15 @@ Operates on a per-project DB. The log of every message sent to a task's agent, a
 | `listForSession(sessionId)` | Every send attempt against a session, oldest first |
 | `listForTask(taskId)` | Every send attempt across all of a task's sessions, held rows included |
 
+## SessionTypedMessageRepository
+
+Operates on a per-project DB. What Kangentic itself typed into a session, as hashes, so a Text match on the user's message never reads it as the user's (#1078). `typedMessageKey(text)` is the key: a SHA-256 of the text after `normalizeForMatch`, or null for text with no words.
+
+| Method | Description |
+|--------|-------------|
+| `record(sessionId, text)` | Record one typed text, then prune the session to its newest 50 rows. Returns false and writes nothing for text with no words or a session with no row |
+| `keysForSession(sessionId)` | Every recorded key for a session, as a set |
+
 ## BacklogAttachmentRepository
 
 Operates on a per-project DB. Manages both database records and files on disk under `<projectPath>/.kangentic/backlog/<backlogTaskId>/attachments/`. Mirrors `AttachmentRepository` for backlog tasks.

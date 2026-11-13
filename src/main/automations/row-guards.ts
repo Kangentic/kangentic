@@ -1,4 +1,5 @@
-import type { ColumnAutomation } from '../../shared/types';
+import type { ColumnAutomation, TextMatchSource } from '../../shared/types';
+import { textMatchSourceOf } from '../../shared/final-line-match';
 
 /**
  * Whether a row carries a guard the runner applies: a Condition (either kind,
@@ -7,8 +8,8 @@ import type { ColumnAutomation } from '../../shared/types';
  * (`resolveColumnMessage`'s `guarded`) asks here, and the two can never
  * disagree about which rows are guarded.
  *
- * Its own module, with type imports only, so the transition engine's column
- * strategy can ask without importing the runner and its adapter registry.
+ * Its own module, importing only shared code, so the transition engine's
+ * column strategy can ask without importing the runner and its adapter registry.
  */
 
 /**
@@ -43,8 +44,25 @@ export function hasFrequencyLimit<Row extends Pick<ColumnAutomation, 'max_runs'>
  * pass and Run again both ask here, so neither reads the message (a retrieval
  * worker call of up to 15 s) for a row that never looks at it.
  */
-export function needsAgentReply(automation: Pick<ColumnAutomation, 'condition' | 'final_line' | 'trigger' | 'config'>): boolean {
-  return hasCondition(automation) || hasFinalLine(automation) || JSON.stringify(automation.config).includes('{{agentReply}}');
+export function needsAgentReply(
+  automation: Pick<ColumnAutomation, 'condition' | 'final_line' | 'trigger' | 'config'> & { text_match_source?: TextMatchSource },
+): boolean {
+  return hasCondition(automation)
+    || (hasFinalLine(automation) && textMatchSourceOf(automation) === 'agent')
+    || JSON.stringify(automation.config).includes('{{agentReply}}');
+}
+
+export { textMatchSourceOf };
+
+/**
+ * Whether a row has a Text match on the user's message (#1078), and so needs
+ * their last message in the turn. Read only then, since the read is a
+ * retrieval worker call.
+ */
+export function hasUserTextMatch(
+  automation: Pick<ColumnAutomation, 'final_line' | 'trigger'> & { text_match_source?: TextMatchSource | null },
+): boolean {
+  return hasFinalLine(automation) && textMatchSourceOf(automation) === 'user';
 }
 
 /** Whether a row carries any guard: either Condition kind or a Frequency limit. */

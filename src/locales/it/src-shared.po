@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: it\n"
 
+#: src/shared/final-line-match.ts
+msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
+msgstr ""
+
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr ""
@@ -306,6 +310,10 @@ msgstr "Condizione: solo se {condition}."
 msgid "Condition: only if the last line {rule}."
 msgstr ""
 
+#: src/shared/automation-describe.ts
+msgid "Condition: only if your message {rule}."
+msgstr ""
+
 #: src/shared/keybindings.ts
 #, fuzzy
 msgctxt "hotkey"
@@ -597,6 +605,10 @@ msgstr "Percorso del checkout principale del progetto. Sempre il repository di b
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
 msgstr "Manuale, perché Kangentic non può approvare i piani di {agentName}."
 
+#: src/shared/final-line-match.ts
+msgid "Matching a message runs on agent turn end only."
+msgstr ""
+
 #: src/shared/keybindings.ts
 #, fuzzy
 msgctxt "hotkey"
@@ -831,6 +843,14 @@ msgstr ""
 
 #: src/shared/automation-describe.ts
 msgid "Only if the last line {rule}."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "only if your message {rule}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Only if your message {rule}."
 msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
@@ -1338,11 +1358,6 @@ msgstr "UUID dell'attività."
 msgid "Terminal names"
 msgstr "Nomi dei terminali"
 
-#: src/shared/final-line-match.ts
-#, fuzzy
-msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr "La corrispondenza del testo legge l'ultimo messaggio dell'agente, quindi viene eseguita solo alla fine del turno dell'agente."
-
 #: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
@@ -1416,6 +1431,10 @@ msgstr "Le etichette dell'attività, separate da virgole."
 #, fuzzy
 msgid "This column's agent can't report when it finishes a turn."
 msgstr "L'agente di questa colonna non può segnalare quando termina un turno."
+
+#: src/shared/automation-manifest.ts
+msgid "This column's agent doesn't report the messages you send."
+msgstr ""
 
 #: src/shared/session-resume-eligibility.ts
 #, fuzzy

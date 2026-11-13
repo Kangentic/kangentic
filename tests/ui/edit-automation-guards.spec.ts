@@ -47,7 +47,7 @@ function card(name: 'trigger' | 'condition' | 'frequency' | 'action'): Locator {
 /** The line each guard card prints under its title. Clicked, not the switch beside it. */
 const CONDITION_DESCRIPTION = 'Runs only when this holds.';
 /** The hover reason a disabled Text match option carries off a turn end. */
-const TEXT_MATCH_UNAVAILABLE = "Text match reads the agent's last message, so it runs on agent turn end only.";
+const TEXT_MATCH_UNAVAILABLE = 'Matching a message runs on agent turn end only.';
 const FREQUENCY_DESCRIPTION = 'How many times it can run on a task.';
 
 type AutomationTriggerName = 'enter' | 'turn_end' | 'exit';
@@ -241,7 +241,7 @@ function textMatchMark(name: string): Locator {
 }
 
 /** One option of the Condition card's kind control. */
-function conditionKind(kind: 'agent' | 'text'): Locator {
+function conditionKind(kind: 'agent' | 'text' | 'user'): Locator {
   return card('condition').locator(`[data-testid="edit-automation-condition-kind-${kind}"]`);
 }
 
@@ -925,29 +925,69 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
 
   // 4b - The two Condition kinds ─────────────────────────────────────────────
 
-  test('the kind control lists Agent evaluation then Text match, and Text match is turn end only, with the reason', async () => {
+  test('the kind control lists Agent evaluation, Agent\'s message, Your message, and both messages are turn end only, with the reason', async () => {
     await setAutomationAgent({ agent: 'claude', model: 'sonnet' });
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
 
     const kinds = card('condition').locator('[data-testid^="edit-automation-condition-kind-"]');
     expect(await kinds.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-testid'))))
-      .toEqual(['edit-automation-condition-kind-agent', 'edit-automation-condition-kind-text']);
+      .toEqual(['edit-automation-condition-kind-agent', 'edit-automation-condition-kind-text', 'edit-automation-condition-kind-user']);
+    await expect(conditionKind('text')).toHaveText("Agent's message");
+    await expect(conditionKind('user')).toHaveText('Your message');
     // With an agent set up, a new Condition starts on the kind that has always been the default.
     await expect(conditionKind('agent')).toHaveAttribute('aria-checked', 'true');
     await expect(conditionKind('text')).toBeEnabled();
+    await expect(conditionKind('user')).toBeEnabled();
 
-    // Off a turn end there is no final message: shown, disabled, and saying why.
+    // Off a turn end there is no message to match: both shown, disabled, and saying why.
     for (const trigger of ['enter', 'exit'] as const) {
       await editDialog().locator(`[data-testid="edit-automation-trigger-${trigger}"]`).click();
-      await expect(conditionKind('text')).toBeDisabled();
-      await expect(conditionKind('text')).toHaveAccessibleDescription(TEXT_MATCH_UNAVAILABLE);
+      for (const kind of ['text', 'user'] as const) {
+        await expect(conditionKind(kind)).toBeDisabled();
+        await expect(conditionKind(kind)).toHaveAccessibleDescription(TEXT_MATCH_UNAVAILABLE);
+      }
       await expect(conditionKind('agent')).toBeEnabled();
     }
 
     await editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]').click();
     await expect(conditionKind('text')).toBeEnabled();
     await expect(conditionKind('text')).not.toHaveAccessibleDescription(TEXT_MATCH_UNAVAILABLE);
+  });
+
+  // #1078: the two message tabs share one patterns field; the tab says whose message it reads.
+  test('Your message shares the patterns field, says whose message it reads, and saves the source', async () => {
+    await openColumn('Executing');
+    await addThroughPicker('turn_end', 'notify');
+    await editDialog().locator('[data-testid="edit-automation-name"]').fill('Sign-off ping');
+
+    const finalLine = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
+    const hint = card('condition').locator('[data-testid="edit-automation-final-line-hint"]');
+    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    await finalLine.fill('*signed off*');
+
+    await conditionKind('user').click();
+    await expect(conditionKind('user')).toHaveAttribute('aria-checked', 'true');
+    await expect(finalLine).toHaveValue('*signed off*');
+    await expect(hint).toHaveText('Matches your last message in the turn, with * and ! supported.');
+    await finalLine.fill('');
+    await expect(finalLine).toHaveAttribute('placeholder', 'Signed off');
+    await finalLine.fill('*signed off*');
+
+    await conditionKind('text').click();
+    await expect(finalLine).toHaveValue('*signed off*');
+    await expect(hint).toHaveText('Matches the last line the agent writes when its turn ends, with * and ! supported.');
+    await conditionKind('user').click();
+
+    await editDialog().locator('[data-testid="edit-automation-done"]').click();
+    await expect(editDialog()).toBeHidden();
+    // The same mark as the agent's message, worded for the user's.
+    await expectMarkSays(textMatchMark('Sign-off ping'), 'Condition: only if your message reads "*signed off*".');
+
+    await saveManager();
+    const saved = (await readColumnRows('Executing')).find((entry) => entry.name === 'Sign-off ping');
+    expect(saved?.final_line).toBe('*signed off*');
+    expect(saved?.text_match_source).toBe('user');
   });
 
   test('with no Automation agent a new turn-end Condition starts on Text match, which needs no setup', async () => {

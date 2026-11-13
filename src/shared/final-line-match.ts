@@ -44,6 +44,7 @@
  */
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
+import type { TextMatchSource } from './types';
 
 /**
  * The Text match field's placeholder, and the line the Patterns tip's examples
@@ -51,6 +52,13 @@ import { msg } from '@lingui/core/runtime-macro';
  * examples are matched against it.
  */
 export const TEXT_MATCH_PLACEHOLDER = 'Ready for review';
+
+/**
+ * The Your message tab's placeholder: a message a person types to move a card
+ * on. English, as `TEXT_MATCH_PLACEHOLDER` is: it stands for text matched as
+ * typed.
+ */
+export const TEXT_MATCH_USER_PLACEHOLDER = 'Signed off';
 
 /**
  * The most patterns one Text match holds, and the longest one, as the MCP tools
@@ -114,10 +122,28 @@ export const TEXT_MATCH_EXAMPLES: readonly TextMatchExample[] = [
  * tip on the dialog's disabled option (`translateText`), and the MCP and file
  * refusals reuse it in English (`englishText`).
  */
-export const TEXT_MATCH_UNAVAILABLE_REASON = msg`Text match reads the agent's last message, so it runs on agent turn end only.`;
+export const TEXT_MATCH_UNAVAILABLE_REASON = msg`Matching a message runs on agent turn end only.`;
+
+/**
+ * Why the Your message tab is off for a column's agent: Kangentic cannot read
+ * the user's messages back from that agent's transcript. Resolve it where it
+ * shows, with the agent's display name and the column's name.
+ */
+export const TEXT_MATCH_USER_UNSUPPORTED_REASON = msg({ message: "{agentName} doesn't report the messages you send, so this can't run in {columnName}." });
 
 /** The reason when there is no line to read: no reply, or one with no words. */
 export const TEXT_MATCH_NO_REPLY_REASON = 'The turn ended without a message Kangentic could read.';
+
+/**
+ * The run reasons for a Text match on the user's message. English, as every
+ * run reason is (agents read them through `kangentic_get_automation_runs`),
+ * and none of them quotes the message: the user's words are read for the
+ * match and never stored.
+ */
+export const USER_TEXT_MATCH_MET_REASON = 'Your message matched.';
+export const USER_TEXT_MATCH_NOT_MET_REASON = 'Your message matched no pattern.';
+export const USER_TEXT_MATCH_NO_MESSAGE_REASON = 'No message from you in this turn.';
+export const USER_TEXT_MATCH_UNREADABLE_REASON = "Kangentic couldn't read your messages for this turn, so the row did not run.";
 
 /** How much of the final line a reason quotes. */
 const REASON_LINE_MAX = 120;
@@ -311,10 +337,26 @@ export function normalizeTextMatch(value: string | null | undefined): string | n
 export function conditionKindsAsStored(row: {
   condition?: string | null;
   final_line?: string | null;
+  text_match_source?: TextMatchSource | null;
   trigger: string;
-}): { condition: string | null; final_line: string | null } {
+}): { condition: string | null; final_line: string | null; text_match_source: TextMatchSource } {
   const finalLine = row.trigger === 'turn_end' && typeof row.final_line === 'string' ? normalizeTextMatch(row.final_line) : null;
-  return { condition: finalLine === null ? trimmedOrNull(row.condition) : null, final_line: finalLine };
+  return {
+    condition: finalLine === null ? trimmedOrNull(row.condition) : null,
+    final_line: finalLine,
+    // A source means nothing without a Text match, so a row with none reads
+    // as the agent's, the default.
+    text_match_source: finalLine !== null ? textMatchSourceOf(row) : 'agent',
+  };
+}
+
+/**
+ * Whose message a row's Text match reads. Only an exact `'user'` is the
+ * user's: a row built without the field (an older main process, an older
+ * fixture) reads the agent's line.
+ */
+export function textMatchSourceOf(row: { text_match_source?: TextMatchSource | null }): TextMatchSource {
+  return row.text_match_source === 'user' ? 'user' : 'agent';
 }
 
 function trimmedOrNull(text: string | null | undefined): string | null {
@@ -335,6 +377,31 @@ export function matchFinalLine(value: string, reply: string | null | undefined):
   const line = finalMatchLine(reply);
   if (line === null) return { met: false, reason: TEXT_MATCH_NO_REPLY_REASON };
   return { met: textMatchMatches(value, line), reason: `The final line reads "${shownFinalLine(line)}".` };
+}
+
+/**
+ * What the turn-end read found of the user's messages: their last message in
+ * the turn (null when they sent none Kangentic did not type itself), or
+ * `unreadable` when the read failed or the agent cannot report them.
+ */
+export type UserMessageRead = { readable: true; message: string | null } | { readable: false };
+
+/**
+ * Match a Text match against the user's last message in the turn, the WHOLE
+ * message, with the same forgiveness as a final line (case, punctuation,
+ * markdown, runs of spaces and line breaks).
+ *
+ * Fails closed: a read that failed, and a turn with no message from the user,
+ * meet nothing, `!` patterns included. The reasons never quote the message:
+ * the user's words are read for the match and never stored.
+ */
+export function matchUserMessage(value: string, read: UserMessageRead): FinalLineMatch {
+  if (!read.readable) return { met: false, reason: USER_TEXT_MATCH_UNREADABLE_REASON };
+  if (read.message === null || normalizeForMatch(read.message) === '') {
+    return { met: false, reason: USER_TEXT_MATCH_NO_MESSAGE_REASON };
+  }
+  const met = textMatchMatches(value, read.message);
+  return { met, reason: met ? USER_TEXT_MATCH_MET_REASON : USER_TEXT_MATCH_NOT_MET_REASON };
 }
 
 /** A final line as a reason quotes it: cut after `REASON_LINE_MAX` characters. */

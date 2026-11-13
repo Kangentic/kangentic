@@ -7,6 +7,10 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-CN\n"
 
+#: src/shared/final-line-match.ts
+msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
+msgstr ""
+
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr ""
@@ -253,6 +257,10 @@ msgstr "条件：仅当 {condition} 时。"
 msgid "Condition: only if the last line {rule}."
 msgstr ""
 
+#: src/shared/automation-describe.ts
+msgid "Condition: only if your message {rule}."
+msgstr ""
+
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
 msgid "Copy"
@@ -496,6 +504,10 @@ msgstr "项目主检出路径。始终为基础仓库，即使任务拥有工作
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
 msgstr "手动，因为 Kangentic 无法批准 {agentName} 的计划。"
 
+#: src/shared/final-line-match.ts
+msgid "Matching a message runs on agent turn end only."
+msgstr ""
+
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
 msgid "Maximize"
@@ -691,6 +703,14 @@ msgstr ""
 
 #: src/shared/automation-describe.ts
 msgid "Only if the last line {rule}."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "only if your message {rule}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Only if your message {rule}."
 msgstr ""
 
 #: src/shared/knowledge-graph-task-fields.ts
@@ -1117,10 +1137,6 @@ msgstr "任务 UUID。"
 msgid "Terminal names"
 msgstr "终端名称"
 
-#: src/shared/final-line-match.ts
-msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr "文本匹配读取智能体的最后一条消息，因此只能在智能体轮次结束时运行。"
-
 #: src/shared/workflow-refusals.ts
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
 msgstr "该关联会形成循环。工作流中的关联不能构成环路。"
@@ -1180,6 +1196,10 @@ msgstr "任务的标签，以逗号分隔。"
 #: src/shared/automation-manifest.ts
 msgid "This column's agent can't report when it finishes a turn."
 msgstr "此列的智能体无法上报轮次结束。"
+
+#: src/shared/automation-manifest.ts
+msgid "This column's agent doesn't report the messages you send."
+msgstr ""
 
 #: src/shared/session-resume-eligibility.ts
 msgid "This task is archived. Restore it to the board to continue working on it."

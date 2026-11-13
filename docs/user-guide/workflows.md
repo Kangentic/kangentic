@@ -158,6 +158,8 @@ nothing and the agent's word decides.
 card out of it, because the way on is yours to give. Once the agent has finished what it can do
 alone, the card stops and you get one notice. Drag it on when it is ready. A real stall there still
 gets its nudges, and so does a turn that ends with no final message. To let a run go on by itself, give the column a row that moves the task forward.
+A row that moves the task forward on **Your message** keeps the column yours too: the card moves
+when you type the words it matches (the Design column's "signed off"), never on the agent's.
 The workflow's planning agent is told which columns these are ("Only a person moves a card out of
 it"), so it puts one on a route only for a task that needs your sign-off there. It picks the rest of
 each route from the columns' descriptions, so a column described as for one kind of work (a design

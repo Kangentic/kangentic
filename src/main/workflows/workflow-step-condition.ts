@@ -1,9 +1,9 @@
-import type { ColumnAutomation, Swimlane, Task } from '../../shared/types';
+import type { ColumnAutomation, Swimlane, Task, TextMatchSource } from '../../shared/types';
 import { automationMovesTask, automationMoveTargetName, canColumnRun } from '../../shared/automation-manifest';
 import { finalMatchLine, shownFinalLine, textMatchCanMatch, textMatchMatches } from '../../shared/final-line-match';
 import { doneColumn, isForwardOf, nextOnRoute, routeCandidates, routeColumns, type RouteFields } from '../../shared/workflow-route';
 import { resolveMoveTarget } from '../automations/move-target';
-import { hasFinalLine } from '../automations/row-guards';
+import { hasFinalLine, textMatchSourceOf } from '../automations/row-guards';
 
 /**
  * What the workflow's step check asks the Automation agent at a turn end, the
@@ -162,6 +162,12 @@ export function workflowBlockerConditions(
 export interface StepExitRow {
   /** The row's Text match. */
   finalLine: string;
+  /**
+   * Whose message the Text match reads (#1078). Only an agent row is an exit
+   * the agent's line can take: a row on the user's message is the person's
+   * own way on, so a forward one makes the column a person's gate.
+   */
+  source: TextMatchSource;
   /** The column the row moves the task to, or null when its target names no column. */
   target: Pick<Swimlane, 'name' | 'position' | 'role'> | null;
 }
@@ -194,22 +200,36 @@ export function columnExitRows(
   for (const row of turnEndRows) {
     if (!hasFinalLine(row) || !automationMovesTask(row.type) || !canColumnRun(row.type, facts, 'turn_end').ok) continue;
     const target = resolveMoveTarget(columns, column.id, automationMoveTargetName(row.type, row.config), route);
-    exitRows.push({ finalLine: row.final_line, target: target.ok ? target.column : null });
+    exitRows.push({ finalLine: row.final_line, source: textMatchSourceOf(row), target: target.ok ? target.column : null });
   }
   return exitRows;
 }
 
-/** A row that can run, whose Text match can match a line. */
-function liveExitRows(exitRows: readonly StepExitRow[]): StepExitRow[] {
+/** The rows, of either source, whose Text match can match some text. */
+function matchableRows(exitRows: readonly StepExitRow[]): StepExitRow[] {
   return exitRows.filter((row) => textMatchCanMatch(row.finalLine));
 }
 
+/** The matchable rows the agent's line can take: never a row on the user's message. */
+function agentExitRows(exitRows: readonly StepExitRow[]): StepExitRow[] {
+  // `!== 'user'`, not `=== 'agent'`: a row built without a source reads the agent's line.
+  return matchableRows(exitRows).filter((row) => row.source !== 'user');
+}
+
+/** Whether a matchable row on the user's message moves the task forward: the person's own way on. */
+function hasUserForwardRow(column: Pick<Swimlane, 'position'>, exitRows: readonly StepExitRow[]): boolean {
+  return matchableRows(exitRows).some((row) => row.source === 'user' && row.target !== null && isForwardOf(row.target, column));
+}
+
 /**
- * Does this column say how a task goes back, and leave the way on to a person?
- * Its exit rows send a task to a known column, and none of them sends it forward.
+ * Does this column leave the way on to a person? Either its agent exit rows
+ * send a task to a known column and none of them sends it forward, or a row on
+ * the user's message moves it forward (#1078): then the person's message, not
+ * the agent's line or the step, is what moves the card on.
  */
 export function isSendBackOnly(column: Pick<Swimlane, 'position'>, exitRows: readonly StepExitRow[]): boolean {
-  const targets = liveExitRows(exitRows).flatMap((row) => (row.target ? [row.target] : []));
+  if (hasUserForwardRow(column, exitRows)) return true;
+  const targets = agentExitRows(exitRows).flatMap((row) => (row.target ? [row.target] : []));
   return targets.length > 0 && !targets.some((target) => isForwardOf(target, column));
 }
 
@@ -247,10 +267,16 @@ export function stepExitVerdict(
   exitRows: readonly StepExitRow[],
   agentReply: string | null,
 ): StepExitVerdict | null {
-  const exits = liveExitRows(exitRows);
-  if (exits.length === 0) return null;
-  const isForward = (row: StepExitRow): boolean => row.target !== null && isForwardOf(row.target, column);
+  const exits = agentExitRows(exitRows);
   const line = finalMatchLine(agentReply);
+  if (exits.length === 0) {
+    // Only rows on the user's message: a forward one is the person's way on,
+    // so the step never moves the task out and the card stops (#1078).
+    if (!hasUserForwardRow(column, exitRows)) return null;
+    if (line === null) return { accepted: false, reason: 'the turn ended without a final message' };
+    return { accepted: true, stopsHere: true };
+  }
+  const isForward = (row: StepExitRow): boolean => row.target !== null && isForwardOf(row.target, column);
   // The runner's own rule (`textMatchMatches`): a row with `!` patterns is an
   // exit on every line it does not rule out, as the row itself moves the task.
   const matched = line === null ? [] : exits.filter((row) => textMatchMatches(row.finalLine, line));
@@ -259,7 +285,7 @@ export function stepExitVerdict(
   if (line !== null && sendBack?.target) {
     return { accepted: false, reason: `the final line, "${shownFinalLine(line)}", sends the task back to ${sendBack.target.name}` };
   }
-  const sendBackOnly = isSendBackOnly(column, exits);
+  const sendBackOnly = isSendBackOnly(column, exitRows);
   if (!sendBackOnly && !exits.some(isForward)) return null;
   if (line === null) return { accepted: false, reason: 'the turn ended without a final message' };
   if (sendBackOnly) return { accepted: true, stopsHere: true };

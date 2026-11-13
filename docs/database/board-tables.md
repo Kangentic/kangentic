@@ -297,6 +297,7 @@ one column.
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
 | final_line | TEXT | | NULL |
+| text_match_source | TEXT | | NULL |
 
 Valid types: `send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus legacy
 `spawn_agent` on boards that already had one. `trigger` is `enter`, `turn_end` (each time the
@@ -306,7 +307,8 @@ is skipped with a warning, never read as `enter`.
 
 `condition` is the row's Condition in plain words, judged by the Automation agent before the row
 runs; NULL (or blank) means the row always runs. `final_line` is the other kind of Condition, a
-Text match: patterns checked in code against the agent's last line with no agent call
+Text match: patterns checked in code against the agent's last line, or the user's last message
+when `text_match_source` is `'user'`, with no agent call
 (`src/shared/final-line-match.ts`), one per line joined by a line break, each trimmed with blank
 lines dropped (`normalizeTextMatch`). A pattern that starts with `!` means not. A row holds one kind. `AutomationRepository.replaceForColumn`
 stores `final_line` only on a `turn_end` row and, when it is set, stores `condition` as NULL, so a
@@ -315,6 +317,12 @@ with two checks or a Text match on a trigger with no final message. `max_runs` i
 the most times it may run on one task across every visit since a person last moved the task to
 another column, or it last left Done; NULL means no limit. All three are nullable so a build from
 before them still inserts into a database that has them.
+
+`text_match_source` says whose message the Text match reads (#1078): NULL for the agent's last
+line, `'user'` for the user's last message in the turn. It is stored only beside a `final_line`,
+and an unknown value reads as `'user'` with a warning, the side that can never be an agent exit.
+What Kangentic itself typed, which such a row must never read as the user's, is recorded in
+[`session_typed_messages`](session-tables.md#session_typed_messages-table).
 
 `position` is assigned PER TRIGGER, so each group numbers from 0 independently and the three can
 never interleave.

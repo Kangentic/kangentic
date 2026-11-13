@@ -96,20 +96,32 @@ it is checked:
   do"). The **Automation agent**, chosen in Settings > Workflows, checks it before the row runs.
   Until one is set up, this kind shows a notice with Open Settings where its field would be. The
   same agent names tasks and Command Terminals, and without one naming is off.
-- **Text match** is checked against the last line the agent writes when its turn ends, such as
-  `Verdict: Ready`. It is read once per turn end, from the agent's final message, on the spot, with
-  no agent and no cost. Use `*` as a wildcard (`Ready for *`); case, punctuation and markdown are
-  ignored, so `**Verdict: Ready.**` matches too. A `!` at the very start means not:
-  `!Design: waiting on you` runs on any last line but that one. The field takes one pattern per
-  line, and Enter adds a line. The row runs when the last line matches any plain line and none of
-  the `!` lines, in any order; with only `!` lines it runs on any line but those. A turn that ends
-  with no message runs no Text match, with or without `!`. It reads the agent's last message, so it
-  is offered on **On agent turn end** only: on enter or exit it is shown disabled, with the reason.
-  Hover the info icon after its hint for the rules and examples.
+- **Agent's message** is a Text match checked against the last line the agent writes when its
+  turn ends, such as `Verdict: Ready`. It is read once per turn end, from the agent's final
+  message, on the spot, with no agent and no cost. Use `*` as a wildcard (`Ready for *`); case,
+  punctuation and markdown are ignored, so `**Verdict: Ready.**` matches too. A `!` at the very
+  start means not: `!Design: waiting on you` runs on any last line but that one. The field takes
+  one pattern per line, and Enter adds a line. The row runs when the last line matches any plain
+  line and none of the `!` lines, in any order; with only `!` lines it runs on any line but those.
+  A turn that ends with no message runs no Text match, with or without `!`. Hover the info icon
+  after its hint for the rules and examples.
+- **Your message** is the same Text match, against your last message in the turn instead,
+  including one you typed while the agent was working. A message Kangentic typed (a column message,
+  a nudge) never counts as yours. Neither does one you sent while no agent was running, from your
+  phone or the desktop: Kangentic holds it and hands it to the next agent itself, often inside the
+  column's own message. It is how a column lets you move a card on by saying so: the
+  Design column's **On to Planning** row moves a card when you type "signed off". The run log says
+  whether your message matched, never what it said. When Kangentic cannot read the turn exactly (an
+  agent's first turn, a very large turn, Run again), the row does not run. It needs an agent that
+  reports the messages you send (Claude Code today); for another agent the tab is disabled with the
+  reason, and a saved row is shown off.
+
+Both message tabs share one patterns field, and both are offered on **On agent turn end** only: on
+enter or exit they are shown disabled, with the reason.
 
 Either way, a no means the row did not run, and it is checked again next time. A row holds one kind.
-A new Condition starts on Agent evaluation, or on Text match at a turn end when no Automation agent
-is set up. **Frequency** caps how many times a row runs on one task, across every visit, which is
+A new Condition starts on Agent evaluation, or on Agent's message at a turn end when no Automation
+agent is set up. **Frequency** caps how many times a row runs on one task, across every visit, which is
 what keeps a review loop from bouncing a task forever. The count starts over each time you move the
 task to another column, by a drag, from your phone, or by restoring it from the Completed list, so
 a task you send back for another pass runs the board's automations again. A move the board makes
@@ -141,7 +153,8 @@ in the editor's card order: a robot for an Agent evaluation or a magnifier over 
 match, a repeat icon with the run limit for a Frequency, a clock on a Send message row that waits
 for the current turn, and a speech bubble on a Move to column row that carries a Message. Hover a
 mark to read its card and value ("Condition: only if the review is clean.", "Condition: only if the
-last line reads "Verdict: Ready".", "Frequency: at most 3 times until you move the task."); a
+last line reads "Verdict: Ready".", "Condition: only if your message reads "*signed off*".",
+"Frequency: at most 3 times until you move the task."); a
 Message or a Condition reads in full there. A webhook's body and headers and a notification's body are not
 marked: open the row for those. The rows under **Copy existing** in the Add automation picker carry
 the same marks.
