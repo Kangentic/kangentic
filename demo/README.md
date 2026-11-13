@@ -1223,9 +1223,12 @@ manifest's `geometry` names the scale each of its numbers was measured at.
 
 `task-mcp` is the one named exception. The site shows it as the whole app at 56 percent for its MCP
 tools tab, where native 12px type is under 7px and the tool names are the point of the figure. So
-the scene spells out the `terminal` block with a larger font, sized so the maximized pane fits fewer
-columns than the 154-column recording at every display scale, and the seed's hold then lands the
-recording on the whole pane at the largest type that carries it. The rest of the frame keeps the
+the scene sets a larger terminal font (23px), sized so the maximized pane fits fewer columns than
+the 154-column recording at every display scale, and the seed's hold then lands the recording on
+the whole pane at the largest type that carries it. A scene replaces the terminal block, so it
+spells out the demo's face and line height too (`scripts/lib/demo-fonts.mjs`) and
+`scene-registry.test.ts` holds it to them: it named a system face before, and a Windows visitor read
+Consolas where the posters, shot on Linux, showed Liberation Mono. The rest of the frame keeps the
 app's own type. No other scene should copy it. The rule above is what keeps the figures one app.
 
 ## The sample install

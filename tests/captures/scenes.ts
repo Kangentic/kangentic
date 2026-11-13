@@ -34,6 +34,7 @@ import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_COMMAND_TERMINAL_EARLIER
 import { DEMO_COMPLETED_TASK_CHANGES, DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEMO_BROWSER_ANNOTATION_DRAFT } from './helpers/demo-browser-annotations';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
+import { DEMO_FONT_STACKS, DEMO_TERMINAL_LINE_HEIGHT } from '../../scripts/lib/demo-fonts.mjs';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
 import contosoHistory from './fixtures/demo/history/contoso-web.json';
@@ -338,11 +339,19 @@ const MCP_SCENE_AGENT_LIST = {
  */
 const MCP_SCENE_TERMINAL = {
   shell: null,
-  fontFamily: 'Consolas, "Courier New", monospace',
-  // About 137 columns across the maximized pane at scale 1 (Consolas), 141 at 1.25 and 125 at 2 in
-  // the posters' Liberation Mono: under 154 everywhere, so the hold always lands, at about 18.6px.
-  // Checked in Courier New too, whose metrics Liberation Mono clones: the pane fills at 1, 1.25 and 2.
-  fontSize: 21,
+  // The demo's own face and line height (scripts/lib/demo-fonts.mjs, the one place boot.js reads
+  // them from too), so the scene draws in Inconsolata like every other terminal, on every OS. A
+  // scene REPLACES the terminal block, so it has to spell them out: it named a system face before,
+  // which left a Windows visitor in Consolas and the posters, shot on Linux, in Liberation Mono
+  // (task #1079; scene-registry.test.ts holds every replaced terminal block to them now).
+  // Inconsolata's advance is half an em, so 23px is 11.5px a column:
+  // about 112 across the maximized pane, under the 154-column recording at every display scale, so
+  // the hold always lands. Sizes 18 to 26 were scanned at 1, 1.25, 1.5 and 2 on Windows and on
+  // Linux, and 23 is the one whose pane fills at all eight (the empty band beside it is 4 to 14px,
+  // below it 5 to 20): 21 left 43px below at 1.25 on Linux, past the 2-cells bound the demo tier holds.
+  fontFamily: DEMO_FONT_STACKS.mono,
+  lineHeight: DEMO_TERMINAL_LINE_HEIGHT,
+  fontSize: 23,
   showPreview: false,
   panelHeight: 280,
   panelCollapsed: false,
