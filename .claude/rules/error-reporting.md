@@ -43,8 +43,10 @@ new report from carrying what a user wrote. The design and every source: [docs/t
 - **Dedupe through `markReported(original)`.** A reporter marks the error it was handed, and a
   wrapper that sees it again (the IPC wrap, a caller's catch) skips it through `isReported`,
   which also checks one level of `cause`. Never keep a set of the copies that were sent.
-- **Report from main only.** The pty host, the retrieval worker and the dictation worker cannot
-  import Sentry. They relay a fixed code (`handledError`) and main reports it.
+- **Report from main or the renderer, never from a worker process.** The pty host, the retrieval
+  worker and the dictation worker cannot import Sentry. They relay a fixed code (`handledError`)
+  and main reports it. A renderer store reports through `reportRendererFailure`, whose sink the
+  SDK module registers, so a store never imports the SDK.
 - **Disclose a new data class** in Settings > Privacy (`PrivacyTab.tsx`) and in
   `docs/telemetry/error-reporting.md` in the same change. A new console tag kept as a breadcrumb
   joins `CONSOLE_BREADCRUMB_TAGS` only when nothing under it interpolates user content.
