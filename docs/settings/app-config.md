@@ -104,7 +104,7 @@ sources:
 | `terminal.panelHeight` | number | `250` | Bottom panel height (px). Global-only. |
 | `terminal.panelCollapsed` | boolean | `false` | Whether the bottom terminal panel is collapsed. Global-only. |
 | `terminal.cursorStyle` | `'block'` \| `'underline'` \| `'bar'` | per platform | Terminal cursor appearance. Global-only. `'bar'` on Windows (Windows Terminal's default), `'block'` on Linux and macOS. |
-| `terminal.lineHeight` | number (optional) | absent (`1`) | xterm's line height, a multiple of the font's own. No settings row sets it; the web demo sets 1.17 so Inconsolata draws the 14px rows its recordings were made at. A value under 1, which xterm refuses, runs at 1. |
+| `terminal.lineHeight` | number (optional) | absent (`1`) | xterm's line height, a multiple of the font's own. No settings row sets it; the web demo sets 1.17 so Inconsolata draws the 14px rows its recordings were made at. A value under 1, which xterm refuses, runs at 1. Global-only. |
 | `terminal.colors` | `TerminalColorOverrides` | `{}` | Custom terminal background, foreground, and cursor color, edited via color swatches in the Colors row of the Terminal settings tab. Any slot left unset falls back to the built-in default: background `#0c0c0c`, foreground/cursor `#e4e4e7`. The 16-color ANSI palette (based on Windows Terminal's "Campbell" scheme) is a fixed built-in scheme, not exposed for per-color editing. `cursorAccent` always tracks the resolved background (for cursor legibility) and `selectionBackground` is a fixed app accent; neither is user-customizable. A dictionary-style field (`CONFIG_DICTIONARY_PATHS`): saved wholesale so resetting a slot actually deletes it. Global-only. |
 
 ## agent.*

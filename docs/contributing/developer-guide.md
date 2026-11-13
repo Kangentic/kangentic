@@ -317,7 +317,9 @@ boot script (`demo/boot.js`: the URL contract, config overrides, still and embed
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
 pre-reveal step runner, a silent microphone in place of `getUserMedia`, the in-place display
 language switch that stands in for a restart (`demo/language.ts`), a focus outline held back
-until a visitor's first input, and, for each scene-only
+until a visitor's first input, the demo's own faces (Roboto and Inconsolata, registered before the
+frame reports ready so a poster's text never reflows at the lift, with every terminal on one 6 by
+14 cell at 12px and a line height of 1.17; `demo/README.md`, "Fonts"), and, for each scene-only
 row a frame names, a `document.write` of that row's own script, so it runs ahead of the seed), the webview shim
 (`demo/webview-shim.js`: an iframe standing in for Electron's `<webview>` in the Browser pane,
 onto a bundled page with the project's own data at its dev URL), `tests/ui/mock-electron-api.js`
