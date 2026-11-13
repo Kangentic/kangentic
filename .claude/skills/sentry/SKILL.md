@@ -184,7 +184,7 @@ handled forwards), release, environment, and the anonymous install id under `use
 - **The breadcrumb trail is filtered on the machine.** On a release carrying
   `src/shared/sentry-breadcrumbs.ts`, console crumbs appear only under its allowlisted tags
   (`[AGENT-LAUNCH]`, `[UPDATER]`, `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`,
-  `[APP]`) plus Electron's own `Error occurred in handler for '<channel>'` line, an Error argument
+  `[APP]`, `[pty-host]`, `[utility-process]`) plus Electron's own `Error occurred in handler for '<channel>'` line, an Error argument
   shows as its name and code only, click selectors read `[title]`
   without a value, and request crumbs keep a URL only when it is Kangentic's own. So a missing
   untagged line (`[WORKTREE]`, `[spawnAgent]`) is not evidence it was never logged: the user's

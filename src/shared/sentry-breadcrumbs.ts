@@ -60,6 +60,9 @@ export interface BreadcrumbShape {
  * - `[APP]`: uncaught errors and startup faults.
  * - `[AGENT-LAUNCH]`: a launch's trail, in fixed values only (stage, cause, agent,
  *   shell, and session ids), never its command or its output.
+ * - `[pty-host]` and `[utility-process]`: the pty host's and the workers'
+ *   lifecycle (spawn, exit code, restart, latch), the trail a crash report and
+ *   a lost terminal are read through.
  */
 export const CONSOLE_BREADCRUMB_TAGS: readonly string[] = [
   '[UPDATER]',
@@ -70,6 +73,8 @@ export const CONSOLE_BREADCRUMB_TAGS: readonly string[] = [
   '[GPU-HEALTH]',
   '[APP]',
   '[AGENT-LAUNCH]',
+  '[pty-host]',
+  '[utility-process]',
 ];
 
 /**

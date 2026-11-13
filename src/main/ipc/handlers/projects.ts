@@ -1106,7 +1106,7 @@ async function recoverTasksAfterPtyHostLoss(
         );
       });
     } catch (error) {
-      console.error(`[pty-host] recovering sessions in ${project.name} after the host restarted failed:`, error);
+      console.error(`[pty-host] recovering sessions in project ${project.id} after the host restarted failed:`, error);
       reportRecoveryPassFailure('pty_host_loss', error);
     }
   }
