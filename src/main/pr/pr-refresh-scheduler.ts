@@ -30,6 +30,7 @@
 import { runWithProjectLogContext } from '../diagnostics/project-log-context';
 import { refreshProjectPRs, listRefreshEligibleTasks, pickNextDuePR, nextPRDueAt } from './pr-refresh';
 import { linkPR, cancelPendingVerdictRepolls, lastPRCheckAt, prunePRCheckStamps, clearPRCheckStamps } from './pr-linking';
+import { prReporter } from './pr-report';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Project } from '../../shared/types';
 import { PR_REFRESH_INTERVAL_MS } from '../../shared/refresh-intervals';
@@ -63,7 +64,16 @@ function isActive(context: IpcContext, project: Project): boolean {
 }
 
 function arm(context: IpcContext, project: Project, delayMs: number): void {
-  activeTimer = setTimeout(() => { void tick(context, project); }, Math.max(PR_REFRESH_MIN_GAP_MS, delayMs));
+  const armedGeneration = generation;
+  activeTimer = setTimeout(() => {
+    // A throw anywhere in a tick used to stop the queue re-arming for the rest
+    // of the session. It is reported, and the queue goes on.
+    tick(context, project).catch((error: unknown) => {
+      console.error('[pr-refresh] tick failed:', error);
+      prReporter.report(error, { tags: { stage: 'tick' } });
+      if (generation === armedGeneration && isActive(context, project) && !activeTimer) arm(context, project, PR_REFRESH_INTERVAL_MS);
+    });
+  }, Math.max(PR_REFRESH_MIN_GAP_MS, delayMs));
   // Never let the timer block a clean quit; it is also explicitly cleared on
   // switch/delete/shutdown.
   activeTimer.unref();
@@ -95,6 +105,7 @@ async function tick(context: IpcContext, project: Project): Promise<void> {
   const check = runWithProjectLogContext(project.name, () => linkPR(context, { projectId: project.id, taskId: dueTaskId }));
   await check.catch((error: unknown) => {
     console.error('[pr-refresh] check failed:', error);
+    prReporter.report(error, { tags: { stage: 'check' } });
   });
   // Stopped, switched, or restarted while the check ran.
   if (generation !== tickGeneration || !isActive(context, project) || activeTimer) return;
@@ -111,6 +122,7 @@ function openSweep(context: IpcContext, project: Project, queueEnabled: boolean,
   void sweep
     .catch((error: unknown) => {
       console.error('[pr-refresh] sweep failed:', error);
+      prReporter.report(error, { tags: { stage: 'sweep' } });
     })
     .finally(() => {
       // Armed only after the sweep, so the queue never races it for the same

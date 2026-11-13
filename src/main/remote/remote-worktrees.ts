@@ -29,6 +29,7 @@ import { taskWorktreeFolderFor, taskWorktreePathFor } from '../git/task-worktree
 import type { RemoteWorktreeBackend, RemoteWorktreeResolver, RemoteWorktreeTask } from '../git/remote-worktree';
 import type { EnsureWorktreeResult } from '../git/worktree-manager';
 import type { HostCommandRequest, HostCommandResult } from './protocol/messages';
+import { RefusalError } from '../../shared/refusal';
 
 const CREATE_TIMEOUT_MS = 240_000;
 const REMOVE_TIMEOUT_MS = 60_000;
@@ -143,7 +144,7 @@ function lineValue(lines: string[], key: string): string {
 /** A name that starts with a dash would reach the host's git as an option. Refused before anything runs. */
 function assertSafeBranches(names: readonly string[]): void {
   for (const name of names) {
-    if (!isSafeBranchName(name)) throw new Error(`Could not make the worktree on the host: "${name}" is not a usable branch name.`);
+    if (!isSafeBranchName(name)) throw new RefusalError(`Could not make the worktree on the host: "${name}" is not a usable branch name.`);
   }
 }
 
@@ -206,7 +207,7 @@ export class HostWorktrees implements RemoteWorktreeBackend {
       if (output.lines.includes('created')) await this.removeWorktree(localPath);
       options.signal.throwIfAborted();
     }
-    if (output.error) throw new Error(`Could not make the worktree on the host: ${output.error}`);
+    if (output.error) throw new RefusalError(`Could not make the worktree on the host: ${output.error}`);
 
     const skip = output.lines.find((line) => line.startsWith('skip:'));
     if (skip) {
@@ -231,7 +232,7 @@ export class HostWorktrees implements RemoteWorktreeBackend {
     const hostPath = hostWorktreePathFor(worktreePath, this.deps.shellFolder, this.deps.hostRepoPath);
     const result = await this.deps.runCommand(runScriptRequest(PENDING_SCRIPT, [hostPath], this.deps.hostRepoPath, REMOVE_TIMEOUT_MS));
     const output = readScriptOutput(result);
-    if (output.error) throw new Error(output.error);
+    if (output.error) throw new RefusalError(output.error);
     const uncommitted = lineValue(output.lines, 'uncommitted');
     // A count that cannot be read is an error, never zero: zero says the tree is clean (and `Number('')` is 0).
     if (!/^\d+$/.test(uncommitted)) throw new Error('The host did not say how many files are changed.');

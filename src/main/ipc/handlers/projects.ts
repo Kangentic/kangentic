@@ -58,6 +58,7 @@ import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
 import type { ConfigManager } from '../../config/config-manager';
 import { pickOverridableSubset } from '../../config/config-manager';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Sync the project-level MCP config file with the current settings.
@@ -701,7 +702,7 @@ const hostsSweeping = new Set<string>();
 async function snapshotWhenConnected(context: IpcContext, hostId: string): Promise<{ sessions: HelperSessionRecord[] }> {
   const hosting = context.remoteHosting;
   if (!hosting || hosting.status.get(hostId)?.state !== 'connected') {
-    throw new Error('the host is not connected');
+    throw new RefusalError('the host is not connected');
   }
   return hosting.hostService.snapshot(hostId);
 }
@@ -809,7 +810,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   // A hidden project's stand-in folder is no folder to add: a local row at its path would run every start as the
   // hidden remote project, which `remoteOfProjectPath` finds first, and be refused.
   if (!project && context.projectRepo.listHidden().some((hidden) => path.resolve(hidden.path) === normalized)) {
-    throw new Error(`${normalized} belongs to a project whose SSH host was removed. Add the host again to bring it back.`);
+    throw new RefusalError(`${normalized} belongs to a project whose SSH host was removed. Add the host again to bring it back.`);
   }
 
   // Guard BEFORE any directory-creating side effect (saveProjectOverrides,
@@ -819,9 +820,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   // The sentinel lets the renderer offer the "Locate Folder..." flow.
   if (!fs.existsSync(normalized)) {
     if (project) {
-      throw new Error(PROJECT_PATH_MISSING_PREFIX + normalized);
+      throw new RefusalError(PROJECT_PATH_MISSING_PREFIX + normalized);
     }
-    throw new Error(`Project path does not exist: ${normalized}`);
+    throw new RefusalError(`Project path does not exist: ${normalized}`);
   }
 
   let created = false;
@@ -841,7 +842,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
       fs.writeFileSync(writeProbePath, '');
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
-      throw new Error(`${PROJECT_FOLDER_NOT_WRITABLE_PREFIX}${code}: ${normalized}`, { cause: error });
+      throw new RefusalError(`${PROJECT_FOLDER_NOT_WRITABLE_PREFIX}${code}: ${normalized}`, { cause: error });
     }
     try {
       fs.unlinkSync(writeProbePath);
@@ -1251,7 +1252,7 @@ export function registerProjectHandlers(context: IpcContext): void {
     let input = requested;
     if (requested.remote) {
       const admin = context.remoteHosting?.admin;
-      if (!admin) throw new Error('Remote projects are not available.');
+      if (!admin) throw new RefusalError('Remote projects are not available.');
       input = await admin.prepareRemoteProject(requested);
     }
     // Explicit input wins; the inherited defaults only fill what it left unset.
@@ -1294,13 +1295,13 @@ export function registerProjectHandlers(context: IpcContext): void {
     // or a dev-only boot prune) hit this and had no way to tell "gone" from
     // any other failure. The sentinel lets the renderer refetch its list
     // instead of surfacing a raw error with nothing to do about it.
-    if (!project) throw new Error(PROJECT_NOT_FOUND_PREFIX + id);
+    if (!project) throw new RefusalError(PROJECT_NOT_FOUND_PREFIX + id);
 
     // The project folder was moved or renamed on disk. Bail before any
     // directory-creating side effect below recreates an empty folder at the
     // stale path; the sentinel triggers the renderer's "Locate Folder..." flow.
     if (!fs.existsSync(project.path)) {
-      throw new Error(PROJECT_PATH_MISSING_PREFIX + project.path);
+      throw new RefusalError(PROJECT_PATH_MISSING_PREFIX + project.path);
     }
 
     // Skip full recovery on warm reopens: any project we've already recovered
@@ -1402,7 +1403,7 @@ export function registerProjectHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.PROJECT_SET_DEFAULT_AGENT, async (_, id: string, agentName: string) => {
     const { agentRegistry } = await import('../../agent/agent-registry');
     if (!agentRegistry.has(agentName)) {
-      throw new Error(`Unknown agent: "${agentName}"`);
+      throw new RefusalError(`Unknown agent: "${agentName}"`);
     }
     return context.projectRepo.setDefaultAgent(id, agentName);
   });
@@ -1470,7 +1471,7 @@ export function registerProjectHandlers(context: IpcContext): void {
     const resolvedCwd = path.resolve(input.cwd);
     const stat = await fs.promises.stat(resolvedCwd).catch(() => null);
     if (!stat?.isDirectory()) {
-      throw new Error(`Project search path is not a directory: ${resolvedCwd}`);
+      throw new RefusalError(`Project search path is not a directory: ${resolvedCwd}`);
     }
     return searchProjectEntries({ ...input, cwd: resolvedCwd });
   });

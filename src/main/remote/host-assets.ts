@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { HostArch, HostAsset } from './link/host-installer';
+import { RefusalError } from '../../shared/refusal';
 
 export interface HostAssetsResult {
   assets: HostAsset[];
@@ -158,9 +159,9 @@ async function fetchVerified(options: DownloadOptions): Promise<void> {
   try {
     response = await options.fetchImpl(options.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
   } catch (error) {
-    throw new Error(`Could not download the host program from ${new URL(options.url).host}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new RefusalError(`Could not download the host program from ${new URL(options.url).host}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
-  if (!response.ok) throw new Error(`Could not download the host program: ${new URL(options.url).host} answered ${response.status}.`);
+  if (!response.ok) throw new RefusalError(`Could not download the host program: ${new URL(options.url).host} answered ${response.status}.`);
   const bytes = Buffer.from(await response.arrayBuffer());
   if (options.expectedSize !== null && bytes.length !== options.expectedSize) {
     throw new Error(`The host program downloaded is ${bytes.length} bytes and its manifest says ${options.expectedSize}, so it was not kept.`);

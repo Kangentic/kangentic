@@ -26,6 +26,7 @@ import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconci
 import { abortInFlightResume } from './session-resume-controllers';
 import type { Session, SuspendedBy } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * `paused`: the task had a live session and it is now suspended.
@@ -73,7 +74,7 @@ export function pauseTaskSession(
 
   return withTaskLock(taskId, async (): Promise<PauseTaskSessionOutcome> => {
     const resolvedProjectId = options.projectId ?? context.currentProjectId;
-    if (!resolvedProjectId) throw new Error('No project is currently open');
+    if (!resolvedProjectId) throw new RefusalError('No project is currently open');
 
     // Reconciled against the registry, as SESSION_RESUME and the task move
     // are: a pointer at an exited row is cleared and there is nothing to

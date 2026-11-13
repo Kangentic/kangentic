@@ -21,6 +21,7 @@ import { childProcessEnv } from '../shared/child-env';
 import { killChildTreeNow } from '../shared/child-tree-stop';
 import { posixShellCommand } from './link/ssh-run';
 import { assertSafeDestination, defaultSshClientPaths, nativePathFromSsh } from './ssh-client';
+import { RefusalError } from '../../shared/refusal';
 
 export interface RunResult {
   code: number | null;
@@ -134,7 +135,7 @@ export function parseSshConfigDump(text: string, homeDirectory: string, platform
     if (space > 0 && !values.has(line.slice(0, space))) values.set(line.slice(0, space), line.slice(space + 1).trim());
   }
   const hostname = values.get('hostname');
-  if (!hostname) throw new Error('ssh did not say which host that address means.');
+  if (!hostname) throw new RefusalError('ssh did not say which host that address means.');
   const knownHosts = (values.get('userknownhostsfile') ?? '~/.ssh/known_hosts').split(/\s+/)[0];
   return {
     hostname,
@@ -154,7 +155,7 @@ function expandHome(filePath: string, homeDirectory: string): string {
 export async function resolveTarget(destination: string, deps: SshSetupDeps): Promise<ResolvedTarget> {
   assertSafeDestination(destination);
   const result = await deps.run(deps.sshPath, [...(deps.sshOptions ?? []), '-G', destination], { env: childProcessEnv(), timeout: 15_000 });
-  if (result.code !== 0) throw new Error(result.stderr.trim() || 'ssh could not read that address.');
+  if (result.code !== 0) throw new RefusalError(result.stderr.trim() || 'ssh could not read that address.');
   return parseSshConfigDump(result.stdout, deps.homeDirectory, deps.platform);
 }
 
@@ -227,7 +228,7 @@ export async function probeHostKey(destination: string, deps: SshSetupDeps, reso
     ], { env: childProcessEnv(), timeout: 30_000 });
     const text = await fs.readFile(known, 'utf8').catch(() => '');
     const entry = pickKnownHostsEntry(text, knownHostsToken(target));
-    if (!entry) throw new Error(`Could not reach ${target.hostname}${target.port === 22 ? '' : `:${target.port}`} to read its key. Check the address and that the host is on.`);
+    if (!entry) throw new RefusalError(`Could not reach ${target.hostname}${target.port === 22 ? '' : `:${target.port}`} to read its key. Check the address and that the host is on.`);
     return {
       hostname: target.hostname,
       port: target.port,
@@ -248,7 +249,7 @@ export async function trustHostKey(destination: string, shownFingerprint: string
   const target = await resolveTarget(destination, deps);
   const probe = await probeHostKey(destination, deps, target);
   if (probe.fingerprint !== shownFingerprint) {
-    throw new Error('The host presented a different key than the one you were shown, so nothing was trusted. Try again, and compare the fingerprint.');
+    throw new RefusalError('The host presented a different key than the one you were shown, so nothing was trusted. Try again, and compare the fingerprint.');
   }
   await recordKnownHostsLine(target, probe.knownHostsLine);
   return probe;
@@ -272,7 +273,7 @@ export async function forgetHostKey(destination: string, deps: SshSetupDeps): Pr
 
 async function removeRecordedKey(target: ResolvedTarget, deps: SshSetupDeps, recordedHost: string = knownHostsToken(target)): Promise<void> {
   const result = await deps.run(deps.sshKeygenPath, ['-R', recordedHost, '-f', target.userKnownHostsFile], { env: childProcessEnv(), timeout: 15_000 });
-  if (result.code !== 0 && !/not found/i.test(result.stdout + result.stderr)) throw new Error(result.stderr.trim() || 'ssh-keygen could not remove the old key.');
+  if (result.code !== 0 && !/not found/i.test(result.stdout + result.stderr)) throw new RefusalError(result.stderr.trim() || 'ssh-keygen could not remove the old key.');
 }
 
 /**
@@ -302,7 +303,7 @@ export async function replaceHostKey(destination: string, shownFingerprint: stri
   const target = await resolveTarget(destination, deps);
   const probe = await probeHostKey(destination, deps, target);
   if (probe.fingerprint !== shownFingerprint) {
-    throw new Error('The host presented a different key than the one you were shown, so nothing was changed. Try again, and compare the fingerprint.');
+    throw new RefusalError('The host presented a different key than the one you were shown, so nothing was changed. Try again, and compare the fingerprint.');
   }
   // The name ssh looks the host up under, which a HostKeyAlias makes something other than the address. ssh
   // accepts a host when any line matches, so an old line left under that name stays trusted.
@@ -342,7 +343,7 @@ export async function createHostKey(hostId: string, deps: SshSetupDeps): Promise
   await fs.rm(privateKeyPath, { force: true });
   await fs.rm(`${privateKeyPath}.pub`, { force: true });
   const result = await deps.run(deps.sshKeygenPath, ['-q', '-t', 'ed25519', '-N', '', '-C', 'kangentic', '-f', privateKeyPath], { env: childProcessEnv(), timeout: 30_000 });
-  if (result.code !== 0) throw new Error(result.stderr.trim() || 'ssh-keygen could not make a key.');
+  if (result.code !== 0) throw new RefusalError(result.stderr.trim() || 'ssh-keygen could not make a key.');
   const publicKey = (await fs.readFile(`${privateKeyPath}.pub`, 'utf8')).trim();
   if (!isValidPublicKey(publicKey)) throw new Error('ssh-keygen made a key Kangentic could not read back.');
   return { privateKeyPath, publicKey };
@@ -355,9 +356,9 @@ export async function createHostKey(hostId: string, deps: SshSetupDeps): Promise
 async function readUsablePrivateKey(sourcePath: string): Promise<string> {
   // A key saved on Windows can carry CRLF line ends, which a POSIX OpenSSH refuses as an invalid format.
   const content = (await fs.readFile(sourcePath, 'utf8')).replace(/\r\n/g, '\n');
-  if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) throw new Error('That file is not a private key.');
+  if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) throw new RefusalError('That file is not a private key.');
   if (/ENCRYPTED/.test(content.split('\n').slice(0, 4).join('\n')) || isEncryptedOpenSshKey(content)) {
-    throw new Error('That key has a passphrase, and Kangentic never asks for one. Add it to ssh-agent, or let Kangentic make its own key.');
+    throw new RefusalError('That key has a passphrase, and Kangentic never asks for one. Add it to ssh-agent, or let Kangentic make its own key.');
   }
   return content;
 }
@@ -396,7 +397,7 @@ async function restrictToOwnerOnWindows(filePath: string, deps: SshSetupDeps): P
   const { username } = os.userInfo();
   const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${username}` : username;
   const result = await deps.run(icacls, [filePath, '/inheritance:r', '/grant:r', `${account}:F`, '*S-1-5-18:F'], { env: childProcessEnv(), timeout: 30_000 });
-  if (result.code !== 0) throw new Error(result.stdout.trim() || result.stderr.trim() || 'Could not restrict who can read the key file.');
+  if (result.code !== 0) throw new RefusalError(result.stdout.trim() || result.stderr.trim() || 'Could not restrict who can read the key file.');
 }
 
 /**
@@ -445,7 +446,7 @@ export function askpassProgram(platform: NodeJS.Platform): { fileName: string; c
  * first, or the key would be glued onto that line and neither would work.
  */
 export function installKeyCommand(publicKey: string): string {
-  if (!isValidPublicKey(publicKey)) throw new Error('That is not a public key Kangentic can add.');
+  if (!isValidPublicKey(publicKey)) throw new RefusalError('That is not a public key Kangentic can add.');
   const line = publicKey.trim();
   const file = '~/.ssh/authorized_keys';
   return posixShellCommand([
@@ -493,7 +494,7 @@ export async function installPublicKeyWithPassword(destination: string, publicKe
     });
     if (result.code !== 0) {
       // ssh's own words when it printed any. With none, say what happened rather than guess a cause.
-      throw new Error(result.stderr.trim() || (result.code === null
+      throw new RefusalError(result.stderr.trim() || (result.code === null
         ? 'The ssh program did not finish within 60 seconds and was stopped.'
         : `The ssh program exited with code ${result.code} and printed no message.`));
     }
@@ -508,7 +509,7 @@ export async function installPublicKeyWithPassword(destination: string, publicKe
  * Exit 2 (a read error, a full disk) leaves a short temporary file, which must never replace the user's keys.
  */
 export function removeKeyCommand(publicKey: string): string {
-  if (!isValidPublicKey(publicKey)) throw new Error('That is not a public key Kangentic can remove.');
+  if (!isValidPublicKey(publicKey)) throw new RefusalError('That is not a public key Kangentic can remove.');
   const line = publicKey.trim();
   return posixShellCommand([
     'f=~/.ssh/authorized_keys',

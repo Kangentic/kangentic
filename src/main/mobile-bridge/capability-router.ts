@@ -1,5 +1,13 @@
 import type { CapabilityRequestMessage, CapabilityResponseMessage, CapabilityVerb } from '@kangentic/protocol';
 import type { BridgeSession } from './session/bridge-session';
+import { createChokepointReporter } from '../analytics/handled-report';
+
+/**
+ * One report per defect a phone verb's handler throws (13 verbs). The verb is a
+ * fixed protocol word. Refusals (`RefusalError`), aborts, the network and a quit
+ * are skipped by the reporter.
+ */
+export const mobileVerbReporter = createChokepointReporter('mobile_verb');
 
 export type CapabilityHandler = (
   request: CapabilityRequestMessage,
@@ -44,6 +52,8 @@ export class CapabilityRouter {
     try {
       return await handler(request, session);
     } catch (error) {
+      // The phone gets the message; Sentry gets a defect, tagged with the verb.
+      mobileVerbReporter.report(error, { tags: { verb: request.verb } });
       return {
         type: 'capability-response',
         requestId: request.requestId,

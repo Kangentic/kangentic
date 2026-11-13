@@ -54,6 +54,7 @@ import { resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/se
 import type { LaunchStartPath, Session, Task } from '../../../shared/types';
 import type { SpawnFailureStep } from '../helpers/task-git';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * The move that put the task in its current column, when it came after the
@@ -207,7 +208,7 @@ export function resumeTaskSession(
   return (async (): Promise<Session | null> => {
     try {
       const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, options.projectId);
-      if (!resolvedProjectId) throw new Error('No project is currently open');
+      if (!resolvedProjectId) throw new RefusalError('No project is currently open');
 
       const { tasks, automations, automationRuns, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
 
@@ -234,7 +235,7 @@ export function resumeTaskSession(
           }
           const lane = swimlanes.getById(task.swimlane_id);
           const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
-          if (blocked) throw new Error(resumeBlockMessage(blocked));
+          if (blocked) throw new RefusalError(resumeBlockMessage(blocked));
           if (options.plainResume && !options.plainResume.stillEligible(task)) return { kind: 'declined' as const };
           return { kind: 'spawn' as const, task };
         });
@@ -302,7 +303,7 @@ export function resumeTaskSession(
             // that reports one.
             const currentRow = swimlanes.getById(current.swimlane_id);
             const currentBlocked = resumeBlockReasonForTask({ task: current, laneRole: currentRow?.role });
-            if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
+            if (currentBlocked) throw new RefusalError(resumeBlockMessage(currentBlocked));
             if (options.plainResume && !options.plainResume.stillEligible(current)) return null;
 
             // Every throw from here on is a resume that failed after a phone was

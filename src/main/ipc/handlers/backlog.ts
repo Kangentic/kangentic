@@ -37,6 +37,7 @@ import type {
 } from '../../../shared/types';
 import { boardRegistry, ImportSourceStore } from '../../boards';
 import { registerAsanaIpcHandlers } from '../../boards/adapters/asana';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Per-task AbortControllers for in-flight backlog promotions.
@@ -52,7 +53,7 @@ export function abortBacklogPromotion(taskId: string): void {
 }
 
 function getBacklogRepo(context: IpcContext): BacklogRepository {
-  if (!context.currentProjectId) throw new Error('No project is currently open');
+  if (!context.currentProjectId) throw new RefusalError('No project is currently open');
   const db = getProjectDb(context.currentProjectId);
   return new BacklogRepository(db);
 }
@@ -131,7 +132,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.BACKLOG_CREATE, (_, input: BacklogTaskCreateInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
-      throw new Error('No project is currently open');
+      throw new RefusalError('No project is currently open');
     }
     const db = getProjectDb(context.currentProjectId);
     const backlogRepo = new BacklogRepository(db);
@@ -142,7 +143,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.BACKLOG_UPDATE, (_, input: BacklogTaskUpdateInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
-      throw new Error('No project is currently open');
+      throw new RefusalError('No project is currently open');
     }
     const db = getProjectDb(context.currentProjectId);
     const backlogRepo = new BacklogRepository(db);
@@ -152,7 +153,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.BACKLOG_DELETE, (_, id: string) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
+    if (!context.currentProjectId) throw new RefusalError('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     // Clean up backlog attachments before deleting the task
     new BacklogAttachmentRepository(db).deleteByTaskId(id);
@@ -164,7 +165,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.BACKLOG_BULK_DELETE, (_, ids: string[]) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
+    if (!context.currentProjectId) throw new RefusalError('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
     // Clean up backlog attachments before bulk delete
@@ -176,7 +177,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.BACKLOG_PROMOTE, async (_, input: BacklogPromoteInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
-      throw new Error('No project is currently open');
+      throw new RefusalError('No project is currently open');
     }
     const projectId = context.currentProjectId;
     const projectPath = context.currentProjectPath;
@@ -191,7 +192,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const backlogAttachments = new BacklogAttachmentRepository(db);
 
     const targetSwimlane = swimlanes.getById(input.targetSwimlaneId);
-    if (!targetSwimlane) throw new Error(`Swimlane ${input.targetSwimlaneId} not found`);
+    if (!targetSwimlane) throw new RefusalError(`Swimlane ${input.targetSwimlaneId} not found`);
 
     // Phase 1: Synchronous DB work - create tasks and return immediately
     const createdTasks: Task[] = [];
@@ -321,7 +322,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     // task of a project the board is not on (project-scoped-ipc rule).
     const { projectId, projectPath } = resolveProjectContext(context, requestedProjectId);
     if (!projectId || !projectPath) {
-      throw new Error('No project is currently open');
+      throw new RefusalError('No project is currently open');
     }
     const db = getProjectDb(projectId);
     const backlogRepo = new BacklogRepository(db);
@@ -331,9 +332,9 @@ export function registerBacklogHandlers(context: IpcContext): void {
     // A demote deletes the task, which would drop it from its workflow and
     // unblock what waits for it, from a menu that says only "Backlog".
     const demotableTask = (task: Task | undefined): Task => {
-      if (!task) throw new Error(`Task ${input.taskId} not found`);
+      if (!task) throw new RefusalError(`Task ${input.taskId} not found`);
       if (isInWorkflow(task, projectId)) {
-        throw new Error(WORKFLOW_REFUSALS.removeFirst(`#${task.display_id}`, workflowTitleOf(task, projectId)));
+        throw new RefusalError(WORKFLOW_REFUSALS.removeFirst(`#${task.display_id}`, workflowTitleOf(task, projectId)));
       }
       return task;
     };
@@ -422,39 +423,39 @@ export function registerBacklogHandlers(context: IpcContext): void {
   // === Backlog Attachments ===
 
   ipcMain.handle(IPC.BACKLOG_ATTACHMENT_LIST, (_, backlogTaskId: string) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
+    if (!context.currentProjectId) throw new RefusalError('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     return new BacklogAttachmentRepository(db).list(backlogTaskId);
   });
 
   ipcMain.handle(IPC.BACKLOG_ATTACHMENT_ADD, (_, input: { backlog_task_id: string; filename: string; data: string; media_type: string }) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
-      throw new Error('No project is currently open');
+      throw new RefusalError('No project is currently open');
     }
     const maxSize = 10 * 1024 * 1024; // 10MB
     const dataSize = Buffer.byteLength(input.data, 'base64');
-    if (dataSize > maxSize) throw new Error(`Attachment exceeds 10MB limit (${(dataSize / 1024 / 1024).toFixed(1)}MB)`);
+    if (dataSize > maxSize) throw new RefusalError(`Attachment exceeds 10MB limit (${(dataSize / 1024 / 1024).toFixed(1)}MB)`);
     const db = getProjectDb(context.currentProjectId);
     return new BacklogAttachmentRepository(db).add(context.currentProjectPath, input.backlog_task_id, input.filename, input.data, input.media_type);
   });
 
   ipcMain.handle(IPC.BACKLOG_ATTACHMENT_REMOVE, (_, id: string) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
+    if (!context.currentProjectId) throw new RefusalError('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     new BacklogAttachmentRepository(db).remove(id);
   });
 
   ipcMain.handle(IPC.BACKLOG_ATTACHMENT_GET_DATA_URL, (_, id: string) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
+    if (!context.currentProjectId) throw new RefusalError('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     return new BacklogAttachmentRepository(db).getDataUrl(id);
   });
 
   ipcMain.handle(IPC.BACKLOG_ATTACHMENT_OPEN, async (_, id: string) => {
-    if (!context.currentProjectId) throw new Error('No project is currently open');
+    if (!context.currentProjectId) throw new RefusalError('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     const attachment = new BacklogAttachmentRepository(db).getById(id);
-    if (!attachment) throw new Error(`Backlog attachment ${id} not found`);
+    if (!attachment) throw new RefusalError(`Backlog attachment ${id} not found`);
     return openAttachmentFile(attachment);
   });
 
@@ -472,7 +473,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
   // re-stamped from the live backlog so a just-imported item shows imported offline.
   ipcMain.handle(IPC.BACKLOG_IMPORT_GET_CACHED, (_, input: ImportCacheQuery) => {
     const projectId = input.projectId ?? context.currentProjectId;
-    if (!projectId) throw new Error('No project is currently open');
+    if (!projectId) throw new RefusalError('No project is currently open');
     const db = getProjectDb(projectId);
     const cacheRepo = new RemoteItemCacheRepository(db);
     const backlogRepo = new BacklogRepository(db);
@@ -485,7 +486,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
   // (or an empty cache) re-fetches everything.
   ipcMain.handle(IPC.BACKLOG_IMPORT_RECONCILE, async (_, input: ImportReconcileInput) => {
     const projectId = input.projectId ?? context.currentProjectId;
-    if (!projectId) throw new Error('No project is currently open');
+    if (!projectId) throw new RefusalError('No project is currently open');
     return serializeReconcile(
       `${projectId}::${input.source}::${input.repository}`,
       () => runReconcile(projectId, input),
@@ -579,7 +580,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_EXECUTE, async (_, input: ImportExecuteInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
-      throw new Error('No project is currently open');
+      throw new RefusalError('No project is currently open');
     }
     const db = getProjectDb(context.currentProjectId);
     const backlogRepo = new BacklogRepository(db);
@@ -675,12 +676,12 @@ export function registerBacklogHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_LIST, () => {
-    if (!context.currentProjectPath) throw new Error('No project is currently open');
+    if (!context.currentProjectPath) throw new RefusalError('No project is currently open');
     return new ImportSourceStore(context.currentProjectPath).list();
   });
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_ADD, async (_, input: { source: ExternalSource; url: string }) => {
-    if (!context.currentProjectPath) throw new Error('No project is currently open');
+    if (!context.currentProjectPath) throw new RefusalError('No project is currently open');
     const store = new ImportSourceStore(context.currentProjectPath);
     const source = store.add(input.source, input.url);
 
@@ -703,7 +704,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_REMOVE, (_, id: string) => {
-    if (!context.currentProjectPath) throw new Error('No project is currently open');
+    if (!context.currentProjectPath) throw new RefusalError('No project is currently open');
     new ImportSourceStore(context.currentProjectPath).remove(id);
   });
 

@@ -3,7 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { Trans } from '@lingui/react/macro';
-import { reportBoundaryError } from '../../../../error-reporting';
+import type { BoundaryReportTags } from '../../../../error-reporting';
 
 /** Scoped error boundary prevents Monaco failures from crashing the entire app. */
 export class DiffErrorBoundary extends React.Component<
@@ -22,9 +22,8 @@ export class DiffErrorBoundary extends React.Component<
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('DiffViewer error:', error, info.componentStack);
     // Boundary-caught errors never reach Sentry's global handlers (React
-    // swallows them); see ErrorBoundary.componentDidCatch. This boundary was
-    // the only one in the tree not forwarding them, so a diff-viewer render
-    // crash reached the console and nothing else.
+    // swallows them). The root's onCaughtError (index.tsx) reports this
+    // boundary's catch, tagged `boundary: diff` from boundaryReportTags.
     //
     // It still catches only RENDER-phase throws. The diff subsystem's known
     // crash class (Sentry DESKTOP-19) is thrown inside a Monaco event listener
@@ -32,7 +31,11 @@ export class DiffErrorBoundary extends React.Component<
     // Sentry as a handled report from monaco's error funnel instead
     // (src/renderer/monaco-error-funnel.ts). Do not read this boundary as
     // covering it.
-    reportBoundaryError(error);
+  }
+
+  /** Read by the root's `onCaughtError` (`reportCaughtRenderError`). */
+  boundaryReportTags(): BoundaryReportTags {
+    return { boundary: 'diff' };
   }
 
   render() {

@@ -13,6 +13,7 @@ import { installHost, type HostAsset, type InstalledHost } from './link/host-ins
 import { createSshRunner, type SshRunner } from './link/ssh-run';
 import type { HelperMethod, HelperRequestMap, HelperSessionRecord, HostFileSearch, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
 import { assertSafeDestination } from './ssh-client';
+import { RefusalError } from '../../shared/refusal';
 
 export { assertSafeDestination, InvalidSshDestinationError } from './ssh-client';
 
@@ -107,7 +108,7 @@ export class RemoteHostService {
 
   private async install(hostId: string): Promise<void> {
     const host = this.deps.hosts.getById(hostId);
-    if (!host || host.removed_at) throw new Error('That host is not set up in Kangentic.');
+    if (!host || host.removed_at) throw new RefusalError('That host is not set up in Kangentic.');
     const args = sshArgsFor(host);
     const asset = this.deps.asset();
     if (!asset || (Array.isArray(asset) && asset.length === 0)) throw new HostProgramMissingError();
@@ -289,7 +290,7 @@ export class RemoteHostService {
     const deadline = Date.now() + (options.timeoutMs ?? LEFT_RUNNING_WAIT_MS);
     let remaining = await leftRunning();
     while (remaining.length > 0) {
-      if (Date.now() >= deadline) throw new Error(`${remaining.length} of this host's terminals are still running.`);
+      if (Date.now() >= deadline) throw new RefusalError(`${remaining.length} of this host's terminals are still running.`);
       await new Promise((resolve) => { setTimeout(resolve, options.pollMs ?? LEFT_RUNNING_POLL_MS); });
       remaining = await leftRunning();
     }

@@ -36,6 +36,7 @@ import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import { taskHoldRefusal } from '../../workflows/workflow-lock-check';
 import type { IpcContext } from '../ipc-context';
 import type { Task, TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Cap on concurrent bulk-delete workers. Git mutations serialize through the
@@ -107,7 +108,7 @@ function withDeadline<T>(
 function assertDescriptionFits(description: string | undefined, previousDescription: string | null): void {
   if (description === undefined) return;
   const refusal = taskDescriptionRefusal(description, previousDescription);
-  if (refusal !== null) throw new Error(refusal);
+  if (refusal !== null) throw new RefusalError(refusal);
 }
 
 export function registerTaskCrudHandlers(context: IpcContext): void {
@@ -218,7 +219,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     assertDescriptionFits(input.description, existing?.description ?? null);
     if (input.automations_disabled === true && existing && resolvedProjectId) {
       const refusal = taskHoldRefusal(existing, resolvedProjectId);
-      if (refusal) throw new Error(refusal);
+      if (refusal) throw new RefusalError(refusal);
     }
 
     // If title changed and task has a worktree branch, try to rename the branch

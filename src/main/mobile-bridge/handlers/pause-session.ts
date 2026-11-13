@@ -2,6 +2,7 @@ import { parseCapabilityRequestPayload, type CapabilityRequestMessage, type Capa
 import { pauseTaskSession } from '../../ipc/handlers/session-pause';
 import { resolveKnownProject } from './known-project';
 import type { IpcContext } from '../../ipc/ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 /** The refusal a phone shows when the task it tapped Pause on has no live session. */
 export const PAUSE_SESSION_NOT_LIVE_MESSAGE = 'This task has no running session to pause.';
@@ -53,7 +54,7 @@ export async function handlePauseSession(
   });
 
   const first = await Promise.race([acceptedSignal, settled]);
-  if (first === 'not-live') throw new Error(PAUSE_SESSION_NOT_LIVE_MESSAGE);
+  if (first === 'not-live') throw new RefusalError(PAUSE_SESSION_NOT_LIVE_MESSAGE);
 
   const responsePayload: PauseSessionResponsePayload = { ok: true };
   return { type: 'capability-response', requestId: request.requestId, ok: true, payload: responsePayload as unknown as JsonValue };

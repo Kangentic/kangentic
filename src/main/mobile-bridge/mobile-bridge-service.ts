@@ -52,6 +52,7 @@ import { SpawnStallWatcher } from './push/spawn-stall-watcher';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { isRunningWorkflowStepTask } from '../workflows/workflow-home';
 import type { IpcContext } from '../ipc/ipc-context';
+import { RefusalError } from '../../shared/refusal';
 
 export interface MobileBridgeConfig {
   enabled: boolean;
@@ -1060,7 +1061,7 @@ export class MobileBridgeService extends EventEmitter {
 
   renameDevice(deviceId: string, displayName: string): void {
     const identity = this.loadedIdentity();
-    if (!identity) throw new Error(`No such paired device: ${deviceId}`);
+    if (!identity) throw new RefusalError(`No such paired device: ${deviceId}`);
     // Same clamp and control-character filter the pairing path applies to the
     // phone-supplied name: a rename lands in the same signed roster entry and
     // the same settings list, so it cannot be the unguarded way in.
@@ -1105,7 +1106,7 @@ export class MobileBridgeService extends EventEmitter {
 
   setDeviceCapabilities(deviceId: string, capabilities: CapabilityVerb[]): void {
     const identity = this.loadedIdentity();
-    if (!identity) throw new Error(`No such paired device: ${deviceId}`);
+    if (!identity) throw new RefusalError(`No such paired device: ${deviceId}`);
     setDeviceCapabilitiesInRoster(identity, deviceId, capabilities);
     const session = this.sessions.get(deviceId);
     if (session) session.capabilities = capabilitySetFromArray(capabilities);
@@ -1113,7 +1114,7 @@ export class MobileBridgeService extends EventEmitter {
   }
 
   async startPairing(): Promise<{ qrPayload: PairingQrPayload; qrUri: string }> {
-    if (!this.config.enabled) throw new Error('Mobile bridge is not enabled');
+    if (!this.config.enabled) throw new RefusalError('Mobile bridge is not enabled');
     if (this.activePairing) {
       // Supersede rather than throw: this is what makes "Pair a device"
       // self-heal after the pairing panel was closed mid-ceremony without a
@@ -1127,14 +1128,14 @@ export class MobileBridgeService extends EventEmitter {
     // not the primary validation path.
     const relayValidation = validateRelayUrl(this.config.relayUrl);
     // Thrown, so English, like the prefix it follows (`docs/architecture/i18n.md`).
-    if (!relayValidation.ok) throw new Error(`Cannot start pairing: ${englishText(relayValidation.reason)}`);
+    if (!relayValidation.ok) throw new RefusalError(`Cannot start pairing: ${englishText(relayValidation.reason)}`);
 
     const identity = await this.ensureIdentity();
     // The bridge can be disabled or shut down during that await. The checks at
     // the top ran before it, so repeat them, or a ceremony and its relay
     // transport start for a bridge that is off.
-    if (this.disposed) throw new Error('Mobile bridge service is shutting down');
-    if (!this.config.enabled) throw new Error('Mobile bridge is not enabled');
+    if (this.disposed) throw new RefusalError('Mobile bridge service is shutting down');
+    if (!this.config.enabled) throw new RefusalError('Mobile bridge is not enabled');
     // ensureIdentity() awaits, so a second click can have started its own
     // ceremony in the gap. Supersede it here as above, or the first one's
     // transport would stay open with nothing left to close it.
@@ -1199,7 +1200,7 @@ export class MobileBridgeService extends EventEmitter {
       // Superseded while connect() was in flight, but the dial happened to
       // resolve anyway. Do not arm a ceremony nothing points at any more.
       transport.close();
-      throw new Error('Pairing was superseded by a new pairing attempt');
+      throw new RefusalError('Pairing was superseded by a new pairing attempt');
     }
     pairingService.start(transport);
 

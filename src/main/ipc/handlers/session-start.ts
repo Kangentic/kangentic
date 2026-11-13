@@ -40,6 +40,7 @@ import { resumeRefusalBeforeLock, resumeTaskSession, type ResumeAcceptance } fro
 import { resumeTaskOnOpen, type OpenResumeOutcome } from './session-resume-on-open';
 import { isTaskPaused, resumeBlockMessage, resumeBlockReasonForTask, taskSessionStatesOf } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 export type StartTaskSessionResult =
   /** The task already has a live session. Nothing was spawned. */
@@ -85,7 +86,7 @@ export async function startTaskSession(
   taskId: string,
 ): Promise<StartTaskSessionResult> {
   const refusal = resumeRefusalBeforeLock(context, projectId, taskId);
-  if (refusal) throw new Error(refusal);
+  if (refusal) throw new RefusalError(refusal);
 
   const decision = await withTaskLock(taskId, async () => {
     const { task, liveSession } = reconcileTaskSessionRef(context, projectId, taskId);
@@ -94,7 +95,7 @@ export async function startTaskSession(
     const { swimlanes } = getProjectRepos(context, projectId);
     const lane = swimlanes.getById(task.swimlane_id);
     const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
-    if (blocked) throw new Error(resumeBlockMessage(blocked));
+    if (blocked) throw new RefusalError(resumeBlockMessage(blocked));
     // No paused-workflow refusal: a person may bring one task of a paused
     // workflow back to work it, as the desktop's Resume and a hand move do.
     // The workflow itself stays paused and starts nothing else.

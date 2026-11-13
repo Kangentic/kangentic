@@ -5,6 +5,7 @@ import { matchFinalLine, matchUserMessage, type FinalLineMatch, type UserMessage
 import type { AutomationRunStatus, ColumnAutomation, Swimlane } from '../../shared/types';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
+import { createChokepointReporter } from '../analytics/handled-report';
 import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig } from './interpolate-config';
 import { hasCondition, hasFinalLine, hasFrequencyLimit, textMatchSourceOf } from './row-guards';
@@ -241,6 +242,12 @@ export const TEXT_MATCH_NO_TURN_REASON = 'A text match is checked only at an age
 
 /** Why a row that needs the agent did not run on a move of a task whose agent is paused (`agentPaused`). */
 export const AGENT_PAUSED_REASON = 'The agent is paused. This row runs if the agent is resumed in this column.';
+
+/**
+ * One report per defect a row failed with. A start-agent failure is not reported
+ * here: `spawnAgent` already reports it (the `startAgent` catch above).
+ */
+export const automationRunReporter = createChokepointReporter('automation_runner');
 
 export async function runAutomations(options: RunAutomationsOptions): Promise<AutomationRunSummary> {
   const { automations, column, context, runs, signal } = options;
@@ -557,6 +564,10 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       record('failed', detail);
       // And the loop continues. This is the isolate-and-continue rule.
       console.error(`[automations] "${automation.name}" on ${column.name} failed: ${detail}`);
+      // An adapter's classified outcome (Automation*Error, the user's endpoint
+      // or script) is skipped by the reporter; anything else is a defect. The
+      // automation's and column's names are the user's, so only the type goes.
+      automationRunReporter.report(lastError, { tags: { automation_type: automation.type } });
       continue;
     }
 

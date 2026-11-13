@@ -49,13 +49,14 @@ import {
   trustHostKey,
   type SshSetupDeps,
 } from './ssh-setup';
+import { RefusalError } from '../../shared/refusal';
 
 const MAX_HOST_NAME_LENGTH = 60;
 const SIGN_IN_PROOF_TIMEOUT_MS = 30_000;
 const TAKE_KEY_OFF_TIMEOUT_MS = 30_000;
 
 function assertHostName(name: string): void {
-  if (name.length === 0 || name.length > MAX_HOST_NAME_LENGTH) throw new Error(`Give the host a name of 1 to ${MAX_HOST_NAME_LENGTH} characters.`);
+  if (name.length === 0 || name.length > MAX_HOST_NAME_LENGTH) throw new RefusalError(`Give the host a name of 1 to ${MAX_HOST_NAME_LENGTH} characters.`);
 }
 
 /** Whether a resolved path on a host is its home or beneath it. */
@@ -175,8 +176,8 @@ export class SshHostAdmin {
     // The in-flight check covers a second add that starts before the first has made its row.
     const addressKey = addressKeyOf(input.destination);
     const existing = this.deps.hosting.hosts.list().find((candidate) => addressKeyOf(candidate.destination) === addressKey);
-    if (existing) throw new Error(`${input.destination} is already added as "${existing.name}".`);
-    if (this.adding.has(addressKey)) throw new Error(`${input.destination} is already being added.`);
+    if (existing) throw new RefusalError(`${input.destination} is already added as "${existing.name}".`);
+    if (this.adding.has(addressKey)) throw new RefusalError(`${input.destination} is already being added.`);
     this.adding.add(addressKey);
     try {
       // The same address as a host that was removed: that row comes back, so its projects do too.
@@ -265,16 +266,16 @@ export class SshHostAdmin {
     const newKey = addressKeyOf(destination);
     if (addressChanged) {
       const other = this.deps.hosting.hosts.list().find((candidate) => candidate.id !== hostId && addressKeyOf(candidate.destination) === newKey);
-      if (other) throw new Error(`${destination} is already added as "${other.name}".`);
+      if (other) throw new RefusalError(`${destination} is already added as "${other.name}".`);
       const hidden = this.deps.hosting.hosts.listRemoved().find((candidate) => addressKeyOf(candidate.destination) === newKey);
-      if (hidden) throw new Error(`${destination} belongs to a host you removed, with its projects. Add it again from Add host to bring them back.`);
-      if (this.adding.has(newKey)) throw new Error(`${destination} is already being added.`);
-      if (!input.expectedFingerprint) throw new Error('Show the new address\'s key and trust it before saving the address.');
+      if (hidden) throw new RefusalError(`${destination} belongs to a host you removed, with its projects. Add it again from Add host to bring them back.`);
+      if (this.adding.has(newKey)) throw new RefusalError(`${destination} is already being added.`);
+      if (!input.expectedFingerprint) throw new RefusalError('Show the new address\'s key and trust it before saving the address.');
       // A key Kangentic made was added to the old machine only: it has to be made again for the new one.
-      if (host.key_created && !input.signIn) throw new Error('Sign in again for the new address: the key Kangentic made was added to the old one.');
+      if (host.key_created && !input.signIn) throw new RefusalError('Sign in again for the new address: the key Kangentic made was added to the old one.');
     }
     if (this.deps.hasLiveSessions?.(hostId)) {
-      throw new Error('Stop the terminals running on this host first. Changing its address or sign-in restarts the connection.');
+      throw new RefusalError('Stop the terminals running on this host first. Changing its address or sign-in restarts the connection.');
     }
 
     this.adding.add(newKey);
@@ -355,7 +356,7 @@ export class SshHostAdmin {
       ...sshArgsFor({ destination, key_path: keyPath }),
       'true',
     ], { env: childProcessEnv(), timeout: SIGN_IN_PROOF_TIMEOUT_MS });
-    if (result.code !== 0) throw new Error((result.stderr || result.stdout).trim() || `ssh to ${destination} exited with ${result.code}.`);
+    if (result.code !== 0) throw new RefusalError((result.stderr || result.stdout).trim() || `ssh to ${destination} exited with ${result.code}.`);
   }
 
   async reconnectHost(hostId: string): Promise<SshHostStatus> {
@@ -456,7 +457,7 @@ export class SshHostAdmin {
       });
     }
     this.deps.projectsChanged?.();
-    if (failed.length > 0) throw new Error(`Could not clear ${failed.join('; ')}`);
+    if (failed.length > 0) throw new RefusalError(`Could not clear ${failed.join('; ')}`);
   }
 
   /** Whether a folder exists on a host, as the host's helper says: only it can. A link that is down is an error, not "missing". */
@@ -467,7 +468,7 @@ export class SshHostAdmin {
     // The helper reads and writes only beneath the user's home, so a project anywhere else could be added
     // here and then fail on its first file. Said now, with the home it must be in.
     if (!isInsideHome(resolved, info.home)) {
-      throw new Error(`${resolved} is outside the home folder on the host (${info.home}). Kangentic works only in folders inside it.`);
+      throw new RefusalError(`${resolved} is outside the home folder on the host (${info.home}). Kangentic works only in folders inside it.`);
     }
     const [folder, git] = await this.deps.hosting.hostService.pathPresence(hostId, [resolved, `${resolved}/.git`]);
     return { exists: folder === 'present', path: resolved, isGitRepo: git === 'present' };
@@ -494,11 +495,11 @@ export class SshHostAdmin {
         timeoutMs: LIST_DIRECTORIES_TIMEOUT_MS,
       });
     } catch (error) {
-      throw new Error(`Could not list ${resolved} on the host: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      throw new RefusalError(`Could not list ${resolved} on the host: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
-    if (result.error) throw new Error(`Could not list ${resolved} on the host: ${result.error}`);
-    if (result.timedOut) throw new Error(`The host did not list ${resolved} in time.`);
-    if (result.code !== 0) throw new Error(`Could not list ${resolved} on the host: ${(result.stderr || result.stdout).trim().split('\n')[0] || `exit ${result.code}`}`);
+    if (result.error) throw new RefusalError(`Could not list ${resolved} on the host: ${result.error}`);
+    if (result.timedOut) throw new RefusalError(`The host did not list ${resolved} in time.`);
+    if (result.code !== 0) throw new RefusalError(`Could not list ${resolved} on the host: ${(result.stderr || result.stdout).trim().split('\n')[0] || `exit ${result.code}`}`);
     return parseDirectoryListing(resolved, result.stdout);
   }
 
@@ -509,10 +510,10 @@ export class SshHostAdmin {
    */
   async prepareRemoteProject(input: ProjectCreateInput): Promise<ProjectCreateInput> {
     const remote = input.remote;
-    if (!remote) throw new Error('This is not a remote project.');
+    if (!remote) throw new RefusalError('This is not a remote project.');
     this.requireHost(remote.hostId);
     const probe = await this.probeRemoteFolder(remote.hostId, remote.path);
-    if (!probe.exists) throw new Error(`${probe.path} does not exist on that host.`);
+    if (!probe.exists) throw new RefusalError(`${probe.path} does not exist on that host.`);
 
     const shellFolder = this.deps.newShellFolder();
     await fs.mkdir(shellFolder, { recursive: true });
@@ -580,7 +581,7 @@ export class SshHostAdmin {
   private requireHost(hostId: string): SshHost {
     const host = this.deps.hosting.hosts.getById(hostId);
     // A removed host is no host to act on: only adding its address again brings it back.
-    if (!host || host.removed_at) throw new Error('That host is not set up in Kangentic.');
+    if (!host || host.removed_at) throw new RefusalError('That host is not set up in Kangentic.');
     return host;
   }
 
@@ -621,7 +622,7 @@ const LIST_DIRECTORIES_SCRIPT = [
 export function parseDirectoryListing(resolvedPath: string, output: string): SshDirectoryListing {
   const lines = output.split('\n').map((line) => line.replace(/\r$/, ''));
   if (lines[0] === 'kangentic-missing') return { path: resolvedPath, insideHome: true, exists: false, entries: [], truncated: false };
-  if (lines[0] === 'kangentic-denied') throw new Error(`Kangentic cannot read ${resolvedPath} on the host.`);
+  if (lines[0] === 'kangentic-denied') throw new RefusalError(`Kangentic cannot read ${resolvedPath} on the host.`);
   const entries: SshDirectoryEntry[] = [];
   for (const line of lines) {
     const match = /^([dg])\t(.+)$/.exec(line);
@@ -634,10 +635,10 @@ export function parseDirectoryListing(resolvedPath: string, output: string): Ssh
 /** A folder the user typed, as an absolute path on the host: `~` is the host's home, anything else must already be absolute. */
 export function resolveHostFolder(folderPath: string, home: string): string {
   const trimmed = folderPath.trim();
-  if (trimmed.length === 0 || /[\u0000-\u001f]/.test(trimmed)) throw new Error('Enter the folder\'s path on the host.');
+  if (trimmed.length === 0 || /[\u0000-\u001f]/.test(trimmed)) throw new RefusalError('Enter the folder\'s path on the host.');
   const expanded = trimmed === '~' ? home : trimmed.startsWith('~/') ? `${home}${trimmed.slice(1)}` : trimmed;
-  if (!expanded.startsWith('/')) throw new Error('Enter an absolute path on the host, starting with / or ~/.');
+  if (!expanded.startsWith('/')) throw new RefusalError('Enter an absolute path on the host, starting with / or ~/.');
   const normalized = expanded.replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1');
-  if (normalized.split('/').includes('..')) throw new Error('Leave out .. from the path.');
+  if (normalized.split('/').includes('..')) throw new RefusalError('Leave out .. from the path.');
   return normalized;
 }

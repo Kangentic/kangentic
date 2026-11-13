@@ -8,7 +8,7 @@ import { SOURCE_LOCALE } from '../shared/i18n/locales';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readPopOutDescriptor } from './pop-out/read-descriptor';
 import { PopOutSurfaceRoot } from './pop-out/PopOutSurfaceRoot';
-import { initRendererErrorReporting } from './error-reporting';
+import { initRendererErrorReporting, reportCaughtRenderError } from './error-reporting';
 import faviconHref from '@kangentic/branding/assets/brandmark-small.svg?url';
 import './index.css';
 
@@ -42,7 +42,16 @@ if (!document.querySelector('link[rel="icon"]')) {
 const popOutDescriptor = readPopOutDescriptor();
 
 function render(): void {
-  const root = createRoot(document.getElementById('root')!);
+  const root = createRoot(document.getElementById('root')!, {
+    // The one place React hands over every boundary's catch, with the boundary
+    // itself, so the boundaries do not report on their own. Passing this replaces
+    // React's default console.error of the error, so it is logged here, as
+    // React would, keeping dev parity.
+    onCaughtError: (error, errorInfo) => {
+      console.error(error);
+      reportCaughtRenderError(error, errorInfo);
+    },
+  });
   root.render(
     <React.StrictMode>
       <I18nProvider i18n={i18n}>

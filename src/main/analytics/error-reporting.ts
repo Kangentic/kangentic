@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/electron/main';
 import type { ErrorEvent, EventHint } from '@sentry/electron/main';
 import { isUserConfigurationError } from '../../shared/user-configuration-error';
 import { BENIGN_RENDERER_ERRORS } from '../../shared/benign-renderer-errors';
+import { IPC_REJECTION_DUPLICATE_PATTERN } from '../../shared/ipc-rejection';
 import type { HostMemorySample } from '../../shared/types';
 import {
   correctNativeCrashEvent,
@@ -508,6 +509,14 @@ export function initErrorReporting(options: { previousRun?: PreviousRun | null }
         // actually CRASHES still arrives, as the reduced native warning beforeSend
         // builds; the breadcrumb survives this filter too.
         /'browser-guest' process exited with/,
+        // The renderer's copy of a rejected `ipcMain.handle` handler. Main's wrap
+        // (ipc-handler-report.ts) sees every one of those and reports the defects
+        // itself, with main's stack, so the renderer copy is a duplicate, or a
+        // refusal main skipped on purpose. Two rejections never reach a handler
+        // and so never reach the wrap: `No handler registered for` (a preload
+        // and main out of step) and `An object could not be cloned` (a handler
+        // that returned something IPC cannot carry). Both keep reporting.
+        IPC_REJECTION_DUPLICATE_PATTERN,
         // Renderer errors that are known-benign and outside our control. Shared
         // with the monaco error funnel (monacoConfig.ts) and the UI-test
         // collector (tests/ui/helpers.ts) so one registry drives all three.

@@ -45,6 +45,7 @@ import type {
   SelectFileOptions,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 // Held only so a shown Notification is not garbage-collected before the user
 // interacts with it (Electron's Notification has no other owner).
@@ -166,7 +167,7 @@ export function registerSystemHandlers(context: IpcContext): void {
     // Another registered project's, for a workflow's planned task on its board
     // (its default base branch and Worktrees switch); the open project's otherwise.
     const otherProject = projectId && projectId !== context.currentProjectId ? context.projectRepo.getById(projectId) : undefined;
-    if (projectId && projectId !== context.currentProjectId && !otherProject) throw new Error('Unknown project');
+    if (projectId && projectId !== context.currentProjectId && !otherProject) throw new RefusalError('Unknown project');
     const config = context.configManager.getEffectiveConfig(otherProject ? otherProject.path : context.currentProjectPath || undefined);
     // Overlay board config's defaultBaseBranch (team-shared) onto the effective config.
     // Spread to avoid mutating the cached config object from ConfigManager.
@@ -275,7 +276,7 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.CONFIG_SET_PROJECT, (_, overrides) => {
-    if (!context.currentProjectPath) throw new Error('No project open');
+    if (!context.currentProjectPath) throw new RefusalError('No project open');
     const persisted = context.configManager.saveProjectOverrides(context.currentProjectPath, overrides);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
     // The project's permission mode is what an approved plan continues in when
@@ -291,13 +292,13 @@ export function registerSystemHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.CONFIG_GET_PROJECT_BY_PATH, (_, projectPath: string) => {
     const known = context.projectRepo.list().some((p) => p.path === projectPath);
-    if (!known) throw new Error('Unknown project path');
+    if (!known) throw new RefusalError('Unknown project path');
     return context.configManager.loadProjectOverrides(projectPath);
   });
 
   ipcMain.handle(IPC.CONFIG_SET_PROJECT_BY_PATH, (_, projectPath: string, overrides) => {
     const project = context.projectRepo.list().find((p) => p.path === projectPath);
-    if (!project) throw new Error('Unknown project path');
+    if (!project) throw new RefusalError('Unknown project path');
     const persisted = context.configManager.saveProjectOverrides(projectPath, overrides);
     // Every project's live sessions keep a decision file, a background
     // project's too, so this one does not wait for the project to open.
@@ -670,7 +671,7 @@ export function registerSystemHandlers(context: IpcContext): void {
       throw new Error('shell:exec requires a non-empty command string');
     }
     if (!cwd || typeof cwd !== 'string' || !fs.existsSync(cwd)) {
-      throw new Error(`shell:exec requires a valid cwd directory (got "${cwd}")`);
+      throw new RefusalError(`shell:exec requires a valid cwd directory (got "${cwd}")`);
     }
     console.log(`[shell:exec] command="${command}" cwd="${cwd}"`);
     // Detached and never killed, so a dev server started here can outlive the

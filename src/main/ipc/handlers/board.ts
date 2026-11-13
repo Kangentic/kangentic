@@ -8,6 +8,7 @@ import { runWithProjectLogContext } from '../../diagnostics/project-log-context'
 import { refreshPlanApprovals } from '../../plan-approval/plan-approval-writer';
 import type { AutomationRunAgainResult, BoardProfile, ShortcutConfig } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { RefusalError } from '../../../shared/refusal';
 
 /** Trigger write-back if kangentic.json exists. */
 function triggerWriteBack(context: IpcContext): void {
@@ -26,10 +27,10 @@ export function registerBoardHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.ATTACHMENT_ADD, (_, input: { task_id: string; filename: string; data: string; media_type: string }) => {
-    if (!context.currentProjectPath) throw new Error('No project open');
+    if (!context.currentProjectPath) throw new RefusalError('No project open');
     const maxSize = 10 * 1024 * 1024; // 10MB
     const dataSize = Buffer.byteLength(input.data, 'base64');
-    if (dataSize > maxSize) throw new Error(`Attachment exceeds 10MB limit (${(dataSize / 1024 / 1024).toFixed(1)}MB)`);
+    if (dataSize > maxSize) throw new RefusalError(`Attachment exceeds 10MB limit (${(dataSize / 1024 / 1024).toFixed(1)}MB)`);
     const { attachments } = getProjectRepos(context);
     return attachments.add(context.currentProjectPath, input.task_id, input.filename, input.data, input.media_type);
   });
@@ -47,7 +48,7 @@ export function registerBoardHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.ATTACHMENT_OPEN, async (_, id: string) => {
     const { attachments } = getProjectRepos(context);
     const attachment = attachments.getById(id);
-    if (!attachment) throw new Error(`Attachment ${id} not found`);
+    if (!attachment) throw new RefusalError(`Attachment ${id} not found`);
     return openAttachmentFile(attachment);
   });
 
@@ -222,7 +223,7 @@ export function registerBoardHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.BOARD_CONFIG_APPLY, (_, projectId: string) => {
     const project = context.projectRepo.getById(projectId);
-    if (!project) throw new Error(`Project ${projectId} not found`);
+    if (!project) throw new RefusalError(`Project ${projectId} not found`);
     // Reconcile is keyed to an explicit projectId (the kangentic.json file
     // watcher fires it for whichever project changed, not necessarily the
     // focused one), so tag the [BOARD_CONFIG] reconcile warnings with that
@@ -276,7 +277,7 @@ export function registerBoardHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.BOARD_CONFIG_SET_STOP_SCRIPT, (_, projectId: string, script: string | null) => {
     const project = context.projectRepo.getById(projectId);
-    if (!project) throw new Error('Unknown project');
+    if (!project) throw new RefusalError('Unknown project');
     context.boardConfigManager.setStopScript(project.path, script);
   });
 }

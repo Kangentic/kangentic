@@ -19,6 +19,7 @@ import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos
 import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphCommit, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitFileImageInput, GitPendingChangesInput, GitPendingChangesResult, GitTaskChangesInput, GitTaskChangesResult, GitWorktreeHeadInput, GitWorktreeHeadResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
+import { RefusalError } from '../../../shared/refusal';
 
 /**
  * Policy inputs that shape what the Done move would actually destroy. `autoCleanup`
@@ -202,10 +203,10 @@ export async function readTaskChanges(
   options: { commitWebLinks?: boolean } = {},
 ): Promise<GitTaskChangesResult> {
   const { projectId, projectPath } = resolveProjectContext(context, input.projectId);
-  if (!projectId || !projectPath) throw new Error('The task\'s project is not open');
+  if (!projectId || !projectPath) throw new RefusalError('The task\'s project is not open');
   const tasks = getProjectRepos(context, projectId).tasks;
   const task = tasks.getById(input.taskId);
-  if (!task) throw new Error('The task could not be found');
+  if (!task) throw new RefusalError('The task could not be found');
 
   const defaultBaseBranch = context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch || 'main';
   const baseBranch = task.resolved_base_branch || task.base_branch || defaultBaseBranch;
@@ -220,7 +221,7 @@ export async function readTaskChanges(
     linkedCommitShas: linked === 'off' ? null : linked === 'unavailable' ? [] : linked,
   });
   if (linked === 'unavailable' && resolution.emptyReason !== null) {
-    throw new Error('The Knowledge Graph index is restarting, so the task\'s commits could not be read');
+    throw new RefusalError('The Knowledge Graph index is restarting, so the task\'s commits could not be read');
   }
 
   const linkedResult = options.commitWebLinks === false
