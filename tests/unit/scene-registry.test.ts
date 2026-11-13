@@ -21,6 +21,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
 import { canReadTurnUserMessages } from '../../src/main/agent/shared/transcript-reader-capability';
 import { SETTINGS_TABS } from '../../src/renderer/components/settings/settings-tabs';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
+import { DEMO_FONT_STACKS, DEMO_TERMINAL_LINE_HEIGHT } from '../../scripts/lib/demo-fonts.mjs';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const DEMO_BOOT_PATH = path.join(REPO_ROOT, 'demo/boot.js');
@@ -561,6 +562,7 @@ describe('scene registry', () => {
     // nested block a scene names replaces the default's WHOLE. Naming one field of it therefore
     // leaves every sibling undefined, on settings the scene never meant to touch and that no
     // frame shows. The key-set check is what makes that loud; the VALUES are the scene's business.
+    // A field the default leaves out because it is optional (terminal.lineHeight) may be added.
     //
     // A block with no populated default (an optional one like `developer`, or a map keyed by
     // project id like `workspaceByProject`) has no shape to match and is skipped.
@@ -575,13 +577,30 @@ describe('scene registry', () => {
         if (Object.keys(fallback).length === 0) continue;
         checked += 1;
         expect(
-          Object.keys(override).sort(),
+          Object.keys(fallback).filter((field) => !(field in override)).sort(),
           `${scene.name}.config.${key} replaces the whole block, so it must name every field DEFAULT_CONFIG.${key} has`,
-        ).toEqual(Object.keys(fallback).sort());
+        ).toEqual([]);
       }
     }
     // Vacuity guard: the monitor and notification scenes both replace a populated block.
     expect(checked).toBeGreaterThanOrEqual(2);
+  });
+
+  it('draws a scene\'s own terminal block in the demo\'s face at the demo\'s line height', () => {
+    // A scene replaces the terminal block (above), so one that names a system face leaves every
+    // visitor in whatever that face resolves to on their OS: task-mcp named Consolas, which a
+    // Windows visitor read as Consolas and the Linux runner that shot the posters as Liberation
+    // Mono, and the held grid fell short of its pane at 125 percent there. Only the font SIZE is a
+    // scene's to choose.
+    let checked = 0;
+    for (const scene of scenes) {
+      const terminal = scene.config?.terminal;
+      if (terminal === undefined) continue;
+      checked += 1;
+      expect(terminal.fontFamily, `${scene.name}.config.terminal.fontFamily is a system face`).toBe(DEMO_FONT_STACKS.mono);
+      expect(terminal.lineHeight, `${scene.name}.config.terminal.lineHeight is not the demo's`).toBe(DEMO_TERMINAL_LINE_HEIGHT);
+    }
+    expect(checked, 'no scene replaces the terminal block, so this guards nothing').toBeGreaterThanOrEqual(1);
   });
 
   it('seeds column ids the sample install actually has', () => {
