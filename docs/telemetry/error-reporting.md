@@ -323,7 +323,8 @@ in one Sentry org, one triage surface.
   which never calls main's hook. Dropping a crumb before it is added also keeps it out of the ring;
   on one event, `[agent-push]` debug lines had evicted every click. By category:
   - `console`: kept only under a tag in `CONSOLE_BREADCRUMB_TAGS` (`[AGENT-LAUNCH]`, `[UPDATER]`,
-    `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`, `[APP]`) or
+    `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`, `[APP]`,
+    `[pty-host]`, `[utility-process]`) or
     Electron's own `Error occurred in handler for '<channel>'`, and never at debug level. A kept
     line is rebuilt from its arguments: the tagged string with paths redacted, each Error reduced
     to its name and code, numbers and booleans. A name that is not an identifier reads `Error`, and

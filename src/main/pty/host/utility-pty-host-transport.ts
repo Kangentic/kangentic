@@ -486,5 +486,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
  *  packaged build, where nothing else would show it. */
 function logFromHost(level: 'log' | 'info' | 'warn' | 'error', text: string): void {
   if (level === 'error' && !app.isPackaged) return;
-  console[level](`[pty-host] ${text}`);
+  // `[pty-host-log]`, not `[pty-host]`: the host's own text is not vetted for
+  // user content, so it stays out of the Sentry breadcrumbs.
+  console[level](`[pty-host-log] ${text}`);
 }
