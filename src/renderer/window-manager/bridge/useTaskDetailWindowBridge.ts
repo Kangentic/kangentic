@@ -33,6 +33,30 @@ import { useProjectStore } from '../../stores/project-store';
 import { useWindowStore } from '../store/window-store';
 import { taskDetailWindowInput } from './window-parking';
 
+/**
+ * Ask main where a board card's detail should open. Exported (and kept out of the
+ * hook) so a unit test can drive the failure path without a DOM.
+ */
+export function requestDetailOpenFromMain(
+  requestOpen: (projectId: string, taskId: string, host: 'board') => Promise<{ kind: string }>,
+  projectId: string,
+  taskId: string,
+): Promise<void> {
+  return requestOpen(projectId, taskId, 'board').then((destination) => {
+    // Another host already has it and was focused for us. Clear the signal so a
+    // later click on the same task asks again (rather than being swallowed as
+    // "no change") and so the mirror effect below does not chase a window that
+    // was never opened here.
+    if (destination.kind === 'focused-existing') {
+      useSessionStore.getState().setDetailTaskId(null);
+    }
+  }).catch((error) => {
+    console.error('[task-detail] Failed to resolve where to open:', error);
+    // A card click that opens nothing, with nothing on screen to say so.
+    reportRendererFailure('task_detail', 'open', error);
+  });
+}
+
 export function useTaskDetailWindowBridge(): void {
   const detailTaskId = useSessionStore((state) => state.detailTaskId);
   const windows = useWindowStore((state) => state.windows);
@@ -173,19 +197,7 @@ export function useTaskDetailWindowBridge(): void {
       openWhenLoaded(projectId, detailTaskId);
       return;
     }
-    void ownership.requestOpen(projectId, detailTaskId, 'board').then((destination) => {
-      // Another host already has it and was focused for us. Clear the signal so a
-      // later click on the same task asks again (rather than being swallowed as
-      // "no change") and so the mirror effect below does not chase a window that
-      // was never opened here.
-      if (destination.kind === 'focused-existing') {
-        useSessionStore.getState().setDetailTaskId(null);
-      }
-    }).catch((error) => {
-      console.error('[task-detail] Failed to resolve where to open:', error);
-      // A card click that opens nothing, with nothing on screen to say so.
-      reportRendererFailure('task_detail', 'open', error);
-    });
+    void requestDetailOpenFromMain(ownership.requestOpen, projectId, detailTaskId);
   }, [detailTaskId, openWhenLoaded]);
 
   // Mirror window closure back to the signal: when the detail window we opened is

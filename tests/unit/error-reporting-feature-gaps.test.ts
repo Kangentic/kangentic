@@ -1,8 +1,15 @@
 /**
  * The feature failures the chokepoints missed, each now reported once and with
- * no user text. A drag's worktree failure and a resume's are the two a user hits
- * most; the rest are pinned at the call that reports, so a refactor that drops
- * one fails here instead of going quiet.
+ * no user text. A drag's worktree failure and a recovery pass are driven here.
+ * Every other feature site is driven with a throwing dependency in its own file:
+ * error-reporting-task-lifecycle-behavior.test.ts (task move, resume, the
+ * project open passes), error-reporting-main-features-behavior.test.ts (held
+ * messages, the idle pause, metrics, artifacts, accounts),
+ * error-reporting-worktree-session-crash-behavior.test.ts (worktree removal, the
+ * session id miss, crash capture), error-reporting-renderer-sites-behavior.test.ts,
+ * db-open-failure-notifier.test.ts, dictation-failure-report.test.ts,
+ * retrieval-client.test.ts, embed-client.test.ts, pop-out-window-manager.test.ts,
+ * and, in real Electron, tests/e2e/push-callback-guard.spec.ts.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -53,12 +60,6 @@ describe('a move that failed on its worktree (reportMoveSpawnFailure)', () => {
     expect(reportHandledError).not.toHaveBeenCalled();
     expect(spawnFailureOf(new TypeError('x')).step).toBe('agent');
   });
-
-  it('is called from handleTaskMove\'s outer catch, ahead of the rethrow', () => {
-    const moveSource = source('src/main/ipc/handlers/task-move.ts');
-    expect(moveSource).toMatch(/reportMoveSpawnFailure\(task, error\);\s*throw error;/);
-    expect(moveSource).toContain("taskMoveReporter.report(rollbackError, { tags: { stage: 'rollback' } });");
-  });
 });
 
 describe('a whole recovery pass that threw', () => {
@@ -77,34 +78,10 @@ describe('a whole recovery pass that threw', () => {
   });
 });
 
-describe('every other gap reports at the site that only logged', () => {
-  it.each([
-    ['src/main/ipc/handlers/session-resume.ts', "cause: step === 'worktree' ? worktreeFailureCause(error) : 'resume',"],
-    ['src/main/ipc/handlers/projects.ts', "reportRecoveryPassFailure('cold_open', error);"],
-    ['src/main/ipc/handlers/projects.ts', "reportRecoveryPassFailure('pty_host_loss', error);"],
-    ['src/main/ipc/register-all.ts', "reportRecoveryPassFailure('remote_projects', error);"],
-    ['src/main/db/database.ts', "notifyOpenFailure(error, { database: 'global', stage });"],
-    ['src/main/db/database.ts', "notifyOpenFailure(error, { database: 'project', stage });"],
-    ['src/main/index.ts', 'setDbOpenFailureNotifier((error, failure) => {'],
-    ['src/main/pty/lifecycle/session-id-manager.ts', 'this.callbacks.onSessionIdNotCaptured?.(sessionId);'],
-    ['src/main/retrieval/retrieval-client.ts', 'reportRetrievalWorkerFailure(record);'],
-    ['src/main/retrieval/embedder/embed-client.ts', 'reportEmbedInitFailure();'],
-    ['src/main/transcription/transcription-service.ts', 'reportDictationFailure(error, context.remote);'],
-    ['src/main/held-messages/held-messages.ts', "heldMessagesReporter.report(error, { tags: { stage: 'read' } });"],
-    ['src/main/ipc/handlers/sessions.ts', "sessionHandlersReporter.report(error, { tags: { stage: 'idle_pause' } });"],
-    ['src/main/git/worktree-manager.ts', 'reportWorktreeRemovalFailure({ profile, timedOut, holders: holders.length > 0, attempt: lastAttempt });'],
-    ['src/main/diagnostics/crash-capture.ts', "if (isOwnWindow(webContents)) preloadReporter.report(error, { tags: { kind: 'preload_error' } });"],
-    ['src/main/diagnostics/crash-capture.ts', 'if (isOwnWindow(event.sender)) reportPushCallbackRecord(record);'],
-    ['src/preload/preload.ts', "contextBridge.exposeInMainWorld('electronAPI', guardPushCallbacks(api, reportPushCallbackFailure));"],
-    ['src/main/pop-out/pop-out-window-manager.ts', 'popOutLoadReporter.report(failed, { tags: { kind, error_code: String(errorCode) } });'],
-    ['src/main/accounts/account-continuation.ts', "accountsReporter.report(error, { tags: { stage: 'continuation' } });"],
-    ['src/main/ipc/handlers/metrics-snapshot-timer.ts', "metricsSnapshotReporter.report(error, { tags: { stage: 'batch' } });"],
-    ['src/main/artifacts/artifact-detection.ts', "artifactDetectionReporter.report(error, { tags: { stage: 'detect' } });"],
-    ['src/renderer/stores/board-store/board-hydration-slice.ts', "reportRendererFailure('board', 'load', error);"],
-    ['src/renderer/window-manager/bridge/useTaskDetailWindowBridge.ts', "reportRendererFailure('task_detail', 'open', error);"],
-    ['src/renderer/hooks/useTerminal.ts', "reportRendererFailure('terminal', 'replay', error, { replay: { trigger: 'mount' } });"],
-    ['src/renderer/utils/terminal-webgl.ts', "reportRendererFailure('terminal', 'webgl_fallback', fallback,"],
-  ])('%s: %s', (file, call) => {
-    expect(source(file)).toContain(call);
+describe('the DB open notifier is registered at startup', () => {
+  // src/main/index.ts cannot be imported (it boots the app), so this is the one
+  // site pinned by its text. The notifier itself runs in db-open-failure-notifier.test.ts.
+  it('registers the notifier in index.ts', () => {
+    expect(source('src/main/index.ts')).toContain('setDbOpenFailureNotifier((error, failure) => {');
   });
 });

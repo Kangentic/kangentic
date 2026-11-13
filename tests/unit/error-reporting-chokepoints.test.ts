@@ -1,12 +1,13 @@
 /**
  * Each dispatcher chokepoint reaches Sentry through its own latched reporter
  * (`handled-report.ts`). The MCP tool proxy and the phone's capability router run
- * for real here: a defect reports once and a refusal does not. The rest are pinned
- * statically: the catch that used to only log must still call its reporter, so a
- * refactor that drops the call fails here rather than going quiet in production.
+ * for real here: a defect reports once and a refusal does not. Every other
+ * chokepoint is driven the same way in its own file:
+ * error-reporting-mcp-browser-behavior.test.ts (the MCP command, request and
+ * dispatch catches, the three server builders, the browser driver),
+ * error-reporting-turn-end-workflow-behavior.test.ts, pr-report-behavior.test.ts
+ * and automation-runner-report-behavior.test.ts.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const reportHandledError = vi.fn();
@@ -15,11 +16,6 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError 
 const { withToolReporting, mcpToolReporter } = await import('../../src/main/agent/mcp-http/tool-reporting');
 const { CapabilityRouter, mobileVerbReporter } = await import('../../src/main/mobile-bridge/capability-router');
 const { RefusalError } = await import('../../src/shared/refusal');
-
-const repoRoot = path.join(__dirname, '../..');
-function source(relative: string): string {
-  return fs.readFileSync(path.join(repoRoot, relative), 'utf8');
-}
 
 describe('the MCP registerTool proxy', () => {
   beforeEach(() => {
@@ -52,13 +48,6 @@ describe('the MCP registerTool proxy', () => {
     await expect(server.callbacks.get('kangentic_c')?.({}, {})).resolves.toEqual({ content: [] });
     expect(reportHandledError).not.toHaveBeenCalled();
   });
-
-  it('wraps all three server builders', () => {
-    const serverSource = source('src/main/agent/mcp-http-server.ts');
-    expect(serverSource).toContain('const mcpServer = withToolReporting(createdServer);');
-    expect(serverSource).toContain('registerSearchTools(withToolReporting(mcpServer), resolver, callerSessionId);');
-    expect(serverSource).toContain('scopeServerToWorkflowAgent(withToolReporting(mcpServer), workflowId)');
-  });
 });
 
 describe('the phone capability router', () => {
@@ -83,30 +72,5 @@ describe('the phone capability router', () => {
     router.register('pause-session' as never, () => { throw new RefusalError('The session is not live'); });
     await router.dispatch({ type: 'capability-request', requestId: 'r2', verb: 'pause-session' } as never, session as never);
     expect(reportHandledError).not.toHaveBeenCalled();
-  });
-});
-
-describe('each remaining chokepoint calls its reporter in the catch that used to only log', () => {
-  it.each([
-    ['src/main/agent/mcp-http/handler-helpers.ts', "mcpCommandReporter.report(error, { tags: { command: String(handlerName) } });"],
-    ['src/main/agent/mcp-http-server.ts', "mcpRequestReporter.report(error, { tags: { stage: 'request' } });"],
-    ['src/main/agent/mcp-http-server.ts', "mcpRequestReporter.report(error, { tags: { stage: 'dispatch' } });"],
-    ['src/main/automations/automation-runner.ts', 'automationRunReporter.report(lastError, { tags: { automation_type: automation.type } });'],
-    ['src/main/automations/turn-end/turn-end-runner.ts', 'turnEndReporter.report(error, { tags: { stage: kind } });'],
-    ['src/main/automations/turn-end/turn-end-runner.ts', "turnEndReporter.report(error, { tags: { stage: 'reclaim' } });"],
-    ['src/main/workflows/workflow-engine-host.ts', "workflowEngineReporter.report(error, { tags: { stage: 'evaluate' } });"],
-    ['src/main/workflows/workflow-engine-host.ts', "workflowEngineReporter.report(error, { tags: { stage: 'start' } });"],
-    ['src/main/workflows/workflow-engine-host.ts', "workflowEngineReporter.report(error, { tags: { stage: 'drop_links' } });"],
-    ['src/main/workflows/workflow-engine-host.ts', "workflowEngineReporter.report(error, { tags: { stage: 'end_agent' } });"],
-    ['src/main/workflows/workflow-engine-host.ts', "workflowEngineReporter.report(error, { tags: { stage: 'complete' } });"],
-    ['src/main/pr/pr-linking.ts', "prReporter.report(error, { tags: { stage: 'resolve' } });"],
-    ['src/main/pr/pr-refresh-scheduler.ts', "prReporter.report(error, { tags: { stage: 'tick' } });"],
-    ['src/main/pr/pr-refresh-scheduler.ts', "prReporter.report(error, { tags: { stage: 'check' } });"],
-    ['src/main/pr/pr-refresh-scheduler.ts', "prReporter.report(error, { tags: { stage: 'sweep' } });"],
-    ['src/main/browser/browser-pane-driver.ts', "browserDriverReporter.report(error, { tags: { capability: options.capability, kind: 'driver-error' } });"],
-    ['src/main/browser/browser-pane-driver.ts', "browserDriverReporter.report(error, { tags: { capability: options.capability, kind: 'acquire-error' } });"],
-    ['src/main/browser/browser-pane-driver.ts', "browserDriverReporter.report(cdpAttachFailure(), { tags: { capability: options.capability, kind: 'cdp-attach-failed' } });"],
-  ])('%s: %s', (file, call) => {
-    expect(source(file)).toContain(call);
   });
 });
