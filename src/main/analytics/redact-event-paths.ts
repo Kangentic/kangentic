@@ -96,7 +96,43 @@ function rootPatterns(root: string, homeSegments: string[], caseInsensitive: boo
   return patterns;
 }
 
-/** Project roots longest first, so a nested project is matched before the one around it, then the home directory. */
+/** What a worktree folder (or one set aside) becomes. Its name is `slugify(task.title)-<id>`. */
+export const WORKTREE_FOLDER_PLACEHOLDER = '[worktree]';
+
+/** Either separator, raw or percent-encoded, as `pathPattern` spells it. */
+const FOLDER_SEPARATOR = '(?:[\\\\/]|%2[Ff]|%5[Cc])+';
+/** One folder name: anything up to the next separator (raw or encoded), whitespace, quote or `:`.
+ *  A name that opens with `[` is a placeholder already, so a second pass leaves it alone. */
+const FOLDER_NAME = '(?:(?!%2[Ff]|%5[Cc])%[0-9A-Fa-f]{2}|[^\\\\/\\s"\'<>|*?:,;)\\[\\]%])+';
+
+/**
+ * Folders whose NAME is user content, matched wherever they sit, so a root this
+ * process never registered (another install's project, a stderr tail from a git
+ * child) is covered too. The parent folders are kept; only the named folder goes.
+ *
+ * - A worktree is `slugify(task.title)-<id>` (`git/task-worktree-folder.ts`), under
+ *   `worktrees/`, `removed-worktrees/` (a Done move's set-aside, with a timestamp
+ *   suffix) and `set-aside/<kind>/` (the orphan sweep's).
+ * - Claude's transcript folder (`~/.claude/projects/<encoded cwd>`) spells the whole
+ *   project path, username and project name included, and a worktree's has its slug.
+ */
+const FOLDER_NAME_REWRITES: readonly PathRewrite[] = [
+  {
+    pattern: new RegExp(`(\\.kangentic${FOLDER_SEPARATOR}(?:removed-)?worktrees${FOLDER_SEPARATOR})${FOLDER_NAME}`, 'gi'),
+    replacement: `$1${WORKTREE_FOLDER_PLACEHOLDER}`,
+  },
+  {
+    pattern: new RegExp(`(\\.kangentic${FOLDER_SEPARATOR}set-aside${FOLDER_SEPARATOR}[a-z]+${FOLDER_SEPARATOR})${FOLDER_NAME}`, 'gi'),
+    replacement: `$1${WORKTREE_FOLDER_PLACEHOLDER}`,
+  },
+  {
+    pattern: new RegExp(`(\\.claude${FOLDER_SEPARATOR}projects${FOLDER_SEPARATOR})${FOLDER_NAME}`, 'gi'),
+    replacement: `$1${PROJECT_ROOT_PLACEHOLDER}`,
+  },
+];
+
+/** Project roots longest first, so a nested project is matched before the one around it, then the
+ *  home directory, then the folder names that are user content wherever they sit. */
 function buildRewrites(
   homeDirectory: string,
   caseInsensitive: boolean,
@@ -114,7 +150,28 @@ function buildRewrites(
   }
   const homePattern = pathPattern(homeDirectory, caseInsensitive);
   if (homePattern) rewrites.push({ pattern: homePattern, replacement: '~' });
+  // Last, so a root that is itself a worktree (a project opened from one) is matched whole first.
+  rewrites.push(...FOLDER_NAME_REWRITES);
   return rewrites;
+}
+
+/**
+ * Apply the same rewrites to one string: project roots, the home directory and the
+ * folder names that are user content. For text a reporter builds or captures itself (a
+ * worker's stderr tail) before it ever reaches `beforeSend`.
+ */
+export function redactEventText(
+  text: string,
+  homeDirectory: string = os.homedir(),
+  caseInsensitive: boolean = process.platform === 'win32',
+  projectRoots: Iterable<string> = knownProjectRoots(),
+): string {
+  try {
+    const rewrites = buildRewrites(homeDirectory, caseInsensitive, projectRoots);
+    return rewrites.reduce((current, rewrite) => current.replace(rewrite.pattern, rewrite.replacement), text);
+  } catch {
+    return text;
+  }
 }
 
 /**
@@ -164,8 +221,7 @@ export function redactEventPaths(
   projectRoots: Iterable<string> = knownProjectRoots(),
 ): ErrorEvent {
   try {
-    const rewrites = buildRewrites(homeDirectory, caseInsensitive, projectRoots);
-    if (rewrites.length > 0) redactValue(event, rewrites, 0);
+    redactValue(event, buildRewrites(homeDirectory, caseInsensitive, projectRoots), 0);
   } catch {
     // A privacy rewrite must not cost the event: a throwing `beforeSend` makes the SDK drop it.
   }

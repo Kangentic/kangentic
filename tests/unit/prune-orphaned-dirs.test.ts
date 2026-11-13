@@ -96,7 +96,7 @@ vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 
-import { pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
+import { pruneOrphanedDirectories, resetSweepRefusalReports } from '../../src/main/transition-engine/resource-cleanup';
 import { ownershipOf } from './helpers/verified-ownership';
 import { runWorktreeCreation, isWorktreeCreationInFlight } from '../../src/main/git/worktree-creation-registry';
 import { removeNodeModulesPath } from '../../src/main/git/node-modules-link';
@@ -157,6 +157,7 @@ async function runWithTimers(): Promise<void> {
 describe('pruneStaleResources -- async background cleanup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetSweepRefusalReports();
     vi.useFakeTimers();
     mockExistsSync.mockReturnValue(true);
     mockReaddir.mockResolvedValue([]);

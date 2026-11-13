@@ -22,7 +22,8 @@ export function reportUnrecognizedHistoryView(agentName: string | null): void {
   const agent = agentName ?? 'unknown';
   if (reported.has(agent)) return;
   reported.add(agent);
-  reportHandledError(new Error('Agent history view was not recognized'), { source: 'history_view', agent });
+  // Fingerprinted, so one agent's drift is one issue whichever caller saw it.
+  reportHandledError(new Error('Agent history view was not recognized'), { source: 'history_view', agent }, {}, ['history-view', agent]);
 }
 
 /** Forget what this launch reported. Tests only. */

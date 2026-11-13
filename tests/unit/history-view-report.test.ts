@@ -23,6 +23,7 @@ describe('reportUnrecognizedHistoryView', () => {
     const [error, tags] = reportHandledError.mock.calls[0] as [Error, Record<string, string>];
     expect(error.message).toBe('Agent history view was not recognized');
     expect(tags).toEqual({ source: 'history_view', agent: 'claude' });
+    expect(reportHandledError.mock.calls[0]?.[3]).toEqual(['history-view', 'claude']);
 
     reportUnrecognizedHistoryView('codex');
     expect(reportHandledError).toHaveBeenCalledTimes(2);

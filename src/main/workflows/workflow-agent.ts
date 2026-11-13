@@ -552,7 +552,7 @@ function startOnce(
   const started = startWorkflowAgent(context, homeProjectId, workflowId, grid, continuation)
     .catch((error: unknown) => {
       // A refusal comes back as a status, so what lands here is a real failure.
-      reportPreflightFailure({ cause: 'workflow_agent', error, startPath: 'workflow', keepMessage: true });
+      reportPreflightFailure({ cause: 'workflow_agent', error, startPath: 'workflow' });
       throw error;
     })
     .finally(() => {

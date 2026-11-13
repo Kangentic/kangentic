@@ -36,6 +36,7 @@ import {
   reportSessionLaunchFailure,
   resetLaunchReports,
 } from '../../src/main/pty/agent-launch-report';
+import { isReported } from '../../src/main/analytics/handled-report';
 import { AgentCliNotFoundError } from '../../src/main/agent/shared/agent-cli-not-found';
 import { recordDetectedCliIdentity, resetDetectedCliIdentities } from '../../src/main/agent/shared/cli-identity';
 import realFs from 'node:fs';
@@ -537,15 +538,22 @@ describe('reportLaunchFailure', () => {
     expect(reportHandledError).toHaveBeenCalledTimes(2);
   });
 
-  it('strips paths from an error it was handed, and keeps its name and frames', () => {
-    const error = new TypeError('cannot read /Users/dev/secret-project/launch.sh');
-    const frames = error.stack;
+  it('sends none of the text of an error it was handed, and keeps its frames', () => {
+    const error = new TypeError("cannot read /Users/dev/secret-project/launch.sh on branch 'fix-acme-billing'");
+    const frames = error.stack?.slice(error.stack.search(/\n\s+at /)) ?? '';
     reportLaunchFailure({ stage: 'preflight', cause: 'agent_start', tags, error });
 
     const sent = reportHandledError.mock.calls[0][0] as Error;
-    expect(sent.name).toBe('TypeError');
-    expect(sent.message).not.toContain('/Users/dev');
-    expect(sent.stack).toBe(frames);
+    expect(sent.name).toBe('AgentLaunchPreflightError');
+    expect(sent.message).toBe('Agent launch failed: preflight (agent_start)');
+    expect(sent.stack).toBe(`AgentLaunchPreflightError: Agent launch failed: preflight (agent_start)${frames}`);
+    expect(sent.stack).not.toMatch(/secret-project|acme/);
+  });
+
+  it('marks the error it was handed, so a later chokepoint skips it', () => {
+    const error = new Error('spawn broke');
+    reportLaunchFailure({ stage: 'preflight', cause: 'agent_start', tags, error });
+    expect(isReported(error)).toBe(true);
   });
 
   it('hands a missing CLI to the filter as its own type, which is what excludes it', () => {
@@ -714,20 +722,20 @@ describe('reportPreflightFailure', () => {
     expect(JSON.stringify(eventTags)).not.toContain('acme');
   });
 
-  it('sends a fixed message for an error whose text it was not told to keep', () => {
+  it('sends a fixed message, never the text git wrote', () => {
     reportPreflightFailure({ ...base, error: new Error("fatal: cannot lock ref 'refs/heads/fix-acme-billing'") });
 
     const sent = reportHandledError.mock.calls[0][0] as Error;
     expect(sent.name).toBe('AgentLaunchPreflightError');
     expect(sent.message).toBe('Agent launch failed: preflight (worktree)');
+    expect(sent.stack).not.toContain('acme');
   });
 
-  it('keeps the message when told to, with its paths redacted', () => {
-    reportPreflightFailure({ ...base, error: new Error('cannot read /Users/dev/secret-project/launch.sh'), keepMessage: true });
-
-    const sent = reportHandledError.mock.calls[0][0] as Error;
-    expect(sent.message).toContain('cannot read');
-    expect(sent.message).not.toContain('/Users/dev');
+  it('reports a failure once when a caller catches it again after a rethrow', () => {
+    const error = new Error('spawn broke');
+    reportPreflightFailure({ ...base, cause: 'agent_start', error });
+    reportPreflightFailure({ ...base, cause: 'auto_spawn', error });
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
   });
 
   it('reports a step that failed with a return value rather than a throw', () => {

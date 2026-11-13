@@ -662,6 +662,14 @@ const ORPHAN_DIRECTORY_GRACE_PERIOD_MS = 10 * 60 * 1000;
  */
 const ORPHAN_REFUSAL_MINIMUM = 5;
 
+/** Folder kinds whose refused sweep was reported this run. */
+const reportedSweepRefusals = new Set<string>();
+
+/** Forget the refused sweeps reported this run. Tests only. */
+export function resetSweepRefusalReports(): void {
+  reportedSweepRefusals.clear();
+}
+
 /**
  * A pass that would clear most of a folder is not cleaning it. Genuine orphans
  * are a few stragglers, and an owner's database naming almost nothing on disk is
@@ -726,12 +734,17 @@ async function pruneDirectory(
       `[RESOURCE_CLEANUP] Refused to clear ${orphans.length} of ${directories.length} ${label} directories: `
       + 'that is most of the folder, and this database may not be the one that made them',
     );
-    reportHandledError(
-      new Error(`Refused an orphan sweep of most of a ${label} folder`),
-      { source: 'orphan_sweep_refused', folder: label },
-      { orphan_sweep: { orphans: orphans.length, directories: directories.length } },
-      ['orphan-sweep-refused', label],
-    );
+    // Once per folder kind per run: the sweep runs at every project open, and
+    // a refusal repeats on every one until the folder changes.
+    if (!reportedSweepRefusals.has(label)) {
+      reportedSweepRefusals.add(label);
+      reportHandledError(
+        new Error(`Refused an orphan sweep of most of a ${label} folder`),
+        { source: 'orphan_sweep_refused', folder: label },
+        { orphan_sweep: { orphans: orphans.length, directories: directories.length } },
+        ['orphan-sweep-refused', label],
+      );
+    }
     return;
   }
 

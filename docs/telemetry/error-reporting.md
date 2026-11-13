@@ -97,6 +97,15 @@ in one Sentry org, one triage surface.
   drive root, is skipped and left to the home rewrite. Native crash events are the part this
   cannot reach (see "Native crash fields" below).
 
+  Three folder names are user content wherever they sit, so the same pass rewrites them under
+  any root, a root this process never registered included, after the root and home rewrites. A
+  worktree folder is `slugify(task.title)-<id>`, so `.kangentic/worktrees/<folder>`,
+  `.kangentic/removed-worktrees/<folder>` and `.kangentic/set-aside/<kind>/<name>` become
+  `[worktree]`. Claude's transcript folder spells the whole project path, the username included,
+  so `.claude/projects/<encoded>` becomes `[project]`. Both separators and their percent-encoded
+  forms match. `redactEventText` runs the same rewrites on one string, for text a reporter
+  captures before `beforeSend` (the utility worker's stderr tail).
+
 ## Filtering
 
 - **Filtering is a different concern and does live in code,** in `ignoreErrors`. Scrubbing removes
@@ -355,8 +364,11 @@ in one Sentry org, one triage surface.
   When a person or an agent adds a link on any other site, main reports that site's domain so the
   list grows from what is used (`src/main/artifacts/artifact-domain-report.ts`). The event carries
   two tags, `artifact_domain` and `artifact_source` (`user` or `agent`), and is fingerprinted per
-  domain, so Sentry holds one issue per site. The domain is the link's whole host name, subdomains
-  included (`wiki.example.com`), without a leading `www.`. Nothing else of the link is sent: no
+  domain, so Sentry holds one issue per site. The domain is the site the host belongs to, without a
+  leading `www.`, and every label left of it collapsed to `*` (`collapseTenantLabels`):
+  `acme.sharepoint.com` goes as `*.sharepoint.com`, because a tenant host names the customer's
+  organization in its first label. A known two-label suffix (`co.uk`, `com.au`, ...) keeps three
+  labels. A host that is already the site (`example.com`) goes as it is. Nothing else of the link is sent: no
   path, no query, no fragment, no name, no task. A host that only means something inside a private
   network is never sent (`isPrivateHost`: `localhost`, a bare name, an IP address, and the `.local`,
   `.localhost`, `.internal`, `.intranet`, `.lan`, `.home`, `.home.arpa`, `.corp`, `.test`,
@@ -372,7 +384,8 @@ in one Sentry org, one triage surface.
   `reportHandledRendererError`, serves the monaco funnel above): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
   spawn failures (`source: pty_spawn`), a Kangentic utility worker that has crashed past its restart cap
-  (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`), and a GPU health
+  (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`, fingerprinted
+  `['utility-process-latched', service, cause]`, its stderr tail run through `redactEventText`), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
   `crashCount` - see the GPU health bullet below), a failed agent launch (`source: agent_launch`,
   see "Every failed launch has one report" below), a task leftover reap or a
@@ -560,7 +573,12 @@ in one Sentry org, one triage surface.
   `stale_directory` (a folder that would not clear) and `worktree_setup_script` (the Post-Worktree
   Script failed, `WorktreeSetupScriptError`). Each phrase was read off real git, and
   `tests/unit/worktree-failure-cause-real-git.test.ts` produces each one, except the full disk,
-  which no test can make. Other preflight reports keep the error's message with its paths redacted.
+  which no test can make. No preflight report sends an error's message: the event is the stage's
+  built error (`Agent launch failed: preflight (<cause>)`) carrying the original's frames, with
+  its class in `error_type` and its code in `errno`. Messages here held branch names, task titles
+  and URLs, and redacting paths left those. A failure `spawnAgent` reported and rethrew is marked
+  (`markReported`), so the caller that catches it again (`auto_spawn`, `create_spawn`) sends
+  nothing.
 
   One event per `stage`, `cause`, `attempt` and `agent` per run, on top of one report per session
   (`launchFailureNoted`), so one broken machine cannot use up the org's quota. `attempt` is in the

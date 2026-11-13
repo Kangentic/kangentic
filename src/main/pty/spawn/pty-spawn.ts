@@ -4,6 +4,7 @@ import { isUncPath, isCmdShell, isFishShell, isNushellShell, isPowerShellShell }
 import { escapeForPowerShellSingleQuoted, escapePercentForCmd } from '../../../shared/shell-quote';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
+import { redactPaths } from '../../../shared/sentry-breadcrumbs';
 import { parseWslShellSpec } from '../process-tag/task-process-tag';
 import { childProcessEnv } from '../../shared/child-env';
 import { PTY_OUTPUT_NOT_CONNECTED_CODE } from '../host/root-pid-gate';
@@ -407,15 +408,19 @@ export function recordSpawnFailure(params: {
     },
   });
   if (!tags) return;
+  // `redactPaths` runs first: `sanitizeErrorMessage` stops a Windows path at its
+  // first space (`C:\Users\First Last\...` left `Last\...`) and knows only a few
+  // POSIX roots, and once a path's prefix is cut `beforeSend` cannot match the rest.
+  const message = sanitizeErrorMessage(redactPaths(params.diagnostic.errorMessage));
   if (params.diagnostic.kind === 'output-not-connected') {
-    const notConnected = new Error(sanitizeErrorMessage(params.diagnostic.errorMessage));
+    const notConnected = new Error(message);
     notConnected.name = 'PtyOutputNotConnectedError';
     reportHandledError(notConnected, tags);
     return;
   }
   // The text of the next line is hashed into the grouping of every other
   // spawn-failure issue: rewording it opens a new issue for each of them.
-  reportHandledError(new Error(sanitizeErrorMessage(params.diagnostic.errorMessage)), {
+  reportHandledError(new Error(message), {
     ...tags,
   });
 }

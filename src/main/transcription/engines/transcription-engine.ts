@@ -28,6 +28,7 @@ export class ModelLoadError extends Error {
 
   constructor(modelId: string, cause: unknown) {
     super(cause instanceof Error ? cause.message : 'The model failed to load', { cause });
+    this.name = 'ModelLoadError';
     this.modelId = modelId;
   }
 }

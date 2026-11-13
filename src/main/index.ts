@@ -2304,6 +2304,11 @@ app.whenReady().then(async () => {
             softwareRenderingEngaged: graphicsMode.engagedNow,
           }),
         },
+        // One issue per shape and reason. The message carries the exit code,
+        // and the no-exit fallback must not fold into the crash-loop issue.
+        pendingGpuEscalation.count > 0
+          ? ['gpu-process', 'exited-repeatedly', reportedDeath.reason]
+          : ['gpu-process', 'no-exit-reported'],
       );
     }
   } catch (error) {

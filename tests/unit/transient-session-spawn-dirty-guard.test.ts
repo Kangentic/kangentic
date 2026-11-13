@@ -733,7 +733,6 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
     expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
       cause: 'command_terminal',
       startPath: 'command_terminal',
-      keepMessage: true,
     }));
     await vi.waitFor(() => expect(releaseFirstSpawn).toBeTypeOf('function'));
     releaseFirstSpawn();

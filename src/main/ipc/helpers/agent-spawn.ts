@@ -1134,7 +1134,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // counted and surfaced without becoming an un-actionable issue.
       console.error('[spawnAgent] Failed to start session:', error);
       trackEvent('spawn_failed', { agent: targetAgent, reason: 'resume' });
-      reportPreflightFailure({ cause: 'agent_start', error, agent: targetAgent, startPath: options.startPath ?? 'board', keepMessage: true, alreadyCounted: true });
+      reportPreflightFailure({ cause: 'agent_start', error, agent: targetAgent, startPath: options.startPath ?? 'board', alreadyCounted: true });
       notifySpawnBlocked(context, beforeSpawn, 'agent', error, options.projectId);
       // Rethrown, unlike the old fallback which returned: the runner records
       // the row that asked for the agent as skipped with this reason, so a
@@ -1743,7 +1743,7 @@ export async function autoSpawnForTask(
         // DB may be closed; keep the placeholder
       }
       trackEvent('spawn_failed', { agent: failedAgent, reason: 'auto_spawn' });
-      reportPreflightFailure({ cause: 'auto_spawn', error: err, agent: failedAgent, startPath: options.startPath ?? 'board', keepMessage: true, alreadyCounted: true });
+      reportPreflightFailure({ cause: 'auto_spawn', error: err, agent: failedAgent, startPath: options.startPath ?? 'board', alreadyCounted: true });
     } finally {
       releaseResumeController(task.id, controller);
     }

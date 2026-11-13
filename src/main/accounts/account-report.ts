@@ -1,4 +1,5 @@
-import { reportHandledError } from '../analytics/error-reporting';
+import { reportHandledError, type ErrorReportContexts } from '../analytics/error-reporting';
+import { markReported } from '../analytics/handled-report';
 
 /**
  * Reports an account problem to Sentry (task #1057). Most agents' account support was built from
@@ -31,8 +32,36 @@ export type AccountProblem =
 
 export type AccountProblemFacts = Record<string, string | number | boolean | null>;
 
-/** One report per problem, agent and facts per run: a refresh repeats every few minutes. */
+/**
+ * One report per problem and agent per run. A refresh repeats every few minutes, and the facts
+ * vary (a provider's text, a count), so a key that held them never latched.
+ */
 const reported = new Set<string>();
+
+/**
+ * What a provider's failure text is about, in one fixed word. The text itself is never sent:
+ * `scrubFailureDetail` removes addresses and paths, but a provider's own words can still name the
+ * user's organization or workspace.
+ */
+export type FailureDetailClass = 'usage_limit' | 'auth' | 'network' | 'server' | 'refused' | 'empty' | 'other';
+
+export function classifyFailureDetail(detail: string): FailureDetailClass {
+  const text = detail.toLowerCase();
+  if (text.trim().length === 0) return 'empty';
+  if (/usage limit|rate limit|quota|too many requests|\b429\b|limit reached/.test(text)) return 'usage_limit';
+  if (/unauthori[sz]ed|forbidden|\b401\b|\b403\b|log ?in|sign ?in|credential|token|api key/.test(text)) return 'auth';
+  if (/network|econn|enotfound|etimedout|timed? ?out|offline|socket|dns/.test(text)) return 'network';
+  if (/\b5\d\d\b|overloaded|internal server|service unavailable|bad gateway/.test(text)) return 'server';
+  if (/refus|not allowed|denied|not found/.test(text)) return 'refused';
+  return 'other';
+}
+
+/** The facts with any `detail` text replaced by its class and length. */
+function sendableFacts(facts: AccountProblemFacts): AccountProblemFacts {
+  const { detail, ...rest } = facts;
+  if (typeof detail !== 'string') return facts;
+  return { ...rest, detail_class: classifyFailureDetail(detail), detail_length: detail.length };
+}
 
 export function reportAccountProblem(
   problem: AccountProblem,
@@ -40,20 +69,24 @@ export function reportAccountProblem(
   facts: AccountProblemFacts = {},
   error?: unknown,
 ): void {
-  const key = `${problem}:${agent}:${JSON.stringify(facts)}`;
+  const key = `${problem}:${agent}`;
   if (reported.has(key)) return;
   reported.add(key);
   console.warn(`[ACCOUNTS] ${problem} (${agent})`, facts);
   // A caller's error names what failed, and its message can hold a folder path or an address:
-  // only its scrubbed text leaves, never the error itself.
-  const cause = error instanceof Error ? scrubFailureDetail(error.message) : null;
+  // only its class and errno leave, never its text.
+  const errno = (error as NodeJS.ErrnoException | undefined)?.code;
+  const causeContext: ErrorReportContexts = error instanceof Error
+    ? { cause: { name: error.name, ...(typeof errno === 'string' ? { errno } : {}) } }
+    : {};
   reportHandledError(
-    new Error(cause ? `Agent account problem: ${problem} (${agent}): ${cause}` : `Agent account problem: ${problem} (${agent})`),
+    new Error(`Agent account problem: ${problem} (${agent})`),
     { subsystem: 'agent_accounts', account_problem: problem, agent },
-    { account: facts },
+    { account: sendableFacts(facts), ...causeContext },
     // One issue per problem and agent, whatever call path found it.
     ['agent-accounts', problem, agent],
   );
+  if (error !== undefined) markReported(error);
 }
 
 /** For tests: forget what this run reported. */

@@ -17,7 +17,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
-import { PROJECT_ROOT_PLACEHOLDER, redactEventPaths } from '../../src/main/analytics/redact-event-paths';
+import { PROJECT_ROOT_PLACEHOLDER, redactEventPaths, redactEventText } from '../../src/main/analytics/redact-event-paths';
 import { pathPattern } from '../../src/main/utility-process/stderr-tail';
 
 const WINDOWS_HOME = 'C:\\Users\\dev';
@@ -81,7 +81,7 @@ describe('redactEventPaths: project roots (DESKTOP-21)', () => {
     );
     redactEventPaths(event, POSIX_HOME, false, [POSIX_PROJECT_ROOT]);
     for (const field of fieldsOf(event)) expect(field).not.toContain('client-app');
-    expect(event.message).toBe('mkdir failed for [project]/.kangentic/worktrees/12');
+    expect(event.message).toBe('mkdir failed for [project]/.kangentic/worktrees/[worktree]');
   });
 
   it('removes the folder name of a project under the home directory instead of leaving ~/projects/<name>', () => {
@@ -197,6 +197,60 @@ describe('redactEventPaths: project roots (DESKTOP-21)', () => {
     redactEventPaths(event, WINDOWS_HOME, true, [OTHER_DRIVE_ROOT]);
     redactEventPaths(event, WINDOWS_HOME, true, [OTHER_DRIVE_ROOT]);
     expect(event.message).toBe('[project]\\x and ~\\y');
+  });
+});
+
+describe('redactEventPaths: folder names that are user content', () => {
+  it('removes a worktree slug (the task title) under a registered root, an unregistered one and ~', () => {
+    const event: ErrorEvent = {
+      message: 'D:\\work\\client-app\\.kangentic\\worktrees\\fix-the-login-redirect-1a2b3c4d\\src',
+      exception: { values: [{ type: 'Error', value: "git failed in /srv/other/.kangentic/worktrees/rename-acme-billing-9f8e7d6c" }] },
+      contexts: { tail: { text: '~/projects/app/.kangentic/worktrees/ship-it-0a1b2c3d: not a git repository' } },
+    };
+    redactEventPaths(event, WINDOWS_HOME, false, [OTHER_DRIVE_ROOT]);
+    expect(event.message).toBe('[project]\\.kangentic\\worktrees\\[worktree]\\src');
+    expect(event.exception?.values?.[0].value).toBe('git failed in /srv/other/.kangentic/worktrees/[worktree]');
+    expect((event.contexts?.tail as { text: string }).text).toBe('~/projects/app/.kangentic/worktrees/[worktree]: not a git repository');
+  });
+
+  it('removes a percent-encoded worktree slug, and the set-aside and removed-worktree folders', () => {
+    const event: ErrorEvent = {
+      message: 'file%3A%2F%2F%2FD%3A%2Fx%2F.kangentic%2Fworktrees%2Fmy%20task%20title-1a2b%2Findex.html',
+      extra: {
+        removed: 'C:\\x\\.kangentic\\removed-worktrees\\fix-login-1a2b-1700000000-ab12\\file',
+        swept: '/x/.kangentic/set-aside/worktrees/client-name-task-1a2b-1700000000-ab12',
+      },
+    };
+    redactEventPaths(event, POSIX_HOME, false, []);
+    expect(event.message).toBe('file%3A%2F%2F%2FD%3A%2Fx%2F.kangentic%2Fworktrees%2F[worktree]%2Findex.html');
+    expect(event.extra).toEqual({
+      removed: 'C:\\x\\.kangentic\\removed-worktrees\\[worktree]\\file',
+      swept: '/x/.kangentic/set-aside/worktrees/[worktree]',
+    });
+  });
+
+  it("removes Claude's encoded transcript folder, which spells the username and project", () => {
+    const event: ErrorEvent = {
+      message: 'ENOENT: open C:\\Users\\dev\\.claude\\projects\\C--Users-dev-Documents-client-app\\abc.jsonl',
+    };
+    redactEventPaths(event, WINDOWS_HOME, true, []);
+    expect(event.message).toBe('ENOENT: open ~\\.claude\\projects\\[project]\\abc.jsonl');
+  });
+
+  it('matches a root that is itself a worktree whole, and stays idempotent', () => {
+    const root = 'D:\\repo\\.kangentic\\worktrees\\task-slug-1a2b';
+    const event: ErrorEvent = { message: `${root}\\src and D:\\other\\.kangentic\\worktrees\\x-1` };
+    redactEventPaths(event, WINDOWS_HOME, false, [root]);
+    redactEventPaths(event, WINDOWS_HOME, false, [root]);
+    expect(event.message).toBe('[project]\\src and D:\\other\\.kangentic\\worktrees\\[worktree]');
+  });
+});
+
+describe('redactEventText', () => {
+  it('applies the same rewrites to one string', () => {
+    expect(redactEventText('/home/dev/p/.kangentic/worktrees/secret-title-1', POSIX_HOME, false, [])).toBe(
+      '~/p/.kangentic/worktrees/[worktree]',
+    );
   });
 });
 

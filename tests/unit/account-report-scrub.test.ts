@@ -27,17 +27,31 @@ describe('reportAccountProblem', () => {
     expect(sent.message).not.toContain('/home/dev');
   });
 
-  it('drops the second identical report in one run and sends it again after a reset', () => {
+  it('latches on the problem and agent, whatever the facts, and sends again after a reset', () => {
     reportAccountProblem('usage-read-unreadable', 'test-agent', { keys: 'a,b' });
-    reportAccountProblem('usage-read-unreadable', 'test-agent', { keys: 'a,b' });
+    reportAccountProblem('usage-read-unreadable', 'test-agent', { keys: 'c' });
     expect(reportHandledError).toHaveBeenCalledTimes(1);
 
-    reportAccountProblem('usage-read-unreadable', 'test-agent', { keys: 'c' });
+    reportAccountProblem('usage-read-unreadable', 'other-agent', { keys: 'c' });
     expect(reportHandledError).toHaveBeenCalledTimes(2);
 
     resetAccountProblemReports();
     reportAccountProblem('usage-read-unreadable', 'test-agent', { keys: 'a,b' });
     expect(reportHandledError).toHaveBeenCalledTimes(3);
+  });
+
+  it("sends a provider's detail as a class and a length, never its words", () => {
+    reportAccountProblem('turn-failed-after-move', 'test-agent', { detail: 'Acme Corp workspace hit its usage limit' });
+    const contexts = reportHandledError.mock.calls[0][2] as { account: Record<string, unknown> };
+    expect(contexts.account).toEqual({ detail_class: 'usage_limit', detail_length: 39 });
+    expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('Acme');
+  });
+
+  it("never sends the caller error's message, only its class", () => {
+    reportAccountProblem('folder-link-failed', 'test-agent', {}, new Error('link failed for org-name'));
+    const [sent, , contexts] = reportHandledError.mock.calls[0] as [Error, unknown, Record<string, unknown>];
+    expect(sent.message).toBe('Agent account problem: folder-link-failed (test-agent)');
+    expect(contexts.cause).toEqual({ name: 'Error' });
   });
 });
 

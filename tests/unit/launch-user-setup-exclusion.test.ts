@@ -120,7 +120,7 @@ describe('what stays out of Sentry', () => {
   });
 
   it('keeps a missing CLI out, which never reached a PTY', () => {
-    reportPreflightFailure({ cause: 'agent_start', error: new AgentCliNotFoundError('codex', 'Codex CLI'), startPath: 'board', keepMessage: true });
+    reportPreflightFailure({ cause: 'agent_start', error: new AgentCliNotFoundError('codex', 'Codex CLI'), startPath: 'board' });
     expect(sentry.captureException).not.toHaveBeenCalled();
   });
 
@@ -133,10 +133,10 @@ describe('what stays out of Sentry', () => {
   });
 
   it('leaves a real failure of the same cause its one event', () => {
-    reportPreflightFailure({ cause: 'agent_start', error: new AgentCliNotFoundError('codex', 'Codex CLI'), startPath: 'board', keepMessage: true });
-    reportPreflightFailure({ cause: 'agent_start', error: new Error('spawn broke'), startPath: 'board', keepMessage: true });
+    reportPreflightFailure({ cause: 'agent_start', error: new AgentCliNotFoundError('codex', 'Codex CLI'), startPath: 'board' });
+    reportPreflightFailure({ cause: 'agent_start', error: new Error('spawn broke'), startPath: 'board' });
     expect(sentry.captureException).toHaveBeenCalledTimes(1);
-    expect((sentry.captureException.mock.calls[0][0] as Error).message).toBe('spawn broke');
+    expect((sentry.captureException.mock.calls[0][0] as Error).message).toBe('Agent launch failed: preflight (agent_start)');
   });
 
   it('does not count twice a failure its caller counted', () => {

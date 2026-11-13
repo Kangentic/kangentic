@@ -582,7 +582,7 @@ export async function resumeSuspendedSessions(
         `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}); ${giveUpOutcome()}:`,
         err,
       );
-      reportPreflightFailure({ cause: 'recovery_prepare', error: err, startPath: 'startup_recovery', keepMessage: true });
+      reportPreflightFailure({ cause: 'recovery_prepare', error: err, startPath: 'startup_recovery' });
       try {
         await giveUpPreparation();
       } catch (updateErr) {
@@ -770,7 +770,6 @@ export async function resumeSuspendedSessions(
           agent: input.adapter.name,
           agentCliVersion: input.agentCliVersion,
           startPath: 'startup_recovery',
-          keepMessage: true,
         });
       }
       try {
