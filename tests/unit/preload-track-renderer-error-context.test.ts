@@ -43,6 +43,7 @@ vi.mock('electron', () => ({
 // Patches window.console and registers window listeners at module scope.
 vi.mock('../../src/preload/diagnostics/console-capture', () => ({
   installConsoleCapture: vi.fn(),
+  reportPushCallbackFailure: vi.fn(),
 }));
 
 async function loadExposedApi(): Promise<ElectronAPI> {
