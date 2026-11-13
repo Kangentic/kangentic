@@ -172,22 +172,6 @@ interface DisposableViewModel {
 }
 
 /**
- * A disposer for the diff view model attached to `diffEditor`, read from
- * monaco's private state, or null when that state is not where monaco 0.57
- * keeps it.
- *
- * Only the view model @monaco-editor/react attaches before onMount needs this.
- * Its `setModel({ original, modified })` has the editor build one, and monaco
- * never disposes it. `setModel` wraps it in `RefCounted.create` and never
- * releases that reference (diffEditorWidget.js `setModel`, utils.js
- * `BaseRefCounted`). monaco has no getter for it either (`getModel()` returns
- * the text models), so this reads the widget's `_diffModel` observable. A
- * missing field returns null at the first check, and the identity check
- * against `getModel()` keeps a field that now holds something else from being
- * disposed. A null leaves that one view model alive, as every swap did before
- * Sentry DESKTOP-22, and tests/ui/diff-swap-stale-view-model.spec.ts goes red.
- */
-/**
  * The tokenizer of one side of a diff, read through the text model's `tokenization` part, which
  * monaco's public typings leave out. The inline diff draws its deleted lines from the ORIGINAL
  * text's tokens when it builds them, and rebuilds them on a token change only while its own check
@@ -232,14 +216,39 @@ function readModelTokenization(model: MonacoEditorNamespace.ITextModel | null): 
 
 /**
  * The most lines either side of a diff may have for the diff to tokenize it up front, so its
- * deleted lines and its first screen are coloured when they are drawn. The pass is synchronous, so a longer file keeps monaco's own background
- * pass instead, and may draw its deleted lines plain at first.
+ * deleted lines and its first screen are coloured when they are drawn. The pass runs in one
+ * synchronous task on the renderer thread, so a longer file keeps monaco's own background pass
+ * instead and may draw its deleted lines plain at first. The largest side any web demo diff
+ * carries is 441 lines, so every Changes scene stays on the up-front path.
  */
-const UPFRONT_TOKENIZE_LINE_LIMIT = 3000;
+const UPFRONT_TOKENIZE_LINE_LIMIT = 1000;
 
 /** How long `laid-out` waits for a language's tokenizer to arrive before it stops waiting. */
 const TOKENIZER_WAIT_MS = 2000;
 
+/** One side's tokenizer when that side is short enough and in a language to tokenize up front. */
+function readUpfrontTokenization(model: MonacoEditorNamespace.ITextModel | null): { model: MonacoEditorNamespace.ITextModel; tokenization: ModelTokenization } | null {
+  if (model === null || model.getLanguageId() === 'plaintext' || model.getLineCount() > UPFRONT_TOKENIZE_LINE_LIMIT) return null;
+  const tokenization = readModelTokenization(model);
+  return tokenization === null ? null : { model, tokenization };
+}
+
+/**
+ * A disposer for the diff view model attached to `diffEditor`, read from
+ * monaco's private state, or null when that state is not where monaco 0.57
+ * keeps it.
+ *
+ * Only the view model @monaco-editor/react attaches before onMount needs this.
+ * Its `setModel({ original, modified })` has the editor build one, and monaco
+ * never disposes it. `setModel` wraps it in `RefCounted.create` and never
+ * releases that reference (diffEditorWidget.js `setModel`, utils.js
+ * `BaseRefCounted`). monaco has no getter for it either (`getModel()` returns
+ * the text models), so this reads the widget's `_diffModel` observable. A
+ * missing field returns null at the first check, and the identity check
+ * against `getModel()` keeps a field that now holds something else from being
+ * disposed. A null leaves that one view model alive, as every swap did before
+ * Sentry DESKTOP-22, and tests/ui/diff-swap-stale-view-model.spec.ts goes red.
+ */
 function readAttachedViewModel(diffEditor: MonacoDiffEditor): DisposableViewModel | null {
   const diffModelObservable: unknown = Reflect.get(diffEditor, '_diffModel');
   if (typeof diffModelObservable !== 'object' || diffModelObservable === null) return null;
@@ -621,8 +630,9 @@ export function DiffViewer({
   // position is applied against them. Each of those lands a task or more after the diff and
   // changes what the diff shows, so anything that waits for the diff to look the way it will stay
   // (the web demo's Changes scenes, which report ready on it: demo/README.md, The poster gate)
-  // reads this, stamped on the editor area as `data-diff-state`. A content swap sets it back to
-  // pending.
+  // reads this, stamped on the editor area as `data-diff-state`. It covers each content's first
+  // layout: a content swap sets it back to pending, and a recompute of the same content (a
+  // whitespace toggle) settles again behind a stamp that stays laid-out.
   const [diffLaidOut, setDiffLaidOut] = useState(false);
   // The settle in flight (markDiffLaidOut), cancelled by a content swap, a newer settle or unmount.
   const settleRef = useRef<{ dispose(): void } | null>(null);
@@ -642,18 +652,8 @@ export function DiffViewer({
     if (diffEditor === null || diffEditor.getLineChanges() === null) return;
     cancelSettle();
     const originalEditor = diffEditor.getOriginalEditor();
-    const originalModel = originalEditor.getModel();
-    const tokenization = originalModel !== null
-      && originalModel.getLanguageId() !== 'plaintext'
-      && originalModel.getLineCount() <= UPFRONT_TOKENIZE_LINE_LIMIT
-      ? readModelTokenization(originalModel)
-      : null;
-    const modifiedModel = diffEditor.getModifiedEditor().getModel();
-    const modifiedTokenization = modifiedModel !== null
-      && modifiedModel.getLanguageId() !== 'plaintext'
-      && modifiedModel.getLineCount() <= UPFRONT_TOKENIZE_LINE_LIMIT
-      ? readModelTokenization(modifiedModel)
-      : null;
+    const originalSide = readUpfrontTokenization(originalEditor.getModel());
+    const modifiedSide = readUpfrontTokenization(diffEditor.getModifiedEditor().getModel());
     let disposed = false;
     let finished = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -677,7 +677,7 @@ export function DiffViewer({
       if (finished || disposed) return;
       finished = true;
       stopWaiting();
-      if (modifiedModel !== null) modifiedTokenization?.tokenizeUntil(modifiedModel.getLineCount());
+      modifiedSide?.tokenization.tokenizeUntil(modifiedSide.model.getLineCount());
       // Any view zone change makes monaco realign the diff on its next task, which rebuilds the
       // deleted-line blocks from the tokens they have now (diffEditorViewZones.js,
       // invalidateAlignmentsState). An empty zone added and removed is that change.
@@ -700,11 +700,12 @@ export function DiffViewer({
         });
       }, 0);
     };
-    if (tokenization === null || originalModel === null) {
+    if (originalSide === null) {
       finish();
       return;
     }
-    const lineCount = originalModel.getLineCount();
+    const { tokenization } = originalSide;
+    const lineCount = originalSide.model.getLineCount();
     let tokenizing = false;
     const tokenizeAll = () => {
       if (tokenizing) return;
@@ -726,7 +727,21 @@ export function DiffViewer({
       finish();
     }, TOKENIZER_WAIT_MS);
   }, [cancelSettle]);
-  useEffect(() => cancelSettle, [cancelSettle]);
+  // Fast Refresh runs this cleanup and then the setup again, which would cancel a settle in flight
+  // and leave the stamp pending until the next content swap. The setup starts that settle over. An
+  // unmount runs no setup.
+  const settleInterruptedRef = useRef(false);
+  const interruptSettle = useCallback(() => {
+    settleInterruptedRef.current = settleRef.current !== null;
+    cancelSettle();
+  }, [cancelSettle]);
+  useEffect(() => {
+    if (settleInterruptedRef.current) {
+      settleInterruptedRef.current = false;
+      markDiffLaidOut();
+    }
+    return interruptSettle;
+  }, [interruptSettle, markDiffLaidOut]);
   const restorePendingRegionState = useCallback((diffEditor: MonacoDiffEditor) => {
     const pending = pendingRegionStateRef.current;
     if (pending === null) return;
@@ -793,6 +808,9 @@ export function DiffViewer({
     const scrollType = smooth
       ? monacoRef.current?.editor.ScrollType.Smooth
       : monacoRef.current?.editor.ScrollType.Immediate;
+    // A change the reader navigates to replaces the first position, so the settle must not put
+    // that position back over it (a toolbar or shortcut press never reaches the editor's container).
+    appliedRevealRef.current = null;
     modifiedEditor.revealLineInCenter(Math.max(1, lineNumber), scrollType);
     modifiedEditor.setPosition({ lineNumber: Math.max(1, lineNumber), column: 1 });
   }, []);

@@ -40,6 +40,12 @@ type DemoServer = Awaited<ReturnType<typeof startDemoServer>>;
 let server: DemoServer;
 
 test.describe('Poster gate', () => {
+  // Each case is its own test group, so the workflow's --shard splits the cases between its legs.
+  // In the default mode the whole file is one group, and a second shard would get no case at all
+  // and still exit 0. The captures project keeps one worker, so the cases still run one at a time,
+  // and each worker starts its own server in beforeAll.
+  test.describe.configure({ mode: 'parallel' });
+
   test.beforeAll(async () => {
     server = await startDemoServer({ distDir: DIST_DIR, port: 0 });
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });

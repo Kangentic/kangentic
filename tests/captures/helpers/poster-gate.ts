@@ -125,7 +125,8 @@ export function posterGateSet(scenes: string[], frame: { width: number; height: 
  * Every case the gate runs, scenes first in the set's order. A scale the hero has no still at is
  * checked against the still at the nearest scale below it, which has the same CSS layout.
  */
-export function gateCases(set: GateSet, scales: readonly number[] = GATE_SCALES): GateCase[] {
+export function gateCases(set: GateSet): GateCase[] {
+  const scales = GATE_SCALES;
   const cases: GateCase[] = [];
   for (const scene of set.scenes) {
     for (const scale of scales) {
@@ -172,11 +173,14 @@ export function gateCases(set: GateSet, scales: readonly number[] = GATE_SCALES)
  * macOS rasterize text through their own scalers (DirectWrite, CoreText), and the share of their
  * difference pixelmatch does not classify as antialiasing is measured by a dispatched run of
  * demo-poster-gate.yml (demo/README.md, The poster gate); raise a value here only from such a run,
- * with its number in the comment beside it.
+ * with its number in the comment beside it. Every entry is 0 on purpose until then: a leg over
+ * budget fails and prints its count, which is the measurement.
  */
 export const NON_ANTIALIASING_PIXEL_BUDGET: Record<string, number> = {
   linux: 0,
+  // Measured by a local Windows run of the whole gate (task 1079): every pixel comparison identical.
   win32: 0,
+  // Not measured yet: the first macOS leg's failure prints the number to put here.
   darwin: 0,
 };
 

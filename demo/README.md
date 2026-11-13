@@ -1156,17 +1156,18 @@ finished tokenizer flips on a token change, which the tokenizer's last pass come
 a deleted block could stay uncoloured for good. And for an added file, Monaco draws the original's
 one empty line as a deleted line above line 1: the first-change reveal ran before or after that
 line appeared, and the editor rested 23 px apart. `DiffViewer` now tokenizes both sides up front
-(up to 3,000 lines each; a longer file keeps Monaco's own background pass), has Monaco rebuild
-the deleted lines from those tokens, applies the file's first position again once they are in
-(unless the user has scrolled, clicked or typed in the editor), and stamps `laid-out` a frame
-after. The Conversation window rested its transcript on a fractional scroll offset (1955.5), which
-Chromium painted a device pixel higher on some opens than on others; its settle loop now rests on a
-whole pixel. The Activity tab painted its oldest events for a frame before jumping to the newest: its virtualizer
-had measured the list while the tab was hidden, at no height, and read the real height only from a
-ResizeObserver a frame later. `ActivityLog` now hands the virtualizer its scroll element only while
-the tab shows, so it reads the height when the tab opens, and scrolls to the end once the rows
-exist, before the first paint. And a still
-painted Claude's `/rc` underlined where the live frame did not: xterm reports a hyperlink's cells as
+(up to 1,000 lines each, against 441 for the largest side any demo diff carries; a longer file
+keeps Monaco's own background pass), has Monaco rebuild the deleted lines from those tokens,
+applies the file's first position again once they are in (unless the user has scrolled, clicked
+or typed in the editor, or moved to a change), and stamps `laid-out` a frame after. The
+Conversation window rested its transcript on a fractional scroll offset (1955.5), which Chromium
+painted a device pixel higher on some opens than on others; its settle loop now rests on a whole
+pixel. The Activity tab painted its oldest events for a frame before jumping to the newest: its
+virtualizer had measured the list while the tab was hidden, at no height, and read the real height
+only from a ResizeObserver a frame later. `ActivityLog` now hands the virtualizer its scroll
+element only while the tab shows, so it reads the height when the tab opens, and scrolls to the
+end once the rows exist, before the first paint. And a still painted Claude's `/rc` underlined
+where the live frame did not: xterm reports a hyperlink's cells as
 underlined with no underline style, headless and browser xterm disagreed on it, and the frame
 serializer now draws only an underline the agent wrote (the frames rebuilt with
 `node scripts/backfill-demo-timelines.mjs --force`). The looping hero's terminal is held to the

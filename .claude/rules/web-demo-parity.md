@@ -36,8 +36,9 @@ three things staying in step, and each is enforced rather than remembered.
   targets by selector: the window-controls cluster it hides, the `<testId>-confirm` and
   `<testId>-cancel` buttons ConfirmDialog derives, which a scene clicks because their labels
   change with the language, and DiffViewer's `data-diff-state`, which says when a diff has
-  finished laying out and which the Changes scenes' `ready` waits on. The in-place language switch (`demo/language.ts`) is demo behaviour
-  too: boot.js wraps `language.setLanguageAndRestart`, and the renderer is not told.
+  finished laying out and which the Changes scenes' `ready` waits on. The in-place language
+  switch (`demo/language.ts`) is demo behaviour too: boot.js wraps
+  `language.setLanguageAndRestart`, and the renderer is not told.
 - **A visitor's browser extensions stay out of the frame, and `demo/boot.js` keeps them out.**
   Every text field carries each vendor's documented opt-out. A sweep hides what an isolated world
   adds: a hyphenated tag the page never defined, or an element under `<html>` or `<body>` that the
@@ -63,8 +64,8 @@ three things staying in step, and each is enforced rather than remembered.
   instant on every visit and formats dates, times and numbers in UTC and en-US, so a time on a
   poster is the time the live frame shows in every visitor's zone and locale. A scene whose
   subject lays out after it mounts reports ready only once that is done (the Changes scenes wait
-  for DiffViewer's generic `data-diff-state="laid-out"`). The posters are shot in the full Chromium build with its
-  scrollbars, once the frame stops changing, and the poster gate holds every frame to its poster
+  for DiffViewer's generic `data-diff-state="laid-out"`). The posters are shot in the full
+  Chromium build with its scrollbars, once the frame stops changing, and the poster gate holds every frame to its poster
   on Windows, macOS and Linux (`demo/README.md`, Fonts and The poster gate).
 - **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
