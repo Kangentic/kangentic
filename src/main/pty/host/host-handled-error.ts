@@ -19,7 +19,7 @@ export class HostHandledErrors {
     try {
       this.emit({ type: 'handledError', code, error: toPtyHostError(error) });
     } catch {
-      // A report must not replace the failure it reports.
+      // report-ok: this is the relay; its own throw must not replace the failure it relays.
     }
   }
 }

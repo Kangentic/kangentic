@@ -80,6 +80,7 @@ export function reportRendererFailure(
     );
     return true;
   } catch {
+    // report-ok: this is the reporter; a failed send must never break the path that called it.
     return false;
   }
 }

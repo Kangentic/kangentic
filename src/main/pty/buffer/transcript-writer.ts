@@ -197,7 +197,7 @@ export class TranscriptWriter {
       try {
         this.onFlushFailed(error);
       } catch {
-        // A report must not replace the failure it reports.
+        // report-ok: onFlushFailed is the report; its own throw must not replace the flush failure.
       }
     }
   }

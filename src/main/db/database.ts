@@ -101,7 +101,7 @@ function notifyOpenFailure(error: unknown, failure: DbOpenFailure): void {
   try {
     dbOpenFailureNotifier?.(error, failure);
   } catch {
-    // A report must not replace the failure it reports.
+    // report-ok: the notifier is the report; its own throw must not replace the open failure.
   }
 }
 

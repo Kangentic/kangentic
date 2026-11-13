@@ -80,7 +80,7 @@ process.on('uncaughtException', (error) => {
   try {
     post({ type: 'handledError', code: 'uncaught', error: toPtyHostError(error) });
   } catch {
-    // The port is gone: the host is exiting anyway.
+    // report-ok: the port to main is gone, so there is nowhere to report, and the host exits.
   }
   console.error('[pty-host] uncaught exception; the host exits:', error);
   setTimeout(() => process.exit(1), UNCAUGHT_REPORT_GRACE_MS);

@@ -280,7 +280,7 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
         sendHandledFailure(source, error, tags, reportOptions.contexts);
         return true;
       } catch {
-        // A report must never break the path that called it.
+        // report-ok: this is the reporter; a failed send must never break the path that called it.
         return false;
       }
     },

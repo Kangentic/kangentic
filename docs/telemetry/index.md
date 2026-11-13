@@ -6,4 +6,4 @@
 
 ## Errors and crashes
 
-* [Error reporting (Sentry)](error-reporting.md) - How Sentry runs in main and the renderer: path scrubbing, ignoreErrors filters, the console breadcrumb tag allowlist, foreign native crash handling, errors counted instead of reported (updater, GPU, workers), the GPU escalation report, and sourcemap and debug file upload.
+* [Error reporting (Sentry)](error-reporting.md) - How Sentry runs in main and the renderer: path scrubbing, ignoreErrors filters, the console breadcrumb tag allowlist, the handled-failure chokepoints and their sources, error boundaries, foreign native crash handling, errors counted instead of reported (updater, GPU, workers), the GPU escalation report, and sourcemap and debug file upload.
