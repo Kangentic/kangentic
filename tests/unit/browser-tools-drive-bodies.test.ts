@@ -48,6 +48,12 @@
  *    caller's capture folder and returns the path instead of the inline value
  *    (task #977). An agent needing large DOM and PNG captures as files drove
  *    Playwright MCP because these tools could only answer inline.
+ * 7. Every tool that acts on one element by selector asks its primitive for a
+ *    STRICT match unless the agent passed `strict: false`, an
+ *    `ambiguous-selector` refusal reaches the agent with its candidates, and a
+ *    click by x/y with no `coordSpace` says how it read them (GitHub #820). The
+ *    match counting itself runs in the page and is pinned in
+ *    `browser-actionable-matches.test.ts` and the e2e spec.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -87,6 +93,11 @@ const getLayoutMetrics = vi.fn();
 // an untracked inline stub.
 const clickAtCenterOfSelector = vi.fn();
 const dispatchKeypress = vi.fn();
+// hoverSelector, dragFromTo and dropFilesOnSelector are tracked for the
+// strict-selector passthrough tested below.
+const hoverSelector = vi.fn();
+const dragFromTo = vi.fn();
+const dropFilesOnSelector = vi.fn();
 // runtimeEvaluate drives the eval body's saveToFile path tested below.
 const runtimeEvaluate = vi.fn();
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
@@ -94,15 +105,15 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   dispatchMouseEvent: (...args: unknown[]) => dispatchMouseEvent(...args),
   dispatchKeyEvent: vi.fn(),
   dispatchKeypress: (...args: unknown[]) => dispatchKeypress(...args),
-  dragFromTo: vi.fn(),
-  dropFilesOnSelector: vi.fn(),
+  dragFromTo: (...args: unknown[]) => dragFromTo(...args),
+  dropFilesOnSelector: (...args: unknown[]) => dropFilesOnSelector(...args),
   getDialogEntries: vi.fn(() => []),
   getNetworkEntries: vi.fn(() => []),
   getOuterHtml: (...args: unknown[]) => getOuterHtml(...args),
   getBoundingBox: vi.fn(),
   getConsoleEntries: vi.fn(),
   getLayoutMetrics: (...args: unknown[]) => getLayoutMetrics(...args),
-  hoverSelector: vi.fn(),
+  hoverSelector: (...args: unknown[]) => hoverSelector(...args),
   queryAllElements: vi.fn(),
   runtimeEvaluate: (...args: unknown[]) => runtimeEvaluate(...args),
   scrollBy: (...args: unknown[]) => scrollBy(...args),
@@ -785,6 +796,105 @@ describe('kangentic_browser_click: image-space coordinate mapping', () => {
     expect(dispatchMouseEvent).not.toHaveBeenCalled();
     await close();
   });
+
+  it('warns how it read x/y when coordSpace is omitted, and still clicks at them as viewport pixels', async () => {
+    // A point off a HiDPI screenshot read as viewport pixels lands somewhere
+    // else, and a click on a modal's backdrop closes the modal (GitHub #820).
+    // The click is unchanged, so a caller passing real viewport pixels keeps
+    // working; the result says what happened.
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_click', arguments: { x: 100, y: 200 } });
+
+    expect(result.isError).toBeUndefined();
+    expect(dispatchMouseEvent).toHaveBeenNthCalledWith(1, fakeGuest, { type: 'mousePressed', x: 100, y: 200 });
+    const structured = result.structuredContent as { warning?: string };
+    expect(structured.warning).toContain('coordSpace: "image"');
+    expect(structured.warning).toContain('pixelsPerCssPixel');
+    // The text block is what most agents read, so the warning must be there too.
+    expect(JSON.stringify(result.content)).toContain('coordSpace');
+    await close();
+  });
+
+  it('carries no warning when coordSpace is viewport', async () => {
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_click',
+      arguments: { x: 100, y: 200, coordSpace: 'viewport' },
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).not.toHaveProperty('warning');
+    await close();
+  });
+});
+
+describe('strict selector matching reaches every single-element tool (GitHub #820)', () => {
+  // The counting runs in the page. What these pin is that each tool ASKS for
+  // it by default and stops asking only when the agent says strict: false, so
+  // a tool added to the family or refactored cannot quietly go back to acting
+  // on whichever match came first.
+
+  it('click asks for a strict match by default and a loose one when strict is false', async () => {
+    clickAtCenterOfSelector.mockResolvedValue(true);
+    const { client, close } = await connect();
+
+    await client.callTool({ name: 'kangentic_browser_click', arguments: { selector: 'text="Save"' } });
+    await client.callTool({ name: 'kangentic_browser_click', arguments: { selector: 'text="Save"', strict: false } });
+
+    expect(clickAtCenterOfSelector).toHaveBeenNthCalledWith(1, fakeGuest, 'text="Save"', { strict: true });
+    expect(clickAtCenterOfSelector).toHaveBeenNthCalledWith(2, fakeGuest, 'text="Save"', { strict: false });
+    await close();
+  });
+
+  it('type, keypress, hover, drag, scroll, select_option and drop_files ask for a strict match by default', async () => {
+    clickAtCenterOfSelector.mockResolvedValue(true);
+    dispatchKeypress.mockResolvedValue(true);
+    hoverSelector.mockResolvedValue(true);
+    dragFromTo.mockResolvedValue(true);
+    scrollBy.mockResolvedValue(true);
+    getLayoutMetrics.mockResolvedValue(null);
+    selectOptionOnSelector.mockResolvedValue({ ok: true, value: 'a' });
+    dropFilesOnSelector.mockResolvedValue(true);
+    const { client, close } = await connect();
+
+    await client.callTool({ name: 'kangentic_browser_type', arguments: { text: 'x', selector: '#field' } });
+    await client.callTool({ name: 'kangentic_browser_keypress', arguments: { keys: 'Enter', selector: '#field' } });
+    await client.callTool({ name: 'kangentic_browser_hover', arguments: { selector: '#menu' } });
+    await client.callTool({ name: 'kangentic_browser_drag', arguments: { fromSelector: '#a', toSelector: '#b' } });
+    await client.callTool({ name: 'kangentic_browser_scroll', arguments: { selector: '#list', deltaY: 100 } });
+    await client.callTool({ name: 'kangentic_browser_select_option', arguments: { selector: '#pick', value: 'a' } });
+    await client.callTool({ name: 'kangentic_browser_drop_files', arguments: { selector: '#zone', paths: ['/tmp/a.txt'] } });
+
+    expect(clickAtCenterOfSelector).toHaveBeenNthCalledWith(1, fakeGuest, '#field', { strict: true });
+    expect(clickAtCenterOfSelector).toHaveBeenNthCalledWith(2, fakeGuest, '#field', { strict: true });
+    expect(hoverSelector).toHaveBeenCalledWith(fakeGuest, '#menu', { strict: true });
+    expect(dragFromTo).toHaveBeenCalledWith(fakeGuest, '#a', '#b', { steps: undefined, strict: true });
+    expect(scrollBy).toHaveBeenCalledWith(fakeGuest, { selector: '#list', deltaX: undefined, deltaY: 100, strict: true });
+    expect(selectOptionOnSelector).toHaveBeenCalledWith(fakeGuest, '#pick', { value: 'a', label: undefined, index: undefined }, { strict: true });
+    expect(dropFilesOnSelector).toHaveBeenCalledWith(fakeGuest, '#zone', ['/tmp/a.txt'], { strict: true });
+    await close();
+  });
+
+  it('hands an ambiguous-selector refusal to the agent with its candidates, in both result blocks', async () => {
+    const candidates = [
+      { index: 0, tag: 'button', text: 'Save', id: null, role: null, ariaLabel: null, name: null, inDialog: false, topmost: false, box: { x: 10, y: 10, width: 60, height: 24 }, selector: 'html > body > form > button' },
+      { index: 1, tag: 'button', text: 'Save', id: 'modal-save', role: null, ariaLabel: null, name: null, inDialog: true, topmost: true, box: { x: 300, y: 200, width: 60, height: 24 }, selector: '#modal-save' },
+    ];
+    vi.mocked(withGuest).mockResolvedValueOnce({
+      ok: false,
+      error: { kind: 'ambiguous-selector', detail: '2 visible elements match text="Save".', total: 2, candidates },
+    });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({ name: 'kangentic_browser_click', arguments: { selector: 'text="Save"' } });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: { kind: 'ambiguous-selector', total: 2, candidates } });
+    expect(JSON.stringify(result.content)).toContain('#modal-save');
+    await close();
+  });
 });
 
 describe('kangentic_browser_keypress: an optional selector clicks first, in the same call', () => {
@@ -805,7 +915,7 @@ describe('kangentic_browser_keypress: an optional selector clicks first, in the 
     });
 
     expect(result.isError).toBeFalsy();
-    expect(clickAtCenterOfSelector).toHaveBeenCalledWith(fakeGuest, '#demo-frame');
+    expect(clickAtCenterOfSelector).toHaveBeenCalledWith(fakeGuest, '#demo-frame', { strict: true });
     expect(dispatchKeypress).toHaveBeenCalledWith(fakeGuest, 'Escape');
     expect(clickAtCenterOfSelector.mock.invocationCallOrder[0])
       .toBeLessThan(dispatchKeypress.mock.invocationCallOrder[0]);

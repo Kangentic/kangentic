@@ -31,6 +31,7 @@ import {
 } from '../../src/main/browser/cdp/cdp';
 import { withGuest, validateNavigationUrl } from '../../src/main/browser/browser-pane-driver';
 import { KeyboardFocusNotInGuestError } from '../../src/main/browser/cdp/keyboard-focus';
+import { AmbiguousSelectorError } from '../../src/main/browser/cdp/ambiguous-selector';
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 import { resetGuestDriveQueuesForTests } from '../../src/main/browser/guest-drive-queue';
 import {
@@ -469,6 +470,25 @@ describe('withGuest - resolution and attach', () => {
     });
     expect(result).toMatchObject({ ok: false, error: { kind: 'pane-not-focused' } });
     expect(result.ok ? '' : result.error.detail).toContain('selector');
+  });
+
+  it('reports a selector that named several visible elements as ambiguous-selector, with its candidates', async () => {
+    // Not a driver-error either: the tool refused to guess which match the
+    // agent meant (GitHub #820). The candidates have to survive the envelope,
+    // or the agent needs another call to learn what to pick.
+    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
+    seedGuest(7);
+    const candidates = [
+      { index: 0, tag: 'button', text: 'Save', id: null, role: null, ariaLabel: null, name: null, inDialog: false, topmost: false, box: { x: 0, y: 0, width: 10, height: 10 }, selector: 'html > body > button' },
+      { index: 1, tag: 'button', text: 'Save', id: 'modal-save', role: null, ariaLabel: null, name: null, inDialog: true, topmost: true, box: { x: 20, y: 0, width: 10, height: 10 }, selector: '#modal-save' },
+    ];
+    const result = await withGuest({ selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'interact', config: config() }, async () => {
+      throw new AmbiguousSelectorError('text="Save"', 2, candidates);
+    });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'ambiguous-selector', total: 2, candidates } });
+    const detail = result.ok ? '' : result.error.detail;
+    expect(detail).toContain('text="Save"');
+    expect(detail).toContain('strict: false');
   });
 });
 

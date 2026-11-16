@@ -13,6 +13,7 @@ import {
   waitForDialogInterception,
 } from './cdp/cdp';
 import { KeyboardFocusNotInGuestError } from './cdp/keyboard-focus';
+import { AmbiguousSelectorError, ambiguousSelectorDetail, type SelectorCandidate } from './cdp/ambiguous-selector';
 import { beginAgentInput, endAgentInput } from './agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-drive-queue';
@@ -69,6 +70,10 @@ function cdpAttachFailure(): Error {
 export interface DriverError {
   kind: string;
   detail: string;
+  /** `ambiguous-selector` only: how many elements a user could act on matched. */
+  total?: number;
+  /** `ambiguous-selector` only: up to `AMBIGUOUS_CANDIDATE_LIMIT` of those matches, described. */
+  candidates?: SelectorCandidate[];
 }
 
 export type DriverResult<T> = { ok: true; data: T } | { ok: false; error: DriverError };
@@ -297,6 +302,21 @@ export async function withGuest<T>(
           return {
             ok: false,
             error: { kind: 'pane-not-focused', detail: PANE_NOT_FOCUSED_DETAIL },
+          } as DriverResult<T>;
+        }
+        // Also not a defect: the selector named several elements a user could
+        // act on, so the tool refused to pick one (GitHub #820). The
+        // candidates ride along so the agent can choose without a second call.
+        if (error instanceof AmbiguousSelectorError) {
+          report('ambiguous-selector');
+          return {
+            ok: false,
+            error: {
+              kind: 'ambiguous-selector',
+              detail: ambiguousSelectorDetail(error),
+              total: error.total,
+              candidates: error.candidates,
+            },
           } as DriverResult<T>;
         }
         if (error instanceof NavigationRefusedByPageError) {

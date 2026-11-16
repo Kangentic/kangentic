@@ -140,6 +140,23 @@ describe('parseSelectorSpec', () => {
         value: 'Save',
       });
     });
+
+    it('keeps the CSS before a trailing :has-text as its scope', () => {
+      // It used to be dropped, so a selector scoped to an open dialog matched a
+      // same-text button anywhere on the page (GitHub #820).
+      expect(parseSelectorSpec('[role=dialog] button:has-text("Save")')).toStrictEqual({
+        kind: 'text-contains',
+        value: 'Save',
+        scope: '[role=dialog] button',
+      });
+    });
+
+    it('leaves a :has-text in the middle of a selector unscoped rather than guessing a combinator', () => {
+      expect(parseSelectorSpec('div:has-text("Save") > button')).toStrictEqual({
+        kind: 'text-contains',
+        value: 'Save',
+      });
+    });
   });
 
   describe('edge cases', () => {

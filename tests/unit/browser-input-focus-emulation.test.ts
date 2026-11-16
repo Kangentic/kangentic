@@ -36,6 +36,7 @@ import {
   dispatchMouseEvent,
   clickAtCenterOfSelector,
   dragFromTo,
+  dropFilesOnSelector,
   getDialogEntries,
   getNetworkEntries,
   hoverSelector,
@@ -44,6 +45,7 @@ import {
   setDialogResponse,
 } from '../../src/main/browser/cdp/cdp';
 import { chordKeyIdentity } from '../../src/main/browser/cdp/key-combo';
+import { AmbiguousSelectorError } from '../../src/main/browser/cdp/ambiguous-selector';
 
 interface SentCommand {
   method: string;
@@ -1074,5 +1076,234 @@ describe('chordKeyIdentity', () => {
     // A shifted symbol is not a physical key, and inventing a code for it
     // ("Key~") would be one no real keyboard sends.
     expect(chordKeyIdentity('~')).not.toHaveProperty('code');
+  });
+});
+
+describe('strict selector resolution (GitHub #820)', () => {
+  // The page counts the matches a user could act on and answers with the one
+  // element, null, or a description of several. These pin what the driver does
+  // with each answer. Which elements count is the page's half, pinned in
+  // browser-actionable-matches.test.ts and the e2e spec.
+
+  const QUAD = [10, 20, 110, 20, 110, 40, 10, 40];
+
+  it('clicks the element the page counted, never re-resolving through DOM.querySelector', async () => {
+    // DOM.querySelector answers the FIRST match in the document, which can be a
+    // hidden duplicate sitting before the one that was counted. Re-resolving
+    // would pass the strict check and click the wrong node.
+    const { guest, methods, sent } = fakeGuest({
+      'Runtime.evaluate': { result: { type: 'object', subtype: 'node', objectId: 'counted-1' } },
+      'DOM.getDocument': { root: { nodeId: 1 } },
+      'DOM.requestNode': { nodeId: 77 },
+      'DOM.getBoxModel': { model: { content: QUAD, width: 100, height: 20 } },
+    });
+    attachDebugger(guest);
+    sent.length = 0;
+
+    const ok = await clickAtCenterOfSelector(guest, 'text="Save"', { strict: true });
+
+    expect(ok).toBe(true);
+    expect(methods()).not.toContain('DOM.querySelector');
+    expect(sent.find((entry) => entry.method === 'DOM.requestNode')?.params).toEqual({ objectId: 'counted-1' });
+    expect(sent.find((entry) => entry.method === 'DOM.getBoxModel')?.params).toEqual({ nodeId: 77 });
+    expect(sent.filter((entry) => entry.method === 'Input.dispatchMouseEvent')).toHaveLength(3);
+    // The counted element's remote object is released, and the document is
+    // pushed to the DOM agent before the node is requested (requestNode only
+    // answers once the agent holds the document).
+    expect(sent.find((entry) => entry.method === 'Runtime.releaseObject')?.params).toEqual({ objectId: 'counted-1' });
+    const sentMethods = methods();
+    expect(sentMethods.indexOf('DOM.getDocument')).toBeGreaterThanOrEqual(0);
+    expect(sentMethods.indexOf('DOM.getDocument')).toBeLessThan(sentMethods.indexOf('DOM.requestNode'));
+    detachDebugger(guest);
+  });
+
+  it('throws AmbiguousSelectorError with the candidates the page described, and dispatches nothing', async () => {
+    const candidates = [
+      { index: 0, tag: 'button', text: 'Save', selector: 'html > body > form > button' },
+      { index: 1, tag: 'button', text: 'Save', selector: '#modal-save' },
+    ];
+    const { guest, sent } = fakeGuest({
+      'Runtime.evaluate': { result: { type: 'object', objectId: 'described-1' } },
+      'Runtime.callFunctionOn': { result: { value: { total: 2, candidates } } },
+    });
+    attachDebugger(guest);
+
+    const clicked = clickAtCenterOfSelector(guest, 'text="Save"', { strict: true });
+
+    await expect(clicked).rejects.toBeInstanceOf(AmbiguousSelectorError);
+    await expect(clicked).rejects.toMatchObject({ selector: 'text="Save"', total: 2, candidates });
+    expect(sent.some((entry) => entry.method === 'Input.dispatchMouseEvent')).toBe(false);
+    // The described object is released, like every other remote object here.
+    expect(sent.some((entry) => entry.method === 'Runtime.releaseObject' && entry.params?.objectId === 'described-1')).toBe(true);
+    detachDebugger(guest);
+  });
+
+  it('answers a miss from the one page scan, without a second DOM.querySelector pass', async () => {
+    // When nothing is actionable the page expression itself answers with the
+    // first match in document order (or null). That hidden-only first-match
+    // answer is the page expression's job, pinned in
+    // browser-actionable-matches.test.ts. Here a null answer is a miss.
+    const { guest, methods, sent } = fakeGuest({
+      'Runtime.evaluate': { result: { type: 'object', subtype: 'null' } },
+      ...resolvableNode(QUAD),
+    });
+    attachDebugger(guest);
+    sent.length = 0;
+
+    const ok = await clickAtCenterOfSelector(guest, '#missing', { strict: true });
+
+    expect(ok).toBe(false);
+    expect(methods()).not.toContain('DOM.querySelector');
+    expect(methods().filter((method) => method === 'Runtime.evaluate')).toHaveLength(1);
+    expect(sent.some((entry) => entry.method === 'Input.dispatchMouseEvent')).toBe(false);
+    detachDebugger(guest);
+  });
+
+  it('falls back to first-match resolution when the page threw, and releases the thrown object', async () => {
+    const { guest, methods, sent } = fakeGuest({
+      'Runtime.evaluate': {
+        result: { type: 'object', objectId: 'thrown-1' },
+        exceptionDetails: { text: 'Uncaught' },
+      },
+      ...resolvableNode(QUAD),
+    });
+    attachDebugger(guest);
+    sent.length = 0;
+
+    const ok = await clickAtCenterOfSelector(guest, '#odd', { strict: true });
+
+    expect(ok).toBe(true);
+    expect(methods()).toContain('DOM.querySelector');
+    expect(sent.some((entry) => entry.method === 'Runtime.releaseObject' && entry.params?.objectId === 'thrown-1')).toBe(true);
+    detachDebugger(guest);
+  });
+
+  it('falls back to first-match resolution when the page threw without an object', async () => {
+    const { guest, methods } = fakeGuest({
+      'Runtime.evaluate': { exceptionDetails: { text: 'SyntaxError' } },
+      ...resolvableNode(QUAD),
+    });
+    attachDebugger(guest);
+
+    const ok = await clickAtCenterOfSelector(guest, '#odd', { strict: true });
+
+    expect(ok).toBe(true);
+    expect(methods()).toContain('DOM.querySelector');
+    detachDebugger(guest);
+  });
+
+  it('does not throw when every described candidate is malformed, and resolves the first match instead', async () => {
+    const { guest, methods, sent } = fakeGuest({
+      'Runtime.evaluate': { result: { type: 'object', objectId: 'described-2' } },
+      'Runtime.callFunctionOn': { result: { value: { total: 2, candidates: [null, { tag: 'button' }] } } },
+      ...resolvableNode(QUAD),
+    });
+    attachDebugger(guest);
+    sent.length = 0;
+
+    // A CSS selector, so the fallback resolves through DOM.querySelector and
+    // not through another Runtime.evaluate (which this fake answers the same).
+    const ok = await clickAtCenterOfSelector(guest, '#save', { strict: true });
+
+    expect(ok).toBe(true);
+    expect(methods()).toContain('DOM.querySelector');
+    expect(sent.some((entry) => entry.method === 'Runtime.releaseObject' && entry.params?.objectId === 'described-2')).toBe(true);
+    detachDebugger(guest);
+  });
+
+  describe('every primitive passes strictness down', () => {
+    const AMBIGUOUS_REPLIES = {
+      'Runtime.evaluate': { result: { type: 'object', objectId: 'described-3' } },
+      'Runtime.callFunctionOn': {
+        result: {
+          value: {
+            total: 2,
+            candidates: [
+              { index: 0, tag: 'button', text: 'Save', selector: '#first' },
+              { index: 1, tag: 'button', text: 'Save', selector: '#second' },
+            ],
+          },
+        },
+      },
+      ...resolvableNode(QUAD),
+    };
+
+    const primitives: Array<[string, (guest: WebContents) => Promise<unknown>]> = [
+      ['hoverSelector', (guest) => hoverSelector(guest, '#a', { strict: true })],
+      ['scrollBy with a selector', (guest) => scrollBy(guest, { selector: '#a', deltaY: 100, strict: true })],
+      ['selectOptionOnSelector', (guest) => selectOptionOnSelector(guest, '#a', { value: 'x' }, { strict: true })],
+      ['dragFromTo (source)', (guest) => dragFromTo(guest, '#a', '#b', { strict: true })],
+      ['dropFilesOnSelector', (guest) => dropFilesOnSelector(guest, '#a', ['/tmp/a.txt'], { strict: true })],
+      ['clickAtCenterOfSelector', (guest) => clickAtCenterOfSelector(guest, '#a', { strict: true })],
+    ];
+
+    it.each(primitives)('%s rejects with AmbiguousSelectorError and sends no input', async (_name, run) => {
+      const { guest, sent } = fakeGuest(AMBIGUOUS_REPLIES);
+      attachDebugger(guest);
+
+      await expect(run(guest)).rejects.toBeInstanceOf(AmbiguousSelectorError);
+
+      expect(sent.some((entry) => entry.method === 'Input.dispatchMouseEvent')).toBe(false);
+      expect(sent.some((entry) => entry.method === 'Input.dispatchDragEvent')).toBe(false);
+      detachDebugger(guest);
+    });
+
+    it('dragFromTo rejects when the source resolves to a node and the target is ambiguous', async () => {
+      // The fake answers by method, so a getter hands out a different
+      // Runtime.evaluate answer on each call: the node for the source, then
+      // the ambiguity for the target.
+      let evaluateCalls = 0;
+      const replies: Record<string, unknown> = { ...AMBIGUOUS_REPLIES };
+      Object.defineProperty(replies, 'Runtime.evaluate', {
+        enumerable: true,
+        get: () => {
+          evaluateCalls += 1;
+          return evaluateCalls === 1
+            ? { result: { type: 'object', subtype: 'node', objectId: 'source-1' } }
+            : { result: { type: 'object', objectId: 'described-4' } };
+        },
+      });
+      replies['DOM.requestNode'] = { nodeId: 77 };
+      const { guest, sent } = fakeGuest(replies);
+      attachDebugger(guest);
+
+      const dragged = dragFromTo(guest, '#source', '#target', { strict: true });
+
+      await expect(dragged).rejects.toBeInstanceOf(AmbiguousSelectorError);
+      await expect(dragged).rejects.toMatchObject({ selector: '#target' });
+      expect(sent.some((entry) => entry.method === 'Input.dispatchMouseEvent')).toBe(false);
+      detachDebugger(guest);
+    });
+
+    it('none of them counts matches when strict is omitted', async () => {
+      const { guest, methods, sent } = fakeGuest({
+        ...resolvableNode(QUAD),
+        'DOM.requestNode': { nodeId: 77 },
+      });
+      attachDebugger(guest);
+      sent.length = 0;
+
+      await hoverSelector(guest, '#a');
+      await scrollBy(guest, { selector: '#a', deltaY: 100 });
+      await selectOptionOnSelector(guest, '#a', { value: 'x' });
+      await dragFromTo(guest, '#a', '#b');
+      await dropFilesOnSelector(guest, '#a', ['/tmp/a.txt']);
+      await clickAtCenterOfSelector(guest, '#a');
+
+      expect(methods()).not.toContain('Runtime.evaluate');
+      detachDebugger(guest);
+    });
+  });
+
+  it('does not count matches at all unless asked, which keeps the dev bridge and every other caller unchanged', async () => {
+    const { guest, methods, sent } = fakeGuest(resolvableNode(QUAD));
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await clickAtCenterOfSelector(guest, '#target');
+    await clickAtCenterOfSelector(guest, '#target', { strict: false });
+
+    expect(methods()).not.toContain('Runtime.evaluate');
+    detachDebugger(guest);
   });
 });

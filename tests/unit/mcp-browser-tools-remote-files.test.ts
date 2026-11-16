@@ -102,7 +102,7 @@ describe('kangentic_browser_drop_files on a remote project', () => {
 
     expect(result.isError).toBeFalsy();
     expect(fetch).toHaveBeenCalledWith([HOST_FILE], scratch);
-    expect(dropFilesOnSelector).toHaveBeenCalledWith(expect.anything(), '#zone', [LOCAL_COPY]);
+    expect(dropFilesOnSelector).toHaveBeenCalledWith(expect.anything(), '#zone', [LOCAL_COPY], { strict: true });
   });
 
   // Without it a local project's drop would be sent through a host fetch that returns nothing.
@@ -111,7 +111,7 @@ describe('kangentic_browser_drop_files on a remote project', () => {
 
     await client.callTool({ name: 'kangentic_browser_drop_files', arguments: { selector: '#zone', paths: ['/tmp/x.txt'] } });
 
-    expect(dropFilesOnSelector).toHaveBeenCalledWith(expect.anything(), '#zone', ['/tmp/x.txt']);
+    expect(dropFilesOnSelector).toHaveBeenCalledWith(expect.anything(), '#zone', ['/tmp/x.txt'], { strict: true });
   });
 });
 
