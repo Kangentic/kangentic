@@ -182,7 +182,7 @@ export interface CoreSessionSlice {
     id: string | null,
     options?: { initialEdit?: boolean },
   ) => void;
-  spawnSession: (input: Omit<SpawnSessionInput, 'startPath'>) => Promise<Session>;
+  spawnSession: (input: Omit<SpawnSessionInput, 'startPath' | 'openingPrompt'>) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
   // `projectId` on the four task-session mutations below is the task's own
   // project, captured where the user acted (project-scoped-ipc.md). A caller

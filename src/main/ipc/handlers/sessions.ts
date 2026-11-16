@@ -114,9 +114,16 @@ export function registerSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.SESSION_SPAWN, (_, input, projectId?: string | null) => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
     if (!resolvedProjectId) throw new RefusalError('Cannot spawn session: no project is currently open');
-    // Set after the spread: the renderer never names a start path, and never
-    // supplies the resume check's evidence, which only a spawn chokepoint reads.
-    return context.sessionManager.spawn({ ...input, projectId: resolvedProjectId, startPath: 'board', resumeEvidence: null });
+    // Set after the spread: the renderer never names a start path or how the
+    // opening prompt is delivered, and never supplies the resume check's
+    // evidence. Only a spawn chokepoint knows those, and reports read them.
+    return context.sessionManager.spawn({
+      ...input,
+      projectId: resolvedProjectId,
+      startPath: 'board',
+      openingPrompt: undefined,
+      resumeEvidence: null,
+    });
   });
   ipcMain.handle(IPC.SESSION_KILL, (_, id) => {
     // Serialize against suspend/resume/reset for the same task so KILL can't

@@ -408,6 +408,20 @@ describe('sessions.ts renderer port broker', () => {
       expect(spawn).toHaveBeenCalledTimes(1);
       expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ command: 'claude', projectId: 'proj-1', startPath: 'board' }));
     });
+
+    // The launch report sends openingPrompt as a tag, and only a spawn chokepoint
+    // knows how a prompt was delivered. A renderer's value must not reach the row.
+    it('drops an opening prompt delivery the renderer sent', () => {
+      const spawn = vi.fn();
+      (context.sessionManager as unknown as { spawn: typeof spawn }).spawn = spawn;
+
+      findIpcHandleHandler(IPC.SESSION_SPAWN)({}, { command: 'claude', openingPrompt: 'typed' }, 'proj-1');
+
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const spawnInput = spawn.mock.calls[0][0] as { command: string; openingPrompt?: string };
+      expect(spawnInput.command).toBe('claude');
+      expect(spawnInput.openingPrompt).toBeUndefined();
+    });
   });
 
   describe("sessionManager 'renderer-ports-lost' (a restarted host)", () => {
