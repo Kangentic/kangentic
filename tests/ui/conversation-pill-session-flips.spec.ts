@@ -15,6 +15,7 @@
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
+import type { ConversationSessionMeta } from '../../src/shared/types';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -30,22 +31,22 @@ type SessionRow = { id: string; status: string; pid: number | null };
 
 const preConfigScript = `
   window.__mockPreConfigure(function (state) {
-    var ts = new Date().toISOString();
+    var timestamp = new Date().toISOString();
     state.projects.push({
       id: '${PROJECT_ID}', name: 'Conversation Flips', path: '/mock/conv-flips',
-      github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+      github_url: null, default_agent: 'claude', last_opened: timestamp, created_at: timestamp,
     });
     var laneIds = {};
     state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
       var id = 'lane-conv-flips-' + index;
       laneIds[swimlane.name] = id;
-      state.swimlanes.push(Object.assign({}, swimlane, { id: id, position: index, created_at: ts }));
+      state.swimlanes.push(Object.assign({}, swimlane, { id: id, position: index, created_at: timestamp }));
     });
     state.tasks.push({
       id: '${TASK_ID}', title: 'Flipping row task', description: '',
       swimlane_id: laneIds['Code Review'], position: 0, agent: null, session_id: null,
       worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
-      base_branch: null, archived_at: null, created_at: ts, updated_at: ts,
+      base_branch: null, archived_at: null, created_at: timestamp, updated_at: timestamp,
     });
     return { currentProjectId: '${PROJECT_ID}' };
   });
@@ -80,16 +81,17 @@ async function setTaskRow(page: Page, row: SessionRow) {
 }
 
 /**
- * Serve the listing from the page: every call is recorded, and a call waits
- * on `hold` when one is set. `answer` is what the listing returns.
+ * Serve the listing from the page: every call is recorded, and with `hold`
+ * set every call waits until `__releaseListing()` runs. `__listAnswer` is
+ * what the listing returns.
  */
 async function installListing(page: Page, options: { hold: boolean }) {
-  await page.evaluate((holdFirst) => {
+  await page.evaluate((holdCalls) => {
     const scope = window as unknown as {
       __listCalls: number;
-      __listAnswer: unknown[];
+      __listAnswer: ConversationSessionMeta[];
       __releaseListing: () => void;
-      __mockTranscriptsListSessionsOverride: (taskId: string) => Promise<unknown[]>;
+      __mockTranscriptsListSessionsOverride: (taskId: string) => Promise<ConversationSessionMeta[]>;
     };
     scope.__listCalls = 0;
     scope.__listAnswer = [];
@@ -98,7 +100,7 @@ async function installListing(page: Page, options: { hold: boolean }) {
     scope.__releaseListing = release;
     scope.__mockTranscriptsListSessionsOverride = () => {
       scope.__listCalls += 1;
-      if (holdFirst) return gate.then(() => scope.__listAnswer.slice());
+      if (holdCalls) return gate.then(() => scope.__listAnswer.slice());
       return Promise.resolve(scope.__listAnswer.slice());
     };
   }, options.hold);
@@ -156,7 +158,7 @@ test.describe('Conversation pill follows the row', () => {
       const callsBeforeReplacement = await listingCalls(page);
 
       await page.evaluate((sessionId) => {
-        (window as unknown as { __listAnswer: unknown[] }).__listAnswer = [
+        (window as unknown as { __listAnswer: ConversationSessionMeta[] }).__listAnswer = [
           { sessionId, agentName: 'Claude Code', startedAt: new Date().toISOString(), exitedAt: null, isolatedSwimlaneId: null, status: 'exited' },
         ];
       }, SECOND_SESSION_ID);

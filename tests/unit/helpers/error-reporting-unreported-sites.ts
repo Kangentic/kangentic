@@ -675,7 +675,6 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/renderer/components/dialogs/task-detail/completed/CompletedConversationTab.tsx': 1,
   'src/renderer/components/dialogs/task-detail/completed/useTaskReport.ts': 3,
   'src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx': 1,
-  'src/renderer/components/dialogs/task-detail/open-task-conversation.ts': 1,
   'src/renderer/components/dialogs/task-detail/useAttachments.ts': 6,
   'src/renderer/components/dialogs/task-detail/useTaskActions.ts': 9,
   'src/renderer/components/dialogs/task-detail/useTaskSessionState.ts': 1,
