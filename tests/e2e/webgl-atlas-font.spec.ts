@@ -12,7 +12,8 @@
  * Playwright's own Chromium, so they would stay green through this, and no spec renders
  * WebGL. This reads the parse directly, which needs no GPU, so it runs in this tier's
  * `ELECTRON_DISABLE_GPU` launch. Any Electron bump goes through it. Passes on 45.1.0
- * and reads red on 45.2.3.
+ * and reads red on 45.2.3. Passes again on 45.3.3: 45.3.2 took Chromium's follow-up
+ * fix (electron/electron#55737), and 45.3.0 and 45.3.1 still carry the regression.
  */
 import { test, expect } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
