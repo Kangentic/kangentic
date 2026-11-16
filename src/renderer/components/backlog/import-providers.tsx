@@ -1,5 +1,5 @@
 import React from 'react';
-import { KanbanSquare, CircleDot, Cloud } from 'lucide-react';
+import { SquareKanban, CircleDot, Cloud } from 'lucide-react';
 import { msg } from '@lingui/core/runtime-macro';
 import { GitHubIcon } from '../icons/GitHubIcon';
 import { translateText } from '../../i18n/translate';
@@ -51,7 +51,7 @@ export const PROVIDERS: Provider[] = [
         description: msg({ message: 'Import from a GitHub Project board', context: 'import source type' }),
         placeholder: 'https://github.com/orgs/owner/projects/1', // i18n-ok: an example URL
         hint: msg({ message: 'Paste the full URL to your GitHub Project', context: 'import source type' }),
-        icon: <KanbanSquare size={16} />,
+        icon: <SquareKanban size={16} />,
       },
     ],
   },
@@ -67,14 +67,14 @@ export const PROVIDERS: Provider[] = [
         description: msg({ message: 'Import from Azure DevOps boards', context: 'import source type' }),
         placeholder: 'https://dev.azure.com/org/project', // i18n-ok: an example URL
         hint: msg({ message: 'Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)', context: 'import source type' }),
-        icon: <KanbanSquare size={16} />,
+        icon: <SquareKanban size={16} />,
       },
     ],
   },
   {
     id: 'asana',
     label: 'Asana', // i18n-ok: a provider's own name
-    icon: <KanbanSquare size={18} />,
+    icon: <SquareKanban size={18} />,
     available: true,
     requiresAuth: true,
     sourceTypes: [
@@ -84,7 +84,7 @@ export const PROVIDERS: Provider[] = [
         description: msg({ message: 'Import tasks from an Asana project', context: 'import source type' }),
         placeholder: 'https://app.asana.com/0/1234567890/list', // i18n-ok: an example URL
         hint: msg({ message: 'Paste any Asana project URL (list, board, or calendar view).', context: 'import source type' }),
-        icon: <KanbanSquare size={16} />,
+        icon: <SquareKanban size={16} />,
       },
     ],
   },

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, type RefObject, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { GitBranch, Search, Loader2, ChevronDown, CornerDownLeft } from 'lucide-react';
+import { GitBranch, Search, LoaderCircle, ChevronDown, CornerDownLeft } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
@@ -375,7 +375,7 @@ export function BranchPicker({
       <div className="max-h-[200px] min-h-0 overflow-y-auto py-1">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-4 text-xs text-fg-faint">
-            <Loader2 size={14} className="animate-spin" />
+            <LoaderCircle size={14} className="animate-spin" />
             <Trans>Loading branches...</Trans>
           </div>
         ) : filtered.length === 0 ? (
@@ -422,7 +422,7 @@ export function BranchPicker({
           data-testid="branch-picker-use-typed"
         >
           {isChecking
-            ? <Loader2 size={12} className="shrink-0 animate-spin" aria-hidden />
+            ? <LoaderCircle size={12} className="shrink-0 animate-spin" aria-hidden />
             : <CornerDownLeft size={12} className="shrink-0" aria-hidden />}
           <span className="min-w-0 truncate">
             {isChecking

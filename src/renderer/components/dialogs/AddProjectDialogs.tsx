@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronRight, CircleExclamationPoint, Folder, Laptop, Loader2, Server } from 'lucide-react';
+import { ChevronRight, CircleExclamationPoint, Folder, Laptop, LoaderCircle, Server } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { SshDirectoryEntry, SshDirectoryListing, SshHostConnectionState } from '../../../shared/types';
 import { useAddProject } from '../../hooks/useAddProject';
@@ -129,7 +129,7 @@ function DirectoryBrowser({ browser, home, onOpen }: { browser: ReturnType<typeo
             </button>
           </span>
         ))}
-        {browser.loading ? <Loader2 size={12} className="ml-1 animate-spin text-fg-faint" /> : null}
+        {browser.loading ? <LoaderCircle size={12} className="ml-1 animate-spin text-fg-faint" /> : null}
       </nav>
       {browser.error ? <ReportedError error={browser.error} testId="add-remote-project-browse-error" /> : null}
       {listing && !listing.exists ? (
@@ -347,7 +347,7 @@ function AddRemoteProjectForm({ hostId }: { hostId: string }) {
             className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on disabled:opacity-50"
             data-testid="add-remote-project-submit"
           >
-            {busy ? <Loader2 size={12} className="animate-spin" /> : null}
+            {busy ? <LoaderCircle size={12} className="animate-spin" /> : null}
             <Trans>Add project</Trans>
           </button>
         </div>

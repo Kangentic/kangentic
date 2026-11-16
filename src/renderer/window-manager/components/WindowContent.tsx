@@ -12,7 +12,7 @@
  */
 
 import { Suspense, lazy, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
@@ -51,7 +51,7 @@ export function WindowContent({
         <Suspense
           fallback={
             <div className="flex h-full w-full items-center justify-center">
-              <Loader2 size={20} className="animate-spin text-fg-muted" />
+              <LoaderCircle size={20} className="animate-spin text-fg-muted" />
             </div>
           }
         >

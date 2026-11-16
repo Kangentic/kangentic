@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Pencil, Send, SquareMousePointer, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, LoaderCircle, Pencil, Send, SquareMousePointer, Trash2, X } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { CountBadge } from '../../CountBadge';
@@ -204,7 +204,7 @@ export function AnnotationComposer({
             className="flex items-center justify-center gap-1.5 h-[34px] min-w-[104px] px-[18px] rounded bg-accent-emphasis hover:bg-accent text-[13px] font-semibold text-accent-on disabled:opacity-50"
             data-testid="browser-send"
           >
-            {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+            {sending ? <LoaderCircle size={13} className="animate-spin" /> : <Send size={13} />}
             <Trans>Send</Trans>
           </button>
         </Tooltip>

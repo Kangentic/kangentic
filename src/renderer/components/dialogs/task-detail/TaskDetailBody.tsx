@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Loader2, Play, RotateCcw } from 'lucide-react';
+import { LoaderCircle, Play, RotateCcw } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
@@ -607,7 +607,7 @@ export function TaskDetailBody({
     // so the resting state is always "Resume session" with a Play icon. While
     // toggling, the direction depends on the current session status.
     const toggleIcon = toggling
-      ? <Loader2 size={16} className="animate-spin" />
+      ? <LoaderCircle size={16} className="animate-spin" />
       : <Play size={16} />;
     const toggleLabel = !toggling
       ? t`Resume session`

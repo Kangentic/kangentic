@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Bug, GripVertical, X, Loader2, Mail, Lock, Wrench, Users, Terminal, RotateCw } from 'lucide-react';
+import { Bug, GripVertical, X, LoaderCircle, Mail, Lock, Wrench, Users, Terminal, RotateCw } from 'lucide-react';
 import type { ActivityStatsSnapshot, ActivityReason, ActivityState } from '../../../shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
 import { useConfigStore } from '../../stores/config-store';
@@ -710,7 +710,7 @@ function ActivityDebugOverlayContent() {
       >
         {!firstPollComplete ? (
           <div className="flex items-center gap-2 text-fg-faint text-[11px]">
-            <Loader2 size={12} className="animate-spin" />
+            <LoaderCircle size={12} className="animate-spin" />
             <span>Loading activity state...</span>
           </div>
         ) : snapshots.length === 0 ? (
@@ -1194,7 +1194,7 @@ function statusPresentation(snapshot: ActivityStatsSnapshot): {
     }
     case 'turn-active':
       return {
-        Icon: Loader2,
+        Icon: LoaderCircle,
         iconClass: 'text-active animate-spin',
         pillClasses: pill,
         label: 'Thinking · turn active',
@@ -1203,7 +1203,7 @@ function statusPresentation(snapshot: ActivityStatsSnapshot): {
     // non-idle/non-permission reason - but TypeScript needs them.
     case 'idle':
       return {
-        Icon: Loader2,
+        Icon: LoaderCircle,
         iconClass: 'text-active animate-spin',
         pillClasses: pill,
         label: 'Thinking',

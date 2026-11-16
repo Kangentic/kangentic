@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffEditorProps, DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
-import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye, ImageOff } from 'lucide-react';
+import { LoaderCircle, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye, ImageOff } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { translateText } from '../../../../i18n/translate';
 import { FILE_STATUS_CONFIG } from './file-status';
@@ -1578,7 +1578,7 @@ export function DiffViewer({
           // image never paints under the new file's header.
           contentFilePath !== filePath ? (
             <div className="flex items-center justify-center h-full">
-              <Loader2 size={20} className="animate-spin text-fg-muted" />
+              <LoaderCircle size={20} className="animate-spin text-fg-muted" />
             </div>
           ) : image !== null ? (
             <ImageDiffView
@@ -1606,7 +1606,7 @@ export function DiffViewer({
           // never created with empty placeholder models (whose empty diff would
           // be misread as "no changes" for the first real file).
           <div className="flex items-center justify-center h-full">
-            <Loader2 size={20} className="animate-spin text-fg-muted" />
+            <LoaderCircle size={20} className="animate-spin text-fg-muted" />
           </div>
         ) : previewActive ? (
           // Rendered markdown preview. A deleted file (status 'D') has no new
@@ -1623,7 +1623,7 @@ export function DiffViewer({
           // and a revision switch never shows the last revision's images.
           contentFilePath !== filePath ? (
             <div className="flex items-center justify-center h-full">
-              <Loader2 size={20} className="animate-spin text-fg-muted" />
+              <LoaderCircle size={20} className="animate-spin text-fg-muted" />
             </div>
           ) : (
             <div
@@ -1697,7 +1697,7 @@ export function DiffViewer({
               loading={
                 showEditorBootSpinner ? (
                   <div className="flex items-center justify-center h-full">
-                    <Loader2 size={20} className="animate-spin text-fg-muted" />
+                    <LoaderCircle size={20} className="animate-spin text-fg-muted" />
                   </div>
                 ) : (
                   <></>

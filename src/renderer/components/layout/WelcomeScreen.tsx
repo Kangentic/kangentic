@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleExclamationPoint, Copy, Loader2, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
+import { FolderOpen, FileText, GitBranch, Terminal, CircleCheckBig, CircleExclamationPoint, Copy, LoaderCircle, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { DOCS_URLS } from '../../../shared/docs-links';
@@ -63,11 +63,11 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
       <div className="flex items-start gap-2">
         <div className="w-4 h-5 flex items-center justify-center shrink-0">
           {loading ? (
-            <Loader2 size={14} className="animate-spin text-fg-faint" />
+            <LoaderCircle size={14} className="animate-spin text-fg-faint" />
           ) : unauthenticated ? (
             <CircleExclamationPoint size={14} className="text-attention" />
           ) : found ? (
-            <CheckCircle size={14} className="text-active" />
+            <CircleCheckBig size={14} className="text-active" />
           ) : (
             <div className="w-3.5 h-3.5 rounded-full border border-fg-faint/30" />
           )}
@@ -268,7 +268,7 @@ export function WelcomeScreen() {
             }`}
             data-testid="welcome-open-project"
           >
-            {detectionResolved ? <FolderOpen size={20} /> : <Loader2 size={20} className="animate-spin" />}
+            {detectionResolved ? <FolderOpen size={20} /> : <LoaderCircle size={20} className="animate-spin" />}
             {detectionResolved ? <Trans>Open a project</Trans> : <Trans>Checking your setup</Trans>}
           </button>
           {/* Only the blocked case gets subtext. When ready, "Open a project" plus
@@ -304,11 +304,11 @@ export function WelcomeScreen() {
           >
             <span role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-fg min-w-0" data-testid="welcome-readiness">
               {!detectionResolved ? (
-                <Loader2 size={14} className="animate-spin text-fg-faint shrink-0" />
+                <LoaderCircle size={14} className="animate-spin text-fg-faint shrink-0" />
               ) : blocked ? (
                 <CircleExclamationPoint size={14} className="text-attention shrink-0" />
               ) : (
-                <CheckCircle size={14} className="text-active shrink-0" />
+                <CircleCheckBig size={14} className="text-active shrink-0" />
               )}
               {/* Ready state renders neutral chips, not green: the check icon
                   already carries the verdict, and --kng-active means "an agent is

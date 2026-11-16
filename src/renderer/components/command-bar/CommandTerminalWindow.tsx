@@ -18,7 +18,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderGit, GitCompare, Globe, Loader2, Maximize2, Minimize2, Pencil, Search } from 'lucide-react';
+import { FolderGit, GitCompare, Globe, LoaderCircle, Maximize2, Minimize2, Pencil, Search } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -1027,7 +1027,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               <Suspense
                 fallback={
                   <div className="flex items-center justify-center h-full">
-                    <Loader2 size={20} className="animate-spin text-fg-muted" />
+                    <LoaderCircle size={20} className="animate-spin text-fg-muted" />
                   </div>
                 }
               >

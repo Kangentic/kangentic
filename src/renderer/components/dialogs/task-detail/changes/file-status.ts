@@ -1,4 +1,4 @@
-import { Plus, Pencil, Minus, ArrowRight, Copy, FileQuestion } from 'lucide-react';
+import { Plus, Pencil, Minus, ArrowRight, Copy, FileQuestionMark } from 'lucide-react';
 import { msg } from '@lingui/core/runtime-macro';
 import type { GitDiffStatus } from '../../../../../shared/types';
 import type { LocalizedText } from '../../../../../shared/i18n/text';
@@ -15,5 +15,5 @@ export const FILE_STATUS_CONFIG: Record<GitDiffStatus, { icon: typeof Plus; colo
   D: { icon: Minus, colorClass: 'text-red-400', label: msg({ message: 'Deleted', context: 'file status' }) },
   R: { icon: ArrowRight, colorClass: 'text-blue-400', label: msg({ message: 'Renamed', context: 'file status' }) },
   C: { icon: Copy, colorClass: 'text-blue-400', label: msg({ message: 'Copied', context: 'file status' }) },
-  U: { icon: FileQuestion, colorClass: 'text-green-300', label: msg({ message: 'Untracked', context: 'file status' }) },
+  U: { icon: FileQuestionMark, colorClass: 'text-green-300', label: msg({ message: 'Untracked', context: 'file status' }) },
 };

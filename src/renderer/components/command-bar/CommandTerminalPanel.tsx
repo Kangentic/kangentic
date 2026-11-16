@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject, ReactNode } from 'react';
-import { Maximize, Minimize, SquareArrowOutUpRight, SquareTerminal, X } from 'lucide-react';
+import { Maximize, Minimize, SquareArrowUpRightExit, SquareTerminal, X } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
@@ -533,7 +533,7 @@ export function CommandTerminalPanel({
                 aria-label={t`Open in new window`}
                 data-testid="command-terminal-panel-pop-out"
               >
-                <SquareArrowOutUpRight size={PANEL_CONTROL_ICON_PX} />
+                <SquareArrowUpRightExit size={PANEL_CONTROL_ICON_PX} />
               </button>
             </Tooltip>
             <Tooltip label={geometry.maximized ? t`Restore panel` : t`Maximize panel`} keys="panel.maximize">

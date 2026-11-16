@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Filter, X } from 'lucide-react';
+import { Funnel, X } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { OverlayPopover } from './OverlayPopover';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -113,7 +113,7 @@ export function MultiSelectDropdown({
         }`}
       >
         {triggerText ?? label}
-        <Filter size={10} />
+        <Funnel size={10} />
       </button>
       <OverlayPopover
         open={open}

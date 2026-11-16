@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { GitCompare, Loader2 } from 'lucide-react';
+import { GitCompare, LoaderCircle } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { BaseDialog } from './BaseDialog';
@@ -53,7 +53,7 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-full">
-                  <Loader2 size={20} className="animate-spin text-fg-muted" />
+                  <LoaderCircle size={20} className="animate-spin text-fg-muted" />
                 </div>
               }
             >

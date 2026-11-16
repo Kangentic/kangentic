@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import type { PopOutChangesFileParams } from '../../../shared/pop-out';
@@ -23,7 +23,7 @@ export interface DisplayedFileDiffContent {
 function CenteredSpinner() {
   return (
     <div className="flex items-center justify-center h-full">
-      <Loader2 size={20} className="animate-spin text-fg-muted" />
+      <LoaderCircle size={20} className="animate-spin text-fg-muted" />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { CheckCircle2, GitPullRequest, XCircle } from 'lucide-react';
+import { CircleCheck, GitPullRequest, CircleX } from 'lucide-react';
 import { Plural, useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
 import { formatCost, formatSpan } from '../../../../utils/format-session';
@@ -157,7 +157,7 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
             aria-label={statusLabel}
             data-testid="completed-status"
           >
-            {exitedWithError ? <XCircle size={14} /> : <CheckCircle2 size={14} />}
+            {exitedWithError ? <CircleX size={14} /> : <CircleCheck size={14} />}
             <span className="hidden @[760px]:inline" aria-hidden="true">{statusLabel}</span>
           </span>
         </Tooltip>

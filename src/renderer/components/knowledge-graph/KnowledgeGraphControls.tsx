@@ -32,7 +32,7 @@
  */
 
 import { useMemo, useState, type ReactNode } from 'react';
-import { Filter, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
+import { Funnel, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -407,7 +407,7 @@ export function KnowledgeGraphControls({
     >
       <div className={CARD_CLASS} data-testid="knowledge-graph-filter-card">
         <SectionHeader
-          icon={<Filter size={13} aria-hidden />}
+          icon={<Funnel size={13} aria-hidden />}
           label={t`Filter`}
           collapsed={filterCollapsed}
           onToggle={() => setFilterCollapsed((current) => !current)}

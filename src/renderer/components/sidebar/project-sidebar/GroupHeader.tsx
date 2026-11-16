@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import { ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, ChevronRight, Ellipsis } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { CountBadge } from '../../CountBadge';
 import { Tooltip } from '../../Tooltip';
@@ -113,7 +113,7 @@ export function GroupHeader({
           data-testid={`group-menu-${group.id}`}
           aria-label={t`Open menu for group ${groupName}`}
         >
-          <MoreHorizontal size={14} />
+          <Ellipsis size={14} />
         </button>
       </Tooltip>
     </div>

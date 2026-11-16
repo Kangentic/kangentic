@@ -18,7 +18,7 @@
 
 import type React from 'react';
 import { useState } from 'react';
-import { Brain, Filter, Loader2 } from 'lucide-react';
+import { Brain, Funnel, LoaderCircle } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { SettingsCard, CardSourceList, CardStatusRow, CardTile } from '../settings/settings-card';
 import { settingProps } from '../settings/settings-registry';
@@ -56,7 +56,7 @@ export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, proj
           <div className="pointer-events-auto flex max-h-full w-64 flex-col gap-3 overflow-y-auto" data-testid="knowledge-graph-no-map-panel">
             <div className={CARD_CLASS} data-testid="knowledge-graph-pending-scope">
               <SectionHeader
-                icon={<Filter size={13} aria-hidden />}
+                icon={<Funnel size={13} aria-hidden />}
                 label={t`Filter`}
                 collapsed={filterCollapsed}
                 onToggle={() => setFilterCollapsed((current) => !current)}
@@ -151,7 +151,7 @@ function BuildingCard({ buildProgress, index, onOpenSettings }: {
   const row = buildProgressRow(buildProgress);
   return (
     <SettingsCard
-      icon={<Loader2 size={16} className="animate-spin" />}
+      icon={<LoaderCircle size={16} className="animate-spin" />}
       label={t`Building the map`}
       description={t`Once per project, in the background. Later updates take moments.`}
       testId="knowledge-graph-building-card"

@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Check, EllipsisVertical, GripVertical, KeyRound, LogIn, RotateCcw, Trash2, TriangleAlert } from 'lucide-react';
+import { ArrowLeftRight, Check, EllipsisVertical, GripVertical, KeyRound, LogIn, RotateCcw, Trash2, TriangleExclamationPoint } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -174,7 +174,7 @@ function AccountRowContent({
             className="inline-flex flex-shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 text-[11px] leading-4 text-warning"
             style={{ borderColor: tint(50), backgroundColor: tint(12) }}
           >
-            <TriangleAlert size={11} strokeWidth={2.5} aria-hidden="true" />
+            <TriangleExclamationPoint size={11} strokeWidth={2.5} aria-hidden="true" />
             {statusLabels[account.status]}
           </span>
         ) : null}

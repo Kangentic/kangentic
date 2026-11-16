@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CircleStop, Loader2, Monitor, Pin, RotateCcw, Send, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleStop, LoaderCircle, Monitor, Pin, RotateCcw, Send, ZoomIn, ZoomOut } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
@@ -134,7 +134,7 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId, visibility = 's
   if (urlLoading) {
     return (
       <div className="flex items-center justify-center h-full bg-surface" data-testid="browser-pane-loading">
-        <Loader2 size={20} className="animate-spin text-fg-muted" />
+        <LoaderCircle size={20} className="animate-spin text-fg-muted" />
       </div>
     );
   }
@@ -159,7 +159,7 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId, visibility = 's
   if (!jarSynced) {
     return (
       <div className="flex items-center justify-center h-full bg-surface" data-testid="browser-pane-jar-syncing">
-        <Loader2 size={20} className="animate-spin text-fg-muted" />
+        <LoaderCircle size={20} className="animate-spin text-fg-muted" />
       </div>
     );
   }
@@ -1178,7 +1178,7 @@ function BrowserPaneActive({
             data-testid="browser-pin-project"
           >
             {pinning
-              ? <Loader2 size={14} className="animate-spin" />
+              ? <LoaderCircle size={14} className="animate-spin" />
               : <Pin size={14} strokeWidth={matchesProjectDefault ? 2 : 1.75} fill={matchesProjectDefault ? 'currentColor' : 'none'} />}
           </button>
         </Tooltip>
@@ -1412,7 +1412,7 @@ function BrowserPaneActive({
             className="absolute inset-0 flex items-center justify-center bg-surface pointer-events-none"
             data-testid="browser-pane-page-loading"
           >
-            <Loader2 size={20} className="animate-spin text-fg-muted" />
+            <LoaderCircle size={20} className="animate-spin text-fg-muted" />
           </div>
         )}
         {/* An agent is driving this page, said on the page rather than in the
@@ -1585,7 +1585,7 @@ function BrowserPaneActive({
                 className="flex items-center gap-1 px-3 py-1 text-xs text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors disabled:opacity-50"
                 data-testid="browser-send"
               >
-                {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                {sending ? <LoaderCircle size={12} className="animate-spin" /> : <Send size={12} />}
                 <Trans>Send</Trans>
               </button>
             </Tooltip>

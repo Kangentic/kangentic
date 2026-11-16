@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from 'react';
 import type { ReactElement } from 'react';
-import { ArrowRight, FileText, Sparkles, SquareTerminal, Workflow, XCircle } from 'lucide-react';
+import { ArrowRight, FileText, Sparkles, SquareTerminal, Workflow, CircleX } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { msg } from '@lingui/core/runtime-macro';
 import { translateText } from '../../../../i18n/translate';
@@ -309,7 +309,7 @@ function RunRow({
                   className="inline-flex text-red-400"
                   data-testid="completed-run-exited"
                 >
-                  <XCircle size={13} />
+                  <CircleX size={13} />
                 </span>
               </Tooltip>
             )}

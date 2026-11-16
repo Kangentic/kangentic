@@ -1,5 +1,5 @@
 import React from 'react';
-import { Brain, ChartColumn, CloudDownload, Command, Loader2, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
+import { Brain, ChartColumn, CloudDownload, Command, LoaderCircle, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
@@ -212,7 +212,7 @@ export function TitleBar({
                   lands as the glyph swaps. */}
               <IconSlot size={20}>
                 {commandBarOpening
-                  ? <Loader2 size={18} className="animate-spin" data-testid="quick-session-opening" />
+                  ? <LoaderCircle size={18} className="animate-spin" data-testid="quick-session-opening" />
                   : <CommandTerminalIcon tone={transientActivityTone} />}
               </IconSlot>
             </button>

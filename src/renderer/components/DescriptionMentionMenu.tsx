@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { File, Folder, Loader2 } from 'lucide-react';
+import { File, Folder, LoaderCircle } from 'lucide-react';
 import type { ProjectSearchEntry } from '../../shared/types';
 import { basenameOfMentionPath } from '../utils/description-mentions';
 
@@ -47,7 +47,7 @@ export function DescriptionMentionMenu({
         {items.length === 0 ? (
           <div className="px-3 py-2 text-xs text-fg-faint">
             <div className="flex items-center gap-2">
-              {isLoading && <Loader2 size={12} className="animate-spin" />}
+              {isLoading && <LoaderCircle size={12} className="animate-spin" />}
               <span>{helperText}</span>
             </div>
           </div>

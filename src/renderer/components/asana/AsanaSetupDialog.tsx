@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Trans, useLingui } from '@lingui/react/macro';
-import { KanbanSquare, ExternalLink, Loader2, Eye, EyeOff } from 'lucide-react';
+import { SquareKanban, ExternalLink, LoaderCircle, Eye, EyeOff } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 
 interface AsanaSetupDialogProps {
@@ -63,7 +63,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
     <BaseDialog
       onClose={onClose}
       title={t`Connect Asana`}
-      icon={<KanbanSquare size={18} className="text-accent" />}
+      icon={<SquareKanban size={18} className="text-accent" />}
       testId="asana-setup-dialog"
       className="w-[480px]"
       save={{ onSave: () => void handleSave(), disabled: submitting || token.trim().length === 0 }}
@@ -83,7 +83,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
             data-testid="asana-setup-save-btn"
           >
-            {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
+            {submitting ? <LoaderCircle size={14} className="animate-spin" /> : null}
             <Trans>Connect</Trans>
           </button>
         </div>

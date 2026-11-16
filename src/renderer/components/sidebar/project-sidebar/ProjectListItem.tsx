@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useShallow } from 'zustand/react/shallow';
-import { MoreHorizontal } from 'lucide-react';
+import { Ellipsis } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { SidebarActivityCounts } from './SidebarActivityCounts';
 import { SidebarCommandTerminalIndicator } from './SidebarCommandTerminalIndicator';
@@ -183,7 +183,7 @@ function ProjectListItemImpl({
             data-testid={`project-menu-${project.id}`}
             aria-label={t`Open menu for ${projectName}`}
           >
-            <MoreHorizontal size={14} />
+            <Ellipsis size={14} />
           </button>
         </Tooltip>
       </div>

@@ -30,7 +30,7 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ChevronRight, ChevronDown, Wrench, MessageSquareExclamationPoint, Bot, User, Terminal, Copy, Check, Archive, FileText, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Wrench, MessageSquareExclamationPoint, Bot, User, Terminal, Copy, Check, Archive, FileText, LoaderCircle } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -886,7 +886,7 @@ function EdgeRow({ edge, status, top, onRetry, onJumpToStart }: {
       data-testid={`conversation-edge-${edge}`}
       data-status={status}
     >
-      {!failed && <Loader2 size={13} className="animate-spin" />}
+      {!failed && <LoaderCircle size={13} className="animate-spin" />}
       <span>{label}</span>
       {failed && (
         <button

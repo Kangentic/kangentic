@@ -1,4 +1,4 @@
-import { CircleExclamationPoint, Loader2, Server } from 'lucide-react';
+import { CircleExclamationPoint, LoaderCircle, Server } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { IconSlot } from '../../IconSlot';
 import { Tooltip } from '../../Tooltip';
@@ -45,7 +45,7 @@ export function HostChip({ hostId }: { hostId: string }) {
         {unreachable
           ? <CircleExclamationPoint size={12} aria-hidden="true" />
           : waiting
-            ? <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+            ? <LoaderCircle size={12} className="animate-spin" aria-hidden="true" />
             : <Server size={12} aria-hidden="true" />}
       </IconSlot>
     </Tooltip>

@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components, ExtraProps } from 'react-markdown';
 import type { Element, ElementContent } from 'hast';
-import { Info, Lightbulb, Loader2, MessageSquareExclamationPoint, OctagonExclamationPoint, TriangleExclamationPoint, type LucideProps } from 'lucide-react';
+import { Info, Lightbulb, LoaderCircle, MessageSquareExclamationPoint, OctagonExclamationPoint, TriangleExclamationPoint, type LucideProps } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from './Tooltip';
 import { imageKindForPath } from '../../shared/image-preview';
@@ -378,7 +378,7 @@ function MarkdownDocument({ content, className, options }: { content: string; cl
       <div className={`markdown-body markdown-document${className ? ` ${className}` : ''}`}>
         {renderedDocument ?? (
           <div className="flex justify-center py-6">
-            <Loader2 size={20} className="animate-spin text-fg-muted" />
+            <LoaderCircle size={20} className="animate-spin text-fg-muted" />
           </div>
         )}
       </div>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Loader2, Search } from 'lucide-react';
+import { LoaderCircle, Search } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { AgentCommand } from '../../../../shared/types';
 
@@ -102,7 +102,7 @@ export function CommandSearchList({ cwd, onSelect, onClose }: CommandSearchListP
       <div ref={listRef} className="overflow-y-auto flex-1 min-h-0">
         {loading ? (
           <div className="flex items-center justify-center py-6">
-            <Loader2 size={16} className="text-fg-faint animate-spin" />
+            <LoaderCircle size={16} className="text-fg-faint animate-spin" />
           </div>
         ) : filteredCommands.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-fg-faint">

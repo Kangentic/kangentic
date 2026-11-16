@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Layers, Sliders, Bot, MessageSquare,
+  Layers, SlidersVertical, Bot, MessageSquare,
   RotateCcw, Palette, ChevronRight, Trash2, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
@@ -122,8 +122,8 @@ type SectionId = 'general' | 'agent' | 'auto';
  * which conversation it continues, and how many run at once. `Columns3Cog` stays
  * free for the automations card.
  */
-const SECTIONS: { id: SectionId; label: LocalizedText; icon: typeof Sliders }[] = [
-  { id: 'general', label: msg`General`, icon: Sliders },
+const SECTIONS: { id: SectionId; label: LocalizedText; icon: typeof SlidersVertical }[] = [
+  { id: 'general', label: msg`General`, icon: SlidersVertical },
   { id: 'agent', label: msg`Agent`, icon: Bot },
   { id: 'auto', label: msg`Sessions`, icon: MessageSquare },
 ];
