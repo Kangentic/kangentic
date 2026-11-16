@@ -1192,7 +1192,10 @@ describe('strict selector resolution (GitHub #820)', () => {
     detachDebugger(guest);
   });
 
-  it('does not throw when every described candidate is malformed, and resolves the first match instead', async () => {
+  it('still refuses when no described candidate survives the parse, and acts on no first match', async () => {
+    // On a deep page every CSS path can pass CANDIDATE_SELECTOR_MAX_CHARS, so
+    // the parse drops them all. The page still counted two matches: acting on
+    // the first one would be the silent pick strictness exists to stop.
     const { guest, methods, sent } = fakeGuest({
       'Runtime.evaluate': { result: { type: 'object', objectId: 'described-2' } },
       'Runtime.callFunctionOn': { result: { value: { total: 2, candidates: [null, { tag: 'button' }] } } },
@@ -1201,13 +1204,32 @@ describe('strict selector resolution (GitHub #820)', () => {
     attachDebugger(guest);
     sent.length = 0;
 
-    // A CSS selector, so the fallback resolves through DOM.querySelector and
-    // not through another Runtime.evaluate (which this fake answers the same).
+    const clicked = clickAtCenterOfSelector(guest, '#save', { strict: true });
+
+    await expect(clicked).rejects.toBeInstanceOf(AmbiguousSelectorError);
+    await expect(clicked).rejects.toMatchObject({ selector: '#save', total: 2, candidates: [] });
+    expect(methods()).not.toContain('DOM.querySelector');
+    expect(sent.some((entry) => entry.method === 'Input.dispatchMouseEvent')).toBe(false);
+    expect(sent.some((entry) => entry.method === 'Runtime.releaseObject' && entry.params?.objectId === 'described-2')).toBe(true);
+    detachDebugger(guest);
+  });
+
+  it('falls back to first-match resolution when the described total is below two', async () => {
+    // The page answers with an object only for two or more matches, so a
+    // smaller total is not an answer the expression gives.
+    const { guest, methods } = fakeGuest({
+      'Runtime.evaluate': { result: { type: 'object', objectId: 'described-5' } },
+      'Runtime.callFunctionOn': {
+        result: { value: { total: 1, candidates: [{ index: 0, tag: 'button', text: 'Save', selector: '#first' }] } },
+      },
+      ...resolvableNode(QUAD),
+    });
+    attachDebugger(guest);
+
     const ok = await clickAtCenterOfSelector(guest, '#save', { strict: true });
 
     expect(ok).toBe(true);
     expect(methods()).toContain('DOM.querySelector');
-    expect(sent.some((entry) => entry.method === 'Runtime.releaseObject' && entry.params?.objectId === 'described-2')).toBe(true);
     detachDebugger(guest);
   });
 

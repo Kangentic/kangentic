@@ -808,10 +808,23 @@ export function parseSelectorSpec(selector: string): SelectorSpec {
     // keeps the old unscoped reading rather than guessing at a combinator.
     const matchIndex = match.index ?? 0;
     const isTrailing = matchIndex + match[0].length === trimmed.length;
-    const scope = isTrailing ? trimmed.slice(0, matchIndex).trim() : '';
+    const scope = isTrailing ? hasTextScope(trimmed.slice(0, matchIndex)) : '';
     return scope ? { kind: 'text-contains', value, scope } : { kind: 'text-contains', value };
   }
   return { kind: 'css', value: trimmed };
+}
+
+/**
+ * The scope CSS for the text written before a trailing `:has-text(...)`.
+ * `button:has-text("x")` filters `button` itself. With whitespace or a
+ * combinator before it, `:has-text` stands alone, as `*` does in CSS:
+ * `[role=dialog] :has-text("x")` means elements inside the dialog, so the
+ * scope is `[role=dialog] *`, never the dialog itself.
+ */
+function hasTextScope(prefix: string): string {
+  const scope = prefix.trim();
+  if (!scope) return '';
+  return /[\s>+~]$/.test(prefix) ? `${scope} *` : scope;
 }
 
 /** The `document.querySelectorAll(...)` a text match walks: its scope, or the candidate pool. */
@@ -923,9 +936,13 @@ async function resolveActionTarget(
     const ambiguity = described.result?.value;
     const candidates = parseSelectorCandidates(ambiguity?.candidates);
     // `total` reaches the agent's message, so a NaN or Infinity from a page
-    // that patched the expression's builtins is read as no answer.
-    if (ambiguity && typeof ambiguity.total === 'number' && Number.isFinite(ambiguity.total) && candidates.length > 0) {
-      throw new AmbiguousSelectorError(selector, ambiguity.total, candidates);
+    // that patched the expression's builtins is read as no answer. A total of
+    // two or more refuses even when no candidate survived the parse (on a deep
+    // page every CSS path can pass CANDIDATE_SELECTOR_MAX_CHARS): acting on the
+    // first match there is the silent pick strictness exists to stop.
+    const total = ambiguity?.total;
+    if (typeof total === 'number' && Number.isFinite(total) && total >= 2) {
+      throw new AmbiguousSelectorError(selector, total, candidates);
     }
     return await resolveSelector(webContents, selector);
   } finally {
