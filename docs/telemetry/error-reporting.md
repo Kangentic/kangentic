@@ -900,7 +900,8 @@ in one Sentry org, one triage surface.
   failure overwriting a choice the user made themselves. The renderer PULLS this state
   (`IPC.GPU_HEALTH_STATUS`) rather than main pushing it: both facts are decided during boot, when a
   `webContents.send` can land before any listener is registered and be dropped silently, and the
-  record behind them is already gone. Reading consumes the notice, so a reload cannot re-toast.
+  record behind them is already gone. A read from the main window consumes the notice, so a reload
+  cannot re-toast. A pop-out's read never takes it.
   The way back is the Settings > Performance toggle, which saves and restarts in one call
   (`IPC.GPU_HEALTH_SET_ACCELERATION`) through the normal quit, so that run records `clean`.
   See "Graphics failures" in [Troubleshooting](../user-guide/troubleshooting.md#graphics-failures) for what the user sees.
