@@ -453,6 +453,13 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, spawnWorkerProbeBinary: binary },
       ]);
       expect(fakeFuses.calls).toEqual([{ electronBinaryPath: binary }]);
+      // Red-green: pass a hardcoded 'win32' (or drop the call) in afterPack.js and the platform
+      // or the call itself differs here. The real module logs "not needed on darwin" and returns.
+      const binaryDir = onnxruntimeBinaryDir(unpackedRoot, 'darwin', 'arm64');
+      expect(msvcRuntimeCalls).toEqual([
+        { step: 'stage', binaryDir, platform: 'darwin' },
+        { step: 'verify', binaryDir, platform: 'darwin' },
+      ]);
       // The spawn-helper replacement targets the same tree on the same platform.
       expect(fakeSpawnHelper.calls).toEqual([{ unpackedRoot, platform: 'darwin' }]);
       // Both verifiers passed, so packaging must still proceed to flipFuses.
@@ -633,6 +640,10 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, spawnWorkerProbeBinary: binary },
       ]);
       expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/embed worker: onnxruntime-node ships no darwin-x64 binding.*Skipping the embed worker probe only/));
+      // Red-green: hoist stageMsvcRuntime/verifyMsvcRuntimeBesideBinding out of the 'probe'
+      // branch in afterPack.js and a skipped target is staged and checked against a binding
+      // directory that does not exist.
+      expect(msvcRuntimeCalls).toEqual([]);
       expect(fakeFuses.calls).toHaveLength(1);
     } finally {
       fakeFuses.restore();

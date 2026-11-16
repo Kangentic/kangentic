@@ -1,0 +1,11 @@
+{
+  "source": "stdout of vswhere.exe -all -products * -utf8 -property installationPath on a Windows 11 build machine, captured through execFileSync with encoding utf8. Kept as a JSON string so git cannot normalize its CRLF line endings. -products * also lists a product that is not Visual Studio (SQL Server Management Studio), and the output ends in a CRLF.",
+  "stdout": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\r\nC:\\Program Files\\Microsoft Visual Studio\\18\\Professional\r\nC:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\r\nC:\\Program Files\\Microsoft SQL Server Management Studio 21\\Release\r\nC:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\r\n",
+  "installationPaths": [
+    "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional",
+    "C:\\Program Files\\Microsoft Visual Studio\\18\\Professional",
+    "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools",
+    "C:\\Program Files\\Microsoft SQL Server Management Studio 21\\Release",
+    "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools"
+  ]
+}

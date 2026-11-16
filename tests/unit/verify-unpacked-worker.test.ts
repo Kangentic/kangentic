@@ -21,6 +21,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { isEmbeddingRuntimeSupported } from '../../src/shared/embedding-runtime';
@@ -352,6 +353,95 @@ describe('embed runtime gate', () => {
       'C:\\WINDOWS\\SYSTEM32\\MSVCP140_ATOMIC_WAIT.dll',
     ]);
     expect(foreignMsvcRuntimeModules(fixture.appLocalRuntime.sharedObjects, fixture.appLocalRuntime.bindingDir)).toEqual([]);
+  });
+
+  // The generated probe script itself, evaluated in a vm context with stubbed require and
+  // process, so the win32 branch (which no other platform's real run reaches) runs here.
+  describe('the generated probe script, evaluated', () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'process-report-shared-objects-win32.json'), 'utf8'),
+    ) as {
+      systemRuntime: { bindingDir: string; sharedObjects: string[] };
+      appLocalRuntime: { bindingDir: string; sharedObjects: string[] };
+    };
+    // Chosen so the script's own bindingDir computation equals systemRuntime.bindingDir.
+    const WIN_ROOT = 'C:\\Users\\dev\\kangentic';
+    const WIN_BINDING_DIR = path.win32.join(WIN_ROOT, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', 'win32', 'x64');
+
+    class ExitSignal extends Error {
+      constructor(readonly code: number) {
+        super(`exit ${code}`);
+      }
+    }
+
+    function runProbeScript(platform: string, sharedObjects: string[]): { exitCode: number | null; stdout: string; stderr: string } {
+      let stdout = '';
+      let stderr = '';
+      const stubPath = platform === 'win32' ? path.win32 : path.posix;
+      const root = platform === 'win32' ? WIN_ROOT : '/mock/kangentic';
+      const stubRequire = (specifier: string): unknown => {
+        if (specifier === 'module') return { _nodeModulePaths: () => [], globalPaths: ['x'] };
+        if (specifier === 'path') return stubPath;
+        if (specifier === 'fs') return { realpathSync: (value: string) => value };
+        // The onnxruntime-node require: loading it is a no-op here.
+        return {};
+      };
+      const stubProcess = {
+        platform,
+        arch: 'x64',
+        report: { getReport: () => ({ sharedObjects }) },
+        stdout: { write: (text: string) => { stdout += text; } },
+        stderr: { write: (text: string) => { stderr += text; } },
+        exit: (code: number) => { throw new ExitSignal(code); },
+      };
+      let exitCode: number | null = null;
+      try {
+        vm.runInNewContext(buildEmbedRuntimeLoadScript(root), { require: stubRequire, process: stubProcess });
+      } catch (error) {
+        if (!(error instanceof ExitSignal)) throw error;
+        exitCode = error.code;
+      }
+      return { exitCode, stdout, stderr };
+    }
+
+    it('computes the binding directory the captured report is relative to', () => {
+      expect(WIN_BINDING_DIR).toBe(fixture.systemRuntime.bindingDir);
+    });
+
+    // Red-green: delete the `foreign.length > 0` exit in the script and the system runtime passes.
+    it('on win32 exits 1 naming the foreign runtime when the DLLs loaded from System32', () => {
+      const result = runProbeScript('win32', fixture.systemRuntime.sharedObjects);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('the MSVC runtime loaded from outside');
+      expect(result.stderr).toContain(WIN_BINDING_DIR);
+      expect(result.stderr).toContain('C:\\WINDOWS\\SYSTEM32\\MSVCP140.dll');
+      expect(result.stdout).toBe('');
+    });
+
+    // Red-green: compare against the wrong directory (or drop the normalization of the \\?\
+    // prefix and case) and the app-local copies read as foreign.
+    it('on win32 passes when the runtime loaded from beside the binding', () => {
+      const relocated = fixture.appLocalRuntime.sharedObjects.map((entry) => entry.split(fixture.appLocalRuntime.bindingDir).join(WIN_BINDING_DIR));
+      expect(relocated.some((entry) => entry.includes(WIN_BINDING_DIR))).toBe(true);
+      const result = runProbeScript('win32', relocated);
+      expect(result.exitCode).toBeNull();
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toContain('MSVC runtime loaded from beside the binding');
+    });
+
+    // Red-green: drop the binding-loaded check and a package whose binding never loaded passes.
+    it('exits 1 when onnxruntime_binding.node is not among the loaded modules', () => {
+      const result = runProbeScript('win32', ['C:\\WINDOWS\\System32\\msvcp_win.dll']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('onnxruntime_binding.node is not among the loaded modules');
+    });
+
+    // Red-green: drop the platform guard and the foreign-runtime check runs on Linux and macOS.
+    it.each(['linux', 'darwin'])('on %s prints that the MSVC runtime is not used and does not exit', (platform) => {
+      const result = runProbeScript(platform, ['/mock/bin/onnxruntime_binding.node']);
+      expect(result.exitCode).toBeNull();
+      expect(result.stdout).toBe(`onnxruntime_binding.node loaded; MSVC runtime not used on ${platform}\n`);
+    });
   });
 
   // The probe inlines its own regex because the function is serialized into the probe script.

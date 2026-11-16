@@ -1213,6 +1213,59 @@ describe('UtilityRestartPolicy', () => {
       expect(policy.loadFailed).toBe(true);
     });
 
+    // Red-green: report only from the crash's emit closure (not at the latch) and the count is 0.
+    it('reports stderr that lands after the drain bound, when the latch is first read', async () => {
+      const { policy } = makePolicy({ latchOnLoadFailure: true });
+      let text = '';
+      let release: () => void = () => {};
+      const drained = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      policy.recordCrash(1, { snapshot: () => text, whenDrained: () => drained });
+      release();
+      await drained;
+      // emit ran against an empty snapshot, so nothing is latched or reported yet.
+      expect(mockReportHandledError).not.toHaveBeenCalled();
+
+      text = DLOPEN_STDERR;
+
+      expect(policy.maySpawn()).toBe(false);
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      expect(mockReportHandledError.mock.calls[0][3]).toEqual(
+        ['handled-env', 'utility-process-load-failed', 'kangentic-test-worker', 'ERR_DLOPEN_FAILED'],
+      );
+      expect(mockTrackEvent.mock.calls.map(([, properties]) => (properties as { phase: string }).phase)).toContain('latched');
+    });
+
+    // Red-green: drop the loadFailureReported guard and the second crash or rebuilt policy reports again.
+    it('reports a load failure once per service per run, across crashes and rebuilt policies', () => {
+      const { policy } = makePolicy({ latchOnLoadFailure: true });
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+      expect(policy.loadFailed).toBe(true);
+
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+      const { policy: rebuilt } = makePolicy({ latchOnLoadFailure: true });
+      rebuilt.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+      expect(rebuilt.loadFailed).toBe(true);
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const latchedEvents = mockTrackEvent.mock.calls.filter(([, properties]) => (properties as { phase: string }).phase === 'latched');
+      expect(latchedEvents).toHaveLength(1);
+    });
+
+    // Red-green: make the loadFailed getter return loadFailures.has(service) alone and the plain policy reads true.
+    it('leaves a policy that did not opt in alone when another policy for the service latched', () => {
+      const { policy: optedIn } = makePolicy({ latchOnLoadFailure: true });
+      optedIn.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+      expect(optedIn.loadFailed).toBe(true);
+
+      const { policy: plain } = makePolicy();
+
+      expect(plain.loadFailed).toBe(false);
+      expect(plain.exhausted).toBe(false);
+      expect(plain.maySpawn()).toBe(true);
+    });
+
     // Red-green: rename a tag or add a key to the context and the exact comparison fails.
     it('keeps the exact tags and context keys of the load-failure report', () => {
       const { policy } = makePolicy({ latchOnLoadFailure: true });
