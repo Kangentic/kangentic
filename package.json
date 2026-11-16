@@ -171,7 +171,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.2",
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "^13.2.0",
     "font-list": "^2.1.0",
     "koffi": "3.3.7",
     "node-pty": "1.2.0-beta.18",

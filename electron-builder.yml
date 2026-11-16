@@ -15,7 +15,8 @@ files:
   - "package.json"
   # better-sqlite3 13 ships its native addon as Node-API prebuilds under
   # prebuilds/<platform>-<arch>.node and loads them itself (lib/binding.js);
-  # build/afterPack.js strips every prebuild but the target's.
+  # build/afterPack.js strips every prebuild but the target's, and any build/
+  # folder, which the loader would take ahead of the prebuild.
   - "node_modules/better-sqlite3/**"
   - "node_modules/node-pty/**"
   - "node_modules/sherpa-onnx-node/**"
