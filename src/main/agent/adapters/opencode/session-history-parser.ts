@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadBetterSqlite3 } from '../../shared/sqlite-loader';
+import { pathStoreEvidence } from '../../shared/store-evidence';
+import type { SessionIdStoreEvidence } from '../../../../shared/types';
 
 // The lazy better-sqlite3 loader is shared with Goose's reader. Re-exported so
 // this module's importers (and the tests that mock it here) keep their path.
@@ -102,6 +104,15 @@ export class OpenCodeSessionHistoryParser {
     if (!fs.existsSync(dbPath)) return null;
     const found = sessionIdExists(dbPath, options.agentSessionId);
     return found ? dbPath : null;
+  }
+
+  /**
+   * Whether `opencode.db` exists on this machine, the file
+   * `captureSessionIdFromFilesystem` reads. For the session-id report only. A
+   * fixed word, never a path.
+   */
+  static storeEvidence(): Promise<SessionIdStoreEvidence> {
+    return pathStoreEvidence(openCodeDbPath(), 'file');
   }
 }
 

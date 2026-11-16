@@ -30,6 +30,8 @@ sources:
   - resource: src/main/pty/launch-output-class.ts
   - resource: src/main/git/worktree-errors.ts
   - resource: src/main/pty/spawn/agent-start-refused.ts
+  - resource: src/main/pty/lifecycle/session-id-manager.ts
+  - resource: src/main/git/spawn-with-abort.ts
   - resource: src/main/agent/shared/cli-identity.ts
   - resource: scripts/sentry-upload-gate.js
   - resource: src/main/analytics/handled-report.ts
@@ -441,8 +443,20 @@ in one Sentry org, one triage surface.
     `['utility-process-first-crash', service, cause]`, apart from the five-crash latch.
   - `retrieval`: the worker's reply carries the error's class and code, and a sqlite-vec load
     failure and an embeddings init failure each report once.
-  - `agent_session_id`: a session whose id no capture path found, once per agent, with
-    `agent_cli_version`.
+  - `agent_session_id`: a session whose id no capture path found within the 30 s window
+    (`SessionIdManager`), reported once its outcome is known, never at the window (Sentry
+    DESKTOP-36 reported there and could not tell late from never). An id that arrives later sends
+    `AgentSessionIdCapturedLateError` with `captured_after_s` (a seconds bucket). A session removed
+    with no id, or still without one five minutes after its spawn (a paused row is never removed),
+    sends `AgentSessionIdNotCapturedError` with `settled_by` (`removed`, `ceiling`) and
+    `session_status`. Each kind reports once per agent per run, as its own issue. Both carry
+    `agent_cli_version`, `start_path`, `shell`, `opening_prompt` (`command_line`, `typed`, `none`,
+    or `unknown` where the spawn did not say), `hook_seen`, `agent_started` and `first_output`
+    (`yes`, `no`, at the window), `fs_scan` (what the filesystem pathway did: `none`, `pending`,
+    `found`, `empty`, `dropped` for a match another session could own, `failed`) and `id_store`
+    (`present`, `absent`, `unknown`: whether the agent's own store exists, from the adapter's
+    `sessionId.storeEvidence`, today's or yesterday's rollout folder for Codex and `opencode.db`
+    for OpenCode). Every value is fixed; no path or id leaves.
   - `preload_callback` (tag `method`, such as `config.onChanged`): a renderer callback that threw
     when the preload called it on a push. That throw is an error of the preload's isolated world,
     which the renderer's SDK cannot see: measured in Electron 45, the main world's `error` and
@@ -607,7 +621,15 @@ in one Sentry org, one triage surface.
   refused before it had a PTY (`AgentStartRefusedError`): `worktree-missing` or `folder-missing`
   for a gone folder, `prompt-too-long` for a command its shell cannot run. The folder's path is
   redacted, so this tag is what tells a gone worktree from a gone project folder (Sentry DESKTOP-2P
-  could not).
+  could not). A launch past cmd's typed budget whose `.cmd` shim cannot be read past, in any shell,
+  (`AgentBatchShimUnresolvedError`) is refused the same way, with the same card reason, and goes
+  under the cause `batch_shim_unresolved` whichever path started it, with `batch_shim` naming why
+  the shim gave up (`unreadable`, `unparsed`, `target_missing`, `target_not_script`, `node_path`).
+  Sentry DESKTOP-3R saw only the typed refusal, 30 to 60 s later, and could not say which shim. A
+  Post-Worktree Script failure (`WorktreeSetupScriptError`) adds how the script ended, from
+  `spawnWithAbort`'s fields: `script_exit` (its exit code), `script_signal` (a `SIG` name, for a
+  script something else killed) and `timed_out` (`yes`, `no`). Sentry DESKTOP-3D had none and could
+  not tell an exit from a kill: a non-zero exit carried no code either.
 
   A report on a resuming session adds what the resume check read before it
   (`assessResumeConversationWithEvidence`, `src/main/transition-engine/resume-conversation-guard.ts`),

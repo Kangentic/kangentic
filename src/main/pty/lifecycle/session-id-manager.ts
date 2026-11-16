@@ -60,12 +60,37 @@ export interface SessionIdManagerCallbacks {
    *  filesystem promise was in flight. */
   sessionExists(sessionId: string): boolean;
   /** The agent session id a session already holds, or null. Read to tell
-   *  whether a folder scan's match could be another session's. */
+   *  whether a folder scan's match could be another session's, and whether an
+   *  id was captured at all. */
   agentSessionIdOf(sessionId: string): string | null;
-  /** No capture path fired within the diagnostic window. Main reports it; the
-   *  pty host, which bundles this module too, passes nothing. */
-  onSessionIdNotCaptured?(sessionId: string): void;
+  /**
+   * No capture path fired within the diagnostic window. Main snapshots the
+   * session's facts here, while its row is certain to exist; it reports nothing
+   * yet, since an id can still arrive. The pty host, which bundles this module
+   * too, passes neither this nor `onCaptureOutcome`, and then nothing below the
+   * window's local warning runs.
+   */
+  onCaptureWindowPassed?(sessionId: string): void;
+  /** How a session past the window ended up: captured late, or never. Main reports it. */
+  onCaptureOutcome?(sessionId: string, outcome: SessionIdCaptureOutcome): void;
 }
+
+/**
+ * What the filesystem pathway did for a session. `dropped` is a match another
+ * session could own (the folder-match check), `empty` a scan that found nothing
+ * in its budget, `pending` one still polling.
+ */
+export type FilesystemScanOutcome = 'none' | 'pending' | 'found' | 'empty' | 'dropped' | 'failed';
+
+/**
+ * The end of a session whose id the diagnostic window did not see. Sentry
+ * DESKTOP-36 reported at the window whether or not an id arrived after it, so it
+ * could not tell late from never; this is reported once the answer is known.
+ */
+export type SessionIdCaptureOutcome =
+  | { kind: 'late'; capturedAfterMs: number; filesystemScan: FilesystemScanOutcome }
+  /** `removed`: the row went with no id. `ceiling`: still none `CAPTURE_CEILING_MS` after the spawn. */
+  | { kind: 'never'; settledBy: 'removed' | 'ceiling'; filesystemScan: FilesystemScanOutcome };
 
 /** A folder, compared the way the file system compares it. */
 function folderKey(cwd: string): string {
@@ -94,7 +119,10 @@ function folderKey(cwd: string): string {
  *
  * Additionally, arm a 30s diagnostic timer on spawn. If none of the
  * capture paths fire by then, log a warning - regression canary for
- * adapter changes that silently break --resume.
+ * adapter changes that silently break --resume. The report waits for the
+ * answer: an id that arrives later is a late capture (`noteCaptured`), and a
+ * session removed with none, or still without one at `CAPTURE_CEILING_MS`, is
+ * one never captured (`onCaptureOutcome`).
  *
  * A filesystem match is the one pathway that can name ANOTHER session's id:
  * it finds the newest session file the agent wrote in a folder, and the
@@ -121,11 +149,19 @@ export class SessionIdManager {
    *  match ambiguous. Wider than any adapter's own match window (OpenCode's is
    *  5 s before to 30 s after the spawn). */
   private static readonly FOLDER_SCAN_AMBIGUITY_MS = 60_000;
+  /**
+   * How long after its spawn a session past the window may still report a late
+   * capture. Past it, a session with no id (one paused and never removed, or a
+   * long-running one) is reported as never captured.
+   */
+  static readonly CAPTURE_CEILING_MS = 5 * 60_000;
 
   private scanners = new Map<string, SessionIdScanner>();
   private diagnosticTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Where and when each session with a capture strategy started, for the folder-match check. */
-  private spawns = new Map<string, { folder: string; agentName: string; spawnedAt: number }>();
+  /** Where and when each session with a capture strategy started, and what its folder scan did. */
+  private spawns = new Map<string, { folder: string; agentName: string; spawnedAt: number; filesystemScan: FilesystemScanOutcome }>();
+  /** Sessions past the window with no id, until the outcome is known. */
+  private pastWindow = new Map<string, { spawnedAt: number; ceiling: ReturnType<typeof setTimeout> }>();
 
   constructor(private readonly callbacks: SessionIdManagerCallbacks) {}
 
@@ -151,33 +187,48 @@ export class SessionIdManager {
     const strategy = agentParser?.runtime?.sessionId;
     if (!strategy) return;
     const spawnedAt = new Date();
-    this.spawns.set(sessionId, { folder: folderKey(cwd), agentName, spawnedAt: spawnedAt.getTime() });
+    const spawnEntry = {
+      folder: folderKey(cwd),
+      agentName,
+      spawnedAt: spawnedAt.getTime(),
+      filesystemScan: (strategy.fromFilesystem ? 'pending' : 'none') as FilesystemScanOutcome,
+    };
+    this.spawns.set(sessionId, spawnEntry);
 
     const hasCapturePath = !!(strategy.fromHook || strategy.fromOutput || strategy.fromFilesystem);
     if (hasCapturePath && !hasKnownAgentSessionId) {
       const timer = setTimeout(() => {
         this.diagnosticTimers.delete(sessionId);
-        if (!this.callbacks.hasAgentSessionId(sessionId)) {
-          console.warn(
-            `[session-manager] ${agentName} session ID not captured after `
-            + `${SessionIdManager.DIAGNOSTIC_TIMEOUT_MS / 1000}s for session `
-            + `${sessionId.slice(0, 8)} - --resume will not work.`,
-          );
-          if (this.callbacks.sessionExists(sessionId)) this.callbacks.onSessionIdNotCaptured?.(sessionId);
-        }
+        if (this.holdsAgentSessionId(sessionId)) return;
+        console.warn(
+          `[session-manager] ${agentName} session ID not captured after `
+          + `${SessionIdManager.DIAGNOSTIC_TIMEOUT_MS / 1000}s for session `
+          + `${sessionId.slice(0, 8)} - --resume will not work.`,
+        );
+        if (this.callbacks.sessionExists(sessionId)) this.markPastWindow(sessionId, spawnEntry.spawnedAt);
       }, SessionIdManager.DIAGNOSTIC_TIMEOUT_MS);
       timer.unref();
       this.diagnosticTimers.set(sessionId, timer);
     }
 
     if (strategy.fromFilesystem) {
+      // Each outcome is written to this spawn's own entry, so a scan that
+      // settles after a respawn reused the id cannot mark the new session's.
       strategy.fromFilesystem({ spawnedAt, cwd, cliTarget })
         .then((capturedId) => {
-          if (!capturedId) return;
+          if (!capturedId) {
+            spawnEntry.filesystemScan = 'empty';
+            return;
+          }
+          spawnEntry.filesystemScan = 'found';
+          // A scan from a spawn since replaced under the same id found the old
+          // spawn's file, never the new one's.
+          if (this.spawns.get(sessionId) !== spawnEntry) return;
           if (this.callbacks.hasAgentSessionId(sessionId)) return;
           if (!this.callbacks.sessionExists(sessionId)) return;
           const conflict = this.folderMatchConflict(sessionId, capturedId);
           if (conflict) {
+            spawnEntry.filesystemScan = 'dropped';
             console.warn(`[${agentName}] Dropped a session ID found in the folder for ${sessionId.slice(0, 8)}: ${conflict}.`);
             return;
           }
@@ -185,9 +236,68 @@ export class SessionIdManager {
           this.callbacks.notifyAgentSessionId(sessionId, capturedId);
         })
         .catch((err) => {
+          // report-ok: recorded as the `failed` scan, which the not-captured report sends as a fixed value.
+          spawnEntry.filesystemScan = 'failed';
           console.warn(`[session-manager] fromFilesystem capture failed for session=${sessionId.slice(0, 8)}:`, err);
         });
     }
+  }
+
+  /**
+   * An id reached the session, by any pathway (`SessionManager`'s
+   * `onAgentSessionId`, where every capture lands). For a session past the
+   * window this is a late capture, and its outcome is known.
+   */
+  noteCaptured(sessionId: string): void {
+    const pending = this.pastWindow.get(sessionId);
+    if (!pending) return;
+    this.settlePastWindow(sessionId);
+    this.callbacks.onCaptureOutcome?.(sessionId, {
+      kind: 'late',
+      capturedAfterMs: Date.now() - pending.spawnedAt,
+      filesystemScan: this.filesystemScanOf(sessionId),
+    });
+  }
+
+  /** An id the session holds. A status write with no id marks `hasAgentSessionId` true, so that alone is not one. */
+  private holdsAgentSessionId(sessionId: string): boolean {
+    return this.callbacks.agentSessionIdOf(sessionId) !== null;
+  }
+
+  private filesystemScanOf(sessionId: string): FilesystemScanOutcome {
+    return this.spawns.get(sessionId)?.filesystemScan ?? 'none';
+  }
+
+  /**
+   * Hold a session past the window until its outcome is known. Inert without
+   * the callbacks (the pty host's copy): nothing is held and no timer is armed.
+   */
+  private markPastWindow(sessionId: string, spawnedAt: number): void {
+    if (!this.callbacks.onCaptureOutcome) return;
+    this.callbacks.onCaptureWindowPassed?.(sessionId);
+    const untilCeiling = Math.max(0, spawnedAt + SessionIdManager.CAPTURE_CEILING_MS - Date.now());
+    const ceiling = setTimeout(() => this.settleNever(sessionId, 'ceiling'), untilCeiling);
+    ceiling.unref();
+    this.pastWindow.set(sessionId, { spawnedAt, ceiling });
+  }
+
+  private settlePastWindow(sessionId: string): void {
+    const pending = this.pastWindow.get(sessionId);
+    if (!pending) return;
+    clearTimeout(pending.ceiling);
+    this.pastWindow.delete(sessionId);
+  }
+
+  private settleNever(sessionId: string, settledBy: 'removed' | 'ceiling'): void {
+    if (!this.pastWindow.has(sessionId)) return;
+    // An id that arrived through a path that never reached `noteCaptured` is
+    // still a late capture, timed from when it was noticed here (an upper bound).
+    if (this.holdsAgentSessionId(sessionId)) {
+      this.noteCaptured(sessionId);
+      return;
+    }
+    this.settlePastWindow(sessionId);
+    this.callbacks.onCaptureOutcome?.(sessionId, { kind: 'never', settledBy, filesystemScan: this.filesystemScanOf(sessionId) });
   }
 
   /**
@@ -238,7 +348,9 @@ export class SessionIdManager {
    * Cancel the diagnostic timer without dropping the scanner. Called
    * from the PTY exit handler so a spurious "not captured" warning
    * cannot fire after exit, but the scanner remains available for
-   * the suspend-time scrollback fallback.
+   * the suspend-time scrollback fallback. A session already past the
+   * window keeps waiting for its outcome: a paused row is never removed,
+   * and its ceiling is what reports it.
    */
   clearDiagnostic(sessionId: string): void {
     const timer = this.diagnosticTimers.get(sessionId);
@@ -248,8 +360,15 @@ export class SessionIdManager {
     }
   }
 
-  /** Full cleanup. Called on remove() and during respawn teardown. */
+  /**
+   * Full cleanup. Called on remove() and during respawn teardown. A session
+   * past the window that leaves with no id is one never captured. The report
+   * carries the facts main took at the window (`onCaptureWindowPassed`), and
+   * reads the row's status when the caller still has it (`removed` when not,
+   * as after a suspended placeholder replaced an exited row).
+   */
   removeSession(sessionId: string): void {
+    this.settleNever(sessionId, 'removed');
     this.clearDiagnostic(sessionId);
     this.scanners.delete(sessionId);
     this.spawns.delete(sessionId);

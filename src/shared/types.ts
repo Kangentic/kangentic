@@ -7376,6 +7376,14 @@ export interface AdapterRuntimeStrategy {
       cliTarget?: StoredCliTarget | null;
     }): Promise<string | null>;
     /**
+     * Whether the folder or file `fromFilesystem` reads exists at all, for a
+     * session whose id the capture window did not see: `absent` says the agent
+     * wrote nothing there yet, which no capture path could fix. A fixed word,
+     * never a path. Read only by the session-id capture reports (late and
+     * never); an adapter without it reports `unknown`.
+     */
+    storeEvidence?(options: { cwd: string; cliTarget?: StoredCliTarget | null }): Promise<SessionIdStoreEvidence>;
+    /**
      * True when a SessionStart hook that moves the conversation to another id
      * (`statusFile.parseSessionStart`: a `/clear`, a branch, a `/resume` inside
      * the TUI) switches the session's id by itself. For an agent whose
@@ -8063,6 +8071,17 @@ export type LaunchStartPath =
   | 'phone_open';
 
 /**
+ * How a launch handed the agent its opening prompt, for the session-id report:
+ * on its command line, typed in once it was ready, or none at all. An agent that
+ * writes its session file only at its first turn (Codex's rollout) has nothing
+ * to find on a launch with no prompt.
+ */
+export type OpeningPromptDelivery = 'command_line' | 'typed' | 'none';
+
+/** Whether an agent's session store exists (`sessionId.storeEvidence`). */
+export type SessionIdStoreEvidence = 'present' | 'absent' | 'unknown';
+
+/**
  * What the resume check (`src/main/transition-engine/resume-conversation-guard.ts`)
  * read before a resume, as fixed values a launch report can send, never a path.
  *
@@ -8102,6 +8121,8 @@ export interface SpawnSessionInput {
   cwd: string;
   /** What started this session. Required, so a new spawn sink has to say. */
   startPath: LaunchStartPath;
+  /** How the opening prompt reaches the agent, where the spawn knows. Read only by the session-id report. */
+  openingPrompt?: OpeningPromptDelivery;
   /**
    * The agent CLI's version as detection read it. Raw detector text, so
    * `launchVersionTag` vets it before it reaches an event.
@@ -9113,7 +9134,7 @@ export interface ElectronAPI {
     // `projectId` the renderer stamps at interaction time (same rationale as
     // the task mutations above). kill/write/resize/list operate by session id
     // and stay project-agnostic. See .claude/rules/project-scoped-ipc.md.
-    spawn: (input: Omit<SpawnSessionInput, 'startPath'>, projectId?: string | null) => Promise<Session>;
+    spawn: (input: Omit<SpawnSessionInput, 'startPath' | 'openingPrompt'>, projectId?: string | null) => Promise<Session>;
     kill: (sessionId: string) => Promise<void>;
     suspend: (taskId: string, projectId?: string | null) => Promise<void>;
     /** Null when a newer resume, a suspend, a reset or a relocation cancelled this one. */

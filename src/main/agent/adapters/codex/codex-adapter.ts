@@ -343,6 +343,7 @@ export class CodexAdapter implements AgentAdapter {
       // versions and for cases where the banner scrolls before we can
       // capture it.
       fromFilesystem: CodexSessionHistoryParser.captureSessionIdFromFilesystem,
+      storeEvidence: CodexSessionHistoryParser.storeEvidence,
     },
     sessionHistory: {
       locate: CodexSessionHistoryParser.locate,

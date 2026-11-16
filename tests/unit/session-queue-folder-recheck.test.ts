@@ -35,17 +35,30 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
-// The limit is Windows', which CI's Linux never reaches. `typed-launch.test.ts`
-// pins the measurement; here it is only what the spawn does with the answer.
-const commandFits = vi.hoisted(() => ({ value: true }));
-vi.mock('../../src/main/pty/spawn/typed-launch', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/main/pty/spawn/typed-launch')>()),
-  commandFitsShell: () => commandFits.value,
-}));
+const reportHandledError = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
+
+// The limits are Windows', which CI's Linux never reaches. `typed-launch.test.ts`
+// pins the decision; here it is only what the spawn does with the answer.
+const commandFits = vi.hoisted(() => ({ value: true, refusal: 'too_long' as 'too_long' | 'shim' }));
+vi.mock('../../src/main/pty/spawn/typed-launch', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/pty/spawn/typed-launch')>();
+  const refused = await import('../../src/main/pty/spawn/agent-start-refused');
+  return {
+    ...original,
+    launchRefusal: () => {
+      if (commandFits.value) return null;
+      return commandFits.refusal === 'shim'
+        ? new refused.AgentBatchShimUnresolvedError('node_path')
+        : new refused.AgentCommandTooLongError();
+    },
+  };
+});
 
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
-import { AgentCommandTooLongError, AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
+import { AgentBatchShimUnresolvedError, AgentCommandTooLongError, AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
+import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { InProcessPtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { AgentParser, Session } from '../../src/shared/types';
 
@@ -94,6 +107,9 @@ beforeEach(() => {
   goneFolder = path.join(tmpDir, 'worktree');
   fs.mkdirSync(goneFolder);
   commandFits.value = true;
+  commandFits.refusal = 'too_long';
+  reportHandledError.mockClear();
+  resetLaunchReports();
 });
 
 afterEach(() => {
@@ -174,6 +190,43 @@ describe('an agent whose command is too long for its shell', () => {
     // An id still in the set with no row reads as gone (false) after the wait;
     // an id out of the set has no alternate screen to wait for (true at once).
     await expect(manager.awaitInputReady('refused-alt-screen', 0)).resolves.toBe(true);
+  });
+
+  it('puts the same card reason on a start refused for a .cmd shim it cannot read past', async () => {
+    const manager = makeManager();
+    commandFits.value = false;
+    commandFits.refusal = 'shim';
+
+    await expect(manager.spawn({ taskId: 'task-direct', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser }))
+      .rejects.toBeInstanceOf(AgentBatchShimUnresolvedError);
+
+    expect(pty.spawn).not.toHaveBeenCalled();
+    expect(manager.listSessions()).toEqual([expect.objectContaining({
+      taskId: 'task-direct',
+      status: 'suspended',
+      startBlockedReason: 'prompt-too-long',
+    })]);
+  });
+
+  it('reports a queued start refused for its shim, under a cause of its own, since no caller does', async () => {
+    const manager = makeManager();
+    manager.on('agent-start-refused', () => undefined);
+    await manager.spawn({ taskId: 'task-running', projectId: 'project-1', command: '', cwd: tmpDir });
+    await manager.spawn({ taskId: 'task-queued', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser, agentName: 'claude', startPath: 'board' });
+    commandFits.value = false;
+    commandFits.refusal = 'shim';
+
+    manager.setMaxConcurrent(2);
+    await flushUntil(() => reportHandledError.mock.calls.length === 1);
+
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+      stage: 'preflight',
+      cause: 'batch_shim_unresolved',
+      batch_shim: 'node_path',
+      start_refused_reason: 'prompt-too-long',
+      error_type: 'AgentBatchShimUnresolvedError',
+      agent: 'claude',
+    });
   });
 
   it('leaves a raw command to fail in its own terminal', async () => {

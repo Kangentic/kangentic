@@ -116,6 +116,45 @@ describe('runInitScript', () => {
       .rejects.toThrow(/code 1.*boom: command failed/s);
   });
 
+  describe('how the script ended, as fields a report can read (Sentry DESKTOP-3D)', () => {
+    it('carries the exit code of a script that exited non-zero', async () => {
+      spawnOverrides.push({ match: () => true, behavior: { exitCode: 3, stderr: 'boom' } });
+
+      await expect(runInitScript('bad-script', '/worktree/path', { timeoutMs: 1000 }))
+        .rejects.toMatchObject({ exitCode: 3, timedOut: false });
+    });
+
+    it('marks a script the timeout stopped, whatever signal its close carried', async () => {
+      vi.useFakeTimers();
+      spawnOverrides.push({ match: () => true, behavior: { hang: true } });
+
+      const promise = runInitScript('slow-script', '/worktree/path', { timeoutMs: 1000 });
+      const assertion = expect(promise).rejects.toMatchObject({ timedOut: true });
+      await vi.advanceTimersByTimeAsync(1000);
+      await assertion;
+      await expect(promise).rejects.not.toHaveProperty('exitCode');
+    });
+
+    it('names the signal of a script something else killed', async () => {
+      spawnOverrides.push({ match: () => true, behavior: { hang: true } });
+
+      const promise = runInitScript('npm install', '/worktree/path', { timeoutMs: 60_000 });
+      lastChild().emit('close', null, 'SIGKILL');
+
+      await expect(promise).rejects.toMatchObject({ signal: 'SIGKILL', timedOut: false });
+    });
+
+    it('marks an external abort as no timeout', async () => {
+      spawnOverrides.push({ match: () => true, behavior: { hang: true } });
+      const controller = new AbortController();
+
+      const promise = runInitScript('npm install', '/worktree/path', { timeoutMs: 60_000, signal: controller.signal });
+      controller.abort();
+
+      await expect(promise).rejects.toMatchObject({ timedOut: false });
+    });
+  });
+
   it('rejects when the external signal aborts', async () => {
     spawnOverrides.push({ match: () => true, behavior: { hang: true } });
     const controller = new AbortController();

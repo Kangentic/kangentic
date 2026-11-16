@@ -807,6 +807,16 @@ describe('WorktreeManager - setUpWorktree (initScript and node_modules linking)'
     expect(new WorktreeSetupScriptError('x', { cause: new Error('no code') }).code).toBeUndefined();
     expect(new WorktreeSetupScriptError('x').code).toBeUndefined();
   });
+
+  it('keeps how the script ended through the wrap: its exit code, signal and timeout', () => {
+    const ended = (fields: Record<string, unknown>) => new WorktreeSetupScriptError('x', { cause: Object.assign(new Error('script failed'), fields) });
+    expect(ended({ exitCode: 2, timedOut: false })).toMatchObject({ exitCode: 2, timedOut: false });
+    expect(ended({ signal: 'SIGTERM', timedOut: true })).toMatchObject({ signal: 'SIGTERM', timedOut: true });
+    const wrongTypes = ended({ exitCode: '2', signal: 15, timedOut: 'yes' });
+    expect(wrongTypes.exitCode).toBeUndefined();
+    expect(wrongTypes.signal).toBeUndefined();
+    expect(wrongTypes.timedOut).toBeUndefined();
+  });
 });
 
 describe('WorktreeManager - createWorktree step timings', () => {

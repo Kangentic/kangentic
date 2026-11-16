@@ -13,11 +13,18 @@ import {
   CMD_TYPED_LINE_BYTE_BUDGET,
   commandFitsShell,
   commandLineLimit,
+  launchRefusal,
   LINUX_ARGUMENT_BYTE_LIMIT,
   TYPED_LINE_BYTE_BUDGET,
   WINDOWS_COMMAND_LINE_LIMIT,
   type TypedLaunchInput,
 } from '../../src/main/pty/spawn/typed-launch';
+import {
+  AgentBatchShimUnresolvedError,
+  AgentCommandTooLongError,
+  type AgentStartRefusedError,
+} from '../../src/main/pty/spawn/agent-start-refused';
+import type { BatchShimGiveUp } from '../../src/main/agent/shared/npm-shim-target';
 import { classifyLaunchOutput } from '../../src/main/pty/agent-launch-report';
 import { buildSpawnClearPrelude, quoteArg } from '../../src/shared/paths';
 
@@ -458,6 +465,37 @@ describe('buildTypedLaunch', () => {
         const launch = cmdLaunch(command);
         expect(launch.launcher).toBeNull();
         expect(launch.typedLine).toBe('cls & echo The command line is too long.');
+        expect(launch.refusedShimPath).toBe(shim);
+      });
+
+      describe('launchRefusal, which an agent start reads before it has a PTY', () => {
+        const refusalOf = (typedCommand: string, gaveUp: BatchShimGiveUp | null = 'node_path'): AgentStartRefusedError | null => {
+          const typedLaunch = cmdLaunch(typedCommand);
+          return launchRefusal({ command: typedCommand, shell: CMD_SHELL, platform: 'win32', typedLaunch, shimGaveUp: () => gaveUp });
+        };
+
+        it('refuses a start past the budget whose shim it cannot get past, naming why, with a card reason', () => {
+          const refusal = refusalOf(command, 'node_path');
+          expect(refusal).toBeInstanceOf(AgentBatchShimUnresolvedError);
+          expect(refusal?.reason).toBe('prompt-too-long');
+          expect((refusal as AgentBatchShimUnresolvedError).shimGaveUp).toBe('node_path');
+        });
+
+        it('names a shim that changed into one it can read as unreadable, never as nothing', () => {
+          expect((refusalOf(command, null) as AgentBatchShimUnresolvedError).shimGaveUp).toBe('unreadable');
+        });
+
+        it('refuses nothing for a shim it can get past, or a line within the budget', () => {
+          const typedLaunch = cmdLaunch(command, { batchShimLaunch: () => ({ program: 'C:\\tools\\claude.exe', script: null }) });
+          expect(launchRefusal({ command, shell: CMD_SHELL, platform: 'win32', typedLaunch, shimGaveUp: () => 'node_path' })).toBeNull();
+          expect(refusalOf(`"${shim}" --resume abc`)).toBeNull();
+        });
+
+        it('refuses a command past its shell\'s limit as too long, as before', () => {
+          const tooLong = `"C:\\tools\\claude.exe" ${'x'.repeat(CMD_COMMAND_LINE_LIMIT)}`;
+          expect(launchRefusal({ command: tooLong, shell: CMD_SHELL, platform: 'win32', typedLaunch: null, shimGaveUp: () => null }))
+            .toBeInstanceOf(AgentCommandTooLongError);
+        });
       });
 
       it('types a line under the budget through the shim as before', () => {
@@ -505,7 +543,9 @@ describe('buildTypedLaunch', () => {
       });
 
       it('names a shim it cannot get past, as a line each shell prints as one sentence', () => {
-        expect(cmdLaunch(`"${shim}" ${longArguments}`, { shell: POWERSHELL }).typedLine)
+        const refused = cmdLaunch(`"${shim}" ${longArguments}`, { shell: POWERSHELL });
+        expect(refused.refusedShimPath).toBe(shim);
+        expect(refused.typedLine)
           .toBe('Clear-Host; echo "The command line is too long."');
         expect(cmdLaunch(`'${shim}' ${longArguments}`, { shell: GIT_BASH }).typedLine)
           .toBe("clear; echo 'The command line is too long.'");

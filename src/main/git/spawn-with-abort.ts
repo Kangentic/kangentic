@@ -59,6 +59,26 @@ export interface SpawnWithAbortTarget {
 }
 
 /**
+ * How a child ended, as fixed fields on the error `spawnWithAbort` rejects with.
+ * Its message is free text (stderr rides on it), so a report reads these
+ * instead: Sentry DESKTOP-3D, a Post-Worktree Script failure, could not tell a
+ * non-zero exit from a timeout or a kill. Not `code`, which callers of a spawn
+ * error read as an errno.
+ */
+export interface SpawnExitFields {
+  /** The exit code of a child that exited non-zero on its own. */
+  exitCode?: number;
+  /** The signal that ended a child nobody here asked to stop. */
+  signal?: NodeJS.Signals;
+  /** True when the wall-clock timeout, not the caller, stopped the child. */
+  timedOut?: boolean;
+}
+
+function withExitFields(error: Error, fields: SpawnExitFields): Error & SpawnExitFields {
+  return Object.assign(error, fields);
+}
+
+/**
  * Shared `child_process.spawn` lifecycle behind runGitWithTimeout and
  * runInitScript: an internal AbortController on a wall-clock timeout, optional
  * external-signal forwarding (removed on settle so the signal isn't held
@@ -131,8 +151,9 @@ export function spawnWithAbort(
     };
 
     const abortedError = (): Error => {
-      const reason = externalSignal?.aborted ? 'external abort' : `timeout after ${timeoutMs}ms`;
-      return new Error(`${label} aborted (${reason}) (child process killed)`);
+      const timedOut = externalSignal?.aborted !== true;
+      const reason = timedOut ? `timeout after ${timeoutMs}ms` : 'external abort';
+      return withExitFields(new Error(`${label} aborted (${reason}) (child process killed)`), { timedOut });
     };
 
     let stdout = '';
@@ -159,15 +180,19 @@ export function spawnWithAbort(
         // 'timeout' failure downstream (classifyFetchFailure), turning a
         // clean cancel into a spurious staleness toast.
         if (externalSignal?.aborted) {
-          settleReject(new Error(`${label} aborted (external abort) (child process killed)`));
+          settleReject(withExitFields(new Error(`${label} aborted (external abort) (child process killed)`), { timedOut: false }));
           return;
         }
         const timeoutSuffix = signalKillAssertsTimeout ? ` after ${timeoutMs}ms timeout` : '';
-        settleReject(new Error(`${label} killed by signal ${signalName}${timeoutSuffix}`));
+        // A binary's timeout kills it through Node's `signal` option, and its
+        // close can win the race with the `error` the abort raises.
+        const timedOut = controller.signal.aborted;
+        settleReject(withExitFields(new Error(`${label} killed by signal ${signalName}${timeoutSuffix}`), { signal: signalName, timedOut }));
         return;
       }
       if (code !== 0) {
-        settleReject(new Error(`${label} exited with code ${code}: ${stderr.trim() || stdout.trim()}`));
+        const exitFields: SpawnExitFields = typeof code === 'number' ? { exitCode: code, timedOut: false } : { timedOut: false };
+        settleReject(withExitFields(new Error(`${label} exited with code ${code}: ${stderr.trim() || stdout.trim()}`), exitFields));
         return;
       }
       settleResolve({ stdout, stderr });

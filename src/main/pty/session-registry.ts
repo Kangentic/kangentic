@@ -12,7 +12,7 @@ import type {
   StreamOutputParser,
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
-import type { LaunchStartPath, ResumeEvidenceSummary, StartBlockedReason } from '../../shared/types';
+import type { LaunchStartPath, OpeningPromptDelivery, ResumeEvidenceSummary, StartBlockedReason } from '../../shared/types';
 import type { LaunchOutputClass } from './launch-output-class';
 import type { AgentProcessPresence } from './host/agent-process-presence';
 
@@ -156,6 +156,8 @@ export interface ManagedSession {
   launcherPath?: string | null;
   /** What started this session (`SpawnSessionInput.startPath`). */
   startPath?: LaunchStartPath;
+  /** How the opening prompt reached the agent (`SpawnSessionInput.openingPrompt`), where the spawn knew. */
+  openingPrompt?: OpeningPromptDelivery;
   /** The agent CLI's version as detection read it; `launchVersionTag` vets it. */
   agentCliVersion?: string | null;
   /**

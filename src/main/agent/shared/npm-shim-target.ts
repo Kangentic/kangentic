@@ -140,34 +140,82 @@ export interface BatchShimLaunch {
 }
 
 /**
- * What a `.cmd` shim runs, so a launch too long for one can start it directly.
+ * Why `batchShimLaunchOutcome` could not say what a shim starts. A fixed word,
+ * sent as the `batch_shim` tag of a start refused for it, so a report can say
+ * which shim a user has without its text or its path.
+ */
+export type BatchShimGiveUp =
+  /** The file could not be read, or was too large to be a shim. */
+  | 'unreadable'
+  /** No quoted target rooted at the shim's own folder. */
+  | 'unparsed'
+  /** The target the shim names is not on disk. */
+  | 'target_missing'
+  /** The target is neither a program nor a Node script. */
+  | 'target_not_script'
+  /** A Node script whose shim sets `NODE_PATH`, which the script may read. */
+  | 'node_path';
+
+export type BatchShimOutcome = { launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp };
+
+/**
+ * What a `.cmd` shim runs, so a launch too long for one can start it directly,
+ * or why that cannot be known.
  *
  * A shim's `%*` line has its own cmd line limit and fails past it with no error
  * at all: through an npm-style shim, 8000 characters ran and 8388 never did. The
  * rules are the shim's own: `node.exe` beside the shim if there is one, else
  * `node`, and a binary target runs as it is.
  *
- * Null when this cannot be sure it would start what the shim starts: an
- * unreadable file, a target that is not there or not a program or a Node
- * script, or a shim that sets `NODE_PATH` (pnpm's), whose target expects it.
+ * A shim that sets `NODE_PATH` (pnpm's, whenever its install has node paths to
+ * add) gives up only for a Node script, which may resolve modules through it. A
+ * native `.exe` target (Claude Code's npm bin is `bin/claude.exe`) never reads
+ * it, and pnpm calls such a target directly, so it starts as an npm shim's does.
+ */
+export function batchShimLaunchOutcome(
+  shimPath: string,
+  dependencies: NpmShimTargetDependencies = {},
+): BatchShimOutcome {
+  const fileExists = dependencies.fileExists ?? fs.existsSync;
+  const readFile = dependencies.readFile ?? readShimFromDisk;
+  let content: string;
+  try {
+    content = readFile(shimPath);
+  } catch {
+    // report-ok: an unreadable shim is the answer, named by the outcome.
+    return { gaveUp: 'unreadable' };
+  }
+  try {
+    const target = npmShimTargetPath(shimPath, { readFile: () => content });
+    if (target === null) return { gaveUp: 'unparsed' };
+    if (!fileExists(target)) return { gaveUp: 'target_missing' };
+    if (/\.exe$/i.test(target)) return { launch: { program: target, script: null } };
+    if (!/\.[cm]?js$/i.test(target)) return { gaveUp: 'target_not_script' };
+    if (content.toUpperCase().includes('NODE_PATH')) return { gaveUp: 'node_path' };
+    const siblingNode = path.join(path.dirname(shimPath), 'node.exe');
+    return { launch: { program: fileExists(siblingNode) ? siblingNode : 'node', script: target } };
+  } catch {
+    // report-ok: an injected `fileExists` that throws reads as a target not found.
+    return { gaveUp: 'target_missing' };
+  }
+}
+
+/**
+ * What a `.cmd` shim runs, or null when this cannot be sure it would start what
+ * the shim starts (`batchShimLaunchOutcome` says why).
  */
 export function directLaunchOfBatchShim(
   shimPath: string,
   dependencies: NpmShimTargetDependencies = {},
 ): BatchShimLaunch | null {
-  const fileExists = dependencies.fileExists ?? fs.existsSync;
-  const readFile = dependencies.readFile ?? readShimFromDisk;
-  try {
-    if (readFile(shimPath).toUpperCase().includes('NODE_PATH')) return null;
-    const target = npmShimTargetPath(shimPath, { readFile });
-    if (target === null || !fileExists(target)) return null;
-    if (/\.exe$/i.test(target)) return { program: target, script: null };
-    if (!/\.[cm]?js$/i.test(target)) return null;
-    const siblingNode = path.join(path.dirname(shimPath), 'node.exe');
-    return { program: fileExists(siblingNode) ? siblingNode : 'node', script: target };
-  } catch {
-    return null;
-  }
+  const outcome = batchShimLaunchOutcome(shimPath, dependencies);
+  return 'launch' in outcome ? outcome.launch : null;
+}
+
+/** Why `directLaunchOfBatchShim` gave up on a shim, or null when it did not. */
+export function batchShimGiveUpOf(shimPath: string, dependencies: NpmShimTargetDependencies = {}): BatchShimGiveUp | null {
+  const outcome = batchShimLaunchOutcome(shimPath, dependencies);
+  return 'gaveUp' in outcome ? outcome.gaveUp : null;
 }
 
 function readShimFromDisk(candidatePath: string): string {

@@ -15,6 +15,7 @@ import type {
   ColumnAutomation,
   ConversationExpiredNotice,
   LaunchStartPath,
+  OpeningPromptDelivery,
   NotificationInput,
   ResumeAccountMatch,
   ResumeEvidenceSummary,
@@ -211,6 +212,8 @@ interface ResolvedLaunch {
    * (`freshPromptTypedForLength`), handed back as `typedOpening`.
    */
   promptKeptOff: boolean;
+  /** How the opening prompt reaches the agent, for the session-id report. */
+  openingPrompt: OpeningPromptDelivery;
   /** `launchKeyOf` for this launch, which an adoption compares. */
   launchKey: string;
   /**
@@ -833,6 +836,7 @@ export class TransitionEngine {
       shell,
       commandOptions,
       promptKeptOff,
+      openingPrompt: promptText === null ? 'none' : promptKeptOff ? 'typed' : 'command_line',
       launchKey: launchKeyOf(input.agentName, commandOptions),
       inputInAlternateScreen,
       resumeAccount: resumeAccountMatch(conversationAccountId, account),
@@ -1173,6 +1177,7 @@ export class TransitionEngine {
       rebuildCommand,
       cwd,
       startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
+      openingPrompt: launch.openingPrompt,
       agentCliVersion: spawnCli.version,
       agentCliPath: launch.commandOptions.agentPath,
       resumeEvidence: canResume && resumeEvidence ? { ...resumeEvidence, account: launch.resumeAccount } : null,

@@ -166,9 +166,17 @@ a batch file does not read a line the way a prompt does:
   added, and past it the shim fails with no error at all: through an npm-style shim, 8,000 characters
   ran and 8,388 never did. `resolveShimLaunch` keeps the shim on a cmd host, so `directLaunchOfBatchShim`
   (`src/main/agent/shared/npm-shim-target.ts`) reads the target out of it and the file starts that:
-  the `node.exe` beside the shim or `node`, as the shim does, or a binary target directly. A shim
-  it cannot read, or one that sets `NODE_PATH` as pnpm's does, is never run past the budget. The
-  spawn types `echo The command line is too long.` instead, which reports like cmd's own refusal.
+  the `node.exe` beside the shim or `node`, as the shim does, or a binary target directly. A
+  pnpm shim sets `NODE_PATH` whenever its install has node paths to add, and pnpm calls a target
+  with no shebang directly, so an `.exe` target (Claude Code's npm bin is `bin/claude.exe`) runs
+  as an npm shim's does: only a Node script reads `NODE_PATH`. A shim it cannot read past (one it
+  cannot read or parse, a target that is gone or not a program or Node script, or a Node script
+  whose shim sets `NODE_PATH`) is never run past the budget. An agent's start is refused before
+  its PTY (`launchRefusal`, `AgentBatchShimUnresolvedError`) with the card reason a command too
+  long for its shell gets, and the report names why the shim gave up (`batch_shim`). Sentry
+  DESKTOP-3Q and DESKTOP-3R were such starts, which used to type the refusal below and show a
+  working agent for 30 to 60 s. A raw command still types `echo The command line is too long.`,
+  which reports like cmd's own refusal.
   The launcher does not use a `.ps1` sibling, because `call` keeps the tree as cmd then agent, the
   shape the absence sweep and `exited-root-wait` were measured on. With a bare `node`, the file's
   `PATHEXT` line outlives it as the code page does.
@@ -197,9 +205,9 @@ Measured with a shell metacharacter in the prompt's tail, up to 8,000 characters
 8,050 ran nothing and printed nothing, and from 8,100 cmd printed "The command line is too long."
 So past `CMD_TYPED_LINE_BYTE_BUDGET` the spawn types what the shim would have started, read by
 `directLaunchOfBatchShim`. Those shells can start it directly, so there is no launcher file. A shim
-it cannot read gets the same named refusal as under cmd, from the same budget: its text is unknown,
-so a line of 7,000 to 8,000 bytes that might have run is refused rather than left to fail with no
-error.
+it cannot read past gets the same refusal as under cmd, from the same budget: before the PTY for an
+agent, typed for a raw command. Its text is unknown, so a line of 7,000 to 8,000 bytes that might
+have run is refused rather than left to fail with no error.
 
 A Windows console has no line limit, but the process the line starts does: 32,766 characters, and
 8,191 through cmd.exe. `commandLineLimit` holds both. Linux limits one argument to 131,072 bytes,
