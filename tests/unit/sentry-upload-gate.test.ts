@@ -48,10 +48,13 @@ interface PreparedUpload {
 }
 
 const uploads: PreparedUpload[] = [];
+/** The options each plugin handed `createSentrySDK`, one entry per client it made. */
+const sdkClientOptions: Array<Record<string, unknown>> = [];
 let uploadError: Error | undefined;
 let originalSentryCacheEntry: NodeModule | undefined;
 
-function fakeCreateSentrySDK(): unknown {
+function fakeCreateSentrySDK(options: Record<string, unknown>): unknown {
+  sdkClientOptions.push(options);
   return {
     release: {
       create: async () => undefined,
@@ -101,11 +104,15 @@ function refuseNetwork(): never {
 beforeEach(() => {
   vi.resetModules();
   uploads.length = 0;
+  sdkClientOptions.length = 0;
   uploadError = undefined;
   fixtureDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sentry-upload-gate-')));
 
   vi.stubEnv('KANGENTIC_SENTRY_TOKEN', 'fake-token');
   vi.stubEnv('SENTRY_AUTH_TOKEN', '');
+  // The plugins read this when no `url` option is passed, so a machine that exports it
+  // would hide whether the repo's own options name a server.
+  vi.stubEnv('SENTRY_URL', undefined);
   vi.stubEnv('CI', 'true');
   vi.stubEnv('KANGENTIC_SENTRY_UPLOAD', '');
   process.env.NODE_ENV = 'production';
@@ -197,6 +204,9 @@ describe('the esbuild half', () => {
     expect(fs.existsSync(path.join(fixtureDir, '.vite', 'build', 'main-bundle.js'))).toBe(true);
     expect(fs.existsSync(path.join(fixtureDir, '.vite', 'build', 'main-bundle.js.map'))).toBe(false);
     expect(loggedLines()).toContain('Sentry sourcemaps: uploaded');
+    // No `url` option: the plugin stopped defaulting it, so the CLI takes the server from the token.
+    expect(sdkClientOptions.length).toBeGreaterThan(0);
+    expect(sdkClientOptions.filter((options) => options.url !== undefined)).toEqual([]);
   });
 
   it('fails a build whose bundle has no map, which the plugin only warns about', async () => {
@@ -394,18 +404,26 @@ describe('which renderer chunks the gate holds to the upload', () => {
 describe('the Vite half', () => {
   const OUT_DIR = path.join('.vite', 'build', 'renderer', 'main_window');
 
-  type SentryConfigFactory = (env: { mode: string }) => { plugins: PluginOption[] };
+  type BuildSourcemap = NonNullable<InlineConfig['build']>['sourcemap'];
+  type SentryConfigFactory = (env: { mode: string }) => { plugins: PluginOption[]; build?: { sourcemap?: BuildSourcemap } };
 
   /** The Sentry plugin and the gate exactly as vite.config.mts builds them, without the
-   *  React, Tailwind and Lingui plugins a throwaway fixture has no use for. */
-  async function loadRepoPlugins(): Promise<PluginOption[]> {
+   *  React, Tailwind and Lingui plugins a throwaway fixture has no use for, and the
+   *  `build.sourcemap` it sets beside them. */
+  async function loadRepoConfig(): Promise<{ plugins: PluginOption[]; sourcemap: BuildSourcemap }> {
     const configFactory = (await import('../../vite.config.mts')).default as unknown as SentryConfigFactory;
-    return configFactory({ mode: 'production' }).plugins.flat().filter((plugin) => (
+    const config = configFactory({ mode: 'production' });
+    const plugins = config.plugins.flat().filter((plugin) => (
       plugin !== null
       && typeof plugin === 'object'
       && 'name' in plugin
       && plugin.name.includes('sentry')
     ));
+    return { plugins, sourcemap: config.build?.sourcemap };
+  }
+
+  async function loadRepoPlugins(): Promise<PluginOption[]> {
+    return (await loadRepoConfig()).plugins;
   }
 
   function writeRendererFixture(): void {
@@ -418,7 +436,7 @@ describe('the Vite half', () => {
     writeFixtureFile('worker.js', "postMessage('worker bundle');");
   }
 
-  function fixtureBuild(plugins: PluginOption[], sourcemap: 'hidden' | false): ReturnType<typeof viteBuild> {
+  function fixtureBuild(plugins: PluginOption[], sourcemap: BuildSourcemap): ReturnType<typeof viteBuild> {
     const config: InlineConfig = {
       configFile: false,
       root: fixtureDir,
@@ -433,7 +451,9 @@ describe('the Vite half', () => {
   it('checks the upload after it finishes, holding chunks but not worker bundles to it', async () => {
     writeRendererFixture();
 
-    await fixtureBuild(await loadRepoPlugins(), 'hidden');
+    // With the source map setting vite.config.mts sets for an upload, not one written here.
+    const repoConfig = await loadRepoConfig();
+    await fixtureBuild(repoConfig.plugins, repoConfig.sourcemap);
 
     expect(uploads).toHaveLength(1);
     const [upload] = uploads;
@@ -444,6 +464,20 @@ describe('the Vite half', () => {
     // The fixture really did carry a worker, so the count above exempted one.
     const assets = fs.readdirSync(path.join(fixtureDir, OUT_DIR, 'assets'));
     expect(assets.some((asset) => asset.startsWith('worker'))).toBe(true);
+    // The uploaded maps are gone, by the repo's own filesToDeleteAfterUpload glob.
+    expect(assets.filter((asset) => asset.endsWith('.map'))).toEqual([]);
+    // No `url` option: the plugin stopped defaulting it, so the CLI takes the server from the token.
+    expect(sdkClientOptions.length).toBeGreaterThan(0);
+    expect(sdkClientOptions.filter((options) => options.url !== undefined)).toEqual([]);
+  });
+
+  it('fails a renderer build that leaves the source map setting to the plugin', async () => {
+    // With `build.sourcemap` unset the plugin turns hidden maps on itself and takes each map
+    // out of the bundle before it is written, so none sits beside its chunk for the ledger to
+    // record. That is why vite.config.mts sets `hidden` itself.
+    writeRendererFixture();
+
+    await expect(fixtureBuild(await loadRepoPlugins(), undefined)).rejects.toThrow(GATE_MESSAGE);
   });
 
   it('leaves a rejected upload reporting its own error, with no line saying it uploaded', async () => {
