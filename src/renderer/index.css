@@ -498,6 +498,20 @@
   will-change: transform;
 }
 
+/* React Flow 13 follows the OS color scheme. Under a dark OS its root, and the
+   dotted background's own box, paint #141414 over the app's surface in every
+   app theme, light ones included. The canvas draws in the app's theme tokens,
+   so that is switched off here. `color-scheme` puts every `light-dark()`
+   default in React Flow's sheet back on its light value, which is what React
+   Flow 12 drew. The background is named as well, so the canvas stays clear if
+   the app ever declares a color scheme of its own. React Flow's sheet sits in
+   `@layer xyflow` and this rule is unlayered, so it wins without relying on
+   load order. */
+.workflow-canvas .react-flow {
+  color-scheme: inherit;
+  --xy-background-color: transparent;
+}
+
 /* A card's full-size link target (WorkflowTaskNode) is mounted with the card
    and takes the pointer only while a link is drawn, so it never takes a card
    drag and starting a link re-renders no card. React Flow finds the card under

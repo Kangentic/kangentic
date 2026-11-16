@@ -5,15 +5,14 @@ import {
   Background,
   BackgroundVariant,
   ConnectionMode,
+  NodeChangeset,
   Panel,
   ReactFlow,
-  applyNodeChanges,
   useConnection,
   useNodesInitialized,
   useReactFlow,
   type Connection,
   type IsValidConnection,
-  type NodeChange,
   type NodeMouseHandler,
   type OnNodeDrag,
   type XYPosition,
@@ -57,16 +56,19 @@ import { buildWorkflowAriaLabelConfig } from './workflow-aria-labels';
 const NODE_TYPES = { workflowTask: WorkflowTaskNode };
 const EDGE_TYPES = { workflowLink: WorkflowEdge };
 const PRO_OPTIONS = { hideAttribution: true };
-const FIT_VIEW_OPTIONS = { padding: 0.15, maxZoom: 1 };
+/**
+ * A percentage, since React Flow reads a bare number as pixels: 6.5% of the
+ * canvas on each side, which is what the fraction 0.15 gave before React Flow 13.
+ */
+const FIT_VIEW_OPTIONS = { padding: '6.5%', maxZoom: 1 } as const;
 const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 const ARROW_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 /** How long the arrow keys rest before the card's new place is saved: one save per run of presses. */
 const KEY_MOVE_SAVE_DELAY_MS = 400;
 /**
- * How far a press moves before it is a drag. A press that moves less is a
- * click, so every press is one or the other: React Flow's click distance
- * defaults to 0, and a hand's click that drifted a pixel or two then neither
- * selected the card nor moved it.
+ * How far a press moves before it is a drag, on a card and on the empty canvas
+ * alike. A press that moves less is a click, so every press is one or the
+ * other. React Flow's own threshold is 1px, which a hand's click drifts past.
  */
 const DRAG_THRESHOLD = 3;
 /**
@@ -259,11 +261,15 @@ export function WorkflowCanvas({
       setArranged({ ...change, animate: arrangeFrom.animate });
     }
   }
-  const onNodesChange = useCallback((changes: NodeChange<WorkflowFlowNode>[]) => {
+  const onNodesChange = useCallback((changes: NodeChangeset<WorkflowFlowNode>) => {
     // Selection is ours (one task, mirrored into `selected` above); every other
-    // change (position, dimensions) is React Flow's to apply.
-    const applicable = changes.filter((change) => change.type !== 'select' && change.type !== 'remove');
-    if (applicable.length > 0) setNodes((current) => applyNodeChanges(applicable, current));
+    // change (position, dimensions) is React Flow's to apply. The kept changes
+    // go in a changeset of their own, so the one React Flow handed over is left
+    // as it was.
+    const applicable = new NodeChangeset<WorkflowFlowNode>(
+      changes.toArray().filter((change) => change.type !== 'select' && change.type !== 'remove'),
+    );
+    if (!applicable.isEmpty()) setNodes((current) => applicable.applyTo(current));
     // A height the layout has not seen yet lays the cards out again, once no
     // card is being dragged. A drag's position changes leave the map as it
     // was, so they never do.
@@ -505,8 +511,7 @@ export function WorkflowCanvas({
         proOptions={PRO_OPTIONS}
         ariaLabelConfig={ariaLabelConfig}
         nodeDragThreshold={DRAG_THRESHOLD}
-        nodeClickDistance={DRAG_THRESHOLD}
-        paneClickDistance={DRAG_THRESHOLD}
+        paneDragThreshold={DRAG_THRESHOLD}
       >
         {editable && <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="var(--color-edge-input)" />}
         <Panel position="bottom-left">

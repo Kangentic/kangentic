@@ -231,13 +231,19 @@ export default defineConfig(({ mode }) => ({
     rolldownOptions: {
       output: {
         manualChunks(id: string) {
-          // `use-sync-external-store` rides with React: recharts and React Flow's
-          // own zustand both use its shim, and as a CJS module it carries React's
-          // interop into whichever group claims it. In any lazy group that made
-          // the entry import that group statically (measured: the whole group
-          // joined the entry's closure). Here it costs a few KB the entry loads
-          // with React anyway.
-          if (/node_modules[\\/](react|react-dom|scheduler|use-sync-external-store)[\\/]/.test(id)) return 'react-vendor';
+          // `use-sync-external-store` rides with React: recharts uses its shim,
+          // and as a CJS module it carries React's interop into whichever group
+          // claims it. In any lazy group that made the entry import that group
+          // statically (measured: the whole group joined the entry's closure).
+          // Here it costs a few KB the entry loads with React anyway.
+          //
+          // `zustand` rides with React for the same reason. React Flow 13 nests
+          // no copy of its own and imports the one the app's stores use. Left
+          // unclaimed, that shared copy went into the xyflow group, and every
+          // chunk that holds a store imported the group statically
+          // (assertVendorChunksLazy failed the build). The entry loads zustand
+          // with its stores anyway.
+          if (/node_modules[\\/](react|react-dom|scheduler|use-sync-external-store|zustand)[\\/]/.test(id)) return 'react-vendor';
           if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-webgl') || id.includes('@xterm/addon-search')) return 'xterm';
           // The d3 modules recharts and React Flow both use. Unclaimed, the
           // recharts group absorbed them and React Flow imported them from it, so
@@ -250,7 +256,7 @@ export default defineConfig(({ mode }) => ({
           // LazyKnowledgeGraph; the name match cannot hit first-party sources,
           // which live under components/knowledge-graph/.
           if (/node_modules[\\/](three|camera-controls)[\\/]/.test(id)) return 'three';
-          // React Flow (and the copy of zustand it nests), reachable ONLY through
+          // React Flow and its system package, reachable ONLY through
           // LazyWorkflowsView, so assertVendorChunksLazy can check it by name.
           if (/node_modules[\\/]@xyflow[\\/]/.test(id)) return 'xyflow';
         },
