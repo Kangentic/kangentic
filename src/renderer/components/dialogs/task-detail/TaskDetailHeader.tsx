@@ -232,6 +232,12 @@ export function TaskDetailHeader({
   const historyKey = JSON.stringify([task.id, hostProjectId || null]);
   const [historicalConversation, setHistoricalConversation] = useState<{ key: string; available: boolean } | null>(null);
   const historicalConversationAvailable = historicalConversation?.key === historyKey && historicalConversation.available;
+  // A running session writes its record as it starts, so it stands as the
+  // answer until the list replaces it. Without this, the pill went disabled
+  // for one list round trip every time a running session paused or exited.
+  if (liveSessionRunning && !historicalConversationAvailable) {
+    setHistoricalConversation({ key: historyKey, available: true });
+  }
   useEffect(() => {
     if (liveSessionRunning) return;
     let cancelled = false;

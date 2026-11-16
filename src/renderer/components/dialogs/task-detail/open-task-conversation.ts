@@ -33,15 +33,15 @@ import { isLiveSessionStatus } from '../../../../shared/session-liveness';
  * transcript lives in that project's DB.
  */
 export async function openTaskConversation(taskId: string, projectId: string | null): Promise<void> {
-  const liveSession = useSessionStore.getState()._sessionByTaskId.get(taskId) ?? null;
-  let liveSessionId = liveSession?.id ?? null;
+  const registrySession = useSessionStore.getState()._sessionByTaskId.get(taskId) ?? null;
+  let registrySessionId = registrySession?.id ?? null;
   // Capture the terminal's visible scrollback NOW, at click time, before the
   // async listSessions() gap below (during which live output could keep
   // scrolling it) - open-at-position needs the viewport exactly as the user
   // was looking at it. A no-terminal / no-live-session task simply has
   // nothing to capture (capture is null), and the viewer falls back to
   // opening at the bottom.
-  const capture = captureTerminalScrollback(liveSessionId);
+  const capture = captureTerminalScrollback(registrySessionId);
   let taskSessionIds: string[] = [];
   let newestSessionId: string | null = null;
   try {
@@ -54,21 +54,22 @@ export async function openTaskConversation(taskId: string, projectId: string | n
     // Anchor on the list instead. A running or queued session is kept even
     // when unlisted: its record is written as it starts, and a click can
     // land just before that.
-    if (liveSession && !taskSessionIds.includes(liveSession.id) && !isLiveSessionStatus(liveSession.status)) {
-      liveSessionId = null;
+    if (registrySession && !taskSessionIds.includes(registrySession.id) && !isLiveSessionStatus(registrySession.status)) {
+      registrySessionId = null;
     }
   } catch {
-    // No list: fall back to the live session alone, as before.
+    // No list, so the row cannot be checked against it: the registry row is
+    // the anchor in any state, a paused placeholder included.
   }
   const taskWindows = Object.values(useWindowStore.getState().windows).filter(
-    (candidate) => candidate.kind === 'conversation' && (candidate.anchor === liveSessionId || taskSessionIds.includes(candidate.anchor)),
+    (candidate) => candidate.kind === 'conversation' && (candidate.anchor === registrySessionId || taskSessionIds.includes(candidate.anchor)),
   );
-  const reusedWindow = taskWindows.find((candidate) => candidate.anchor === liveSessionId)
+  const reusedWindow = taskWindows.find((candidate) => candidate.anchor === registrySessionId)
     ?? taskWindows.reduce<(typeof taskWindows)[number] | null>(
       (raisedLast, candidate) => (raisedLast && raisedLast.zIndex >= candidate.zIndex ? raisedLast : candidate),
       null,
     );
-  const sessionId = reusedWindow?.anchor ?? liveSessionId ?? newestSessionId;
+  const sessionId = reusedWindow?.anchor ?? registrySessionId ?? newestSessionId;
   if (!sessionId) {
     useToastStore.getState().addToast({
       title: i18n._(msg`No conversation yet`),
