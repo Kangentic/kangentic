@@ -58,7 +58,7 @@ about how many calls); otherwise it runs at once. A Search quality change re-emb
 
 When the embedding worker crashes three times inside five minutes, the restart
 policy stops respawning it and search falls back to keyword matches until the
-window decays. The Knowledge Graph card's note then names the reason (`KnowledgeGraphStatus.workerError`:
+window decays (a worker that could not load its native runtime never decays, see below). The Knowledge Graph card's note then names the reason (`KnowledgeGraphStatus.workerError`:
 how the worker stopped plus the first error line of its stderr, for example
 `exited with code 1: Error: Cannot find module 'onnxruntime-common'`, or `failed to start` for a
 fork that threw), and the
