@@ -523,10 +523,12 @@ export async function resumeSuspendedSessions(
 
       const swimlane = laneMap.get(task.swimlane_id) ?? null;
 
-      // Decide whether to resume or start fresh. Uses type-AND-isolation-aware
-      // lookup so cross-agent and main-vs-isolated resume mismatches are
-      // structurally impossible. The adapter isn't known yet - we use the record's
-      // session_type (captured at spawn, agent-specific) and its isolation.
+      // Decide whether to resume or start fresh. The lookup matches type AND
+      // isolation, so a main-vs-isolated mismatch cannot happen. The adapter
+      // isn't known yet, so it uses the record's session_type (captured at
+      // spawn) and its isolation. A record of another agent than the column
+      // runs is matched to that agent's own conversation in prepareAgentSpawn
+      // (resumeForAgent).
       const typeMatch = sessionRepo.getLatestForTaskByTypeAndIsolation(record.task_id, record.session_type, record.isolated_swimlane_id);
       canResume = isResumeEligible(typeMatch);
       // recordId enables prepareAgentSpawn's resume-time id reconcile against

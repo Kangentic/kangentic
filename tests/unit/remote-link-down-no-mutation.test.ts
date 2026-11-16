@@ -176,6 +176,7 @@ function preparedSpawn(remote: boolean) {
       appliedModel: null,
       appliedEffort: null,
       resumed: true,
+      rematchedRecordId: null,
       prompt: null,
       startOver: null,
       expiredLastActiveAt: null,

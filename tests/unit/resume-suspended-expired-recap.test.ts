@@ -229,6 +229,7 @@ function preparedSpawn(overrides: Record<string, unknown> = {}) {
       appliedModel: null,
       appliedEffort: null,
       resumed: false,
+      rematchedRecordId: null,
       prompt: null,
       startOver: null,
       expiredLastActiveAt: null,
