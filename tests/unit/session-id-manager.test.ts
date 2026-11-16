@@ -410,16 +410,15 @@ describe('SessionIdManager', () => {
       expect(outcomes).toHaveBeenCalledTimes(1);
       expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'none' });
 
-      // The first spawn's ceiling (5 min after it) would land here. The new
-      // spawn's window passes at +31 s from the second init (about 62 s in) and
-      // its own ceiling is later still, so by 5 min after the first spawn the
-      // only extra outcome possible is the new spawn's own ceiling.
+      // The second spawn started 31 s after the first, so its own ceiling lands
+      // 31 s after the first spawn's. Step across the first spawn's ceiling: any
+      // outcome inside that span can only be the old ceiling firing on the new
+      // spawn, which is now past its own window and held.
+      const secondSpawnOffsetMs = 31_000;
       outcomes.mockClear();
-      await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS - 31_000 - 1_000);
-      // Now at CAPTURE_CEILING_MS - 1 s after the first spawn: nothing yet.
+      await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS - secondSpawnOffsetMs - 1_000);
       expect(outcomes).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(2_000);
-      // First spawn's ceiling instant has passed; no outcome for the old ceiling.
       expect(outcomes).not.toHaveBeenCalled();
     });
 

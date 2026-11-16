@@ -4,7 +4,7 @@ import { resolveSpawnAccount } from '../accounts/account-service';
 import { buildSessionEnv } from '../accounts/account-env';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
-import type { ActivityState, Project, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
+import type { ActivityState, OpeningPromptDelivery, Project, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../shared/workflow-agent-choice';
@@ -796,6 +796,10 @@ async function startWorkflowAgentWithPull(
   // A push that fails means this command is never spawned.
   await pushHostFilesForSpawn(hostFilePull.sync, sessionId, () => releaseCommandHold(adapter, projectRoot, sessionId));
 
+  // No prompt at all, a prompt on the command line, or a continuation typed in
+  // once the agent is ready.
+  let openingPrompt: OpeningPromptDelivery = 'none';
+  if (prompt !== undefined) openingPrompt = typedContinuation === undefined ? 'command_line' : 'typed';
   const session = await context.sessionManager.spawn({
     id: sessionId,
     taskId: workflow.id,
@@ -804,7 +808,7 @@ async function startWorkflowAgentWithPull(
     cwd: projectRoot,
     ...(remoteLaunch ? { remote: remoteLaunch.remote } : {}),
     startPath: 'workflow',
-    openingPrompt: prompt === undefined ? 'none' : typedContinuation === undefined ? 'command_line' : 'typed',
+    openingPrompt,
     agentCliVersion: spawnCli.version,
     agentCliPath: launch.agentPath,
     env: extraEnv ?? undefined,

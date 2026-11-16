@@ -156,7 +156,7 @@ export type BatchShimGiveUp =
   /** A Node script whose shim sets `NODE_PATH`, which the script may read. */
   | 'node_path';
 
-type BatchShimOutcome ={ launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp };
+type BatchShimOutcome = { launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp };
 
 /**
  * What a `.cmd` shim runs, so a launch too long for one can start it directly,
