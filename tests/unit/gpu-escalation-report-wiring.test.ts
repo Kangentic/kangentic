@@ -318,7 +318,7 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     // rests on, and the mock reproduces it. If main stopped clearing the flag,
     // the mock would still pass while the real app re-toasted on every reload.
     const handlerStart = INDEX_CODE.indexOf('ipcMain.handle(IPC.GPU_HEALTH_STATUS');
-    const handlerBody = INDEX_CODE.slice(handlerStart, handlerStart + 400);
+    const handlerBody = INDEX_CODE.slice(handlerStart, INDEX_CODE.indexOf('\n}));', handlerStart));
     expect(
       handlerBody,
       'the handler must clear pendingGpuNotice as it reads it, or a renderer reload re-toasts the same incident',

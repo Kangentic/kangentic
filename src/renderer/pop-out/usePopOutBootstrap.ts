@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useConfigStore } from '../stores/config-store';
 import { reportRendererFailure } from '../utils/renderer-failure';
+import { setTerminalGraphicsSupport } from '../utils/terminal-webgl';
 import { getSurface } from './surface-registry';
 import type { PopOutDescriptor } from '../../shared/pop-out';
 
@@ -31,6 +32,19 @@ function reloadConfig(): void {
   });
 }
 
+/** Pull main's graphics status into this page's terminal renderer. */
+export function loadTerminalGraphicsSupport(): void {
+  window.electronAPI.gpuHealth?.readStatus()
+    .then((status) => {
+      setTerminalGraphicsSupport(status);
+    })
+    .catch((error: unknown) => {
+      // report-ok: no status leaves WebGL available, which is how a terminal
+      // ran before this pull existed; App.tsx swallows the same read.
+      console.warn('[usePopOutBootstrap] could not read the graphics status', error);
+    });
+}
+
 export function usePopOutBootstrap(descriptor: PopOutDescriptor): void {
   const surface = getSurface(descriptor.kind);
 
@@ -41,6 +55,13 @@ export function usePopOutBootstrap(descriptor: PopOutDescriptor): void {
 
     const offConfigChanged = window.electronAPI.config.onChanged(reloadConfig);
     controller.signal.addEventListener('abort', offConfigChanged);
+
+    // A pop-out hosts terminals too (the Agent Monitor, a Command Terminal), and
+    // this page has its own copy of terminal-webgl.ts, so it needs the graphics
+    // status App.tsx pulls in the main window, or a terminal here retries WebGL
+    // on a machine that cannot have it (DESKTOP-32). Main answers a pop-out
+    // without the one-shot recovery notice, which stays the main window's.
+    loadTerminalGraphicsSupport();
 
     surface.bootstrap(descriptor.params, { signal: controller.signal });
 
