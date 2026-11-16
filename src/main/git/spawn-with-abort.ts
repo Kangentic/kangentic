@@ -187,7 +187,7 @@ export function spawnWithAbort(
         // 'timeout' failure downstream (classifyFetchFailure), turning a
         // clean cancel into a spurious staleness toast.
         if (abortCause === 'external') {
-          settleReject(withExitFields(new Error(`${label} aborted (external abort) (child process killed)`), { timedOut: false }));
+          settleReject(abortedError());
           return;
         }
         const timeoutSuffix = signalKillAssertsTimeout ? ` after ${timeoutMs}ms timeout` : '';
