@@ -955,8 +955,8 @@ export function clearGpuEscalation(filePath: string, options: { onlyIfLastAt?: s
  * `GpuGraphicsStatus.softwareRendering` instead.
  *
  * An unlisted or missing value counts as available, so a status nobody has
- * measured keeps the terminal's retry schedule and its report, which now
- * carries the status, rather than turning WebGL off.
+ * measured keeps the terminal's retry schedule and its report, which carries
+ * the status, rather than turning WebGL off. macOS has not been measured.
  */
 const WEBGL_UNAVAILABLE_STATUSES: ReadonlySet<string> = new Set([
   'disabled_off',
@@ -997,17 +997,18 @@ export interface WebglAvailabilityGate {
  * Answers WebGL availability only once the GPU process has reported.
  *
  * Until the first `gpu-info-update`, `getFeatureStatus()` reads a PRELIMINARY
- * `webgl: disabled_off` on every platform measured: Windows with a working
- * GPU, WSLg and xvfb, at `whenReady` and still at the page's first load. The
- * first update carried the settled value in all six runs (`enabled` on a real
- * GPU). Read too early, the answer would turn WebGL off for every user, so
- * `read` waits for that first update, bounded by `timeoutMs`, and on a timeout
- * answers available with `pending`: today's behavior. The flag is sticky, so a
- * renderer reload later in the run reads at once. The status is classified at
- * answer time, not copied at the update, so a later read sees the current
- * value.
+ * `webgl: disabled_off` on every platform measured (Windows with a working
+ * GPU, WSLg and xvfb), at `whenReady` and still at the page's first load. The
+ * first update carried the settled value in all six runs, `enabled` on a real
+ * GPU. An answer read before it would turn WebGL off for every user.
  *
- * Subscribe at module scope in main: the GPU process starts after `whenReady`,
+ * So `read` waits for that first update, bounded by `timeoutMs`. On a timeout
+ * it answers available with `pending`, which is how terminals behaved before
+ * this gate. The flag is sticky, so a renderer reload later in the run reads
+ * at once. The status is classified at answer time, not copied at the update,
+ * so a later read sees the current value.
+ *
+ * Subscribe at module scope in main. The GPU process starts after `whenReady`,
  * so a listener registered there cannot miss the first update.
  */
 export function createWebglAvailabilityGate(options: WebglAvailabilityGateOptions): WebglAvailabilityGate {

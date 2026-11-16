@@ -1717,7 +1717,7 @@ describe('resolveWebglAvailability (DESKTOP-32)', () => {
     expect(resolveWebglAvailability({ webgl })).toEqual({ available: false, status: webgl });
   });
 
-  it('unavailable_software stays available: SwiftShader serves a working context under it', () => {
+  it('unavailable_software stays available, because SwiftShader serves a working context under it', () => {
     // Measured on Electron 45.1.0 with --enable-unsafe-swiftshader on a no-GPU
     // xvfb: the status read unavailable_software and getContext('webgl2')
     // returned a context. Listing it would turn a working terminal to DOM.
@@ -1735,8 +1735,8 @@ describe('resolveWebglAvailability (DESKTOP-32)', () => {
 
 describe('the gpuHealth:status handler answers WebGL through the gate (index.ts, source read)', () => {
   // index.ts cannot be imported, so this reads its text, and pins only the
-  // wiring; readGpuGraphicsStatus's own cases are above. What it protects: a
-  // handler that read getGPUFeatureStatus() directly would see the preliminary
+  // wiring; readGpuGraphicsStatus's own cases are below. It protects against a
+  // handler that read getGPUFeatureStatus() directly. That one would see the preliminary
   // `disabled_off` every platform reports before the GPU process's first
   // update, turn WebGL off for every user, and file nothing to say so.
   const indexSource = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'main', 'index.ts'), 'utf-8');
@@ -1762,7 +1762,7 @@ describe('the gpuHealth:status handler answers WebGL through the gate (index.ts,
   it('the gate listens for gpu-info-update at module scope', () => {
     const gateStart = indexSource.indexOf('const webglAvailabilityGate = createWebglAvailabilityGate(');
     expect(gateStart).toBeGreaterThan(-1);
-    // Module scope: the declaration starts a line, not inside a function body.
+    // At module scope the declaration starts a line, not inside a function body.
     expect(indexSource[gateStart - 1]).toBe('\n');
     expect(indexSource.slice(gateStart, indexSource.indexOf('});', gateStart))).toContain("app.on('gpu-info-update'");
   });
@@ -1824,6 +1824,19 @@ describe('createWebglAvailabilityGate', () => {
     const pending = gate.read();
     await vi.advanceTimersByTimeAsync(3_000);
     await expect(pending).resolves.toEqual({ available: true, status: WEBGL_STATUS_PENDING });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('an update that lands after a timeout settles later reads on the real status', async () => {
+    // A slow GPU start must not pin `pending` for the run: a pop-out opened
+    // after the first update gets the settled answer.
+    const { gate, fireUpdate } = makeGate(3_000);
+    const first = gate.read();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(first).resolves.toEqual({ available: true, status: WEBGL_STATUS_PENDING });
+
+    fireUpdate();
+    await expect(gate.read()).resolves.toEqual({ available: false, status: 'disabled_off' });
     expect(vi.getTimerCount()).toBe(0);
   });
 

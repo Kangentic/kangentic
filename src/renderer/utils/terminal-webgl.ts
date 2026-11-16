@@ -230,8 +230,8 @@ const reservedWebglKeys: Set<string> = import.meta.hot?.data?.reservedWebglKeys 
 
 // The module's ONLY dispose registration. Vite keeps one callback per module
 // (`disposeMap.set`), so a second `hot.dispose` call silently replaces the
-// first: `graphicsSupport` used to have its own block above and was never
-// stashed, which reset the no-WebGL skip on every Fast Refresh of this module.
+// first. So every value this module preserves, `graphicsSupport` included, is
+// stashed in this one block, or a Fast Refresh resets the no-WebGL skip.
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot

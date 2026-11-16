@@ -213,10 +213,14 @@ Three things follow, and `createWebglAvailabilityGate` (`gpu-health.ts`) holds a
   included, keeps today's retry and report.
 - Electron 45's feature status has no `webgl2` key, so the gate reads `webgl`.
 
+macOS has not been measured. The gate trusts the first update there too, so a Mac whose first
+update still read `disabled_off` on a working GPU would keep its terminals on DOM for the run, and
+file no report to say so. Measure one before treating the table as covering every platform.
+
 When WebGL was reported available and still fails, the fallback report carries the word as
-`webgl.featureStatus`, so a real defect (`enabled`) can be told from an environment the gate could
-not judge (`pending`, an unmeasured word). A pop-out page has its own copy of the terminal
-renderer, so its bootstrap (`usePopOutBootstrap.ts`) pulls the status too. Main gives a pop-out
+`webgl.featureStatus`. That tells a real defect (`enabled`) from an environment the gate could not
+judge (`pending`, an unmeasured word). A pop-out page has its own copy of the terminal renderer,
+so its bootstrap (`usePopOutBootstrap.ts`) pulls the status too. Main gives a pop-out
 `noticePending: false` and leaves the flag for the main window, whose toast is the only reader.
 
 See [Error reporting (Sentry)](../telemetry/error-reporting.md) for the reporting half.
