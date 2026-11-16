@@ -198,6 +198,10 @@ export default defineConfig(({ mode }) => ({
   build: {
     // Hidden maps (no sourceMappingURL comment) exist only long enough for the
     // Sentry plugin above to upload and delete them; see uploadSourcemaps.
+    // Keep this line. Left unset, the plugin turns hidden maps on itself and takes
+    // each one out of the bundle before it is written, so the upload gate finds no
+    // map beside the entry chunk and fails the release build
+    // (tests/unit/sentry-upload-gate.test.ts runs both).
     ...(uploadSourcemaps && mode === 'production' ? { sourcemap: 'hidden' as const } : {}),
     // Electron loads from disk, so large DOWNLOAD sizes are not a concern -
     // but parse/eval at cold start is. Named vendor chunks serve two goals:
