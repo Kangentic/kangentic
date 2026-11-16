@@ -120,10 +120,11 @@ Linux rows come from Ubuntu 24.04 under WSLg, whose GL is Mesa's d3d12 driver ra
 one, and which Chromium blocklists, so the control needed `--ignore-gpu-blocklist` to start on the
 GPU. macOS has not been measured. `app.getGPUInfo('complete')` still settles under the switches
 (1 ms on Windows), and still names the adapter, so the report loses nothing by running in this
-mode. `terminal-webgl.ts` skips its attach entirely in this mode, rather than retrying on its usual
-schedule: the context is not blocked, it cannot exist. It keys that on `softwareRendering`, not on
-the `webgl` word, because `unavailable_software` does not by itself mean no context (see Linux with
-no usable GPU, below).
+mode. `terminal-webgl.ts` skips its attach entirely in this mode, and on a Linux with no usable GPU
+(below), rather than retrying on its usual schedule: the context is not blocked, it cannot exist.
+It keys the skip on `softwareRendering` or on `webglAvailable: false`, not on the raw `webgl` word,
+because `unavailable_software` does not by itself mean no context (see Linux with no usable GPU,
+below).
 
 What ships now, on every platform:
 
@@ -205,8 +206,9 @@ Three things follow, and `createWebglAvailabilityGate` (`gpu-health.ts`) holds a
 
 - The status reads a preliminary `disabled_off` everywhere until the GPU process first reports,
   100 to 300 ms after `whenReady`. The `gpuHealth:status` handler waits for that first update, up
-  to 3 s, and on a timeout answers WebGL available with the word `pending`. Answering from the
-  preliminary value would turn WebGL off on every working GPU.
+  to 3 s, and on a timeout answers WebGL available with the word `pending`. Software mode skips the
+  wait, since no GPU process will report. Answering from the preliminary value would turn WebGL off
+  on every working GPU.
 - `unavailable_software` comes with a working context when SwiftShader is allowed, so it is not
   in the no-WebGL set. The set is `disabled_off` (measured) and `disabled_off_ok`,
   `unavailable_off`, `unavailable_off_ok` (no fallback, not seen). Any other word, `unknown`
