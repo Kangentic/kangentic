@@ -902,8 +902,26 @@ describe('afterPack: stripping better-sqlite3 prebuilds to the target', () => {
     expect(fs.readdirSync(prebuildsDir)).toEqual(['win32-x64.node']);
     expect(lines).toEqual([
       '[afterPack] better-sqlite3: kept prebuilds/win32-x64.node, removed 7 other prebuild(s)',
-      '[afterPack] better-sqlite3: removed build/, so the kept prebuild is the addon that loads',
+      '[afterPack] better-sqlite3: removed build/, which the loader takes ahead of a prebuild',
     ]);
+  });
+
+  it('removes a build folder that has no prebuilds folder beside it, so a compiled addon never ships alone', async () => {
+    // Packaging that dropped prebuilds/ would otherwise ship the addon compiled on
+    // the runner. With it gone the package has no addon, and the load probes fail.
+    fs.rmSync(prebuildsDir, { recursive: true, force: true });
+    const compiledDir = path.join(unpackedRoot, 'node_modules', 'better-sqlite3', 'build');
+    fs.mkdirSync(path.join(compiledDir, 'Release'), { recursive: true });
+    fs.writeFileSync(path.join(compiledDir, 'Release', 'better_sqlite3.node'), 'compiled on the runner');
+    const afterPack = await importAfterPack();
+    const lines: string[] = [];
+
+    afterPack.stripBetterSqlitePrebuilds({ unpackedRoot, platform: 'win32', targetArch: 'x64', log: (line) => lines.push(line) });
+
+    expect(fs.existsSync(compiledDir)).toBe(false);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/no prebuilds directory.*nothing to strip/);
+    expect(lines[1]).toBe('[afterPack] better-sqlite3: removed build/, which the loader takes ahead of a prebuild');
   });
 
   it('keeps the glibc build on Linux and drops the musl ones', async () => {

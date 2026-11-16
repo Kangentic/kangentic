@@ -76,6 +76,12 @@ function fakeCreateSentrySDK(options: Record<string, unknown>): unknown {
   };
 }
 
+/** No `url` option: the plugin stopped defaulting it, so the CLI takes the server from the token. */
+function expectNoUrlOption(): void {
+  expect(sdkClientOptions.length).toBeGreaterThan(0);
+  expect(sdkClientOptions.filter((options) => options.url !== undefined)).toEqual([]);
+}
+
 beforeAll(() => {
   originalSentryCacheEntry = require.cache[SENTRY_RESOLVED_PATH];
   require.cache[SENTRY_RESOLVED_PATH] = {
@@ -204,9 +210,7 @@ describe('the esbuild half', () => {
     expect(fs.existsSync(path.join(fixtureDir, '.vite', 'build', 'main-bundle.js'))).toBe(true);
     expect(fs.existsSync(path.join(fixtureDir, '.vite', 'build', 'main-bundle.js.map'))).toBe(false);
     expect(loggedLines()).toContain('Sentry sourcemaps: uploaded');
-    // No `url` option: the plugin stopped defaulting it, so the CLI takes the server from the token.
-    expect(sdkClientOptions.length).toBeGreaterThan(0);
-    expect(sdkClientOptions.filter((options) => options.url !== undefined)).toEqual([]);
+    expectNoUrlOption();
   });
 
   it('fails a build whose bundle has no map, which the plugin only warns about', async () => {
@@ -466,9 +470,7 @@ describe('the Vite half', () => {
     expect(assets.some((asset) => asset.startsWith('worker'))).toBe(true);
     // The uploaded maps are gone, by the repo's own filesToDeleteAfterUpload glob.
     expect(assets.filter((asset) => asset.endsWith('.map'))).toEqual([]);
-    // No `url` option: the plugin stopped defaulting it, so the CLI takes the server from the token.
-    expect(sdkClientOptions.length).toBeGreaterThan(0);
-    expect(sdkClientOptions.filter((options) => options.url !== undefined)).toEqual([]);
+    expectNoUrlOption();
   });
 
   it('fails a renderer build that leaves the source map setting to the plugin', async () => {

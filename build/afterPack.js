@@ -73,17 +73,20 @@ function embedWorkerProbePlan({ unpackedRoot, platform, targetArch, gaps = EMBED
  * prebuild and leaving the load probe to report a confusing failure later.
  * Logs which branch it took either way.
  *
- * A `build/` folder never ships either. From 13.2.0 `lib/binding.js` loads a
- * compiled addon under `build/` ahead of the prebuilds, and the load probes
- * cannot tell which one opened the database. An npm older than 12 runs an
- * implied `node-gyp rebuild` on install (npm 12 skips it through
- * `allowScripts`), which leaves the folder on a CI or release runner, and a
- * compile run on purpose leaves a binary in it.
+ * A `build/` folder never ships either, with or without a `prebuilds/` folder
+ * beside it. From 13.2.0 `lib/binding.js` loads a compiled addon under `build/`
+ * ahead of the prebuilds, and the load probes cannot tell which one opened the
+ * database. An npm older than 12 runs an implied `node-gyp rebuild` on install
+ * (npm 12 skips it through `allowScripts`), which leaves the folder on a CI or
+ * release runner, and a compile run on purpose leaves a binary in it. A package
+ * left with no addon at all fails the load probes, which is the loud outcome.
  */
 function stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch, log = console.log }) {
-  const prebuildsDir = path.join(unpackedRoot, 'node_modules', 'better-sqlite3', 'prebuilds');
+  const packageDir = path.join(unpackedRoot, 'node_modules', 'better-sqlite3');
+  const prebuildsDir = path.join(packageDir, 'prebuilds');
   if (!fs.existsSync(prebuildsDir)) {
     log(`[afterPack] better-sqlite3: no prebuilds directory at ${prebuildsDir}, nothing to strip`);
+    removeCompiledBetterSqlite({ packageDir, log });
     return;
   }
   const keep = `${platform}-${targetArch}.node`;
@@ -99,12 +102,19 @@ function stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch, log = 
     fs.rmSync(path.join(prebuildsDir, entry), { recursive: true, force: true });
   }
   log(`[afterPack] better-sqlite3: kept prebuilds/${keep}, removed ${removed.length} other prebuild(s)`);
+  removeCompiledBetterSqlite({ packageDir, log });
+}
 
-  const compiledDir = path.join(unpackedRoot, 'node_modules', 'better-sqlite3', 'build');
-  if (fs.existsSync(compiledDir)) {
-    fs.rmSync(compiledDir, { recursive: true, force: true });
-    log('[afterPack] better-sqlite3: removed build/, so the kept prebuild is the addon that loads');
-  }
+/**
+ * Removes better-sqlite3's `build/` folder, on every path through the strip
+ * above, and says so when it does. `fs.rmSync` throws on any failure but a
+ * missing path, so the log line never follows a folder that is still there.
+ */
+function removeCompiledBetterSqlite({ packageDir, log }) {
+  const compiledDir = path.join(packageDir, 'build');
+  if (!fs.existsSync(compiledDir)) return;
+  fs.rmSync(compiledDir, { recursive: true, force: true });
+  log('[afterPack] better-sqlite3: removed build/, which the loader takes ahead of a prebuild');
 }
 
 /**
