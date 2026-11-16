@@ -1237,7 +1237,7 @@ describe('UtilityRestartPolicy', () => {
       expect(mockTrackEvent.mock.calls.map(([, properties]) => (properties as { phase: string }).phase)).toContain('latched');
     });
 
-    // Red-green: drop the loadFailureReported guard and the second crash or rebuilt policy reports again.
+    // Red-green: drop latchIfLoadFailed's loadFailures.has(service) early return and the second crash or rebuilt policy reports again.
     it('reports a load failure once per service per run, across crashes and rebuilt policies', () => {
       const { policy } = makePolicy({ latchOnLoadFailure: true });
       policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));

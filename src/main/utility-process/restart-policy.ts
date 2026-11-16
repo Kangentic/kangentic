@@ -85,10 +85,9 @@ const LOAD_FAILURE_CODE = 'ERR_DLOPEN_FAILED';
  * in-app signal shows. Module scope, like `trackedCrashPhases`: the embed
  * client builds a fresh policy whenever the engine rebuilds it, and a rebuilt
  * client must not fork again. Never decays; the next app run starts clear.
+ * A service enters it once, so its one report goes out when it does.
  */
 const loadFailures = new Map<string, string>();
-/** Services whose load failure was reported this run. */
-const loadFailureReported = new Set<string>();
 
 const DEFAULT_MAX_CRASHES = 3;
 /**
@@ -166,7 +165,6 @@ export function resetUtilityCrashTelemetryForTests(): void {
   trackedCrashPhases.clear();
   firstCrashReported.clear();
   loadFailures.clear();
-  loadFailureReported.clear();
 }
 
 export class UtilityRestartPolicy {
@@ -232,8 +230,6 @@ export class UtilityRestartPolicy {
     const stderr = newest?.stderr?.snapshot() ?? '';
     if (!newest || !stderr.includes(LOAD_FAILURE_CODE)) return;
     loadFailures.set(this.service, describeCrashWithStderr(newest, stderr));
-    if (loadFailureReported.has(this.service)) return;
-    loadFailureReported.add(this.service);
     this.trackCrashOnce('latched', newest);
     this.reportLoadFailure(newest, this.crashCount);
   }
