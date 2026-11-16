@@ -10,20 +10,24 @@ import { isLiveSessionStatus } from '../../../../shared/session-liveness';
  * Open the conversation viewer for this task. The anchor session id only
  * resolves WHICH task to show (`transcripts.get` always returns that task's
  * entire lifecycle regardless of which of its sessions is passed), so any
- * session the task has a record of works. Shared by the header's Conversation pill and the
- * kebab "View conversation" item, so both open the same window. A completed
- * task shows its conversation in its own Conversation tab instead
+ * session the task has a record of works. Shared by the header's Conversation
+ * pill and the kebab "View conversation" item, so both open the same window.
+ * A completed task shows its conversation in its own Conversation tab instead
  * (`completed/CompletedConversationTab.tsx`).
  *
  * "Already open" means the same TASK, not the same session: a window's anchor
- * is whichever session opened it (the live one then, a search hit's own
- * session), so this looks for an open conversation window anchored on any of
- * the task's sessions and reuses its anchor, so a second open raises that
- * window instead of opening another for the same conversation. When several
- * match, the live session's window wins, then the one raised last. With none
- * open it prefers the live session, then the newest. A paused or ended row the listing
- * does not hold is not the live session: after a restart it is a placeholder
- * with no record behind it.
+ * is whichever session opened it (the task's registry session then, a search
+ * hit's own session), so this looks for an open conversation window anchored
+ * on any of the task's sessions and reuses its anchor, so a second open raises
+ * that window instead of opening another for the same conversation. When
+ * several match, the registry session's window wins, then the one raised
+ * last. With none open it prefers the registry session, then the newest
+ * listed one.
+ *
+ * The registry session is the task's row in the session store. A paused or
+ * ended row the listing does not hold is dropped: after a restart it is a
+ * placeholder with no record behind it. A running or queued row stays even
+ * when unlisted.
  *
  * It asks for no tab: a new window shows All and an open one keeps the tab it
  * is on.
@@ -58,8 +62,10 @@ export async function openTaskConversation(taskId: string, projectId: string | n
       registrySessionId = null;
     }
   } catch {
-    // No list, so the row cannot be checked against it: the registry row is
-    // the anchor in any state, a paused placeholder included.
+    // report-ok: the listing is only a check here, and main's IPC wrap
+    // reports a handler that throws. With no list the row cannot be checked
+    // against it, so the registry row is the anchor in any state, a paused
+    // placeholder included.
   }
   const taskWindows = Object.values(useWindowStore.getState().windows).filter(
     (candidate) => candidate.kind === 'conversation' && (candidate.anchor === registrySessionId || taskSessionIds.includes(candidate.anchor)),
