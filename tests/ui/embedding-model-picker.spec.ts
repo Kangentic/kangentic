@@ -54,12 +54,13 @@ function makePreConfig(modelState: string, progress?: number, summaries?: object
 
 /** Seeds a `semantic: 'error'` status (the embed worker crashed past its
  *  restart cap), with or without a `workerError` detail string. */
-function makeErrorPreConfig(workerError?: string): string {
+function makeErrorPreConfig(workerError?: string, workerLoadFailed?: boolean): string {
   const memoryStatus = {
     indexingEnabled: true,
     semantic: 'error',
     activeBackend: undefined,
     workerError,
+    workerLoadFailed,
     model: {
       id: 'bge-small',
       displayName: 'bge small',
@@ -741,6 +742,37 @@ test.describe('Local model error state', () => {
       await expect(status).toBeVisible();
       // Also what a failed model download shows: that path sets the same state with no worker error.
       await expect(status).toHaveText('The local model is unavailable - showing keyword matches.');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('says the native runtime could not load, with the worker error detail', async () => {
+    const workerError = 'exited with code 1: Error: The specified module could not be found.';
+    const { browser, page } = await launchWithState(makeErrorPreConfig(workerError, true));
+    try {
+      await openKnowledgeGraphTab(page);
+      const status = page.getByTestId('semantic-status');
+      await expect(status).toBeVisible();
+      await expect(status).toHaveText(
+        `The local model could not load on this computer - showing keyword matches until Kangentic restarts. (${workerError})`,
+      );
+      await expect(status).not.toContainText('is unavailable');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('says the native runtime could not load when no worker error detail is available', async () => {
+    const { browser, page } = await launchWithState(makeErrorPreConfig(undefined, true));
+    try {
+      await openKnowledgeGraphTab(page);
+      const status = page.getByTestId('semantic-status');
+      await expect(status).toBeVisible();
+      await expect(status).toHaveText(
+        'The local model could not load on this computer - showing keyword matches until Kangentic restarts.',
+      );
+      await expect(status).not.toContainText('is unavailable');
     } finally {
       await browser.close();
     }

@@ -1,0 +1,29 @@
+{
+  "source": "process.report.getReport().sharedObjects after loading onnxruntime-node 1.30.0 (win32/x64) under plain Node on Windows 11, filtered to the MSVC runtime and onnxruntime entries. The embed runtime probe reads the same list under Electron as Node. Home-directory segments are replaced with C:\\Users\\dev; the \\\\?\\ prefixes, the casing and the file names are as the loader printed them.",
+  "systemRuntime": {
+    "bindingDir": "C:\\Users\\dev\\kangentic\\node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64",
+    "sharedObjects": [
+      "C:\\WINDOWS\\System32\\msvcp_win.dll",
+      "\\\\?\\C:\\Users\\dev\\kangentic\\node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64\\onnxruntime_binding.node",
+      "C:\\WINDOWS\\SYSTEM32\\MSVCP140.dll",
+      "\\\\?\\C:\\Users\\dev\\kangentic\\node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64\\onnxruntime.dll",
+      "C:\\WINDOWS\\SYSTEM32\\VCRUNTIME140.dll",
+      "C:\\WINDOWS\\SYSTEM32\\VCRUNTIME140_1.dll",
+      "C:\\WINDOWS\\SYSTEM32\\MSVCP140_1.dll",
+      "C:\\WINDOWS\\SYSTEM32\\MSVCP140_ATOMIC_WAIT.dll"
+    ]
+  },
+  "appLocalRuntime": {
+    "bindingDir": "C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q",
+    "sharedObjects": [
+      "C:\\WINDOWS\\System32\\msvcp_win.dll",
+      "\\\\?\\C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q\\onnxruntime_binding.node",
+      "\\\\?\\C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q\\VCRUNTIME140_1.dll",
+      "\\\\?\\C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q\\VCRUNTIME140.dll",
+      "\\\\?\\C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q\\MSVCP140.dll",
+      "\\\\?\\C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q\\onnxruntime.dll",
+      "\\\\?\\C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q\\MSVCP140_1.dll",
+      "\\\\?\\C:\\Users\\dev\\AppData\\Local\\Temp\\app-local-msvc-oO1S5Q\\MSVCP140_ATOMIC_WAIT.dll"
+    ]
+  }
+}
