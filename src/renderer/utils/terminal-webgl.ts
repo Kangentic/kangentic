@@ -2,6 +2,7 @@ import type { Terminal, ITerminalAddon } from '@xterm/xterm';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { traceTerminalRenderer } from './terminal-grid-registry';
 import { reportRendererFailure } from './renderer-failure';
+import type { GpuGraphicsStatus } from '../../shared/types';
 
 /**
  * WebGL renderer attachment with context-loss recovery and a page-wide
@@ -109,8 +110,10 @@ interface AttachWebglOptions {
  * the block when no further crash extends it; after that the last slot repeats
  * at the block's own period. A probe while blocked is a sync round trip to the
  * browser process that returns null, sub-millisecond and no GPU work, so the
- * unending tail costs nothing in an environment where WebGL never comes back
- * (headless, blocklisted GPU). The numbers are not load-bearing: if Chromium's
+ * unending tail costs little where WebGL never comes back. The environment
+ * Chromium itself reports as WebGL-off (no usable GPU, DESKTOP-32) never gets
+ * here: `graphicsSupport` below keeps it on DOM with no schedule and no
+ * report. The numbers are not load-bearing: if Chromium's
  * expiry changes, recovery slips by at most one tail slot.
  *
  * Do not "fix" this by calling `app.disableDomainBlockingFor3DAPIs()` in main.
@@ -145,31 +148,49 @@ const DEFAULT_RETRY_DELAYS_MS = [2_000, 10_000, 30_000, 30_000, 60_000, 120_000]
 export const WEBGL_ATTACH_BUDGET = 8;
 
 /**
- * True when main started this launch without a GPU process at all
- * (Sentry DESKTOP-18/DESKTOP-W). Set once from App.tsx's boot pull, before
- * any terminal mounts. Module state rather than a store because this module
- * is the only consumer and the value never changes within a launch.
+ * What this launch's graphics can do for a terminal, from the page's boot pull
+ * of main's `GpuGraphicsStatus` (App.tsx in the main window,
+ * usePopOutBootstrap.ts in a pop-out).
  *
- * Preserved across Fast Refresh (HMR Pattern A): App.tsx's boot pull is what
- * sets it, and that effect does not re-run on every module update, so a reset
- * here would quietly put a software-rendered dev session back to retrying
- * WebGL forever.
+ * `webglUnavailable` is true when no WebGL context can exist for the whole
+ * run: main started without a GPU process (Sentry DESKTOP-18/DESKTOP-W), or
+ * Chromium reports WebGL off with no fallback, as on a Linux with no usable
+ * GPU (DESKTOP-32). The retry schedule below never gives up, by design, but a
+ * context that cannot exist is not a context that is temporarily blocked, so
+ * every terminal then stays on the DOM renderer with no retry and no report.
+ *
+ * `webglFeatureStatus` is Chromium's word for WebGL, sent with the fallback
+ * report when WebGL was supposed to be available, so an environment can be
+ * told from a defect. `unknown` until the boot pull lands.
  */
-// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
-let softwareRenderingActive: boolean = import.meta.hot?.data?.softwareRenderingActive ?? false;
-
-/** Called once at boot from App.tsx. Exported for tests, which need to clear
- *  it again between cases. */
-export function setSoftwareRenderingActive(active: boolean): void {
-  softwareRenderingActive = active;
+interface TerminalGraphicsSupport {
+  webglUnavailable: boolean;
+  webglFeatureStatus: string;
 }
 
-// @ts-expect-error -- Vite handles import.meta.hot
-if (import.meta.hot) {
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose((data: Record<string, unknown>) => {
-    data.softwareRenderingActive = softwareRenderingActive;
-  });
+/**
+ * Module state rather than a store because this module is the only consumer
+ * and the value does not change within a launch. Preserved across Fast
+ * Refresh (HMR Pattern A) by this module's one dispose block, below the
+ * registries: the boot pull is what sets it, and that effect does not re-run
+ * on every module update, so a reset here would put a session with no WebGL
+ * back to retrying it forever.
+ *
+ * One object for the module's life, written in place, so the closures of a
+ * terminal attached before a Fast Refresh read the same value the setter of
+ * the re-evaluated module writes.
+ */
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const graphicsSupport: TerminalGraphicsSupport = import.meta.hot?.data?.graphicsSupport ?? { webglUnavailable: false, webglFeatureStatus: 'unknown' };
+
+/** Called once at boot with main's graphics status. Exported for tests, which
+ *  reset it between cases. A status that does not say WebGL is unavailable
+ *  leaves it available, the same answer main gives when it cannot tell. */
+export function setTerminalGraphicsSupport(
+  status: Pick<GpuGraphicsStatus, 'softwareRendering' | 'webglAvailable' | 'webglFeatureStatus'>,
+): void {
+  graphicsSupport.webglUnavailable = status.softwareRendering || status.webglAvailable === false;
+  graphicsSupport.webglFeatureStatus = status.webglFeatureStatus;
 }
 
 interface WebglAttachmentController {
@@ -207,10 +228,15 @@ const webglAttachmentListeners: Set<() => void> = import.meta.hot?.data?.webglAt
 // @ts-expect-error -- Vite handles import.meta.hot
 const reservedWebglKeys: Set<string> = import.meta.hot?.data?.reservedWebglKeys ?? new Set();
 
+// The module's ONLY dispose registration. Vite keeps one callback per module
+// (`disposeMap.set`), so a second `hot.dispose` call silently replaces the
+// first: `graphicsSupport` used to have its own block above and was never
+// stashed, which reset the no-WebGL skip on every Fast Refresh of this module.
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.graphicsSupport = graphicsSupport;
     data.rendererStatusByKey = rendererStatusByKey;
     data.attachmentControllersByKey = attachmentControllersByKey;
     data.webglAttachmentListeners = webglAttachmentListeners;
@@ -333,12 +359,13 @@ export function attachWebglRenderer(
   rendererKey: string,
   options?: AttachWebglOptions,
 ): () => void {
-  // This launch has no GPU process at all (Sentry DESKTOP-18/DESKTOP-W: main
-  // started Chromium with --disable-gpu and --in-process-gpu after the last
-  // run was killed by its GPU). The retry schedule below never gives up, by
-  // design, but there is nothing here to come back: a context that cannot
-  // exist is not a context that is temporarily blocked. Report DOM and stop.
-  if (softwareRenderingActive) {
+  // No WebGL context can exist this launch (see `graphicsSupport`): main
+  // started without a GPU process, or Chromium reports WebGL off with no
+  // fallback. Report DOM and stop: no addon, no retry, no report. The checks in
+  // tryAttach and recordFailureAndArm would reach the same renderer, but this
+  // one also keeps the terminal out of the budget, the coordinator's plan and
+  // the controller registry.
+  if (graphicsSupport.webglUnavailable) {
     rendererStatusByKey.set(rendererKey, {
       renderer: 'dom',
       contextLossCount: 0,
@@ -393,6 +420,15 @@ export function attachWebglRenderer(
     retryDelaysMs[Math.min(failures, retryDelaysMs.length) - 1];
 
   const tryAttach = (): boolean => {
+    // The boot pull can land after this terminal mounted (App.tsx reads the
+    // status asynchronously), leaving a retry armed or a budget-suspended
+    // controller the coordinator may resume. Every acquisition comes through
+    // here, so this one check keeps all of them from constructing an addon
+    // once WebGL is known not to exist; recordFailureAndArm then stops.
+    if (graphicsSupport.webglUnavailable) {
+      flipRenderer('dom');
+      return false;
+    }
     let addon: WebglAddonLike;
     try {
       addon = createAddon();
@@ -441,6 +477,14 @@ export function attachWebglRenderer(
    * through here: it advances the schedule, logs, and arms the next slot.
    */
   function recordFailureAndArm(failure: AcquisitionFailure): void {
+    // WebGL cannot exist this launch (an environment fact, DESKTOP-32), so
+    // this is not a failure to retry or report. Stay on DOM with nothing
+    // armed. That holds for a loss on an addon that attached before the
+    // status landed too: main's answer outranks the one context that worked.
+    if (graphicsSupport.webglUnavailable) {
+      clearRetryTimer();
+      return;
+    }
     status.failedAttempts += 1;
     const failures = status.failedAttempts;
     const delayMs = delayForFailures(failures);
@@ -457,10 +501,15 @@ export function attachWebglRenderer(
       console.warn(`[terminal-webgl] WebGL still unavailable for ${rendererKey}; retrying every ${delayMs}ms`);
       // The schedule's first pass failed, so this terminal stays on the DOM
       // renderer: once per run, whatever terminal hits it (the latch is per area,
-      // op and class), with the failure kind as a fixed word.
+      // op and class), with the failure kind as a fixed word. `featureStatus`
+      // is Chromium's word for WebGL when main said it was available, so a
+      // real defect (`enabled`) can be told from an environment main could
+      // not judge (`pending`, an unmeasured value).
       const fallback = new Error('A terminal fell back to the DOM renderer');
       fallback.name = 'WebglFallbackError';
-      reportRendererFailure('terminal', 'webgl_fallback', fallback, { webgl: { failure, contextLosses: status.contextLossCount } });
+      reportRendererFailure('terminal', 'webgl_fallback', fallback, {
+        webgl: { failure, contextLosses: status.contextLossCount, featureStatus: graphicsSupport.webglFeatureStatus },
+      });
     }
     armRetryTimer(delayMs);
   }
@@ -572,10 +621,11 @@ export function attachWebglRenderer(
     suspended = true;
     status.suspendedByBudget = true;
   } else if (!tryAttach()) {
-    // WebGL refused or unavailable at mount (blocked after a GPU crash,
-    // headless, blocklisted GPU): same schedule as a loss. In a WebGL-less
-    // environment the tail keeps probing at its slowest slot for the life of
-    // the terminal, which is one null getContext every two minutes.
+    // WebGL refused or unavailable at mount (blocked after a GPU crash, or an
+    // environment main could not judge): same schedule as a loss. Where
+    // Chromium reports WebGL off outright, `graphicsSupport` skips all of
+    // this; anything else keeps probing at the tail's slowest slot, one null
+    // getContext every two minutes.
     recordFailureAndArm('unavailable');
   }
 

@@ -38,7 +38,7 @@ import { openTaskFromNotification } from './utils/open-task-from-notification';
 import { asSentence, describeIpcError } from './lib/ipc-error';
 import { stopScriptFailureBody } from './lib/stop-script-toast';
 import { resolveGpuNotice } from './utils/gpu-notice';
-import { setSoftwareRenderingActive } from './utils/terminal-webgl';
+import { setTerminalGraphicsSupport } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { notificationConfigNow, playEventSound } from './utils/event-sound-player';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
@@ -192,11 +192,10 @@ export function App() {
     }).then((status) => {
       if (!status) return;
       // Arrives asynchronously, so a terminal that mounts before this lands
-      // will attempt WebGL once and arm a retry. Harmless (the attach path
-      // already handles a refused context) and not worth a synchronous boot
-      // hop to avoid, but it does mean the skip below is an optimisation for
-      // later mounts rather than a hard guarantee for the first one.
-      setSoftwareRenderingActive(status.softwareRendering);
+      // may attempt WebGL once and arm a retry. Its next acquisition reads
+      // the status set here and stops without retrying or reporting
+      // (terminal-webgl.ts tryAttach), so the early mount costs one attempt.
+      setTerminalGraphicsSupport(status);
       const notice = resolveGpuNotice(status);
       if (!notice) return;
       // Main wrote graphicsAccelerationEnabled: false during whenReady, which may
