@@ -9,6 +9,10 @@
  * twice. Strict resolution counts the VISIBLE matches and refuses to pick one
  * when there is more than one, the way a Playwright Locator does.
  *
+ * "Visible" is the agent-facing word for what `buildActionableMatchesExpression`
+ * in `cdp.ts` calls a match a user could act on: connected, laid out with a
+ * non-zero box, not `visibility: hidden`, and not inside an `inert` subtree.
+ *
  * The refusal travels as a thrown error rather than a return value so every
  * primitive in `cdp.ts` keeps its return type, and `withGuest` turns it into
  * the `ambiguous-selector` kind in one place, next to `pane-not-focused`.
@@ -41,12 +45,30 @@ export interface SelectorCandidate {
   selector: string;
 }
 
+/**
+ * The longest a described field may be. The page's expression clips `text` to
+ * 80, but every field comes from the page, and a multi-megabyte `aria-label`
+ * would otherwise ride whole into the agent's error envelope.
+ */
+export const CANDIDATE_FIELD_MAX_CHARS = 200;
+
+/**
+ * The longest `selector` a candidate may carry. A selector is never clipped,
+ * because a cut CSS path is invalid or names a different element, and the
+ * agent is told to retry with it. A candidate past this is dropped instead.
+ */
+export const CANDIDATE_SELECTOR_MAX_CHARS = 2000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function clippedString(value: unknown): string {
+  return typeof value === 'string' ? value.slice(0, CANDIDATE_FIELD_MAX_CHARS) : '';
+}
+
 function stringOrNull(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
+  return typeof value === 'string' ? value.slice(0, CANDIDATE_FIELD_MAX_CHARS) : null;
 }
 
 function finiteNumber(value: unknown): number {
@@ -57,19 +79,21 @@ function finiteNumber(value: unknown): number {
  * The candidates a page described, checked field by field. The page runs our
  * expression, but it is still the page: a script can patch what that
  * expression calls, so the shape is not trusted. An entry without a string
- * `selector` cannot be retried and is dropped; any other field that is the
- * wrong type is read as empty.
+ * `selector`, or with one past `CANDIDATE_SELECTOR_MAX_CHARS`, cannot be
+ * retried and is dropped; any other field that is the wrong type is read as
+ * empty, and a string field is clipped to `CANDIDATE_FIELD_MAX_CHARS`.
  */
 export function parseSelectorCandidates(value: unknown): SelectorCandidate[] {
   if (!Array.isArray(value)) return [];
   const candidates: SelectorCandidate[] = [];
   for (const entry of value.slice(0, AMBIGUOUS_CANDIDATE_LIMIT)) {
     if (!isRecord(entry) || typeof entry.selector !== 'string') continue;
+    if (entry.selector.length > CANDIDATE_SELECTOR_MAX_CHARS) continue;
     const box = isRecord(entry.box) ? entry.box : {};
     candidates.push({
       index: finiteNumber(entry.index),
-      tag: typeof entry.tag === 'string' ? entry.tag : '',
-      text: typeof entry.text === 'string' ? entry.text : '',
+      tag: clippedString(entry.tag),
+      text: clippedString(entry.text),
       id: stringOrNull(entry.id),
       role: stringOrNull(entry.role),
       ariaLabel: stringOrNull(entry.ariaLabel),

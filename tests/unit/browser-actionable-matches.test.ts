@@ -14,6 +14,7 @@
  * `devtools-query-all.test.ts` runs its sibling builder.
  */
 import { describe, it, expect } from 'vitest';
+import { parseSelectorCandidates } from '../../src/main/browser/cdp/ambiguous-selector';
 import {
   buildActionableMatchesExpression,
   buildSelectorAllExpression,
@@ -100,9 +101,23 @@ function element(options: FakeElementOptions): FakeElement {
   return self;
 }
 
+interface PageCandidate {
+  index: number;
+  tag: string;
+  text: string;
+  id: string | null;
+  role: string | null;
+  ariaLabel: string | null;
+  name: string | null;
+  inDialog: boolean;
+  topmost: boolean | null;
+  box: { x: number; y: number; width: number; height: number };
+  selector: string;
+}
+
 interface PageAnswer {
   total: number;
-  candidates: Array<{ index: number; text: string; id: string | null; inDialog: boolean; topmost: boolean | null; selector: string }>;
+  candidates: PageCandidate[];
 }
 
 /**
@@ -265,6 +280,96 @@ describe('buildActionableMatchesExpression', () => {
     expect(page.candidates[0].text).toBe(`Item${'a'.repeat(76)}`);
     expect(page.candidates[0].text).toHaveLength(80);
     expect(page.candidates[1].text).toBe('Item');
+  });
+
+  it('collapses newlines and runs of spaces in candidate text without touching the letter s', () => {
+    // The collapse regex sits inside a template literal, where a single
+    // backslash would turn \s into a bare s and strip every s from the text.
+    const messy = element({ tag: 'button', text: 'Save\n  changes   now' });
+    const other = element({ tag: 'button', text: 'Other' });
+    const root = element({ tag: 'html', children: [messy, other] });
+
+    const { answer } = evaluate('button', root, [messy, other]);
+
+    const page = answer as PageAnswer;
+    expect(page.candidates[0].text).toBe('Save changes now');
+  });
+
+  it('numbers same-tag siblings with :nth-of-type in a candidate selector', () => {
+    const first = element({ tag: 'button', text: 'Go' });
+    const second = element({ tag: 'button', text: 'Go' });
+    const body = element({ tag: 'body', children: [first, second] });
+    const root = element({ tag: 'html', children: [body] });
+
+    const { answer } = evaluate('button', root, [first, second]);
+
+    const page = answer as PageAnswer;
+    expect(page.candidates.map((candidate) => candidate.selector)).toEqual([
+      'html > body > button:nth-of-type(1)',
+      'html > body > button:nth-of-type(2)',
+    ]);
+  });
+
+  it('does not shorten a selector to an id that more than one element carries', () => {
+    const first = element({ tag: 'button', text: 'Go', id: 'dup' });
+    const second = element({ tag: 'button', text: 'Go', id: 'dup' });
+    const body = element({ tag: 'body', children: [first, second] });
+    const root = element({ tag: 'html', children: [body] });
+
+    const { answer } = evaluate('button', root, [first, second]);
+
+    const page = answer as PageAnswer;
+    for (const candidate of page.candidates) {
+      expect(candidate.selector).not.toBe('#dup');
+      expect(candidate.selector.startsWith('#dup')).toBe(false);
+    }
+    expect(page.candidates.map((candidate) => candidate.selector)).toEqual([
+      'html > body > button:nth-of-type(1)',
+      'html > body > button:nth-of-type(2)',
+    ]);
+  });
+
+  it('round-trips every candidate field through parseSelectorCandidates unchanged (#820 two Save buttons)', () => {
+    // The page expression and the parser live in different files and agree
+    // only by field name. A field renamed on one side shows up here as a
+    // missing or null value on the parsed side.
+    const formSave = element({
+      tag: 'button',
+      text: 'Save',
+      rect: [10, 10, 80, 24],
+      attributes: { role: 'button', name: 'save-form' },
+    });
+    const modalSave = element({
+      tag: 'button',
+      text: 'Save',
+      id: 'modal-save',
+      rect: [400, 300, 90, 30],
+      attributes: { role: 'menuitem', 'aria-label': 'Save changes', name: 'save-modal' },
+    });
+    const form = element({ tag: 'form', children: [formSave] });
+    const dialog = element({ tag: 'div', dialog: true, children: [modalSave] });
+    const body = element({ tag: 'body', children: [form, dialog] });
+    const root = element({ tag: 'html', children: [body] });
+    const backdrop = element({ tag: 'div' });
+
+    const { answer } = evaluate('text*="Save"', root, [formSave, modalSave], (x) => (x > 300 ? modalSave : backdrop));
+
+    const page = answer as PageAnswer;
+    expect(page.candidates).toHaveLength(2);
+    expect(page.candidates[1]).toMatchObject({
+      tag: 'button',
+      text: 'Save changes',
+      id: 'modal-save',
+      role: 'menuitem',
+      ariaLabel: 'Save changes',
+      name: 'save-modal',
+      inDialog: true,
+      topmost: true,
+      box: { x: 400, y: 300, width: 90, height: 30 },
+      selector: '#modal-save',
+      index: 1,
+    });
+    expect(parseSelectorCandidates(page.candidates)).toStrictEqual(page.candidates);
   });
 
   it('collapses a match nested two levels deep inside other matches to the innermost element', () => {

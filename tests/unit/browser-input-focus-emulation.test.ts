@@ -1211,6 +1211,28 @@ describe('strict selector resolution (GitHub #820)', () => {
     detachDebugger(guest);
   });
 
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('does not throw when the described total is %s, and resolves the first match instead', async (_label, badTotal) => {
+    const { guest, methods, sent } = fakeGuest({
+      'Runtime.evaluate': { result: { type: 'object', objectId: 'described-4' } },
+      'Runtime.callFunctionOn': {
+        result: { value: { total: badTotal, candidates: [{ index: 0, tag: 'button', text: 'Save', selector: '#first' }] } },
+      },
+      ...resolvableNode(QUAD),
+    });
+    attachDebugger(guest);
+    sent.length = 0;
+
+    const ok = await clickAtCenterOfSelector(guest, '#save', { strict: true });
+
+    expect(ok).toBe(true);
+    expect(methods()).toContain('DOM.querySelector');
+    expect(sent.some((entry) => entry.method === 'Runtime.releaseObject' && entry.params?.objectId === 'described-4')).toBe(true);
+    detachDebugger(guest);
+  });
+
   describe('every primitive passes strictness down', () => {
     const AMBIGUOUS_REPLIES = {
       'Runtime.evaluate': { result: { type: 'object', objectId: 'described-3' } },
