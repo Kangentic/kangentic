@@ -143,6 +143,7 @@ import {
   startCommandTerminal,
 } from '../../src/main/ipc/handlers/transient-sessions';
 import { AgentCommandTooLongError, AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
+import { AgentBatchShimUnresolvedError } from '../../src/main/pty/spawn/agent-start-refused';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { SpawnTransientSessionInput } from '../../src/shared/types';
 
@@ -706,6 +707,26 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
     await expect(startCommandTerminal(context as never, { projectId: 'proj-1' })).rejects.toBe(refusal);
 
     expect(mockReportPreflightFailure).not.toHaveBeenCalled();
+  });
+
+  it('reports a shim the launcher cannot resolve: a gap in the launcher, unlike the refusals beside it', async () => {
+    mockReportPreflightFailure.mockClear();
+    const context = createMockContext();
+    const gap = new AgentBatchShimUnresolvedError('unparsed');
+    context.sessionManager.spawn.mockRejectedValueOnce(gap);
+
+    await expect(startCommandTerminal(context as never, { projectId: 'proj-1' })).rejects.toBe(gap);
+
+    expect(mockReportPreflightFailure).toHaveBeenCalledTimes(1);
+    expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({ cause: 'command_terminal', error: gap }));
+  });
+
+  it('starts a Command Terminal with no opening prompt', async () => {
+    const context = createMockContext();
+
+    await startCommandTerminal(context as never, { projectId: 'proj-1' });
+
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: 'none' }));
   });
 
   it('still reports any other error the spawn throws', async () => {

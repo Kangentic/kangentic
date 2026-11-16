@@ -156,7 +156,7 @@ export type BatchShimGiveUp =
   /** A Node script whose shim sets `NODE_PATH`, which the script may read. */
   | 'node_path';
 
-export type BatchShimOutcome = { launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp };
+type BatchShimOutcome ={ launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp };
 
 /**
  * What a `.cmd` shim runs, so a launch too long for one can start it directly,
@@ -172,7 +172,7 @@ export type BatchShimOutcome = { launch: BatchShimLaunch } | { gaveUp: BatchShim
  * native `.exe` target (Claude Code's npm bin is `bin/claude.exe`) never reads
  * it, and pnpm calls such a target directly, so it starts as an npm shim's does.
  */
-export function batchShimLaunchOutcome(
+function batchShimLaunchOutcome(
   shimPath: string,
   dependencies: NpmShimTargetDependencies = {},
 ): BatchShimOutcome {

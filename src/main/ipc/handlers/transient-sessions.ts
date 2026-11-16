@@ -39,7 +39,7 @@ import type {
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
-import { AgentStartRefusedError } from '../../pty/spawn/pty-spawn';
+import { AgentBatchShimUnresolvedError, AgentStartRefusedError } from '../../pty/spawn/pty-spawn';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -459,6 +459,8 @@ export async function startCommandTerminal(
       command,
       cwd: projectRoot,
       startPath: commandTerminalStartPath(input, restore),
+      // A Command Terminal starts with no prompt.
+      openingPrompt: 'none',
       agentCliVersion: detection.version,
       agentCliPath: launch.agentPath,
       env: extraEnv ?? undefined,
@@ -523,8 +525,10 @@ export async function startCommandTerminal(
   } catch (error) {
     // A typed refusal is an answer, a start the spawn refused is another, and a
     // shell that did not start reported from its own spawn, so only what nothing
-    // expected reports here.
-    if (!(error instanceof CommandTerminalStartError) && !(error instanceof AgentStartRefusedError)) {
+    // expected reports here. A shim the launcher cannot resolve is a refusal that
+    // still reports: it is a gap in the launcher, not the user's input.
+    const refusedAsExpected = error instanceof AgentStartRefusedError && !(error instanceof AgentBatchShimUnresolvedError);
+    if (!(error instanceof CommandTerminalStartError) && !refusedAsExpected) {
       reportPreflightFailure({
         cause: 'command_terminal',
         error,

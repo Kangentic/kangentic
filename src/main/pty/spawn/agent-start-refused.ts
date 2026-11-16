@@ -69,11 +69,10 @@ export class AgentCommandTooLongError extends AgentStartRefusedError {
  *
  * Past that budget the launch has to start what the shim starts (through
  * `launch.cmd` under cmd, directly under the other shells), since the shim's
- * own `%*` line fails past its limit with no error. A shim `batchShimLaunchOutcome` cannot resolve used to be
- * typed a named refusal into its terminal, and the card showed a working agent
- * for 30 to 60 s until the absence sweep reported it (Sentry DESKTOP-3Q,
- * DESKTOP-3R). Now it is refused here, with the same card reason as a command
- * too long for its shell.
+ * own `%*` line fails past its limit with no error. A shim that cannot be
+ * resolved is refused here, before the PTY, with the same card reason as a
+ * command too long for its shell, so the card never shows a working agent
+ * (Sentry DESKTOP-3Q, DESKTOP-3R).
  *
  * Reportable on purpose, unlike `AgentCommandTooLongError`: a shim this cannot
  * resolve is a gap in the launcher, not the user's prompt, and `shimGaveUp`

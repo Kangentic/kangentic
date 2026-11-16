@@ -331,6 +331,98 @@ describe('SessionIdManager', () => {
       expect(outcomes.mock.calls.map((call) => [call[0], call[1].filesystemScan])).toEqual([['failed', 'failed'], ['polling', 'pending']]);
     });
 
+    // A status write with no id marks hasAgentSessionId true, so only
+    // agentSessionIdOf says whether an id is actually held.
+    it('treats a session as having no id when hasAgentSessionId is true but agentSessionIdOf is null', async () => {
+      const windowPassed = vi.fn();
+      const outcomes = vi.fn();
+      const flagOnlyManager = new SessionIdManager({
+        hasAgentSessionId: () => true,
+        notifyAgentSessionId: () => undefined,
+        sessionExists: () => true,
+        agentSessionIdOf: () => null,
+        onCaptureWindowPassed: windowPassed,
+        onCaptureOutcome: outcomes,
+      });
+      flagOnlyManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(windowPassed).toHaveBeenCalledWith('s1');
+
+      flagOnlyManager.removeSession('s1');
+      expect(outcomes).toHaveBeenCalledTimes(1);
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'none' });
+    });
+
+    it('records an empty folder scan on the never outcome', async () => {
+      const { outcomeManager, outcomes } = managerWithOutcomes();
+      existingSessions.add('s1');
+      outcomeManager.init('s1', makeAdapter({ fromFilesystem: async () => null }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      outcomeManager.removeSession('s1');
+
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'empty' });
+    });
+
+    it('records a found folder scan on the never outcome when the id was not accepted', async () => {
+      const windowPassed = vi.fn();
+      const outcomes = vi.fn();
+      const refusingManager = new SessionIdManager({
+        hasAgentSessionId: () => true,
+        notifyAgentSessionId: () => undefined,
+        sessionExists: () => true,
+        agentSessionIdOf: () => null,
+        onCaptureWindowPassed: windowPassed,
+        onCaptureOutcome: outcomes,
+      });
+      refusingManager.init('s1', makeAdapter({ fromFilesystem: async () => 'found-id' }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      refusingManager.removeSession('s1');
+
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'found' });
+    });
+
+    it('records a found folder scan on a late outcome', async () => {
+      const { outcomeManager, outcomes } = managerWithOutcomes();
+      existingSessions.add('s1');
+      let resolveScan: (capturedId: string | null) => void = () => undefined;
+      const scan = new Promise<string | null>((resolve) => { resolveScan = resolve; });
+      outcomeManager.init('s1', makeAdapter({ fromFilesystem: () => scan }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      resolveScan('late-id');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(capturedIds.get('s1')).toBe('late-id');
+      outcomeManager.noteCaptured('s1');
+
+      expect(outcomes).toHaveBeenCalledTimes(1);
+      expect(outcomes.mock.calls[0][1]).toMatchObject({ kind: 'late', filesystemScan: 'found' });
+    });
+
+    it('settles an earlier spawn under the same id on init, so its ceiling never fires for the new spawn', async () => {
+      const { outcomeManager, windowPassed, outcomes } = managerWithOutcomes();
+      existingSessions.add('s1');
+      outcomeManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(windowPassed).toHaveBeenCalledTimes(1);
+      expect(outcomes).not.toHaveBeenCalled();
+
+      // Respawn under the same id with no removeSession in between.
+      outcomeManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
+      expect(outcomes).toHaveBeenCalledTimes(1);
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'none' });
+
+      // The first spawn's ceiling (5 min after it) would land here. The new
+      // spawn's window passes at +31 s from the second init (about 62 s in) and
+      // its own ceiling is later still, so by 5 min after the first spawn the
+      // only extra outcome possible is the new spawn's own ceiling.
+      outcomes.mockClear();
+      await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS - 31_000 - 1_000);
+      // Now at CAPTURE_CEILING_MS - 1 s after the first spawn: nothing yet.
+      expect(outcomes).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(2_000);
+      // First spawn's ceiling instant has passed; no outcome for the old ceiling.
+      expect(outcomes).not.toHaveBeenCalled();
+    });
+
     it('holds nothing and arms nothing without the callbacks, as in the pty host', async () => {
       existingSessions.add('s1');
       manager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');

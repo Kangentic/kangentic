@@ -63,6 +63,62 @@ describe('Codex session id store evidence', () => {
   });
 });
 
+// Codex reduces today's and yesterday's folder answers: present > unknown > absent.
+describe('Codex storeEvidence reduction of the two folder answers', () => {
+  let codexHome: string;
+  const originalCodexHome = process.env.CODEX_HOME;
+
+  beforeEach(() => {
+    codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-store-reduce-'));
+    process.env.CODEX_HOME = codexHome;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = originalCodexHome;
+    fs.rmSync(codexHome, { recursive: true, force: true });
+  });
+
+  /** Answer each folder's stat by its path: a rejection with the given code, or a real directory's stats. */
+  function stubFolderStats(todayAnswer: 'EACCES' | 'ENOENT' | 'exists', yesterdayAnswer: 'EACCES' | 'ENOENT' | 'exists'): void {
+    const todayFolder = codexSessionsDirForToday();
+    const yesterdayFolder = codexSessionsDirForYesterday();
+    const directoryStats = fs.statSync(codexHome);
+    vi.spyOn(fs.promises, 'stat').mockImplementation(async (target) => {
+      const answer = String(target) === todayFolder ? todayAnswer : String(target) === yesterdayFolder ? yesterdayAnswer : 'ENOENT';
+      if (answer === 'exists') return directoryStats;
+      throw Object.assign(new Error(answer), { code: answer });
+    });
+  }
+
+  const storeEvidence = () => {
+    const check = new CodexAdapter().runtime.sessionId?.storeEvidence;
+    if (!check) throw new Error('Codex declares no store evidence');
+    return check({ cwd: codexHome });
+  };
+
+  it('reads unknown when one folder is unreadable and the other is missing', async () => {
+    stubFolderStats('EACCES', 'ENOENT');
+    await expect(storeEvidence()).resolves.toBe('unknown');
+  });
+
+  it('reads unknown when yesterday is unreadable and today is missing', async () => {
+    stubFolderStats('ENOENT', 'EACCES');
+    await expect(storeEvidence()).resolves.toBe('unknown');
+  });
+
+  it('reads present when one folder is unreadable and the other exists', async () => {
+    stubFolderStats('EACCES', 'exists');
+    await expect(storeEvidence()).resolves.toBe('present');
+  });
+
+  it('reads present when today exists and yesterday is unreadable', async () => {
+    stubFolderStats('exists', 'EACCES');
+    await expect(storeEvidence()).resolves.toBe('present');
+  });
+});
+
 describe('pathStoreEvidence error mapping', () => {
   afterEach(() => {
     vi.restoreAllMocks();

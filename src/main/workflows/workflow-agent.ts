@@ -804,6 +804,7 @@ async function startWorkflowAgentWithPull(
     cwd: projectRoot,
     ...(remoteLaunch ? { remote: remoteLaunch.remote } : {}),
     startPath: 'workflow',
+    openingPrompt: prompt === undefined ? 'none' : typedContinuation === undefined ? 'command_line' : 'typed',
     agentCliVersion: spawnCli.version,
     agentCliPath: launch.agentPath,
     env: extraEnv ?? undefined,
