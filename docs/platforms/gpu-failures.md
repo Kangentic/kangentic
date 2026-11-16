@@ -120,8 +120,9 @@ Linux rows come from Ubuntu 24.04 under WSLg, whose GL is Mesa's d3d12 driver ra
 one, and which Chromium blocklists, so the control needed `--ignore-gpu-blocklist` to start on the
 GPU. macOS has not been measured. `app.getGPUInfo('complete')` still settles under the switches
 (1 ms on Windows), and still names the adapter, so the report loses nothing by running in this
-mode. `terminal-webgl.ts` skips its attach entirely in this mode, and on a Linux with no usable GPU
-(below), rather than retrying on its usual schedule: the context is not blocked, it cannot exist.
+mode. `terminal-webgl.ts` skips its attach entirely in this mode, and wherever Chromium reports no
+WebGL (below), rather than retrying on its usual schedule: the context is not blocked, it cannot
+exist.
 It keys the skip on `softwareRendering` or on `webglAvailable: false`, not on the raw `webgl` word,
 because `unavailable_software` does not by itself mean no context (see Linux with no usable GPU,
 below).
@@ -202,7 +203,8 @@ DOM, no retry, no report. Measured on Electron 45.1.0 (2026-11-16), reading
 | WSLg, `--ignore-gpu-blocklist` | `disabled_off` | `enabled` | yes |
 | Windows, working NVIDIA GPU | `disabled_off` | `enabled` | yes |
 
-Three things follow, and `createWebglAvailabilityGate` (`gpu-health.ts`) holds all of them:
+Three things follow. `createWebglAvailabilityGate` holds the wait, and `resolveWebglAvailability`
+holds the word set and the `webgl` key read (both in `gpu-health.ts`):
 
 - The status reads a preliminary `disabled_off` everywhere until the GPU process first reports,
   100 to 300 ms after `whenReady`. The `gpuHealth:status` handler waits for that first update, up

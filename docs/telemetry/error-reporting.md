@@ -461,9 +461,10 @@ in one Sentry org, one triage surface.
     stack grouping: a renderer catch often holds an IPC rejection only the renderer sees (no handler
     registered, a clone failure), whose frames are Electron's `ipcRenderer` internals in every area. It is latched
     per key under HMR, and has no Sentry import: `error-reporting.ts` registers its sink at init.
-    The WebGL fallback's `webgl` context holds three fixed words: the failure kind, the context-loss
-    count, and `featureStatus`, Chromium's `getGPUFeatureStatus().webgl` as main read it (or
-    `pending`). A machine where Chromium reports WebGL off never files it (DESKTOP-32,
+    The WebGL fallback's `webgl` context holds the failure kind (a word), the context-loss count (a
+    number), and `featureStatus` (a word): Chromium's `getGPUFeatureStatus().webgl` as main read it,
+    `pending` when the GPU process had not reported in time, or `unknown` before the status is
+    read. A machine where Chromium reports WebGL off never files it (DESKTOP-32,
     [GPU process failures](../platforms/gpu-failures.md)). The same feature-status class already
     ships in the GPU process report's `featureStatusOnReport`.
 
