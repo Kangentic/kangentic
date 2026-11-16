@@ -332,6 +332,29 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
     }));
   });
 
+  // The launch report's opening_prompt tag reads how the prompt was delivered off
+  // the session row: a prompt preparation kept was built into the command.
+  //
+  // Red-green: change the `openingPrompt` expression in auto-spawn.ts's spawn call
+  // and one of these fails.
+  it.each([
+    { label: 'a prompt', prompt: 'Fix the login flow', expected: 'command_line' },
+    { label: 'no prompt', prompt: null, expected: 'none' },
+  ])('hands spawn openingPrompt $expected for $label', async ({ prompt, expected }) => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      const prepared = preparedSpawn('task-lost');
+      return { ...prepared, data: { ...prepared.data, prompt } } as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+      new Set(['session-lost']),
+    );
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: expected }));
+  });
+
   // The launch report's resume tags read the evidence off the session row, so a
   // startup respawn that drops it sends a resume failure with nothing to triage.
   //

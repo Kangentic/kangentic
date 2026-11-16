@@ -125,6 +125,37 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
     expect(killChildTreeNowMock).not.toHaveBeenCalled();
   });
 
+  it('carries the signal and timedOut: true when the timeout kill closes the binary before its abort error', async () => {
+    vi.useFakeTimers();
+    const child = fakeChild(4242);
+    spawnMock.mockReturnValue(child);
+
+    const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000 });
+    const caught = pending.catch((error: unknown) => error);
+    vi.advanceTimersByTime(1_000);
+    child.emit('close', null, 'SIGTERM');
+
+    const error = await caught as Error & { signal?: string; timedOut?: boolean };
+    expect(error.message).toMatch(/git fetch --all killed by signal SIGTERM after 1000ms timeout/);
+    expect(error.signal).toBe('SIGTERM');
+    expect(error.timedOut).toBe(true);
+  });
+
+  it('carries the exit code and timedOut: false for a binary that exits non-zero', async () => {
+    const child = fakeChild(4242);
+    spawnMock.mockReturnValue(child);
+
+    const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000 });
+    const caught = pending.catch((error: unknown) => error);
+    child.stderr.emit('data', Buffer.from('fatal: nope'));
+    child.emit('close', 128, null);
+
+    const error = await caught as Error & { exitCode?: number; timedOut?: boolean };
+    expect(error.message).toMatch(/exited with code 128: fatal: nope/);
+    expect(error.exitCode).toBe(128);
+    expect(error.timedOut).toBe(false);
+  });
+
   it('contrast: a shell command gets no `signal`, leads its own group on POSIX, and loses its tree on abort', async () => {
     const child = fakeChild(4242);
     spawnMock.mockReturnValue(child);

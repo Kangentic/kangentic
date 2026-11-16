@@ -863,6 +863,27 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
     }));
   });
 
+  // The launch report's opening_prompt tag reads it off the session row: a recap
+  // preparation kept was built into the command.
+  //
+  // Red-green: change the `openingPrompt` expression in resume-suspended.ts's
+  // spawn call and one of these fails.
+  it.each([
+    { label: 'a recap', prompt: 'Pick up where you left off', expected: 'command_line' },
+    { label: 'no prompt', prompt: null, expected: 'none' },
+  ])('hands spawn openingPrompt $expected for $label', async ({ prompt, expected }) => {
+    prepareAgentSpawnMock.mockResolvedValue({
+      ...preparedResume(),
+      data: { ...preparedResume().data, prompt },
+    });
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'running' });
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: expected }));
+  });
+
   // Red-green: drop `resumeEvidence: input.resumeEvidence` from the spawn call in
   // resume-suspended.ts and this fails.
   it('hands spawn the evidence the resume check read', async () => {

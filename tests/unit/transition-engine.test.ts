@@ -1829,6 +1829,7 @@ describe('TransitionEngine - a resume prompt that does not ride the command line
       expect(outcome.unsentPrompt).toBeNull();
       expect(outcome.typedOpening ?? null).toBeNull();
       expect(sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
+      expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: 'command_line' }));
     });
 
     it('keeps the fresh prompt off, hands it back as the opening and opens idle when the adapter types it', async () => {
@@ -1841,6 +1842,7 @@ describe('TransitionEngine - a resume prompt that does not ride the command line
       expect(outcome.typedOpening).toBe('Fix the login flow');
       expect(outcome.unsentPrompt).toBeNull();
       expect(sessionManager.markIdleAuthoritative).toHaveBeenCalledWith('pty-session-1');
+      expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: 'typed' }));
     });
 
     it('hands back the task template as the opening, and a message it left out as unsent', async () => {
@@ -1862,6 +1864,7 @@ describe('TransitionEngine - a resume prompt that does not ride the command line
       expect(outcome.unsentPrompt).toBeNull();
       expect(outcome.typedOpening ?? null).toBeNull();
       expect(sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
+      expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: 'none' }));
     });
 
     it('still keeps a typed adapter\'s resume prompt on the resume path', async () => {
