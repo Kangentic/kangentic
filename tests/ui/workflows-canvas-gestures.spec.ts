@@ -444,15 +444,32 @@ test.describe('Workflows canvas gestures', () => {
   // disabled until a card has been moved, so a gesture let go over it never saw its
   // release: the card stayed on the pointer, the canvas followed the mouse, the link
   // stayed drawn, each until the next click.
-  for (const gesture of ['a card drag', 'a pan', 'a link drag'] as const) {
-    test(`${gesture} let go over a disabled tool ends`, async () => {
+  // The rule covers every disabled form control in the window, not only the canvas's
+  // panel. No control outside the canvas is disabled in the `draft` seed, so the
+  // second target is a stand-in disabled button over the header strip: one of them.
+  for (const [gesture, target] of [
+    ['a card drag', 'panel'], ['a pan', 'panel'], ['a link drag', 'panel'],
+    ['a card drag', 'outside'], ['a pan', 'outside'], ['a link drag', 'outside'],
+  ] as const) {
+    test(`${gesture} let go over a disabled ${target === 'panel' ? 'tool' : 'control outside the canvas'} ends`, async () => {
       const { browser, page } = await launch('draft');
       try {
-        const autoLayout = byTestId(page, 'workflow-auto-layout');
-        await expect(autoLayout).toBeDisabled();
-        // At rest the tool takes the pointer, for the tip that says why it is disabled.
-        await expect(autoLayout).toHaveCSS('pointer-events', 'auto');
-        const tool = await centerOf(page, autoLayout);
+        let disabledTarget = byTestId(page, 'workflow-auto-layout');
+        if (target === 'outside') {
+          await page.evaluate(() => {
+            const standIn = document.createElement('button');
+            standIn.disabled = true;
+            standIn.setAttribute('data-testid', 'stand-in-disabled');
+            standIn.textContent = 'Disabled';
+            standIn.style.cssText = 'position:fixed;top:4px;left:700px;width:120px;height:30px;z-index:99999';
+            document.body.appendChild(standIn);
+          });
+          disabledTarget = byTestId(page, 'stand-in-disabled');
+        }
+        await expect(disabledTarget).toBeDisabled();
+        // At rest the control takes the pointer, for the tip that says why it is disabled.
+        await expect(disabledTarget).toHaveCSS('pointer-events', 'auto');
+        const tool = await centerOf(page, disabledTarget);
         const inFlight = () => page.evaluate(() => ({
           card: document.querySelectorAll('.react-flow__node.dragging').length,
           pan: document.querySelectorAll('.react-flow__pane.dragging').length,
@@ -707,6 +724,40 @@ test.describe('Workflows canvas gestures', () => {
       await pressAndDrift('task-2', 8);
       await expect(card(page, 'task-2')).toHaveAttribute('data-selected', 'true');
       await expect(byTestId(page, 'workflow-auto-layout')).toBeEnabled();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a press on empty canvas that drifts under the drag threshold is a click, and one past it pans', async () => {
+    // paneDragThreshold: under it React Flow treats the gesture as a pane click
+    // (the selection clears) and leaves the viewport alone. At its default of 1
+    // a hand's two-pixel drift was a pan, and no click fired.
+    const { browser, page } = await launch('draft');
+    try {
+      const viewport = () => page.locator('.workflow-canvas .react-flow__viewport').evaluate((element) => (element as HTMLElement).style.transform);
+      const pressOnEmptyCanvas = async (drift: number) => {
+        const pane = await page.locator('.workflow-canvas .react-flow__pane').boundingBox();
+        if (!pane || pane.width === 0) throw new Error('canvas not laid out');
+        const x = pane.x + pane.width / 2;
+        const y = pane.y + 40;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x + drift, y, { steps: 2 });
+        await page.mouse.up();
+      };
+
+      await card(page, 'task-3').click();
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
+      const resting = await viewport();
+
+      await pressOnEmptyCanvas(2);
+      await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
+      await settleFrames(page, 3);
+      expect(await viewport()).toBe(resting);
+
+      await pressOnEmptyCanvas(60);
+      await expect.poll(viewport).not.toBe(resting);
     } finally {
       await browser.close();
     }
