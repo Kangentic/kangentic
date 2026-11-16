@@ -440,6 +440,57 @@ test.describe('Workflows canvas gestures', () => {
     }
   });
 
+  // Chromium sends no mouse event whose target is a disabled button. Auto layout is
+  // disabled until a card has been moved, so a gesture let go over it never saw its
+  // release: the card stayed on the pointer, the canvas followed the mouse, the link
+  // stayed drawn, each until the next click.
+  for (const gesture of ['a card drag', 'a pan', 'a link drag'] as const) {
+    test(`${gesture} let go over a disabled tool ends`, async () => {
+      const { browser, page } = await launch('draft');
+      try {
+        const autoLayout = byTestId(page, 'workflow-auto-layout');
+        await expect(autoLayout).toBeDisabled();
+        // At rest the tool takes the pointer, for the tip that says why it is disabled.
+        await expect(autoLayout).toHaveCSS('pointer-events', 'auto');
+        const tool = await centerOf(page, autoLayout);
+        const inFlight = () => page.evaluate(() => ({
+          card: document.querySelectorAll('.react-flow__node.dragging').length,
+          pan: document.querySelectorAll('.react-flow__pane.dragging').length,
+          link: document.querySelectorAll('[data-testid="workflow-canvas"][data-linking]').length,
+        }));
+        const viewport = () => page.locator('.workflow-canvas .react-flow__viewport').evaluate((element) => (element as HTMLElement).style.transform);
+
+        if (gesture === 'a card drag') {
+          const box = await card(page, 'task-3').boundingBox();
+          if (!box || box.width === 0) throw new Error('card not laid out');
+          await page.mouse.move(box.x + box.width / 2, box.y + 60);
+          await page.mouse.down();
+        } else if (gesture === 'a pan') {
+          const pane = await page.locator('.workflow-canvas .react-flow__pane').boundingBox();
+          if (!pane || pane.width === 0) throw new Error('canvas not laid out');
+          await page.mouse.move(pane.x + pane.width / 2, pane.y + 40);
+          await page.mouse.down();
+        } else {
+          await pressPortToStartLink(page, outgoingPort(page, 'task-1'));
+        }
+        await page.mouse.move(tool.x, tool.y, { steps: 14 });
+        // The gesture is live, so the check below is not of a press that never started.
+        await expect.poll(async () => Object.values(await inFlight()).reduce((total, count) => total + count, 0)).toBe(1);
+
+        await page.mouse.up();
+        await expect.poll(inFlight).toEqual({ card: 0, pan: 0, link: 0 });
+        // Nothing is held any more: a move with no button down leaves the canvas where it is.
+        const rested = await viewport();
+        await page.mouse.move(tool.x + 200, tool.y - 300, { steps: 6 });
+        await settleFrames(page, 3);
+        expect(await viewport()).toBe(rested);
+        expect(await inFlight()).toEqual({ card: 0, pan: 0, link: 0 });
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
   test('a card being moved lifts, and settles when it is let go', async () => {
     const { browser, page } = await launch('draft');
     try {
