@@ -340,13 +340,14 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
       ['null', null],
       ['omitted', undefined],
     ])('looks up this agent\'s record on the main track with null when the resume track is %s', async (_label, isolatedSwimlaneId) => {
-      const mainTrackResume = {
+      // The spread leaves the key out entirely in the omitted case.
+      const mainTrackResume: StartupResume = {
         agentSessionId: 'codex-conversation',
         recordId: 'codex-record-on-main',
         recordCwd: '/mock/codex-record-cwd',
         sessionType: 'codex_agent',
         ...(isolatedSwimlaneId === undefined ? {} : { isolatedSwimlaneId }),
-      } as StartupResume;
+      };
 
       const { sessionRepo } = await runWith({
         updateAgentSessionId: vi.fn(),

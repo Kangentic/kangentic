@@ -561,14 +561,21 @@ describe('resumeSuspendedSessions: spawn carries correct isolated_swimlane_id', 
   });
 
   // #821: a Resume launched Claude in a Codex column and left a claude_agent
-  // record there. Recovery runs the column's agent, and the preparation resumes
-  // that agent's own conversation on the track (`rematchedRecordId`). The new
-  // row names the agent that runs, and the record it replaced is retired too.
-  it('records the agent that runs and retires the conversation the preparation matched to it', async () => {
+  // record there. Recovery gathers that record and runs the column's agent. The
+  // two tests below differ only in what the preparation found on the track.
+  // Returns the ids of every record recovery retired.
+  async function recoverWrongAgentRecord(prepared: {
+    command: string;
+    sessionRecordId: string;
+    agentSessionId: string;
+    resumed?: boolean;
+    rematchedRecordId: string | null;
+  }): Promise<unknown[]> {
     swimlaneListMock.mockReturnValue([
       { id: 'lane-review', auto_spawn: true, session_target: 'isolated', session_spawn_strategy: 'always_spawn_new' },
     ]);
     sessionRepoInsertMock.mockClear();
+    retireRecordMock.mockClear();
     const wrongAgentRecord = makeRecord({
       id: 'record-wrong-agent',
       session_type: 'claude_agent',
@@ -587,15 +594,12 @@ describe('resumeSuspendedSessions: spawn carries correct isolated_swimlane_id', 
       data: {
         adapter: { name: 'codex', sessionType: 'codex_agent', getExitSequence: () => ['\x03'] } as never,
         agent: 'codex',
-        command: 'codex resume codex-conversation',
         cwd: '/project/cwd',
-        sessionRecordId: 'new-record-codex',
-        agentSessionId: 'codex-conversation',
         permissionMode: 'default',
-        statusOutputPath: '/project/.kangentic/sessions/new-record-codex/status.json',
-        eventsOutputPath: '/project/.kangentic/sessions/new-record-codex/events.jsonl',
+        statusOutputPath: `/project/.kangentic/sessions/${prepared.sessionRecordId}/status.json`,
+        eventsOutputPath: `/project/.kangentic/sessions/${prepared.sessionRecordId}/events.jsonl`,
         extraEnv: null,
-        rematchedRecordId: 'record-codex-own',
+        ...prepared,
       } as never,
     });
 
@@ -605,6 +609,19 @@ describe('resumeSuspendedSessions: spawn carries correct isolated_swimlane_id', 
       sessionRepoGetLatestByTypeAndIsolation.mockReturnValue(null);
       vi.mocked(isResumeEligible).mockReturnValue(false);
     }
+    return retireRecordMock.mock.calls.map((call) => (call as unknown[])[1]);
+  }
+
+  // The preparation resumes the column agent's own conversation on the track
+  // (`rematchedRecordId`). The new row names the agent that runs, and the record
+  // it replaced is retired too.
+  it('records the agent that runs and retires the conversation the preparation matched to it', async () => {
+    const retiredIds = await recoverWrongAgentRecord({
+      command: 'codex resume codex-conversation',
+      sessionRecordId: 'new-record-codex',
+      agentSessionId: 'codex-conversation',
+      rematchedRecordId: 'record-codex-own',
+    });
 
     // The preparation is told the record's type and track, which is what lets it
     // notice the agent mismatch and swap in the agent's own conversation.
@@ -616,61 +633,26 @@ describe('resumeSuspendedSessions: spawn carries correct isolated_swimlane_id', 
       session_type: 'codex_agent',
       isolated_swimlane_id: 'lane-review',
     }));
-    const retiredIds = retireRecordMock.mock.calls.map((call) => (call as unknown[])[1]);
     expect(retiredIds).toEqual(expect.arrayContaining(['record-wrong-agent', 'record-codex-own']));
   });
 
-  // #821, fresh-start branch: the column's agent has no conversation on the
-  // track, so the preparation starts fresh and matches no record. Only the
-  // gathered record is retired, and the new row still names the agent that runs.
+  // Fresh-start branch: the column's agent has no conversation on the track, so
+  // the preparation starts fresh and matches no record. Only the gathered record
+  // is retired, and the new row still names the agent that runs.
   it('retires only the gathered record and records the running agent when the column agent starts fresh', async () => {
-    swimlaneListMock.mockReturnValue([
-      { id: 'lane-review', auto_spawn: true, session_target: 'isolated', session_spawn_strategy: 'always_spawn_new' },
-    ]);
-    sessionRepoInsertMock.mockClear();
-    retireRecordMock.mockClear();
-    const wrongAgentRecord = makeRecord({
-      id: 'record-wrong-agent',
-      session_type: 'claude_agent',
-      isolated_swimlane_id: 'lane-review',
-      status: 'suspended',
-      agent_session_id: 'claude-conversation',
+    const retiredIds = await recoverWrongAgentRecord({
+      command: 'codex',
+      sessionRecordId: 'new-record-codex-fresh',
+      agentSessionId: 'codex-fresh-conversation',
+      resumed: false,
+      rematchedRecordId: null,
     });
-    sessionRepoGetResumable.mockReturnValue([wrongAgentRecord]);
-    sessionRepoGetLatestByTypeAndIsolation.mockReturnValue(wrongAgentRecord);
-    vi.mocked(isResumeEligible).mockReturnValue(true);
-    taskRepoList.mockReturnValue([makeTask({ swimlane_id: 'lane-review' })]);
-    vi.mocked(prepareAgentSpawn).mockResolvedValue({
-      ok: true,
-      data: {
-        adapter: { name: 'codex', sessionType: 'codex_agent', getExitSequence: () => ['\x03'] } as never,
-        agent: 'codex',
-        command: 'codex',
-        cwd: '/project/cwd',
-        sessionRecordId: 'new-record-codex-fresh',
-        agentSessionId: 'codex-fresh-conversation',
-        permissionMode: 'default',
-        statusOutputPath: '/project/.kangentic/sessions/new-record-codex-fresh/status.json',
-        eventsOutputPath: '/project/.kangentic/sessions/new-record-codex-fresh/events.jsonl',
-        extraEnv: null,
-        resumed: false,
-        rematchedRecordId: null,
-      } as never,
-    });
-
-    try {
-      await resumeSuspendedSessions('proj-1', '/project', makeSessionManager() as never, makeConfigManager(true) as never);
-    } finally {
-      sessionRepoGetLatestByTypeAndIsolation.mockReturnValue(null);
-      vi.mocked(isResumeEligible).mockReturnValue(false);
-    }
 
     expect(sessionRepoInsertMock).toHaveBeenCalledTimes(1);
     expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({
       session_type: 'codex_agent',
       isolated_swimlane_id: 'lane-review',
     }));
-    const retiredIds = retireRecordMock.mock.calls.map((call) => (call as unknown[])[1]);
     expect(retiredIds).toEqual(['record-wrong-agent']);
   });
 });
