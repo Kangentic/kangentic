@@ -14,7 +14,7 @@
  * `devtools-query-all.test.ts` runs its sibling builder.
  */
 import { describe, it, expect } from 'vitest';
-import { parseSelectorCandidates } from '../../src/main/browser/cdp/ambiguous-selector';
+import { parseSelectorCandidates, type SelectorCandidate } from '../../src/main/browser/cdp/ambiguous-selector';
 import {
   buildActionableMatchesExpression,
   buildSelectorAllExpression,
@@ -101,23 +101,9 @@ function element(options: FakeElementOptions): FakeElement {
   return self;
 }
 
-interface PageCandidate {
-  index: number;
-  tag: string;
-  text: string;
-  id: string | null;
-  role: string | null;
-  ariaLabel: string | null;
-  name: string | null;
-  inDialog: boolean;
-  topmost: boolean | null;
-  box: { x: number; y: number; width: number; height: number };
-  selector: string;
-}
-
 interface PageAnswer {
   total: number;
-  candidates: PageCandidate[];
+  candidates: SelectorCandidate[];
 }
 
 /**

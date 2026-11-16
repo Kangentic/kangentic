@@ -14,8 +14,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   AMBIGUOUS_CANDIDATE_LIMIT,
+  AmbiguousSelectorError,
   CANDIDATE_FIELD_MAX_CHARS,
   CANDIDATE_SELECTOR_MAX_CHARS,
+  ambiguousSelectorDetail,
   parseSelectorCandidates,
 } from '../../src/main/browser/cdp/ambiguous-selector';
 
@@ -136,5 +138,23 @@ describe('parseSelectorCandidates', () => {
     const kept = realCandidate({ selector: `#${'a'.repeat(CANDIDATE_SELECTOR_MAX_CHARS - 1)}` });
     const tooLong = realCandidate({ selector: `#${'a'.repeat(CANDIDATE_SELECTOR_MAX_CHARS)}` });
     expect(parseSelectorCandidates([tooLong, kept])).toEqual([kept]);
+  });
+});
+
+describe('ambiguousSelectorDetail', () => {
+  it('points the agent at a candidate selector when there is one', () => {
+    const [candidate] = parseSelectorCandidates([realCandidate()]);
+    const detail = ambiguousSelectorDetail(new AmbiguousSelectorError('text="Save"', 2, [candidate]));
+    expect(detail).toContain('2 visible elements match text="Save"');
+    expect(detail).toContain('Retry with one candidate\'s selector');
+    expect(detail).toContain('topmost: false');
+  });
+
+  it('never tells the agent to retry with a candidate when the refusal carries none', () => {
+    const detail = ambiguousSelectorDetail(new AmbiguousSelectorError('#save', 3, []));
+    expect(detail).toContain('3 visible elements match #save');
+    expect(detail).not.toContain('candidate\'s selector');
+    expect(detail).toContain('scope the selector to its container');
+    expect(detail).toContain('strict: false');
   });
 });

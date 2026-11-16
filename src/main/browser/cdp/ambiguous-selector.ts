@@ -63,12 +63,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function clippedString(value: unknown): string {
-  return typeof value === 'string' ? value.slice(0, CANDIDATE_FIELD_MAX_CHARS) : '';
-}
-
 function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value.slice(0, CANDIDATE_FIELD_MAX_CHARS) : null;
+}
+
+function clippedString(value: unknown): string {
+  return stringOrNull(value) ?? '';
 }
 
 function finiteNumber(value: unknown): number {
@@ -126,10 +126,19 @@ export class AmbiguousSelectorError extends Error {
   }
 }
 
-/** The agent-facing sentence for an `ambiguous-selector` refusal. */
+/**
+ * The agent-facing sentence for an `ambiguous-selector` refusal. With no
+ * candidates (every one the page described was dropped as unretryable) it does
+ * not point the agent at a candidate's selector.
+ */
 export function ambiguousSelectorDetail(error: AmbiguousSelectorError): string {
+  const scopeHint = 'scope the selector to its container '
+    + '(for example [role=dialog] button:has-text("Save")), or pass strict: false to act on the first match.';
+  if (error.candidates.length === 0) {
+    return `${error.total} visible elements match ${error.selector}, so nothing was done. `
+      + `None of them could be described with a selector to retry, so ${scopeHint}`;
+  }
   return `${error.total} visible elements match ${error.selector}, so nothing was done. `
-    + 'Retry with one candidate\'s selector, or scope the selector to its container '
-    + '(for example [role=dialog] button:has-text("Save")), or pass strict: false to act on the first match. '
+    + `Retry with one candidate's selector, or ${scopeHint} `
     + 'A candidate with topmost: false is covered by another element.';
 }
