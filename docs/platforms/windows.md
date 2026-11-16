@@ -58,7 +58,7 @@ That order is also why the version matters. An app-local runtime older than the 
 
 Two gates in afterPack hold it. `verifyMsvcRuntimeBesideBinding` re-reads the directory and fails on any imported runtime DLL that is not in it. The embed runtime probe (`verifyEmbedRuntimeLoads`, `build/verify-unpacked-worker.js`) then loads the binding under the packaged Electron and reads `process.report`'s list of loaded modules: a runtime DLL loaded from anywhere but beside the binding fails the build. A load alone would prove nothing, since every build machine has the runtime in System32.
 
-If a binding still cannot load on a user's machine, the embed client stops forking for the rest of the run instead of re-forking every five minutes (`latchOnLoadFailure` in `src/main/utility-process/restart-policy.ts`). See [Knowledge Graph index and workers](../architecture/knowledge-graph.md).
+If a binding still cannot load on a user's machine, the embed client stops forking for the rest of the run instead of re-forking after each decay window (`latchOnLoadFailure` in `src/main/utility-process/restart-policy.ts`). See [Knowledge Graph index and workers](../architecture/knowledge-graph.md).
 
 ## Windows Long Paths
 

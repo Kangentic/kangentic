@@ -775,7 +775,9 @@ in one Sentry org, one triage surface.
   config write instead). The Add project flow turns the sentinel into a toast, and nothing is
   registered, so `project_create` does not fire either.
 - **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
-  restart cap produces a Sentry issue, and only once per latch; Aptabase sees at most two
+  restart cap produces a Sentry issue, and only once per latch, except an embed worker that could not
+  load a native module (`ERR_DLOPEN_FAILED`), which is reported on its first crash because it
+  stops forking then; Aptabase sees at most two
   `utility_worker_crashed` events per service per app run, the first crash and the latch. The same
   volume-versus-diagnostic split as `spawn_failed`.
   Every crash does log its stderr tail to the main console as a
