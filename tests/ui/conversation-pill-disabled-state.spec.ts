@@ -2,7 +2,9 @@
  * UI tests for the task-detail "View conversation" affordance's disabled state
  * (header pill + kebab item). A task with no session (live or historical) has
  * nothing for the button to open, so it renders muted/disabled instead of
- * clicking through to an empty viewer or a "no history" toast.
+ * clicking through to an empty viewer or a "no history" toast. A paused row
+ * with no session record behind it (the placeholder recovery registers at
+ * launch, GitHub #822) is not history either, so it leaves the pill disabled.
  *
  * Cross-platform: no pixel assertions, no bare waitForTimeout - every check
  * polls for a condition (data attribute / testid / text).
@@ -20,6 +22,12 @@ const PROJECT_ID = 'proj-conv-disabled';
 const NO_HISTORY_TASK_ID = 'task-conv-disabled-none';
 const HAS_HISTORY_TASK_ID = 'task-conv-disabled-history';
 const HISTORICAL_SESSION_ID = 'sess-conv-disabled-historical';
+const PLACEHOLDER_TASK_ID = 'task-conv-disabled-placeholder';
+const PLACEHOLDER_SESSION_ID = 'sess-conv-disabled-placeholder';
+const RUNNING_TASK_ID = 'task-conv-disabled-running';
+const RUNNING_SESSION_ID = 'sess-conv-disabled-running';
+const SUSPENDED_RECORD_TASK_ID = 'task-conv-disabled-suspended-record';
+const SUSPENDED_RECORD_SESSION_ID = 'sess-conv-disabled-suspended-record';
 
 const preConfigScript = `
   window.__mockPreConfigure(function (state) {
@@ -52,9 +60,40 @@ const preConfigScript = `
     // No live session, but a past (exited) session exists in the index.
     pushTask('${HAS_HISTORY_TASK_ID}', 'Has history task', 1);
 
+    // A suspended registry row with no session record behind it: the
+    // placeholder recovery registers for a paused task at launch, here for a
+    // first start that was refused, so the task has no history (GitHub #822).
+    pushTask('${PLACEHOLDER_TASK_ID}', 'Paused placeholder task', 2);
+    state.sessions.push({
+      id: '${PLACEHOLDER_SESSION_ID}', taskId: '${PLACEHOLDER_TASK_ID}', projectId: '${PROJECT_ID}',
+      pid: null, status: 'suspended', shell: '', cwd: '/mock/conv-disabled',
+      startedAt: ts, exitCode: null, resuming: false,
+    });
+
+    // A running session whose id has no entry in the transcript listing: a live
+    // session is proof enough, the listing is not consulted.
+    pushTask('${RUNNING_TASK_ID}', 'Running session task', 3);
+    state.sessions.push({
+      id: '${RUNNING_SESSION_ID}', taskId: '${RUNNING_TASK_ID}', projectId: '${PROJECT_ID}',
+      pid: 4242, status: 'running', shell: 'bash', cwd: '/mock/conv-disabled',
+      startedAt: ts, exitCode: null, resuming: false,
+    });
+
+    // A suspended row that IS a real record: the listing holds it, so the
+    // pill enables once the check resolves.
+    pushTask('${SUSPENDED_RECORD_TASK_ID}', 'Suspended with record task', 4);
+    state.sessions.push({
+      id: '${SUSPENDED_RECORD_SESSION_ID}', taskId: '${SUSPENDED_RECORD_TASK_ID}', projectId: '${PROJECT_ID}',
+      pid: null, status: 'suspended', shell: '', cwd: '/mock/conv-disabled',
+      startedAt: ts, exitCode: null, resuming: false,
+    });
+
     var transcriptSessionsByTask = {};
     transcriptSessionsByTask['${HAS_HISTORY_TASK_ID}'] = [
       { sessionId: '${HISTORICAL_SESSION_ID}', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' },
+    ];
+    transcriptSessionsByTask['${SUSPENDED_RECORD_TASK_ID}'] = [
+      { sessionId: '${SUSPENDED_RECORD_SESSION_ID}', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'exited' },
     ];
 
     return {
@@ -111,6 +150,45 @@ test.describe('Conversation pill disabled state', () => {
       const kebabItem = page.getByTestId('view-conversation-btn');
       await expect(kebabItem).toBeVisible();
       await expect(kebabItem).toBeDisabled();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a paused row with no session record behind it does not enable the pill', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTaskDetail(page, PLACEHOLDER_TASK_ID);
+
+      const pill = page.getByTestId('conversation-pill');
+      await expect(pill).toBeVisible();
+      await expect(pill).toBeDisabled();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a running session enables the pill without any entry in the transcript listing', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTaskDetail(page, RUNNING_TASK_ID);
+
+      const pill = page.getByTestId('conversation-pill');
+      await expect(pill).toBeVisible();
+      await expect(pill).toBeEnabled();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a suspended row that has a session record enables the pill once the listing resolves', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTaskDetail(page, SUSPENDED_RECORD_TASK_ID);
+
+      const pill = page.getByTestId('conversation-pill');
+      await expect(pill).toBeVisible();
+      await expect(pill).toBeEnabled();
     } finally {
       await browser.close();
     }

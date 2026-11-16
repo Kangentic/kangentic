@@ -270,6 +270,7 @@ function subscribeReadStream(
         syncId,
         projectId: ownerProjectId,
         sessionId,
+        taskId: taskId || undefined,
         mode: 'diff',
         remoteTargets: collectRemoteTargets(agentRegistry),
       });
@@ -670,6 +671,7 @@ function subscribeReadStream(
         syncId,
         projectId: ownerProjectId,
         sessionId,
+        taskId: taskId || undefined,
         mode: 'seed',
         remoteTargets: collectRemoteTargets(agentRegistry),
       });
@@ -751,6 +753,9 @@ export async function handleReadStream(
     const windowPayload: TranscriptWindowResponsePayload = await retrievalClient.call('transcript.window', {
       projectId,
       sessionId: payload.sessionId,
+      // A paused task's placeholder id has no session record after a restart;
+      // the registry still names its task.
+      taskId: context.sessionManager.getSession(payload.sessionId)?.taskId || undefined,
       beforeIndex: payload.beforeIndex,
       limit: payload.limit,
       remoteTargets: collectRemoteTargets(agentRegistry),

@@ -1999,6 +1999,27 @@ describe('handleReadStream', () => {
     }
   });
 
+  it('the diff read after a session event names the task the registry holds the session under (GitHub #822)', async () => {
+    vi.useFakeTimers();
+    try {
+      resolveTaskTranscriptMock.mockResolvedValue(liveTranscript(1, [userEntry]));
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+      await vi.advanceTimersByTimeAsync(0);
+      const readsAfterSeed = resolveTaskTranscriptMock.mock.calls.length;
+
+      sessionManager.emit('event', 'sess-1', { ts: 1, type: 'tool_start' });
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(resolveTaskTranscriptMock.mock.calls.length).toBe(readsAfterSeed + 1);
+      const diffCall = resolveTaskTranscriptMock.mock.calls[readsAfterSeed];
+      expect(diffCall[1]).toBe('sess-1');
+      expect(diffCall[2]).toBe('task-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('transcript-window returns the newest slice with its absolute start index', async () => {
     const older = { kind: 'user', uuid: 'entry-older', ts: 50, text: 'earlier question' };
     resolveTaskTranscriptMock.mockResolvedValue(liveTranscript(7, [older, userEntry, assistantEntry]));
@@ -2020,6 +2041,27 @@ describe('handleReadStream', () => {
       new SubscriptionRegistry(),
     );
     expect(olderPage.payload).toEqual({ revision: 7, totalEntries: 3, startIndex: 0, entries: [older] });
+  });
+
+  it('transcript-window and the subscribe-time sync name the task the registry holds the session under (GitHub #822)', async () => {
+    // A paused task's placeholder after a restart has no session record; the
+    // worker anchors on this task's records instead.
+    resolveTaskTranscriptMock.mockResolvedValue(liveTranscript(1, [userEntry]));
+    const context = { sessionManager } as unknown as IpcContext;
+
+    await handleReadStream(
+      fakeRequest({ sessionId: 'sess-1', action: 'transcript-window', limit: 2 }),
+      fakeSession(),
+      context,
+      new SubscriptionRegistry(),
+    );
+    expect(resolveTaskTranscriptMock).toHaveBeenLastCalledWith(expect.anything(), 'sess-1', 'task-1');
+
+    resolveTaskTranscriptMock.mockClear();
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolveTaskTranscriptMock).toHaveBeenCalledWith(expect.anything(), 'sess-1', 'task-1');
   });
 
   it('transcript-window answers the unknown-session code when no project has the session on record', async () => {

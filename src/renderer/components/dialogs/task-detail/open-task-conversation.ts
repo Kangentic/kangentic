@@ -4,12 +4,13 @@ import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../../stores/toast-store';
 import { useWindowStore } from '../../../window-manager/store/window-store';
 import { captureTerminalScrollback } from '../../../utils/terminal-capture-registry';
+import { isLiveSessionStatus } from '../../../../shared/session-liveness';
 
 /**
  * Open the conversation viewer for this task. The anchor session id only
  * resolves WHICH task to show (`transcripts.get` always returns that task's
  * entire lifecycle regardless of which of its sessions is passed), so any
- * valid session id works. Shared by the header's Conversation pill and the
+ * session the task has a record of works. Shared by the header's Conversation pill and the
  * kebab "View conversation" item, so both open the same window. A completed
  * task shows its conversation in its own Conversation tab instead
  * (`completed/CompletedConversationTab.tsx`).
@@ -20,7 +21,9 @@ import { captureTerminalScrollback } from '../../../utils/terminal-capture-regis
  * the task's sessions and reuses its anchor, so a second open raises that
  * window instead of opening another for the same conversation. When several
  * match, the live session's window wins, then the one raised last. With none
- * open it prefers the live session, then the newest.
+ * open it prefers the live session, then the newest. A paused or ended row the listing
+ * does not hold is not the live session: after a restart it is a placeholder
+ * with no record behind it.
  *
  * It asks for no tab: a new window shows All and an open one keeps the tab it
  * is on.
@@ -30,7 +33,8 @@ import { captureTerminalScrollback } from '../../../utils/terminal-capture-regis
  * transcript lives in that project's DB.
  */
 export async function openTaskConversation(taskId: string, projectId: string | null): Promise<void> {
-  const liveSessionId = useSessionStore.getState()._sessionByTaskId.get(taskId)?.id ?? null;
+  const liveSession = useSessionStore.getState()._sessionByTaskId.get(taskId) ?? null;
+  let liveSessionId = liveSession?.id ?? null;
   // Capture the terminal's visible scrollback NOW, at click time, before the
   // async listSessions() gap below (during which live output could keep
   // scrolling it) - open-at-position needs the viewport exactly as the user
@@ -44,6 +48,15 @@ export async function openTaskConversation(taskId: string, projectId: string | n
     const list = await window.electronAPI.transcripts.listSessions(taskId, projectId);
     taskSessionIds = list.map((meta) => meta.sessionId);
     newestSessionId = [...list].sort((first, second) => second.startedAt.localeCompare(first.startedAt))[0]?.sessionId ?? null;
+    // The list holds every session the task has a record of. A paused task's
+    // registry row after a restart is a placeholder whose id has no record
+    // (GitHub #822), so the viewer would find no task and no transcript.
+    // Anchor on the list instead. A running or queued session is kept even
+    // when unlisted: its record is written as it starts, and a click can
+    // land just before that.
+    if (liveSession && !taskSessionIds.includes(liveSession.id) && !isLiveSessionStatus(liveSession.status)) {
+      liveSessionId = null;
+    }
   } catch {
     // No list: fall back to the live session alone, as before.
   }
