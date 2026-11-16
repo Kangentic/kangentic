@@ -218,6 +218,43 @@ describe('resolveTaskTranscript', () => {
     expect(result).toBeNull();
   });
 
+  it('anchors an id with no record on the task main names for it (GitHub #822)', async () => {
+    // A paused task's placeholder row after a restart carries a fresh id that
+    // no session record has; main passes the task its registry holds it under.
+    const older = makeRecord({ id: 'session-paused-old', task_id: 'task-paused', agent_session_id: 'agent-paused-old', started_at: '2026-06-01T10:00:00Z' });
+    const newer = makeRecord({ id: 'session-paused-new', task_id: 'task-paused', agent_session_id: 'agent-paused-new', started_at: '2026-06-01T12:00:00Z', status: 'suspended' });
+    const db = makeFakeDb({
+      sessionsById: { 'session-paused-old': older, 'session-paused-new': newer },
+      sessionsByTask: { 'task-paused': [newer, older] },
+      taskTitle: 'Fix the login redirect',
+    });
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript: vi.fn(async (agentSessionId: string) => ({
+        entries: [{ kind: 'user' as const, uuid: `turn-${agentSessionId}`, ts: agentSessionId.endsWith('old') ? 1 : 2, text: `turn of ${agentSessionId}` }],
+        sourcePath: `/history/${agentSessionId}.jsonl`,
+      })),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    expect(await resolveTaskTranscript(db, 'placeholder-id')).toBeNull();
+    const result = await resolveTaskTranscript(db, 'placeholder-id', 'task-paused');
+
+    expect(result).not.toBeNull();
+    expect(result!.taskTitle).toBe('Fix the login redirect');
+    expect(result!.record.id).toBe('session-paused-new');
+    expect(result!.entries.filter((entry) => entry.kind === 'user').map((entry) => entry.text)).toEqual([
+      'turn of agent-paused-old',
+      'turn of agent-paused-new',
+    ]);
+  });
+
+  it('still returns null when the named task has no session records', async () => {
+    const db = makeFakeDb({ sessionsById: {}, sessionsByTask: {} });
+    getBySessionType.mockReturnValue(undefined);
+
+    expect(await resolveTaskTranscript(db, 'placeholder-id', 'task-never-ran')).toBeNull();
+  });
+
   it('stitches two sessions oldest-first with a session_boundary divider, stamping each assistant entry with its own session\'s agentName', async () => {
     // Distinct session_type per record so getBySessionType can route each to
     // its own parser/displayName below.

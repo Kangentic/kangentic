@@ -44,8 +44,14 @@ vi.mock('../../src/main/retrieval/retrieval-client', async () => (
 import { registerTranscriptHandlers } from '../../src/main/ipc/handlers/transcripts';
 import { IPC } from '../../src/shared/ipc-channels';
 
+/** Main's session registry, by id: what `getSession` answers. */
+const registrySessions = new Map<string, { taskId: string }>();
+
 function makeContext(currentProjectId: string | null) {
-  return { currentProjectId } as Parameters<typeof registerTranscriptHandlers>[0];
+  return {
+    currentProjectId,
+    sessionManager: { getSession: (sessionId: string) => registrySessions.get(sessionId) },
+  } as unknown as Parameters<typeof registerTranscriptHandlers>[0];
 }
 
 async function invokeTranscriptGet(request: {
@@ -84,7 +90,36 @@ describe('TRANSCRIPT_GET relays the worker answer to knownRevision', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     resolveTaskTranscript.mockReset();
+    registrySessions.clear();
     registerTranscriptHandlers(makeContext('proj-1'));
+  });
+
+  it('names the task the registry holds the id under, for an id with no session record (GitHub #822)', async () => {
+    // A paused task's placeholder row after a restart: in the registry, never in `sessions`.
+    registrySessions.set('placeholder-id', { taskId: 'task-paused' });
+    resolveTaskTranscript.mockResolvedValue(makeResolved(1));
+
+    await invokeTranscriptGet({ sessionId: 'placeholder-id' });
+
+    expect(resolveTaskTranscript).toHaveBeenCalledWith(expect.anything(), 'placeholder-id', 'task-paused');
+  });
+
+  it('names no task for a registry row that belongs to no task', async () => {
+    // A Command Terminal row carries an empty task id.
+    registrySessions.set('terminal-id', { taskId: '' });
+    resolveTaskTranscript.mockResolvedValue(makeResolved(1));
+
+    await invokeTranscriptGet({ sessionId: 'terminal-id' });
+
+    expect(resolveTaskTranscript).toHaveBeenCalledWith(expect.anything(), 'terminal-id', undefined);
+  });
+
+  it('names no task for an id the registry does not hold', async () => {
+    resolveTaskTranscript.mockResolvedValue(makeResolved(1));
+
+    await invokeTranscriptGet({ sessionId: 'session-1' });
+
+    expect(resolveTaskTranscript).toHaveBeenCalledWith(expect.anything(), 'session-1', undefined);
   });
 
   it('returns { unchanged: true, revision } with no entries when knownRevision matches the resolved revision', async () => {

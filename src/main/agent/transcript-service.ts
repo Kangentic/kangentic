@@ -635,13 +635,23 @@ function toSessionMeta(record: SessionRecord, agentName: string): ConversationSe
 export async function resolveTaskTranscript(
   db: Database.Database,
   anchorSessionId: string,
+  fallbackTaskId?: string,
 ): Promise<ResolvedTaskTranscript | null> {
   const sessionRepo = new SessionRepository(db);
-  const anchor = findTranscriptRecord(db, anchorSessionId)?.record ?? null;
+  // An id with no record still names its task when main's registry holds it:
+  // a paused task's placeholder row after a restart has a fresh id that was
+  // never written to `sessions` (GitHub #822). Any of the task's records
+  // anchors the same timeline, so the newest stands in, and its list is the
+  // task's list below.
+  const recordAnchor = findTranscriptRecord(db, anchorSessionId)?.record ?? null;
+  const fallbackSessions = !recordAnchor && fallbackTaskId
+    ? sessionRepo.listForTaskNewestFirst(fallbackTaskId)
+    : null;
+  const anchor = recordAnchor ?? fallbackSessions?.[0] ?? null;
   if (!anchor) return null;
 
   const sessions = anchor.task_id
-    ? sessionRepo.listForTaskNewestFirst(anchor.task_id).reverse() // oldest first
+    ? (fallbackSessions ?? sessionRepo.listForTaskNewestFirst(anchor.task_id)).reverse() // oldest first
     : [anchor];
 
   /**

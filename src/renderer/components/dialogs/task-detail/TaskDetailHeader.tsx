@@ -20,6 +20,7 @@ import { shortRefLabel, useBaseRefKind } from '../../../hooks/useBaseRefKind';
 import { useSessionStore } from '../../../stores/session-store';
 import { useTerminalFindControl } from '../../../utils/terminal-find-registry';
 import { openTaskConversation } from './open-task-conversation';
+import { isLiveSessionStatus } from '../../../../shared/session-liveness';
 import { prStatePresentation } from '../../../lib/pr-state';
 import { usePrChecks, prFixCount } from '../../../hooks/usePrChecks';
 import { useLinkOpener } from '../../../hooks/useLinkOpener';
@@ -214,10 +215,17 @@ export function TaskDetailHeader({
   const prFixes = prFixCount(task, prChecks);
 
   // Conversation availability, for disabling the pill/kebab item rather than
-  // letting a click resolve to nothing. A live session (any state, not just
-  // running) means history is already known synchronously; otherwise a
-  // session may still exist from a prior run, so check once per task.
-  const liveSessionId = useSessionStore((state) => state._sessionByTaskId.get(task.id)?.id ?? null);
+  // letting a click resolve to nothing. A running or queued session means
+  // history is already known synchronously. A paused or ended row proves
+  // nothing: after a restart a paused task's row is a placeholder with no
+  // session record behind it (GitHub #822), so the list decides, checked once
+  // per task. The row's id is read in any state: the find bar follows it, and
+  // a row replaced by another (a placeholder by a real start) re-checks.
+  const taskSessionId = useSessionStore((state) => state._sessionByTaskId.get(task.id)?.id ?? null);
+  const liveSessionRunning = useSessionStore((state) => {
+    const session = state._sessionByTaskId.get(task.id);
+    return session ? isLiveSessionStatus(session.status) : false;
+  });
   // The answer is stored with the key it was checked for and derived from it,
   // so a change of task or host reads as "unknown" (false) at once, with no
   // effect having to clear the previous answer first.
@@ -225,16 +233,16 @@ export function TaskDetailHeader({
   const [historicalConversation, setHistoricalConversation] = useState<{ key: string; available: boolean } | null>(null);
   const historicalConversationAvailable = historicalConversation?.key === historyKey && historicalConversation.available;
   useEffect(() => {
-    if (liveSessionId) return;
+    if (liveSessionRunning) return;
     let cancelled = false;
     window.electronAPI.transcripts
       .listSessions(task.id, hostProjectId || null)
       .then((list) => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: list.length > 0 }); })
       .catch(() => { if (!cancelled) setHistoricalConversation({ key: historyKey, available: false }); });
     return () => { cancelled = true; };
-  }, [task.id, liveSessionId, hostProjectId, historyKey]);
-  const conversationAvailable = Boolean(liveSessionId) || historicalConversationAvailable;
-  const terminalFind = useTerminalFindControl(liveSessionId);
+  }, [task.id, taskSessionId, liveSessionRunning, hostProjectId, historyKey]);
+  const conversationAvailable = liveSessionRunning || historicalConversationAvailable;
+  const terminalFind = useTerminalFindControl(taskSessionId);
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left

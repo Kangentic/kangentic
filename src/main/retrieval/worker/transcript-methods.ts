@@ -61,9 +61,13 @@ export interface TranscriptMethods {
    * `TranscriptGetResponse`, a `TranscriptUnchangedResponse` (the caller's
    * revision is current) or a `TranscriptDeltaResponse` (only what changed
    * since the caller's revision). Main relays the string as is.
+   *
+   * `taskId` on this and the two phone reads is the task main's session
+   * registry holds the id under, for an id with no session record (a paused
+   * task's placeholder after a restart, GitHub #822). See `resolveTaskTranscript`.
    */
   'transcript.task': {
-    params: { projectId: string; sessionId: string; knownRevision?: number; remoteTargets: RemoteTargets };
+    params: { projectId: string; sessionId: string; taskId?: string; knownRevision?: number; remoteTargets: RemoteTargets };
     result: string;
   };
   /**
@@ -87,7 +91,7 @@ export interface TranscriptMethods {
   };
   /** The phone's page of a task's conversation: the newest entries before an index. */
   'transcript.window': {
-    params: { projectId: string; sessionId: string; beforeIndex?: number; limit?: number; remoteTargets: RemoteTargets };
+    params: { projectId: string; sessionId: string; taskId?: string; beforeIndex?: number; limit?: number; remoteTargets: RemoteTargets };
     result: TranscriptWindowSlice;
   };
   /**
@@ -97,7 +101,7 @@ export interface TranscriptMethods {
    * know (it restarted) answers `diff` with a reset.
    */
   'transcript.mobileSync': {
-    params: { syncId: string; projectId: string; sessionId: string; mode: 'seed' | 'diff'; remoteTargets: RemoteTargets };
+    params: { syncId: string; projectId: string; sessionId: string; taskId?: string; mode: 'seed' | 'diff'; remoteTargets: RemoteTargets };
     result: { payloads: TranscriptEventPayload[]; preview: string | null };
   };
   /** Forget a phone subscription's sync state. */
@@ -286,9 +290,9 @@ function emptyTaskJson(sessionId: string): string {
 }
 
 export const transcriptHandlers: TranscriptHandlers = {
-  'transcript.task': async ({ projectId, sessionId, knownRevision, remoteTargets }, context) => {
+  'transcript.task': async ({ projectId, sessionId, taskId, knownRevision, remoteTargets }, context) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
-    const resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId);
+    const resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId, taskId);
     return resolved ? taskTranscriptJson(resolved, knownRevision) : emptyTaskJson(sessionId);
   },
 
@@ -318,21 +322,21 @@ export const transcriptHandlers: TranscriptHandlers = {
     return outcome.ran ? outcome.value : { status: outcome.reason };
   },
 
-  'transcript.window': async ({ projectId, sessionId, beforeIndex, limit, remoteTargets }, context) => {
+  'transcript.window': async ({ projectId, sessionId, taskId, beforeIndex, limit, remoteTargets }, context) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
-    const resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId);
+    const resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId, taskId);
     return resolved
       ? sliceTranscriptWindow(resolved, beforeIndex, limit)
       : { revision: 0, totalEntries: 0, startIndex: 0, entries: [] };
   },
 
-  'transcript.mobileSync': async ({ syncId, projectId, sessionId, mode, remoteTargets }, context) => {
+  'transcript.mobileSync': async ({ syncId, projectId, sessionId, taskId, mode, remoteTargets }, context) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
     mobileReadsInFlight.set(syncId, (mobileReadsInFlight.get(syncId) ?? 0) + 1);
     let resolved: Awaited<ReturnType<typeof resolveTaskTranscript>>;
     let releasedDuringRead: boolean;
     try {
-      resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId);
+      resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId, taskId);
     } finally {
       const remaining = (mobileReadsInFlight.get(syncId) ?? 1) - 1;
       releasedDuringRead = releasedMidRead.has(syncId);

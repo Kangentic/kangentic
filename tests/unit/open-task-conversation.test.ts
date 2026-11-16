@@ -11,6 +11,9 @@
  *     opening another for the same conversation). Several candidates: the one
  *     on the live session wins, then the one raised last (highest zIndex). With
  *     none open: the live session, then the newest listed one.
+ *   - A paused row the listing does not hold (the placeholder recovery
+ *     registers after a restart, whose id has no session record, GitHub #822)
+ *     is not the live session: neither the anchor nor a reused window's.
  *   - No history at all: a toast, and the signal is left exactly as it was.
  *   - A listing that fails is not fatal while a live session exists.
  *   - The tab request is null, which a window that is already open reads as
@@ -27,7 +30,9 @@
  * task-detail case fails; swap the live preference for the zIndex rule alone
  * and the live-wins case fails; flip the zIndex comparison and the raised-last
  * case fails; pass the store's old tab instead of `null` and the no-tab case
- * fails; drop the catch and the rejected-listing cases fail.
+ * fails; drop the catch and the rejected-listing cases fail; trust an unlisted
+ * paused live id again and three of the five #822 cases fail; drop an unlisted
+ * live id even when it is running and the running-session #822 case fails.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -101,6 +106,17 @@ const LISTED_SESSIONS: ConversationSessionMeta[] = [
 
 function seedLiveSession(): void {
   const sessions = [makeLiveSession()];
+  useSessionStore.setState({ sessions, _sessionByTaskId: buildSessionByTaskId(sessions) });
+}
+
+/**
+ * The row recovery registers for a paused task at launch: suspended, no PTY,
+ * and a fresh id that no session record carries, so the listing never has it
+ * (GitHub #822).
+ */
+const PLACEHOLDER_SESSION_ID = 'session-placeholder';
+function seedPausedPlaceholder(): void {
+  const sessions: Session[] = [{ ...makeLiveSession(), id: PLACEHOLDER_SESSION_ID, pid: null, status: 'suspended' }];
   useSessionStore.setState({ sessions, _sessionByTaskId: buildSessionByTaskId(sessions) });
 }
 
@@ -285,6 +301,58 @@ describe('openTaskConversation: reusing an open conversation window', () => {
     await openTaskConversation(TASK_ID, PROJECT_ID);
 
     expect(signal().conversationSessionId).toBe(LIVE_SESSION_ID);
+  });
+});
+
+describe('openTaskConversation: a paused task after a restart (GitHub #822)', () => {
+  it('opens on the newest listed session, not the placeholder id no record carries', async () => {
+    seedPausedPlaceholder();
+    electronStub.listSessions.mockResolvedValue(LISTED_SESSIONS);
+
+    await openTaskConversation(TASK_ID, PROJECT_ID);
+
+    expect(signal().conversationSessionId).toBe(NEWEST_SESSION_ID);
+  });
+
+  it('does not raise a window anchored on the placeholder id', async () => {
+    seedPausedPlaceholder();
+    electronStub.listSessions.mockResolvedValue(LISTED_SESSIONS);
+    seedWindows([{ anchor: PLACEHOLDER_SESSION_ID, zIndex: 9 }]);
+
+    await openTaskConversation(TASK_ID, PROJECT_ID);
+
+    expect(signal().conversationSessionId).toBe(NEWEST_SESSION_ID);
+  });
+
+  it('toasts instead of opening an empty window when the task has no session records', async () => {
+    seedPausedPlaceholder();
+
+    await openTaskConversation(TASK_ID, PROJECT_ID);
+
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+    expect(signal().conversationSessionId).toBe(SENTINEL_SESSION_ID);
+  });
+
+  it('keeps a running session the listing does not hold yet, over the newest listed one', async () => {
+    // A just-spawned session has no record in the listing until it writes one,
+    // but it is live, so it is the conversation the user means.
+    seedLiveSession();
+    electronStub.listSessions.mockResolvedValue(LISTED_SESSIONS);
+    expect(LISTED_SESSIONS.map((meta) => meta.sessionId)).not.toContain(LIVE_SESSION_ID);
+
+    await openTaskConversation(TASK_ID, PROJECT_ID);
+
+    expect(signal().conversationSessionId).toBe(LIVE_SESSION_ID);
+    expect(signal().conversationSessionId).not.toBe(NEWEST_SESSION_ID);
+  });
+
+  it('keeps a paused session whose row is a real record', async () => {
+    seedPausedPlaceholder();
+    electronStub.listSessions.mockResolvedValue([...LISTED_SESSIONS, makeMeta(PLACEHOLDER_SESSION_ID, '2026-10-01T09:00:00.000Z')]);
+
+    await openTaskConversation(TASK_ID, PROJECT_ID);
+
+    expect(signal().conversationSessionId).toBe(PLACEHOLDER_SESSION_ID);
   });
 });
 

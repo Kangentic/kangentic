@@ -88,6 +88,9 @@ export function registerTranscriptHandlers(context: IpcContext): void {
       return retrievalClient.call('transcript.task', {
         projectId,
         sessionId: request.sessionId,
+        // The registry's task for an id with no session record (a paused
+        // task's placeholder after a restart), which only main can read.
+        taskId: context.sessionManager.getSession(request.sessionId)?.taskId || undefined,
         knownRevision: request.knownRevision,
         remoteTargets: collectRemoteTargets(agentRegistry),
       });
