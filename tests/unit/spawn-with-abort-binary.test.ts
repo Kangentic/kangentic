@@ -141,6 +141,26 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
     expect(error.timedOut).toBe(true);
   });
 
+  it('blames the timeout when the caller aborts after it and the binary then closes by signal before its abort error', async () => {
+    vi.useFakeTimers();
+    const child = fakeChild(4242);
+    spawnMock.mockReturnValue(child);
+    const external = new AbortController();
+
+    const pending = spawnWithAbort(BINARY_TARGET, { timeoutMs: 1_000, signal: external.signal });
+    const caught = pending.catch((error: unknown) => error);
+    // The timeout fires first, then the caller's abort lands while the child is still dying.
+    vi.advanceTimersByTime(1_000);
+    external.abort();
+    child.emit('close', null, 'SIGTERM');
+
+    const error = await caught as Error & { signal?: string; timedOut?: boolean };
+    expect(error.message).toMatch(/git fetch --all killed by signal SIGTERM after 1000ms timeout/);
+    expect(error.message).not.toMatch(/external abort/);
+    expect(error.signal).toBe('SIGTERM');
+    expect(error.timedOut).toBe(true);
+  });
+
   it('carries the exit code and timedOut: false for a binary that exits non-zero', async () => {
     const child = fakeChild(4242);
     spawnMock.mockReturnValue(child);

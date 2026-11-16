@@ -80,7 +80,7 @@ export interface SessionIdManagerCallbacks {
  * session could own (the folder-match check), `empty` a scan that found nothing
  * in its budget, `pending` one still polling.
  */
-type FilesystemScanOutcome ='none' | 'pending' | 'found' | 'empty' | 'dropped' | 'failed';
+type FilesystemScanOutcome = 'none' | 'pending' | 'found' | 'empty' | 'dropped' | 'failed';
 
 /**
  * The end of a session whose id the diagnostic window did not see. Sentry
@@ -185,12 +185,10 @@ export class SessionIdManager {
     cliTarget: StoredCliTarget | null = null,
   ): void {
     // An earlier spawn under this id still waiting past the window ended with no
-    // id. Settled before anything else, so its ceiling never fires on this spawn,
-    // and never read as a late capture from an id this spawn starts with.
-    if (this.pastWindow.has(sessionId)) {
-      this.settlePastWindow(sessionId);
-      this.callbacks.onCaptureOutcome?.(sessionId, { kind: 'never', settledBy: 'removed', filesystemScan: this.filesystemScanOf(sessionId) });
-    }
+    // id. Settled before anything else, so its ceiling never fires on this spawn.
+    // Not through `settleNever`, whose late-capture check would read an id this
+    // spawn starts with as the earlier spawn's.
+    if (this.pastWindow.has(sessionId)) this.reportNever(sessionId, 'removed');
     const strategy = agentParser?.runtime?.sessionId;
     if (!strategy) return;
     const spawnedAt = new Date();
@@ -303,6 +301,11 @@ export class SessionIdManager {
       this.noteCaptured(sessionId);
       return;
     }
+    this.reportNever(sessionId, settledBy);
+  }
+
+  /** Stop holding a session past the window and report it never captured. */
+  private reportNever(sessionId: string, settledBy: 'removed' | 'ceiling'): void {
     this.settlePastWindow(sessionId);
     this.callbacks.onCaptureOutcome?.(sessionId, { kind: 'never', settledBy, filesystemScan: this.filesystemScanOf(sessionId) });
   }
