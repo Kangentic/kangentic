@@ -512,6 +512,19 @@
   --xy-background-color: transparent;
 }
 
+/* A gesture let go over a disabled canvas tool still ends. Chromium sends no
+   mouse event whose target is a disabled button, so a card drag, a pan or a
+   link let go over Auto layout (disabled until a card has been moved) or a
+   waiting Add task never saw its release: the card stayed on the pointer, the
+   canvas kept panning, and the link stayed drawn until the next click. While
+   a gesture is in flight those buttons take no pointer, so the release lands
+   on the panel beneath them. At rest they keep it, for the tip that says why
+   they are disabled. */
+.workflow-canvas:has(.react-flow__node.dragging, .react-flow__pane.dragging) .react-flow__panel button:disabled,
+.workflow-canvas[data-linking] .react-flow__panel button:disabled {
+  pointer-events: none;
+}
+
 /* A card's full-size link target (WorkflowTaskNode) is mounted with the card
    and takes the pointer only while a link is drawn, so it never takes a card
    drag and starting a link re-renders no card. React Flow finds the card under
