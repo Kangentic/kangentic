@@ -141,6 +141,20 @@ async function addDisabledStandIn(page: Page, tag: 'button' | 'input' | 'select'
   }, { tagName: tag, id: testId, offset: left });
 }
 
+/** How many gestures the canvas holds: a card being dragged, a pan, a link being drawn. */
+function gesturesInFlight(page: Page): Promise<{ card: number; pan: number; link: number }> {
+  return page.evaluate(() => ({
+    card: document.querySelectorAll('.react-flow__node.dragging').length,
+    pan: document.querySelectorAll('.react-flow__pane.dragging').length,
+    link: document.querySelectorAll('[data-testid="workflow-canvas"][data-linking]').length,
+  }));
+}
+
+/** The transform React Flow writes on the viewport: where the canvas is panned and zoomed to. */
+function viewportTransform(page: Page): Promise<string> {
+  return page.locator('.workflow-canvas .react-flow__viewport').evaluate((element) => (element as HTMLElement).style.transform);
+}
+
 /** The place in a React Flow node's `translate(...)` transform, or null when it has none. */
 function parseTranslate(transform: string): { x: number; y: number } | null {
   const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(transform);
@@ -477,12 +491,6 @@ test.describe('Workflows canvas gestures', () => {
         // At rest the control takes the pointer, for the tip that says why it is disabled.
         await expect(disabledTarget).toHaveCSS('pointer-events', 'auto');
         const tool = await centerOf(page, disabledTarget);
-        const inFlight = () => page.evaluate(() => ({
-          card: document.querySelectorAll('.react-flow__node.dragging').length,
-          pan: document.querySelectorAll('.react-flow__pane.dragging').length,
-          link: document.querySelectorAll('[data-testid="workflow-canvas"][data-linking]').length,
-        }));
-        const viewport = () => page.locator('.workflow-canvas .react-flow__viewport').evaluate((element) => (element as HTMLElement).style.transform);
 
         if (gesture === 'a card drag') {
           const box = await card(page, 'task-3').boundingBox();
@@ -499,16 +507,16 @@ test.describe('Workflows canvas gestures', () => {
         }
         await page.mouse.move(tool.x, tool.y, { steps: 14 });
         // The gesture is live, so the check below is not of a press that never started.
-        await expect.poll(async () => Object.values(await inFlight()).reduce((total, count) => total + count, 0)).toBe(1);
+        await expect.poll(async () => Object.values(await gesturesInFlight(page)).reduce((total, count) => total + count, 0)).toBe(1);
 
         await page.mouse.up();
-        await expect.poll(inFlight).toEqual({ card: 0, pan: 0, link: 0 });
+        await expect.poll(() => gesturesInFlight(page)).toEqual({ card: 0, pan: 0, link: 0 });
         // Nothing is held any more: a move with no button down leaves the canvas where it is.
-        const rested = await viewport();
+        const rested = await viewportTransform(page);
         await page.mouse.move(tool.x + 200, tool.y - 300, { steps: 6 });
         await settleFrames(page, 3);
-        expect(await viewport()).toBe(rested);
-        expect(await inFlight()).toEqual({ card: 0, pan: 0, link: 0 });
+        expect(await viewportTransform(page)).toBe(rested);
+        expect(await gesturesInFlight(page)).toEqual({ card: 0, pan: 0, link: 0 });
       } finally {
         await browser.close();
       }
@@ -522,12 +530,6 @@ test.describe('Workflows canvas gestures', () => {
       for (const [index, tag] of tags.entries()) {
         await addDisabledStandIn(page, tag, `stand-in-${tag}`, 700 + index * 140);
       }
-      const inFlight = () => page.evaluate(() => ({
-        card: document.querySelectorAll('.react-flow__node.dragging').length,
-        pan: document.querySelectorAll('.react-flow__pane.dragging').length,
-        link: document.querySelectorAll('[data-testid="workflow-canvas"][data-linking]').length,
-      }));
-      const viewport = () => page.locator('.workflow-canvas .react-flow__viewport').evaluate((element) => (element as HTMLElement).style.transform);
 
       for (const tag of tags) {
         const standIn = byTestId(page, `stand-in-${tag}`);
@@ -542,19 +544,19 @@ test.describe('Workflows canvas gestures', () => {
         await page.mouse.down();
         await page.mouse.move(target.x, target.y, { steps: 14 });
         // The pan is live, so the check below is not of a press that never started.
-        await expect.poll(inFlight).toEqual({ card: 0, pan: 1, link: 0 });
-        // While it is, no disabled control takes the pointer.
+        await expect.poll(() => gesturesInFlight(page)).toEqual({ card: 0, pan: 1, link: 0 });
+        // While it is, the stand-in does not take the pointer.
         await expect(standIn).toHaveCSS('pointer-events', 'none');
 
         await page.mouse.up();
-        await expect.poll(inFlight).toEqual({ card: 0, pan: 0, link: 0 });
+        await expect.poll(() => gesturesInFlight(page)).toEqual({ card: 0, pan: 0, link: 0 });
         await expect(standIn).toHaveCSS('pointer-events', 'auto');
         // Nothing is held any more: a move with no button down leaves the canvas where it is.
-        const rested = await viewport();
+        const rested = await viewportTransform(page);
         await page.mouse.move(target.x + 100, target.y + 300, { steps: 6 });
         await settleFrames(page, 3);
-        expect(await viewport()).toBe(rested);
-        expect(await inFlight()).toEqual({ card: 0, pan: 0, link: 0 });
+        expect(await viewportTransform(page)).toBe(rested);
+        expect(await gesturesInFlight(page)).toEqual({ card: 0, pan: 0, link: 0 });
       }
     } finally {
       await browser.close();
@@ -788,7 +790,6 @@ test.describe('Workflows canvas gestures', () => {
     // a hand's two-pixel drift was a pan, and no click fired.
     const { browser, page } = await launch('draft');
     try {
-      const viewport = () => page.locator('.workflow-canvas .react-flow__viewport').evaluate((element) => (element as HTMLElement).style.transform);
       const pressOnEmptyCanvas = async (drift: number) => {
         const pane = await page.locator('.workflow-canvas .react-flow__pane').boundingBox();
         if (!pane || pane.width === 0) throw new Error('canvas not laid out');
@@ -802,15 +803,15 @@ test.describe('Workflows canvas gestures', () => {
 
       await card(page, 'task-3').click();
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'true');
-      const resting = await viewport();
+      const resting = await viewportTransform(page);
 
       await pressOnEmptyCanvas(2);
       await expect(card(page, 'task-3')).toHaveAttribute('data-selected', 'false');
       await settleFrames(page, 3);
-      expect(await viewport()).toBe(resting);
+      expect(await viewportTransform(page)).toBe(resting);
 
       await pressOnEmptyCanvas(60);
-      await expect.poll(viewport).not.toBe(resting);
+      await expect.poll(() => viewportTransform(page)).not.toBe(resting);
     } finally {
       await browser.close();
     }
