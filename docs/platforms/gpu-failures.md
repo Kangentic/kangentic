@@ -1,11 +1,12 @@
 ---
 type: Design
 title: GPU process failures
-description: Why an unusable GPU process kills the browser process (Chromium's fallback ladder, Linux zygote launch failures), why --disable-gpu alone does not help, and how the --in-process-gpu recovery, gpu-health.json records and the graphicsAccelerationEnabled setting work.
+description: Why an unusable GPU process kills the browser process (Chromium's fallback ladder, Linux zygote launch failures), why --disable-gpu alone does not help, how the --in-process-gpu recovery, gpu-health.json records and the graphicsAccelerationEnabled setting work, and how terminals skip WebGL on a Linux with no usable GPU.
 tags: [gpu, chromium, recovery, linux]
 sources:
   - resource: src/main/diagnostics/gpu-health.ts
   - resource: src/main/diagnostics/linux-gpu-zygote.ts
+  - resource: src/renderer/utils/terminal-webgl.ts
 ---
 # GPU process failures
 
@@ -119,8 +120,10 @@ Linux rows come from Ubuntu 24.04 under WSLg, whose GL is Mesa's d3d12 driver ra
 one, and which Chromium blocklists, so the control needed `--ignore-gpu-blocklist` to start on the
 GPU. macOS has not been measured. `app.getGPUInfo('complete')` still settles under the switches
 (1 ms on Windows), and still names the adapter, so the report loses nothing by running in this
-mode. `webgl: unavailable_software` is why `terminal-webgl.ts` skips its attach entirely rather
-than retrying on its usual schedule: in this mode the context is not blocked, it cannot exist.
+mode. `terminal-webgl.ts` skips its attach entirely in this mode, rather than retrying on its usual
+schedule: the context is not blocked, it cannot exist. It keys that on `softwareRendering`, not on
+the `webgl` word, because `unavailable_software` does not by itself mean no context (see Linux with
+no usable GPU, below).
 
 What ships now, on every platform:
 
@@ -179,5 +182,41 @@ What ships now, on every platform:
   watches the driver version: we never established what killed the GPU process, so the app claims
   no cause and suggests no cure. Changing the setting restarts Kangentic behind a confirmation,
   because the mode is fixed before the app is ready in both directions.
+
+## Linux with no usable GPU (DESKTOP-32)
+
+A Linux whose Chromium finds no GPU (vendor and device `0x0000`) gives a page no WebGL context
+at all. Before the fix every terminal failed its attach, retried every two minutes for the
+whole run, and filed `WebglFallbackError` once per run with zero context losses. Main now tells
+the renderer (`GpuGraphicsStatus.webglAvailable`), and the terminal takes the software-mode path:
+DOM, no retry, no report. Measured on Electron 45.1.0 (2026-11-16), reading
+`getGPUFeatureStatus().webgl` and a page's `getContext('webgl2')`:
+
+| Machine | Before the first `gpu-info-update` | After it | `webgl2` context |
+|---|---|---|---|
+| WSL Ubuntu under xvfb, no GPU ("GPU access is disabled due to frequent crashes") | `disabled_off` | `disabled_off` | null |
+| Same, `--enable-unsafe-swiftshader` | `disabled_off` | `unavailable_software` | yes |
+| Same, `--ignore-gpu-blocklist` | `disabled_off` | `enabled` | yes |
+| WSLg (blocklisted Mesa d3d12) | `disabled_off` | `disabled_off` | null |
+| WSLg, `--ignore-gpu-blocklist` | `disabled_off` | `enabled` | yes |
+| Windows, working NVIDIA GPU | `disabled_off` | `enabled` | yes |
+
+Three things follow, and `createWebglAvailabilityGate` (`gpu-health.ts`) holds all of them:
+
+- The status reads a preliminary `disabled_off` everywhere until the GPU process first reports,
+  100 to 300 ms after `whenReady`. The `gpuHealth:status` handler waits for that first update, up
+  to 3 s, and on a timeout answers WebGL available with the word `pending`. Answering from the
+  preliminary value would turn WebGL off on every working GPU.
+- `unavailable_software` comes with a working context when SwiftShader is allowed, so it is not
+  in the no-WebGL set. The set is `disabled_off` (measured) and `disabled_off_ok`,
+  `unavailable_off`, `unavailable_off_ok` (no fallback, not seen). Any other word, `unknown`
+  included, keeps today's retry and report.
+- Electron 45's feature status has no `webgl2` key, so the gate reads `webgl`.
+
+When WebGL was reported available and still fails, the fallback report carries the word as
+`webgl.featureStatus`, so a real defect (`enabled`) can be told from an environment the gate could
+not judge (`pending`, an unmeasured word). A pop-out page has its own copy of the terminal
+renderer, so its bootstrap (`usePopOutBootstrap.ts`) pulls the status too. Main gives a pop-out
+`noticePending: false` and leaves the flag for the main window, whose toast is the only reader.
 
 See [Error reporting (Sentry)](../telemetry/error-reporting.md) for the reporting half.

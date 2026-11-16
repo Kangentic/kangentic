@@ -5821,8 +5821,19 @@ export interface GpuGraphicsStatus {
    *  The terminal renderer reads this to stop retrying WebGL forever against
    *  a context it can never get (src/renderer/utils/terminal-webgl.ts). */
   softwareRendering: boolean;
+  /** False when Chromium reports WebGL off with no fallback (a Linux with no
+   *  usable GPU, Sentry DESKTOP-32), and in software mode. The terminal
+   *  renderer then takes the same DOM-only path as `softwareRendering`. Decided
+   *  by `createWebglAvailabilityGate` (src/main/diagnostics/gpu-health.ts),
+   *  which answers true whenever it cannot tell. */
+  webglAvailable: boolean;
+  /** `app.getGPUFeatureStatus().webgl` behind that answer: a fixed Chromium
+   *  word, or `pending` (the GPU process had not reported in time) or
+   *  `software-rendering`. Sent with the terminal's WebGL fallback report so an
+   *  environment can be told from a defect. */
+  webglFeatureStatus: string;
   /** True exactly once, on the launch that recovered from a GPU-fatal run.
-   *  Reading the status consumes it. */
+   *  The main window's read consumes it; a pop-out's read always gets false. */
   noticePending: boolean;
 }
 

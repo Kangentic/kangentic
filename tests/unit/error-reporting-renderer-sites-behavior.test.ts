@@ -27,7 +27,7 @@ vi.mock('../../src/renderer/utils/renderer-failure', async (importOriginal) => (
 import { reportRendererFailure } from '../../src/renderer/utils/renderer-failure';
 import { createBoardStore } from '../../src/renderer/stores/board-store';
 import { requestDetailOpenFromMain } from '../../src/renderer/window-manager/bridge/useTaskDetailWindowBridge';
-import { attachWebglRenderer } from '../../src/renderer/utils/terminal-webgl';
+import { attachWebglRenderer, setTerminalGraphicsSupport } from '../../src/renderer/utils/terminal-webgl';
 
 const reportMock = vi.mocked(reportRendererFailure);
 
@@ -103,9 +103,18 @@ describe('card click that cannot resolve where to open', () => {
 });
 
 describe('terminal WebGL fallback', () => {
-  it('reports the DOM fallback once, when the first retry pass is spent', () => {
+  // The graphics support is module state in terminal-webgl.ts, so a case that
+  // sets it puts the default back for whatever runs after it.
+  afterEach(() => {
+    setTerminalGraphicsSupport({ softwareRendering: false, webglAvailable: true, webglFeatureStatus: 'unknown' });
+  });
+
+  it('reports the DOM fallback once, when the first retry pass is spent, with the WebGL feature status', () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // Main said WebGL was available and it still failed: the report carries
+    // Chromium's word so a real defect can be told from an environment.
+    setTerminalGraphicsSupport({ softwareRendering: false, webglAvailable: true, webglFeatureStatus: 'enabled' });
     const fakeTerminal = { loadAddon: vi.fn() } as unknown as Terminal;
     const dispose = attachWebglRenderer(fakeTerminal, 'session-webgl-report', {
       createAddon: () => { throw new Error('WebGL blocked'); },
@@ -123,7 +132,7 @@ describe('terminal WebGL fallback', () => {
     expect(area).toBe('terminal');
     expect(operation).toBe('webgl_fallback');
     expect((error as Error).name).toBe('WebglFallbackError');
-    expect(contexts).toEqual({ webgl: { failure: 're-init-failed', contextLosses: 0 } });
+    expect(contexts).toEqual({ webgl: { failure: 're-init-failed', contextLosses: 0, featureStatus: 'enabled' } });
 
     // Later failures stay quiet.
     vi.advanceTimersByTime(200);

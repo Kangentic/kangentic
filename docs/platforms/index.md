@@ -19,4 +19,4 @@
 
 ## Failure recovery
 
-* [GPU process failures](gpu-failures.md) - Why an unusable GPU process kills the browser process (Chromium's fallback ladder, Linux zygote launch failures), why --disable-gpu alone does not help, and how the --in-process-gpu recovery, gpu-health.json records and the graphicsAccelerationEnabled setting work.
+* [GPU process failures](gpu-failures.md) - Why an unusable GPU process kills the browser process (Chromium's fallback ladder, Linux zygote launch failures), why --disable-gpu alone does not help, how the --in-process-gpu recovery, gpu-health.json records and the graphicsAccelerationEnabled setting work, and how terminals skip WebGL on a Linux with no usable GPU.

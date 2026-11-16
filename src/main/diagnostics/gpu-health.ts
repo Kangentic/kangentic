@@ -3,6 +3,7 @@ import path from 'node:path';
 import { atomicWriteJson } from '../config/board-config/atomic-write';
 import { trackEvent } from '../analytics/analytics';
 import type { LinuxProcessSnapshot, ZygoteState } from './linux-gpu-zygote';
+import type { GpuGraphicsStatus } from '../../shared/types';
 
 /**
  * Records GPU-process deaths within one app run and persists them for the
@@ -935,4 +936,137 @@ export function clearGpuEscalation(filePath: string, options: { onlyIfLastAt?: s
   } catch {
     // Missing, or unwritable: nothing more to do either way.
   }
+}
+
+/**
+ * `app.getGPUFeatureStatus().webgl` values under which a page gets no WebGL
+ * context at all (Sentry DESKTOP-32: terminals retried WebGL every two minutes
+ * for a whole run on a Linux whose Chromium found no GPU).
+ *
+ * Measured on Electron 45.1.0 (docs/platforms/gpu-failures.md): `disabled_off`
+ * with a null `getContext('webgl2')`, under xvfb with no GPU (vendor and device
+ * 0x0000, the Sentry machines' shape) and under WSLg's blocklisted driver. The
+ * other three carry no software fallback either, but were not seen.
+ *
+ * `unavailable_software` is deliberately NOT here: with
+ * `--enable-unsafe-swiftshader` on the same no-GPU machine it reads
+ * `unavailable_software` AND the page gets a working WebGL2 context. Our own
+ * software mode, which also reads it on Windows, is handled by
+ * `GpuGraphicsStatus.softwareRendering` instead.
+ *
+ * An unlisted or missing value counts as available, so a status nobody has
+ * measured keeps the terminal's retry schedule and its report, which now
+ * carries the status, rather than turning WebGL off.
+ */
+const WEBGL_UNAVAILABLE_STATUSES: ReadonlySet<string> = new Set([
+  'disabled_off',
+  'disabled_off_ok',
+  'unavailable_off',
+  'unavailable_off_ok',
+]);
+
+/** The status word sent when the GPU process never reported inside the wait. */
+export const WEBGL_STATUS_PENDING = 'pending';
+
+export interface WebglAvailability {
+  available: boolean;
+  /** The Chromium feature-status word (or `pending` / `unknown`), a fixed
+   *  enum never carrying user text, so it is safe as a report context. */
+  status: string;
+}
+
+/** Electron 45 has no `webgl2` key in the feature status, so `webgl` it is. */
+export function resolveWebglAvailability(featureStatus: { webgl?: string }): WebglAvailability {
+  const status = typeof featureStatus.webgl === 'string' ? featureStatus.webgl : 'unknown';
+  return { available: !WEBGL_UNAVAILABLE_STATUSES.has(status), status };
+}
+
+export interface WebglAvailabilityGateOptions {
+  /** Registers a listener for Electron's `gpu-info-update`. */
+  subscribe(listener: () => void): void;
+  getFeatureStatus(): { webgl?: string };
+  /** How long `read` waits for the first update before answering `pending`. */
+  timeoutMs: number;
+}
+
+export interface WebglAvailabilityGate {
+  read(): Promise<WebglAvailability>;
+}
+
+/**
+ * Answers WebGL availability only once the GPU process has reported.
+ *
+ * Until the first `gpu-info-update`, `getFeatureStatus()` reads a PRELIMINARY
+ * `webgl: disabled_off` on every platform measured: Windows with a working
+ * GPU, WSLg and xvfb, at `whenReady` and still at the page's first load. The
+ * first update carried the settled value in all six runs (`enabled` on a real
+ * GPU). Read too early, the answer would turn WebGL off for every user, so
+ * `read` waits for that first update, bounded by `timeoutMs`, and on a timeout
+ * answers available with `pending`: today's behavior. The flag is sticky, so a
+ * renderer reload later in the run reads at once. The status is classified at
+ * answer time, not copied at the update, so a later read sees the current
+ * value.
+ *
+ * Subscribe at module scope in main: the GPU process starts after `whenReady`,
+ * so a listener registered there cannot miss the first update.
+ */
+export function createWebglAvailabilityGate(options: WebglAvailabilityGateOptions): WebglAvailabilityGate {
+  let gpuReported = false;
+  const waiters = new Set<() => void>();
+  options.subscribe(() => {
+    if (gpuReported) return;
+    gpuReported = true;
+    for (const wake of waiters) wake();
+    waiters.clear();
+  });
+  return {
+    async read(): Promise<WebglAvailability> {
+      if (!gpuReported) {
+        await new Promise<void>((resolve) => {
+          const wake = (): void => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            waiters.delete(wake);
+            resolve();
+          }, options.timeoutMs);
+          waiters.add(wake);
+        });
+      }
+      if (!gpuReported) return { available: true, status: WEBGL_STATUS_PENDING };
+      return resolveWebglAvailability(options.getFeatureStatus());
+    },
+  };
+}
+
+/** The status word sent in software mode, where no GPU process exists to ask. */
+export const WEBGL_STATUS_SOFTWARE_RENDERING = 'software-rendering';
+
+export interface GpuGraphicsStatusSources {
+  /** This launch's pre-whenReady graphics decision. */
+  softwareRendering: boolean;
+  gate: WebglAvailabilityGate;
+  /** Reads and clears the one-shot recovery notice for this caller. Called
+   *  after the wait, in the same tick as the answer. */
+  takeNotice(): boolean;
+}
+
+/**
+ * The `gpuHealth:status` answer. Software mode skips the gate: no GPU process
+ * will ever report, `softwareRendering` already decides the terminals, and the
+ * recovery notice, which only a software launch carries, should not sit behind
+ * a wait. The notice is taken after the wait, so two reads that overlap cannot
+ * both take it.
+ */
+export async function readGpuGraphicsStatus(sources: GpuGraphicsStatusSources): Promise<GpuGraphicsStatus> {
+  const webgl: WebglAvailability = sources.softwareRendering
+    ? { available: false, status: WEBGL_STATUS_SOFTWARE_RENDERING }
+    : await sources.gate.read();
+  return {
+    softwareRendering: sources.softwareRendering,
+    webglAvailable: webgl.available,
+    webglFeatureStatus: webgl.status,
+    noticePending: sources.takeNotice(),
+  };
 }

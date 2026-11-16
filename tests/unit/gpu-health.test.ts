@@ -70,8 +70,13 @@ import {
   shouldReportEscalation,
   summarizeGpuInfo,
   buildGpuProcessContext,
+  resolveWebglAvailability,
+  createWebglAvailabilityGate,
+  WEBGL_STATUS_PENDING,
+  WEBGL_STATUS_SOFTWARE_RENDERING,
+  readGpuGraphicsStatus,
 } from '../../src/main/diagnostics/gpu-health';
-import type { GpuEscalationRecord } from '../../src/main/diagnostics/gpu-health';
+import type { GpuEscalationRecord, GpuGraphicsStatusSources } from '../../src/main/diagnostics/gpu-health';
 
 const START_MS = 1_700_000_000_000;
 
@@ -1704,5 +1709,238 @@ describe('clearGpuEscalation compare-and-clear', () => {
     clearGpuEscalation(escalationPath, { onlyIfLastAt: reported!.lastAt });
 
     expect(fs.existsSync(escalationPath)).toBe(false);
+  });
+});
+
+describe('resolveWebglAvailability (DESKTOP-32)', () => {
+  it.each(['disabled_off', 'disabled_off_ok', 'unavailable_off', 'unavailable_off_ok'])('%s means no WebGL', (webgl) => {
+    expect(resolveWebglAvailability({ webgl })).toEqual({ available: false, status: webgl });
+  });
+
+  it('unavailable_software stays available: SwiftShader serves a working context under it', () => {
+    // Measured on Electron 45.1.0 with --enable-unsafe-swiftshader on a no-GPU
+    // xvfb: the status read unavailable_software and getContext('webgl2')
+    // returned a context. Listing it would turn a working terminal to DOM.
+    expect(resolveWebglAvailability({ webgl: 'unavailable_software' }).available).toBe(true);
+  });
+
+  it.each(['enabled', 'enabled_readback', 'disabled_software'])('%s stays available', (webgl) => {
+    expect(resolveWebglAvailability({ webgl }).available).toBe(true);
+  });
+
+  it('a missing value is unknown and stays available', () => {
+    expect(resolveWebglAvailability({})).toEqual({ available: true, status: 'unknown' });
+  });
+});
+
+describe('the gpuHealth:status handler answers WebGL through the gate (index.ts, source read)', () => {
+  // index.ts cannot be imported, so this reads its text, and pins only the
+  // wiring; readGpuGraphicsStatus's own cases are above. What it protects: a
+  // handler that read getGPUFeatureStatus() directly would see the preliminary
+  // `disabled_off` every platform reports before the GPU process's first
+  // update, turn WebGL off for every user, and file nothing to say so.
+  const indexSource = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'main', 'index.ts'), 'utf-8');
+  const handlerStart = indexSource.indexOf('ipcMain.handle(IPC.GPU_HEALTH_STATUS');
+  const handlerEnd = indexSource.indexOf('\n}));', handlerStart);
+  const handlerBody = indexSource.slice(handlerStart, handlerEnd);
+
+  it('answers through readGpuGraphicsStatus with the module-scope gate, never the feature status itself', () => {
+    expect(handlerStart).toBeGreaterThan(-1);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+    expect(handlerBody).toContain('readGpuGraphicsStatus(');
+    expect(handlerBody).toContain('gate: webglAvailabilityGate');
+    expect(handlerBody).not.toContain('getGPUFeatureStatus');
+    expect(handlerBody).not.toContain('resolveWebglAvailability');
+  });
+
+  it('gives the recovery notice to the main window only', () => {
+    // A pop-out pulls the status for its own terminals. If its read took the
+    // one-shot flag, the main window's toast would never show.
+    expect(handlerBody).toContain('if (event.sender !== mainWindow?.webContents) return false;');
+  });
+
+  it('the gate listens for gpu-info-update at module scope', () => {
+    const gateStart = indexSource.indexOf('const webglAvailabilityGate = createWebglAvailabilityGate(');
+    expect(gateStart).toBeGreaterThan(-1);
+    // Module scope: the declaration starts a line, not inside a function body.
+    expect(indexSource[gateStart - 1]).toBe('\n');
+    expect(indexSource.slice(gateStart, indexSource.indexOf('});', gateStart))).toContain("app.on('gpu-info-update'");
+  });
+});
+
+describe('createWebglAvailabilityGate', () => {
+  // Before the GPU process's first report, Chromium reads a preliminary
+  // `webgl: disabled_off` on every platform, a working Windows GPU included.
+  // The gate is what keeps that value from turning WebGL off for everyone.
+  function makeGate(timeoutMs = 3_000): {
+    gate: ReturnType<typeof createWebglAvailabilityGate>;
+    fireUpdate: () => void;
+    setStatus: (webgl: string) => void;
+  } {
+    const listeners: Array<() => void> = [];
+    let currentWebgl = 'disabled_off';
+    const gate = createWebglAvailabilityGate({
+      subscribe: (listener) => { listeners.push(listener); },
+      getFeatureStatus: () => ({ webgl: currentWebgl }),
+      timeoutMs,
+    });
+    return {
+      gate,
+      fireUpdate: () => { for (const listener of listeners) listener(); },
+      setStatus: (webgl) => { currentWebgl = webgl; },
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('never answers unavailable from the preliminary status: it waits for the first update', async () => {
+    const { gate, fireUpdate, setStatus } = makeGate();
+    let answer: Awaited<ReturnType<typeof gate.read>> | null = null;
+    void gate.read().then((value) => { answer = value; });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(answer).toBeNull();
+
+    setStatus('enabled');
+    fireUpdate();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(answer).toEqual({ available: true, status: 'enabled' });
+  });
+
+  it('answers unavailable when the first update settles on disabled_off', async () => {
+    const { gate, fireUpdate } = makeGate();
+    const pending = gate.read();
+    fireUpdate();
+    await expect(pending).resolves.toEqual({ available: false, status: 'disabled_off' });
+  });
+
+  it('a timeout answers available with pending, today\'s behavior', async () => {
+    const { gate } = makeGate(3_000);
+    const pending = gate.read();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(pending).resolves.toEqual({ available: true, status: WEBGL_STATUS_PENDING });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('after the first update a read answers at once from the current status', async () => {
+    const { gate, fireUpdate, setStatus } = makeGate();
+    setStatus('enabled');
+    fireUpdate();
+    await expect(gate.read()).resolves.toEqual({ available: true, status: 'enabled' });
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Classified at answer time, not copied at the update: a renderer reload
+    // later in the run sees the current value.
+    setStatus('disabled_off');
+    await expect(gate.read()).resolves.toEqual({ available: false, status: 'disabled_off' });
+  });
+
+  it('a read woken by an update before the timeout leaves no timer behind', async () => {
+    const { gate, fireUpdate } = makeGate(3_000);
+    const pending = gate.read();
+    expect(vi.getTimerCount()).toBe(1);
+    fireUpdate();
+    await pending;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('several concurrent reads all resolve with the same answer on one update, with no timers left', async () => {
+    const { gate, fireUpdate, setStatus } = makeGate(3_000);
+    const reads = [gate.read(), gate.read(), gate.read()];
+    expect(vi.getTimerCount()).toBe(3);
+    setStatus('disabled_off_ok');
+    fireUpdate();
+    const answers = await Promise.all(reads);
+    expect(answers).toEqual([
+      { available: false, status: 'disabled_off_ok' },
+      { available: false, status: 'disabled_off_ok' },
+      { available: false, status: 'disabled_off_ok' },
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a second update changes nothing, and a later read answers from the current status', async () => {
+    const { gate, fireUpdate, setStatus } = makeGate(3_000);
+    const first = gate.read();
+    setStatus('enabled');
+    fireUpdate();
+    await expect(first).resolves.toEqual({ available: true, status: 'enabled' });
+
+    fireUpdate();
+    expect(vi.getTimerCount()).toBe(0);
+
+    setStatus('unavailable_off');
+    await expect(gate.read()).resolves.toEqual({ available: false, status: 'unavailable_off' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('readGpuGraphicsStatus', () => {
+  function makeSources(overrides: Partial<GpuGraphicsStatusSources> = {}): {
+    sources: GpuGraphicsStatusSources;
+    gateRead: ReturnType<typeof vi.fn>;
+    takeNotice: ReturnType<typeof vi.fn>;
+  } {
+    const gateRead = vi.fn(async () => ({ available: true, status: 'enabled' }));
+    const takeNotice = vi.fn(() => false);
+    return {
+      sources: { softwareRendering: false, gate: { read: gateRead }, takeNotice, ...overrides },
+      gateRead,
+      takeNotice,
+    };
+  }
+
+  it('in software mode never reads the gate, and answers WebGL unavailable', async () => {
+    const { sources, gateRead } = makeSources({ softwareRendering: true });
+    await expect(readGpuGraphicsStatus(sources)).resolves.toEqual({
+      softwareRendering: true,
+      webglAvailable: false,
+      webglFeatureStatus: WEBGL_STATUS_SOFTWARE_RENDERING,
+      noticePending: false,
+    });
+    expect(gateRead).not.toHaveBeenCalled();
+  });
+
+  it('otherwise returns the gate\'s answer', async () => {
+    const { sources, gateRead } = makeSources();
+    gateRead.mockResolvedValue({ available: false, status: 'disabled_off' });
+    await expect(readGpuGraphicsStatus(sources)).resolves.toEqual({
+      softwareRendering: false,
+      webglAvailable: false,
+      webglFeatureStatus: 'disabled_off',
+      noticePending: false,
+    });
+    expect(gateRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes the notice only after the gate\'s read resolves', async () => {
+    let resolveRead: (value: { available: boolean; status: string }) => void = () => undefined;
+    const { sources, gateRead, takeNotice } = makeSources();
+    gateRead.mockReturnValue(new Promise((resolve) => { resolveRead = resolve; }));
+
+    const answer = readGpuGraphicsStatus(sources);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(gateRead).toHaveBeenCalledTimes(1);
+    expect(takeNotice).not.toHaveBeenCalled();
+
+    resolveRead({ available: true, status: 'enabled' });
+    await answer;
+    expect(takeNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it('noticePending is whatever takeNotice returned', async () => {
+    const taken = makeSources();
+    taken.takeNotice.mockReturnValue(true);
+    expect((await readGpuGraphicsStatus(taken.sources)).noticePending).toBe(true);
+
+    const notTaken = makeSources();
+    notTaken.takeNotice.mockReturnValue(false);
+    expect((await readGpuGraphicsStatus(notTaken.sources)).noticePending).toBe(false);
   });
 });

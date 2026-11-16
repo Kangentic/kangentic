@@ -50,7 +50,7 @@ import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, s
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
-import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, buildGpuProcessContext } from './diagnostics/gpu-health';
+import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, buildGpuProcessContext, createWebglAvailabilityGate, readGpuGraphicsStatus } from './diagnostics/gpu-health';
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
@@ -147,6 +147,12 @@ const ABANDONED_LAUNCHES_FILE_PATH = path.join(PATHS.configDir, 'abandoned-launc
  *  giving up on it. Enrichment only: nothing downstream needs it, and the
  *  report is worth more on time without it than late with it. */
 const GPU_INFO_TIMEOUT_MS = 2_000;
+
+/** How long the graphics status waits for the GPU process's first report
+ *  before answering WebGL as available. Measured: the first
+ *  `gpu-info-update` lands 100 to 300 ms after `whenReady` on Windows, WSLg
+ *  and xvfb, and a renderer's boot pull usually arrives after it anyway. */
+const WEBGL_AVAILABILITY_WAIT_MS = 3_000;
 
 // When this run started, in wall clock. Compared against a pending GPU
 // record's own timestamp so the report block far below can tell a record the
@@ -444,13 +450,30 @@ app.commandLine.appendSwitch('force-prefers-no-reduced-motion');
 
 // Registered here rather than in an ipc/handlers module because the answer is
 // a module-scope fact of THIS file: the graphics decision runs before
-// whenReady and the notice it produces has no other owner. Cleared on read, so
-// a renderer reload during the same launch does not re-toast.
-ipcMain.handle(IPC.GPU_HEALTH_STATUS, (): GpuGraphicsStatus => {
-  const noticePending = pendingGpuNotice;
-  pendingGpuNotice = false;
-  return { softwareRendering: graphicsMode.software, noticePending };
+// whenReady and the notice it produces has no other owner. The main window's
+// read clears the notice, so a renderer reload during the same launch does not
+// re-toast. A pop-out reads the status for its own terminals and never takes
+// the notice, which only the main window raises.
+//
+// The WebGL answer waits for the GPU process's first report (bounded): before
+// it, the feature status reads a preliminary `disabled_off` on every platform,
+// and answering from that would turn WebGL off on a working GPU. The order
+// (software skip, wait, then the notice) is readGpuGraphicsStatus's.
+const webglAvailabilityGate = createWebglAvailabilityGate({
+  subscribe: (listener) => { app.on('gpu-info-update', listener); },
+  getFeatureStatus: () => app.getGPUFeatureStatus(),
+  timeoutMs: WEBGL_AVAILABILITY_WAIT_MS,
 });
+ipcMain.handle(IPC.GPU_HEALTH_STATUS, (event): Promise<GpuGraphicsStatus> => readGpuGraphicsStatus({
+  softwareRendering: graphicsMode.software,
+  gate: webglAvailabilityGate,
+  takeNotice: () => {
+    if (event.sender !== mainWindow?.webContents) return false;
+    const noticePending = pendingGpuNotice;
+    pendingGpuNotice = false;
+    return noticePending;
+  },
+}));
 
 // The Graphics acceleration toggle's only write path. Saving and restarting are
 // one call because the mode is chosen before whenReady above: a save with no

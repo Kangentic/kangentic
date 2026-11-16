@@ -35,7 +35,9 @@ export function gpuNoticeMessage(): string {
   return i18n._(msg`Repeated failures shut down your last run.`);
 }
 
-export function resolveGpuNotice(status: GpuGraphicsStatus | null | undefined): GpuNoticeResult | null {
+export function resolveGpuNotice(
+  status: Pick<GpuGraphicsStatus, 'softwareRendering' | 'noticePending'> | null | undefined,
+): GpuNoticeResult | null {
   if (!status?.noticePending) return null;
   // Main only arms the notice on a launch it put into software rendering, but
   // a status claiming one without the other is incoherent enough that saying

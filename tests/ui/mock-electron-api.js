@@ -6217,8 +6217,13 @@
         }
         var noticePending = window.__mockGpuNoticePending === true;
         window.__mockGpuNoticePending = false;
+        // __mockGpuWebglAvailable = false and __mockGpuWebglFeatureStatus
+        // stand in for main's WebGL gate (gpu-health.ts); the defaults are a
+        // working GPU.
         return Promise.resolve({
           softwareRendering: window.__mockGpuSoftwareRendering === true,
+          webglAvailable: window.__mockGpuWebglAvailable !== false,
+          webglFeatureStatus: window.__mockGpuWebglFeatureStatus || 'enabled',
           noticePending: noticePending,
         });
       },
