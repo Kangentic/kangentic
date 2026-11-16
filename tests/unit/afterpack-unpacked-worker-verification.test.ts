@@ -888,6 +888,24 @@ describe('afterPack: stripping better-sqlite3 prebuilds to the target', () => {
     expect(lines).toEqual(['[afterPack] better-sqlite3: kept prebuilds/win32-x64.node, removed 7 other prebuild(s)']);
   });
 
+  it('removes a build folder, which the loader would take ahead of the kept prebuild, and says so', async () => {
+    // better-sqlite3 13.2.0's lib/binding.js tries build/Release before prebuilds/.
+    const compiledDir = path.join(unpackedRoot, 'node_modules', 'better-sqlite3', 'build');
+    fs.mkdirSync(path.join(compiledDir, 'Release'), { recursive: true });
+    fs.writeFileSync(path.join(compiledDir, 'Release', 'better_sqlite3.node'), 'compiled on the runner');
+    const afterPack = await importAfterPack();
+    const lines: string[] = [];
+
+    afterPack.stripBetterSqlitePrebuilds({ unpackedRoot, platform: 'win32', targetArch: 'x64', log: (line) => lines.push(line) });
+
+    expect(fs.existsSync(compiledDir)).toBe(false);
+    expect(fs.readdirSync(prebuildsDir)).toEqual(['win32-x64.node']);
+    expect(lines).toEqual([
+      '[afterPack] better-sqlite3: kept prebuilds/win32-x64.node, removed 7 other prebuild(s)',
+      '[afterPack] better-sqlite3: removed build/, so the kept prebuild is the addon that loads',
+    ]);
+  });
+
   it('keeps the glibc build on Linux and drops the musl ones', async () => {
     const afterPack = await importAfterPack();
     afterPack.stripBetterSqlitePrebuilds({ unpackedRoot, platform: 'linux', targetArch: 'arm64', log: () => {} });
