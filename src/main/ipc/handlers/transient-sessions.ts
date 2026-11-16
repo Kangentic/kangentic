@@ -39,7 +39,7 @@ import type {
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
-import { AgentBatchShimUnresolvedError, AgentStartRefusedError } from '../../pty/spawn/pty-spawn';
+import { AgentBatchShimUnresolvedError, AgentStartRefusedError } from '../../pty/spawn/agent-start-refused';
 import type { IpcContext } from '../ipc-context';
 
 /**
