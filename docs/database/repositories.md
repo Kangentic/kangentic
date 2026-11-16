@@ -206,6 +206,7 @@ Operates on a per-project DB.
 | `getOrphaned()` | Get orphaned agent sessions (any `session_type` except `run_script`) |
 | `deleteByTaskId(taskId)` | Delete all session records for a given task |
 | `getLatestForTask(taskId)` | Find the most recent session record for a task (by `started_at` DESC) |
+| `getLatestForTaskByTypeAndIsolation(taskId, sessionType, isolatedSwimlaneId)` | The newest record of one agent's `session_type` on one track (`null` is the main session), by `started_at` DESC. The resume lookup: the board spawn's intent, startup recovery's record choice, and `resumeForAgent`, which swaps in the running agent's own record when the one recovered belongs to another agent. |
 | `listForTaskNewestFirst(taskId)` | All session records for a task, newest first. Used by `captureGitChurn` to enumerate the full record-id list for `setTaskGitStats`. |
 | `listTaskReportRecords(taskId)` | Every record of a task, newest first, with only the columns the completed task view's report reads (`TaskReportSessionRecord`). Leaves out `prompt` and `command`, which the report never reads. |
 | `getLatestAgentSessionForTask(taskId)` | The newest record of a task that has an `agent_session_id`, with only `session_type`, `agent_session_id`, `cwd`, `cli_target` and `transcript_path`: what the completed task view's last-message read needs to find the transcript, in a WSL distro's home when the CLI ran there, or at the reported path when a resumed conversation sits outside the folder its cwd maps to. Skips a newer record with no conversation id. |
