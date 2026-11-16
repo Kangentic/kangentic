@@ -111,6 +111,7 @@ function makeFakeClient(overrides?: Partial<EmbedWorkerClient>): EmbedWorkerClie
     dispose: vi.fn(),
     crashed: false,
     crashReason: null,
+    loadFailed: false,
     activeDevice: 'cpu',
     dimensions: 384,
     modelTag: 'bge-base@q8-cls',
@@ -718,6 +719,24 @@ describe('createEmbedEngine workerCrashReason', () => {
     // see the sibling test above); workerCrashReason must still see it.
     expect(engine.getEmbedder(context)).toBeNull();
     expect(engine.workerCrashReason).toBe("exited with code 1: Error: Cannot find module 'sharp'");
+    expect(engine.workerLoadFailed).toBe(false);
+  });
+
+  // The Knowledge Graph tab says "until Kangentic restarts" only from this getter (DESKTOP-38).
+  it("forwards the client's load failure, and is false before any client is resolved", () => {
+    const failedClient = makeFakeClient({
+      crashed: true,
+      loadFailed: true,
+      crashReason: 'exited with code 1: Error: The specified module could not be found.',
+    });
+    const engine = createEmbedEngine({
+      store: localEmbedStoreAccess(() => ({}) as unknown as Database.Database, () => new FakeStore('proj-load-failed', [], [])),
+      createClient: () => failedClient,
+      delay: immediateDelay,
+    });
+    expect(engine.workerLoadFailed).toBe(false);
+    expect(engine.getEmbedder(makeContext({ currentProjectId: 'proj-load-failed', enabled: true }))).toBeNull();
+    expect(engine.workerLoadFailed).toBe(true);
   });
 });
 

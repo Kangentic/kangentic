@@ -33,7 +33,10 @@ files:
   # onnxruntime-node execution providers (DirectML / WebGPU / CPU) because
   # transformers.js v4 dropped the browser 'wasm' backend in Node, so
   # onnxruntime-node and its native binaries (onnxruntime_binding.node +
-  # onnxruntime.dll + DirectML.dll) must ship and be unpacked. onnxruntime-web is
+  # onnxruntime.dll + DirectML.dll) must ship and be unpacked. On Windows those
+  # import the MSVC runtime, which build/afterPack.js copies in beside them from
+  # the build machine's Visual Studio redist (build/msvc-runtime.js, DESKTOP-38),
+  # so a Windows build fails without a new enough C++ redist. onnxruntime-web is
   # retained only as transformers' optional peer; its wasm path is now unused
   # (follow-up: drop it once the packaged smoke test confirms onnxruntime-node is
   # the sole backend).

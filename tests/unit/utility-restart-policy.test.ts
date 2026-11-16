@@ -54,7 +54,7 @@ function makeClock(start = 1_000) {
   };
 }
 
-function makePolicy(overrides: Partial<{ maxCrashes: number; decayMs: number; reportFirstCrash: boolean; service: string }> = {}) {
+function makePolicy(overrides: Partial<{ maxCrashes: number; decayMs: number; reportFirstCrash: boolean; service: string; latchOnLoadFailure: boolean }> = {}) {
   const clock = makeClock();
   const policy = new UtilityRestartPolicy({
     service: overrides.service ?? 'kangentic-test-worker',
@@ -63,6 +63,7 @@ function makePolicy(overrides: Partial<{ maxCrashes: number; decayMs: number; re
     decayMs: overrides.decayMs ?? 300_000,
     now: clock.now,
     reportFirstCrash: overrides.reportFirstCrash,
+    latchOnLoadFailure: overrides.latchOnLoadFailure,
   });
   return { policy, clock };
 }
@@ -1117,6 +1118,117 @@ describe('UtilityRestartPolicy', () => {
         // clearAllMocks in beforeEach does not drop an unconsumed once-implementation.
         mockReportHandledError.mockReset();
       }
+    });
+  });
+
+  // DESKTOP-38: a native module that cannot load (a DLL the machine lacks) fails the same way
+  // on every fork, so the decay window only re-forked a worker that could never start.
+  describe('a native module that cannot load (latchOnLoadFailure)', () => {
+    const DLOPEN_STDERR =
+      'Error: The specified module could not be found.\n' +
+      '\\\\?\\C:\\Users\\dev\\app.asar.unpacked\\node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64\\onnxruntime_binding.node\n' +
+      "    at Object..node (node:internal/modules/cjs/loader:1921:18) {\n  code: 'ERR_DLOPEN_FAILED'\n}";
+
+    it('stops spawning after one crash, holds through the decay window and a new policy, and reports once', () => {
+      const { policy, clock } = makePolicy({ latchOnLoadFailure: true });
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+
+      expect(policy.loadFailed).toBe(true);
+      expect(policy.exhausted).toBe(true);
+      expect(policy.maySpawn()).toBe(false);
+      clock.advance(10 * 300_000);
+      expect(policy.maySpawn()).toBe(false);
+      expect(policy.lastCrashDescription).toBe('exited with code 1: Error: The specified module could not be found.');
+
+      // The embed engine rebuilds its client, and so its policy, on a model change.
+      const { policy: rebuilt } = makePolicy({ latchOnLoadFailure: true });
+      expect(rebuilt.maySpawn()).toBe(false);
+      expect(rebuilt.lastCrashDescription).toBe('exited with code 1: Error: The specified module could not be found.');
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [error, tags, , fingerprint] = mockReportHandledError.mock.calls[0];
+      expect((error as Error).message).toBe('kangentic-test-worker worker could not load a native module (ERR_DLOPEN_FAILED)');
+      expect(tags).toMatchObject({ source: 'utility_process', service: 'kangentic-test-worker', code: 'ERR_DLOPEN_FAILED' });
+      expect(fingerprint).toEqual(['handled-env', 'utility-process-load-failed', 'kangentic-test-worker', 'ERR_DLOPEN_FAILED']);
+      expect(mockTrackEvent.mock.calls.map(([, properties]) => (properties as { phase: string }).phase)).toEqual(['first', 'latched']);
+    });
+
+    it('reads stderr that lands after the crash was recorded', () => {
+      const { policy } = makePolicy({ latchOnLoadFailure: true });
+      const stderr = makeStderrSource('');
+      policy.recordCrash(1, stderr);
+      expect(policy.exhausted).toBe(false);
+      stderr.set(DLOPEN_STDERR);
+      expect(policy.exhausted).toBe(true);
+    });
+
+    it('leaves any other crash to the backoff and decay', () => {
+      const { policy, clock } = makePolicy({ latchOnLoadFailure: true });
+      policy.recordCrash(1, makeStderrSource("Error: Cannot find module 'sharp'"));
+      expect(policy.loadFailed).toBe(false);
+      clock.advance(1_000);
+      expect(policy.maySpawn()).toBe(true);
+    });
+
+    it('does nothing for a service that did not ask', () => {
+      const { policy, clock } = makePolicy();
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+      expect(policy.loadFailed).toBe(false);
+      clock.advance(1_000);
+      expect(policy.maySpawn()).toBe(true);
+      expect(mockReportHandledError).not.toHaveBeenCalled();
+    });
+
+    // Red-green: drop the `return` after reportLoadFailure and the first-crash report fires as well.
+    it('reports a load failure instead of the first crash for a service that asked for both', () => {
+      const { policy } = makePolicy({ latchOnLoadFailure: true, reportFirstCrash: true });
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const fingerprints = mockReportHandledError.mock.calls.map((call) => call[3]);
+      expect(fingerprints[0]).toEqual(['handled-env', 'utility-process-load-failed', 'kangentic-test-worker', 'ERR_DLOPEN_FAILED']);
+      expect(fingerprints).not.toContainEqual(expect.arrayContaining(['utility-process-first-crash']));
+    });
+
+    // Red-green: remove the loadFailed early return and the cap's latch report fires too.
+    it('reports a load failure that is also the cap once, with no latch report', () => {
+      const { policy } = makePolicy({ latchOnLoadFailure: true, maxCrashes: 1 });
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const fingerprints = mockReportHandledError.mock.calls.map((call) => call[3]);
+      expect(fingerprints[0][0]).toBe('handled-env');
+      expect(fingerprints).not.toContainEqual(expect.arrayContaining(['utility-process-latched']));
+    });
+
+    // Red-green: make reset() clear the module-level load failure and maySpawn() turns true.
+    it('keeps a load failure through reset()', () => {
+      const { policy } = makePolicy({ latchOnLoadFailure: true });
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+      expect(policy.loadFailed).toBe(true);
+
+      policy.reset();
+
+      expect(policy.maySpawn()).toBe(false);
+      expect(policy.loadFailed).toBe(true);
+    });
+
+    // Red-green: rename a tag or add a key to the context and the exact comparison fails.
+    it('keeps the exact tags and context keys of the load-failure report', () => {
+      const { policy } = makePolicy({ latchOnLoadFailure: true });
+      policy.recordCrash(1, makeStderrSource(DLOPEN_STDERR));
+
+      const [, tags, contexts] = mockReportHandledError.mock.calls[0];
+      expect(tags).toEqual({
+        source: 'utility_process',
+        service: 'kangentic-test-worker',
+        exitCode: '1',
+        crashCount: '1',
+        cause: 'exit',
+        code: 'ERR_DLOPEN_FAILED',
+      });
+      expect(Object.keys((contexts as { utility_process: object }).utility_process).sort())
+        .toEqual(['crashCount', 'exitCode', 'service', 'stderrTail']);
     });
   });
 });

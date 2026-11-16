@@ -46,6 +46,13 @@ function semanticPlatformNote(status: KnowledgeGraphStatus | null, i18n: I18n): 
   }
   if (status.semantic === 'error') {
     const workerError = status.workerError;
+    // The worker could not load its native runtime, which does not change while
+    // the app runs, so the line says how long keyword matches will last.
+    if (status.workerLoadFailed) {
+      return workerError
+        ? i18n._(msg`The local model could not load on this computer - showing keyword matches until Kangentic restarts. (${workerError})`)
+        : i18n._(msg`The local model could not load on this computer - showing keyword matches until Kangentic restarts.`);
+    }
     return workerError
       ? i18n._(msg`The local model is unavailable - showing keyword matches. (${workerError})`)
       : i18n._(msg`The local model is unavailable - showing keyword matches.`);

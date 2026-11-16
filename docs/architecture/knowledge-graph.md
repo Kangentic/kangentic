@@ -7,6 +7,8 @@ sources:
   - resource: src/main/retrieval/summary/
   - resource: src/main/retrieval/retrieval-service.ts
   - resource: src/main/retrieval/embedder/embed-client.ts
+  - resource: src/main/utility-process/restart-policy.ts
+    title: latchOnLoadFailure
   - resource: src/main/retrieval/index-counts.ts
   - resource: src/shared/index-summary.ts
     title: sumIndexCounts, isIndexedProject
@@ -62,3 +64,15 @@ how the worker stopped plus the first error line of its stderr, for example
 fork that threw), and the
 same text is in `<project>/.kangentic/logs/<date>.log` as a
 `[utility-process]` warning.
+
+A worker whose stderr shows `ERR_DLOPEN_FAILED` could not load a native module
+(onnxruntime's binding, or a DLL it links against that the machine lacks, Sentry
+DESKTOP-38). That does not change while the app runs, so the embed client's
+policy (`latchOnLoadFailure`) stops forking after that one crash and does not
+decay. The latch is kept per service for the run, so a client the engine
+rebuilds on a model or acceleration change stays off too. `KnowledgeGraphStatus`
+then carries `workerLoadFailed: true` beside `workerError`, and the note reads
+"The local model could not load on this computer - showing keyword matches until
+Kangentic restarts." It is reported once a run, as an environment failure (see
+[Error reporting](../telemetry/error-reporting.md)). The Windows build ships the
+MSVC runtime beside the binding, so a missing runtime no longer causes it there ([Windows](../platforms/windows.md#the-msvc-runtime-beside-onnxruntime)).

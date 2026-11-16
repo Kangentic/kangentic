@@ -103,7 +103,9 @@ export class EmbedClient implements Embedder {
     this.noiseFloor = model.noiseFloor;
     this.deviceChain = resolveDeviceChain(acceleration);
     this.restartPolicy = restartPolicy
-      ?? new UtilityRestartPolicy({ service: SERVICE_NAME, maxCrashes: MAX_CRASHES });
+      // A binding that cannot load (a DLL the machine lacks, DESKTOP-38) fails
+      // the same way on every fork, so it stops forking for the run.
+      ?? new UtilityRestartPolicy({ service: SERVICE_NAME, maxCrashes: MAX_CRASHES, latchOnLoadFailure: true });
     this.readCommitBytes = options?.readCommitBytes ?? readProcessCommitBytes;
   }
 
@@ -139,6 +141,12 @@ export class EmbedClient implements Embedder {
    *  and first error line. Null while nothing has crashed in the window. */
   get crashReason(): string | null {
     return this.restartPolicy.lastCrashDescription;
+  }
+
+  /** True once the worker could not load its native runtime this run. It stays
+   *  off until Kangentic restarts, and the Knowledge Graph tab says so. */
+  get loadFailed(): boolean {
+    return this.restartPolicy.loadFailed;
   }
 
   /** The execution provider the worker actually initialized on this run

@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { isEmbeddingRuntimeSupported } from '../../src/shared/embedding-runtime';
 
 const require = createRequire(import.meta.url);
 const {
@@ -30,6 +31,9 @@ const {
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
   verifySpawnWorkerLoads,
+  verifyEmbedRuntimeLoads,
+  buildEmbedRuntimeLoadScript,
+  foreignMsvcRuntimeModules,
   buildProbeScript,
   buildRetrievalLoadScript,
   buildPtyHostLoadScript,
@@ -308,6 +312,104 @@ describe('dictation worker closure parity (DESKTOP-X)', () => {
     expect(files).toContain('"node_modules/sherpa-onnx-node/**"');
     expect(files).toContain('"node_modules/sherpa-onnx-*/**"');
   });
+});
+
+// DESKTOP-38: a build machine has the MSVC runtime in System32, so a load alone passes a package
+// that lacks it. The probe reads where each runtime DLL actually loaded from.
+describe('embed runtime gate', () => {
+  const bindingDir = 'C:\\Program Files\\Kangentic\\resources\\app.asar.unpacked\\node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64';
+
+  it('flags a runtime DLL loaded from System32, and passes one loaded from beside the binding', () => {
+    const sharedObjects = [
+      'C:\\WINDOWS\\System32\\msvcp_win.dll',
+      `\\\\?\\${bindingDir}\\onnxruntime_binding.node`,
+      `\\\\?\\${bindingDir.toUpperCase()}\\MSVCP140.dll`,
+      `${bindingDir}\\vcruntime140_1.dll`,
+      'C:\\WINDOWS\\SYSTEM32\\VCRUNTIME140.dll',
+      'C:\\WINDOWS\\SYSTEM32\\MSVCP140_ATOMIC_WAIT.dll',
+    ];
+    // msvcp_win.dll is part of Windows, not the Visual C++ runtime, so it never counts.
+    expect(foreignMsvcRuntimeModules(sharedObjects, bindingDir)).toEqual([
+      'C:\\WINDOWS\\SYSTEM32\\VCRUNTIME140.dll',
+      'C:\\WINDOWS\\SYSTEM32\\MSVCP140_ATOMIC_WAIT.dll',
+    ]);
+    expect(foreignMsvcRuntimeModules(sharedObjects.slice(0, 4), `${bindingDir}\\`)).toEqual([]);
+  });
+
+  // Real process.report captures, so the filter is proven on the shape Windows really reports.
+  it('reads the captured process.report lists: the system runtime is foreign, the app-local one is not', () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'process-report-shared-objects-win32.json'), 'utf8'),
+    ) as {
+      systemRuntime: { bindingDir: string; sharedObjects: string[] };
+      appLocalRuntime: { bindingDir: string; sharedObjects: string[] };
+    };
+    expect(foreignMsvcRuntimeModules(fixture.systemRuntime.sharedObjects, fixture.systemRuntime.bindingDir)).toEqual([
+      'C:\\WINDOWS\\SYSTEM32\\MSVCP140.dll',
+      'C:\\WINDOWS\\SYSTEM32\\VCRUNTIME140.dll',
+      'C:\\WINDOWS\\SYSTEM32\\VCRUNTIME140_1.dll',
+      'C:\\WINDOWS\\SYSTEM32\\MSVCP140_1.dll',
+      'C:\\WINDOWS\\SYSTEM32\\MSVCP140_ATOMIC_WAIT.dll',
+    ]);
+    expect(foreignMsvcRuntimeModules(fixture.appLocalRuntime.sharedObjects, fixture.appLocalRuntime.bindingDir)).toEqual([]);
+  });
+
+  // The probe inlines its own regex because the function is serialized into the probe script.
+  it('keeps the inlined runtime DLL regex in step with build/msvc-runtime.js', () => {
+    const { MSVC_RUNTIME_DLL_PATTERN } = require('../../build/msvc-runtime.js') as { MSVC_RUNTIME_DLL_PATTERN: RegExp };
+    expect(foreignMsvcRuntimeModules.toString()).toContain(MSVC_RUNTIME_DLL_PATTERN.source);
+  });
+
+  it('fails the probe when onnxruntime_binding.node is not among the loaded modules', () => {
+    const unpackedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-embed-no-binding-'));
+    try {
+      const packageDir = path.join(unpackedRoot, 'node_modules', 'onnxruntime-node');
+      fs.mkdirSync(packageDir, { recursive: true });
+      fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({ name: 'onnxruntime-node', version: '0.0.0', main: 'index.js' }));
+      fs.writeFileSync(path.join(packageDir, 'index.js'), 'module.exports = {};\n');
+      expect(() => verifyEmbedRuntimeLoads({ unpackedRoot, electronBinaryPath: process.execPath, log: vi.fn() }))
+        .toThrow(/onnxruntime_binding\.node is not among the loaded modules/);
+    } finally {
+      fs.rmSync(unpackedRoot, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('runs the probe under the given Electron binary as Node, with the check inlined, and throws with its stderr', () => {
+    const spawn = vi.fn(() => {
+      const error: SpawnError = new Error('Command failed');
+      error.stderr = 'the MSVC runtime loaded from outside the binding: C:\\WINDOWS\\SYSTEM32\\MSVCP140.dll';
+      throw error;
+    });
+    const binary = path.join(path.sep, 'mock', 'Kangentic.exe');
+    expect(() => verifyEmbedRuntimeLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: binary, spawn, log: vi.fn() }))
+      .toThrow(/onnxruntime-node's binding does not load[\s\S]*SYSTEM32\\MSVCP140\.dll/);
+    expect(spawn).toHaveBeenCalledWith(
+      binary,
+      ['-e', expect.stringContaining('const foreignMsvcRuntimeModules = function foreignMsvcRuntimeModules')],
+      expect.objectContaining({ env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }) }),
+    );
+    const script = buildEmbedRuntimeLoadScript(MOCK_ROOT);
+    expect(script).toContain('candidate.startsWith(root)');
+    expect(script).toContain('Module.globalPaths = [];');
+  });
+
+  // The real script under this checkout's Electron, against the repo's node_modules. Off Windows
+  // the load is the whole check. On Windows the repo has no runtime beside the binding, so the
+  // probe must refuse: either the system copies loaded (what masked DESKTOP-38 on every build
+  // machine) or there are none and the load itself failed.
+  // A target with no onnxruntime binding (Intel macOS) has nothing to load.
+  it.skipIf(!isEmbeddingRuntimeSupported(process.platform, process.arch))('loads the binding for real under this checkout\'s Electron, and on Windows refuses the system runtime', () => {
+    const installRoot = path.dirname(fs.realpathSync(path.join(REPO_ROOT, 'node_modules')));
+    const electronBinary = require('electron') as unknown as string;
+    const log = vi.fn();
+    if (process.platform === 'win32') {
+      expect(() => verifyEmbedRuntimeLoads({ unpackedRoot: installRoot, electronBinaryPath: electronBinary, log }))
+        .toThrow(/MSVC runtime loaded from outside .*onnxruntime-node.*msvcp140|ERR_DLOPEN_FAILED|specified module could not be found/i);
+    } else {
+      verifyEmbedRuntimeLoads({ unpackedRoot: installRoot, electronBinaryPath: electronBinary, log });
+      expect(log).toHaveBeenCalledWith(`[afterPack] embed runtime: onnxruntime_binding.node loaded; MSVC runtime not used on ${process.platform}`);
+    }
+  }, 60_000);
 });
 
 describe('retrieval worker gate', () => {

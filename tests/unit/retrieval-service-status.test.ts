@@ -53,6 +53,7 @@ const embedEngineMock = vi.hoisted(() => ({
   activeDevice: null as string | null,
   workerCrashed: false,
   workerCrashReason: null as string | null,
+  workerLoadFailed: false,
 }));
 vi.mock('../../src/main/retrieval/embedder/embed-engine', () => ({
   embedEngine: embedEngineMock,
@@ -79,6 +80,7 @@ describe('retrievalService.getStatus', () => {
     embeddingModelMock.present = true;
     embedEngineMock.workerCrashed = false;
     embedEngineMock.workerCrashReason = null;
+    embedEngineMock.workerLoadFailed = false;
     embedEngineMock.activeDevice = null;
     vi.resetModules();
     ({ retrievalService } = await import('../../src/main/retrieval/retrieval-service'));
@@ -98,6 +100,19 @@ describe('retrievalService.getStatus', () => {
     expect(status.workerError).toBe(CRASH_REASON);
     // A crashed worker must not be re-fed work by the status poll.
     expect(embedEngineMock.markDirty).not.toHaveBeenCalled();
+  });
+
+  // DESKTOP-38: the tab says keyword matches last until a restart only from this flag.
+  it('flags a worker that could not load its native runtime, beside its reason', async () => {
+    embedEngineMock.workerCrashed = true;
+    embedEngineMock.workerLoadFailed = true;
+    embedEngineMock.workerCrashReason = 'exited with code 1: Error: The specified module could not be found.';
+
+    const status = await retrievalService.getStatus(makeContext({ indexingEnabled: true, enabled: true }));
+
+    expect(status.semantic).toBe('error');
+    expect(status.workerLoadFailed).toBe(true);
+    expect(status.workerError).toBe('exited with code 1: Error: The specified module could not be found.');
   });
 
   it('reports semantic error with no reason when the policy has none to give', async () => {

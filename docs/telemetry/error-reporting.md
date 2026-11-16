@@ -483,7 +483,10 @@ in one Sentry org, one triage surface.
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
   spawn failures (`source: pty_spawn`), a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`, fingerprinted
-  `['utility-process-latched', service, cause]`, its stderr tail run through `redactEventText`), and a GPU health
+  `['utility-process-latched', service, cause]`, its stderr tail run through `redactEventText`; an embed
+  worker that could not load a native module, `ERR_DLOPEN_FAILED`, is reported once a run in its place with
+  `code: ERR_DLOPEN_FAILED`, fingerprinted `['handled-env', 'utility-process-load-failed', service, 'ERR_DLOPEN_FAILED']`,
+  with the same redacted stderr tail), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
   `crashCount` - see the GPU health bullet below), a failed agent launch (`source: agent_launch`,
   see "Every failed launch has one report" below), a task leftover reap or a
