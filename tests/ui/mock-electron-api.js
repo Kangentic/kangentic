@@ -7806,14 +7806,19 @@
       listSessions: function (taskId, _projectId) {
         // A spec can replace the answer at runtime (hold it, change it) by
         // setting window.__mockTranscriptsListSessionsOverride(taskId). It
-        // returns the list or a Promise of it, or undefined to use the
-        // seeded map. Either answer reaches the caller as a Promise.
-        if (typeof window !== 'undefined' && typeof window.__mockTranscriptsListSessionsOverride === 'function') {
-          var overriddenList = window.__mockTranscriptsListSessionsOverride(taskId);
-          if (overriddenList) return Promise.resolve(overriddenList);
+        // returns the list or a Promise of it. An answer of undefined, now or
+        // once resolved, uses the seeded map. A throw reaches the caller as a
+        // rejection, the way a failed invoke does.
+        function seededList() {
+          var list = transcriptSessionsByTask[taskId];
+          return list ? list.slice() : [];
         }
-        var list = transcriptSessionsByTask[taskId];
-        return Promise.resolve(list ? list.slice() : []);
+        if (typeof window !== 'undefined' && typeof window.__mockTranscriptsListSessionsOverride === 'function') {
+          var override = window.__mockTranscriptsListSessionsOverride;
+          return new Promise(function (resolve) { resolve(override(taskId)); })
+            .then(function (overriddenList) { return overriddenList || seededList(); });
+        }
+        return Promise.resolve(seededList());
       },
     },
 
