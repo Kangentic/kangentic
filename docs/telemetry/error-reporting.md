@@ -732,7 +732,10 @@ in one Sentry org, one triage surface.
   [Which agents identify what](../integrations/agents/optional-properties.md).
 
   An abort is a task taken over, not a failure, and a refusal at a Command Terminal start (the cap, a
-  slot taken, a conversation in use) is an answer, so neither is reported at all.
+  slot taken, a conversation in use) is an answer, so none of those is reported at all. The one
+  refusal that is reported is a launch whose `.cmd` shim cannot be read past
+  (`AgentBatchShimUnresolvedError`, cause `batch_shim_unresolved`), because the gap is the
+  launcher's, not the user's.
 
   The quit path sends nothing (`synchronous-shutdown.md`), and no exit listener runs there. So a
   launch a person quit on goes on disk, as `abandoned-launches.json` in the config directory, and
