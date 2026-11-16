@@ -40,6 +40,7 @@ vi.mock('../../src/main/config/board-config/apply-config', () => ({
 
 import { BoardConfigManager } from '../../src/main/config/board-config-manager';
 import { TEAM_FILE, LOCAL_FILE, BoardConfigUnreadableError } from '../../src/main/config/board-config/config-helpers';
+import { isExpectedFailure } from '../../src/main/analytics/handled-report';
 import { pruneDeletedColumnFromProfiles } from '../../src/main/config/board-config/prune-profile-references';
 import type { BoardProfile } from '../../src/shared/types';
 
@@ -320,6 +321,205 @@ describe('board-config-manager write refusal and reader edges', () => {
       // The team file alone: the unreadable local overrides merged nothing in.
       expect(appliedConfig).toEqual(manager.loadTeamConfig());
       expect(appliedConfig.defaultBaseBranch).toBe('main');
+    });
+  });
+
+  // A build that cannot read all of a file never writes it. On 2026-11-12 a
+  // build that read every `condition.text` as noise exported the file without
+  // them, and the commit after that took the guards from the whole board.
+  describe('a team file this build cannot fully read', () => {
+    const newerTeam = JSON.stringify({ ...validTeam, version: 2 }, null, 2);
+    const localOverrides = JSON.stringify({ columns: [{ id: 'lane-1', color: '#123456' }] }, null, 2);
+    const unreadableGuardTeam = JSON.stringify({
+      version: 1,
+      columns: [{
+        id: 'lane-1',
+        name: 'Executing',
+        automations: { onTurnEnd: [{ name: 'On to Code Review', type: 'move_to_column', targetColumn: 'Code Review', condition: { regex: 'Ready' } }] },
+      }],
+    }, null, 2);
+
+    // Without this control, a write-back that never ran would pass every
+    // "left as it is" assertion below.
+    it('control: the write-back does rewrite a file it can read', () => {
+      const readable = JSON.stringify({ ...validTeam, stale: true }, null, 2);
+      write(TEAM_FILE, readable);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      attachedManager().exportFromDb();
+
+      expect(readReal(TEAM_FILE)).not.toBe(readable);
+    });
+
+    it('leaves a newer file and the local file as they are on a write-back', () => {
+      write(TEAM_FILE, newerTeam);
+      write(LOCAL_FILE, localOverrides);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      attachedManager().exportFromDb();
+
+      expect(readReal(TEAM_FILE)).toBe(newerTeam);
+      expect(readReal(LOCAL_FILE)).toBe(localOverrides);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('saved by a newer version of Kangentic');
+    });
+
+    // The MCP column and automation tools put this in their reply, so an agent
+    // does not report a save that never reached the file.
+    it('tells an MCP write-back why the file was not written, and says nothing when it was', () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const manager = attachedManager();
+
+      write(TEAM_FILE, newerTeam);
+      expect(manager.writeBackForProject('project-1', tempDir)).toContain('saved by a newer version of Kangentic');
+
+      write(TEAM_FILE, unreadableGuardTeam);
+      expect(manager.writeBackForProject('project-1', tempDir)).toBe(
+        'kangentic.json holds automations this build cannot read, so board edits are not saved to it until the file is fixed.',
+      );
+
+      write(TEAM_FILE, JSON.stringify({ ...validTeam, stale: true }, null, 2));
+      expect(manager.writeBackForProject('project-1', tempDir)).toBeNull();
+    });
+
+    it('tells an MCP write-back that a team file it cannot read was left as it is', () => {
+      write(TEAM_FILE, conflicted);
+      const before = readReal(TEAM_FILE);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const reason = attachedManager().writeBackForProject('project-1', tempDir);
+
+      expect(reason).toContain(`${TEAM_FILE} could not be read.`);
+      expect(readReal(TEAM_FILE)).toBe(before);
+    });
+
+    it('tells an MCP write-back the validator rejection text when the team file has columns it rejects', () => {
+      const missingVersion = JSON.stringify({ columns: [{ id: 'lane-1', name: 'To Do', role: 'todo' }] }, null, 2);
+      write(TEAM_FILE, missingVersion);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const reason = attachedManager().writeBackForProject('project-1', tempDir);
+
+      expect(reason).toBe('kangentic.json is missing the version field. Board loaded from local database.');
+      expect(readReal(TEAM_FILE)).toBe(missingVersion);
+    });
+
+    it('tells an MCP write-back that the write failed when the atomic write throws', () => {
+      write(TEAM_FILE, JSON.stringify({ ...validTeam, stale: true }, null, 2));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      });
+
+      const reason = attachedManager().writeBackForProject('project-1', tempDir);
+
+      expect(reason).toBe('Writing kangentic.json failed. The log has the details.');
+      expect(warn).toHaveBeenCalledWith('[BOARD_CONFIG] Write-back failed:', expect.any(Error));
+    });
+
+    it('does not add the unreadable-automations line for a newer file, whose own warning already says why', () => {
+      const newerWithUnreadableRow = JSON.stringify({
+        version: 2,
+        columns: [{
+          id: 'lane-1',
+          name: 'Executing',
+          automations: { onTurnEnd: [{ name: 'Move on', type: 'move_to_column', targetColumn: 'Code Review', onlyWhen: { branch: 'main' } }] },
+        }],
+      }, null, 2);
+      write(TEAM_FILE, newerWithUnreadableRow);
+      hoisted.applyBoardConfigToDb.mockReturnValue({ warnings: ['from the apply'] });
+
+      const { warnings } = attachedManager().applyConfig('project-1', tempDir);
+
+      expect(warnings).not.toContain(
+        'kangentic.json holds automations this build cannot read, so board edits are not saved to it until the file is fixed.',
+      );
+      expect(warnings).toEqual(['from the apply']);
+    });
+
+    it('counts an unreadable board config as an expected refusal, newer format or not', () => {
+      expect(isExpectedFailure(new BoardConfigUnreadableError('kangentic.json', 'reason', { newerFormat: true }))).toBe(true);
+      expect(isExpectedFailure(new BoardConfigUnreadableError('kangentic.json', 'reason'))).toBe(true);
+    });
+
+    it('refuses every settings save to a newer file with an update message, and still saves to the local file', () => {
+      write(TEAM_FILE, newerTeam);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const manager = attachedManager();
+
+      expect(() => manager.setShortcuts([{ id: 's1', label: 'Test', command: 'npm test' }], 'team')).toThrow(BoardConfigUnreadableError);
+      expect(() => manager.setBoardProfiles([])).toThrow('saved by a newer version of Kangentic');
+      expect(() => manager.setDefaultBaseBranch('develop')).toThrow(BoardConfigUnreadableError);
+      expect(readReal(TEAM_FILE)).toBe(newerTeam);
+
+      manager.setShortcuts([{ id: 's1', label: 'Test', command: 'npm test' }], 'local');
+      expect(JSON.parse(readReal(LOCAL_FILE)).shortcuts).toHaveLength(1);
+    });
+
+    it('still applies a newer file, so the board loads what this build can read', () => {
+      write(TEAM_FILE, newerTeam);
+      hoisted.applyBoardConfigToDb.mockReturnValue({ warnings: ['from the apply'] });
+
+      const { warnings } = attachedManager().applyConfig('project-1', tempDir);
+
+      expect(hoisted.applyBoardConfigToDb).toHaveBeenCalledTimes(1);
+      expect(warnings).toEqual(['from the apply']);
+    });
+
+    it('lets the profile prune on a column delete pass over a newer file instead of failing the delete', () => {
+      const newerWithProfiles = JSON.stringify({
+        ...validTeam,
+        version: 2,
+        profiles: [{ id: 'p1', name: 'Heavy', columns: { 'lane-doomed': { modelOverride: 'opus' } } }],
+      });
+      write(TEAM_FILE, newerWithProfiles);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const manager = attachedManager();
+      const accessors = {
+        getBoardProfiles: (): BoardProfile[] => manager.getBoardProfiles(),
+        setBoardProfiles: (profiles: BoardProfile[]) => manager.setBoardProfiles(profiles),
+      };
+
+      expect(() => pruneDeletedColumnFromProfiles(accessors, { columnId: 'lane-doomed', columnName: 'Doomed' })).not.toThrow();
+      expect(readReal(TEAM_FILE)).toBe(newerWithProfiles);
+    });
+
+    it('leaves a file whose automation guard it cannot read as it is on a write-back', () => {
+      write(TEAM_FILE, unreadableGuardTeam);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      attachedManager().exportFromDb();
+
+      expect(readReal(TEAM_FILE)).toBe(unreadableGuardTeam);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('holds automations this build cannot read');
+    });
+
+    // The refused write-back is only a log line, so the board's banner is what
+    // tells the user that a fix made in the Column Manager will not reach the file.
+    it('says on the board that edits are not saved while a guard cannot be read', () => {
+      write(TEAM_FILE, unreadableGuardTeam);
+      hoisted.applyBoardConfigToDb.mockReturnValue({ warnings: ['from the apply'] });
+
+      const { warnings } = attachedManager().applyConfig('project-1', tempDir);
+
+      expect(warnings).toEqual([
+        'kangentic.json holds automations this build cannot read, so board edits are not saved to it until the file is fixed.',
+        'from the apply',
+      ]);
+    });
+
+    it('leaves the team file as it is when the unreadable guard is in the local file', () => {
+      const readableTeam = JSON.stringify({ version: 1, columns: [{ id: 'lane-1', name: 'Executing' }] }, null, 2);
+      const unreadableLocal = JSON.stringify({
+        columns: [{ id: 'lane-1', automations: { onTurnEnd: [{ name: 'Loop', type: 'notify', maxRuns: '3' }] } }],
+      }, null, 2);
+      write(TEAM_FILE, readableTeam);
+      write(LOCAL_FILE, unreadableLocal);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      attachedManager().exportFromDb();
+
+      expect(readReal(TEAM_FILE)).toBe(readableTeam);
+      expect(readReal(LOCAL_FILE)).toBe(unreadableLocal);
     });
   });
 });

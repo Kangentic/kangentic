@@ -320,8 +320,8 @@ export function buildCommandContextForProject(
       // edit survives a restart and reaches teammates via git. Project-scoped
       // so a cross-project update_column reaches the right project's file, not
       // just the currently-active one. Best-effort: writeBackForProject never
-      // throws.
-      ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
+      // throws, and says why when it did not write, which the tool reports.
+      const notSavedReason = ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
       // A limit turned off lets the next tasks start in ANY project. This starts
       // what already waits, so it needs none of the scoping below.
       ipcContext.sessionManager.drainQueue();
@@ -347,6 +347,7 @@ export function buildCommandContextForProject(
           projectId,
         );
       }
+      return notSavedReason;
     },
 
     onSwimlaneDeleted: (swimlane) => {
@@ -362,7 +363,7 @@ export function buildCommandContextForProject(
       // same uuid - the next time the project is opened. The column's
       // kangentic.local.json entry goes first, for the same reason.
       ipcContext.boardConfigManager.removeLocalColumn(projectId, projectPath, swimlane.id);
-      ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
+      return ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
     },
 
     onBacklogChanged: () => {

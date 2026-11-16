@@ -4,7 +4,15 @@ import { ActionRepository } from '../../db/repositories/action-repository';
 import { getProjectDb } from '../../db/database';
 import type { BoardColumnConfig, BoardConfig, PlanApproval, SwimlaneRole } from '../../../shared/types';
 import { normalizeSwimlaneRole } from '../../../shared/types';
-import { CURRENT_VERSION, validateBoardConfig } from './config-helpers';
+import {
+  TEAM_FILE,
+  isLegacyPermissionValue,
+  isNewerFileFormat,
+  legacyKeyReadable,
+  newerFormatReason,
+  retiredKeyPhrase,
+  validateBoardConfig,
+} from './config-helpers';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { configDeclaresAutomations, configIsAutomationAware, planColumnAutomations } from './apply-automations';
 import { writeTransaction } from '../../db/transaction';
@@ -67,9 +75,25 @@ export function applyBoardConfigToDb(
   const actionRepo = new ActionRepository(db);
   const automationRepo = new AutomationRepository(db);
 
-  if (config.version > CURRENT_VERSION) {
-    warnings.push(`kangentic.json uses version ${config.version}. Some features may not be supported.`);
+  // A newer file applies as far as this build can read it. Its writers refuse
+  // (`readProblem` in board-config-manager.ts), and a row it cannot fully read
+  // keeps its column's current automations (`planColumnAutomations`).
+  if (isNewerFileFormat(config.version)) {
+    warnings.push(newerFormatReason(config.version));
   }
+
+  // The top-level lists an older format wrote. Read only where that format
+  // still carries them; past it they are skipped, and said so.
+  const actionsReadable = legacyKeyReadable('actions', config.version);
+  const transitionsReadable = legacyKeyReadable('transitions', config.version);
+  if (!actionsReadable && config.actions !== undefined) {
+    warnings.push(`${TEAM_FILE} ${retiredKeyPhrase('actions', config.version)} Skipped.`);
+  }
+  if (!transitionsReadable && config.transitions !== undefined) {
+    warnings.push(`${TEAM_FILE} ${retiredKeyPhrase('transitions', config.version)} Skipped.`);
+  }
+  const fileActions = actionsReadable ? (config.actions || []) : [];
+  const fileTransitions = transitionsReadable ? (config.transitions || []) : [];
 
   const transaction = writeTransaction(db, () => {
     const existingLanes = swimlaneRepo.list();
@@ -102,6 +126,21 @@ export function applyBoardConfigToDb(
         warnings.push(`Column "${column.name}" has an unknown role "${column.role}". Treated as a custom column.`);
       }
       column.role = normalized ?? undefined;
+    }
+
+    // Permission keys an older format wrote. `migrateBoardColumnFields`
+    // converts them where the file's format still carries them and leaves them
+    // otherwise, so what is left here is retired: the column keeps its current
+    // permission mode rather than take an old value no mode is named.
+    for (const column of config.columns) {
+      const legacyFields = column as unknown as Record<string, unknown>;
+      if (legacyFields.permissionStrategy !== undefined && !legacyKeyReadable('permissionStrategy', config.version)) {
+        warnings.push(`Column "${column.name}" ${retiredKeyPhrase('permissionStrategy', config.version)} Kept its current permission mode.`);
+      }
+      if (isLegacyPermissionValue(column.permissionMode) && !legacyKeyReadable('legacyPermissionValue', config.version)) {
+        warnings.push(`Column "${column.name}" ${retiredKeyPhrase('legacyPermissionValue', config.version)} Kept its current permission mode.`);
+        column.permissionMode = undefined;
+      }
     }
 
     const hasTodo = config.columns.some((column) => column.role === 'todo');
@@ -264,7 +303,7 @@ export function applyBoardConfigToDb(
         // `automations` value here is a malformed one (a well-formed value would
         // have made the file aware), planned only so it is warned about.
         if (!automationAware && !automationsReset(lane.id) && columnConfig.autoCommand === undefined && columnConfig.automations === undefined) continue;
-        const plan = planColumnAutomations(columnConfig);
+        const plan = planColumnAutomations(columnConfig, { formatVersion: config.version });
         warnings.push(...plan.warnings);
         // A malformed container is reported, not applied. Replacing would
         // delete the column's rows over a typo.
@@ -297,9 +336,9 @@ export function applyBoardConfigToDb(
     // --- Reconcile actions ---
     const existingActions = actionRepo.list();
     const existingActionsById = new Map(existingActions.map((action) => [action.id, action]));
-    const configActionIds = new Set((config.actions || []).filter((action) => action.id).map((action) => action.id!));
+    const configActionIds = new Set(fileActions.filter((action) => action.id).map((action) => action.id!));
 
-    for (const actionConfig of (config.actions || [])) {
+    for (const actionConfig of fileActions) {
       const existing = actionConfig.id ? existingActionsById.get(actionConfig.id) : undefined;
 
       if (existing) {
@@ -329,13 +368,13 @@ export function applyBoardConfigToDb(
     // --- Reconcile transitions ---
     // Delete-and-replace only the (from, to) pairs that appear in config.
     // Pairs NOT mentioned in config are preserved.
-    if (config.transitions && config.transitions.length > 0) {
+    if (fileTransitions.length > 0) {
       const reconciledLanes = swimlaneRepo.list();
       const reconciledActions = actionRepo.list();
       const laneByName = new Map(reconciledLanes.map((lane) => [lane.name, lane]));
       const actionByName = new Map(reconciledActions.map((action) => [action.name, action]));
 
-      for (const transitionConfig of config.transitions) {
+      for (const transitionConfig of fileTransitions) {
         const toLane = laneByName.get(transitionConfig.to);
         if (!toLane) {
           warnings.push(`Transition references unknown column '${transitionConfig.to}'. Skipped.`);

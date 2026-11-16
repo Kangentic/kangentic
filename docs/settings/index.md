@@ -11,4 +11,4 @@
 
 ## Board files
 
-* [Board config files](board-config.md) - How kangentic.json and kangentic.local.json define the shared board, which way each sync runs, how a hand edit ghosts or deletes a column, the file schema with its onEnter, onTurnEnd and onExit arrays, which bad rows are skipped, and where Shortcuts and Board Profiles are stored.
+* [Board config files](board-config.md) - How kangentic.json and kangentic.local.json define the shared board, which way each sync runs, how a hand edit ghosts or deletes a column, the file schema with its onEnter, onTurnEnd and onExit arrays, the file format version and what an older build does with a newer file, which bad rows are skipped or keep their column, and where Shortcuts and Board Profiles are stored.

@@ -185,7 +185,7 @@ Delete a swimlane (column) from the board. Refused in two cases, deliberately:
 Everything that pointed at the column is cleaned up in the same operation: lane transitions,
 other columns' `planExitTargetColumn` values, Board Profile entries keyed to it, and any profile
 `planExitTarget` naming it. The response reports the counts. The committed `kangentic.json` mirror
-is rewritten too, which is load-bearing rather than cosmetic - see
+is rewritten too (unless the reply says it was not saved to `kangentic.json`), which is load-bearing rather than cosmetic - see
 [Board Config Sync](../../settings/board-config.md#board-config-sync-kangenticjson): the file re-seeds the
 database on project open, so a delete that left the file alone would be undone on the next open.
 

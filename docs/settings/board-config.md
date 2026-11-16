@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board config files
-description: How kangentic.json and kangentic.local.json define the shared board, which way each sync runs, how a hand edit ghosts or deletes a column, the file schema with its onEnter, onTurnEnd and onExit arrays, which bad rows are skipped, and where Shortcuts and Board Profiles are stored.
+description: How kangentic.json and kangentic.local.json define the shared board, which way each sync runs, how a hand edit ghosts or deletes a column, the file schema with its onEnter, onTurnEnd and onExit arrays, the file format version and what an older build does with a newer file, which bad rows are skipped or keep their column, and where Shortcuts and Board Profiles are stored.
 tags: [board, kangentic-json, sync, profiles, shortcuts]
 sources:
   - resource: src/main/config/board-config/
@@ -359,32 +359,60 @@ queued input included, runs one (Claude Code today); elsewhere the row is shown 
 reason. `"from": "agent"` is the short form's meaning, and the export writes the short form for
 it. A forward row of this kind makes its column a person's gate for a workflow: the agent's line
 never moves the card out, the person's message or drag does. An unknown `from`, an extra key, or
-`patterns` that are not text or a list of text read as off with a warning, as any malformed
-condition does.
+`patterns` that are not text or a list of text is a guard the reader cannot read: it warns and
+keeps the column's current automations, as any malformed condition does.
 
-A build from before #1078 reads the long form that way too: its warning says the row runs
-without a condition, so a Move to column row on the user's message moves the card at every turn
-end there. The file carries no version gate, so everyone who shares a board that uses the long
-form runs a build that knows it. The database has the same split: an older build reads a stored
-`text_match_source` of `user` as the agent's line, and its next save of the column clears it.
+A build from before #1078 reads the long form as a condition that is not text, and runs the row
+without one, so a Move to column row on the user's message moves the card at every turn end there.
+The database has the same split: an older build reads a stored `text_match_source` of `user` as the
+agent's line, and its next save of the column clears it.
 
-**What older builds wrote still reads.** A plain string under `condition` is an Agent evaluation,
-and a `finalLine` key is a Text match of one pattern whose leading `!` is taken off, since it
-meant nothing when that key was written. The export writes neither, so the first save after
-upgrading rewrites each Condition into the nested shape, a one-time diff in a tracked file. This
-repo's own `kangentic.json` carries no `finalLine` since #1078, and
-`board-turn-end-contracts.test.ts` keeps it that way.
+#### File format version
+
+`version` is the file's format, `CURRENT_VERSION` in `config-helpers.ts`. It is bumped on any change
+to what the export can write, and `tests/unit/board-config-format-version.test.ts` fails a change to
+the written shape that does not bump it. The test serializes a board with every key set and
+compares it to the signature recorded for each version.
+
+A build that opens a file of a newer version than it reads:
+
+- Applies what it can read. The board shows a warning saying so, and that board edits are not saved
+  to the file until Kangentic is updated.
+- Never writes `kangentic.json`. The write-back skips it, and every settings save to it (Shortcuts
+  saved for the team, Board Profiles, the default base branch, the team Stop script) refuses with an
+  update message. Saves to `kangentic.local.json` still work. An MCP column or automation tool
+  (`kangentic_create_column`, `kangentic_update_column`, `kangentic_delete_column`,
+  `kangentic_set_automations`) still succeeds, because its change reached the database, and its
+  reply adds that the change was not saved to `kangentic.json` and why.
+- Keeps a column's current automations when one of its rows carries a key it does not know. In a
+  newer file such a key may be a guard, and running the row without it is the failure this exists to
+  prevent. In a file of its own version the export carries an unknown key back as it found it.
+
+This protects every format change from the build that ships it onward. Builds up to v0.58 only warn
+about a newer version and still write the file back. On 2026-11-12, one of them read every
+`condition.text` as a condition that is not text and ran guarded moves unguarded for four days. **A
+team that shares `kangentic.json` should still update Kangentic together.**
+
+**Legacy keys are tied to the version, and a file is migrated on update.** Each key an older format
+wrote and a newer one replaced is listed in `LEGACY_FILE_KEYS` with the last version that could
+carry it: `finalLine`, a string `condition`, the `send_command` type and its `command` key,
+`autoCommand` and `autoCommandMode`, `permissionStrategy` and the old `permissionMode` values, and
+the top-level `actions` and `transitions`. All are version 1. In a file at or below that version the
+key is converted: a plain string under `condition` is an Agent evaluation, and a `finalLine` is a
+Text match of one pattern whose leading `!` is taken off. The export writes none of them and stamps
+the current version, and the open-time export runs right after the apply. So the first open by an
+updated build rewrites the file in the newest format, a one-time diff in a tracked file. In a file
+of a later version, a legacy key is retired and is never silently ignored. A retired guard or
+message keeps the column's current automations, a retired permission key keeps the column's
+current permission mode, and retired `actions` and `transitions` are skipped. Each case warns.
+`kangentic.local.json` carries no version, so its legacy keys still convert. This repo's own
+`kangentic.json` carries no `finalLine` since #1078, and `board-turn-end-contracts.test.ts` keeps it
+that way.
 
 **Keys this build does not know are kept.** When the export rebuilds a column's `automations`, it
 carries over any automation list, row type, or row key it does not recognize from the file it last
 read (a row is matched by name and type). So a field or trigger that a NEWER build added survives a
-save by this one. The reverse cannot be fixed from here: a build from before On agent turn end
-ignores `onTurnEnd`, `condition` and `maxRuns`, drops those rows from its database, and its next
-export writes the file without them. A build from before the nested `condition` is worse for a
-row that uses it: it reads the object as a condition that is not text and keeps the row with no
-Condition, so a Move to column guarded by a Text match runs on that build as an unguarded move, at
-every turn end. **A team that shares `kangentic.json` should update Kangentic together, and restart
-every running copy onto the new build before applying a file written by it.**
+save by this one, when that build did not bump the version.
 
 **The top-level `actions` and `transitions` arrays are gone, along with `columns[].autoCommand`
 and `columns[].autoCommandMode`.** All four are still READ, and converted on apply by the same
@@ -401,17 +429,19 @@ board:
   what the migration did to the same row in the database.
 - A row filed under a trigger its type does not run on (a `move_to_column` row in `onEnter` or
   `onExit`) is skipped: it would run inside the move that fired it.
-- A `maxRuns` below 1 or not a number reads as off, and a fraction is rounded down. Each one warns,
-  since the MCP writer refuses all three. A blank `condition`, `condition.text` or `finalLine`
-  reads as off with no warning.
-- A `condition` that is neither text nor an object, an object with no kind, both kinds or another
-  key, a `condition.agent` that is not text, a `condition.text` that is not text or a list of text,
-  and a Text match on a row in `onEnter` or `onExit` each read as off with a warning; the row still
-  runs.
+- A `maxRuns` below 1 reads as off, and a fraction is rounded down. Each one warns, since the MCP
+  writer refuses both. A blank `condition`, `condition.text` or `finalLine` reads as off with no
+  warning.
+- A guard the reader cannot read keeps the column's current automations, warns, and stops the
+  write-back (below). That covers a `maxRuns` that is not a number, a `condition` that is neither
+  text nor an object, an object with no kind, both kinds or another key, a `condition.agent` that
+  is not text, a `condition.text` that is not text or a list of text (or a long form that is not
+  `{ "from", "patterns" }`), a `finalLine` that is not text, and a Text match on a row in `onEnter`
+  or `onExit`. A row is never planned without a guard the file gave it, and one unreadable row
+  keeps its whole column, because the order of the rows is their run order.
 - A row with both a usable `condition` object and a `finalLine` keeps the `condition`; one with a
-  string `condition` and a `finalLine` keeps the `finalLine`. Either warns. An object that gives no
-  Condition (blank, malformed, or a Text match outside `onTurnEnd`) leaves the `finalLine` in
-  charge, so a bad edit never runs a guarded row unguarded.
+  string `condition` and a `finalLine` keeps the `finalLine`. Either warns. A blank object leaves
+  the `finalLine` in charge.
 - A Text match whose patterns can never match (no letter, number or `*`) is kept, with a warning:
   dropping it would run the row at every turn end. A list with one such pattern among others names
   that pattern.
@@ -421,6 +451,14 @@ board:
   untouched. Treating it as empty would delete the column's rows, and on project open the export
   that follows would write the deletion into the file. A malformed value also does not count as
   the file knowing the `automations` key, so it cannot clear the columns the file is silent about.
+
+Whenever a column keeps its current automations for one of these reasons, the write-back leaves
+both files as they are until the file reads. It rebuilds a column's automations from the database,
+so writing would replace what the file says with what this machine had, and the commit after that
+would take it from the team. The check runs on the files on disk at each write
+(`fileHoldsUnreadableAutomations`), so a hand edit that landed since the last apply counts too. The
+board's warning banner says board edits are not saved to the file until it is fixed, so a fix made
+in the Column Manager meanwhile is not mistaken for one that reached the file.
 
 On project open these warnings appear in the board's warning banner (`boardConfig:warnings`). When a
 `kangentic.json` change is applied while the app is running, each one is shown as a toast, and an

@@ -21,6 +21,11 @@ the database, so they are team-shared and travel through git. A task selects one
 There is no stored "Default" profile. Default is synthetic: a task with no profile simply runs each
 column's own settings, which is why it never appears in a listing.
 
+Profiles exist only in `kangentic.json`, so `kangentic_create_board_profile`,
+`kangentic_update_board_profile` and `kangentic_delete_board_profile` return an error, and save
+nothing, when that file was saved by a newer Kangentic or cannot be read. The error says so. See
+[File format version](../../settings/board-config.md#file-format-version).
+
 **Entries are keyed by column NAME across this whole tool family.** Internally a profile keys its
 entries by swimlane uuid so a rename cannot detach in-flight tasks, but a uuid is useless to an
 agent and actively wrong across projects - the entire point of copying a profile into project X is

@@ -7,10 +7,93 @@ import type {
   ShortcutConfig,
 } from '../../../shared/types';
 import { AUTOMATION_TRIGGER_FILE_KEYS } from '../../../shared/automation-manifest';
+import { RefusalError } from '../../../shared/refusal';
 
+/**
+ * The `kangentic.json` file format this build reads and writes. Bump it on any
+ * change to what the serializer can write, so an older build that meets the
+ * file knows it cannot read all of it (`isNewerFileFormat`) and never writes
+ * it back. `tests/unit/board-config-format-version.test.ts` fails when the
+ * written shape changes without a bump. A key the new format replaces joins
+ * `LEGACY_FILE_KEYS` with the old version as its `lastVersion`.
+ */
 export const CURRENT_VERSION = 1;
 export const TEAM_FILE = 'kangentic.json';
 export const LOCAL_FILE = 'kangentic.local.json';
+
+/**
+ * Was this file written in a format newer than this build reads? A missing
+ * version is not newer: the validator already rejects it. Anything else that
+ * is not a whole number this build knows counts as newer, because nothing here
+ * can vouch for what it holds.
+ */
+export function isNewerFileFormat(version: unknown): boolean {
+  if (version === undefined || version === null) return false;
+  return !(typeof version === 'number' && Number.isInteger(version) && version <= CURRENT_VERSION);
+}
+
+/** The file's `version` as it reads in a message. */
+function describeVersion(version: unknown): string {
+  return typeof version === 'number' || typeof version === 'string' ? String(version) : JSON.stringify(version);
+}
+
+/**
+ * What the board says about a newer file. The apply reads what it can of it,
+ * and every write to kangentic.json refuses until this build is updated: a
+ * build that cannot read a key cannot write it back either.
+ */
+export function newerFormatReason(version: unknown): string {
+  return `${TEAM_FILE} was saved by a newer version of Kangentic (file format ${describeVersion(version)}, this build reads format ${CURRENT_VERSION}). `
+    + 'The board shows what this build can read, and board edits are not saved to the file until you update.';
+}
+
+/**
+ * Keys an older file format wrote and the newest one replaced. Each is read
+ * and converted in a file at or below its `lastVersion`, and is retired in a
+ * newer one. A retired key is never silently ignored: the reader warns, and
+ * where the key was a guard or a message it keeps what the column already has.
+ * Ignoring a guard key would run its row unguarded.
+ *
+ * The open-time export writes none of them, so the first open by a build that
+ * reads them migrates the file to the newest format.
+ */
+export const LEGACY_FILE_KEYS = {
+  /** A row's Text match before `condition.text`. */
+  finalLine: { label: 'finalLine', lastVersion: 1 },
+  /** A row's Agent evaluation as a plain string, before `condition.agent`. */
+  textCondition: { label: 'a condition written as text', lastVersion: 1 },
+  /** The `send_command` row type, before `send_message`. */
+  sendCommandType: { label: 'the send_command type', lastVersion: 1 },
+  /** A Send message row's `command` key, before `message`. */
+  commandField: { label: 'command', lastVersion: 1 },
+  /** A column's `autoCommand` and `autoCommandMode`, before automations. */
+  autoCommand: { label: 'autoCommand', lastVersion: 1 },
+  /** A column's `permissionStrategy`, before `permissionMode`. */
+  permissionStrategy: { label: 'permissionStrategy', lastVersion: 1 },
+  /** A `permissionMode` value from before the rename (`bypass-permissions`, ...). */
+  legacyPermissionValue: { label: 'an old permissionMode value', lastVersion: 1 },
+  /** The top-level `actions` list, before column automations. */
+  actions: { label: 'actions', lastVersion: 1 },
+  /** The top-level `transitions` list, before column automations. */
+  transitions: { label: 'transitions', lastVersion: 1 },
+} as const satisfies Record<string, { label: string; lastVersion: number }>;
+
+export type LegacyFileKey = keyof typeof LEGACY_FILE_KEYS;
+
+/**
+ * May a file of `formatVersion` still carry this legacy key? A file with no
+ * version is `kangentic.local.json`, which this machine's own build writes and
+ * which carries no version, so its legacy keys still read.
+ */
+export function legacyKeyReadable(key: LegacyFileKey, formatVersion: unknown): boolean {
+  if (formatVersion === undefined || formatVersion === null) return true;
+  return typeof formatVersion === 'number' && formatVersion <= LEGACY_FILE_KEYS[key].lastVersion;
+}
+
+/** "uses finalLine, which file format 2 no longer reads." */
+export function retiredKeyPhrase(key: LegacyFileKey, formatVersion: unknown): string {
+  return `uses ${LEGACY_FILE_KEYS[key].label}, which file format ${describeVersion(formatVersion)} no longer reads.`;
+}
 
 /**
  * Backward-compat migration for old kangentic.json permission values.
@@ -32,18 +115,29 @@ const PERMISSION_VALUE_MIGRATION: Record<string, PermissionMode> = {
  * Runs while the file is parsed, where a throw makes the loader treat the
  * whole file as missing. So it touches only the object entries of a real list,
  * and leaves a malformed `columns` for the validator to report.
+ *
+ * Only in a file whose format still carries them (`LEGACY_FILE_KEYS`). In a
+ * newer one they are left as they are, and the apply warns and keeps the
+ * column's current permission mode.
  */
 export function migrateBoardColumnFields(config: BoardConfig): void {
+  const migrateStrategy = legacyKeyReadable('permissionStrategy', config.version);
+  const migrateValues = legacyKeyReadable('legacyPermissionValue', config.version);
   for (const column of readObjectList<BoardColumnConfig>(config.columns)) {
     const legacy = column as unknown as Record<string, unknown>;
-    if (!column.permissionMode && legacy.permissionStrategy) {
+    if (migrateStrategy && !column.permissionMode && legacy.permissionStrategy) {
       column.permissionMode = legacy.permissionStrategy as PermissionMode;
       delete legacy.permissionStrategy;
     }
-    if (column.permissionMode && column.permissionMode in PERMISSION_VALUE_MIGRATION) {
-      column.permissionMode = PERMISSION_VALUE_MIGRATION[column.permissionMode as string];
+    if (migrateValues && isLegacyPermissionValue(column.permissionMode)) {
+      column.permissionMode = PERMISSION_VALUE_MIGRATION[column.permissionMode];
     }
   }
+}
+
+/** A `permissionMode` value from before the rename (`bypass-permissions`, `manual`, ...). */
+export function isLegacyPermissionValue(value: unknown): value is keyof typeof PERMISSION_VALUE_MIGRATION {
+  return typeof value === 'string' && Object.hasOwn(PERMISSION_VALUE_MIGRATION, value);
 }
 
 /**
@@ -61,10 +155,20 @@ export function parseConfigJson(raw: string): unknown {
  * file exists and cannot be read, typically git merge conflict markers. The
  * message is written for the user: an IPC caller toasts it, and an MCP command
  * returns it as its error, so an agent can tell the user what to fix.
+ *
+ * A file in a newer format (`isNewerFileFormat`) is refused the same way, with
+ * its own message: there is nothing to fix in it, only this build to update.
+ * One class for both, because the profile prune on column delete swallows only
+ * this type.
+ *
+ * A refusal, not a defect: the file is the user's to fix or their build to
+ * update, so the IPC wrap and the MCP tool proxy never report it to Sentry.
  */
-export class BoardConfigUnreadableError extends Error {
-  constructor(fileName: string, reason: string) {
-    super(`${fileName} could not be read, so this change was not saved to it. Fix the file and try again. ${reason}`);
+export class BoardConfigUnreadableError extends RefusalError {
+  constructor(fileName: string, reason: string, options: { newerFormat?: boolean } = {}) {
+    super(options.newerFormat
+      ? `${fileName} was saved by a newer version of Kangentic, so this change was not saved to it. Update Kangentic and try again.`
+      : `${fileName} could not be read, so this change was not saved to it. Fix the file and try again. ${reason}`);
     this.name = 'BoardConfigUnreadableError';
   }
 }

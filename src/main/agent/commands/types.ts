@@ -184,8 +184,12 @@ export interface CommandContext {
    * what actually changed for each task in the column (a model/effort delta to
    * inject, an `auto_spawn` flip to reconcile). Omitted or null for a create,
    * which has no tasks to reconcile.
+   *
+   * Returns why `kangentic.json` was not written, or null. The change is in the
+   * database either way; a handler appends the reason with `boardFileNote` so
+   * the agent does not report a save that never reached the team's file.
    */
-  onSwimlaneUpdated: (swimlane: Swimlane, previous?: Swimlane | null) => void;
+  onSwimlaneUpdated: (swimlane: Swimlane, previous?: Swimlane | null) => string | null;
   /**
    * A column was deleted. Separate from `onSwimlaneUpdated` only because the
    * caller passes a pre-delete snapshot of a row that no longer exists.
@@ -193,8 +197,9 @@ export interface CommandContext {
    * Like the update callback, the implementation MUST write back to
    * `kangentic.json`: the file re-seeds the DB on project open, so a delete that
    * skips the write-back is silently undone the next time the project is opened.
+   * Returns why it was not written, or null, as `onSwimlaneUpdated` does.
    */
-  onSwimlaneDeleted: (swimlane: Swimlane) => void;
+  onSwimlaneDeleted: (swimlane: Swimlane) => string | null;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
   /**

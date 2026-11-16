@@ -17,10 +17,10 @@ import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
   AUTOMATION_TRIGGER_FILE_KEYS,
-  RESERVED_AUTOMATION_KEYS,
   isAutomationType,
   isRetiredActionType,
 } from '../../../shared/automation-manifest';
+import { understoodRowKeys } from './apply-automations';
 
 /**
  * Build a BoardConfig object from the current SQLite state for a project.
@@ -370,15 +370,6 @@ function carryUnknownRows(group: BoardAutomationConfig[], existingGroup: unknown
     }
   }
   return merged;
-}
-
-/** The keys this build reads off a row of `type`: the row's own, the type's fields, and legacy keys. */
-function understoodRowKeys(type: string): Set<string> {
-  const keys = new Set<string>([...RESERVED_AUTOMATION_KEYS, 'command', 'workingDir']);
-  if (isAutomationType(type)) {
-    for (const field of AUTOMATION_MANIFEST[type].fields) keys.add(field.key);
-  }
-  return keys;
 }
 
 /** The column's `automations` object from the file on disk, when it is one. */

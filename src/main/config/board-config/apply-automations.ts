@@ -12,6 +12,7 @@ import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
   AUTOMATION_TRIGGER_FILE_KEYS,
+  RESERVED_AUTOMATION_KEYS,
   isAutomationType,
   isRetiredActionType,
   isTypeOfferedOnTrigger,
@@ -19,7 +20,7 @@ import {
 import { englishText } from '../../../shared/i18n/english';
 import { legacyTextMatch, normalizeTextMatch, textMatchCanMatch, unmatchablePattern } from '../../../shared/final-line-match';
 import { uniqueName } from '../../automations/column-message';
-import { isJsonObject, isMalformedList } from './config-helpers';
+import { isJsonObject, isMalformedList, isNewerFileFormat, legacyKeyReadable, retiredKeyPhrase } from './config-helpers';
 
 /**
  * Convert one column's `kangentic.json` entry into the automations it should
@@ -38,11 +39,22 @@ export interface ColumnAutomationPlan {
   rows: AutomationWriteInput[];
   warnings: string[];
   /**
-   * The column's `automations` value, or one of its groups, is the wrong
-   * shape, so the file has said nothing usable about this column. The caller
-   * must leave the column's rows alone rather than replace them with `rows`.
+   * The file holds something about this column's automations that this build
+   * cannot read: a container or group of the wrong shape, or a row whose guard
+   * (its Condition or its `maxRuns`) it cannot read. The caller must leave the
+   * column's rows alone rather than replace them with `rows`, and the
+   * write-back must not overwrite the file (`fileHoldsUnreadableAutomations`).
+   *
+   * A row whose guard is unreadable is never planned without it. That is how a
+   * build from before the nested `condition` ran guarded Move to column rows as
+   * unguarded moves for four days, and then committed the loss.
    */
   keepExisting: boolean;
+}
+
+/** What the file's format lets the reader convert. `formatVersion` is the team file's `version`. */
+export interface ColumnAutomationReadOptions {
+  formatVersion?: unknown;
 }
 
 /**
@@ -89,9 +101,26 @@ export function configIsAutomationAware(columns: BoardColumnConfig[]): boolean {
   return columns.some((column) => column.automations !== undefined && !isMalformedAutomations(column.automations));
 }
 
-export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomationPlan {
+/**
+ * Does this file hold automations this build cannot fully read? True when any
+ * column's plan keeps the column's current rows (`keepExisting`). The
+ * write-back rebuilds a column's automations from the database, so writing
+ * such a file would replace what it could not read with what the database had,
+ * and the commit after that would take it from the whole team.
+ *
+ * Pure, and run on the files as they are on disk at the time of the write, not
+ * on a flag from the last apply: a hand edit may have landed since.
+ */
+export function fileHoldsUnreadableAutomations(columns: unknown, formatVersion: unknown): boolean {
+  if (!Array.isArray(columns)) return false;
+  return columns.some((column: unknown) =>
+    isJsonObject(column) && planColumnAutomations(column as unknown as BoardColumnConfig, { formatVersion }).keepExisting);
+}
+
+export function planColumnAutomations(column: BoardColumnConfig, options: ColumnAutomationReadOptions = {}): ColumnAutomationPlan {
   const warnings: string[] = [];
   const rows: AutomationWriteInput[] = [];
+  const formatVersion = options.formatVersion;
 
   // Read the containers through `unknown`. The declared types are what the app
   // writes, but this came from JSON.parse. A group that is truthy and not a list
@@ -132,12 +161,15 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
     // a warning instead, matching how every other malformed row in `readRow` is
     // handled: the file is reported, never allowed to take the board down.
     const takenNames: string[] = [];
+    let unreadable = false;
     for (const trigger of AUTOMATION_TRIGGERS) {
       const group = groups[trigger];
       if (!Array.isArray(group)) continue;
       for (const entry of group as unknown[]) {
-        const row = readRow(entry, trigger, column.name, warnings);
-        if (!row) continue;
+        const read = readRow(entry, trigger, column.name, formatVersion, warnings);
+        if (read.kind === 'unreadable') unreadable = true;
+        if (read.kind !== 'row') continue;
+        const row = read.row;
         const deduped = uniqueName(row.name, takenNames);
         if (deduped !== row.name) {
           warnings.push(
@@ -149,6 +181,23 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
         rows.push(row);
       }
     }
+    // One row the reader could not fully read keeps the whole column, because
+    // the rows' order is their run order and a partial list would reorder it.
+    if (unreadable) {
+      warnings.push(`"${column.name}" has an automation this build cannot read. Kept the column's current automations.`);
+      return { rows: [], warnings, keepExisting: true };
+    }
+  }
+
+  // A retired `autoCommand` that carries a message keeps the column. A null or
+  // blank one carries none, so it reads as absent, as a blank Condition does.
+  const rawAutoCommand: unknown = column.autoCommand;
+  const autoCommandCarriesValue = typeof rawAutoCommand === 'string'
+    ? rawAutoCommand.trim() !== ''
+    : rawAutoCommand !== undefined && rawAutoCommand !== null;
+  if (autoCommandCarriesValue && !legacyKeyReadable('autoCommand', formatVersion)) {
+    warnings.push(`"${column.name}" ${retiredKeyPhrase('autoCommand', formatVersion)} Kept the column's current automations.`);
+    return { rows: [], warnings, keepExisting: true };
   }
 
   // The legacy message. Applied only when the column declares no automations of
@@ -156,7 +205,7 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
   // up with the message twice.
   // A non-string `autoCommand` (`5`, `{}`) threw "trim is not a function" out
   // of the reconcile transaction, the same class as the containers above.
-  const legacyMessage = typeof column.autoCommand === 'string' ? column.autoCommand.trim() : undefined;
+  const legacyMessage = typeof rawAutoCommand === 'string' ? rawAutoCommand.trim() : undefined;
   if (legacyMessage && rows.length === 0) {
     rows.push({
       name: 'Message',
@@ -172,24 +221,38 @@ export function planColumnAutomations(column: BoardColumnConfig): ColumnAutomati
   return { rows, warnings, keepExisting: false };
 }
 
+/**
+ * One row of the file: planned, skipped (a row the reader drops with a
+ * warning, as it always has), or unreadable (a row whose guard or key this
+ * build cannot read, which keeps the whole column; see `keepExisting`).
+ */
+type RowRead =
+  | { kind: 'row'; row: AutomationWriteInput }
+  | { kind: 'skipped' }
+  | { kind: 'unreadable' };
+
+const SKIPPED: RowRead = { kind: 'skipped' };
+
 function readRow(
   rawEntry: unknown,
   trigger: AutomationTrigger,
   columnName: string,
+  formatVersion: unknown,
   warnings: string[],
-): AutomationWriteInput | null {
+): RowRead {
   // `"onEnter": [null]` used to throw reading `.name` off null.
   if (!isJsonObject(rawEntry)) {
     warnings.push(`An automation on "${columnName}" is not an object. Skipped.`);
-    return null;
+    return SKIPPED;
   }
   const entry = rawEntry as BoardAutomationConfig;
 
   const name = typeof entry.name === 'string' ? entry.name.trim() : '';
   if (!name) {
     warnings.push(`An automation on "${columnName}" has no name. Skipped.`);
-    return null;
+    return SKIPPED;
   }
+  const rowLabel = `Automation "${name}" on "${columnName}"`;
 
   const rawType = typeof entry.type === 'string' ? entry.type : '';
 
@@ -199,54 +262,101 @@ function readRow(
   // duplicate of the move path, so dropping it changes no behavior. Failing the
   // whole config over one would take the board down with it.
   if (isRetiredActionType(rawType)) {
-    warnings.push(`Automation "${name}" on "${columnName}" uses the retired type "${rawType}". Skipped.`);
-    return null;
+    warnings.push(`${rowLabel} uses the retired type "${rawType}". Skipped.`);
+    return SKIPPED;
   }
 
   // The one type rename. `send_command` was wrong the moment its field became
-  // `message`.
+  // `message`. A file format past it no longer carries it, and a row that
+  // still does is not one this build can vouch for.
+  if (rawType === 'send_command' && !legacyKeyReadable('sendCommandType', formatVersion)) {
+    warnings.push(`${rowLabel} ${retiredKeyPhrase('sendCommandType', formatVersion)}`);
+    return { kind: 'unreadable' };
+  }
   const type = rawType === 'send_command' ? 'send_message' : rawType;
   if (!isAutomationType(type)) {
-    warnings.push(`Automation "${name}" on "${columnName}" has an unknown type "${rawType}". Skipped.`);
-    return null;
+    warnings.push(`${rowLabel} has an unknown type "${rawType}". Skipped.`);
+    return SKIPPED;
   }
 
   // A type filed under a trigger it is not offered on (a Move to column row in
   // onEnter, written by hand) would run inside the move that triggered it.
   if (!isTypeOfferedOnTrigger(type, trigger)) {
     warnings.push(
-      `Automation "${name}" on "${columnName}" is a ${englishText(AUTOMATION_MANIFEST[type].label)} row, which runs only in `
+      `${rowLabel} is a ${englishText(AUTOMATION_MANIFEST[type].label)} row, which runs only in `
       + `${offeredFileKeys(type)}, not ${AUTOMATION_TRIGGER_FILE_KEYS[trigger]}. Skipped.`,
     );
-    return null;
+    return SKIPPED;
   }
 
-  // A guard of the wrong type is read as off, and said so: a hand-edited
-  // `"maxRuns": "3"` would otherwise let a review loop run without its limit
-  // with nothing to tell anyone.
+  let unreadable = false;
+
+  // In a newer file, a key this build does not know on a row it does know may
+  // be a guard it has never heard of. Running the row without it is the
+  // failure this reader exists to prevent, so the column keeps what it has.
+  // In a file of this build's own format the export carries such a key back
+  // as it found it, and the format test keeps the serializer from writing one.
+  if (isNewerFileFormat(formatVersion)) {
+    const understood = understoodRowKeys(type);
+    const unknownKeys = Object.keys(entry).filter((key) => !understood.has(key));
+    if (unknownKeys.length > 0) {
+      warnings.push(`${rowLabel} has ${unknownKeys.map((key) => `"${key}"`).join(', ')}, which this build cannot read.`);
+      unreadable = true;
+    }
+  }
+
+  // A limit this build cannot read is never read as no limit: an unlimited
+  // review loop is the worst outcome a bad edit can have here.
   const rawMaxRuns: unknown = entry.maxRuns;
   if (rawMaxRuns !== undefined && rawMaxRuns !== null && typeof rawMaxRuns !== 'number') {
-    warnings.push(`Automation "${name}" on "${columnName}" has a maxRuns that is not a number. It runs without a limit.`);
+    warnings.push(`${rowLabel} has a maxRuns that is not a number.`);
+    unreadable = true;
   } else if (typeof rawMaxRuns === 'number' && !isWholeMaxRuns(rawMaxRuns)) {
     // A number the MCP writer refuses (0, -1, 2.5) is read, not refused, and said so.
     const readAs = normalizeMaxRuns(rawMaxRuns);
     warnings.push(
-      `Automation "${name}" on "${columnName}" has a maxRuns of ${rawMaxRuns}, which is not a whole number of at least 1. `
+      `${rowLabel} has a maxRuns of ${rawMaxRuns}, which is not a whole number of at least 1. `
       + (readAs === null ? 'It runs without a limit.' : `Its limit is read as ${readAs}.`),
     );
   }
-  const { condition, finalLine, source } = readCondition(entry, trigger, `Automation "${name}" on "${columnName}"`, warnings);
+
+  if (type === 'send_message' && entry.message === undefined && entry.command !== undefined
+    && !legacyKeyReadable('commandField', formatVersion)) {
+    warnings.push(`${rowLabel} ${retiredKeyPhrase('commandField', formatVersion)}`);
+    unreadable = true;
+  }
+
+  const read = readCondition(entry, trigger, rowLabel, formatVersion, warnings);
+  if (read.unreadable || unreadable) return { kind: 'unreadable' };
+  const { condition, finalLine, source } = read;
   return {
-    name,
-    type: type as AutomationType,
-    trigger,
-    enabled: entry.enabled !== false,
-    config: readConfig(entry, type as AutomationType),
-    condition: finalLine === null ? condition : null,
-    final_line: finalLine,
-    text_match_source: finalLine === null ? 'agent' : source,
-    max_runs: normalizeMaxRuns(typeof rawMaxRuns === 'number' ? rawMaxRuns : null),
+    kind: 'row',
+    row: {
+      name,
+      type: type as AutomationType,
+      trigger,
+      enabled: entry.enabled !== false,
+      config: readConfig(entry, type as AutomationType),
+      condition: finalLine === null ? condition : null,
+      final_line: finalLine,
+      text_match_source: finalLine === null ? 'agent' : source,
+      max_runs: normalizeMaxRuns(typeof rawMaxRuns === 'number' ? rawMaxRuns : null),
+    },
   };
+}
+
+/**
+ * The keys this build reads off a row of `type`: the row's own, the type's
+ * fields, and legacy keys. The reader treats any other key in a newer file as
+ * one it cannot read, and the export carries any other key back as it found
+ * it. One list for both, so they cannot disagree about what is known.
+ */
+export function understoodRowKeys(type: string): Set<string> {
+  const keys = new Set<string>([...RESERVED_AUTOMATION_KEYS, 'command', 'workingDir']);
+  if (isAutomationType(type)) {
+    for (const field of AUTOMATION_MANIFEST[type].fields) keys.add(field.key);
+  }
+  return keys;
 }
 
 /**
@@ -256,35 +366,52 @@ function readRow(
  *   per item, on a turn end only (the one trigger with a final message).
  * - `"condition": { "agent": "..." }`, an Agent evaluation.
  *
- * What older builds wrote still reads: a plain string under `condition` is an
- * Agent evaluation, and `finalLine` is a Text match whose leading `!` meant
- * nothing then and is taken off (`legacyTextMatch`). Anything else is read as
- * written by hand and said so, and the row runs without a Condition, except a
- * pattern no line can match, which is kept: without it the row would run at
- * every turn end.
+ * What older formats wrote still reads, in a file of a format that carries it
+ * (`LEGACY_FILE_KEYS`): a plain string under `condition` is an Agent
+ * evaluation, and `finalLine` is a Text match whose leading `!` meant nothing
+ * then and is taken off (`legacyTextMatch`).
+ *
+ * Anything else is a Condition this build cannot read: the wrong shape, a kind
+ * it does not know (a newer build's, or a hand edit), a Text match off a turn
+ * end, or a legacy key past its format. Each is said, and makes the row
+ * `unreadable`, which keeps the column's current automations. A row is never
+ * planned without a Condition the file gave it. A blank one reads as none, and
+ * a pattern no line can match is kept: without it the row would run at every
+ * turn end.
  */
 function readCondition(
   entry: BoardAutomationConfig,
   trigger: AutomationTrigger,
   rowLabel: string,
+  formatVersion: unknown,
   warnings: string[],
-): { condition: string | null; finalLine: string | null; source: TextMatchSource } {
+): { condition: string | null; finalLine: string | null; source: TextMatchSource; unreadable: boolean } {
   const rawCondition: unknown = entry.condition;
   const rawFinalLine: unknown = entry.finalLine;
   let condition: string | null = null;
   let objectText: string | null = null;
   let source: TextMatchSource = 'agent';
+  let unreadable = false;
   const conditionIsObject = isJsonObject(rawCondition);
 
   if (typeof rawCondition === 'string') {
-    condition = normalizeCondition(rawCondition);
+    if (legacyKeyReadable('textCondition', formatVersion)) {
+      condition = normalizeCondition(rawCondition);
+    } else if (rawCondition.trim() !== '') {
+      warnings.push(`${rowLabel} ${retiredKeyPhrase('textCondition', formatVersion)}`);
+      unreadable = true;
+    }
   } else if (conditionIsObject) {
     const kinds = Object.keys(rawCondition);
     const kind = kinds.length === 1 ? kinds[0] : null;
     const value: unknown = kind === null ? undefined : rawCondition[kind];
     if (kind === 'agent') {
-      if (typeof value === 'string') condition = normalizeCondition(value);
-      else warnings.push(`${rowLabel} has a condition.agent that is not text. It runs without a condition.`);
+      if (typeof value === 'string') {
+        condition = normalizeCondition(value);
+      } else {
+        warnings.push(`${rowLabel} has a condition.agent that is not text.`);
+        unreadable = true;
+      }
     } else if (kind === 'text') {
       // The long form says whose message it reads (#1078):
       // `{ "from": "user" | "agent", "patterns": "..." | [...] }`.
@@ -292,30 +419,45 @@ function readCondition(
       const lines = isJsonObject(value) ? longForm?.lines ?? null : textMatchValueLines(value);
       if (lines === null) {
         warnings.push(isJsonObject(value)
-          ? `${rowLabel} has a condition.text that is not { "from": "agent" | "user", "patterns": ... }. It runs without a condition.`
-          : `${rowLabel} has a condition.text that is not text or a list of text. It runs without a condition.`);
+          ? `${rowLabel} has a condition.text that is not { "from": "agent" | "user", "patterns": ... }.`
+          : `${rowLabel} has a condition.text that is not text or a list of text.`);
+        unreadable = true;
       } else {
-        objectText = readTextMatch(lines.join('\n'), 'condition.text', trigger, rowLabel, warnings);
+        const textMatch = readTextMatch(lines.join('\n'), 'condition.text', trigger, rowLabel, warnings);
+        if (textMatch.misplaced) unreadable = true;
+        objectText = textMatch.text;
         if (objectText !== null) source = longForm?.source ?? 'agent';
       }
     } else {
-      warnings.push(`${rowLabel} has a condition that is not { "text": ... } or { "agent": ... }. It runs without one.`);
+      warnings.push(`${rowLabel} has a condition that is not { "text": ... } or { "agent": ... }.`);
+      unreadable = true;
     }
   } else if (rawCondition !== undefined && rawCondition !== null) {
-    warnings.push(`${rowLabel} has a condition that is not text or an object. It runs without one.`);
+    warnings.push(`${rowLabel} has a condition that is not text or an object.`);
+    unreadable = true;
   }
 
   let legacyText: string | null = null;
-  if (rawFinalLine !== undefined && rawFinalLine !== null && typeof rawFinalLine !== 'string') {
-    warnings.push(`${rowLabel} has a finalLine that is not text. It runs without one.`);
-  } else if (typeof rawFinalLine === 'string' && rawFinalLine.trim() !== '') {
-    legacyText = readTextMatch(legacyTextMatch(rawFinalLine), 'finalLine', trigger, rowLabel, warnings);
+  const finalLineBlank = rawFinalLine === undefined || rawFinalLine === null
+    || (typeof rawFinalLine === 'string' && rawFinalLine.trim() === '');
+  if (!finalLineBlank && !legacyKeyReadable('finalLine', formatVersion)) {
+    warnings.push(`${rowLabel} ${retiredKeyPhrase('finalLine', formatVersion)}`);
+    unreadable = true;
+  } else if (!finalLineBlank && typeof rawFinalLine !== 'string') {
+    warnings.push(`${rowLabel} has a finalLine that is not text.`);
+    unreadable = true;
+  } else if (typeof rawFinalLine === 'string' && !finalLineBlank) {
+    const textMatch = readTextMatch(legacyTextMatch(rawFinalLine), 'finalLine', trigger, rowLabel, warnings);
+    if (textMatch.misplaced) unreadable = true;
+    legacyText = textMatch.text;
   }
 
+  if (unreadable) return { condition: null, finalLine: null, source: 'agent', unreadable: true };
+
   // One kind per row. A written shape that gave a Condition wins over the old
-  // key; between the two old keys, the Text match wins, as it always did. An
-  // object that gave none (malformed, blank, or a Text match off a turn end)
-  // leaves the finalLine in charge, so a bad edit never unguards the row.
+  // key; between the two old keys, the Text match wins, as it always did. A
+  // blank object leaves the finalLine in charge, so an emptied edit never
+  // unguards the row.
   const objectGaveCondition = objectText !== null || (conditionIsObject && condition !== null);
   if (legacyText !== null && (objectGaveCondition || condition !== null)) {
     const kept = objectGaveCondition ? 'the condition' : 'the finalLine';
@@ -323,14 +465,19 @@ function readCondition(
   }
   const finalLine = objectText ?? (objectGaveCondition ? null : legacyText);
   // A legacy finalLine is always the agent's line.
-  return { condition: finalLine === null ? condition : null, finalLine, source: objectText !== null ? source : 'agent' };
+  return {
+    condition: finalLine === null ? condition : null,
+    finalLine,
+    source: objectText !== null ? source : 'agent',
+    unreadable: false,
+  };
 }
 
 /**
  * The long form of `condition.text`: whose message it reads and its patterns.
  * Null when `from` is missing or unknown, a key is extra, or `patterns` is not
- * text or a list of text: the row then runs without a condition, as any other
- * malformed condition does.
+ * text or a list of text: a Condition this build cannot read, as any other
+ * malformed one is.
  */
 function readTextMatchLongForm(value: Record<string, unknown>): { source: TextMatchSource; lines: string[] } | null {
   const keys = Object.keys(value);
@@ -349,8 +496,10 @@ function textMatchValueLines(value: unknown): string[] | null {
 }
 
 /**
- * A Text match read from the file, normalized, or null. Off a turn end it is
- * dropped and said so. A pattern no line can match is kept and said so.
+ * A Text match read from the file, normalized, or null when blank. Off a turn
+ * end there is no last message to read it against, so it is `misplaced`, said
+ * so, and the caller treats the row as one it cannot read. A pattern no line
+ * can match is kept and said so.
  */
 function readTextMatch(
   text: string,
@@ -358,15 +507,15 @@ function readTextMatch(
   trigger: AutomationTrigger,
   rowLabel: string,
   warnings: string[],
-): string | null {
+): { text: string | null; misplaced: boolean } {
   const normalized = normalizeTextMatch(text);
-  if (normalized === null) return null;
+  if (normalized === null) return { text: null, misplaced: false };
   if (trigger !== 'turn_end') {
     warnings.push(
       `${rowLabel} has a ${key} in ${AUTOMATION_TRIGGER_FILE_KEYS[trigger]}. `
-      + `A text match reads the agent's last message, so it works in ${AUTOMATION_TRIGGER_FILE_KEYS.turn_end} only. It runs without it.`,
+      + `A text match reads the agent's last message, so it works in ${AUTOMATION_TRIGGER_FILE_KEYS.turn_end} only.`,
     );
-    return null;
+    return { text: null, misplaced: true };
   }
   const unmatchable = unmatchablePattern(normalized);
   if (!textMatchCanMatch(normalized)) {
@@ -374,7 +523,7 @@ function readTextMatch(
   } else if (unmatchable !== null) {
     warnings.push(`${rowLabel} has a ${key} pattern "${unmatchable}" with no letter, number or *, so it can never match.`);
   }
-  return normalized;
+  return { text: normalized, misplaced: false };
 }
 
 /** "onEnter, onTurnEnd and onExit", from the one trigger list. */
