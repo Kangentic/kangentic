@@ -259,7 +259,8 @@ describe('parseVswhereOutput and defaultRunVswhere', () => {
   });
 
   // Red-green: drop '-utf8' (non-ASCII install paths break), '-all' (hides older installs), or
-  // change the property, and the exact argument list differs.
+  // change the property, and the exact argument list differs. Drop the timeout (a hung vswhere
+  // holds afterPack) or the utf8 decoding '-utf8' relies on, and the options check fails.
   it('runs vswhere once from the Visual Studio Installer folder with the pinned arguments, and parses its output', () => {
     const programFiles = path.join(os.tmpdir(), 'pf86');
     const exec = vi.fn<VswhereExec>(() => fixture.stdout);
@@ -270,6 +271,7 @@ describe('parseVswhereOutput and defaultRunVswhere', () => {
     expect(exec).toHaveBeenCalledTimes(1);
     expect(exec.mock.calls[0][0]).toBe(expectedExecutable);
     expect(exec.mock.calls[0][1]).toEqual(EXPECTED_ARGS);
+    expect(exec.mock.calls[0][2]).toMatchObject({ encoding: 'utf8', timeout: 30_000 });
     expect(result).toEqual(fixture.installationPaths);
   });
 
