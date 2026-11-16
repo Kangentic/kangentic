@@ -6,6 +6,7 @@ tags: [mcp, browser, automation]
 sources:
   - resource: src/main/agent/mcp-http/browser-tools.ts
   - resource: src/main/browser/browser-pane-driver.ts
+  - resource: src/main/browser/cdp/ambiguous-selector.ts
   - resource: src/main/browser/cdp/guest-capture-hold.ts
   - resource: src/main/browser/guest-drive-queue.ts
   - resource: src/main/browser/dev-server-error.ts
@@ -36,6 +37,18 @@ separate-surface answer was worse than the problem. Concurrent workers on one ta
 and should coordinate rather than assume exclusive control.
 
 The capability gate (`capabilityGate` in `src/main/browser/browser-pane-driver.ts`, the single source of the tier rules) adds four more: `automation-disabled` when the master switch is off, and `interaction-disabled` / `navigation-disabled` / `eval-disabled` for the tool's own tier. `automation-disabled` is reachable even though the family is not registered while the master switch is off, because the policy is read live per request: a switch flipped mid-session refuses the next call rather than waiting for a reconnect.
+
+## Selector strictness
+
+The tools that act on ONE element named by a selector are strict by default: `click`, `type`, `keypress`, `hover`, `drag` (both ends), `scroll`, `select_option` and `drop_files`. When the selector matches more than one element a user could act on, the tool does nothing and returns `ambiguous-selector`. That is how a Playwright Locator behaves. Each of these tools takes `strict` (boolean, default `true`), and `strict: false` acts on the first match in document order, which is what every one of them did before GitHub #820.
+
+The case it exists for: an open modal over a form, each with a "Save" button. `text="Save"` resolved to the form's button, the click landed on the modal's backdrop, and the modal closed with nothing saying the selector had matched twice.
+
+Only matches a user could act on are counted: connected, laid out with a non-zero box, not `visibility: hidden`, and not inside an `inert` subtree. A hidden duplicate (a collapsed mobile menu, a `display: none` template) does not make a selector ambiguous. For the `text=`, `text*=` and `aria=` forms a match that contains another match is dropped in favour of the inner one, so a `[role=dialog]` whose text includes "Save" is not a second match for its own Save button. CSS matches are not collapsed. When nothing actionable matches, the tool falls back to the first match, so strictness never turns a call that worked into `selector-not-found`.
+
+The refusal carries `total` and up to five `candidates`, each with `tag`, `text`, `id`, `role`, `ariaLabel`, `name`, `inDialog`, its viewport `box`, `topmost` (whether a click at its centre would hit it; `false` means something covers it, `null` means its centre is off screen), and `selector`, a CSS path unique in the page at that moment. To pick one, retry with that candidate's `selector`, or scope the selector to its container. A trailing `:has-text("...")` is scoped by the CSS before it: `[role=dialog] button:has-text("Save")` matches buttons inside a dialog whose text contains "Save". Before #820 that CSS was silently dropped, so the form above matched a Save button anywhere on the page. The scope is part of the selector grammar, so it applies to every tool that takes a selector, the read-only ones and `strict: false` included. Without strictness the first scoped match wins, which for `div:has-text("x")` is the outermost containing `div`. A `:has-text` in the middle of a selector is still read unscoped.
+
+The read-only tools (`query_dom`, `query_all`, `bounding_box`, `wait`, `screenshot_element`) are not strict: reading the first match changes nothing on the page.
 
 ## kangentic_browser_navigate
 
@@ -173,12 +186,15 @@ Click an element by selector, or a point by coordinates. Capability tier: `inter
 |-----------|------|----------|-------------|
 | `sessionId` | string | No | Target a surface by its handle. |
 | `taskId` | string | No | Target a surface by task. |
-| `selector` | string | No | CSS selector (or `text=` / `aria=` form) to click at its center. |
-| `x` | number | No | X coordinate. Use with `y` instead of `selector`. |
+| `selector` | string | No | CSS selector (or `text=` / `aria=` form, or CSS ending in `:has-text("...")`) to click at its center. |
+| `x` | number | No | X coordinate, in viewport CSS pixels unless `coordSpace` is `image`. Use with `y` instead of `selector`. |
 | `y` | number | No | Y coordinate. |
-| `coordSpace` | string | No | `viewport` (default) or `image`, which maps the pixels of a full-viewport screenshot back through the `pixelsPerCssPixel` that screenshot reported when its `scale` is 1. A screenshot shrunk to fit `maxBytes` (`scale` below 1) holds fewer pixels, so divide by its own `pixelsPerCssPixel` and pass viewport coordinates instead. |
+| `coordSpace` | string | No | `viewport` or `image`, which maps the pixels of a full-viewport screenshot back through the `pixelsPerCssPixel` that screenshot reported when its `scale` is 1. A screenshot shrunk to fit `maxBytes` (`scale` below 1) holds fewer pixels, so divide by its own `pixelsPerCssPixel` and pass viewport coordinates instead. Omitted, x/y are read as viewport and the result carries a `warning`. |
+| `strict` | boolean | No | Default `true`. See [Selector strictness](#selector-strictness). |
 
-Pass either `selector` or both `x` and `y`. Returns `{ ok: true }`, plus the mapped `dispatched: { x, y }` on the coordinate path. Error modes: `selector-not-found`, `missing-target` when neither form is supplied, and `coord-mapping-failed` when `coordSpace: "image"` is used but the screenshot density could not be read.
+Pass either `selector` or both `x` and `y`. Returns `{ ok: true }`, plus the mapped `dispatched: { x, y }` on the coordinate path. Error modes: `selector-not-found`, `ambiguous-selector`, `missing-target` when neither form is supplied, and `coord-mapping-failed` when `coordSpace: "image"` is used but the screenshot density could not be read.
+
+x/y without `coordSpace` still click in viewport space, as they always have, and the result adds `warning`, which says how they were read and how to map a screenshot point. A point read off a screenshot taken at more than one pixel per CSS pixel lands somewhere else when read as viewport, and on a modal that is usually the backdrop, which closes it. Passing `coordSpace` either way silences the warning.
 
 ## kangentic_browser_type
 
@@ -191,8 +207,9 @@ Type text into the pane. Capability tier: `interact`.
 | `text` | string | Yes | Text to type. |
 | `selector` | string | No | CSS selector to focus before typing. Focus is taken by clicking the element's center. |
 | `clearFirst` | boolean | No | Select-all and delete before typing. Requires `selector`, since it runs as part of focusing. |
+| `strict` | boolean | No | Default `true`. See [Selector strictness](#selector-strictness). |
 
-Returns `{ ok: true }`. Error modes: `selector-not-found`, and `pane-not-focused` when the pane does not hold keyboard focus. With no `selector`, the text goes to whatever the page currently has focused, which works only while the pane itself holds keyboard focus. Chromium delivers a key to whatever widget holds focus in the window, and between calls that is usually the user's terminal, so every key is checked first and refused rather than sent there. Keys sent before a refusal were delivered.
+Returns `{ ok: true }`. Error modes: `selector-not-found`, `ambiguous-selector`, and `pane-not-focused` when the pane does not hold keyboard focus. With no `selector`, the text goes to whatever the page currently has focused, which works only while the pane itself holds keyboard focus. Chromium delivers a key to whatever widget holds focus in the window, and between calls that is usually the user's terminal, so every key is checked first and refused rather than sent there. Keys sent before a refusal were delivered.
 
 A newline in `text` presses Enter carrying `\r`, so it submits a form or starts a new line the way a real Enter does, and a `\r\n` pair counts as one newline. That is how `{selector, text: "query\n"}` types and submits in one call.
 
@@ -206,8 +223,9 @@ Send a key or chord. Single printable characters are typed. Capability tier: `in
 | `taskId` | string | No | Target a surface by task. |
 | `keys` | string | Yes | Key or chord, e.g. `Enter`, `Escape`, `Tab`, `Ctrl+Shift+P`, `ArrowDown`. |
 | `selector` | string | No | CSS selector of the element to click before pressing, in the same call, so it holds keyboard focus. An `<iframe>` selector works, since the click lands inside the frame. |
+| `strict` | boolean | No | Default `true`. See [Selector strictness](#selector-strictness). |
 
-Returns `{ ok: true }`. Error modes: `unknown-key` when the combo cannot be parsed, checked before anything touches the page so a bad combo never costs the `selector`'s click; `selector-not-found`; and `pane-not-focused` when the pane does not hold keyboard focus at the moment the key is sent. That refusal is the common case without a `selector`, because the user's focus returns to their terminal between calls and a key sent then would reach the terminal. An agent's Escape there interrupted the agent that sent it. It can also fire with a `selector`, when focus left the pane after the click.
+Returns `{ ok: true }`. Error modes: `unknown-key` when the combo cannot be parsed, checked before anything touches the page so a bad combo never costs the `selector`'s click; `selector-not-found`; `ambiguous-selector`, which presses nothing; and `pane-not-focused` when the pane does not hold keyboard focus at the moment the key is sent. That refusal is the common case without a `selector`, because the user's focus returns to their terminal between calls and a key sent then would reach the terminal. An agent's Escape there interrupted the agent that sent it. It can also fire with a `selector`, when focus left the pane after the click.
 
 Enter carries `\r`, so it submits a form or starts a textarea line the way a real Enter does; with Ctrl, Alt, or Meta held it carries none, because that is a shortcut. The navigation keys (PageUp, PageDown, Home, End) reach the page without their browser default action.
 
@@ -224,8 +242,9 @@ sees the whole drag. Capability tier: `interact`.
 | `fromSelector` | string | Yes | CSS selector of the drag source. |
 | `toSelector` | string | Yes | CSS selector of the drop target. |
 | `steps` | number | No | Intermediate move steps. Default 10, max 60. Raise it for libraries that need several move events to register a drag. |
+| `strict` | boolean | No | Default `true`, and it applies to both selectors. See [Selector strictness](#selector-strictness). |
 
-Returns `{ ok: true }`. Error mode: `selector-not-found`, which covers either selector failing to match.
+Returns `{ ok: true }`. Error modes: `selector-not-found`, which covers either selector failing to match, and `ambiguous-selector`, whose detail names the selector that matched several.
 
 ## kangentic_browser_hover
 
@@ -236,8 +255,9 @@ Move the pointer over an element without pressing, so a hover menu opens, a tool
 | `sessionId` | string | No | Target a surface by its handle. |
 | `taskId` | string | No | Target a surface by task. |
 | `selector` | string | Yes | CSS selector of the element to hover. Scrolled into view first. |
+| `strict` | boolean | No | Default `true`. See [Selector strictness](#selector-strictness). |
 
-Returns `{ ok: true }`. Error mode: `selector-not-found`.
+Returns `{ ok: true }`. Error modes: `selector-not-found` and `ambiguous-selector`.
 
 `kangentic_browser_click` already sends a `mouseMoved` before its press, so this is not a step you need before clicking. It exists for VERIFYING hover state, which was previously unreachable: there was no way to open a hover menu and then screenshot it.
 
@@ -252,8 +272,9 @@ Scroll the page, or one scrollable element, by a wheel delta. Capability tier: `
 | `deltaY` | number | No | Vertical scroll in CSS pixels. Positive scrolls down. |
 | `deltaX` | number | No | Horizontal scroll in CSS pixels. Positive scrolls right. |
 | `selector` | string | No | A scrollable element to scroll instead of the page. |
+| `strict` | boolean | No | Default `true`; applies only with `selector`. See [Selector strictness](#selector-strictness). |
 
-Returns `{ ok: true, viewport }`, the viewport measured after the scroll. Error modes: `invalid-scroll` (both deltas zero or omitted, which would do nothing) and `selector-not-found`.
+Returns `{ ok: true, viewport }`, the viewport measured after the scroll. Error modes: `invalid-scroll` (both deltas zero or omitted, which would do nothing), `selector-not-found` and `ambiguous-selector`.
 
 This is how you reach content below the fold, and the only way. Measured against a live guest: `kangentic_browser_keypress` delivers PageDown to the page WITHOUT the browser's default action, so two of them left `scrollY` at 0, and `kangentic_browser_eval` (`window.scrollBy`) is gated off by default. Before this tool the family had no scroll at all.
 
@@ -271,8 +292,9 @@ Choose an option in a native `<select>`. Capability tier: `interact`.
 | `value` | string | No | The option's `value` attribute. |
 | `label` | string | No | The option's visible text, matched after trimming. |
 | `index` | number | No | Zero-based option index. |
+| `strict` | boolean | No | Default `true`. See [Selector strictness](#selector-strictness). |
 
-Pass exactly one of `value` / `label` / `index`. Returns `{ ok: true, value }` with the value that ended up selected. Error modes: `missing-target` (none of the three given), `selector-not-found`, `not-a-select` (the selector matched something else), and `no-match` (it is a `<select>` but no option matched; the detail says to read the options with `query_all` on `"<selector> option"`).
+Pass exactly one of `value` / `label` / `index`. Returns `{ ok: true, value }` with the value that ended up selected. Error modes: `missing-target` (none of the three given), `selector-not-found`, `ambiguous-selector`, `not-a-select` (the selector matched something else), and `no-match` (it is a `<select>` but no option matched; the detail says to read the options with `query_all` on `"<selector> option"`).
 
 Clicking cannot do this, which is why it needs its own tool: the list a `<select>` opens is drawn by the operating system outside the page, so a synthesized press reaches the control and then has nothing to aim at. A custom dropdown built from divs is ordinary UI and wants `click` instead. The tool fires `input` and `change`, so framework bindings react exactly as they do for a real choice.
 
@@ -286,8 +308,9 @@ Drop real files onto an element, exactly as dragging them out of the file manage
 | `taskId` | string | No | Target a surface by task. |
 | `selector` | string | Yes | CSS selector of the drop target. |
 | `paths` | string[] | Yes | Absolute file paths where the agent runs, 1 to 20. On a project on an SSH host they are the host's, beneath the user's home folder, and are fetched to this computer first. If one cannot be, nothing is dropped and the error names it (`drop-files-unavailable`). |
+| `strict` | boolean | No | Default `true`. See [Selector strictness](#selector-strictness). |
 
-Returns `{ ok: true, dropped }`. Error mode: `selector-not-found`.
+Returns `{ ok: true, dropped }`. Error modes: `selector-not-found` and `ambiguous-selector`.
 
 The page receives genuine `File` objects through `dataTransfer.files`, each backed by its real path. That is the one hop page script cannot fake - a `new File()` built in the page has no path - so this is the only way to test a drop zone or a file input end to end.
 

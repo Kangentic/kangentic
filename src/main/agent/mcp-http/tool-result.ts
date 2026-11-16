@@ -1,4 +1,4 @@
-import type { DriverResult } from '../../browser/browser-pane-driver';
+import type { DriverError, DriverResult } from '../../browser/browser-pane-driver';
 import type { ScreenshotResponse } from '../../browser/cdp/screenshot';
 
 /**
@@ -28,7 +28,12 @@ function toStructuredContent(data: unknown): Record<string, unknown> | null {
   return data as Record<string, unknown>;
 }
 
-export function errorToolResult(error: { kind: string; detail: string }): McpToolResult {
+/**
+ * An error envelope. Extra fields on the error (an `ambiguous-selector`
+ * refusal's `total` and `candidates`) ride in both blocks, so an agent reading
+ * either one can pick a candidate without another call.
+ */
+export function errorToolResult(error: DriverError): McpToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(error, null, 2) }],
     structuredContent: { error },

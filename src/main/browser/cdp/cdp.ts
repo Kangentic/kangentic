@@ -3,6 +3,7 @@ import type { QueryAllResult } from './types';
 import { keyboardFocusIsInHost, KeyboardFocusNotInGuestError } from './keyboard-focus';
 import { MODIFIER_FLAGS, chordKeyIdentity, parseKeyCombo } from './key-combo';
 import { holdGuestRendering } from './guest-capture-hold';
+import { AMBIGUOUS_CANDIDATE_LIMIT, AmbiguousSelectorError, parseSelectorCandidates } from './ambiguous-selector';
 
 /**
  * Wraps `webContents.debugger.attach('1.3')` and exposes typed helpers
@@ -768,6 +769,8 @@ interface BoxModel {
  *   - `text*="Cancel"` (or `text*=Cancel`)       -> substring visible-text match
  *   - `aria="Cancel"` (or `aria=Cancel`)         -> accessible name match
  *   - `:has-text("Cancel")`                       -> alias for text*=
+ *   - `[role=dialog] button:has-text("Cancel")`   -> text*= among the elements
+ *                                                    the CSS before it matches
  *
  * Anything that doesn't match those prefixes falls through to plain
  * CSS, so existing callers continue to work without changes.
@@ -775,6 +778,13 @@ interface BoxModel {
 interface SelectorSpec {
   kind: 'css' | 'text' | 'text-contains' | 'aria';
   value: string;
+  /**
+   * `text-contains` only: the CSS written before a trailing `:has-text(...)`.
+   * The text match runs over the elements it selects instead of the default
+   * candidate pool, which is Playwright's meaning. It used to be dropped, so
+   * `[role=dialog] button:has-text("Save")` matched a Save button anywhere.
+   */
+  scope?: string;
 }
 
 const TEXT_RE = /^text=(?:"([^"]*)"|'([^']*)'|(.+))$/;
@@ -791,8 +801,22 @@ export function parseSelectorSpec(selector: string): SelectorSpec {
   match = trimmed.match(ARIA_RE);
   if (match) return { kind: 'aria', value: match[1] ?? match[2] ?? match[3] ?? '' };
   match = trimmed.match(HAS_TEXT_RE);
-  if (match) return { kind: 'text-contains', value: match[1] ?? match[2] ?? '' };
+  if (match) {
+    const value = match[1] ?? match[2] ?? '';
+    // A trailing `:has-text(...)` scopes the text match to the CSS before it.
+    // One in the middle (`div:has-text("x") > button`) is not supported, and
+    // keeps the old unscoped reading rather than guessing at a combinator.
+    const matchIndex = match.index ?? 0;
+    const isTrailing = matchIndex + match[0].length === trimmed.length;
+    const scope = isTrailing ? trimmed.slice(0, matchIndex).trim() : '';
+    return scope ? { kind: 'text-contains', value, scope } : { kind: 'text-contains', value };
+  }
   return { kind: 'css', value: trimmed };
+}
+
+/** The `document.querySelectorAll(...)` a text match walks: its scope, or the candidate pool. */
+function textCandidatesJs(spec: SelectorSpec): string {
+  return `document.querySelectorAll(${JSON.stringify(spec.scope ?? CANDIDATE_POOL_SELECTOR)})`;
 }
 
 interface EvaluateNodeResult {
@@ -835,6 +859,83 @@ async function resolveSelector(webContents: WebContents, selector: string): Prom
 }
 
 /**
+ * Whether a selector must name exactly one element a user could act on. The
+ * primitives below default it to false, which is the old first-match reading:
+ * the dev inspection bridge and every caller that does not ask keep it. The
+ * shipped `kangentic_browser_*` tools pass true unless the agent opts out.
+ */
+export interface SelectorStrictness {
+  strict?: boolean;
+}
+
+/**
+ * Resolve the ONE element an action should target.
+ *
+ * Not strict: exactly `resolveSelector`, the first match in document order.
+ *
+ * Strict: one evaluate counts the matches a user could act on
+ * (`buildActionableMatchesExpression`). One match comes back as the element
+ * itself and is turned into a node id here, so the action lands on the element
+ * that was counted. `DOM.querySelector` is never asked again, because its first
+ * match can be a hidden duplicate that sits earlier in the document. Several
+ * matches throw `AmbiguousSelectorError`, which `withGuest` reports as the
+ * `ambiguous-selector` kind. When no match is actionable, the page answers with
+ * the first match in document order, which is what `resolveSelector` would
+ * pick, so strictness never turns a call that works today into a miss and a
+ * miss costs one scan of the page, not two. A selector the page cannot
+ * evaluate falls back to `resolveSelector`, which fails the way it always has.
+ */
+async function resolveActionTarget(
+  webContents: WebContents,
+  selector: string,
+  options: SelectorStrictness = {},
+): Promise<number | null> {
+  if (!options.strict) return resolveSelector(webContents, selector);
+  const spec = parseSelectorSpec(selector);
+  const evalResult = (await webContents.debugger.sendCommand('Runtime.evaluate', {
+    expression: buildActionableMatchesExpression(spec, AMBIGUOUS_CANDIDATE_LIMIT),
+    returnByValue: false,
+  })) as EvaluateNodeResult;
+  const objectId = evalResult.result?.objectId;
+  if (!objectId) {
+    return evalResult.exceptionDetails ? resolveSelector(webContents, selector) : null;
+  }
+  // From here every path releases `objectId`, the thrown exception included.
+  // The node branch repeats `resolveSelector`'s requestNode-then-release with
+  // a `DOM.getDocument` first; keep the two in step.
+  try {
+    if (evalResult.exceptionDetails) return await resolveSelector(webContents, selector);
+    if (evalResult.result.subtype === 'node') {
+      // `DOM.requestNode` pushes a node id only once the DOM agent holds the
+      // document, which a CSS resolve used to guarantee by calling
+      // `DOM.getDocument` first. This path never did, so it asks here.
+      await webContents.debugger.sendCommand('DOM.getDocument', { depth: 0 });
+      const nodeResult = (await webContents.debugger.sendCommand('DOM.requestNode', {
+        objectId,
+      })) as { nodeId: number };
+      return nodeResult.nodeId || null;
+    }
+    const described = (await webContents.debugger.sendCommand('Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: 'function () { return this; }',
+      returnByValue: true,
+    })) as { result?: { value?: { total?: unknown; candidates?: unknown } } };
+    const ambiguity = described.result?.value;
+    const candidates = parseSelectorCandidates(ambiguity?.candidates);
+    if (ambiguity && typeof ambiguity.total === 'number' && candidates.length > 0) {
+      throw new AmbiguousSelectorError(selector, ambiguity.total, candidates);
+    }
+    return await resolveSelector(webContents, selector);
+  } finally {
+    try {
+      await webContents.debugger.sendCommand('Runtime.releaseObject', { objectId });
+    } catch {
+      // report-ok: releasing a remote object the page may already have dropped; a miss leaks one handle until the page navigates
+    }
+  }
+}
+
+/**
  * Candidate pool for `text=` / `text*=` matching, shared by
  * `buildSelectorExpression` (first match) and `buildSelectorAllExpression`
  * (all matches) so the two paths cannot drift. Favors interactive / labeled
@@ -855,7 +956,7 @@ const ARIA_CONTENT_NAME_SELECTOR =
 
 export function buildSelectorExpression(spec: SelectorSpec): string {
   const targetLiteral = JSON.stringify(spec.value);
-  const candidatesJs = `document.querySelectorAll(${JSON.stringify(CANDIDATE_POOL_SELECTOR)})`;
+  const candidatesJs = textCandidatesJs(spec);
   if (spec.kind === 'text') {
     return `(() => {
       const target = ${targetLiteral};
@@ -895,6 +996,148 @@ export function buildSelectorExpression(spec: SelectorSpec): string {
 }
 
 /**
+ * The expression that collects EVERY element matching `spec`, in document
+ * order, as an array. It reads the match text from a `target` binding the
+ * caller's wrapper declares. Shared by `buildSelectorAllExpression` and
+ * `buildActionableMatchesExpression` so the two cannot disagree about what a
+ * selector matches.
+ */
+function buildCollectExpression(spec: SelectorSpec): string {
+  if (spec.kind === 'css') {
+    return 'Array.from(document.querySelectorAll(target))';
+  }
+  if (spec.kind === 'text' || spec.kind === 'text-contains') {
+    const comparison = spec.kind === 'text' ? 'visibleText === target' : 'visibleText.includes(target)';
+    return `Array.from(${textCandidatesJs(spec)}).filter((element) => {
+        const ariaLabel = element.getAttribute('aria-label');
+        const visibleText = (ariaLabel ?? element.innerText ?? element.textContent ?? '').trim();
+        return ${comparison};
+      })`;
+  }
+  // aria=: aria-label matches first, then content-derived names, deduped.
+  return `(() => {
+        const matched = new Set();
+        for (const element of document.querySelectorAll('[aria-label]')) {
+          if ((element.getAttribute('aria-label') ?? '').trim() === target) matched.add(element);
+        }
+        for (const element of document.querySelectorAll(${JSON.stringify(ARIA_CONTENT_NAME_SELECTOR)})) {
+          const visibleText = (element.innerText ?? element.textContent ?? '').trim();
+          if (visibleText === target) matched.add(element);
+        }
+        return Array.from(matched);
+      })()`;
+}
+
+/**
+ * The expression strict resolution evaluates (`resolveActionTarget`). It keeps
+ * only the matches a user could act on, then answers with:
+ *
+ *   - the ONE element, when exactly one remains (so the caller clicks the
+ *     element it counted, never a re-resolved first match);
+ *   - the first match in document order, when matches exist but none is
+ *     actionable (the element `resolveSelector` would pick, so strictness never
+ *     turns a working call into a miss), or `null` when nothing matches;
+ *   - a plain `{ total, candidates }` object, when several do.
+ *
+ * "Could act on" means connected, laid out with a non-zero box, not
+ * `visibility: hidden`, and not inside an `inert` subtree. A hidden mobile-nav
+ * duplicate therefore does not make a selector ambiguous. `aria-hidden` is not
+ * a filter: it hides an element from assistive technology, not from a click.
+ *
+ * For the text and aria kinds, a match that CONTAINS another match is dropped
+ * in favour of the inner one. The candidate pool includes `[role]`, so a
+ * `[role=dialog]` whose text includes "Save" matches `text*="Save"` beside its
+ * own Save button. CSS matches are left alone: a nested CSS match is a
+ * genuinely different element the caller's selector named. The containing
+ * matches are found in one walk up from each match, not by comparing every
+ * pair, so a broad text match on a large page stays linear.
+ */
+export function buildActionableMatchesExpression(spec: SelectorSpec, candidateLimit: number): string {
+  const keptExpr = spec.kind === 'css'
+    ? 'actionable'
+    : `(() => {
+      const ancestorsOfMatches = new Set();
+      for (const element of actionable) {
+        let ancestor = element.parentElement;
+        while (ancestor && !ancestorsOfMatches.has(ancestor)) {
+          ancestorsOfMatches.add(ancestor);
+          ancestor = ancestor.parentElement;
+        }
+      }
+      return actionable.filter((element) => !ancestorsOfMatches.has(element));
+    })()`;
+  return `(() => {
+    const target = ${JSON.stringify(spec.value)};
+    const all = ${buildCollectExpression(spec)};
+    const actionable = all.filter((element) => {
+      if (!element.isConnected) return false;
+      if (element.getClientRects().length === 0) return false;
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const style = window.getComputedStyle(element);
+      if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      if (element.closest('[inert]')) return false;
+      return true;
+    });
+    const kept = ${keptExpr};
+    if (kept.length === 0) return all.length > 0 ? all[0] : null;
+    if (kept.length === 1) return kept[0];
+    const cssPath = (element) => {
+      const segments = [];
+      let node = element;
+      while (node && node.nodeType === 1 && node !== document.documentElement) {
+        if (node.id && document.querySelectorAll('#' + CSS.escape(node.id)).length === 1) {
+          segments.unshift('#' + CSS.escape(node.id));
+          return segments.join(' > ');
+        }
+        const parent = node.parentElement;
+        const tag = node.tagName.toLowerCase();
+        if (!parent) {
+          segments.unshift(tag);
+          return segments.join(' > ');
+        }
+        const sameTag = Array.from(parent.children).filter((child) => child.tagName === node.tagName);
+        segments.unshift(sameTag.length > 1 ? tag + ':nth-of-type(' + (sameTag.indexOf(node) + 1) + ')' : tag);
+        node = parent;
+      }
+      segments.unshift('html');
+      return segments.join(' > ');
+    };
+    const candidates = kept.slice(0, ${candidateLimit}).map((element, index) => {
+      const rect = element.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      let topmost = null;
+      if (centerX >= 0 && centerY >= 0 && centerX < window.innerWidth && centerY < window.innerHeight) {
+        const hit = document.elementFromPoint(centerX, centerY);
+        topmost = !!hit && (hit === element || element.contains(hit));
+      }
+      const label = element.getAttribute('aria-label');
+      const text = (label ?? element.innerText ?? element.textContent ?? '').replace(/\\s+/g, ' ').trim();
+      return {
+        index,
+        tag: element.tagName.toLowerCase(),
+        text: text.length > 80 ? text.slice(0, 80) : text,
+        id: element.id || null,
+        role: element.getAttribute('role'),
+        ariaLabel: label,
+        name: element.getAttribute('name'),
+        inDialog: !!element.closest('dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]'),
+        topmost,
+        box: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+        selector: cssPath(element),
+      };
+    });
+    return { total: kept.length, candidates };
+  })()`;
+}
+
+/**
  * Build a single self-contained expression that measures EVERY element
  * matching `spec` (unlike `buildSelectorExpression`, which returns the
  * first match). Evaluated once via `Runtime.evaluate` so N elements cost
@@ -906,30 +1149,7 @@ export function buildSelectorAllExpression(
   spec: SelectorSpec,
   opts: { includeHtml: boolean; includeAttributes: boolean; limit: number; htmlMaxChars: number },
 ): string {
-  let collectExpr: string;
-  if (spec.kind === 'css') {
-    collectExpr = 'Array.from(document.querySelectorAll(target))';
-  } else if (spec.kind === 'text' || spec.kind === 'text-contains') {
-    const comparison = spec.kind === 'text' ? 'visibleText === target' : 'visibleText.includes(target)';
-    collectExpr = `Array.from(document.querySelectorAll(${JSON.stringify(CANDIDATE_POOL_SELECTOR)})).filter((element) => {
-        const ariaLabel = element.getAttribute('aria-label');
-        const visibleText = (ariaLabel ?? element.innerText ?? element.textContent ?? '').trim();
-        return ${comparison};
-      })`;
-  } else {
-    // aria=: aria-label matches first, then content-derived names, deduped.
-    collectExpr = `(() => {
-        const matched = new Set();
-        for (const element of document.querySelectorAll('[aria-label]')) {
-          if ((element.getAttribute('aria-label') ?? '').trim() === target) matched.add(element);
-        }
-        for (const element of document.querySelectorAll(${JSON.stringify(ARIA_CONTENT_NAME_SELECTOR)})) {
-          const visibleText = (element.innerText ?? element.textContent ?? '').trim();
-          if (visibleText === target) matched.add(element);
-        }
-        return Array.from(matched);
-      })()`;
-  }
+  const collectExpr = buildCollectExpression(spec);
   return `(() => {
     const target = ${JSON.stringify(spec.value)};
     const LIMIT = ${opts.limit};
@@ -1201,8 +1421,9 @@ function contentCentroid(box: BoxModel['model']): { x: number; y: number } | nul
 async function resolveClickPoint(
   webContents: WebContents,
   selector: string,
+  strictness: SelectorStrictness = {},
 ): Promise<{ x: number; y: number } | null> {
-  const nodeId = await resolveSelector(webContents, selector);
+  const nodeId = await resolveActionTarget(webContents, selector, strictness);
   if (!nodeId) return null;
   await scrollNodeIntoView(webContents, nodeId);
   // Measured AFTER the scroll: the box is only meaningful once the element is
@@ -1215,8 +1436,9 @@ async function resolveClickPoint(
 export async function clickAtCenterOfSelector(
   webContents: WebContents,
   selector: string,
+  strictness: SelectorStrictness = {},
 ): Promise<boolean> {
-  const point = await resolveClickPoint(webContents, selector);
+  const point = await resolveClickPoint(webContents, selector, strictness);
   if (!point) return false;
   // A `mouseMoved` before the press, which a real pointer always produces.
   // Without it a page never sees `mouseover` / `mouseenter`, so hover-gated UI
@@ -1236,8 +1458,12 @@ export async function clickAtCenterOfSelector(
  * hover-revealed button) is not open until the pointer arrives. Verifying that
  * UI is a separate act from clicking it, and there was no way to do it.
  */
-export async function hoverSelector(webContents: WebContents, selector: string): Promise<boolean> {
-  const point = await resolveClickPoint(webContents, selector);
+export async function hoverSelector(
+  webContents: WebContents,
+  selector: string,
+  strictness: SelectorStrictness = {},
+): Promise<boolean> {
+  const point = await resolveClickPoint(webContents, selector, strictness);
   if (!point) return false;
   await dispatchMouseMoveBounded(webContents, point.x, point.y);
   return true;
@@ -1260,11 +1486,11 @@ export async function hoverSelector(webContents: WebContents, selector: string):
  */
 export async function scrollBy(
   webContents: WebContents,
-  options: { selector?: string; deltaX?: number; deltaY?: number },
+  options: { selector?: string; deltaX?: number; deltaY?: number } & SelectorStrictness,
 ): Promise<boolean> {
   let point: { x: number; y: number };
   if (options.selector) {
-    const resolved = await resolveClickPoint(webContents, options.selector);
+    const resolved = await resolveClickPoint(webContents, options.selector, { strict: options.strict });
     if (!resolved) return false;
     point = resolved;
   } else {
@@ -1304,8 +1530,9 @@ export async function selectOptionOnSelector(
   webContents: WebContents,
   selector: string,
   choice: { value?: string; label?: string; index?: number },
+  strictness: SelectorStrictness = {},
 ): Promise<{ ok: true; value: string } | { ok: false; reason: 'not-found' | 'not-a-select' | 'no-match' }> {
-  const nodeId = await resolveSelector(webContents, selector);
+  const nodeId = await resolveActionTarget(webContents, selector, strictness);
   if (!nodeId) return { ok: false, reason: 'not-found' };
   let objectId: string | undefined;
   try {
@@ -1352,8 +1579,9 @@ export async function dragFromTo(
   webContents: WebContents,
   fromSelector: string,
   toSelector: string,
-  options: { steps?: number } = {},
+  options: { steps?: number } & SelectorStrictness = {},
 ): Promise<boolean> {
+  const strictness: SelectorStrictness = { strict: options.strict };
   // Same viewport-coordinate requirement as a click: measure only after both
   // ends are scrolled into view, or a drag involving anything below the fold
   // silently does nothing. Source first, then target, because scrolling to the
@@ -1367,14 +1595,14 @@ export async function dragFromTo(
   // across the target's resolve made every two-selector drag fail with
   // "selector did not match" (the stale id's box read as null), which the
   // caller could not tell apart from a real miss.
-  const scrolledFromNodeId = await resolveSelector(webContents, fromSelector);
+  const scrolledFromNodeId = await resolveActionTarget(webContents, fromSelector, strictness);
   if (!scrolledFromNodeId) return false;
   await scrollNodeIntoView(webContents, scrolledFromNodeId);
-  const toNodeId = await resolveSelector(webContents, toSelector);
+  const toNodeId = await resolveActionTarget(webContents, toSelector, strictness);
   if (!toNodeId) return false;
   await scrollNodeIntoView(webContents, toNodeId);
   const toBox = await getBoundingBoxByNodeId(webContents, toNodeId);
-  const fromNodeId = await resolveSelector(webContents, fromSelector);
+  const fromNodeId = await resolveActionTarget(webContents, fromSelector, strictness);
   if (!fromNodeId) return false;
   const fromBox = await getBoundingBoxByNodeId(webContents, fromNodeId);
   const source = fromBox ? contentCentroid(fromBox) : null;
@@ -1426,8 +1654,9 @@ export async function dropFilesOnSelector(
   webContents: WebContents,
   selector: string,
   filePaths: readonly string[],
+  strictness: SelectorStrictness = {},
 ): Promise<boolean> {
-  const point = await resolveClickPoint(webContents, selector);
+  const point = await resolveClickPoint(webContents, selector, strictness);
   if (!point) return false;
   // dragOperationsMask 1 = copy, the operation a file-manager drag offers.
   const data = { items: [], files: [...filePaths], dragOperationsMask: 1 };

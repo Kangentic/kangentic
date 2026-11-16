@@ -97,8 +97,36 @@ const TARGET_SHAPE = {
 
 type TargetArgs = { sessionId?: string; taskId?: string };
 
+/**
+ * Strict selector matching (GitHub #820), on every tool that acts on ONE
+ * element named by a selector. Default true, as a Playwright Locator is: a
+ * selector that names two visible elements is refused with
+ * `ambiguous-selector` and its candidates, instead of acting on whichever came
+ * first. `strict: false` is the old first-match reading.
+ */
+const STRICT_SHAPE = {
+  strict: z.boolean().optional().describe('Default true: when the selector matches more than one visible element, nothing is done and the call fails with ambiguous-selector, listing the matches with a unique selector for each. Hidden matches do not count. Pass false to act on the first match in document order.'),
+};
+
+/** The strictness a tool body passes down: on unless the agent turned it off. */
+function strictness(strict: boolean | undefined): { strict: boolean } {
+  return { strict: strict ?? true };
+}
+
+/**
+ * Said when x/y arrive without `coordSpace`. The click still runs in viewport
+ * space, as it always has; the warning exists because image pixels read as
+ * viewport pixels land somewhere else whenever a screenshot holds more than one
+ * pixel per CSS pixel, and a click on a modal's backdrop closes the modal.
+ */
+const IMPLICIT_COORD_SPACE_WARNING =
+  'x and y were read as viewport CSS pixels because coordSpace was not passed. '
+  + 'If they came from a kangentic_browser_screenshot, pass coordSpace: "image" when that screenshot reported scale 1, '
+  + 'or divide them by its pixelsPerCssPixel and pass viewport coordinates when its scale was below 1. '
+  + 'Pass coordSpace: "viewport" to say these are viewport coordinates and silence this warning.';
+
 type ClickOutcome =
-  | { ok: true; dispatched?: { x: number; y: number } }
+  | { ok: true; dispatched?: { x: number; y: number }; warning?: string }
   | { error: 'selector-not-found' | 'coord-mapping-failed' | 'missing-target' };
 
 /** Reads the live automation policy once per call so a Settings flip applies immediately. */
@@ -717,20 +745,21 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_click',
     {
-      description: "Click an element (by selector) or a point (by viewport x/y) in the task's Browser pane.",
+      description: "Click an element (by selector) or a point (by x/y) in the task's Browser pane. A selector must name exactly one visible element unless strict is false. Pass coordSpace with x/y: a point read off a screenshot is in image pixels, not viewport pixels.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
-        selector: z.string().optional().describe('CSS selector (or text=/aria= form) to click at its center.'),
-        x: z.number().optional().describe('Viewport X (use with y instead of selector).'),
-        y: z.number().optional().describe('Viewport Y.'),
-        coordSpace: z.enum(['viewport', 'image']).optional().describe('Coordinate space for x/y. Default viewport. "image" maps pixels of a full-viewport kangentic_browser_screenshot back to the page, through the `pixelsPerCssPixel` that screenshot reported when its `scale` is 1. If the screenshot shrank to fit maxBytes (`scale` below 1), divide by its `pixelsPerCssPixel` yourself and pass viewport coordinates.'),
+        selector: z.string().optional().describe('CSS selector (or text=/aria= form, or CSS ending in :has-text("...")) to click at its center.'),
+        x: z.number().optional().describe('X, in viewport CSS pixels unless coordSpace is "image". Use with y instead of selector.'),
+        y: z.number().optional().describe('Y, in viewport CSS pixels unless coordSpace is "image".'),
+        coordSpace: z.enum(['viewport', 'image']).optional().describe('Coordinate space for x/y. Read as viewport when omitted, with a warning in the result. "image" maps pixels of a full-viewport kangentic_browser_screenshot back to the page, through the `pixelsPerCssPixel` that screenshot reported when its `scale` is 1. If the screenshot shrank to fit maxBytes (`scale` below 1), divide by its `pixelsPerCssPixel` yourself and pass viewport coordinates.'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, selector, x, y, coordSpace }) => {
+    async ({ sessionId, taskId, selector, x, y, coordSpace, strict }) => {
       const result = await drive<ClickOutcome>('interact', { sessionId, taskId }, async (webContents, entry) => {
         if (typeof selector === 'string') {
-          const ok = await clickAtCenterOfSelector(webContents, selector);
+          const ok = await clickAtCenterOfSelector(webContents, selector, strictness(strict));
           if (!ok) return { error: 'selector-not-found' as const };
           return { ok: true };
         }
@@ -751,7 +780,9 @@ export function registerBrowserTools(
           }
           await dispatchMouseEvent(webContents, { type: 'mousePressed', x: targetX, y: targetY });
           await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: targetX, y: targetY });
-          return { ok: true, dispatched: { x: targetX, y: targetY } };
+          return coordSpace === undefined
+            ? { ok: true, dispatched: { x: targetX, y: targetY }, warning: IMPLICIT_COORD_SPACE_WARNING }
+            : { ok: true, dispatched: { x: targetX, y: targetY } };
         }
         return { error: 'missing-target' as const };
       });
@@ -777,13 +808,14 @@ export function registerBrowserTools(
         text: z.string().describe('Text to type.'),
         selector: z.string().optional().describe('CSS selector to focus before typing.'),
         clearFirst: z.boolean().optional().describe('Select-all + delete before typing.'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, text, selector, clearFirst }) => {
+    async ({ sessionId, taskId, text, selector, clearFirst, strict }) => {
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
         if (typeof selector === 'string') {
-          const focused = await clickAtCenterOfSelector(webContents, selector);
+          const focused = await clickAtCenterOfSelector(webContents, selector, strictness(strict));
           if (!focused) return { error: 'selector-not-found' as const };
           if (clearFirst) {
             // Select-all is Cmd+A on macOS; Ctrl+A there is the emacs
@@ -814,17 +846,18 @@ export function registerBrowserTools(
         ...TARGET_SHAPE,
         keys: z.string().describe('One key or chord, e.g. "Enter", "PageDown", "Ctrl+Shift+P". Not a sequence - one press per call.'),
         selector: z.string().optional().describe('CSS selector of the element to click before pressing, so it holds keyboard focus.'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, keys, selector }) => {
+    async ({ sessionId, taskId, keys, selector, strict }) => {
       // Before the drive, so a typo in `keys` never costs the page a click.
       if (!parseKeyCombo(keys)) {
         return errorToolResult({ kind: 'unknown-key', detail: `Could not parse key combo: ${keys}.` });
       }
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
         if (typeof selector === 'string') {
-          const focused = await clickAtCenterOfSelector(webContents, selector);
+          const focused = await clickAtCenterOfSelector(webContents, selector, strictness(strict));
           if (!focused) return { error: 'selector-not-found' as const };
         }
         const ok = await dispatchKeypress(webContents, keys);
@@ -848,12 +881,13 @@ export function registerBrowserTools(
         fromSelector: z.string().describe('CSS selector of the drag source.'),
         toSelector: z.string().describe('CSS selector of the drop target.'),
         steps: z.number().int().positive().max(60).optional().describe('Intermediate move steps (default 10).'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, fromSelector, toSelector, steps }) => {
+    async ({ sessionId, taskId, fromSelector, toSelector, steps, strict }) => {
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
-        const ok = await dragFromTo(webContents, fromSelector, toSelector, { steps });
+        const ok = await dragFromTo(webContents, fromSelector, toSelector, { steps, ...strictness(strict) });
         return ok ? { ok: true } : { error: 'selector-not-found' as const };
       });
       if (result.ok && 'error' in result.data) {
@@ -871,12 +905,13 @@ export function registerBrowserTools(
       inputSchema: z.object({
         ...TARGET_SHAPE,
         selector: z.string().describe('CSS selector of the element to hover. Scrolled into view first.'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, selector }) => {
+    async ({ sessionId, taskId, selector, strict }) => {
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
-        const ok = await hoverSelector(webContents, selector);
+        const ok = await hoverSelector(webContents, selector, strictness(strict));
         return ok ? { ok: true } : { error: 'selector-not-found' as const };
       });
       if (result.ok && 'error' in result.data) {
@@ -896,10 +931,11 @@ export function registerBrowserTools(
         deltaY: z.number().int().min(-50000).max(50000).optional().describe('Vertical scroll in CSS pixels. Positive scrolls down. Default 0.'),
         deltaX: z.number().int().min(-50000).max(50000).optional().describe('Horizontal scroll in CSS pixels. Positive scrolls right. Default 0.'),
         selector: z.string().optional().describe('CSS selector of a scrollable element to scroll. Omit to scroll the page.'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, deltaX, deltaY, selector }) => {
+    async ({ sessionId, taskId, deltaX, deltaY, selector, strict }) => {
       if (!deltaX && !deltaY) {
         return errorToolResult({
           kind: 'invalid-scroll',
@@ -907,7 +943,7 @@ export function registerBrowserTools(
         });
       }
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
-        const ok = await scrollBy(webContents, { selector, deltaX, deltaY });
+        const ok = await scrollBy(webContents, { selector, deltaX, deltaY, ...strictness(strict) });
         if (!ok) return { error: 'selector-not-found' as const };
         // Report where the page ended up, not what was asked for: a scroll
         // past the end of the document silently does less than requested, and
@@ -933,10 +969,11 @@ export function registerBrowserTools(
         value: z.string().optional().describe('The option\'s value attribute.'),
         label: z.string().optional().describe('The option\'s visible text, matched after trimming.'),
         index: z.number().int().min(0).optional().describe('Zero-based option index.'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, selector, value, label, index }) => {
+    async ({ sessionId, taskId, selector, value, label, index, strict }) => {
       if (value === undefined && label === undefined && index === undefined) {
         return errorToolResult({
           kind: 'missing-target',
@@ -944,7 +981,7 @@ export function registerBrowserTools(
         });
       }
       const result = await drive('interact', { sessionId, taskId }, async (webContents) =>
-        selectOptionOnSelector(webContents, selector, { value, label, index }));
+        selectOptionOnSelector(webContents, selector, { value, label, index }, strictness(strict)));
       if (result.ok && !result.data.ok) {
         const reason = result.data.reason;
         return errorToolResult({
@@ -970,10 +1007,11 @@ export function registerBrowserTools(
         ...TARGET_SHAPE,
         selector: z.string().describe('CSS selector of the drop target.'),
         paths: z.array(z.string()).min(1).max(20).describe('Absolute file paths where you run.'),
+        ...STRICT_SHAPE,
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, selector, paths }) => {
+    async ({ sessionId, taskId, selector, paths, strict }) => {
       // Before the drive: a host's files take a while, and the drive holds the guest.
       const fetched = await dependencies.fetchDroppedFiles?.(paths, captureDirectory()) ?? null;
       if (fetched && fetched.failures.length > 0) {
@@ -981,7 +1019,7 @@ export function registerBrowserTools(
       }
       const localPaths = fetched?.localPaths ?? paths;
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
-        const ok = await dropFilesOnSelector(webContents, selector, localPaths);
+        const ok = await dropFilesOnSelector(webContents, selector, localPaths, strictness(strict));
         return ok ? { ok: true, dropped: localPaths.length } : { error: 'selector-not-found' as const };
       });
       if (result.ok && 'error' in result.data) {
