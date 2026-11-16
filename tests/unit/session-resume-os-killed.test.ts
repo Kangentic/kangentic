@@ -329,6 +329,10 @@ describe('resumeSuspendedSessions: OS-killed (interrupted-exited) recovery', () 
             // The mode the record was launched with, so the agent can keep the
             // mode its conversation was last in (keepsSessionPermissionMode).
             recordPermissionMode: 'default',
+            // The record's agent and track, so the preparation resumes the
+            // conversation of the agent it actually runs (#821).
+            sessionType: 'claude',
+            isolatedSwimlaneId: null,
           },
           sessionRepo: expect.anything(),
         }),

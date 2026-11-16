@@ -1076,7 +1076,10 @@ describe('SESSION_RESUME split-lock dedup', () => {
     if (!handler) throw new Error('SESSION_RESUME handler not registered');
 
     mockEnsureTaskWorktree.mockImplementation(async () => {});
-    mockResolveSpawnOverrides.mockReturnValueOnce({ isolatedSwimlaneId: 'lane-review', forceFresh: true });
+    // The agent rides along with the model it was resolved for (#821): the
+    // Resume names no agent of its own, so dropping it here would launch the
+    // project default with this column's model.
+    mockResolveSpawnOverrides.mockReturnValueOnce({ agent: 'codex', isolatedSwimlaneId: 'lane-review', forceFresh: true });
     const resumeSuspendedSession = vi.fn(async (..._args: unknown[]) => {
       storedTask = { ...storedTask, session_id: 'sess-resumed' };
     });
@@ -1087,7 +1090,7 @@ describe('SESSION_RESUME split-lock dedup', () => {
     expect(resumeSuspendedSession).toHaveBeenCalledTimes(1);
     // Argument 8 of engine.resumeSuspendedSession is the spawn overrides.
     const spawnOverrides = (resumeSuspendedSession.mock.calls[0] as unknown[])[7];
-    expect(spawnOverrides).toEqual({ isolatedSwimlaneId: 'lane-review', forceFresh: false, keepSessionMode: true });
+    expect(spawnOverrides).toEqual({ agent: 'codex', isolatedSwimlaneId: 'lane-review', forceFresh: false, keepSessionMode: true });
   });
 });
 

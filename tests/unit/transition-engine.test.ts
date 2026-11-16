@@ -42,6 +42,7 @@ import { claudeSessionStartLine } from './helpers/claude-session-start';
 import { setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
 import { setRemoteProjectLookup } from '../../src/main/remote/host-paths';
 import { setHostAccessLookup, type HostAccess } from '../../src/main/remote/host-transfer';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
 import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
 
 // ---------------------------------------------------------------------------
@@ -2233,6 +2234,47 @@ describe('TransitionEngine - where an isolated pass began (executeSpawnAgent cho
 
       expect(sessionRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ start_head_sha: null }));
     });
+  });
+});
+
+describe('TransitionEngine - the agent an in-place restart runs (#821)', () => {
+  // A Resume and a settings restart pass no agent of their own, only the
+  // overrides `resolveSpawnOverrides` built for the column's agent. The engine
+  // fell back to the project default (Claude) and launched it with a Codex
+  // column's model: `claude --model gpt-5.6-sol`.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('runs the agent the overrides were resolved for, not the project default', async () => {
+    const { engine } = makeEngine({});
+
+    await engine.resumeSuspendedSession(
+      makeTask() as never, undefined, true, undefined, undefined, undefined, undefined,
+      { agent: 'codex', model: 'gpt-5.6-sol', effort: 'light', isolatedSwimlaneId: 'lane-review' },
+    );
+
+    expect(agentRegistry.getOrThrow).toHaveBeenCalledWith('codex');
+    expect(agentRegistry.getOrThrow).not.toHaveBeenCalledWith('claude');
+  });
+
+  it('keeps an explicit agentOverride ahead of the overrides', async () => {
+    const { engine } = makeEngine({});
+
+    await engine.resumeSuspendedSession(
+      makeTask() as never, undefined, true, undefined, undefined, 'gemini', undefined,
+      { agent: 'codex' },
+    );
+
+    expect(agentRegistry.getOrThrow).toHaveBeenCalledWith('gemini');
+  });
+
+  it('falls back to the project default when neither names an agent', async () => {
+    const { engine } = makeEngine({});
+
+    await engine.resumeSuspendedSession(makeTask() as never, undefined, true);
+
+    expect(agentRegistry.getOrThrow).toHaveBeenCalledWith('claude');
   });
 });
 

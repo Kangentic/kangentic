@@ -124,13 +124,17 @@ export function resolveSpawnOverrides(
   task: Pick<Task, 'agent_override' | 'model_override' | 'effort_override'>,
   lane: Pick<Swimlane, 'id' | 'agent_override' | 'model_override' | 'effort_override' | 'session_target' | 'session_spawn_strategy'> | null | undefined,
   project?: Pick<Project, 'default_agent' | 'default_model' | 'default_effort'> | null,
-): { model: string | null | undefined; effort: string | null | undefined; isolatedSwimlaneId: string | null; forceFresh: boolean } {
+): { agent: string; model: string | null | undefined; effort: string | null | undefined; isolatedSwimlaneId: string | null; forceFresh: boolean } {
   // The project-level model/effort fallback is skipped when a task or column
   // overrides the agent away from the project default: those ids are
   // adapter-specific and do not travel. See projectModelDefaultsApply.
   const resolvedAgent = task.agent_override ?? lane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
   const projectFallback = projectModelDefaultsApply(resolvedAgent, project?.default_agent);
   return {
+    // The agent the model and effort below were resolved for. The engine runs
+    // it when its caller names no agent of its own (an in-place Resume or a
+    // settings restart), so one agent's model never reaches another (#821).
+    agent: resolvedAgent,
     model: task.model_override ?? lane?.model_override
       ?? (projectFallback ? project?.default_model : undefined),
     effort: task.effort_override ?? lane?.effort_override

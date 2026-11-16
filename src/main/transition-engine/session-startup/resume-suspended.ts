@@ -24,7 +24,7 @@ import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { orderByColumnEntry } from '../column-capacity';
-import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
+import { prepareAgentSpawn, type PreparedSpawn, type StartupResume } from './prepare-spawn';
 import { canRecreateWorktree, demoteMissingWorktree, isWorktreeMissing } from './missing-worktree';
 import { startStartupTimer } from './timing';
 import { sweepIntervalsOncePerLaunch } from '../../activity-engine/activity-interval-store';
@@ -534,8 +534,17 @@ export async function resumeSuspendedSessions(
       // shutdown suspend can leave agent_session_id one id behind); recordCwd
       // keeps the reconcile's transcript probe on that same record's cwd in
       // case it diverges from the gathered record's.
-      const resume = canResume
-        ? { agentSessionId: typeMatch!.agent_session_id!, recordId: typeMatch!.id, recordCwd: typeMatch!.cwd, recordPermissionMode: typeMatch!.permission_mode }
+      const resume: StartupResume | null = canResume
+        ? {
+            agentSessionId: typeMatch!.agent_session_id!,
+            recordId: typeMatch!.id,
+            recordCwd: typeMatch!.cwd,
+            recordPermissionMode: typeMatch!.permission_mode,
+            // The agent comes from the task and its column, so the preparation
+            // resumes that agent's own conversation when this one is another's.
+            sessionType: typeMatch!.session_type,
+            isolatedSwimlaneId: typeMatch!.isolated_swimlane_id,
+          }
         : null;
 
       const prep = await prepareAgentSpawn({
@@ -696,11 +705,16 @@ export async function resumeSuspendedSessions(
         });
 
         retireRecord(sessionRepo, input.record.id);
+        // The agent's own conversation the preparation resumed in place of a
+        // record of another agent's (`resumeForAgent`) is replaced too.
+        if (input.rematchedRecordId) retireRecord(sessionRepo, input.rematchedRecordId);
 
         sessionRepo.insert({
           id: newSession.id,
           task_id: input.task.id,
-          session_type: input.record.session_type,
+          // The agent that runs, which is the record's own unless the column's
+          // agent differs from it (#821).
+          session_type: input.adapter.sessionType,
           isolated_swimlane_id: input.record.isolated_swimlane_id,
           agent_session_id: input.agentSessionId,
           command: input.command,
