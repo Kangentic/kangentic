@@ -214,6 +214,9 @@ A Windows console has no line limit, but the process the line starts does: 32,76
 in a WSL distro too. `commandFitsShell` measures a built command against these, and `performSpawn`
 refuses an agent's command that does not fit
 ([A prompt too long for its command line](../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
+It asks `launchRefusal`, which also refuses a launch past the typed budget whose `.cmd` shim cannot
+be read past (`AgentBatchShimUnresolvedError`, with the `batch_shim` tag), under any Windows shell.
+A raw command has no such refusal and types the named one instead.
 
 `tests/unit/typed-launch-round-trip.test.ts` runs both lines through real shells with a controlled
 startup delay and asserts what a stub agent received, never the scrollback, since a shell's echo of
