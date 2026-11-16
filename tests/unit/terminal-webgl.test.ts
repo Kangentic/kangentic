@@ -37,6 +37,7 @@ vi.mock('../../src/renderer/utils/renderer-failure', async (importOriginal) => (
 const reportMock = vi.mocked(reportRendererFailure);
 
 const WEBGL_AVAILABLE = { softwareRendering: false, webglAvailable: true, webglFeatureStatus: 'unknown' };
+const WEBGL_UNAVAILABLE = { softwareRendering: false, webglAvailable: false, webglFeatureStatus: 'disabled_off' };
 
 interface FakeAddon {
   lossHandlers: Array<() => void>;
@@ -468,9 +469,9 @@ describe('no-WebGL skip (software mode, or Chromium reports WebGL off)', () => {
   });
 
   it('a terminal told WebGL is unavailable never constructs an addon, never retries, never reports', () => {
-    // DESKTOP-32: a Linux whose Chromium has no GPU reads `webgl: disabled_off`,
-    // and every terminal used to retry every two minutes and file a fallback.
-    setTerminalGraphicsSupport({ softwareRendering: false, webglAvailable: false, webglFeatureStatus: 'disabled_off' });
+    // DESKTOP-32: a Linux whose Chromium has no GPU reads `webgl: disabled_off`.
+    // Without this skip, every terminal retries every two minutes and files a fallback.
+    setTerminalGraphicsSupport(WEBGL_UNAVAILABLE);
     const factory = vi.fn(makeFakeAddon);
     const flips: string[] = [];
     const dispose = attachWebglRenderer(fakeTerminal, 'k-no-webgl', {
@@ -499,7 +500,7 @@ describe('no-WebGL skip (software mode, or Chromium reports WebGL off)', () => {
       expect(callCount()).toBe(1);
       expect(getTerminalRendererReport()['k-late-status'].retryArmed).toBe(true);
 
-      setTerminalGraphicsSupport({ softwareRendering: false, webglAvailable: false, webglFeatureStatus: 'disabled_off' });
+      setTerminalGraphicsSupport(WEBGL_UNAVAILABLE);
       vi.advanceTimersByTime(500_000);
 
       expect(callCount()).toBe(1);
@@ -523,7 +524,7 @@ describe('no-WebGL skip (software mode, or Chromium reports WebGL off)', () => {
     try {
       expect(getTerminalRendererReport()['k-resume-no-webgl'].suspendedByBudget).toBe(true);
 
-      setTerminalGraphicsSupport({ softwareRendering: false, webglAvailable: false, webglFeatureStatus: 'disabled_off' });
+      setTerminalGraphicsSupport(WEBGL_UNAVAILABLE);
       applyWebglAttachmentPlan({ attachKeys: new Set(['k-resume-no-webgl']), suspendKeys: new Set<string>() });
       vi.advanceTimersByTime(500_000);
 
@@ -586,7 +587,7 @@ describe('no-WebGL skip (software mode, or Chromium reports WebGL off)', () => {
     try {
       expect(getTerminalRendererReport()['k-loss-after-status'].renderer).toBe('webgl');
 
-      setTerminalGraphicsSupport({ softwareRendering: false, webglAvailable: false, webglFeatureStatus: 'disabled_off' });
+      setTerminalGraphicsSupport(WEBGL_UNAVAILABLE);
       addons[0].triggerLoss();
 
       expect(getTerminalRendererReport()['k-loss-after-status']).toMatchObject({
@@ -618,6 +619,24 @@ describe('no-WebGL skip (software mode, or Chromium reports WebGL off)', () => {
     expect(getTerminalRendererReport()['k-software-dispose']).toBeUndefined();
   });
 
+  it('software mode alone keeps a terminal on DOM, even with webglAvailable true', () => {
+    // softwareRendering is its own input: a status that says software mode
+    // wins over a webglAvailable it did not also set to false.
+    setTerminalGraphicsSupport({ softwareRendering: true, webglAvailable: true, webglFeatureStatus: 'software-rendering' });
+    const factory = vi.fn(makeFakeAddon);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-software-only', {
+      createAddon: factory,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    try {
+      expect(factory).not.toHaveBeenCalled();
+      expect(getTerminalRendererReport()['k-software-only']).toMatchObject({ renderer: 'dom', retryArmed: false });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      dispose();
+    }
+  });
+
   it('WebGL reported available leaves the normal attach path running', () => {
     // The default: proves the skip above is genuinely conditional on the graphics support,
     // not a change that disabled WebGL attachment outright.
@@ -642,8 +661,8 @@ describe('HMR dispose registration', () => {
   // A source read, because vitest has no `import.meta.hot`: only the text can
   // show how many dispose callbacks the module registers. Vite keeps ONE
   // dispose callback per module, so a second registration silently drops the
-  // first. `graphicsSupport` used to have its own block and lost its stash
-  // that way, which turned WebGL back on after every hot update.
+  // first. A `graphicsSupport` that lost its stash that way would turn WebGL
+  // back on after every hot update.
   const moduleSource = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'renderer', 'utils', 'terminal-webgl.ts'), 'utf-8');
 
   it('registers import.meta.hot.dispose exactly once, and that callback stashes graphicsSupport', () => {
@@ -652,6 +671,11 @@ describe('HMR dispose registration', () => {
     const start = moduleSource.indexOf('import.meta.hot.dispose(');
     const callbackBody = moduleSource.slice(start, moduleSource.indexOf('\n  });', start));
     expect(callbackBody).toContain('data.graphicsSupport = graphicsSupport;');
+  });
+
+  it('reads graphicsSupport back from the stash on re-evaluation', () => {
+    // The other half of the round trip: a stash nobody reads back resets too.
+    expect(moduleSource).toMatch(/const graphicsSupport: TerminalGraphicsSupport = import\.meta\.hot\?\.data\?\.graphicsSupport \?\?/);
   });
 });
 

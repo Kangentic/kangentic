@@ -149,9 +149,9 @@ const ABANDONED_LAUNCHES_FILE_PATH = path.join(PATHS.configDir, 'abandoned-launc
 const GPU_INFO_TIMEOUT_MS = 2_000;
 
 /** How long the graphics status waits for the GPU process's first report
- *  before answering WebGL as available. Measured: the first
- *  `gpu-info-update` lands 100 to 300 ms after `whenReady` on Windows, WSLg
- *  and xvfb, and a renderer's boot pull usually arrives after it anyway. */
+ *  before answering WebGL as available. The first `gpu-info-update` was
+ *  measured landing 100 to 300 ms after `whenReady` on Windows, WSLg and
+ *  xvfb, and a renderer's boot pull usually arrives after it anyway. */
 const WEBGL_AVAILABILITY_WAIT_MS = 3_000;
 
 // When this run started, in wall clock. Compared against a pending GPU
