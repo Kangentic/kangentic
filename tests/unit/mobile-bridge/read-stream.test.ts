@@ -2059,9 +2059,7 @@ describe('handleReadStream', () => {
 
     resolveTaskTranscriptMock.mockClear();
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), fakeSession(), context, new SubscriptionRegistry());
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(resolveTaskTranscriptMock).toHaveBeenCalledWith(expect.anything(), 'sess-1', 'task-1');
+    await vi.waitFor(() => expect(resolveTaskTranscriptMock).toHaveBeenCalledWith(expect.anything(), 'sess-1', 'task-1'));
   });
 
   it('transcript-window answers the unknown-session code when no project has the session on record', async () => {
