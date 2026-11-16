@@ -36,6 +36,7 @@ const sessionRepoGetResumable = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoGetOrphaned = vi.fn(() => [] as SessionRecord[]);
 const sessionRepoMarkAllRunningAsOrphaned = vi.fn();
 const sessionRepoMarkRunningAsOrphanedExcluding = vi.fn();
+const sessionRepoGetLatestByTypeAndIsolation = vi.fn((..._args: unknown[]): SessionRecord | null => null);
 
 const taskRepoList = vi.fn(() => [] as Task[]);
 const taskRepoUpdateMock = vi.fn();
@@ -63,6 +64,7 @@ vi.mock('../../src/main/shutdown-state', () => ({
 
 const markRecordSuspendedMock = vi.fn(() => true);
 const retireRecordMock = vi.fn(() => true);
+const sessionRepoInsertMock = vi.fn();
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: (...args: unknown[]) => markRecordSuspendedMock(...args),
   retireRecord: (...args: unknown[]) => retireRecordMock(...args),
@@ -81,13 +83,13 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     markAllRunningAsOrphaned = () => sessionRepoMarkAllRunningAsOrphaned();
     markRunningAsOrphanedExcluding = (...args: unknown[]) =>
       sessionRepoMarkRunningAsOrphanedExcluding(...args);
-    getLatestForTaskByTypeAndIsolation = vi.fn(() => null);
+    getLatestForTaskByTypeAndIsolation = (...args: unknown[]) => sessionRepoGetLatestByTypeAndIsolation(...args);
     // autoSpawnTasks' first-ever-spawn detection: every task here had an agent
     // before. A task with no session record goes to the board path, not to the
     // fresh spawn whose isolation tagging these tests pin.
     getLatestForTask = vi.fn(() => ({ id: 'record-earlier', status: 'exited' }));
     getHeldPausedTaskIds = vi.fn(() => new Set<string>());
-    insert = vi.fn();
+    insert = (...args: unknown[]) => sessionRepoInsertMock(...args);
     updateAppliedSettings = vi.fn();
     // The resume pass confirms under the task lock that its record still exists
     // in the status it was gathered in: the gathered row itself, as the
@@ -143,6 +145,7 @@ vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
 import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup/resume-suspended';
 import { autoSpawnTasks } from '../../src/main/transition-engine/session-startup/auto-spawn';
 import { prepareAgentSpawn } from '../../src/main/transition-engine/session-startup/prepare-spawn';
+import { isResumeEligible } from '../../src/main/transition-engine/spawn-intent';
 
 // ---------------------------------------------------------------------------
 // Test data helpers
@@ -555,6 +558,66 @@ describe('resumeSuspendedSessions: spawn carries correct isolated_swimlane_id', 
     expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
     const spawnArg = (sessionManager.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(spawnArg.resuming).toBe(true);
+  });
+
+  // #821: a Resume launched Claude in a Codex column and left a claude_agent
+  // record there. Recovery runs the column's agent, and the preparation resumes
+  // that agent's own conversation on the track (`rematchedRecordId`). The new
+  // row names the agent that runs, and the record it replaced is retired too.
+  it('records the agent that runs and retires the conversation the preparation matched to it', async () => {
+    swimlaneListMock.mockReturnValue([
+      { id: 'lane-review', auto_spawn: true, session_target: 'isolated', session_spawn_strategy: 'always_spawn_new' },
+    ]);
+    sessionRepoInsertMock.mockClear();
+    const wrongAgentRecord = makeRecord({
+      id: 'record-wrong-agent',
+      session_type: 'claude_agent',
+      isolated_swimlane_id: 'lane-review',
+      status: 'suspended',
+      agent_session_id: 'claude-conversation',
+    });
+    sessionRepoGetResumable.mockReturnValue([wrongAgentRecord]);
+    // The record's own type-and-track lookup finds it resumable, so the resume
+    // handed to the preparation is not null and carries its type and track.
+    sessionRepoGetLatestByTypeAndIsolation.mockReturnValue(wrongAgentRecord);
+    vi.mocked(isResumeEligible).mockReturnValue(true);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: 'lane-review' })]);
+    vi.mocked(prepareAgentSpawn).mockResolvedValue({
+      ok: true,
+      data: {
+        adapter: { name: 'codex', sessionType: 'codex_agent', getExitSequence: () => ['\x03'] } as never,
+        agent: 'codex',
+        command: 'codex resume codex-conversation',
+        cwd: '/project/cwd',
+        sessionRecordId: 'new-record-codex',
+        agentSessionId: 'codex-conversation',
+        permissionMode: 'default',
+        statusOutputPath: '/project/.kangentic/sessions/new-record-codex/status.json',
+        eventsOutputPath: '/project/.kangentic/sessions/new-record-codex/events.jsonl',
+        extraEnv: null,
+        rematchedRecordId: 'record-codex-own',
+      } as never,
+    });
+
+    try {
+      await resumeSuspendedSessions('proj-1', '/project', makeSessionManager() as never, makeConfigManager(true) as never);
+    } finally {
+      sessionRepoGetLatestByTypeAndIsolation.mockReturnValue(null);
+      vi.mocked(isResumeEligible).mockReturnValue(false);
+    }
+
+    // The preparation is told the record's type and track, which is what lets it
+    // notice the agent mismatch and swap in the agent's own conversation.
+    expect(prepareAgentSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      resume: expect.objectContaining({ sessionType: 'claude_agent', isolatedSwimlaneId: 'lane-review' }),
+    }));
+    expect(sessionRepoInsertMock).toHaveBeenCalledTimes(1);
+    expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({
+      session_type: 'codex_agent',
+      isolated_swimlane_id: 'lane-review',
+    }));
+    const retiredIds = retireRecordMock.mock.calls.map((call) => (call as unknown[])[1]);
+    expect(retiredIds).toEqual(expect.arrayContaining(['record-wrong-agent', 'record-codex-own']));
   });
 });
 

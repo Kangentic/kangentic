@@ -9,7 +9,7 @@ import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
-import type { AppConfig, BoardProfile, PermissionMode, ResumeEvidenceSummary, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
+import type { AppConfig, BoardProfile, PermissionMode, ResumeEvidenceSummary, SessionRecord, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
 import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../../remote/host-file-sync';
 import { resolveSpawnCli } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
@@ -18,6 +18,7 @@ import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { notePlanApprovalSpawn, planSpawnNeedsBypass } from '../../plan-approval/plan-approval-spawns';
 import { reconcileResumeAgentSessionId } from '../resume-id-reconcile';
+import { isResumeEligible } from '../spawn-intent';
 import { assessResumeConversationWithEvidence, owedPromptOf, resolveResumeLineage, type StartOverReason } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import {
@@ -80,6 +81,12 @@ export interface PreparedSpawn {
   remote: SpawnRemote | null;
   /** Whether the command resumes the agent's conversation (`--resume`). */
   resumed: boolean;
+  /**
+   * The record whose conversation the command resumes, when it is not the one
+   * the caller passed (`resumeForAgent` found the agent's own). The caller
+   * retires it with its own record. Null otherwise.
+   */
+  rematchedRecordId: string | null;
   /**
    * The command's opening prompt. Null on every startup spawn but two: a
    * resume whose conversation the agent deleted starts fresh with a recap, and
@@ -150,30 +157,18 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
   resolvedShell: string;
   mcpServerHandle: McpHttpServerHandle | null | undefined;
   /**
-   * Non-null → build a resume command with the given agent session ID.
-   * `recordId` (the resume-eligible record's id) additionally enables the
-   * resume-time id reconcile against that record's own status.json (see
-   * resume-id-reconcile.ts); omit it to skip the reconcile. `recordCwd` is
-   * that record's own cwd for the reconcile's transcript probe, in case it
-   * differs from the spawn `cwd` (falls back to the spawn cwd).
+   * Non-null → build a resume command with the given agent session ID, unless
+   * the record is another agent's: then the spawn resumes this agent's own
+   * conversation on the track, or starts fresh (`resumeForAgent`).
    */
-  resume: {
-    agentSessionId: string;
-    recordId?: string;
-    recordCwd?: string;
-    /**
-     * The permission mode on the record being resumed. A startup resume is in
-     * the column the session was running in, so with this in hand the agent
-     * keeps the mode its conversation was last in (`keepsSessionPermissionMode`).
-     */
-    recordPermissionMode?: string | null;
-  } | null;
+  resume: StartupResume | null;
   /**
    * Persists a reconciled agent session id (only consulted when
-   * `resume.recordId` is set), and lists the task's records so the
-   * conversation check reads the whole lineage.
+   * `resume.recordId` is set), lists the task's records so the conversation
+   * check reads the whole lineage, and finds the agent's own conversation when
+   * the record to resume is another agent's.
    */
-  sessionRepo?: Pick<SessionRepository, 'updateAgentSessionId'> & Partial<Pick<SessionRepository, 'listForTaskNewestFirst'>>;
+  sessionRepo?: StartupSessionRepo;
   /** Where an expired conversation's recap reads its optional parts. Absent, it carries the task alone. */
   recapSources?: ExpiredConversationRecapSources;
   /**
@@ -231,6 +226,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
     trackEvent('spawn_failed', { agent, reason: 'unknown_agent' });
     return { ok: false, reason: 'unknown-agent' };
   }
+  const { resume, rematchedRecordId } = resumeForAgent(input.resume, adapter, task.id, input.sessionRepo);
 
   // Model/effort ids are adapter-specific, so the project-level default only
   // applies when this spawn actually runs the project's default agent.
@@ -266,12 +262,12 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
   // can leave the DB one id behind. Best-effort; missing file or recordId
   // keeps the stored id unchanged. Before the conversation check, which needs
   // the id actually being resumed.
-  const resumedAgentSessionId = input.resume
+  const resumedAgentSessionId = resume
     ? await reconcileResumeAgentSessionId({
         adapter,
-        recordId: input.resume.recordId ?? null,
-        storedAgentSessionId: input.resume.agentSessionId,
-        cwd: input.resume.recordCwd ?? cwd,
+        recordId: resume.recordId ?? null,
+        storedAgentSessionId: resume.agentSessionId,
+        cwd: resume.recordCwd ?? cwd,
         projectPath,
         sessionRepo: input.sessionRepo,
         // The conversation resumes where this spawn's CLI runs.
@@ -286,18 +282,18 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
   // conversation that never had a turn, or one the agent deleted, must not be
   // recovered with `--resume`, or startup hands the user a dead CLI. Anything
   // the check cannot prove resumes as before.
-  let canResume = input.resume !== null;
+  let canResume = resume !== null;
   let startOver: PreparedSpawn['startOver'] = null;
   let prompt: string | null = null;
   let expiredLastActiveAt: string | null = null;
   let resumeEvidence: ResumeEvidenceSummary | null = null;
-  if (input.resume && resumedAgentSessionId) {
+  if (resume && resumedAgentSessionId) {
     // With no repository to list from, the recovered record is read by its
     // folder alone (it ran until the crash, so it normally has its own status
     // report).
     const { lineage, lastActiveAt } = resolveResumeLineage({
       taskRecords: input.sessionRepo?.listForTaskNewestFirst?.(task.id) ?? [],
-      retiringRecordId: input.resume.recordId ?? null,
+      retiringRecordId: resume.recordId ?? null,
       resumedAgentSessionId,
     });
     const { verdict, evidence } = await assessResumeConversationWithEvidence({
@@ -307,7 +303,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       cwd,
       projectPath,
       place: cliTarget,
-      resumeFromCwd: input.resume.recordCwd ?? null,
+      resumeFromCwd: resume.recordCwd ?? null,
     });
     resumeEvidence = evidence;
     if (verdict === 'never-started') {
@@ -441,7 +437,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       sameColumnResume: true,
       adapterRestores: adapter.restoresPermissionModeOnResume === true,
       columnMode: permissionMode,
-      lastLaunchedMode: input.resume?.recordPermissionMode,
+      lastLaunchedMode: resume?.recordPermissionMode,
     }),
     cliTarget,
     // The account a recovered session runs on (task #1057): the top account with room, as for a
@@ -487,6 +483,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       cliTarget: toStoredCliTarget(cliTarget),
       remote: remoteLaunch?.remote ?? null,
       resumed: canResume,
+      rematchedRecordId,
       prompt,
       startOver,
       expiredLastActiveAt,
@@ -499,4 +496,81 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       accountId: commandOptions.account?.id ?? null,
     },
   };
+}
+
+/**
+ * The resume command's source record. `recordId` (the resume-eligible record's
+ * id) additionally enables the resume-time id reconcile against that record's
+ * own status.json (see resume-id-reconcile.ts); omit it to skip the reconcile.
+ * `recordCwd` is that record's own cwd for the reconcile's transcript probe, in
+ * case it differs from the spawn `cwd` (falls back to the spawn cwd).
+ */
+export interface StartupResume {
+  agentSessionId: string;
+  recordId?: string;
+  recordCwd?: string;
+  /**
+   * The permission mode on the record being resumed. A startup resume is in
+   * the column the session was running in, so with this in hand the agent
+   * keeps the mode its conversation was last in (`keepsSessionPermissionMode`).
+   */
+  recordPermissionMode?: string | null;
+  /**
+   * The record's `session_type` and track. When the agent this spawn runs has
+   * another session type (the column's agent changed, or a record of the wrong
+   * agent was left behind), its own latest conversation on that track is
+   * resumed instead (`resumeForAgent`). Omitted, the resume is taken as given.
+   */
+  sessionType?: string;
+  isolatedSwimlaneId?: string | null;
+}
+
+type StartupSessionRepo = Pick<SessionRepository, 'updateAgentSessionId'>
+  & Partial<Pick<SessionRepository, 'listForTaskNewestFirst' | 'getLatestForTaskByTypeAndIsolation'>>;
+
+/**
+ * The resume a session record supports: its conversation, folder, mode and
+ * track, or null when it has no conversation to resume (`isResumeEligible`).
+ */
+function startupResumeOf(record: SessionRecord | undefined): StartupResume | null {
+  const agentSessionId = record?.agent_session_id;
+  if (!record || !agentSessionId || !isResumeEligible(record)) return null;
+  return {
+    agentSessionId,
+    recordId: record.id,
+    recordCwd: record.cwd,
+    recordPermissionMode: record.permission_mode,
+    sessionType: record.session_type,
+    isolatedSwimlaneId: record.isolated_swimlane_id,
+  };
+}
+
+/**
+ * The conversation a startup spawn resumes, matched to the agent it runs.
+ *
+ * Recovery picks the record by its own `session_type`, while the agent comes
+ * from the task and its column. The two differ when the column's agent changed
+ * while the task was paused, or when a record of the project default agent was
+ * left in a column set to another (#821). Resuming that record would hand one
+ * CLI another's session id. The agent's own latest conversation on the same
+ * track is resumed instead, as the board path's intent lookup does
+ * (`resolveSpawnIntent`), and with none the spawn starts fresh.
+ * `rematchedRecordId` names that conversation's record, for the caller to
+ * retire with its own.
+ */
+function resumeForAgent(
+  resume: StartupResume | null,
+  adapter: AgentAdapter,
+  taskId: string,
+  sessionRepo: StartupSessionRepo | undefined,
+): { resume: StartupResume | null; rematchedRecordId: string | null } {
+  if (!resume || resume.sessionType === undefined || resume.sessionType === adapter.sessionType) {
+    return { resume, rematchedRecordId: null };
+  }
+  const ownAgentResume = startupResumeOf(
+    sessionRepo?.getLatestForTaskByTypeAndIsolation?.(taskId, adapter.sessionType, resume.isolatedSwimlaneId ?? null),
+  );
+  const outcome = ownAgentResume ? `resuming ${adapter.name}'s own conversation on that track` : 'starting fresh';
+  console.log(`[SESSION_RECOVERY] Task ${taskId.slice(0, 8)} runs ${adapter.name}, but its record is ${resume.sessionType}: ${outcome}`);
+  return { resume: ownAgentResume, rematchedRecordId: ownAgentResume?.recordId ?? null };
 }

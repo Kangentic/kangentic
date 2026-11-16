@@ -59,8 +59,13 @@ In-place restarts of an existing session (`resumeTaskSession`, which `SESSION_RE
 Resume share, and `restartSessionForSettingsChange`) call the engine directly; they are not
 first-spawn entry points. A Switch to on an account, and the continuation at a usage limit,
 restart a task's session in place through `restartSessionForSettingsChange` (phase
-`switching-account`). Transient Command Terminal
-sessions bypass all of this (not task agents).
+`switching-account`). Neither names an agent: the engine runs the one `resolveSpawnOverrides`
+resolved the model and effort for (`SpawnOverrides.agent`: the task's override, else the column's,
+else the project default). Before #821 the engine fell back to the project default instead, and
+launched Claude with a Codex column's model. Startup recovery has the same guard from the other
+side: when the record it resumes belongs to another agent than the one the column runs,
+`prepareAgentSpawn` resumes that agent's own conversation on the track, or starts fresh.
+Transient Command Terminal sessions bypass all of this (not task agents).
 
 Three account processes start the agent CLI without being sessions at all, so none passes a
 chokepoint: the sign-in terminal (`src/main/accounts/account-login.ts`), a raw PTY through

@@ -183,7 +183,7 @@ export async function restartSessionForSettingsChange(
           true, // skipPromptTemplate - resume idle, do not re-send the original prompt
           options.resumePrompt, // set only by the auto_command escalation path
           undefined, // signal
-          undefined, // targetAgent - resolved internally from the task/session
+          undefined, // targetAgent - the overrides below carry the agent their model was resolved for
           undefined, // handoffPromptPrefix
           // An in-place restart keeps its conversation. An 'always_spawn_new'
           // column's forceFresh is for a task entering it, not for this.

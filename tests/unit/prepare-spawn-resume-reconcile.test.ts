@@ -269,6 +269,183 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
     expect(locateSessionHistoryFileMock).not.toHaveBeenCalled();
   });
 
+  // #821: recovery picks the record by its own session type, while the agent
+  // comes from the task and its column. A record of another agent (the
+  // column's agent changed, or #821 left one behind) must never hand its
+  // session id to this agent's CLI. The stub adapter here is Claude, so the
+  // record is Codex's: the same mismatch as the report, mirrored.
+  describe('a record of another agent than the one this spawn runs', () => {
+    const OWN_RECORD = {
+      id: 'claude-record-in-review',
+      agent_session_id: 'claude-own-conversation',
+      cwd: '/mock/own-record-cwd',
+      permission_mode: 'acceptEdits',
+      session_type: 'claude_agent',
+      isolated_swimlane_id: 'lane-review',
+      status: 'exited',
+    };
+
+    async function runMismatched(ownRecord: typeof OWN_RECORD | undefined) {
+      const sessionRepo = {
+        updateAgentSessionId: vi.fn(),
+        getLatestForTaskByTypeAndIsolation: vi.fn(() => ownRecord as never),
+      };
+      const result = await prepareAgentSpawn({
+        task: makeTask(),
+        swimlane: makeSwimlane(),
+        cwd: '/mock/spawn-cwd',
+        projectId: 'proj-123',
+        projectPath,
+        effectiveConfig: makeEffectiveConfig(),
+        projectDefaultAgent: 'claude',
+        projectDefaultModel: null,
+        projectDefaultEffort: null,
+        resolvedShell: 'bash',
+        mcpServerHandle: null,
+        resume: {
+          agentSessionId: 'codex-conversation',
+          recordId: 'codex-record-in-review',
+          recordCwd: '/mock/codex-record-cwd',
+          sessionType: 'codex_agent',
+          isolatedSwimlaneId: 'lane-review',
+        },
+        sessionRepo,
+        hasSessionRecord: true,
+        tasks: { update: vi.fn() },
+      });
+      return { result, sessionRepo };
+    }
+
+    it("resumes this agent's own conversation on the same track, and names its record for retiring", async () => {
+      const { result, sessionRepo } = await runMismatched(OWN_RECORD);
+
+      expect(sessionRepo.getLatestForTaskByTypeAndIsolation).toHaveBeenCalledWith(TASK_ID, 'claude_agent', 'lane-review');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumed).toBe(true);
+      expect(result.data.agentSessionId).toBe('claude-own-conversation');
+      expect(result.data.rematchedRecordId).toBe('claude-record-in-review');
+      const commandOptions = buildCommandMock.mock.calls[0][0] as { sessionId?: string };
+      expect(commandOptions.sessionId).toBe('claude-own-conversation');
+    });
+
+    it('starts fresh, never handing over the other agent\'s id, when this agent has no conversation there', async () => {
+      const { result } = await runMismatched(undefined);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumed).toBe(false);
+      expect(result.data.agentSessionId).not.toBe('codex-conversation');
+      expect(result.data.rematchedRecordId).toBeNull();
+      const commandOptions = buildCommandMock.mock.calls[0][0] as { sessionId?: string; resume?: boolean };
+      expect(commandOptions.sessionId).not.toBe('codex-conversation');
+    });
+
+    it.each([
+      ['has no agent session id', { ...OWN_RECORD, agent_session_id: null }],
+      ['is still queued', { ...OWN_RECORD, status: 'queued' }],
+    ])('starts fresh when this agent\'s record on the track %s (not resume-eligible)', async (_label, ineligibleRecord) => {
+      const { result } = await runMismatched(ineligibleRecord as unknown as typeof OWN_RECORD);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumed).toBe(false);
+      expect(result.data.rematchedRecordId).toBeNull();
+      expect(result.data.agentSessionId).not.toBe('codex-conversation');
+      const commandOptions = buildCommandMock.mock.calls[0][0] as { sessionId?: string; resume?: boolean };
+      expect(commandOptions.resume).toBe(false);
+      expect(commandOptions.sessionId).not.toBe('codex-conversation');
+      expect(commandOptions.sessionId).not.toBe('claude-own-conversation');
+    });
+
+    it('starts fresh, without throwing, when the repository has no lookup method', async () => {
+      const sessionRepo = { updateAgentSessionId: vi.fn() };
+      const result = await prepareAgentSpawn({
+        task: makeTask(),
+        swimlane: makeSwimlane(),
+        cwd: '/mock/spawn-cwd',
+        projectId: 'proj-123',
+        projectPath,
+        effectiveConfig: makeEffectiveConfig(),
+        projectDefaultAgent: 'claude',
+        projectDefaultModel: null,
+        projectDefaultEffort: null,
+        resolvedShell: 'bash',
+        mcpServerHandle: null,
+        resume: {
+          agentSessionId: 'codex-conversation',
+          recordId: 'codex-record-in-review',
+          recordCwd: '/mock/codex-record-cwd',
+          sessionType: 'codex_agent',
+          isolatedSwimlaneId: 'lane-review',
+        },
+        sessionRepo,
+        hasSessionRecord: true,
+        tasks: { update: vi.fn() },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.resumed).toBe(false);
+      expect(result.data.rematchedRecordId).toBeNull();
+      expect(result.data.agentSessionId).not.toBe('codex-conversation');
+    });
+
+    it("carries the swapped-in record's own cwd and permission mode, not the other agent's", async () => {
+      // The stub CLI restores a resumed session's mode, so keepSessionPermissionMode
+      // is the observable proof of which record's mode reached the command.
+      (adapter as { restoresPermissionModeOnResume?: boolean }).restoresPermissionModeOnResume = true;
+      // The own record reports a forked id, so the reconcile probes for its
+      // transcript and the folder it probes is observable.
+      const ownSessionDir = path.join(projectPath, '.kangentic', 'sessions', OWN_RECORD.id);
+      fs.mkdirSync(ownSessionDir, { recursive: true });
+      fs.writeFileSync(path.join(ownSessionDir, 'status.json'), JSON.stringify({ session_id: FORKED_ID }));
+      try {
+        const { result } = await runMismatched(OWN_RECORD);
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.resumed).toBe(true);
+        const probedCwds = locateSessionHistoryFileMock.mock.calls.map((call) => call[1]);
+        expect(probedCwds).not.toContain('/mock/codex-record-cwd');
+        expect(probedCwds).toContain('/mock/own-record-cwd');
+        // The record says acceptEdits and the column resolves acceptEdits: kept.
+        // The other agent's record carried no mode, which would give false.
+        const commandOptions = buildCommandMock.mock.calls[0][0] as { keepSessionPermissionMode?: boolean };
+        expect(commandOptions.keepSessionPermissionMode).toBe(true);
+      } finally {
+        delete (adapter as { restoresPermissionModeOnResume?: boolean }).restoresPermissionModeOnResume;
+      }
+    });
+
+    it('takes a record of its own agent as given, with no lookup', async () => {
+      const sessionRepo = { updateAgentSessionId: vi.fn(), getLatestForTaskByTypeAndIsolation: vi.fn() };
+      const result = await prepareAgentSpawn({
+        task: makeTask(),
+        swimlane: makeSwimlane(),
+        cwd: '/mock/spawn-cwd',
+        projectId: 'proj-123',
+        projectPath,
+        effectiveConfig: makeEffectiveConfig(),
+        projectDefaultAgent: 'claude',
+        projectDefaultModel: null,
+        projectDefaultEffort: null,
+        resolvedShell: 'bash',
+        mcpServerHandle: null,
+        resume: { agentSessionId: STORED_ID, recordId: RECORD_ID, sessionType: 'claude_agent', isolatedSwimlaneId: null },
+        sessionRepo,
+        hasSessionRecord: true,
+        tasks: { update: vi.fn() },
+      });
+
+      expect(sessionRepo.getLatestForTaskByTypeAndIsolation).not.toHaveBeenCalled();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.agentSessionId).toBe(STORED_ID);
+      expect(result.data.rematchedRecordId).toBeNull();
+    });
+  });
+
   describe('a conversation the record saw move into a background session', () => {
     function writeEventsFile(lines: string[]): void {
       const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);

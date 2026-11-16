@@ -96,6 +96,9 @@ const mockResolveSpawnOverrides = vi.fn((
   task: { model_override?: string | null; effort_override?: string | null } | undefined,
   lane: { model_override?: string | null; effort_override?: string | null } | null | undefined,
 ) => ({
+  // The agent the model and effort were resolved for: the restart passes no
+  // agent of its own, so the engine runs this one (#821).
+  agent: 'codex',
   model: task?.model_override ?? lane?.model_override ?? undefined,
   effort: task?.effort_override ?? lane?.effort_override ?? undefined,
 }));
@@ -346,14 +349,19 @@ describe('restartSessionForSettingsChange', () => {
       signal,
       targetAgent,
       handoffPromptPrefix,
+      spawnOverrides,
     ] = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
     expect(passedTask).toBe(updatedTask);
     expect(passedPermissionMode).toBe('auto'); // from lane.permission_mode
     expect(skipPromptTemplate).toBe(true);
     expect(resumePrompt).toBeUndefined();
     expect(signal).toBeUndefined();
-    expect(targetAgent).toBeUndefined();
     expect(handoffPromptPrefix).toBeUndefined();
+    // No agent of its own: the overrides carry the agent their model was
+    // resolved for, so the engine never falls back to the project default
+    // with another agent's model (#821).
+    expect(targetAgent).toBeUndefined();
+    expect(spawnOverrides).toEqual(expect.objectContaining({ agent: 'codex' }));
 
     // resolveSpawnOverrides was called to build spawn overrides from task + lane + project.
     expect(mockResolveSpawnOverrides).toHaveBeenCalledWith(
@@ -511,7 +519,7 @@ describe('restartSessionForSettingsChange', () => {
     // never the column's raw base model ('sonnet'). Reverting the fold back to
     // `swimlanes.getById(...)` alone makes this 'sonnet' and fails the test.
     const passedSpawnOverrides = callArgs[7];
-    expect(passedSpawnOverrides).toEqual({ model: 'opus', effort: undefined, forceFresh: false, keepSessionMode: true });
+    expect(passedSpawnOverrides).toEqual({ agent: 'codex', model: 'opus', effort: undefined, forceFresh: false, keepSessionMode: true });
 
     // Directly confirm the LANE object handed to resolveSpawnOverrides was
     // profile-folded, not the raw column lane.
@@ -545,6 +553,7 @@ describe('restartSessionForSettingsChange', () => {
       attachments: {},
     });
     mockResolveSpawnOverrides.mockReturnValueOnce({
+      agent: 'codex',
       model: undefined,
       effort: undefined,
       isolatedSwimlaneId: 'lane-executing',
@@ -557,6 +566,7 @@ describe('restartSessionForSettingsChange', () => {
     expect(result).toEqual({ ok: true });
     const passedSpawnOverrides = (engine.resumeSuspendedSession.mock.calls[0] as unknown[])[7];
     expect(passedSpawnOverrides).toEqual({
+      agent: 'codex',
       model: undefined,
       effort: undefined,
       isolatedSwimlaneId: 'lane-executing',

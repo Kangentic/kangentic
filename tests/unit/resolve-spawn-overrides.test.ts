@@ -322,4 +322,38 @@ describe('resolveSpawnOverrides', () => {
       expect(result.forceFresh).toBe(false);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // agent: the agent the model and effort were resolved for (#821). A Resume
+  // and a settings restart pass no agent of their own, so the engine runs this
+  // one. Without it a Codex column's model reached the project default, Claude.
+  // ---------------------------------------------------------------------------
+
+  describe('agent', () => {
+    const reviewLane = {
+      id: 'lane-review',
+      agent_override: 'codex',
+      model_override: 'gpt-5.6-sol',
+      effort_override: 'light',
+      session_target: 'isolated' as SessionTarget,
+      session_spawn_strategy: 'always_spawn_new' as SessionSpawnStrategy,
+    };
+    const claudeProject = { default_agent: 'claude', default_model: 'opus', default_effort: 'high' };
+    const noTaskOverrides = { agent_override: null, model_override: null, effort_override: null };
+
+    it("is the column's agent, alongside the column's model and effort, in a project whose default is another agent", () => {
+      const result = resolveSpawnOverrides(noTaskOverrides, reviewLane, claudeProject);
+      expect(result).toEqual(expect.objectContaining({ agent: 'codex', model: 'gpt-5.6-sol', effort: 'light' }));
+    });
+
+    it("is the task's own agent when the task overrides it", () => {
+      const result = resolveSpawnOverrides({ ...noTaskOverrides, agent_override: 'gemini' }, reviewLane, claudeProject);
+      expect(result.agent).toBe('gemini');
+    });
+
+    it("is the project's default agent when neither the task nor the column names one", () => {
+      const result = resolveSpawnOverrides(noTaskOverrides, { ...reviewLane, agent_override: null }, claudeProject);
+      expect(result.agent).toBe('claude');
+    });
+  });
 });

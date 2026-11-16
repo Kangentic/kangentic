@@ -111,6 +111,12 @@ interface TransitionEngineConfig {
  * session).
  */
 export interface SpawnOverrides {
+  /**
+   * The agent `model` and `effort` were resolved for (`resolveSpawnOverrides`).
+   * The spawn runs it when the caller passes no `agentOverride`, ahead of the
+   * project default, so a column's model never reaches another agent (#821).
+   */
+  agent?: string;
   model?: string | null;
   effort?: string | null;
   /**
@@ -841,10 +847,13 @@ export class TransitionEngine {
     const appConfig = this.getConfig();
 
     // Resolve which agent adapter to use.
-    // agentOverride is always populated by the caller (from resolveTargetAgent).
+    // agentOverride is the board path's resolved agent (resolveTargetAgent).
+    // An in-place restart (a Resume, a settings change) passes none, and runs
+    // spawnOverrides.agent, the agent its model and effort were resolved for,
+    // so a column's model never reaches another agent (#821).
     // config.agent is a legacy field kept for user-customized actions.
     // appConfig.defaultAgent is the project-level fallback.
-    const agentName = agentOverride ?? config.agent ?? appConfig.defaultAgent ?? 'claude';
+    const agentName = agentOverride ?? spawnOverrides?.agent ?? config.agent ?? appConfig.defaultAgent ?? 'claude';
     const adapter = agentRegistry.getOrThrow(agentName);
     const cliPathOverride = appConfig.cliPathOverrides[agentName] ?? null;
 
