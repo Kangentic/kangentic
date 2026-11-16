@@ -131,6 +131,15 @@ export interface UtilityCrashDetail {
   pendingMethods?: readonly string[];
 }
 
+/** The `utility_process` context every crash report carries. A type alias, not
+ *  an interface, so it fits the reporter's `Record<string, unknown>` contexts. */
+type UtilityProcessReportContext = {
+  service: string;
+  exitCode: number | null;
+  crashCount: number;
+  stderrTail: string;
+};
+
 interface UtilityCrashRecord extends UtilityCrashDetail {
   exitCode: number | null;
   /** This crash's stderr, when it had a process to read one from. A `fork_failed`
@@ -203,24 +212,30 @@ export class UtilityRestartPolicy {
    * True once this service's worker could not load a native module this run
    * (`latchOnLoadFailure`). Read lazily from the newest crash's stderr as well
    * as from the drained crash report, since the text can land just after the
-   * exit that recorded the crash. Reading it can therefore set the latch, and
-   * so can reading `exhausted`, `maySpawn()` and `lastCrashDescription`, which
-   * go through it.
+   * exit that recorded the crash, even after the drain bound. Reading it can
+   * therefore set the latch and send its one report, and so can reading
+   * `exhausted`, `maySpawn()` and `lastCrashDescription`, which go through it.
+   * A policy that did not opt in reads false even when another policy for the
+   * same service latched.
    */
   get loadFailed(): boolean {
     this.latchIfLoadFailed();
-    return loadFailures.has(this.service);
+    return this.latchOnLoadFailure && loadFailures.has(this.service);
   }
 
-  /** Latch the service when the newest crash's stderr shows a load failure. */
+  /** Latch the service when the newest crash's stderr shows a load failure, and
+   *  report it the first time. The report is sent here, where the latch is set,
+   *  so stderr that lands after the crash's drain bound is still reported. */
   private latchIfLoadFailed(): void {
     if (!this.latchOnLoadFailure || loadFailures.has(this.service)) return;
     const newest = this.crashRecords[this.crashRecords.length - 1];
     const stderr = newest?.stderr?.snapshot() ?? '';
     if (!newest || !stderr.includes(LOAD_FAILURE_CODE)) return;
-    const summary = summarizeStderrTail(stderr);
-    const whatHappened = describeCrashForPeople(newest);
-    loadFailures.set(this.service, summary ? `${whatHappened}: ${summary}` : whatHappened);
+    loadFailures.set(this.service, describeCrashWithStderr(newest, stderr));
+    if (loadFailureReported.has(this.service)) return;
+    loadFailureReported.add(this.service);
+    this.trackCrashOnce('latched', newest);
+    this.reportLoadFailure(newest, this.crashCount);
   }
 
   /**
@@ -285,15 +300,9 @@ export class UtilityRestartPolicy {
     const emit = (): void => {
       this.logCrash(record, crashNumber);
       // Read after the drain, so the stderr that names the load failure is in.
-      // A load failure is its own report, in place of the latch or first-crash one.
-      if (this.loadFailed) {
-        if (!loadFailureReported.has(this.service)) {
-          loadFailureReported.add(this.service);
-          this.trackCrashOnce('latched', record);
-          this.reportLoadFailure(record, crashNumber);
-        }
-        return;
-      }
+      // A load failure is its own report (sent by the latch), in place of the
+      // latch or first-crash one.
+      if (this.loadFailed) return;
       if (latchesNow) this.reportLatch(record, crashNumber, crashesAtLatch);
       else if (reportsFirstCrash) this.reportFirst(record, crashNumber);
     };
@@ -374,7 +383,7 @@ export class UtilityRestartPolicy {
    *  content, so it goes in a context, never a tag or the message: a tag would
    *  fragment grouping and a varying message would split the issue. This is
    *  what turns "exit code 1" into the module name or stack that explains it. */
-  private reportContext({ exitCode }: UtilityCrashRecord, crashNumber: number) {
+  private reportContext({ exitCode }: UtilityCrashRecord, crashNumber: number): UtilityProcessReportContext {
     return {
       service: this.service,
       exitCode: exitCode ?? null,
@@ -448,9 +457,7 @@ export class UtilityRestartPolicy {
     this.decayIfQuiet();
     const newest = this.crashRecords[this.crashRecords.length - 1];
     if (this.crashCount === 0 || !newest) return null;
-    const whatHappened = describeCrashForPeople(newest);
-    const summary = summarizeStderrTail(this.latestStderr() ?? '');
-    return summary ? `${whatHappened}: ${summary}` : whatHappened;
+    return describeCrashWithStderr(newest, this.latestStderr() ?? '');
   }
 
   /** Forget the crash history. Called internally by `decayIfQuiet` once the
@@ -486,6 +493,14 @@ function describeCrashForPeople(record: UtilityCrashRecord): string {
     case 'request_timeout':
       return record.method ? `did not answer ${record.method} in time` : 'did not answer in time';
   }
+}
+
+/** The in-app line for a crash: what happened, then the first error line of
+ *  `stderr` when it has one (`exited with code 1: Error: Cannot find module 'sharp'`). */
+function describeCrashWithStderr(record: UtilityCrashRecord, stderr: string): string {
+  const whatHappened = describeCrashForPeople(record);
+  const summary = summarizeStderrTail(stderr);
+  return summary ? `${whatHappened}: ${summary}` : whatHappened;
 }
 
 /** One crash as a fixed-format line for the latch report:

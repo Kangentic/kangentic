@@ -98,6 +98,8 @@ describe('retrievalService.getStatus', () => {
 
     expect(status.semantic).toBe('error');
     expect(status.workerError).toBe(CRASH_REASON);
+    // Red-green: set workerLoadFailed unconditionally in the error branch and this turns red.
+    expect(status.workerLoadFailed).toBeUndefined();
     // A crashed worker must not be re-fed work by the status poll.
     expect(embedEngineMock.markDirty).not.toHaveBeenCalled();
   });
@@ -122,6 +124,8 @@ describe('retrievalService.getStatus', () => {
 
     expect(status.semantic).toBe('error');
     expect(status.workerError).toBeUndefined();
+    // Red-green: same revert as above (an unconditional workerLoadFailed in the error branch).
+    expect(status.workerLoadFailed).toBeUndefined();
   });
 
   it('carries no workerError while healthy (hybrid), and re-marks the project dirty as before', async () => {
@@ -131,6 +135,8 @@ describe('retrievalService.getStatus', () => {
 
     expect(status.semantic).toBe('hybrid');
     expect(status.workerError).toBeUndefined();
+    // Red-green: set workerLoadFailed outside the crashed branch and this turns red.
+    expect(status.workerLoadFailed).toBeUndefined();
     expect(status.activeBackend).toBe('DirectML (GPU)');
     expect(embedEngineMock.markDirty).toHaveBeenCalledWith('proj-1');
   });

@@ -173,18 +173,24 @@ function findCrtDir(redistVersionDir, archDir) {
  *  counts when its redist folder holds the target arch's CRT, which
  *  `locateVcRedist` checks on disk, so an ARM64-only toolchain is not missed.
  *  `-utf8`, because vswhere otherwise prints in the console code page and a
- *  non-ASCII install path would not be found. */
-function defaultRunVswhere(env) {
+ *  non-ASCII install path would not be found. `exec` and `exists` are for tests. */
+function defaultRunVswhere(env, { exec = execFileSync, exists = fs.existsSync } = {}) {
   const programFilesX86 = env['ProgramFiles(x86)'] || env.ProgramFiles;
   if (!programFilesX86) return [];
   const vswhere = path.join(programFilesX86, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
-  if (!fs.existsSync(vswhere)) return [];
-  const stdout = execFileSync(
+  if (!exists(vswhere)) return [];
+  const stdout = exec(
     vswhere,
     ['-all', '-products', '*', '-utf8', '-property', 'installationPath'],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 },
   );
-  return stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  return parseVswhereOutput(stdout);
+}
+
+/** vswhere's `-property installationPath` output, one path per CRLF-ended line,
+ *  as a list of paths. */
+function parseVswhereOutput(stdout) {
+  return String(stdout).split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
 }
 
 /**
@@ -331,6 +337,8 @@ module.exports = {
   // Exported for the test that keeps verify-unpacked-worker.js's inlined copy
   // (the embed runtime probe's foreignMsvcRuntimeModules) in step with it.
   MSVC_RUNTIME_DLL_PATTERN,
+  defaultRunVswhere,
+  parseVswhereOutput,
   readPeInfo,
   requiredMsvcRuntime,
   locateVcRedist,

@@ -27,7 +27,14 @@ interface LocateResult {
   searched: string[];
 }
 
+type VswhereExec = (command: string, args: string[], options: object) => string;
+
 const msvcRuntime = require('../../build/msvc-runtime.js') as {
+  parseVswhereOutput: (stdout: string) => string[];
+  defaultRunVswhere: (
+    env: Record<string, string | undefined>,
+    injected?: { exec?: VswhereExec; exists?: (candidate: string) => boolean },
+  ) => string[];
   readPeInfo: (buffer: Buffer) => { linkerVersion: [number, number]; imports: string[] };
   requiredMsvcRuntime: (binaryDir: string) => { required: string[]; linkerFloor: [number, number] };
   locateVcRedist: (options: {
@@ -191,6 +198,90 @@ describe('readPeInfo', () => {
     expect(() => msvcRuntime.readPeInfo(buildPeImage({ imports: ['KERNEL32.dll'], magic: 0x1234 })))
       .toThrow(/unknown optional header magic/);
   });
+
+  // Offset of data directory 1 (imports) in buildPeImage's PE32+ layout: PE header at 0x40,
+  // optional header 24 bytes after it, data directories 112 bytes into that, entry 1 at +8.
+  const IMPORT_DIRECTORY_RVA_OFFSET = 0x40 + 24 + 112 + 8;
+
+  // Red-green: drop the `descriptor >= 0` guard in readPeInfo and rvaToOffset's -1 reaches
+  // readUInt32LE(-1 + 12), which throws a RangeError instead of returning no imports.
+  it('returns no imports for an import table RVA that no section maps', () => {
+    const image = buildPeImage({ imports: ['MSVCP140.dll'] });
+    image.writeUInt32LE(0x9000, IMPORT_DIRECTORY_RVA_OFFSET);
+    expect(msvcRuntime.readPeInfo(image)).toEqual({ linkerVersion: [14, 44], imports: [] });
+  });
+
+  // Red-green: drop the `descriptor + 20 <= buffer.length` guard and the read past the end of
+  // the buffer throws a RangeError. The terminator descriptor is overwritten with a copy of the
+  // first one's name RVA, so the table has no zero terminator before the buffer ends.
+  it('returns the names it could read from an import table cut off before its terminator', () => {
+    const image = buildPeImage({ imports: ['MSVCP140.dll'] });
+    const sectionFileOffset = 0x200;
+    const firstNameRva = image.readUInt32LE(sectionFileOffset + 12);
+    image.writeUInt32LE(firstNameRva, sectionFileOffset + 20 + 12);
+    let info: { imports: string[] } | undefined;
+    expect(() => { info = msvcRuntime.readPeInfo(image); }).not.toThrow();
+    expect(info?.imports[0]).toBe('MSVCP140.dll');
+    expect(info?.imports.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('parseVswhereOutput and defaultRunVswhere', () => {
+  const fixture = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'vswhere-installation-paths-win32.json'), 'utf8'),
+  ) as { stdout: string; installationPaths: string[] };
+  const EXPECTED_ARGS = ['-all', '-products', '*', '-utf8', '-property', 'installationPath'];
+
+  // Red-green: split on '\n' only (no trim) and every real line keeps a trailing \r; drop the
+  // empty-line filter and the output's final CRLF adds an empty path.
+  it('parses real vswhere stdout (CRLF endings, trailing CRLF) into the install paths', () => {
+    expect(fixture.stdout).toContain('\r\n');
+    expect(msvcRuntime.parseVswhereOutput(fixture.stdout)).toEqual(fixture.installationPaths);
+  });
+
+  // Red-green: drop the `!programFilesX86` early return and path.join(undefined) throws.
+  it('returns no installs, and runs nothing, when neither Program Files variable is set', () => {
+    const exec = vi.fn<VswhereExec>();
+    const exists = vi.fn(() => true);
+    expect(msvcRuntime.defaultRunVswhere({}, { exec, exists })).toEqual([]);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  // Red-green: drop the `exists` check and exec is called for a vswhere that is not there.
+  it('returns no installs, and runs nothing, when vswhere.exe is not installed', () => {
+    const exec = vi.fn<VswhereExec>();
+    const exists = vi.fn(() => false);
+    expect(msvcRuntime.defaultRunVswhere({ 'ProgramFiles(x86)': path.join(os.tmpdir(), 'pf86') }, { exec, exists })).toEqual([]);
+    expect(exists).toHaveBeenCalledTimes(1);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  // Red-green: drop '-utf8' (non-ASCII install paths break), '-all' (hides older installs), or
+  // change the property, and the exact argument list differs.
+  it('runs vswhere once from the Visual Studio Installer folder with the pinned arguments, and parses its output', () => {
+    const programFiles = path.join(os.tmpdir(), 'pf86');
+    const exec = vi.fn<VswhereExec>(() => fixture.stdout);
+    const exists = vi.fn(() => true);
+    const result = msvcRuntime.defaultRunVswhere({ 'ProgramFiles(x86)': programFiles }, { exec, exists });
+    const expectedExecutable = path.join(programFiles, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
+    expect(exists).toHaveBeenCalledWith(expectedExecutable);
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec.mock.calls[0][0]).toBe(expectedExecutable);
+    expect(exec.mock.calls[0][1]).toEqual(EXPECTED_ARGS);
+    expect(result).toEqual(fixture.installationPaths);
+  });
+
+  // Red-green: swap the operands of `||` and the 32-bit-view directory loses to ProgramFiles.
+  it('prefers ProgramFiles(x86) over ProgramFiles', () => {
+    const exec = vi.fn<VswhereExec>(() => '');
+    const x86 = path.join(os.tmpdir(), 'pf86');
+    const native = path.join(os.tmpdir(), 'pf');
+    msvcRuntime.defaultRunVswhere({ 'ProgramFiles(x86)': x86, ProgramFiles: native }, { exec, exists: () => true });
+    expect(exec.mock.calls[0][0]).toBe(path.join(x86, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe'));
+    exec.mockClear();
+    msvcRuntime.defaultRunVswhere({ ProgramFiles: native }, { exec, exists: () => true });
+    expect(exec.mock.calls[0][0]).toBe(path.join(native, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe'));
+  });
 });
 
 describe('requiredMsvcRuntime', () => {
@@ -261,6 +352,22 @@ describe('stageMsvcRuntime', () => {
       log: () => {},
     })).toThrow(/newest x64 redist here is 14\.29\.30133.*linked with 14\.44.*C\+\+ redist is 14\.44 or later/);
     expect(fs.existsSync(path.join(binaryDir, 'msvcp140.dll'))).toBe(false);
+  });
+
+  // Red-green: compare the floor and the redist version as strings and 14.10 < 14.9, so a
+  // redist newer than the binaries' toolset is refused as older.
+  it('treats redist 14.10.1 as newer than a binding linked with 14.9', () => {
+    const binaryDir = makeTempDir('msvc-runtime-numeric-floor-');
+    fs.writeFileSync(path.join(binaryDir, 'onnxruntime_binding.node'), buildPeImage({ linkerVersion: [14, 9], imports: ['MSVCP140.dll'] }));
+    const redist = makeRedist('14.10.1', ['msvcp140.dll', 'vcruntime140.dll']);
+    expect(() => msvcRuntime.stageMsvcRuntime({
+      binaryDir,
+      platform: 'win32',
+      targetArch: 'x64',
+      locate: locateFrom([{ version: '14.10.1', crtDir: redist.crtDir, source: 'redist' }]),
+      log: () => {},
+    })).not.toThrow();
+    expect(fs.existsSync(path.join(binaryDir, 'msvcp140.dll'))).toBe(true);
   });
 
   it('refuses when no redist is found, naming what it searched', () => {
@@ -468,6 +575,31 @@ describe('locateVcRedist', () => {
       { version: '14.44.35112', crtDir: path.join(versionDir, 'x64', 'Microsoft.VC143.CRT'), source: installationPath },
       { version: '14.40.33807', crtDir: fromEnv.crtDir, source: 'VCToolsRedistDir' },
     ]);
+  });
+
+  // Red-green: compare the version strings instead of their numeric parts and '14.9.1' sorts
+  // after '14.10.1', so the older redist is picked as the newest.
+  it('orders redist versions numerically: 14.10.1 is newer than 14.9.1', () => {
+    const older = makeRedist('14.9.1', BINDING_RUNTIME);
+    const newer = makeRedist('14.10.1', BINDING_RUNTIME);
+    const { candidates } = msvcRuntime.locateVcRedist({
+      targetArch: 'x64',
+      env: { VCToolsRedistDir: older.versionDir },
+      runVswhere: () => [],
+    });
+    expect(candidates.map((candidate) => candidate.version)).toEqual(['14.9.1']);
+    const both = msvcRuntime.locateVcRedist({
+      targetArch: 'x64',
+      env: { VCToolsRedistDir: older.versionDir },
+      runVswhere: () => {
+        // vswhere's install holding the 14.10.1 redist, laid out as Visual Studio does.
+        const installationPath = path.resolve(newer.versionDir, '..', '..', '..', '..');
+        fs.mkdirSync(path.join(installationPath, 'VC', 'Auxiliary', 'Build'), { recursive: true });
+        fs.writeFileSync(path.join(installationPath, 'VC', 'Auxiliary', 'Build', 'Microsoft.VCRedistVersion.default.txt'), '14.10.1\n');
+        return [installationPath];
+      },
+    });
+    expect(both.candidates.map((candidate) => candidate.version)).toEqual(['14.10.1', '14.9.1']);
   });
 
   it('finds nothing for an arch the redist does not carry', () => {
