@@ -2961,6 +2961,14 @@ msgid "The language you speak. The models adapt to your choice."
 msgstr "你使用的語言。模型會依你的選擇調整。"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "The local model could not load on this computer - showing keyword matches until Kangentic restarts."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "The local model could not load on this computer - showing keyword matches until Kangentic restarts. ({workerError})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "The local model is unavailable - showing keyword matches."
 msgstr "本機模型無法使用，改為顯示關鍵字比對結果。"
 

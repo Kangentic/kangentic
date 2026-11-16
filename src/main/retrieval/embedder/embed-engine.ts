@@ -75,6 +75,8 @@ export interface EmbedWorkerClient extends Embedder {
   readonly crashed: boolean;
   /** Why the worker is off (exit code + first error line), or null. */
   readonly crashReason: string | null;
+  /** True once the worker could not load its native runtime; off until the app restarts. */
+  readonly loadFailed: boolean;
   readonly activeDevice: string | null;
 }
 
@@ -556,6 +558,10 @@ export function createEmbedEngine(overrides?: Partial<EmbedEngineDeps>) {
 
     get workerCrashReason(): string | null {
       return client?.crashReason ?? null;
+    },
+
+    get workerLoadFailed(): boolean {
+      return client?.loadFailed ?? false;
     },
 
     /** Synchronous shutdown: mark disposed, resolve the wake deferred (so a

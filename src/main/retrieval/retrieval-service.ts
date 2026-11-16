@@ -1341,6 +1341,7 @@ export const retrievalService = {
 
     let semantic: KnowledgeGraphSemanticState;
     let workerError: string | undefined;
+    let workerLoadFailed: boolean | undefined;
     if (!indexingEnabled || !semanticOn) {
       // Genuinely off: the user has not enabled semantic search.
       semantic = 'disabled';
@@ -1354,6 +1355,9 @@ export const retrievalService = {
       // why instead of only that it failed.
       semantic = 'error';
       workerError = embedEngine.workerCrashReason ?? undefined;
+      // A native runtime that cannot load does not come back on its own, so the
+      // tab says the model is off until a restart rather than that it failed.
+      if (embedEngine.workerLoadFailed) workerLoadFailed = true;
     } else if (!index?.hasVec) {
       semantic = 'lexical';
     } else {
@@ -1376,6 +1380,7 @@ export const retrievalService = {
         ? (index ? index.vecError : retrievalClient.unavailableReason) ?? undefined
         : undefined,
       workerError,
+      workerLoadFailed,
       model: {
         id: model.id,
         displayName: model.displayName,

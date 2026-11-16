@@ -10,7 +10,15 @@ import { EventEmitter } from 'node:events';
  * callers degrade to lexical-only, and the crash cap must disable the layer.
  */
 
-const { mockFork, mockSendHandledFailure } = vi.hoisted(() => ({ mockFork: vi.fn(), mockSendHandledFailure: vi.fn() }));
+const { mockFork, mockSendHandledFailure, mockReportHandledError } = vi.hoisted(() => ({
+  mockFork: vi.fn(),
+  mockSendHandledFailure: vi.fn(),
+  mockReportHandledError: vi.fn(),
+}));
+
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: mockReportHandledError,
+}));
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => '/mock/app' },
@@ -22,7 +30,7 @@ vi.mock('../../src/main/analytics/handled-report', () => ({
 }));
 
 import { EmbedClient, resolveDeviceChain } from '../../src/main/retrieval/embedder/embed-client';
-import { UtilityRestartPolicy } from '../../src/main/utility-process/restart-policy';
+import { UtilityRestartPolicy, resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
 import { HEAVY_IDLE_SHUTDOWN_MS, WORKER_COMMIT_CEILING_BYTES } from '../../src/main/utility-process/commit-ceiling';
 import type { EmbeddingModelDef } from '../../src/shared/embedding-models';
 
@@ -64,6 +72,12 @@ function makeFakeChild(withStderr = false): FakeChild {
   if (withStderr) child.stderr = new EventEmitter();
   return child;
 }
+
+// The restart policy keeps a load failure at module scope, for the whole run, so a test that
+// latches one must not leave it for the next.
+beforeEach(() => {
+  resetUtilityCrashTelemetryForTests();
+});
 
 /** Flush pending microtasks (readyPromise -> sendEmbed continuation). */
 function flush(): Promise<void> {
@@ -1057,6 +1071,72 @@ describe('EmbedClient', () => {
       expect(client.crashReason).toBe("exited with code 1: Error: Cannot find module 'onnxruntime-common'");
     } finally {
       stderrWrite.mockRestore();
+    }
+  });
+
+  // DESKTOP-38: on a Windows machine without the MSVC runtime, onnxruntime's binding fails to
+  // load on every fork. The decay window used to re-fork it every five minutes for the whole
+  // run, and every rebuilt client started with a fresh policy. Uses the client's own default
+  // policy, so it also proves the client asks for the latch.
+  it('stops forking for the run, across the decay window and a rebuilt client, once the worker cannot load its native runtime', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      mockFork.mockImplementation(() => {
+        const child = makeFakeChild(true);
+        forkedChildren.push(child);
+        return child;
+      });
+      const client = new EmbedClient(TEST_MODEL);
+      const first = client.embed(['x']);
+      const child = lastChild();
+      child.stderr?.emit('data', Buffer.from(
+        'node:internal/modules/cjs/loader:1921\n' +
+          '  return process.dlopen(module, path.toNamespacedPath(filename));\n\n' +
+          'Error: The specified module could not be found.\n' +
+          '\\\\?\\C:\\Users\\dev\\AppData\\Local\\Programs\\Kangentic\\resources\\app.asar.unpacked\\node_modules\\onnxruntime-node\\bin\\napi-v6\\win32\\x64\\onnxruntime_binding.node\n' +
+          "    at Object..node (node:internal/modules/cjs/loader:1921:18) {\n  code: 'ERR_DLOPEN_FAILED'\n}\n",
+      ));
+      child.emit('exit', 1);
+      // Electron ends the dying worker's stderr pipe just after its exit; the report waits for it.
+      child.stderr?.emit('end');
+      await expect(first).resolves.toBeNull();
+      await flush();
+
+      expect(client.crashed).toBe(true);
+      expect(client.loadFailed).toBe(true);
+      expect(client.crashReason).toBe('exited with code 1: Error: The specified module could not be found.');
+
+      // Past every backoff, then past the five-minute decay window: still no second fork.
+      vi.setSystemTime(Date.now() + 30_000);
+      await expect(client.embed(['x'])).resolves.toBeNull();
+      vi.setSystemTime(Date.now() + 10 * 60_000);
+      await expect(client.embed(['x'])).resolves.toBeNull();
+      await client.prewarm();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      // The engine rebuilds its client on a model or acceleration change; the new one stays off.
+      const rebuilt = new EmbedClient(TEST_MODEL, 'cpu');
+      await expect(rebuilt.embed(['x'])).resolves.toBeNull();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+      expect(rebuilt.crashed).toBe(true);
+      expect(rebuilt.loadFailed).toBe(true);
+      expect(rebuilt.crashReason).toBe('exited with code 1: Error: The specified module could not be found.');
+
+      // One report for the run, grouped as an environment failure, with no path in its message.
+      expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+      const [error, tags, contexts, fingerprint] = mockReportHandledError.mock.calls[0];
+      expect((error as Error).message).toBe('kangentic-embeddings worker could not load a native module (ERR_DLOPEN_FAILED)');
+      expect(tags).toMatchObject({ source: 'utility_process', service: 'kangentic-embeddings', code: 'ERR_DLOPEN_FAILED' });
+      expect(fingerprint).toEqual(['handled-env', 'utility-process-load-failed', 'kangentic-embeddings', 'ERR_DLOPEN_FAILED']);
+      expect((contexts as { utility_process: { stderrTail: string } }).utility_process.stderrTail).toContain('onnxruntime_binding.node');
+      client.dispose();
+      rebuilt.dispose();
+    } finally {
+      vi.useRealTimers();
+      stderrWrite.mockRestore();
+      warnSpy.mockRestore();
     }
   });
 

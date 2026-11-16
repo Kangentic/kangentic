@@ -136,7 +136,13 @@ Any step in the release path that exists to guarantee something must fail when i
   resolution to that tree, proven with a real child `node` against a dependency that exists only
   above the root (the shape that would otherwise pass locally, where the repo's own `node_modules`
   sits above `out/`, and fail on every install). 0.38.0 and 0.39.0 shipped a worker that exited 1
-  on every fork with no gate in the way.
+  on every fork with no gate in the way. The same file pins the embed runtime probe, which loads
+  onnxruntime's binding under the packaged Electron and, on Windows, fails when an MSVC runtime
+  DLL loaded from anywhere but beside it.
+- **Test (mechanical, CI):** `tests/unit/msvc-runtime.test.ts` pins `build/msvc-runtime.js`, the
+  Windows step that copies the MSVC runtime beside onnxruntime's binding (DESKTOP-38): it fails a
+  build with no redist, one older than the binaries' linker version, or one that lacks an imported
+  DLL, and its gate fails a binding directory missing any DLL the binaries import.
 - **Review:** `/code-review` covers the parts that are judgement rather than shape, mainly whether a
   newly added step that can no-op says so.
 

@@ -211,6 +211,94 @@ function verifyRetrievalWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = 
 }
 
 /**
+ * The loaded MSVC runtime DLLs (from `process.report`'s `sharedObjects`) that did
+ * NOT come from `bindingDir`. Self-contained, because `buildEmbedRuntimeLoadScript`
+ * inlines its source into the probe. Windows paths come back with a `\\?\` prefix
+ * and any case, so both sides are normalized before they are compared.
+ */
+function foreignMsvcRuntimeModules(sharedObjects, bindingDir) {
+  const normalize = (modulePath) => String(modulePath).replace(/^\\\\\?\\/, '').replace(/\//g, '\\').toLowerCase();
+  const expectedDir = normalize(bindingDir).replace(/\\+$/, '');
+  return sharedObjects.filter((modulePath) => {
+    const normalized = normalize(modulePath);
+    const separator = normalized.lastIndexOf('\\');
+    const name = normalized.slice(separator + 1);
+    if (!/^(msvcp140(_\w+)?|vcruntime140(_\w+)?|concrt140|vccorlib140|vcomp140)\.dll$/.test(name)) return false;
+    return normalized.slice(0, separator) !== expectedDir;
+  });
+}
+
+/**
+ * The script the embed runtime load probe runs under the packaged Electron binary.
+ * Fenced to the unpacked root, it requires onnxruntime-node the way the embed
+ * worker does (through transformers, which requires it at module scope), which
+ * loads `onnxruntime_binding.node`, and checks the binding is among the loaded
+ * modules.
+ *
+ * On Windows it also proves the MSVC runtime came from beside the binding
+ * (DESKTOP-38). A build machine has the runtime in System32, so a load alone
+ * would pass a package that lacks it; `process.report` names the file each DLL was
+ * loaded from, and any runtime DLL loaded from anywhere else fails the probe.
+ */
+function buildEmbedRuntimeLoadScript(unpackedRoot) {
+  return [
+    "const Module = require('module');",
+    "const path = require('path');",
+    "const fs = require('fs');",
+    `const root = fs.realpathSync(${JSON.stringify(unpackedRoot)});`,
+    'const originalNodeModulePaths = Module._nodeModulePaths;',
+    'Module._nodeModulePaths = function fencedNodeModulePaths(from) {',
+    '  return originalNodeModulePaths.call(Module, from).filter((candidate) => candidate.startsWith(root));',
+    '};',
+    'Module.globalPaths = [];',
+    "require(path.join(root, 'node_modules', 'onnxruntime-node'));",
+    "const bindingDir = path.join(root, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', process.platform, process.arch);",
+    'const sharedObjects = process.report.getReport().sharedObjects;',
+    "if (!sharedObjects.some((modulePath) => /onnxruntime_binding\\.node$/i.test(modulePath))) {",
+    "  process.stderr.write('onnxruntime-node loaded but onnxruntime_binding.node is not among the loaded modules');",
+    '  process.exit(1);',
+    '}',
+    "let runtimeLine = 'MSVC runtime not used on ' + process.platform;",
+    "if (process.platform === 'win32') {",
+    `  const foreignMsvcRuntimeModules = ${foreignMsvcRuntimeModules.toString()};`,
+    '  const foreign = foreignMsvcRuntimeModules(sharedObjects, bindingDir);',
+    '  if (foreign.length > 0) {',
+    "    process.stderr.write('the MSVC runtime loaded from outside ' + bindingDir + ': ' + foreign.join(', '));",
+    '    process.exit(1);',
+    '  }',
+    "  runtimeLine = 'MSVC runtime loaded from beside the binding';",
+    '}',
+    "process.stdout.write('onnxruntime_binding.node loaded; ' + runtimeLine + '\\n');",
+  ].join('\n');
+}
+
+/**
+ * Run the embed runtime load probe with the packaged Electron binary as Node,
+ * before `flipFuses` turns `ELECTRON_RUN_AS_NODE` off. Throws with the child's
+ * stderr on failure; logs the verified branch on success.
+ */
+function verifyEmbedRuntimeLoads({ unpackedRoot, electronBinaryPath, spawn = execFileSync, log = console.log }) {
+  let stdout;
+  try {
+    stdout = spawn(electronBinaryPath, ['-e', buildEmbedRuntimeLoadScript(unpackedRoot)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60_000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  } catch (error) {
+    const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
+    throw new Error(
+      `[afterPack] onnxruntime-node's binding does not load from ${unpackedRoot} under ${electronBinaryPath}. ` +
+        'The packaged embed worker would exit 1 on every fork. On Windows, check that build/msvc-runtime.js ' +
+        'staged the MSVC runtime beside onnxruntime_binding.node.\n' +
+        (stderr || String(error)),
+    );
+  }
+  log(`[afterPack] embed runtime: ${String(stdout).trim()}`);
+}
+
+/**
  * The script the pty host load probe runs under the packaged Electron binary:
  * fenced to the packaged tree, it does what the host does for every terminal.
  * It loads node-pty from where the host loads it and spawns a short process,
@@ -365,7 +453,10 @@ module.exports = {
   buildRetrievalLoadScript,
   buildPtyHostLoadScript,
   buildSpawnWorkerLoadScript,
+  buildEmbedRuntimeLoadScript,
+  foreignMsvcRuntimeModules,
   verifyUnpackedWorkerModules,
+  verifyEmbedRuntimeLoads,
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
   verifySpawnWorkerLoads,

@@ -51,6 +51,7 @@ const ELECTRON_FUSES_RESOLVED_PATH = require.resolve('@electron/fuses');
 const VERIFY_UNPACKED_WORKER_RESOLVED_PATH = require.resolve('../../build/verify-unpacked-worker.js');
 const VERIFY_NO_SOURCE_MAPS_RESOLVED_PATH = require.resolve('../../build/verify-no-source-maps.js');
 const INSTALL_SPAWN_HELPER_RESOLVED_PATH = require.resolve('../../build/install-spawn-helper.js');
+const MSVC_RUNTIME_RESOLVED_PATH = require.resolve('../../build/msvc-runtime.js');
 
 interface FakeFlipFusesCall {
   electronBinaryPath: string;
@@ -65,6 +66,8 @@ interface FakeVerifyUnpackedWorkerCall {
   ptyHostProbeBinary?: string;
   /** Set on the host spawn worker probe's call: the Electron binary it runs. */
   spawnWorkerProbeBinary?: string;
+  /** Set on the embed runtime load probe's call: the Electron binary it runs. */
+  embedRuntimeProbeBinary?: string;
 }
 
 /** electron-builder's AfterPackContext, narrowed to the fields afterPack.js
@@ -179,6 +182,9 @@ function installFakeVerifyUnpackedWorker(
     verifySpawnWorkerLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
       calls.push({ unpackedRoot, spawnWorkerProbeBinary: electronBinaryPath });
     },
+    verifyEmbedRuntimeLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
+      calls.push({ unpackedRoot, embedRuntimeProbeBinary: electronBinaryPath });
+    },
     // afterPack.js destructures these alongside verifyUnpackedWorkerModules
     // for its dictation and retrieval calls; a fake missing them would
     // silently pass `moduleNames: undefined` and make those calls
@@ -239,6 +245,37 @@ function installFakeVerifyNoSourceMaps(): () => void {
     verifyNoSourceMaps: ({ asarPath }: { asarPath: string }): void => {
       verifyNoSourceMapsCalls.push(asarPath);
       if (verifyNoSourceMapsError) throw verifyNoSourceMapsError;
+    },
+  });
+}
+
+interface FakeMsvcRuntimeCall {
+  step: 'stage' | 'verify';
+  binaryDir: string;
+  platform: string;
+}
+
+/** What afterPack.js asked of build/msvc-runtime.js, for the current test. */
+const msvcRuntimeCalls: FakeMsvcRuntimeCall[] = [];
+/** When set, the fake MSVC runtime gate throws it, as the real one does when a DLL is missing. */
+let msvcRuntimeVerifyError: Error | undefined;
+/** Runs when the fake stage step is called, so a test can order it against the probes. */
+let onMsvcRuntimeStage: (() => void) | undefined;
+let restoreMsvcRuntime: () => void = () => undefined;
+
+/** Installs a fake build/msvc-runtime.js at its real resolved path. A fake tree's binding is
+ *  not a PE image and the build machine's redist is not the test's to depend on;
+ *  tests/unit/msvc-runtime.test.ts runs the real module. Installed for every test in this file,
+ *  by the beforeEach below. */
+function installFakeMsvcRuntime(): () => void {
+  return replaceCachedModule(MSVC_RUNTIME_RESOLVED_PATH, {
+    stageMsvcRuntime: ({ binaryDir, platform }: { binaryDir: string; platform: string }): void => {
+      msvcRuntimeCalls.push({ step: 'stage', binaryDir, platform });
+      onMsvcRuntimeStage?.();
+    },
+    verifyMsvcRuntimeBesideBinding: ({ binaryDir, platform }: { binaryDir: string; platform: string }): void => {
+      msvcRuntimeCalls.push({ step: 'verify', binaryDir, platform });
+      if (msvcRuntimeVerifyError) throw msvcRuntimeVerifyError;
     },
   });
 }
@@ -313,10 +350,15 @@ beforeEach(() => {
   verifyNoSourceMapsCalls.length = 0;
   verifyNoSourceMapsError = undefined;
   restoreVerifyNoSourceMaps = installFakeVerifyNoSourceMaps();
+  msvcRuntimeCalls.length = 0;
+  msvcRuntimeVerifyError = undefined;
+  onMsvcRuntimeStage = undefined;
+  restoreMsvcRuntime = installFakeMsvcRuntime();
 });
 
 afterEach(() => {
   restoreVerifyNoSourceMaps();
+  restoreMsvcRuntime();
 });
 
 describe('afterPack: the source map gate', () => {
@@ -402,6 +444,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       const binary = path.join(appOutDir, 'Kangentic.app', 'Contents', 'MacOS', 'Kangentic');
       expect(fakeVerify.calls).toEqual([
         { unpackedRoot },
+        { unpackedRoot, embedRuntimeProbeBinary: binary },
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
         { unpackedRoot, moduleNames: ['better-sqlite3'] },
         { unpackedRoot, loadProbeBinary: binary },
@@ -433,6 +476,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       const unpackedRoot = path.join(appOutDir, 'resources', 'app.asar.unpacked');
       expect(fakeVerify.calls).toEqual([
         { unpackedRoot },
+        { unpackedRoot, embedRuntimeProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
         { unpackedRoot, moduleNames: ['better-sqlite3'] },
         { unpackedRoot, loadProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
@@ -444,6 +488,53 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       // platform it receives is what makes it a no-op off darwin.
       expect(fakeSpawnHelper.calls).toEqual([{ unpackedRoot, platform: 'win32' }]);
       expect(fakeFuses.calls).toHaveLength(1);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
+  // DESKTOP-38: the binding imports the MSVC runtime, which Electron does not provide. afterPack
+  // stages it beside the binding and checks it is there before any embed probe runs.
+  it('stages and checks the MSVC runtime in the target binding directory before the embed probes', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    let probesBeforeStage: number | undefined;
+    onMsvcRuntimeStage = () => { probesBeforeStage = fakeVerify.calls.length; };
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir, unpackedRoot } = packedAppOutDir('win32', 'x64');
+      await afterPack(buildFakeContext({ platform: 'win32', appOutDir }));
+
+      const binaryDir = onnxruntimeBinaryDir(unpackedRoot, 'win32', 'x64');
+      expect(msvcRuntimeCalls).toEqual([
+        { step: 'stage', binaryDir, platform: 'win32' },
+        { step: 'verify', binaryDir, platform: 'win32' },
+      ]);
+      expect(probesBeforeStage).toBe(0);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
+  // Red-green: drop the verifyMsvcRuntimeBesideBinding call from afterPack.js, and the package
+  // reaches flipFuses with a binding that fails ERR_DLOPEN_FAILED on a machine with no runtime.
+  it('fails a Windows build whose MSVC runtime is not beside the binding, before any probe or fuse flip', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    msvcRuntimeVerifyError = new Error('[afterPack] MSVC runtime: msvcp140.dll not beside onnxruntime_binding.node');
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir } = packedAppOutDir('win32', 'x64');
+
+      await expect(afterPack(buildFakeContext({ platform: 'win32', appOutDir }))).rejects.toBe(msvcRuntimeVerifyError);
+      expect(fakeVerify.calls).toEqual([]);
+      expect(fakeFuses.calls).toEqual([]);
     } finally {
       fakeFuses.restore();
       fakeVerify.restore();
@@ -556,8 +647,9 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
   // were consulted for an unnamed arch; the probe running anyway is what shows it is not.
   //
   // Red-green: drop `!targetArch ||` from the embed worker condition in afterPack.js. The plan is
-  // then asked about `win32-undefined`, `path.join` throws a TypeError on the undefined arch, and
-  // afterPack rejects before it reaches any gate.
+  // then asked about `linux-undefined`, `path.join` throws a TypeError on the undefined arch, and
+  // afterPack rejects before it reaches any gate. Linux, because on Windows an unnamed arch has
+  // no binding directory to stage the MSVC runtime beside and fails (the test below).
   it('on an arch it cannot name, still runs the embed worker probe, and does not say it skipped it', async () => {
     const fakeFuses = installFakeElectronFuses();
     const fakeVerify = installFakeVerifyUnpackedWorker();
@@ -566,15 +658,16 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const afterPack = await importAfterPack();
-      const { appOutDir, unpackedRoot } = packedAppOutDir('win32', 'x64', false);
-      await afterPack(buildFakeContext({ platform: 'win32', appOutDir, arch: 99 }));
+      const { appOutDir, unpackedRoot } = packedAppOutDir('linux', 'x64', false);
+      await afterPack(buildFakeContext({ platform: 'linux', appOutDir, arch: 99 }));
 
       // The unmapped branch is what ran.
       expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/Unknown arch enum 99/));
       // The embed worker's call (default moduleNames) is first, then every other gate.
-      const binary = path.join(appOutDir, 'Kangentic.exe');
+      const binary = path.join(appOutDir, 'kangentic');
       expect(fakeVerify.calls).toEqual([
         { unpackedRoot },
+        { unpackedRoot, embedRuntimeProbeBinary: binary },
         { unpackedRoot, moduleNames: ['sherpa-onnx-node'] },
         { unpackedRoot, moduleNames: ['better-sqlite3'] },
         { unpackedRoot, loadProbeBinary: binary },
@@ -588,6 +681,31 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
       fakeFuses.restore();
       fakeVerify.restore();
       fakeSpawnHelper.restore();
+    }
+  });
+
+  // Red-green: drop the `else if (platform === 'win32')` throw from afterPack.js. The embed
+  // runtime probe then runs with nothing staged and, on a real build, fails blaming
+  // build/msvc-runtime.js for a staging step that never ran.
+  it('on Windows, fails an arch it cannot name before any probe or fuse flip, naming the arch map', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir } = packedAppOutDir('win32', 'x64', false);
+      await expect(afterPack(buildFakeContext({ platform: 'win32', appOutDir, arch: 99 })))
+        .rejects.toThrow(/MSVC runtime: unknown arch enum 99.*archMap in build\/afterPack\.js/);
+      expect(msvcRuntimeCalls).toEqual([]);
+      expect(fakeVerify.calls).toEqual([]);
+      expect(fakeFuses.calls).toEqual([]);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+      vi.restoreAllMocks();
     }
   });
 

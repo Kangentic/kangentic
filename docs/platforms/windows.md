@@ -1,12 +1,13 @@
 ---
 type: Reference
 title: Windows
-description: "Windows-only behavior: the AUMID that ties the taskbar icon to the installer shortcut, core.longpaths for worktrees, why MAX_PATH rarely binds and where it does (ninja, CMake), and how CHROME_CRASHPAD_PIPE_NAME is kept from terminal children."
-tags: [windows, aumid, long-paths, crashpad]
+description: "Windows-only behavior: the AUMID that ties the taskbar icon to the installer shortcut, the MSVC runtime shipped beside onnxruntime, core.longpaths for worktrees, why MAX_PATH rarely binds and where it does (ninja, CMake), and how CHROME_CRASHPAD_PIPE_NAME is kept from terminal children."
+tags: [windows, aumid, msvc-runtime, long-paths, crashpad]
 sources:
   - resource: src/shared/windows-path-budget.ts
   - resource: src/main/shared/child-env.ts
   - resource: src/main/window-utils.ts
+  - resource: build/msvc-runtime.js
 ---
 # Windows
 
@@ -46,6 +47,18 @@ What still inherits it, by decision:
 - `shell.openPath`, `openExternal` and `showItemInFolder`, `app.relaunch`, and the updater. Electron gives them no env option. `openPath` can open a file in an Electron app that is its default, so this is the one real gap, and its only fix is the global delete ruled out above.
 
 What still leaks shows up as the Sentry warning "Foreign process crash reached Kangentic's crash database", split by its `module` tag and release (see [Error reporting](../telemetry/error-reporting.md)).
+
+## The MSVC runtime beside onnxruntime
+
+The embed worker loads onnxruntime-node's `onnxruntime_binding.node`. On Windows the binding and the `onnxruntime.dll` beside it import the Microsoft C++ runtime: `MSVCP140.dll`, `MSVCP140_1.dll`, `MSVCP140_ATOMIC_WAIT.dll`, `VCRUNTIME140.dll` and `VCRUNTIME140_1.dll` for onnxruntime-node 1.30.0. Electron links its own C runtime statically, so nothing in the install provided them. A machine without the Visual C++ Redistributable, or with one older than the toolset onnxruntime was built with, failed the worker's `require` with `ERR_DLOPEN_FAILED` ("The specified module could not be found.") on every fork, and semantic search fell back to keyword matches (Sentry DESKTOP-38). The dictation worker's sherpa-onnx binaries import no MSVC runtime DLL, so it was never affected.
+
+`build/msvc-runtime.js` ships the runtime app-local, which the redistributable's terms allow. At afterPack it reads the import tables of every `.dll` and `.node` beside the binding, and copies each runtime DLL they name from the build machine's Visual Studio redist folder (`VC\Redist\MSVC\<version>\<arch>\Microsoft.VC14x.CRT`). It reads the directory again after each copy, because a runtime DLL can import another one, until no new name appears. It finds the redist folder through `VCToolsRedistDir`, which a Developer Command Prompt sets, and through every install vswhere reports whose redist holds a CRT folder for the target arch, and takes the newest. Windows looks beside a module loaded by full path before it looks in System32, so the shipped copies are the ones that load. A run on Windows 11 confirmed it: with the five DLLs beside a copy of the binding, `process.report` listed every one from that directory, and without them every one came from `C:\WINDOWS\SYSTEM32`.
+
+That order is also why the version matters. An app-local runtime older than the toolset the binaries were linked with would replace a newer system copy and break machines that work today, so the build fails unless the redist it finds is at least the highest linker version the binaries record (14.44 for onnxruntime-node 1.30.0). It also fails when no redist is found, and when the redist lacks a DLL the binaries import. Packaging Windows locally therefore needs Visual Studio 2022 17.14 or later, or Visual Studio 2026, or either one's Build Tools, with the "Desktop development with C++" workload and its redistributable component (`Microsoft.VisualStudio.Component.VC.Redist.14.Latest`). The C++ tools alone are not enough: an install without that component names a redist version but has no CRT folder to copy from, and the build error lists it with that reason. The `windows-latest` runner that `release.yml` and `package-smoke.yml` use has to carry a new enough redist too, and the package-smoke Windows job, which runs on each pull request that touches `build/`, is what proves it does.
+
+Two gates in afterPack hold it. `verifyMsvcRuntimeBesideBinding` re-reads the directory and fails on any imported runtime DLL that is not in it. The embed runtime probe (`verifyEmbedRuntimeLoads`, `build/verify-unpacked-worker.js`) then loads the binding under the packaged Electron and reads `process.report`'s list of loaded modules: a runtime DLL loaded from anywhere but beside the binding fails the build. A load alone would prove nothing, since every build machine has the runtime in System32.
+
+If a binding still cannot load on a user's machine, the embed client stops forking for the rest of the run instead of re-forking every five minutes (`latchOnLoadFailure` in `src/main/utility-process/restart-policy.ts`). See [Knowledge Graph index and workers](../architecture/knowledge-graph.md).
 
 ## Windows Long Paths
 

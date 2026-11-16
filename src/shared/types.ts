@@ -10960,6 +10960,11 @@ export interface KnowledgeGraphStatus {
    *  plus the first error line of its stderr (home directory redacted), so the
    *  Knowledge Graph tab can say why. Undefined otherwise. */
   workerError?: string;
+  /** True, alongside `semantic === 'error'` and `workerError`, when the embedding
+   *  worker could not load its native runtime (`ERR_DLOPEN_FAILED`). It stays off
+   *  until Kangentic restarts, so the tab says that rather than that it crashed.
+   *  Undefined otherwise. */
+  workerLoadFailed?: boolean;
   /** Task summaries summed over every indexed project, for their line in the
    *  Index card. Absent while semantic search is off or there is no index to
    *  read (indexing off, no project registered, or no answer from the retrieval

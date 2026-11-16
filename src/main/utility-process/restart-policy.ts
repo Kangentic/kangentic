@@ -64,10 +64,31 @@ export interface UtilityRestartPolicyOptions {
    * `['utility-process-first-crash', service, cause]`; the latch keeps its own.
    */
   reportFirstCrash?: boolean;
+  /**
+   * Stop forking for the rest of the run once a crash's stderr shows a native
+   * module that could not be loaded (`ERR_DLOPEN_FAILED`). A DLL or shared
+   * library missing from the machine does not appear while the app runs, so
+   * the decay window would only re-fork a worker that dies the same way
+   * (DESKTOP-38). The latch is reported once, as an environment failure.
+   */
+  latchOnLoadFailure?: boolean;
 }
 
 /** Services whose first crash was reported this run. Module scope, like `trackedCrashPhases`. */
 const firstCrashReported = new Set<string>();
+
+/** The stderr text that marks a native module the worker could not load. */
+const LOAD_FAILURE_CODE = 'ERR_DLOPEN_FAILED';
+
+/**
+ * Services that cannot load a native module this run, each with the line the
+ * in-app signal shows. Module scope, like `trackedCrashPhases`: the embed
+ * client builds a fresh policy whenever the engine rebuilds it, and a rebuilt
+ * client must not fork again. Never decays; the next app run starts clear.
+ */
+const loadFailures = new Map<string, string>();
+/** Services whose load failure was reported this run. */
+const loadFailureReported = new Set<string>();
 
 const DEFAULT_MAX_CRASHES = 3;
 /**
@@ -135,6 +156,8 @@ const trackedCrashPhases = new Map<string, Set<CrashPhase>>();
 export function resetUtilityCrashTelemetryForTests(): void {
   trackedCrashPhases.clear();
   firstCrashReported.clear();
+  loadFailures.clear();
+  loadFailureReported.clear();
 }
 
 export class UtilityRestartPolicy {
@@ -144,6 +167,7 @@ export class UtilityRestartPolicy {
   private readonly decayMs: number;
   private readonly now: () => number;
   private readonly reportFirstCrash: boolean;
+  private readonly latchOnLoadFailure: boolean;
 
   private crashCount = 0;
   private lastCrashAt: number | null = null;
@@ -160,16 +184,43 @@ export class UtilityRestartPolicy {
     this.decayMs = options.decayMs ?? DEFAULT_DECAY_MS;
     this.now = options.now ?? Date.now;
     this.reportFirstCrash = options.reportFirstCrash === true;
+    this.latchOnLoadFailure = options.latchOnLoadFailure === true;
   }
 
   /**
    * True when the subsystem has given up and callers should stop trying. Reads
    * the decay window, so a client that polls this after a quiet period sees it
-   * clear itself rather than staying latched for the app's lifetime.
+   * clear itself rather than staying latched for the app's lifetime. A load
+   * failure (`latchOnLoadFailure`) is the exception: it holds for the run.
    */
   get exhausted(): boolean {
+    if (this.loadFailed) return true;
     this.decayIfQuiet();
     return this.crashCount >= this.maxCrashes;
+  }
+
+  /**
+   * True once this service's worker could not load a native module this run
+   * (`latchOnLoadFailure`). Read lazily from the newest crash's stderr as well
+   * as from the drained crash report, since the text can land just after the
+   * exit that recorded the crash. Reading it can therefore set the latch, and
+   * so can reading `exhausted`, `maySpawn()` and `lastCrashDescription`, which
+   * go through it.
+   */
+  get loadFailed(): boolean {
+    this.latchIfLoadFailed();
+    return loadFailures.has(this.service);
+  }
+
+  /** Latch the service when the newest crash's stderr shows a load failure. */
+  private latchIfLoadFailed(): void {
+    if (!this.latchOnLoadFailure || loadFailures.has(this.service)) return;
+    const newest = this.crashRecords[this.crashRecords.length - 1];
+    const stderr = newest?.stderr?.snapshot() ?? '';
+    if (!newest || !stderr.includes(LOAD_FAILURE_CODE)) return;
+    const summary = summarizeStderrTail(stderr);
+    const whatHappened = describeCrashForPeople(newest);
+    loadFailures.set(this.service, summary ? `${whatHappened}: ${summary}` : whatHappened);
   }
 
   /**
@@ -233,6 +284,16 @@ export class UtilityRestartPolicy {
 
     const emit = (): void => {
       this.logCrash(record, crashNumber);
+      // Read after the drain, so the stderr that names the load failure is in.
+      // A load failure is its own report, in place of the latch or first-crash one.
+      if (this.loadFailed) {
+        if (!loadFailureReported.has(this.service)) {
+          loadFailureReported.add(this.service);
+          this.trackCrashOnce('latched', record);
+          this.reportLoadFailure(record, crashNumber);
+        }
+        return;
+      }
       if (latchesNow) this.reportLatch(record, crashNumber, crashesAtLatch);
       else if (reportsFirstCrash) this.reportFirst(record, crashNumber);
     };
@@ -274,34 +335,18 @@ export class UtilityRestartPolicy {
    *  own utility-process event is filtered out in error-reporting.ts precisely
    *  because it can carry none of that. */
   private reportLatch(
-    { exitCode, cause }: UtilityCrashRecord,
+    record: UtilityCrashRecord,
     crashNumber: number,
     crashes: readonly UtilityCrashRecord[],
   ): void {
     reportHandledError(
       // The message is the issue's grouping key, so it stays "exited" for every
       // cause. The cause tag and the crash list say what happened.
-      new Error(`${this.service} worker exited repeatedly (exit code ${exitCode ?? 'unknown'})`),
-      {
-        source: 'utility_process',
-        service: this.service,
-        exitCode: String(exitCode ?? 'unknown'),
-        crashCount: String(crashNumber),
-        // A fixed vocabulary, not content, so it is safe as a tag.
-        cause,
-      },
-      // The stderr is content, so it goes in a context, never a tag or the
-      // message: a tag would fragment grouping and a varying message would
-      // split the issue. This is what turns "exit code 1" into the module
-      // name or stack that explains it.
+      new Error(`${this.service} worker exited repeatedly (exit code ${record.exitCode ?? 'unknown'})`),
+      this.reportTags(record, crashNumber),
       {
         utility_process: {
-          service: this.service,
-          exitCode: exitCode ?? null,
-          crashCount: crashNumber,
-          // Free worker stderr, home-redacted at capture only, so it still held
-          // project roots, worktree slugs (task titles) and transcript folders.
-          stderrTail: redactEventText(this.latestStderr() ?? '(no stderr captured)'),
+          ...this.reportContext(record, crashNumber),
           // One line per crash, not one object: Sentry normalizes contexts to
           // depth 3, which turns an object inside this list into "[Object]".
           crashes: crashes.map(describeCrashRecord).map((line) => redactEventText(line)),
@@ -309,31 +354,57 @@ export class UtilityRestartPolicy {
       },
       // One issue per service and cause. The message carries the exit code,
       // which would otherwise split one service's latch across codes.
-      ['utility-process-latched', this.service, cause],
+      ['utility-process-latched', this.service, record.cause],
+    );
+  }
+
+  /** The tags every utility-process report carries. Each is a fixed
+   *  vocabulary or a number, never content, so it is safe as a tag. */
+  private reportTags({ exitCode, cause }: UtilityCrashRecord, crashNumber: number): Record<string, string> {
+    return {
+      source: 'utility_process',
+      service: this.service,
+      exitCode: String(exitCode ?? 'unknown'),
+      crashCount: String(crashNumber),
+      cause,
+    };
+  }
+
+  /** The `utility_process` context every report carries. The stderr is
+   *  content, so it goes in a context, never a tag or the message: a tag would
+   *  fragment grouping and a varying message would split the issue. This is
+   *  what turns "exit code 1" into the module name or stack that explains it. */
+  private reportContext({ exitCode }: UtilityCrashRecord, crashNumber: number) {
+    return {
+      service: this.service,
+      exitCode: exitCode ?? null,
+      crashCount: crashNumber,
+      // Free worker stderr, home-redacted at capture only, so it still held
+      // project roots, worktree slugs (task titles) and transcript folders.
+      stderrTail: redactEventText(this.latestStderr() ?? '(no stderr captured)'),
+    };
+  }
+
+  /** A worker that could not load a native module (`latchOnLoadFailure`), once
+   *  per service per run. The machine is missing something the module links
+   *  against, so it groups as an environment failure, not on its frames. The
+   *  stderr tail names the module and the loader's reason. */
+  private reportLoadFailure(record: UtilityCrashRecord, crashNumber: number): void {
+    reportHandledError(
+      new Error(`${this.service} worker could not load a native module (${LOAD_FAILURE_CODE})`),
+      { ...this.reportTags(record, crashNumber), code: LOAD_FAILURE_CODE },
+      { utility_process: this.reportContext(record, crashNumber) },
+      ['handled-env', 'utility-process-load-failed', this.service, LOAD_FAILURE_CODE],
     );
   }
 
   /** The first crash of a run, for a service that asked (`reportFirstCrash`). */
-  private reportFirst({ exitCode, cause }: UtilityCrashRecord, crashNumber: number): void {
+  private reportFirst(record: UtilityCrashRecord, crashNumber: number): void {
     reportHandledError(
-      new Error(`${this.service} worker exited (exit code ${exitCode ?? 'unknown'})`),
-      {
-        source: 'utility_process',
-        service: this.service,
-        exitCode: String(exitCode ?? 'unknown'),
-        crashCount: String(crashNumber),
-        cause,
-        phase: 'first',
-      },
-      {
-        utility_process: {
-          service: this.service,
-          exitCode: exitCode ?? null,
-          crashCount: crashNumber,
-          stderrTail: redactEventText(this.latestStderr() ?? '(no stderr captured)'),
-        },
-      },
-      ['utility-process-first-crash', this.service, cause],
+      new Error(`${this.service} worker exited (exit code ${record.exitCode ?? 'unknown'})`),
+      { ...this.reportTags(record, crashNumber), phase: 'first' },
+      { utility_process: this.reportContext(record, crashNumber) },
+      ['utility-process-first-crash', this.service, record.cause],
     );
   }
 
@@ -341,7 +412,8 @@ export class UtilityRestartPolicy {
    *  exit code rides along, -1 when there is none, and so does the cause,
    *  because -1 alone cannot tell a fork that threw from a worker that hung.
    *  The crash count does not, because it is a constant per phase (1 on
-   *  `first`, the cap on `latched`) and already lives on the Sentry tag. */
+   *  `first`, the cap on `latched`, or 1 on a `latched` sent for a load
+   *  failure) and already lives on the Sentry tag. */
   private trackCrashOnce(phase: CrashPhase, { exitCode, cause }: UtilityCrashRecord): void {
     let phases = trackedCrashPhases.get(this.service);
     if (!phases) {
@@ -372,6 +444,7 @@ export class UtilityRestartPolicy {
    *  `did not answer projects.summaries in time` for a worker that hung. Null
    *  when nothing has crashed, or once the window has decayed. */
   get lastCrashDescription(): string | null {
+    if (this.loadFailed) return loadFailures.get(this.service) ?? null;
     this.decayIfQuiet();
     const newest = this.crashRecords[this.crashRecords.length - 1];
     if (this.crashCount === 0 || !newest) return null;
@@ -383,7 +456,9 @@ export class UtilityRestartPolicy {
   /** Forget the crash history. Called internally by `decayIfQuiet` once the
    *  window has passed, and by tests. No client calls it directly today; it is
    *  public so a client that gains a deliberate "try again now" control can
-   *  clear the latch without reaching into private state. */
+   *  clear the latch without reaching into private state. It does not clear a
+   *  load failure (`latchOnLoadFailure`), which is kept per service for the
+   *  run: a retry would load the same missing library again. */
   reset(): void {
     this.crashCount = 0;
     this.lastCrashAt = null;

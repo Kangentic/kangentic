@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   verifyUnpackedWorkerModules,
+  verifyEmbedRuntimeLoads,
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
   verifySpawnWorkerLoads,
@@ -15,6 +16,7 @@ const {
 } = require('./verify-unpacked-worker');
 const { verifyNoSourceMaps } = require('./verify-no-source-maps');
 const { installSpawnHelper } = require('./install-spawn-helper');
+const { stageMsvcRuntime, verifyMsvcRuntimeBesideBinding } = require('./msvc-runtime');
 // The targets the local embedding model has no build for, shared with the app
 // (src/shared/embedding-runtime.ts), which reports the Knowledge Graph
 // unavailable on them and never forks the embed worker there.
@@ -240,8 +242,28 @@ module.exports = async function afterPack(context) {
   // which fails the package; see build/verify-unpacked-worker.js. Skipped, with
   // a log line, only on a target the local model has no build for, where the
   // app never forks the worker (embedWorkerProbePlan).
+  //
+  // On Windows the binding and onnxruntime.dll import the MSVC runtime, which
+  // Electron does not provide (it links its C runtime statically), so it is
+  // copied beside the binding from this machine's Visual Studio redist and
+  // checked there (DESKTOP-38; build/msvc-runtime.js). Then the binding is
+  // loaded under the packaged Electron, which on Windows also proves the runtime
+  // came from beside it and not from System32.
   if (!targetArch || embedWorkerProbePlan({ unpackedRoot, platform, targetArch }) === 'probe') {
+    if (targetArch) {
+      const binaryDir = onnxruntimeBinaryDir(unpackedRoot, platform, targetArch);
+      stageMsvcRuntime({ binaryDir, platform, targetArch });
+      verifyMsvcRuntimeBesideBinding({ binaryDir, platform });
+    } else if (platform === 'win32') {
+      // With no arch there is no binding directory or redist arch to stage
+      // from, and the probe below would blame a staging step that never ran.
+      throw new Error(
+        `[afterPack] MSVC runtime: unknown arch enum ${context.arch}, so there is no binding directory to stage ` +
+          'the runtime beside. Add the arch to archMap in build/afterPack.js.',
+      );
+    }
     verifyUnpackedWorkerModules({ unpackedRoot });
+    verifyEmbedRuntimeLoads({ unpackedRoot, electronBinaryPath });
   }
 
   // Same gate for the dictation (sherpa-onnx) worker added for DESKTOP-X: a
