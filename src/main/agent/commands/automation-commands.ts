@@ -50,6 +50,7 @@ import {
 import { resolveMoveTarget, routeOf } from '../../automations/move-target';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
+import { boardFileNote } from './column-commands';
 import { needsRunningWorkCheck, refuseRunningWork, teardownOfColumn } from './running-work-guard';
 import { resolveTask } from './task-resolver';
 import { agentRegistry } from '../agent-registry';
@@ -285,14 +286,14 @@ export const handleSetAutomations: CommandHandler = (
   // and nothing here touches a strategy field. Passing the row as its own
   // previous would walk every task in the column to build a diff that is empty
   // by construction.
-  context.onSwimlaneUpdated(swimlane);
+  const fileNote = boardFileNote(context.onSwimlaneUpdated(swimlane));
 
   const counts = AUTOMATION_TRIGGERS
     .map((trigger) => `${saved.filter((row) => row.trigger === trigger).length} ${englishText(AUTOMATION_TRIGGER_LABELS[trigger]).toLowerCase()}`)
     .join(', ');
   return {
     success: true,
-    message: `Replaced "${swimlane.name}" automations: ${counts}.`
+    message: `Replaced "${swimlane.name}" automations: ${counts}.${fileNote}`
       + (warnings.length > 0 ? `\nHeads up: ${warnings.join(' ')}` : ''),
     data: { automations: saved.map((row) => serializeRow(row, swimlane.name)), warnings },
   };

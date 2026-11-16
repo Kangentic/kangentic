@@ -477,6 +477,34 @@ describe('handleCreateColumn / handleDeleteColumn', () => {
     expect(context.onSwimlaneDeleted).toHaveBeenCalledOnce();
   });
 
+  // The change is in the database either way. An agent told only "Created" or
+  // "Deleted" would report a save that never reached the team's kangentic.json.
+  describe('when kangentic.json was not written', () => {
+    const reason = 'kangentic.json was saved by a newer version of Kangentic (file format 2, this build reads format 1).';
+
+    it('says so in a create, an update and a delete reply', () => {
+      vi.mocked(context.onSwimlaneUpdated).mockReturnValue(reason);
+      vi.mocked(context.onSwimlaneDeleted).mockReturnValue(reason);
+      const expected = ` The change is on the board but was not saved to kangentic.json: ${reason}`;
+
+      const created = handleCreateColumn({ name: 'Brand Review' }, context);
+      const updated = handleUpdateColumn({ column: 'Brand Review', color: '#123456' }, context);
+      const deleted = handleDeleteColumn({ column: 'Brand Review' }, context);
+
+      expect(created.success && created.message?.endsWith(expected)).toBe(true);
+      expect(updated.success && updated.message?.endsWith(expected)).toBe(true);
+      expect(deleted.success && deleted.message?.endsWith(expected)).toBe(true);
+    });
+
+    it('adds nothing when the file was written', () => {
+      vi.mocked(context.onSwimlaneUpdated).mockReturnValue(null);
+
+      const created = handleCreateColumn({ name: 'Brand Review' }, context);
+
+      expect(created.message).not.toContain('kangentic.json');
+    });
+  });
+
   it('clears another column\'s plan_exit_target_id pointing at the deleted one', () => {
     const target = repository.create({ name: 'Brand Review' });
     // Not "Planning" - the seeded board already has one, and a duplicate name

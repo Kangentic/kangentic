@@ -23,7 +23,10 @@ import {
   validateBoardConfig,
   parseConfigJson,
   BoardConfigUnreadableError,
+  isNewerFileFormat,
+  newerFormatReason,
 } from './board-config/config-helpers';
+import { fileHoldsUnreadableAutomations } from './board-config/apply-automations';
 import {
   hashFilePath,
   contentMatchesFile,
@@ -42,6 +45,21 @@ const WRITE_BACK_LOCK_RETRY_MS = 500;
 const WRITE_SUPPRESSION_MS = 1000;
 
 const NOT_AN_OBJECT_REASON = 'The file is not a JSON object.';
+
+/** The board's line for a file whose automations this build cannot fully read (see `doWriteBack`). */
+const UNREADABLE_AUTOMATIONS_REASON =
+  `${TEAM_FILE} holds automations this build cannot read, so board edits are not saved to it until the file is fixed.`;
+
+/**
+ * Why a config file that exists cannot be used (see `readProblem`).
+ * `newerFormat` marks a team file in a format newer than this build reads:
+ * it still applies, as far as this build can read it, but nothing writes it.
+ */
+interface ReadProblem {
+  reason: string;
+  transient: boolean;
+  newerFormat?: boolean;
+}
 
 /**
  * The user-facing reason for a failed read: the error code only. Node's
@@ -401,7 +419,7 @@ export class BoardConfigManager {
    * `transient` marks the codes a Windows lock produces (antivirus, an editor
    * mid-save, a sync client), which the write-back retries instead of dropping.
    */
-  private readProblem(projectPath: string, fileName: string): { reason: string; transient: boolean } | null {
+  private readProblem(projectPath: string, fileName: string): ReadProblem | null {
     let raw: string;
     try {
       raw = fs.readFileSync(path.join(projectPath, fileName), 'utf-8');
@@ -416,13 +434,19 @@ export class BoardConfigManager {
     // An empty file (an interrupted write, or `touch`) holds nothing to lose,
     // so it reads as missing and the next write re-creates it, as before.
     if (raw.trim() === '') return null;
+    let parsed: unknown;
     try {
-      return isJsonObject(parseConfigJson(raw))
-        ? null
-        : { reason: NOT_AN_OBJECT_REASON, transient: false };
+      parsed = parseConfigJson(raw);
     } catch (error) {
       return { reason: error instanceof Error ? error.message : String(error), transient: false };
     }
+    if (!isJsonObject(parsed)) return { reason: NOT_AN_OBJECT_REASON, transient: false };
+    // A team file in a format newer than this build reads it as far as it
+    // can, and never writes it: a key it cannot read is a key it would drop.
+    if (fileName === TEAM_FILE && isNewerFileFormat(parsed.version)) {
+      return { reason: newerFormatReason(parsed.version), transient: false, newerFormat: true };
+    }
+    return null;
   }
 
   /**
@@ -434,8 +458,8 @@ export class BoardConfigManager {
   private assertWritable(projectPath: string, fileName: string, operation: string): void {
     const problem = this.readProblem(projectPath, fileName);
     if (problem === null) return;
-    console.warn(`[BOARD_CONFIG] ${operation} refused: ${fileName} could not be read and was left as it is. ${problem.reason}`);
-    throw new BoardConfigUnreadableError(fileName, problem.reason);
+    console.warn(`[BOARD_CONFIG] ${operation} refused: ${fileName} was left as it is. ${problem.reason}`);
+    throw new BoardConfigUnreadableError(fileName, problem.reason, { newerFormat: problem.newerFormat });
   }
 
   /**
@@ -475,7 +499,9 @@ export class BoardConfigManager {
    */
   applyConfig(projectId: string, projectPath: string): { warnings: string[] } {
     const teamProblem = this.readProblem(projectPath, TEAM_FILE);
-    if (teamProblem !== null) {
+    // A newer file still applies, as far as this build can read it, and the
+    // apply says why board edits stop reaching it.
+    if (teamProblem !== null && !teamProblem.newerFormat) {
       return {
         warnings: [`${TEAM_FILE} could not be read, so board edits are not saved to it until it is fixed. ${teamProblem.reason}`],
       };
@@ -488,6 +514,12 @@ export class BoardConfigManager {
       warnings.push(`${LOCAL_FILE} could not be read, so its overrides were not applied. ${localProblem.reason}`);
     }
     const config = this.getEffectiveConfigForPath(projectPath);
+    // The write-back refuses a file whose automations this build cannot fully
+    // read (`doWriteBack`), and the board is the only place that can say so.
+    // A newer file's own warning already says it.
+    if (config && !teamProblem?.newerFormat && fileHoldsUnreadableAutomations(config.columns, config.version)) {
+      warnings.push(UNREADABLE_AUTOMATIONS_REASON);
+    }
     // Resets only against a local file that was read. One caught mid-save
     // reads as missing, and resetting every override for it would apply team
     // values the user never chose.
@@ -845,18 +877,23 @@ export class BoardConfigManager {
    * open in the UI (see mcp-http/project-resolver). Best-effort: never throws.
    * Writes immediately (no debounce) because MCP tool calls are discrete, not
    * the rapid successive edits a UI drag produces.
+   *
+   * Returns why the file was not written, or null when it was (or a lock that
+   * clears on its own is being retried). The MCP tools put the reason in their
+   * reply: the change is in the database, and an agent told only "updated"
+   * would report a save that never reached the file the team shares.
    */
-  writeBackForProject(projectId: string, projectPath: string): void {
-    if (this.isEphemeral) return;
-    this.doWriteBack(projectId, projectPath);
+  writeBackForProject(projectId: string, projectPath: string): string | null {
+    if (this.isEphemeral) return null;
+    return this.doWriteBack(projectId, projectPath);
   }
 
   private doWriteBack(
     projectId: string | null = this.activeProjectId,
     projectPath: string | null = this.activeProjectPath,
     attempt = 0,
-  ): void {
-    if (!projectId || !projectPath) return;
+  ): string | null {
+    if (!projectId || !projectPath) return null;
 
     // The watcher-suppression bookkeeping (isWritingBack / lastTeamContentHash)
     // only applies to the active project, which is the one with live file
@@ -879,10 +916,11 @@ export class BoardConfigManager {
       if (problem === null) continue;
       if (problem.transient && attempt < WRITE_BACK_LOCK_RETRIES) {
         setTimeout(() => this.doWriteBack(projectId, projectPath, attempt + 1), WRITE_BACK_LOCK_RETRY_MS);
-        return;
+        return null;
       }
-      console.warn(`[BOARD_CONFIG] Write-back skipped: ${fileName} could not be read and was left as it is. ${problem.reason}`);
-      return;
+      const skipped = problem.newerFormat ? problem.reason : `${fileName} could not be read. ${problem.reason}`;
+      console.warn(`[BOARD_CONFIG] Write-back skipped: ${skipped}`);
+      return skipped;
     }
 
     try {
@@ -899,7 +937,17 @@ export class BoardConfigManager {
       const rejection = existingTeam && carriesColumns(existingTeam) ? validateBoardConfig(existingTeam) : null;
       if (rejection !== null) {
         console.warn(`[BOARD_CONFIG] Write-back skipped: ${TEAM_FILE} was left as it is. ${rejection}`);
-        return;
+        return rejection;
+      }
+      // Automations this build cannot fully read (a guard of a shape it does
+      // not know, a retired key) were never applied: their columns kept the
+      // database's rows. Writing the database back would replace what the file
+      // says with what this machine had, so nothing is written until the file
+      // reads. The apply's warning on the board says why.
+      const effective = this.getEffectiveConfigForPath(projectPath);
+      if (effective && fileHoldsUnreadableAutomations(effective.columns, effective.version)) {
+        console.warn(`[BOARD_CONFIG] Write-back skipped: ${UNREADABLE_AUTOMATIONS_REASON}`);
+        return UNREADABLE_AUTOMATIONS_REASON;
       }
       const existingLocal = this.loadLocalOverridesForPath(projectPath);
       // The database holds the personal values of the local file it last
@@ -932,8 +980,10 @@ export class BoardConfigManager {
       if (localApplied && existingLocal && split.localColumns) {
         this.writeLocalOverrides(projectId, projectPath, { ...existingLocal, columns: split.localColumns });
       }
+      return null;
     } catch (error) {
       console.warn('[BOARD_CONFIG] Write-back failed:', error);
+      return `Writing ${TEAM_FILE} failed. The log has the details.`;
     } finally {
       // The active project's file just changed under the read memo.
       if (isActive) this.invalidateConfigCache();

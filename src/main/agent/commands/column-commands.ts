@@ -51,6 +51,15 @@ function readColumnMessage(db: Database.Database, swimlaneId: string): string | 
   return resolveColumnMessage(new AutomationRepository(db).listForColumn(swimlaneId))?.message ?? null;
 }
 
+/**
+ * The sentence a column or automation tool appends when its change reached the
+ * board but not `kangentic.json` (a file in a newer format, one this build
+ * cannot fully read, a merge conflict), or nothing when the file was written.
+ */
+export function boardFileNote(notSavedReason: string | null): string {
+  return notSavedReason ? ` The change is on the board but was not saved to kangentic.json: ${notSavedReason}` : '';
+}
+
 export const handleUpdateColumn: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -231,11 +240,11 @@ export const handleUpdateColumn: CommandHandler = (
   // `swimlane` is the pre-update row resolved above. Handing it over lets the
   // host propagate the change into live sessions the same way the UI's
   // SWIMLANE_UPDATE does; without a before-row it cannot tell what changed.
-  context.onSwimlaneUpdated(updated, swimlane);
+  const fileNote = boardFileNote(context.onSwimlaneUpdated(updated, swimlane));
 
   return {
     success: true,
-    message: `Updated ${changedFields.join(', ')} for column "${updated.name}".${messageNote}`,
+    message: `Updated ${changedFields.join(', ')} for column "${updated.name}".${messageNote}${fileNote}`,
     data: {
       id: updated.id,
       name: updated.name,
@@ -424,11 +433,11 @@ export const handleCreateColumn: CommandHandler = (
     messageNote = ` Its message is the "${result.name}" automation on its On enter group.`;
   }
 
-  context.onSwimlaneUpdated(created);
+  const fileNote = boardFileNote(context.onSwimlaneUpdated(created));
 
   return {
     success: true,
-    message: `Created column "${created.name}" at position ${created.position}.${messageNote}`,
+    message: `Created column "${created.name}" at position ${created.position}.${messageNote}${fileNote}`,
     data: {
       id: created.id,
       name: created.name,
@@ -518,7 +527,7 @@ export const handleDeleteColumn: CommandHandler = (
     { columnId: swimlane.id, columnName: swimlane.name },
   );
 
-  context.onSwimlaneDeleted(swimlane);
+  const fileNote = boardFileNote(context.onSwimlaneDeleted(swimlane));
 
   const alsoCleaned: string[] = [];
   if (automationCount > 0) alsoCleaned.push(`${automationCount} automation(s)`);
@@ -527,11 +536,13 @@ export const handleDeleteColumn: CommandHandler = (
   if (removedEntries > 0) alsoCleaned.push(`${removedEntries} board-profile entr${removedEntries === 1 ? 'y' : 'ies'}`);
   if (clearedPlanExitTargets > 0) alsoCleaned.push(`${clearedPlanExitTargets} profile plan-exit target(s)`);
 
+  const deletedMessage = alsoCleaned.length > 0
+    ? `Deleted column "${swimlane.name}". Also cleaned up ${alsoCleaned.join(', ')}.`
+    : `Deleted column "${swimlane.name}".`;
+
   return {
     success: true,
-    message: alsoCleaned.length > 0
-      ? `Deleted column "${swimlane.name}". Also cleaned up ${alsoCleaned.join(', ')}.`
-      : `Deleted column "${swimlane.name}".`,
+    message: `${deletedMessage}${fileNote}`,
     data: {
       id: swimlane.id,
       name: swimlane.name,
