@@ -156,6 +156,7 @@ describe('parseSelectorSpec', () => {
       ['a child combinator', 'form > :has-text("Save")', 'form > *'],
       ['a child combinator with no space', 'form>:has-text("Save")', 'form> *'],
       ['a sibling combinator', 'h2 ~ :has-text("Save")', 'h2 ~ *'],
+      ['an adjacent-sibling combinator', 'h2 + :has-text("Save")', 'h2 + *'],
     ])('scopes a :has-text after %s to the elements it reaches, never the scope element itself', (_name, selector, scope) => {
       // `[role=dialog] :has-text("Save")` means elements INSIDE the dialog. A
       // scope of `[role=dialog]` alone matched the dialog, whose text contains

@@ -1122,7 +1122,20 @@ export function buildActionableMatchesExpression(spec: SelectorSpec, candidateLi
       segments.unshift('html');
       return segments.join(' > ');
     };
+    // A candidate the page cannot describe is null, never a throw: a form's
+    // named controls shadow its own properties (<input name="tagName"> makes
+    // form.tagName that input), and a throw here would read as an
+    // unevaluable selector and fall back to the first match. The parser drops
+    // a null entry, and a total of two or more still refuses.
     const candidates = kept.slice(0, ${candidateLimit}).map((element, index) => {
+      try {
+        return describeCandidate(element, index);
+      } catch (error) {
+        return null;
+      }
+    });
+    return { total: kept.length, candidates };
+    function describeCandidate(element, index) {
       const rect = element.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
@@ -1151,8 +1164,7 @@ export function buildActionableMatchesExpression(spec: SelectorSpec, candidateLi
         },
         selector: cssPath(element),
       };
-    });
-    return { total: kept.length, candidates };
+    }
   })()`;
 }
 

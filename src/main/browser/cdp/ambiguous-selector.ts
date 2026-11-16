@@ -63,12 +63,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function stringOrNull(value: unknown): string | null {
+/** A string field clipped to `CANDIDATE_FIELD_MAX_CHARS`, or null when it is not a string. */
+function clippedStringOrNull(value: unknown): string | null {
   return typeof value === 'string' ? value.slice(0, CANDIDATE_FIELD_MAX_CHARS) : null;
 }
 
 function clippedString(value: unknown): string {
-  return stringOrNull(value) ?? '';
+  return clippedStringOrNull(value) ?? '';
 }
 
 function finiteNumber(value: unknown): number {
@@ -94,10 +95,10 @@ export function parseSelectorCandidates(value: unknown): SelectorCandidate[] {
       index: finiteNumber(entry.index),
       tag: clippedString(entry.tag),
       text: clippedString(entry.text),
-      id: stringOrNull(entry.id),
-      role: stringOrNull(entry.role),
-      ariaLabel: stringOrNull(entry.ariaLabel),
-      name: stringOrNull(entry.name),
+      id: clippedStringOrNull(entry.id),
+      role: clippedStringOrNull(entry.role),
+      ariaLabel: clippedStringOrNull(entry.ariaLabel),
+      name: clippedStringOrNull(entry.name),
       inDialog: entry.inDialog === true,
       topmost: typeof entry.topmost === 'boolean' ? entry.topmost : null,
       box: {

@@ -305,14 +305,30 @@ describe('buildActionableMatchesExpression', () => {
     const { answer } = evaluate('button', root, [first, second]);
 
     const page = answer as PageAnswer;
-    for (const candidate of page.candidates) {
-      expect(candidate.selector).not.toBe('#dup');
-      expect(candidate.selector.startsWith('#dup')).toBe(false);
-    }
     expect(page.candidates.map((candidate) => candidate.selector)).toEqual([
       'html > body > button:nth-of-type(1)',
       'html > body > button:nth-of-type(2)',
     ]);
+  });
+
+  it('still refuses when a candidate cannot be described, instead of throwing into the first-match fallback', () => {
+    // A form's named controls shadow its own properties: <input name="tagName">
+    // makes form.tagName that input, so the CSS path walk throws on the way up.
+    // A throw would read as an unevaluable selector and the driver would act
+    // on the first match, the silent pick strict exists to stop.
+    const shadowedSave = element({ tag: 'button', text: 'Save' });
+    const plainSave = element({ tag: 'button', text: 'Save', id: 'plain-save' });
+    const shadowedForm = element({ tag: 'form', children: [shadowedSave] });
+    Object.defineProperty(shadowedForm, 'tagName', { value: element({ tag: 'input' }) });
+    const body = element({ tag: 'body', children: [shadowedForm, plainSave] });
+    const root = element({ tag: 'html', children: [body] });
+
+    const { answer } = evaluate('button', root, [shadowedSave, plainSave]);
+
+    const page = answer as { total: number; candidates: unknown[] };
+    expect(page.total).toBe(2);
+    expect(page.candidates[0]).toBeNull();
+    expect(parseSelectorCandidates(page.candidates).map((candidate) => candidate.selector)).toEqual(['#plain-save']);
   });
 
   it('round-trips every candidate field through parseSelectorCandidates unchanged (#820 two Save buttons)', () => {
