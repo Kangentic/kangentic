@@ -275,6 +275,76 @@ test.describe('Workflows canvas', () => {
     }
   });
 
+  test('a fit leaves a margin between the cards and the canvas edge', async () => {
+    // Three cards in a chain are wider than this canvas, so the fit zooms out and its
+    // padding alone sets how close they come to the edge. React Flow 13 reads a bare
+    // number as pixels, and the 0.15 the canvas used to pass left no margin at all.
+    const { browser, page } = await launch(true);
+    try {
+      await page.setViewportSize({ width: 1300, height: 900 });
+      await page.locator('[data-testid="view-toggle-workflows"]').click();
+      await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(3);
+      const framing = () => page.evaluate(() => {
+        const flow = document.querySelector<HTMLElement>('.workflow-canvas .react-flow');
+        const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workflow-canvas-card"]'));
+        if (!flow || cards.length === 0) return null;
+        const frame = flow.getBoundingClientRect();
+        const boxes = cards.map((element) => element.getBoundingClientRect());
+        return {
+          zoom: boxes[0].width / cards[0].offsetWidth,
+          left: (Math.min(...boxes.map((box) => box.left)) - frame.left) / frame.width,
+          right: (frame.right - Math.max(...boxes.map((box) => box.right))) / frame.width,
+        };
+      });
+      // Zoomed out: the fit set the scale, not the 1:1 cap, so the padding is in play.
+      await expect.poll(async () => (await framing())?.zoom ?? 1).toBeLessThan(0.95);
+      const framed = await framing();
+      expect(framed?.zoom).toBeGreaterThan(0.5);
+      // About 6.5% of the canvas on each side. The range is loose on purpose: it
+      // tells a margin from none, on any platform's rounding.
+      for (const margin of [framed?.left, framed?.right]) {
+        expect(margin).toBeGreaterThan(0.03);
+        expect(margin).toBeLessThan(0.12);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the canvas keeps the app\'s surface under a dark OS and a light one, in a dark theme and a light one', async () => {
+    // React Flow 13 follows the OS color scheme: under a dark OS its root, and the
+    // dotted background's box, fill #141414 over the app's own surface in every app
+    // theme. index.css switches that off for the canvas.
+    const { browser, page } = await launch(true);
+    try {
+      await page.locator('[data-testid="view-toggle-workflows"]').click();
+      await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(3);
+      const fills = () => page.evaluate(() => ['.workflow-canvas .react-flow', '.workflow-canvas .react-flow__background'].map((selector) => {
+        const element = document.querySelector(selector);
+        return element ? getComputedStyle(element).backgroundColor : 'missing';
+      }));
+      const shownTheme = () => page.evaluate(() => (
+        Array.from(document.documentElement.classList).find((name) => name.startsWith('theme-'))?.slice('theme-'.length) ?? 'dark'
+      ));
+      for (const theme of ['dark', 'light'] as const) {
+        await page.evaluate((shown) => {
+          (window as unknown as {
+            __zustandStores: { config: { getState: () => { setThemePreview: (theme: string | null) => void } } };
+          }).__zustandStores.config.getState().setThemePreview(shown);
+        }, theme);
+        await expect.poll(shownTheme).toBe(theme);
+        for (const colorScheme of ['dark', 'light'] as const) {
+          await page.emulateMedia({ colorScheme });
+          // The emulation took: the page itself reads the OS side asked for.
+          await expect.poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(colorScheme === 'dark');
+          await expect.poll(fills, { message: `${theme} theme under a ${colorScheme} OS` }).toEqual(['rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 0)']);
+        }
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a click selects a card, and a click on empty canvas or Escape clears it', async () => {
     const { browser, page } = await launch(true);
     try {

@@ -39,7 +39,7 @@ export const NO_MEASURED_HEIGHTS: ReadonlyMap<string, number> = new Map();
  */
 export function withMeasuredHeights(
   current: ReadonlyMap<string, number>,
-  changes: readonly NodeChange[],
+  changes: Iterable<NodeChange>,
 ): ReadonlyMap<string, number> {
   let next: Map<string, number> | null = null;
   for (const change of changes) {

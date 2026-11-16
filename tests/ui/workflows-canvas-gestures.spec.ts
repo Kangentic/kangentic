@@ -444,10 +444,13 @@ test.describe('Workflows canvas gestures', () => {
     const { browser, page } = await launch('draft');
     try {
       // A card is something to click, so it shows the pointer; the empty
-      // canvas around it keeps the pan's grab. React Flow gives both grab.
+      // canvas around it keeps the pan's grab. React Flow gives both grab, and
+      // draws the canvas's on the pane's `::before`, which takes the pointer.
       await expect(node(page, 'task-3')).toHaveCSS('cursor', 'pointer');
       await expect(card(page, 'task-3')).toHaveCSS('cursor', 'pointer');
-      await expect(page.locator('.workflow-canvas .react-flow__pane')).toHaveCSS('cursor', 'grab');
+      await expect.poll(() => page.locator('.workflow-canvas .react-flow__pane').evaluate(
+        (pane) => getComputedStyle(pane, '::before').cursor,
+      )).toBe('grab');
 
       await pressAndMoveCard(page, 'task-3', 60, 80, 8);
       await expect(page.locator('.react-flow__node.dragging')).toHaveCount(1);
