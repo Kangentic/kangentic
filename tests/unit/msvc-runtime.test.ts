@@ -153,8 +153,10 @@ function makeRedist(
   dlls: string[],
   archDir = 'x64',
   dllLinkerVersion: [number, number] = [14, 44],
-): { versionDir: string; crtDir: string } {
-  const versionDir = path.join(makeTempDir('msvc-runtime-redist-'), 'VC', 'Redist', 'MSVC', version);
+): { installationPath: string; versionDir: string; crtDir: string } {
+  // Laid out as a Visual Studio install: <installationPath>/VC/Redist/MSVC/<version>.
+  const installationPath = makeTempDir('msvc-runtime-redist-');
+  const versionDir = path.join(installationPath, 'VC', 'Redist', 'MSVC', version);
   const crtDir = path.join(versionDir, archDir, 'Microsoft.VC143.CRT');
   fs.mkdirSync(crtDir, { recursive: true });
   for (const name of dlls) {
@@ -162,7 +164,7 @@ function makeRedist(
     const imports = name.startsWith('msvcp') ? ['VCRUNTIME140.dll', 'KERNEL32.dll'] : ['KERNEL32.dll'];
     fs.writeFileSync(path.join(crtDir, name), buildPeImage({ imports, linkerVersion: dllLinkerVersion }));
   }
-  return { versionDir, crtDir };
+  return { installationPath, versionDir, crtDir };
 }
 
 function locateFrom(candidates: RedistCandidate[]): () => LocateResult {
@@ -592,8 +594,8 @@ describe('locateVcRedist', () => {
       targetArch: 'x64',
       env: { VCToolsRedistDir: older.versionDir },
       runVswhere: () => {
-        // vswhere's install holding the 14.10.1 redist, laid out as Visual Studio does.
-        const installationPath = path.resolve(newer.versionDir, '..', '..', '..', '..');
+        // vswhere's install holding the 14.10.1 redist.
+        const installationPath = newer.installationPath;
         fs.mkdirSync(path.join(installationPath, 'VC', 'Auxiliary', 'Build'), { recursive: true });
         fs.writeFileSync(path.join(installationPath, 'VC', 'Auxiliary', 'Build', 'Microsoft.VCRedistVersion.default.txt'), '14.10.1\n');
         return [installationPath];

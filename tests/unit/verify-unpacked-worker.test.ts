@@ -51,6 +51,18 @@ const {
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MOCK_ROOT = path.join(path.sep, 'mock', 'app.asar.unpacked');
 
+/** Real process.report `sharedObjects` captures (tests/fixtures), one with the
+ *  MSVC runtime loaded from System32 and one with it loaded beside the binding. */
+interface ProcessReportFixture {
+  systemRuntime: { bindingDir: string; sharedObjects: string[] };
+  appLocalRuntime: { bindingDir: string; sharedObjects: string[] };
+}
+
+function loadProcessReportFixture(): ProcessReportFixture {
+  const fixturePath = path.join(REPO_ROOT, 'tests', 'fixtures', 'process-report-shared-objects-win32.json');
+  return JSON.parse(fs.readFileSync(fixturePath, 'utf8')) as ProcessReportFixture;
+}
+
 interface SpawnError extends Error {
   stderr?: string;
 }
@@ -339,12 +351,7 @@ describe('embed runtime gate', () => {
 
   // Real process.report captures, so the filter is proven on the shape Windows really reports.
   it('reads the captured process.report lists: the system runtime is foreign, the app-local one is not', () => {
-    const fixture = JSON.parse(
-      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'process-report-shared-objects-win32.json'), 'utf8'),
-    ) as {
-      systemRuntime: { bindingDir: string; sharedObjects: string[] };
-      appLocalRuntime: { bindingDir: string; sharedObjects: string[] };
-    };
+    const fixture = loadProcessReportFixture();
     expect(foreignMsvcRuntimeModules(fixture.systemRuntime.sharedObjects, fixture.systemRuntime.bindingDir)).toEqual([
       'C:\\WINDOWS\\SYSTEM32\\MSVCP140.dll',
       'C:\\WINDOWS\\SYSTEM32\\VCRUNTIME140.dll',
@@ -358,12 +365,7 @@ describe('embed runtime gate', () => {
   // The generated probe script itself, evaluated in a vm context with stubbed require and
   // process, so the win32 branch (which no other platform's real run reaches) runs here.
   describe('the generated probe script, evaluated', () => {
-    const fixture = JSON.parse(
-      fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'process-report-shared-objects-win32.json'), 'utf8'),
-    ) as {
-      systemRuntime: { bindingDir: string; sharedObjects: string[] };
-      appLocalRuntime: { bindingDir: string; sharedObjects: string[] };
-    };
+    const fixture = loadProcessReportFixture();
     // Chosen so the script's own bindingDir computation equals systemRuntime.bindingDir.
     const WIN_ROOT = 'C:\\Users\\dev\\kangentic';
     const WIN_BINDING_DIR = path.win32.join(WIN_ROOT, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', 'win32', 'x64');
