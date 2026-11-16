@@ -129,6 +129,18 @@ async function centerOf(page: Page, locator: ReturnType<Page['locator']>): Promi
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
+/** Put a disabled form control of `tag` over the header strip, `left` pixels from the window's edge. */
+async function addDisabledStandIn(page: Page, tag: 'button' | 'input' | 'select' | 'textarea', testId: string, left: number): Promise<void> {
+  await page.evaluate(({ tagName, id, offset }) => {
+    const standIn = document.createElement(tagName) as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    standIn.disabled = true;
+    standIn.setAttribute('data-testid', id);
+    if (tagName === 'button') standIn.textContent = 'Disabled';
+    standIn.style.cssText = `position:fixed;top:4px;left:${offset}px;width:120px;height:30px;z-index:99999`;
+    document.body.appendChild(standIn);
+  }, { tagName: tag, id: testId, offset: left });
+}
+
 /** The place in a React Flow node's `translate(...)` transform, or null when it has none. */
 function parseTranslate(transform: string): { x: number; y: number } | null {
   const match = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px/.exec(transform);
@@ -447,6 +459,8 @@ test.describe('Workflows canvas gestures', () => {
   // The rule covers every disabled form control in the window, not only the canvas's
   // panel. No control outside the canvas is disabled in the `draft` seed, so the
   // second target is a stand-in disabled button over the header strip: one of them.
+  // The loop below only ever lets go over a button. The test after it lets a pan go
+  // over a disabled input, select and textarea, so each tag in the rule is pinned.
   for (const [gesture, target] of [
     ['a card drag', 'panel'], ['a pan', 'panel'], ['a link drag', 'panel'],
     ['a card drag', 'outside'], ['a pan', 'outside'], ['a link drag', 'outside'],
@@ -456,14 +470,7 @@ test.describe('Workflows canvas gestures', () => {
       try {
         let disabledTarget = byTestId(page, 'workflow-auto-layout');
         if (target === 'outside') {
-          await page.evaluate(() => {
-            const standIn = document.createElement('button');
-            standIn.disabled = true;
-            standIn.setAttribute('data-testid', 'stand-in-disabled');
-            standIn.textContent = 'Disabled';
-            standIn.style.cssText = 'position:fixed;top:4px;left:700px;width:120px;height:30px;z-index:99999';
-            document.body.appendChild(standIn);
-          });
+          await addDisabledStandIn(page, 'button', 'stand-in-disabled', 700);
           disabledTarget = byTestId(page, 'stand-in-disabled');
         }
         await expect(disabledTarget).toBeDisabled();
@@ -507,6 +514,52 @@ test.describe('Workflows canvas gestures', () => {
       }
     });
   }
+
+  test('a pan let go over a disabled input, select or textarea ends', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      const tags = ['input', 'select', 'textarea'] as const;
+      for (const [index, tag] of tags.entries()) {
+        await addDisabledStandIn(page, tag, `stand-in-${tag}`, 700 + index * 140);
+      }
+      const inFlight = () => page.evaluate(() => ({
+        card: document.querySelectorAll('.react-flow__node.dragging').length,
+        pan: document.querySelectorAll('.react-flow__pane.dragging').length,
+        link: document.querySelectorAll('[data-testid="workflow-canvas"][data-linking]').length,
+      }));
+      const viewport = () => page.locator('.workflow-canvas .react-flow__viewport').evaluate((element) => (element as HTMLElement).style.transform);
+
+      for (const tag of tags) {
+        const standIn = byTestId(page, `stand-in-${tag}`);
+        await expect(standIn).toBeDisabled();
+        // At rest the control takes the pointer, for the tip that says why it is disabled.
+        await expect(standIn).toHaveCSS('pointer-events', 'auto');
+        const target = await centerOf(page, standIn);
+        const pane = await page.locator('.workflow-canvas .react-flow__pane').boundingBox();
+        if (!pane || pane.width === 0) throw new Error('canvas not laid out');
+        // Near the pane's left edge, clear of the cards.
+        await page.mouse.move(pane.x + 12, pane.y + 40);
+        await page.mouse.down();
+        await page.mouse.move(target.x, target.y, { steps: 14 });
+        // The pan is live, so the check below is not of a press that never started.
+        await expect.poll(inFlight).toEqual({ card: 0, pan: 1, link: 0 });
+        // While it is, no disabled control takes the pointer.
+        await expect(standIn).toHaveCSS('pointer-events', 'none');
+
+        await page.mouse.up();
+        await expect.poll(inFlight).toEqual({ card: 0, pan: 0, link: 0 });
+        await expect(standIn).toHaveCSS('pointer-events', 'auto');
+        // Nothing is held any more: a move with no button down leaves the canvas where it is.
+        const rested = await viewport();
+        await page.mouse.move(target.x + 100, target.y + 300, { steps: 6 });
+        await settleFrames(page, 3);
+        expect(await viewport()).toBe(rested);
+        expect(await inFlight()).toEqual({ card: 0, pan: 0, link: 0 });
+      }
+    } finally {
+      await browser.close();
+    }
+  });
 
   test('a card being moved lifts, and settles when it is let go', async () => {
     const { browser, page } = await launch('draft');

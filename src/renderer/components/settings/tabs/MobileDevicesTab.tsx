@@ -589,7 +589,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         data-testid="mobile-relay-test-result"
                         data-reachable="true"
                       >
-                        {/* A bare Check, not CheckCircle: an enclosed glyph loses
+                        {/* A bare Check, not CircleCheck: an enclosed glyph loses
                             its interior at this size the way ShieldCheck did. */}
                         <Check size={13} className="text-active shrink-0" />
                         {relayLatencyMs == null ? t`Reachable` : t`Reachable, ${relayLatencyMs} ms`}

@@ -4,7 +4,7 @@
  * Verifies:
  * - Merged settings file contains hooks for tool_start, prompt, and idle events
  * - Events JSONL file watcher emits state changes to the renderer
- * - Task card shows Loader2 spinner when thinking, static dot when idle
+ * - Task card shows LoaderCircle spinner when thinking, static dot when idle
  *
  * Uses mock Claude CLI. Since mock Claude doesn't invoke hooks,
  * tests write event files directly to simulate Claude Code's behavior.
@@ -368,7 +368,7 @@ test.describe('Claude Agent -- Task Card Spinner', () => {
       if (el) el.scrollIntoView({ inline: 'nearest', behavior: 'instant' });
     });
 
-    // Look for the spinning loader (Loader2 renders as an SVG with animate-spin)
+    // Look for the spinning loader (LoaderCircle renders as an SVG with animate-spin)
     const spinner = page.locator('[data-swimlane-name="Planning"]').locator('.animate-spin').first();
     await expect(spinner).toBeVisible({ timeout: 5000 });
   });

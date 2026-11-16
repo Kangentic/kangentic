@@ -304,7 +304,7 @@ test.describe('CollapsedRail - colliding project initials', () => {
 // ─── Group 3: idle session, no activity icon ─────────────────────────────
 
 // AGENT activity indicators are intentionally omitted from the collapsed rail: at
-// the rail's narrow column width the partial-arc Loader2 glyph reads as a broken
+// the rail's narrow column width the partial-arc LoaderCircle glyph reads as a broken
 // icon overflowing the project initial. The expanded sidebar still surfaces
 // thinking/idle counts via SidebarActivityCounts; the rail just shows initials.
 //

@@ -727,7 +727,7 @@ test.describe('Task Activity Indicators', () => {
     // Gap 1: liveTelemetryUnsupported branch
     // When a task's agent declares liveTelemetryUnsupported (currently Droid
     // and Antigravity), ContextBar renders a static pill with the adapter's label and
-    // tooltip instead of the indefinite Loader2 spinner. The renderer never
+    // tooltip instead of the indefinite LoaderCircle spinner. The renderer never
     // branches on agent name -- it reads the generic capability flag from
     // agentList.find(a => a.name === task.agent).
     //
@@ -769,10 +769,10 @@ test.describe('Task Activity Indicators', () => {
         // Human-readable pill text
         await expect(usageBar).toContainText('Telemetry: TUI only');
 
-        // No spinner - the indefinite Loader2 must be absent. Asserted on
-        // `.lucide-loader-circle`, the class lucide actually emits: `Loader2` is an alias for
-        // `LoaderCircle`, so the old `.lucide-loader-2` selector matched nothing and this
-        // assertion passed no matter what rendered.
+        // No spinner - the indefinite LoaderCircle must be absent. Asserted on
+        // `.lucide-loader-circle`, the class lucide emits. The code once imported the glyph
+        // under its old name, `Loader2`, and the `.lucide-loader-2` selector written for it
+        // matched nothing, so this assertion passed no matter what rendered.
         await expect(usageBar.locator('.lucide-loader-circle')).toHaveCount(0);
 
         // No "Starting agent..." or "Resuming agent..." copy
@@ -1387,7 +1387,7 @@ test.describe('Task Activity Indicators', () => {
   // Maximizing the task-detail view hides the board card, so the idle-vs-active
   // signal is folded into the header's pause/resume button. The pause action
   // stays centered and visible at all times; activity is encoded by the
-  // surrounding ring: a spinning emerald ring (Loader2) for thinking, a static
+  // surrounding ring: a spinning emerald ring (LoaderCircle) for thinking, a static
   // amber ring (Circle) for idle/permission. The button's icon never changes on
   // hover. It is gated on canToggle (false in To Do), so these tasks live in the
   // Executing lane.
@@ -1516,7 +1516,7 @@ test.describe('Task Activity Indicators', () => {
         // Body: the muted launch overlay surfaces the spawn status.
         await expect(dialog.getByText('Creating worktree...').first()).toBeVisible({ timeout: 10000 });
 
-        // Header: a muted (grey) launch spinner - still a lucide Loader2, since "waiting to
+        // Header: a muted (grey) launch spinner - still a lucide LoaderCircle, since "waiting to
         // start" is not agent activity and the branding set has no loading mark - with no
         // activity ring at all yet (the agent has not started).
         const pauseButton = dialog.locator('button[aria-label="Pause session"]');
