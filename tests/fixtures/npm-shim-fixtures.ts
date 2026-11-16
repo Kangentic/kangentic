@@ -49,6 +49,43 @@ export function legacyNpmCmdShim(relativeTarget: string): string {
   ].join(CMD_SHIM_LINE_ENDING);
 }
 
+/**
+ * pnpm's `.cmd` shim, as `generateCmdShim` in pnpm's `@zkochan/cmd-shim` writes
+ * it (checked line for line against `src/index.ts` on the pnpm/cmd-shim main
+ * branch; not captured from a live install). pnpm writes the `NODE_PATH` block
+ * whenever an install has node paths to add, which a default hoisted install
+ * does, whatever the target is. A Node script (`nodeScript`) runs through
+ * `node.exe` beside the shim or `node`; any other target, a native `.exe` among
+ * them, is called directly as `@"%~dp0\<target>"   %*`.
+ */
+export function pnpmCmdShim(relativeTarget: string, options: { nodeScript: boolean; nodePath?: string }): string {
+  const quotedTarget = `"%~dp0\\${relativeTarget}"`;
+  const lines = ['@SETLOCAL'];
+  if (options.nodePath) {
+    lines.push(
+      '@IF NOT DEFINED NODE_PATH (',
+      `  @SET "NODE_PATH=${options.nodePath}"`,
+      ') ELSE (',
+      `  @SET "NODE_PATH=${options.nodePath};%NODE_PATH%"`,
+      ')',
+    );
+  }
+  if (options.nodeScript) {
+    lines.push(
+      '@IF EXIST "%~dp0\\node.exe" (',
+      `  "%~dp0\\node.exe"  ${quotedTarget} %*`,
+      ') ELSE (',
+      '  @SET PATHEXT=%PATHEXT:;.JS;=;%',
+      `  node  ${quotedTarget} %*`,
+      ')',
+    );
+  } else {
+    lines.push(`@${quotedTarget}   %*`);
+  }
+  lines.push('');
+  return lines.join(CMD_SHIM_LINE_ENDING);
+}
+
 /** The two-line shape every tests/fixtures/mock-*.cmd uses (no separator after `%~dp0`). */
 export function minimalCmdShim(relativeTarget: string): string {
   return ['@echo off', `node "%~dp0${relativeTarget}" %*`, ''].join(CMD_SHIM_LINE_ENDING);

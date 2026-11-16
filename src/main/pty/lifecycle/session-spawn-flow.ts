@@ -15,7 +15,7 @@ import type { FirstOutputTracker } from './first-output-tracker';
 import type { PtyHandle, PtyHostClient, PtyHostSpawnOutcome } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
-import { AgentCommandTooLongError, assertAgentCwdExists } from '../spawn/agent-start-refused';
+import { assertAgentCwdExists } from '../spawn/agent-start-refused';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
 import { HYPERLINK_ENV_KEY } from '../../../shared/hyperlink-env';
 import { addTaskProcessTag, listInWslEnv, parseWslShellSpec } from '../process-tag/task-process-tag';
@@ -26,8 +26,8 @@ import { traceTerminal } from '../terminal-trace';
 import { planRemoteSpawn } from '../spawn/remote-spawn';
 import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target';
 import { remoteTranscriptSource, type RemoteSessionRegistration } from '../../remote/remote-session-relay';
-import { directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
-import { buildTypedLaunch, commandFitsShell, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
+import { batchShimGiveUpOf, directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
+import { buildTypedLaunch, launchRefusal, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -321,11 +321,24 @@ export async function performSpawn(
   // installed in that distro), else the Terminal setting, as before. A remote
   // session is typed into the host's shell, named by its program (zsh, fish, ...).
   const shell = remotePlan ? remotePlan.shellName : (input.shell ?? await context.getShell());
-  // A command its shell cannot start never reaches a PTY, and ahead of the
-  // sibling drain for the reason the folder check above is. Agents only: a raw
-  // command's failure shows in its own terminal. A host is always Linux, whatever this computer is.
-  if (input.agentParser && input.command && !commandFitsShell({ command: input.command, shell, platform: remotePlan ? 'linux' : process.platform })) {
-    throw new AgentCommandTooLongError();
+  // What the shell gets typed. A session on a host types its own line
+  // (`remotePlan.typedLine`): the launcher is a file on this computer, and the
+  // host's login shell cannot source it. Built here, ahead of the refusal below,
+  // which reads it; the launcher file it may name is written later.
+  const launchInput = input.command && !remotePlan ? typedLaunchInput(input, input.command, shell) : null;
+  let typedLaunch = launchInput ? buildTypedLaunch(launchInput) : null;
+  // A command that cannot start never reaches a PTY, and ahead of the sibling
+  // drain for the reason the folder check above is. Agents only: a raw command's
+  // failure shows in its own terminal. A host is always Linux, whatever this computer is.
+  if (input.agentParser && input.command) {
+    const refusal = launchRefusal({
+      command: input.command,
+      shell,
+      platform: remotePlan ? 'linux' : process.platform,
+      typedLaunch,
+      shimGaveUp: batchShimGiveUpOf,
+    });
+    if (refusal) throw refusal;
   }
   // EVERY registry row for the task, not the first match. The registry holds
   // one row per task by contract, but a stale suspended placeholder (a repeat
@@ -549,14 +562,10 @@ export async function performSpawn(
     if (rejoin && registrationError) throw registrationError;
   }
 
-  // What the shell gets typed. A launcher file that line sources has to exist
-  // before it is typed, so it is written here; a short command never waits. One
-  // that cannot be written falls back to typing the whole command, which still
-  // works once the shell has reached its prompt. A session on a host types its
-  // own line (`remotePlan.typedLine`): the launcher is a file on this computer,
-  // and the host's login shell cannot source it.
-  const launchInput = input.command && !remotePlan ? typedLaunchInput(input, input.command, shell) : null;
-  let typedLaunch = launchInput ? buildTypedLaunch(launchInput) : null;
+  // A launcher file the typed line sources has to exist before it is typed, so
+  // it is written here; a short command never waits. One that cannot be written
+  // falls back to typing the whole command, which still works once the shell has
+  // reached its prompt.
   if (launchInput && typedLaunch?.launcher) {
     const written = await writeLauncher(typedLaunch.launcher, id);
     if (!written) typedLaunch = buildTypedLaunch({ ...launchInput, sessionDirectory: null });
@@ -704,6 +713,7 @@ export async function performSpawn(
     launcherUsed: typedLaunch !== null && typedLaunch.launcher !== null,
     launcherPath: typedLaunch?.launcher?.filePath ?? null,
     startPath: input.startPath,
+    ...(input.openingPrompt ? { openingPrompt: input.openingPrompt } : {}),
     agentCliVersion: input.agentCliVersion ?? null,
     agentCliPath: input.agentCliPath ?? null,
     resumeEvidence: input.resumeEvidence ?? null,

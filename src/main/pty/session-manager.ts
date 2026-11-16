@@ -44,7 +44,7 @@ import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn, type RejoinSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary, type SuspendedPlaceholderInput } from './session-registry';
-import { AgentStartRefusedError } from './spawn/pty-spawn';
+import { AgentBatchShimUnresolvedError, AgentStartRefusedError } from './spawn/pty-spawn';
 import type { RemoteHostRequest, RemoteSessionRoute } from '../remote/protocol/messages';
 import type { RemoteSessionRelay } from '../remote/remote-session-relay';
 import type { WriteOrigin } from './prompt-draft-ledger';
@@ -106,8 +106,10 @@ import {
   launchNeverStarted,
   launchTagsOf,
   logLaunchStep,
-  reportAgentSessionIdNotCaptured,
+  noteSessionIdCaptureWindowPassed,
   reportLaunchRecovered,
+  reportSessionIdCaptureOutcome,
+  reportPreflightFailure,
   reportSessionLaunchFailure,
   type LaunchEndedBy,
   type LaunchOutputClass,
@@ -749,6 +751,11 @@ export class SessionManager extends EventEmitter {
           // queue moves on either way, so the row is settled here, or the card
           // would read Queued for good.
           if (error instanceof AgentStartRefusedError && input.id) {
+            // A direct start's refusal is reported by its caller. A promotion has
+            // none, and the one refusal that is a launcher gap still has to say so.
+            if (error instanceof AgentBatchShimUnresolvedError) {
+              reportPreflightFailure({ cause: 'queued_start', error, agent: input.agentName ?? null, startPath: input.startPath });
+            }
             this.refuseQueuedStart(input.id, error);
             return;
           }
@@ -800,9 +807,18 @@ export class SessionManager extends EventEmitter {
       notifyAgentSessionId: (id, capturedId) => this.telemetry.notifyAgentSessionId(id, capturedId),
       sessionExists: (id) => this.registry.has(id),
       agentSessionIdOf: (id) => this.registry.get(id)?.agentSessionId ?? null,
-      onSessionIdNotCaptured: (id) => {
+      onCaptureWindowPassed: (id) => {
         const session = this.registry.get(id);
-        if (session) reportAgentSessionIdNotCaptured(session);
+        if (!session) return;
+        const storeEvidence = session.agentParser?.runtime?.sessionId?.storeEvidence;
+        const cliTarget = session.cliTarget ?? null;
+        noteSessionIdCaptureWindowPassed(
+          session,
+          storeEvidence ? () => storeEvidence({ cwd: session.commandCwd, cliTarget }) : null,
+        );
+      },
+      onCaptureOutcome: (id, outcome) => {
+        reportSessionIdCaptureOutcome(id, outcome, this.registry.get(id)?.status ?? null);
       },
     });
 
@@ -945,6 +961,9 @@ export class SessionManager extends EventEmitter {
           console.warn(`[SESSION] dropped an agent session id from a host for ${sessionId.slice(0, 8)}: it is no plain name`);
           return;
         }
+        // A session past the capture window was waiting on this: a late capture, not a miss.
+        // Below the drop above, so an id the row never takes stays a miss.
+        this.sessionIdManager.noteCaptured(sessionId);
         // The host can stop scanning this session's output for an id, unless this one was only worked
         // out, when the agent's own report is still wanted to confirm it.
         if (!options?.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });

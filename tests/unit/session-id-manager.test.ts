@@ -291,6 +291,110 @@ describe('SessionIdManager', () => {
     });
   });
 
+  describe('the outcome of a session past the window', () => {
+    function managerWithOutcomes(): { outcomeManager: SessionIdManager; windowPassed: ReturnType<typeof vi.fn>; outcomes: ReturnType<typeof vi.fn> } {
+      const windowPassed = vi.fn();
+      const outcomes = vi.fn();
+      const outcomeManager = new SessionIdManager({
+        hasAgentSessionId: (id) => capturedIds.has(id),
+        notifyAgentSessionId: (id, capturedId) => capturedIds.set(id, capturedId),
+        sessionExists: (id) => existingSessions.has(id),
+        agentSessionIdOf: (id) => capturedIds.get(id) ?? null,
+        onCaptureWindowPassed: windowPassed,
+        onCaptureOutcome: outcomes,
+      });
+      return { outcomeManager, windowPassed, outcomes };
+    }
+
+    it('names what the folder scan did: a match another session could own is dropped', async () => {
+      const { outcomeManager, outcomes } = managerWithOutcomes();
+      existingSessions.add('other');
+      existingSessions.add('s1');
+      outcomeManager.init('other', makeAdapter({ fromFilesystem: async () => null }), '/shared', 'codex');
+      outcomeManager.init('s1', makeAdapter({ fromFilesystem: async () => 'found-id' }), '/shared', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      outcomeManager.removeSession('s1');
+
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'dropped' });
+    });
+
+    it('names a scan that failed, and one still polling', async () => {
+      const { outcomeManager, outcomes } = managerWithOutcomes();
+      existingSessions.add('failed');
+      existingSessions.add('polling');
+      outcomeManager.init('failed', makeAdapter({ fromFilesystem: async () => { throw new Error('EACCES'); } }), '/a', 'codex');
+      outcomeManager.init('polling', makeAdapter({ fromFilesystem: () => new Promise(() => undefined) }), '/b', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      outcomeManager.removeSession('failed');
+      outcomeManager.removeSession('polling');
+
+      expect(outcomes.mock.calls.map((call) => [call[0], call[1].filesystemScan])).toEqual([['failed', 'failed'], ['polling', 'pending']]);
+    });
+
+    it('holds nothing and arms nothing without the callbacks, as in the pty host', async () => {
+      existingSessions.add('s1');
+      manager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(vi.getTimerCount()).toBe(0);
+      manager.noteCaptured('s1');
+      manager.removeSession('s1');
+    });
+
+    it('reports a session that holds an id but never called noteCaptured as late at the ceiling, once', async () => {
+      const { outcomeManager, outcomes } = managerWithOutcomes();
+      existingSessions.add('s1');
+      outcomeManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      capturedIds.set('s1', 'quiet-id');
+      await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS);
+
+      expect(outcomes).toHaveBeenCalledTimes(1);
+      expect(outcomes.mock.calls[0][0]).toBe('s1');
+      expect(outcomes.mock.calls[0][1].kind).toBe('late');
+      outcomeManager.removeSession('s1');
+      expect(outcomes).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a session that holds an id but never called noteCaptured as late when removed, once', async () => {
+      const { outcomeManager, outcomes } = managerWithOutcomes();
+      existingSessions.add('s1');
+      outcomeManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
+      await vi.advanceTimersByTimeAsync(31_000);
+      capturedIds.set('s1', 'quiet-id');
+      outcomeManager.removeSession('s1');
+      await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS);
+
+      expect(outcomes).toHaveBeenCalledTimes(1);
+      expect(outcomes.mock.calls[0][1].kind).toBe('late');
+    });
+
+    it('ignores a filesystem scan result from a spawn since replaced under the same id', async () => {
+      existingSessions.add('s1');
+      let resolveFirstScan: (capturedId: string | null) => void = () => undefined;
+      const firstScan = new Promise<string | null>((resolve) => { resolveFirstScan = resolve; });
+      manager.init('s1', makeAdapter({ fromFilesystem: () => firstScan }), '/cwd', 'codex');
+      manager.removeSession('s1');
+      manager.init('s1', makeAdapter({ fromFilesystem: () => new Promise(() => undefined) }), '/cwd', 'codex');
+
+      resolveFirstScan('stale-id');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(capturedIds.has('s1')).toBe(false);
+    });
+
+    it('says nothing of a capture before the window', async () => {
+      const { outcomeManager, windowPassed, outcomes } = managerWithOutcomes();
+      existingSessions.add('s1');
+      outcomeManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
+      capturedIds.set('s1', 'early-id');
+      outcomeManager.noteCaptured('s1');
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(windowPassed).not.toHaveBeenCalled();
+      expect(outcomes).not.toHaveBeenCalled();
+    });
+  });
+
   describe('removeSession', () => {
     it('clears timer and drops scanner state', () => {
       const adapter = makeAdapter({ fromOutput });

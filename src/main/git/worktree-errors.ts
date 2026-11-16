@@ -47,14 +47,26 @@ export class StaleWorktreeDirectoryError extends Error {
  * behind, and the script's output is the user's, so it never leaves either.
  */
 export class WorktreeSetupScriptError extends Error {
-  /** The failure's exit code or errno, so the launch report's `errno` tag survives the wrap. */
+  /** A spawn's errno (an `ENOENT` shell), so the launch report's `errno` tag survives the wrap. */
   readonly code?: string | number;
+  /**
+   * How the script ended, from `spawnWithAbort`'s fields (`SpawnExitFields`): its
+   * exit code, the signal that ended it, or that the timeout stopped it. Sentry
+   * DESKTOP-3D carried none of these and could not tell which.
+   */
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly timedOut?: boolean;
 
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'WorktreeSetupScriptError';
-    const causeCode = (options?.cause as { code?: unknown } | null | undefined)?.code;
+    const cause = options?.cause as { code?: unknown; exitCode?: unknown; signal?: unknown; timedOut?: unknown } | null | undefined;
+    const causeCode = cause?.code;
     if (typeof causeCode === 'string' || typeof causeCode === 'number') this.code = causeCode;
+    if (typeof cause?.exitCode === 'number') this.exitCode = cause.exitCode;
+    if (typeof cause?.signal === 'string') this.signal = cause.signal;
+    if (typeof cause?.timedOut === 'boolean') this.timedOut = cause.timedOut;
   }
 }
 

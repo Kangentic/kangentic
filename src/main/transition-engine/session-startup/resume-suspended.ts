@@ -673,6 +673,8 @@ export async function resumeSuspendedSessions(
           command: input.command,
           cwd: input.cwd,
           startPath: 'startup_recovery',
+          // The recap, when there is one, was built into the command.
+          openingPrompt: input.prompt ? 'command_line' : 'none',
           agentCliVersion: input.agentCliVersion,
           agentCliPath: input.agentCliPath,
           resumeEvidence: input.resumeEvidence,

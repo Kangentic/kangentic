@@ -29,23 +29,26 @@ import {
   lineTooLongSentence,
   logLaunchStep,
   preflightTagsOf,
+  noteSessionIdCaptureWindowPassed,
   reportLaunchFailure,
-  reportAgentSessionIdNotCaptured,
   reportLaunchRecovered,
   reportPreflightFailure,
   reportPtyPortFailure,
+  reportSessionIdCaptureOutcome,
   reportSessionLaunchFailure,
   resetLaunchReports,
 } from '../../src/main/pty/agent-launch-report';
 import { isReported } from '../../src/main/analytics/handled-report';
 import { AgentCliNotFoundError } from '../../src/main/agent/shared/agent-cli-not-found';
+import { WorktreeSetupScriptError } from '../../src/main/git/worktree-errors';
+import { AgentBatchShimUnresolvedError } from '../../src/main/pty/spawn/agent-start-refused';
 import { recordDetectedCliIdentity, resetDetectedCliIdentities } from '../../src/main/agent/shared/cli-identity';
 import realFs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
-import type { AgentParser } from '../../src/shared/types';
+import type { AgentParser, SessionIdStoreEvidence } from '../../src/shared/types';
 
 const STARTED_AT = '2026-11-04T12:00:00.000Z';
 const STARTED_AT_MS = Date.parse(STARTED_AT);
@@ -702,44 +705,138 @@ describe('reportPtyPortFailure', () => {
   });
 });
 
-describe('reportAgentSessionIdNotCaptured', () => {
-  it('sends a fixed message with the agent and its CLI version as tags, grouped per agent', () => {
-    reportAgentSessionIdNotCaptured(session({ agentName: 'codex', agentCliVersion: '0.163.0 (Codex CLI)' }));
+describe('the session id capture reports', () => {
+  const never = { kind: 'never', settledBy: 'removed', filesystemScan: 'empty' } as const;
+  const late = { kind: 'late', capturedAfterMs: 42_000, filesystemScan: 'pending' } as const;
 
-    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  /** A session past the capture window, then its outcome, and what was sent. */
+  async function settle(
+    sessionOverrides: Partial<ManagedSession>,
+    outcome: Parameters<typeof reportSessionIdCaptureOutcome>[1],
+    storeCheck: (() => Promise<SessionIdStoreEvidence>) | null = null,
+  ): Promise<void> {
+    const pastWindow = session({ resuming: false, ...sessionOverrides });
+    noteSessionIdCaptureWindowPassed(pastWindow, storeCheck);
+    reportSessionIdCaptureOutcome(pastWindow.id, outcome, 'running');
+    await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalled());
+  }
+
+  it('sends a never-captured session under a fixed message, grouped per agent, with fixed facts', async () => {
+    await settle(
+      { agentName: 'codex', agentCliVersion: '0.163.0 (Codex CLI)', openingPrompt: 'typed', agentHookObservedAt: STARTED_AT_MS + 2_000, firstOutputAt: STARTED_AT_MS + 900 },
+      never,
+      async () => 'present',
+    );
+
     const [error, eventTags, contexts, fingerprint] = reportHandledError.mock.calls[0];
     expect((error as Error).name).toBe('AgentSessionIdNotCapturedError');
     expect((error as Error).message).toBe('Agent session id not captured (codex)');
-    expect(eventTags).toEqual({ source: 'agent_session_id', agent: 'codex', agent_cli_version: '0.163.0' });
+    expect(eventTags).toEqual({
+      source: 'agent_session_id',
+      agent: 'codex',
+      agent_cli_version: '0.163.0',
+      start_path: 'board',
+      shell: 'zsh',
+      opening_prompt: 'typed',
+      hook_seen: 'yes',
+      agent_started: 'no',
+      first_output: 'yes',
+      settled_by: 'removed',
+      session_status: 'running',
+      fs_scan: 'empty',
+      id_store: 'present',
+    });
     expect(contexts).toEqual({});
     expect(fingerprint).toEqual(['agent-session-id-not-captured', 'codex']);
   });
 
-  it('keeps a path or an unrecognized name out of the tags', () => {
-    reportAgentSessionIdNotCaptured(session({ agentName: '/Users/dev/agent', agentCliVersion: '/Users/dev/bin/agent' }));
+  it('sends a late capture as an issue of its own, with how late', async () => {
+    await settle({ agentName: 'opencode' }, late);
 
     const [error, eventTags, , fingerprint] = reportHandledError.mock.calls[0];
-    expect(eventTags).toEqual({ source: 'agent_session_id', agent: 'other', agent_cli_version: 'unknown' });
+    expect((error as Error).name).toBe('AgentSessionIdCapturedLateError');
+    expect(eventTags).toMatchObject({ agent: 'opencode', captured_after_s: '30-60', fs_scan: 'pending', id_store: 'unknown', opening_prompt: 'unknown' });
+    expect(eventTags).not.toHaveProperty('settled_by');
+    expect(fingerprint).toEqual(['agent-session-id-captured-late', 'opencode']);
+  });
+
+  it('keeps a path or an unrecognized name out of the tags', async () => {
+    await settle({ agentName: '/Users/dev/agent', agentCliVersion: '/Users/dev/bin/agent', shell: '/Users/dev/bin/myshell' }, never);
+
+    const [error, eventTags, , fingerprint] = reportHandledError.mock.calls[0];
+    expect(eventTags).toMatchObject({ agent: 'other', agent_cli_version: 'unknown' });
     expect(fingerprint).toEqual(['agent-session-id-not-captured', 'other']);
     expect(JSON.stringify([(error as Error).message, eventTags])).not.toContain('/Users/dev');
   });
 
-  it('reports once per agent per run, and a different agent still reports', () => {
-    reportAgentSessionIdNotCaptured(session({ agentName: 'claude' }));
-    reportAgentSessionIdNotCaptured(session({ agentName: 'claude', agentCliVersion: '9.9.9' }));
-    reportAgentSessionIdNotCaptured(session({ agentName: 'codex' }));
+  it('reads a store check that fails or hangs as unknown', async () => {
+    await settle({ agentName: 'codex' }, never, async () => { throw new Error('EACCES /Users/dev/.codex'); });
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ id_store: 'unknown' });
 
-    expect(reportHandledError).toHaveBeenCalledTimes(2);
-    expect(reportHandledError.mock.calls.map((call) => call[1].agent)).toEqual(['claude', 'codex']);
+    resetLaunchReports();
+    reportHandledError.mockClear();
+    vi.useFakeTimers();
+    try {
+      noteSessionIdCaptureWindowPassed(session({ agentName: 'codex' }), () => new Promise(() => undefined));
+      reportSessionIdCaptureOutcome('session-1-long-id', never, null);
+      await vi.advanceTimersByTimeAsync(2_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ id_store: 'unknown', session_status: 'removed' });
   });
 
-  it('sends nothing once the quit has started, and does not spend the agent\'s one report on it', () => {
+  it('reports each kind once per agent per run, and a different agent still reports', async () => {
+    await settle({ agentName: 'claude' }, never);
+    reportHandledError.mockClear();
+    noteSessionIdCaptureWindowPassed(session({ agentName: 'claude' }), null);
+    reportSessionIdCaptureOutcome('session-1-long-id', never, null);
+    await settle({ agentName: 'claude' }, late);
+    reportHandledError.mockClear();
+    await settle({ agentName: 'codex' }, never);
+
+    expect(reportHandledError.mock.calls.map((call) => call[1].agent)).toEqual(['codex']);
+  });
+
+  it('vets the opening prompt, so an unexpected string reports unknown', async () => {
+    await settle({ agentName: 'codex', openingPrompt: '/Users/dev/x' as never }, never);
+
+    const eventTags = reportHandledError.mock.calls[0][1];
+    expect(eventTags).toMatchObject({ opening_prompt: 'unknown' });
+    expect(JSON.stringify(eventTags)).not.toContain('/Users/dev');
+  });
+
+  it('does not run the store check for an agent that already spent both kinds, and sends nothing later', async () => {
+    await settle({ agentName: 'claude' }, never);
+    await settle({ agentName: 'claude' }, late);
+    reportHandledError.mockClear();
+
+    const storeCheck = vi.fn(async (): Promise<SessionIdStoreEvidence> => 'present');
+    const anotherSession = session({ agentName: 'claude', id: 'session-2-long-id' });
+    noteSessionIdCaptureWindowPassed(anotherSession, storeCheck);
+    reportSessionIdCaptureOutcome(anotherSession.id, never, null);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(storeCheck).not.toHaveBeenCalled();
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing for a session never held at the window', async () => {
+    reportSessionIdCaptureOutcome('no-such-session', never, null);
+    await Promise.resolve();
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing once the quit has started, and does not spend the agent\'s one report on it', async () => {
     shuttingDown.value = true;
-    reportAgentSessionIdNotCaptured(session());
+    noteSessionIdCaptureWindowPassed(session(), null);
+    reportSessionIdCaptureOutcome('session-1-long-id', never, null);
+    await Promise.resolve();
     expect(reportHandledError).not.toHaveBeenCalled();
 
     shuttingDown.value = false;
-    reportAgentSessionIdNotCaptured(session());
+    await settle({}, never);
     expect(reportHandledError).toHaveBeenCalledTimes(1);
   });
 });
@@ -763,6 +860,53 @@ describe('reportPreflightFailure', () => {
     expect(eventTags).not.toHaveProperty('error_type');
     expect(JSON.stringify(eventTags)).not.toContain('Acme');
     expect(JSON.stringify(eventTags)).not.toContain('acme');
+  });
+
+  describe('a Post-Worktree Script failure (Sentry DESKTOP-3D could not tell an exit from a kill)', () => {
+    const scriptBase = { ...base, cause: 'worktree_setup_script' } as const;
+    const scriptFailure = (fields: Record<string, unknown>): WorktreeSetupScriptError => (
+      new WorktreeSetupScriptError('init script failed', { cause: Object.assign(new Error('init script failed'), fields) })
+    );
+
+    it('names the exit code of a script that exited on its own', () => {
+      reportPreflightFailure({ ...scriptBase, error: scriptFailure({ exitCode: 1, timedOut: false }) });
+
+      const eventTags = reportHandledError.mock.calls[0][1];
+      expect(eventTags).toMatchObject({ error_type: 'WorktreeSetupScriptError', script_exit: '1', timed_out: 'no' });
+      expect(eventTags).not.toHaveProperty('script_signal');
+    });
+
+    it('names a script the timeout stopped', () => {
+      reportPreflightFailure({ ...scriptBase, error: scriptFailure({ timedOut: true }) });
+
+      const eventTags = reportHandledError.mock.calls[0][1];
+      expect(eventTags).toMatchObject({ timed_out: 'yes' });
+      expect(eventTags).not.toHaveProperty('script_exit');
+    });
+
+    it('names the signal that ended it, and only a signal\'s name', () => {
+      reportPreflightFailure({ ...scriptBase, error: scriptFailure({ signal: 'SIGKILL', timedOut: false }) });
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ script_signal: 'SIGKILL', timed_out: 'no' });
+
+      resetLaunchReports();
+      reportHandledError.mockClear();
+      reportPreflightFailure({ ...scriptBase, error: scriptFailure({ signal: 'killed by /Users/dev/hook' }) });
+      expect(reportHandledError.mock.calls[0][1]).not.toHaveProperty('script_signal');
+    });
+  });
+
+  it('files a start refused for a .cmd shim under a cause of its own, with why the shim gave up', () => {
+    reportPreflightFailure({ ...base, cause: 'agent_start', error: new AgentBatchShimUnresolvedError('node_path') });
+
+    const [sent, eventTags, , fingerprint] = reportHandledError.mock.calls[0];
+    expect(eventTags).toMatchObject({
+      cause: 'batch_shim_unresolved',
+      batch_shim: 'node_path',
+      start_refused_reason: 'prompt-too-long',
+      error_type: 'AgentBatchShimUnresolvedError',
+    });
+    expect((sent as Error).message).toBe('Agent launch failed: preflight (batch_shim_unresolved)');
+    expect(fingerprint).toEqual(['agent-launch', 'preflight', 'batch_shim_unresolved']);
   });
 
   it('sends a fixed message, never the text git wrote', () => {

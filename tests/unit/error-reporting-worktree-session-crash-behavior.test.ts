@@ -19,7 +19,7 @@ import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { AgentParser, CrashRecord } from '../../src/shared/types';
+import type { AgentParser, CrashRecord, SessionIdStoreEvidence } from '../../src/shared/types';
 
 type SpawnBehavior = { exitCode: number; stderr?: string };
 
@@ -202,43 +202,126 @@ describe('worktree removal failure report', () => {
 });
 
 describe('session id not captured', () => {
-  function adapterWithCapturePaths(): AgentParser {
+  // Sentry DESKTOP-36 and DESKTOP-3A reported at the 30 s window whether or not
+  // an id arrived after it. These drive the real SessionIdManager into the real
+  // reports, wired as SessionManager wires them, and read what was sent.
+  function adapterWithCapturePaths(storeEvidence?: () => Promise<SessionIdStoreEvidence>): AgentParser {
     return {
-      runtime: { sessionId: { fromOutput: () => null } },
+      runtime: { sessionId: { fromOutput: () => null, ...(storeEvidence ? { storeEvidence } : {}) } },
     } as unknown as AgentParser;
   }
 
-  async function armManager(options: { sessionExists: boolean; captured: boolean }) {
+  async function armManager(options: { sessionExists?: boolean; storeEvidence?: () => Promise<SessionIdStoreEvidence> } = {}) {
     vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const onSessionIdNotCaptured = vi.fn();
     const { SessionIdManager } = await import('../../src/main/pty/lifecycle/session-id-manager');
+    const report = await import('../../src/main/pty/agent-launch-report');
+    report.resetLaunchReports();
+    const agentParser = adapterWithCapturePaths(options.storeEvidence);
+    const session = {
+      id: 'session-1',
+      agentName: 'codex',
+      agentCliVersion: '0.169.0 (Codex CLI)',
+      startPath: 'board',
+      openingPrompt: 'none',
+      shell: '/bin/zsh',
+      commandCwd: tempDirectory,
+      status: 'running',
+      agentParser,
+    } as unknown as import('../../src/main/pty/session-registry').ManagedSession;
+    const state = { agentSessionId: null as string | null, exists: options.sessionExists ?? true };
     const manager = new SessionIdManager({
-      hasAgentSessionId: () => options.captured,
+      hasAgentSessionId: () => state.agentSessionId !== null,
       notifyAgentSessionId: vi.fn(),
-      sessionExists: () => options.sessionExists,
-      agentSessionIdOf: () => null,
-      onSessionIdNotCaptured,
+      sessionExists: () => state.exists,
+      agentSessionIdOf: () => state.agentSessionId,
+      onCaptureWindowPassed: () => {
+        const storeEvidence = agentParser.runtime?.sessionId?.storeEvidence;
+        report.noteSessionIdCaptureWindowPassed(session, storeEvidence ? () => storeEvidence({ cwd: tempDirectory }) : null);
+      },
+      onCaptureOutcome: (id, outcome) => report.reportSessionIdCaptureOutcome(id, outcome, state.exists ? 'running' : null),
     });
-    manager.init('session-1', adapterWithCapturePaths(), tempDirectory, 'claude');
-    vi.advanceTimersByTime(30_000);
-    return onSessionIdNotCaptured;
+    manager.init('session-1', agentParser, tempDirectory, 'codex');
+    /** An id arriving, as SessionManager's `onAgentSessionId` takes it. */
+    const capture = (id: string): void => {
+      state.agentSessionId = id;
+      manager.noteCaptured('session-1');
+    };
+    const sent = async (): Promise<Array<[Error, Record<string, string>]>> => {
+      await vi.advanceTimersByTimeAsync(0);
+      return hoisted.reportHandledError.mock.calls.map((call) => [call[0] as Error, call[1] as Record<string, string>]);
+    };
+    return { manager, state, capture, sent };
   }
 
-  it('calls the callback when no capture path found an id within the window', async () => {
-    const callback = await armManager({ sessionExists: true, captured: false });
-    expect(callback).toHaveBeenCalledTimes(1);
-    expect(callback).toHaveBeenCalledWith('session-1');
+  beforeEach(() => {
+    hoisted.reportHandledError.mockClear();
   });
 
-  it('stays quiet when an id was captured', async () => {
-    const callback = await armManager({ sessionExists: true, captured: true });
-    expect(callback).not.toHaveBeenCalled();
+  it('reports nothing at the window, since an id can still arrive', async () => {
+    const { sent } = await armManager();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await sent()).toEqual([]);
   });
 
-  it('stays quiet for a session that was removed meanwhile', async () => {
-    const callback = await armManager({ sessionExists: false, captured: false });
-    expect(callback).not.toHaveBeenCalled();
+  it('reads an id captured at 35 s as late, never as not captured', async () => {
+    const { capture, manager, sent } = await armManager();
+    await vi.advanceTimersByTimeAsync(35_000);
+    capture('0199a0b2-1111-2222-3333-444455556666');
+    manager.removeSession('session-1');
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const reports = await sent();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][0].name).toBe('AgentSessionIdCapturedLateError');
+    expect(reports[0][1]).toMatchObject({ agent: 'codex', captured_after_s: '30-60', start_path: 'board', opening_prompt: 'none' });
+  });
+
+  it('reports a session removed with no id as not captured, with the facts that say why', async () => {
+    const { manager, sent } = await armManager({ storeEvidence: async () => 'absent' });
+    await vi.advanceTimersByTimeAsync(31_000);
+    manager.removeSession('session-1');
+
+    const reports = await sent();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][0].name).toBe('AgentSessionIdNotCapturedError');
+    expect(reports[0][1]).toEqual({
+      source: 'agent_session_id',
+      agent: 'codex',
+      agent_cli_version: '0.169.0',
+      start_path: 'board',
+      shell: 'zsh',
+      opening_prompt: 'none',
+      hook_seen: 'no',
+      agent_started: 'no',
+      first_output: 'no',
+      settled_by: 'removed',
+      session_status: 'running',
+      fs_scan: 'none',
+      id_store: 'absent',
+    });
+  });
+
+  it('reports a session still without an id at the ceiling, though its PTY exited and its row stayed', async () => {
+    const { manager, sent } = await armManager();
+    await vi.advanceTimersByTimeAsync(31_000);
+    manager.clearDiagnostic('session-1');
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const reports = await sent();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][1]).toMatchObject({ settled_by: 'ceiling', id_store: 'unknown' });
+  });
+
+  it('stays quiet when an id arrived within the window, or the session was removed before it', async () => {
+    const captured = await armManager();
+    captured.capture('0199a0b2-1111-2222-3333-444455556666');
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+    expect(await captured.sent()).toEqual([]);
+
+    const removed = await armManager({ sessionExists: false });
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+    expect(await removed.sent()).toEqual([]);
   });
 });
 

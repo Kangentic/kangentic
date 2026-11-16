@@ -109,6 +109,8 @@ vi.mock('../../src/shared/paths', async (importOriginal) => ({
 
 // The real buildTypedLaunch, watched: one test pins what the spawn hands it.
 const buildTypedLaunchSpy = vi.hoisted(() => vi.fn());
+// Likewise the real launchRefusal: the remote block pins what the spawn asks it.
+const launchRefusalSpy = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/pty/spawn/typed-launch', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/main/pty/spawn/typed-launch')>();
   return {
@@ -116,6 +118,10 @@ vi.mock('../../src/main/pty/spawn/typed-launch', async (importOriginal) => {
     buildTypedLaunch: (...callArguments: Parameters<typeof original.buildTypedLaunch>) => {
       buildTypedLaunchSpy(...callArguments);
       return original.buildTypedLaunch(...callArguments);
+    },
+    launchRefusal: (...callArguments: Parameters<typeof original.launchRefusal>) => {
+      launchRefusalSpy(...callArguments);
+      return original.launchRefusal(...callArguments);
     },
   };
 });
@@ -125,6 +131,7 @@ import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { directLaunchOfBatchShim } from '../../src/main/agent/shared/npm-shim-target';
 import { AgentCwdMissingError, resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
+import { AgentBatchShimUnresolvedError } from '../../src/main/pty/spawn/agent-start-refused';
 import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
 import { safeKillPty } from '../../src/main/pty/lifecycle/pty-kill';
 import { removeAdapterHooks } from '../../src/main/pty/lifecycle/adapter-lifecycle';
@@ -380,6 +387,34 @@ describe('performSpawn - a command too long to type', () => {
     expect(buildTypedLaunchSpy.mock.calls[0][0].batchShimLaunch).toBe(directLaunchOfBatchShim);
   });
 
+  it('refuses an agent past cmd\'s budget whose .cmd shim it cannot read past, before any PTY or sibling', async () => {
+    // Sentry DESKTOP-3Q, DESKTOP-3R: this used to type `echo The command line is
+    // too long.` and leave a working agent on the card until the absence sweep.
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const context = makeContext();
+    const siblingPty = { sealUserInput: vi.fn() };
+    seedRow(context, { id: 'sess-old', status: 'running' });
+    context.registry.get('sess-old')!.pty = siblingPty as never;
+    // A shim that is not on disk reads as unreadable on every platform.
+    const shimPath = path.join(root, 'npm', 'claude.cmd');
+    const command = `"${shimPath}" --session-id abc "${'x'.repeat(7500)}"`;
+
+    const refusal = performSpawn(makeInput({
+      id: 'sess-new',
+      command,
+      shell: 'cmd.exe',
+      agentParser: makeAdapter({}),
+      statusOutputPath: path.join(root, 'sessions', 'session-cmd', 'status.json'),
+    }), context);
+
+    await expect(refusal).rejects.toBeInstanceOf(AgentBatchShimUnresolvedError);
+    await expect(refusal).rejects.toMatchObject({ reason: 'prompt-too-long', shimGaveUp: 'unreadable' });
+    expect(context.host.spawn).not.toHaveBeenCalled();
+    expect(siblingPty.sealUserInput).not.toHaveBeenCalled();
+    expect(context.registry.get('sess-old')?.pty).toBe(siblingPty);
+    expect(fs.existsSync(path.join(root, 'sessions', 'session-cmd', 'launch.cmd'))).toBe(false);
+  });
+
   it.skipIf(process.platform === 'win32')('writes the launcher readable by its owner alone', async () => {
     const sessionDirectory = path.join(root, 'sessions', 'session-mode');
 
@@ -597,6 +632,27 @@ describe('performSpawn - the start path on the session row', () => {
     await performSpawn(makeInput({ id: 'session-retry-0000-000000000000', startPath: 'retry' }), context);
 
     expect(context.registry.get('session-retry-0000-000000000000')?.startPath).toBe('retry');
+  });
+});
+
+describe('performSpawn - the opening prompt delivery on the session row', () => {
+  // The launch report sends it as a Sentry tag, read off the row.
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('copies how the opening prompt was delivered onto the registry row', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-opening-typed-0000-00000000', openingPrompt: 'typed' }), context);
+
+    expect(context.registry.get('session-opening-typed-0000-00000000')?.openingPrompt).toBe('typed');
+  });
+
+  it('leaves the row without one on a spawn that carried none', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-opening-none-0000-000000000' }), context);
+
+    expect(context.registry.get('session-opening-none-0000-000000000')?.openingPrompt).toBeUndefined();
   });
 });
 
@@ -2519,6 +2575,30 @@ describe('performSpawn - a session on a remote host (#913)', () => {
       ...overrides,
     });
   }
+
+  describe('a long command whose head is a .cmd shim', () => {
+    // A host's login shell is Linux whatever this computer is, and its line is the plan's own,
+    // so neither cmd's typed budget nor this computer's shim reader applies to it.
+    const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', hostPlatform);
+    });
+
+    it('is not refused as an unresolved shim and builds no typed launch, with the refusal asked as Linux', async () => {
+      Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+      const context = makeContext();
+      const shimPath = path.join(os.tmpdir(), 'dev', 'npm', 'claude.cmd');
+      const command = `"${shimPath}" --session-id abc "${'x'.repeat(7500)}"`;
+
+      await expect(performSpawn(remoteInput({ command, agentParser: makeAdapter({}) }), context)).resolves.toBeDefined();
+
+      expect(buildTypedLaunchSpy).not.toHaveBeenCalled();
+      expect(launchRefusalSpy).toHaveBeenCalledTimes(1);
+      expect(launchRefusalSpy.mock.calls[0][0]).toMatchObject({ platform: 'linux', typedLaunch: null });
+      expect(context.host.spawn).toHaveBeenCalledTimes(1);
+    });
+  });
 
   describe('the host\'s session folder', () => {
     it('is registered with the relay BEFORE the host starts the PTY, so the first hook has somewhere to publish', async () => {

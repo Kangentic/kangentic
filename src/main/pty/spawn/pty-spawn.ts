@@ -240,6 +240,7 @@ export {
   AgentStartRefusedError,
   AgentCwdMissingError,
   AgentCommandTooLongError,
+  AgentBatchShimUnresolvedError,
   assertAgentCwdExists,
   startBlockedReasonForCwd,
 } from './agent-start-refused';

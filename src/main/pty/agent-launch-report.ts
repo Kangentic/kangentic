@@ -31,13 +31,15 @@ import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
 import { shellProgramName } from '../../shared/shell-quote';
-import type { LaunchStartPath } from '../../shared/types';
+import type { LaunchStartPath, OpeningPromptDelivery, SessionIdStoreEvidence } from '../../shared/types';
+import type { SessionIdCaptureOutcome } from './lifecycle/session-id-manager';
 import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
+import { WorktreeSetupScriptError } from '../git/worktree-errors';
 import type { AgentProcessPresence } from './host/agent-process-presence';
 import { classifyLaunchOutput, type LaunchOutputClass } from './launch-output-class';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { parseWslShellSpec } from './process-tag/task-process-tag';
-import { AgentStartRefusedError } from './spawn/agent-start-refused';
+import { AgentBatchShimUnresolvedError, AgentStartRefusedError } from './spawn/agent-start-refused';
 import type { ManagedSession } from './session-registry';
 
 // Re-exported for the callers that also read this file's report functions. A
@@ -419,7 +421,36 @@ function errorShapeTags(error: unknown): Record<string, string> {
   // A fixed value: which folder a refused start lost (a worktree or the project
   // folder), which its redacted path cannot say. Sentry DESKTOP-2P could not.
   if (error instanceof AgentStartRefusedError) tags.start_refused_reason = error.reason;
+  // A fixed word: why a `.cmd` shim could not be read past (Sentry DESKTOP-3R
+  // could not say which shim its user had).
+  if (error instanceof AgentBatchShimUnresolvedError) tags.batch_shim = error.shimGaveUp;
+  if (error instanceof WorktreeSetupScriptError) Object.assign(tags, setupScriptTags(error));
   return tags;
+}
+
+/** A signal's name. Anything else is left out. */
+const SIGNAL_NAME = /^SIG[A-Z0-9]{1,10}$/;
+
+/**
+ * How a Post-Worktree Script ended, in fixed values: its exit code, the signal
+ * that ended it, and whether the timeout stopped it. Sentry DESKTOP-3D had none
+ * of these and could not tell an exit from a kill.
+ */
+function setupScriptTags(error: WorktreeSetupScriptError): Record<string, string> {
+  const tags: Record<string, string> = {};
+  if (typeof error.exitCode === 'number' && Number.isInteger(error.exitCode)) tags.script_exit = String(error.exitCode);
+  if (error.signal && SIGNAL_NAME.test(error.signal)) tags.script_signal = error.signal;
+  if (typeof error.timedOut === 'boolean') tags.timed_out = error.timedOut ? 'yes' : 'no';
+  return tags;
+}
+
+/**
+ * The cause a preflight report goes under. A start refused for a shim this
+ * cannot resolve opens an issue of its own whichever path started it, rather
+ * than joining that path's generic one and spending its one event per run.
+ */
+function preflightCauseOf(cause: string, error: unknown): string {
+  return error instanceof AgentBatchShimUnresolvedError ? 'batch_shim_unresolved' : cause;
 }
 
 /** What `reportPreflightFailure` takes. */
@@ -450,7 +481,8 @@ export interface PreflightFailure {
  */
 export function reportPreflightFailure(failure: PreflightFailure): void {
   try {
-    const { cause, error, agent, agentCliVersion, startPath, alreadyCounted } = failure;
+    const { error, agent, agentCliVersion, startPath, alreadyCounted } = failure;
+    const cause = preflightCauseOf(failure.cause, error);
     if (isAbortError(error)) return;
     if (isReported(error)) return;
     const tags = {
@@ -564,32 +596,131 @@ export function reportPtyPortFailure(): void {
   reportLaunchFailure({ stage: 'pty_port', cause: 'not_delivered', tags: {} });
 }
 
-/** Agents whose session id went uncaptured this run. */
+/** Agents whose session id went uncaptured this run, and those captured late. */
 const uncapturedSessionIdAgents = new Set<string>();
+const lateSessionIdAgents = new Set<string>();
+
+/** The longest a session-id report waits on the agent's own store check. */
+const STORE_EVIDENCE_WAIT_MS = 2_000;
+
+/** A session past the capture window: its facts at the window, and the store check started then. */
+interface PendingSessionIdReport {
+  agent: string;
+  tags: Record<string, string>;
+  storeEvidence: Promise<SessionIdStoreEvidence>;
+}
+
+const pendingSessionIdReports = new Map<string, PendingSessionIdReport>();
+
+/** Whether the moment was recorded, as `yes` or `no`. */
+function observedTag(timestamp: number | null | undefined): string {
+  return typeof timestamp === 'number' ? 'yes' : 'no';
+}
+
+const OPENING_PROMPT_TAGS: ReadonlySet<string> = new Set<OpeningPromptDelivery>(['command_line', 'typed', 'none']);
+
+/** How the opening prompt was delivered, or `unknown`: a value from anywhere else never reaches a tag. */
+function openingPromptTag(delivery: unknown): string {
+  return typeof delivery === 'string' && OPENING_PROMPT_TAGS.has(delivery) ? delivery : 'unknown';
+}
+
+/** The agent's store check, bounded, and `unknown` for anything but its own answer. */
+function boundedStoreEvidence(check: (() => Promise<SessionIdStoreEvidence>) | null): Promise<SessionIdStoreEvidence> {
+  if (!check) return Promise.resolve('unknown');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<SessionIdStoreEvidence>((resolve) => {
+    timer = setTimeout(() => resolve('unknown'), STORE_EVIDENCE_WAIT_MS);
+    timer.unref?.();
+  });
+  const answer = Promise.resolve()
+    .then(check)
+    .then(
+      (evidence) => (evidence === 'present' || evidence === 'absent' ? evidence : 'unknown'),
+      // report-ok: a failed store check is reported as the fixed value `unknown`.
+      (): SessionIdStoreEvidence => 'unknown',
+    );
+  return Promise.race([answer, timeout]).finally(() => clearTimeout(timer));
+}
 
 /**
  * No capture path found the agent's own session id within the diagnostic window
- * (`SessionIdManager`), so `--resume` will start a fresh conversation without a
- * word. Usually an adapter that drifted after a CLI update, so it reports once
- * per agent per run, with the CLI's version: fixed words only.
+ * (`SessionIdManager`). Nothing is reported yet: an id can still arrive, and a
+ * report that cannot tell late from never (Sentry DESKTOP-36, DESKTOP-3A) says
+ * nothing. Taken now, while the row exists, and sent by
+ * `reportSessionIdCaptureOutcome` once the outcome is known. The agent's store
+ * check (`sessionId.storeEvidence`) starts now too, as close to the miss as can be.
+ * An agent that already sent both kinds this run is not held, and its store is
+ * not read: neither outcome could send anything.
  */
-export function reportAgentSessionIdNotCaptured(session: Pick<ManagedSession, 'agentName' | 'agentCliVersion'>): void {
-  if (isShuttingDown()) return;
+export function noteSessionIdCaptureWindowPassed(
+  session: ManagedSession,
+  storeCheck: (() => Promise<SessionIdStoreEvidence>) | null,
+): void {
   const agent = agentTag(session.agentName);
-  if (uncapturedSessionIdAgents.has(agent)) return;
-  uncapturedSessionIdAgents.add(agent);
-  const error = new Error(`Agent session id not captured (${agent})`);
-  error.name = 'AgentSessionIdNotCapturedError';
-  reportHandledError(
-    error,
-    { source: 'agent_session_id', agent, agent_cli_version: launchVersionTag(session.agentCliVersion) },
-    {},
-    ['agent-session-id-not-captured', agent],
-  );
+  if (uncapturedSessionIdAgents.has(agent) && lateSessionIdAgents.has(agent)) return;
+  pendingSessionIdReports.set(session.id, {
+    agent,
+    tags: {
+      agent_cli_version: launchVersionTag(session.agentCliVersion),
+      start_path: session.startPath ?? 'board',
+      shell: shellLabelOf(session.shell),
+      opening_prompt: openingPromptTag(session.openingPrompt),
+      hook_seen: observedTag(session.agentHookObservedAt),
+      agent_started: observedTag(session.agentStartObservedAt),
+      first_output: observedTag(session.firstOutputAt),
+    },
+    storeEvidence: boundedStoreEvidence(storeCheck),
+  });
+}
+
+/**
+ * Report how a session past the capture window ended, once per agent per run
+ * for each kind: never captured, which leaves `--resume` starting a fresh
+ * conversation without a word, or captured late, which a report at the window
+ * would have counted as never. Two issues, so one cannot hide the other. Fixed
+ * words only.
+ */
+export function reportSessionIdCaptureOutcome(
+  sessionId: string,
+  outcome: SessionIdCaptureOutcome,
+  sessionStatus: string | null,
+): void {
+  const pending = pendingSessionIdReports.get(sessionId);
+  pendingSessionIdReports.delete(sessionId);
+  if (!pending || isShuttingDown()) return;
+  const late = outcome.kind === 'late';
+  const latch = late ? lateSessionIdAgents : uncapturedSessionIdAgents;
+  if (latch.has(pending.agent)) return;
+  latch.add(pending.agent);
+  const outcomeTags: Record<string, string> = late
+    ? { captured_after_s: secondsBucket(outcome.capturedAfterMs) }
+    : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed' };
+  void pending.storeEvidence.then((idStore) => {
+    if (isShuttingDown()) return;
+    const error = new Error(late
+      ? `Agent session id captured late (${pending.agent})`
+      : `Agent session id not captured (${pending.agent})`);
+    error.name = late ? 'AgentSessionIdCapturedLateError' : 'AgentSessionIdNotCapturedError';
+    reportHandledError(
+      error,
+      {
+        source: 'agent_session_id',
+        agent: pending.agent,
+        ...pending.tags,
+        ...outcomeTags,
+        fs_scan: outcome.filesystemScan,
+        id_store: idStore,
+      },
+      {},
+      [late ? 'agent-session-id-captured-late' : 'agent-session-id-not-captured', pending.agent],
+    );
+  });
 }
 
 /** Forget what this run reported. Tests only. */
 export function resetLaunchReports(): void {
   reported.clear();
   uncapturedSessionIdAgents.clear();
+  lateSessionIdAgents.clear();
+  pendingSessionIdReports.clear();
 }

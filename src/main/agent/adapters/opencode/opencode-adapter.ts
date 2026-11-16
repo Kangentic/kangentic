@@ -610,6 +610,12 @@ export class OpenCodeAdapter implements AgentAdapter {
           getAgentVersion: () => this.detector.getCachedVersion(),
         });
       },
+      // This machine's database only: a distro's or a remote server's is not
+      // here to look at.
+      storeEvidence: (options) => {
+        if (options.cliTarget || this.remoteTargetsByCwd.has(options.cwd)) return Promise.resolve('unknown');
+        return OpenCodeSessionHistoryParser.storeEvidence();
+      },
     },
   };
 

@@ -218,6 +218,12 @@ blocks its `.ps1` or the sibling is missing. So:
    check covers every path into a spawn, startup recovery and a queued promotion included. The task
    pauses with `startBlockedReason: 'prompt-too-long'`, and a person reads that on the card and in a
    toast. For a startup replay of a failed launch, Resume then types what startup could not.
+   Both refusals come from `launchRefusal` (`src/main/pty/spawn/typed-launch.ts`). The second is a
+   launch past cmd's typed budget, in any shell, whose `.cmd` shim cannot be read past
+   (`AgentBatchShimUnresolvedError`, the same card reason), which used to type a named refusal into
+   its terminal and show a working agent until the absence sweep found it (Sentry DESKTOP-3R). It
+   is reported, unlike a prompt too long, because a shim the launcher cannot resolve is the
+   launcher's gap; a queued promotion reports it too, since no caller does.
 
 Measured on Windows 11 with a mock CLI and a 40,000 character task, before the refusal: PowerShell
 printed "The filename or extension is too long" through a `.cmd` shim and an npm `.ps1` alike, and a

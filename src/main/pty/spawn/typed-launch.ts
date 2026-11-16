@@ -12,7 +12,12 @@ import {
   toWslPath,
 } from '../../../shared/paths';
 import { quoteCmdExecutable } from '../../../shared/shell-quote';
-import { isWindowsBatchShim, type BatchShimLaunch } from '../../agent/shared/npm-shim-target';
+import { isWindowsBatchShim, type BatchShimGiveUp, type BatchShimLaunch } from '../../agent/shared/npm-shim-target';
+import {
+  AgentBatchShimUnresolvedError,
+  AgentCommandTooLongError,
+  type AgentStartRefusedError,
+} from './agent-start-refused';
 import { parseWslShellSpec, type WslShellSpec } from '../process-tag/task-process-tag';
 
 /** CreateProcess's limit on a command line, in characters: 32,767 less its terminating NUL. */
@@ -146,10 +151,45 @@ export interface TypedLaunch {
   typedLineBytes: number;
   /** The file `typedLine` sources, which the caller writes before typing. */
   launcher: { filePath: string; contents: string } | null;
+  /**
+   * The `.cmd` head this launch could not get past, or null. Set with the named
+   * refusal typed in its place, which only a raw command ever reaches: an
+   * agent's start is refused before its PTY (`launchRefusal`).
+   */
+  refusedShimPath: string | null;
 }
 
 /** Written by a spawn in place of a command no launcher can get past a shim. */
 const CMD_LINE_REFUSAL = 'The command line is too long.';
+
+/**
+ * Why an agent's start is refused before it has a PTY, or null when it can
+ * start. The one place both refusals are decided, so a launch that cannot run
+ * never shows a working agent first:
+ *
+ * - a command past its shell's limit (`commandFitsShell`), and
+ * - a launch past the typed budget whose `.cmd` head cannot be read past
+ *   (`TypedLaunch.refusedShimPath`), which would type a named refusal and sit
+ *   there until the absence sweep found it (Sentry DESKTOP-3Q, DESKTOP-3R).
+ *
+ * `typedLaunch` is null for a launch with no typed line here (a session on an
+ * SSH host, whose limit is Linux's whatever this computer is).
+ */
+export function launchRefusal(input: {
+  command: string;
+  shell: string;
+  platform: NodeJS.Platform;
+  typedLaunch: TypedLaunch | null;
+  /** Why the shim gave up (`batchShimGiveUpOf`). Production reads the file again; tests inject. */
+  shimGaveUp: (shimPath: string) => BatchShimGiveUp | null;
+}): AgentStartRefusedError | null {
+  if (!commandFitsShell(input)) return new AgentCommandTooLongError();
+  const shimPath = input.typedLaunch?.refusedShimPath;
+  if (!shimPath) return null;
+  // The shim was read moments ago and could not be resolved. Read again only to
+  // name why; a file that changed in between names whatever it says now.
+  return new AgentBatchShimUnresolvedError(input.shimGaveUp(shimPath) ?? 'unreadable');
+}
 
 /**
  * Canonical mode is a POSIX tty's. A native Windows shell reads a console, which
@@ -202,8 +242,8 @@ function launcherFormFor(shellName: string): { fileName: string; run: (quotedPat
   return { fileName: 'launch.sh', run: (quotedPath) => `eval "$(cat ${quotedPath})"` };
 }
 
-function typedLaunchOf(typedLine: string, launcher: TypedLaunch['launcher']): TypedLaunch {
-  return { typedLine, typedLineBytes: Buffer.byteLength(`${typedLine}\r`, 'utf8'), launcher };
+function typedLaunchOf(typedLine: string, launcher: TypedLaunch['launcher'], refusedShimPath: string | null = null): TypedLaunch {
+  return { typedLine, typedLineBytes: Buffer.byteLength(`${typedLine}\r`, 'utf8'), launcher, refusedShimPath };
 }
 
 /**
@@ -290,7 +330,9 @@ function cmdLauncherContents(adapted: string, batchShimLaunch: TypedLaunchInput[
 function cmdLaunch(sessionDirectory: string, input: TypedLaunchInput, prelude: string, adapted: string): TypedLaunch {
   const contents = cmdLauncherContents(adapted, input.batchShimLaunch);
   // Named rather than typed whole: under 8190 a too-long shim fails with no error.
-  if (contents === null) return typedLaunchOf(`${prelude}echo ${CMD_LINE_REFUSAL}`, null);
+  if (contents === null) {
+    return typedLaunchOf(`${prelude}echo ${CMD_LINE_REFUSAL}`, null, splitHead(withPlainPercents(adapted)).head);
+  }
   const filePath = path.join(sessionDirectory, 'launch.cmd');
   // `call` parses its line twice and doubles each caret, so it cannot find a path
   // holding one (measured). A bare path at a prompt runs the same file in the same
@@ -322,7 +364,7 @@ function typedPastBatchShim(input: TypedLaunchInput, shellName: string, prelude:
   const { head, rest } = splitHead(input.command);
   if (!isWindowsBatchShim(head)) return fullLaunch;
   const direct = input.batchShimLaunch(head);
-  if (direct === null) return typedLaunchOf(`${prelude}echo ${quoteArg(CMD_LINE_REFUSAL, shellName)}`, null);
+  if (direct === null) return typedLaunchOf(`${prelude}echo ${quoteArg(CMD_LINE_REFUSAL, shellName)}`, null, head);
   const words = shimTargetWords(direct).map((word) => quoteArg(word, shellName, { multiline: true }));
   return typedLaunchOf(prelude + adaptCommandForShell(`${words.join(' ')}${rest}`, shellName, input.platform), null);
 }

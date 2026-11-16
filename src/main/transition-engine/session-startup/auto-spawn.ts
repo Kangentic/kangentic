@@ -484,6 +484,8 @@ export async function autoSpawnTasks(
           command: input.command,
           cwd: input.cwd,
           startPath: 'startup_recovery',
+          // A prompt, when preparation kept one, was built into the command.
+          openingPrompt: input.prompt ? 'command_line' : 'none',
           agentCliVersion: input.agentCliVersion,
           agentCliPath: input.agentCliPath,
           resumeEvidence: input.resumeEvidence,

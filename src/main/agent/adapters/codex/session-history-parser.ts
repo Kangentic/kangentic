@@ -7,12 +7,14 @@ import {
   type SessionHistoryParseResult,
   type SessionUsage,
   type SessionEvent,
+  type SessionIdStoreEvidence,
   type StoredCliTarget,
 } from '../../../../shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
 import { codexHomeDir } from './config-toml';
 import { parseCodexRateLimits } from './rate-limits';
 import { cliPathForTarget, placeFromStored, type CliPlace } from '../../shared/cli-target';
+import { pathStoreEvidence } from '../../shared/store-evidence';
 
 /**
  * Parser for Codex CLI's native session history files (rollout JSONL).
@@ -112,6 +114,21 @@ export class CodexSessionHistoryParser {
       await sleep(500);
     }
     return null;
+  }
+
+  /**
+   * Whether today's or yesterday's (UTC) rollout folder exists, the folders
+   * `captureSessionIdFromFilesystem` reads. For the session-id report only:
+   * `absent` says Codex wrote no rollout at all yet, which an id still missing
+   * at the capture window would follow from. A fixed word, never a path.
+   */
+  static async storeEvidence(options: { cwd: string; cliTarget?: StoredCliTarget | null }): Promise<SessionIdStoreEvidence> {
+    const place = placeFromStored(options.cliTarget ?? null);
+    if (place?.kind === 'ssh') return 'unknown';
+    const directories = Array.from(new Set([codexSessionsDirForToday(place), codexSessionsDirForYesterday(place)]));
+    const answers = await Promise.all(directories.map((directory) => pathStoreEvidence(directory, 'directory')));
+    if (answers.includes('present')) return 'present';
+    return answers.includes('unknown') ? 'unknown' : 'absent';
   }
 
   /**
