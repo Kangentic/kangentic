@@ -188,7 +188,7 @@ Click an element by selector, or a point by coordinates. Capability tier: `inter
 | `taskId` | string | No | Target a surface by task. |
 | `selector` | string | No | CSS selector (or `text=` / `aria=` form, or CSS ending in `:has-text("...")`) to click at its center. |
 | `x` | number | No | X coordinate, in viewport CSS pixels unless `coordSpace` is `image`. Use with `y` instead of `selector`. |
-| `y` | number | No | Y coordinate. |
+| `y` | number | No | Y coordinate, in viewport CSS pixels unless `coordSpace` is `image`. |
 | `coordSpace` | string | No | `viewport` or `image`, which maps the pixels of a full-viewport screenshot back through the `pixelsPerCssPixel` that screenshot reported when its `scale` is 1. A screenshot shrunk to fit `maxBytes` (`scale` below 1) holds fewer pixels, so divide by its own `pixelsPerCssPixel` and pass viewport coordinates instead. Omitted, x/y are read as viewport and the result carries a `warning`. |
 | `strict` | boolean | No | Default `true`. See [Selector strictness](#selector-strictness). |
 

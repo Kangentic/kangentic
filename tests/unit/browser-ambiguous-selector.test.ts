@@ -5,14 +5,17 @@
  * The page is untrusted: a script can patch what the counting expression
  * calls, and the candidates it returns reach the agent's error envelope. So
  * every field is checked, an entry that cannot be retried (no string
- * `selector`) is dropped, any other wrong-typed field reads as empty, and the
- * list is cut to AMBIGUOUS_CANDIDATE_LIMIT.
+ * `selector`, or one too long to retry) is dropped, any other wrong-typed
+ * field reads as empty, every string field is clipped, and the list is cut to
+ * AMBIGUOUS_CANDIDATE_LIMIT.
  *
  * Tier: unit. Pure function, no browser.
  */
 import { describe, it, expect } from 'vitest';
 import {
   AMBIGUOUS_CANDIDATE_LIMIT,
+  CANDIDATE_FIELD_MAX_CHARS,
+  CANDIDATE_SELECTOR_MAX_CHARS,
   parseSelectorCandidates,
 } from '../../src/main/browser/cdp/ambiguous-selector';
 
@@ -62,6 +65,9 @@ describe('parseSelectorCandidates', () => {
     expect(parsed).toEqual([kept]);
   });
 
+  // A separate case, not more entries above: the list is cut to
+  // AMBIGUOUS_CANDIDATE_LIMIT before entries are checked, so a sixth entry
+  // would push `kept` out of the slice.
   it('drops an entry with a missing selector or a numeric entry', () => {
     expect(parseSelectorCandidates([42, realCandidate({ selector: undefined })])).toEqual([]);
   });
@@ -114,5 +120,21 @@ describe('parseSelectorCandidates', () => {
     expect(parsed.map((candidate) => candidate.index)).toEqual(
       Array.from({ length: AMBIGUOUS_CANDIDATE_LIMIT }, (_unused, index) => index),
     );
+  });
+
+  it('clips every described string field, so a page cannot inflate the error envelope', () => {
+    const huge = 'x'.repeat(CANDIDATE_FIELD_MAX_CHARS * 50);
+    const [parsed] = parseSelectorCandidates([
+      realCandidate({ tag: huge, text: huge, id: huge, role: huge, ariaLabel: huge, name: huge }),
+    ]);
+    for (const field of [parsed.tag, parsed.text, parsed.id, parsed.role, parsed.ariaLabel, parsed.name]) {
+      expect(field).toHaveLength(CANDIDATE_FIELD_MAX_CHARS);
+    }
+  });
+
+  it('drops a candidate whose selector is too long to retry, rather than clipping it into a different selector', () => {
+    const kept = realCandidate({ selector: `#${'a'.repeat(CANDIDATE_SELECTOR_MAX_CHARS - 1)}` });
+    const tooLong = realCandidate({ selector: `#${'a'.repeat(CANDIDATE_SELECTOR_MAX_CHARS)}` });
+    expect(parseSelectorCandidates([tooLong, kept])).toEqual([kept]);
   });
 });

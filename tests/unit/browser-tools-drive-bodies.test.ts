@@ -740,6 +740,8 @@ describe('kangentic_browser_click: image-space coordinate mapping', () => {
     });
 
     expect(result.isError).toBeUndefined();
+    // An explicit coordSpace is the agent saying how to read x/y, so no warning.
+    expect(result.structuredContent).not.toHaveProperty('warning');
     // 100 / 0.5 and 200 / 0.5, never 100 / 2 and 200 / 2: dividing by the
     // page's deviceScaleFactor here would land the click on the wrong element.
     expect(dispatchMouseEvent).toHaveBeenNthCalledWith(1, fakeGuest, { type: 'mousePressed', x: 200, y: 400 });
@@ -874,6 +876,35 @@ describe('strict selector matching reaches every single-element tool (GitHub #82
     expect(scrollBy).toHaveBeenCalledWith(fakeGuest, { selector: '#list', deltaX: undefined, deltaY: 100, strict: true });
     expect(selectOptionOnSelector).toHaveBeenCalledWith(fakeGuest, '#pick', { value: 'a', label: undefined, index: undefined }, { strict: true });
     expect(dropFilesOnSelector).toHaveBeenCalledWith(fakeGuest, '#zone', ['/tmp/a.txt'], { strict: true });
+    await close();
+  });
+
+  it('type, keypress, hover, drag, scroll, select_option and drop_files pass strict: false through when the agent asks', async () => {
+    clickAtCenterOfSelector.mockResolvedValue(true);
+    dispatchKeypress.mockResolvedValue(true);
+    hoverSelector.mockResolvedValue(true);
+    dragFromTo.mockResolvedValue(true);
+    scrollBy.mockResolvedValue(true);
+    getLayoutMetrics.mockResolvedValue(null);
+    selectOptionOnSelector.mockResolvedValue({ ok: true, value: 'a' });
+    dropFilesOnSelector.mockResolvedValue(true);
+    const { client, close } = await connect();
+
+    await client.callTool({ name: 'kangentic_browser_type', arguments: { text: 'x', selector: '#field', strict: false } });
+    await client.callTool({ name: 'kangentic_browser_keypress', arguments: { keys: 'Enter', selector: '#field', strict: false } });
+    await client.callTool({ name: 'kangentic_browser_hover', arguments: { selector: '#menu', strict: false } });
+    await client.callTool({ name: 'kangentic_browser_drag', arguments: { fromSelector: '#a', toSelector: '#b', strict: false } });
+    await client.callTool({ name: 'kangentic_browser_scroll', arguments: { selector: '#list', deltaY: 100, strict: false } });
+    await client.callTool({ name: 'kangentic_browser_select_option', arguments: { selector: '#pick', value: 'a', strict: false } });
+    await client.callTool({ name: 'kangentic_browser_drop_files', arguments: { selector: '#zone', paths: ['/tmp/a.txt'], strict: false } });
+
+    expect(clickAtCenterOfSelector).toHaveBeenNthCalledWith(1, fakeGuest, '#field', { strict: false });
+    expect(clickAtCenterOfSelector).toHaveBeenNthCalledWith(2, fakeGuest, '#field', { strict: false });
+    expect(hoverSelector).toHaveBeenCalledWith(fakeGuest, '#menu', { strict: false });
+    expect(dragFromTo).toHaveBeenCalledWith(fakeGuest, '#a', '#b', { steps: undefined, strict: false });
+    expect(scrollBy).toHaveBeenCalledWith(fakeGuest, { selector: '#list', deltaX: undefined, deltaY: 100, strict: false });
+    expect(selectOptionOnSelector).toHaveBeenCalledWith(fakeGuest, '#pick', { value: 'a', label: undefined, index: undefined }, { strict: false });
+    expect(dropFilesOnSelector).toHaveBeenCalledWith(fakeGuest, '#zone', ['/tmp/a.txt'], { strict: false });
     await close();
   });
 

@@ -762,8 +762,8 @@ interface BoxModel {
 
 /**
  * Selector spec parsed out of the user-supplied string. Supports the
- * standard CSS form plus three convenience prefixes that match
- * Playwright vocabulary:
+ * standard CSS form plus convenience forms that match Playwright
+ * vocabulary:
  *
  *   - `text="Cancel"` (or `text=Cancel`)         -> exact visible-text match
  *   - `text*="Cancel"` (or `text*=Cancel`)       -> substring visible-text match
@@ -888,9 +888,9 @@ export interface SelectorStrictness {
 async function resolveActionTarget(
   webContents: WebContents,
   selector: string,
-  options: SelectorStrictness = {},
+  strictness: SelectorStrictness = {},
 ): Promise<number | null> {
-  if (!options.strict) return resolveSelector(webContents, selector);
+  if (!strictness.strict) return resolveSelector(webContents, selector);
   const spec = parseSelectorSpec(selector);
   const evalResult = (await webContents.debugger.sendCommand('Runtime.evaluate', {
     expression: buildActionableMatchesExpression(spec, AMBIGUOUS_CANDIDATE_LIMIT),
@@ -922,7 +922,9 @@ async function resolveActionTarget(
     })) as { result?: { value?: { total?: unknown; candidates?: unknown } } };
     const ambiguity = described.result?.value;
     const candidates = parseSelectorCandidates(ambiguity?.candidates);
-    if (ambiguity && typeof ambiguity.total === 'number' && candidates.length > 0) {
+    // `total` reaches the agent's message, so a NaN or Infinity from a page
+    // that patched the expression's builtins is read as no answer.
+    if (ambiguity && typeof ambiguity.total === 'number' && Number.isFinite(ambiguity.total) && candidates.length > 0) {
       throw new AmbiguousSelectorError(selector, ambiguity.total, candidates);
     }
     return await resolveSelector(webContents, selector);
