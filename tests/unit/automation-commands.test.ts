@@ -337,6 +337,33 @@ describe('automation MCP commands', () => {
       expect(context.onSwimlaneUpdated).toHaveBeenCalled();
     });
 
+    // The list is in the database either way. An agent told only "Saved" would
+    // report a write that never reached the team's kangentic.json.
+    it('says so when kangentic.json was not written', () => {
+      const reason = 'kangentic.json was saved by a newer version of Kangentic (file format 2, this build reads format 1).';
+      vi.mocked(context.onSwimlaneUpdated).mockReturnValue(reason);
+
+      const response = handleSetAutomations({
+        column: 'Executing',
+        automations: [{ name: 'Review', type: 'send_message', message: '/code-review' }],
+      }, context);
+
+      expect(response.success).toBe(true);
+      expect(response.message?.endsWith(`was not saved to kangentic.json: ${reason}`)).toBe(true);
+    });
+
+    it('adds no file note when kangentic.json was written', () => {
+      vi.mocked(context.onSwimlaneUpdated).mockReturnValue(null);
+
+      const response = handleSetAutomations({
+        column: 'Executing',
+        automations: [{ name: 'Review', type: 'send_message', message: '/code-review' }],
+      }, context);
+
+      expect(response.success).toBe(true);
+      expect(response.message).not.toContain('was not saved to kangentic.json');
+    });
+
     describe('finalLine, the Text match kind', () => {
       it('stores a turn-end Text match, trimmed, and reads it back as condition.text', () => {
         const response = handleSetAutomations({

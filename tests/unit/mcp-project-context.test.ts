@@ -852,6 +852,32 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
     expect(writeBackForProject).toHaveBeenCalledWith(DEFAULT_ID, PROJECT_PATH);
   });
 
+  // The reason kangentic.json was not written must reach the MCP handlers, or an
+  // agent is told a change was saved that never reached the team's file.
+  it('returns the reason a column update was not saved to kangentic.json', () => {
+    const { ipcContext, writeBackForProject } = makeWriteBackContext();
+    writeBackForProject.mockReturnValue('some reason');
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    expect(context!.onSwimlaneUpdated(fakeSwimlane())).toBe('some reason');
+  });
+
+  it('returns null from a column update when kangentic.json was written', () => {
+    const { ipcContext, writeBackForProject } = makeWriteBackContext();
+    writeBackForProject.mockReturnValue(null);
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    expect(context!.onSwimlaneUpdated(fakeSwimlane())).toBeNull();
+  });
+
+  it('returns the reason a column delete was not saved to kangentic.json', () => {
+    const { ipcContext, writeBackForProject } = makeWriteBackContext();
+    writeBackForProject.mockReturnValue('some reason');
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    expect(context!.onSwimlaneDeleted(fakeSwimlane())).toBe('some reason');
+  });
+
   it('still notifies the renderer (write-back is additive)', () => {
     const { ipcContext, send } = makeWriteBackContext();
     const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);

@@ -122,6 +122,13 @@ checks out a branch in a checkout the user is not looking at, so the reconcile i
 project's tasks pick the new settings up when they next spawn. The cost is that turning `autoSpawn`
 off on a non-focused project leaves its agents running until it is next opened.
 
+**The reply says when `kangentic.json` was not written.** `kangentic_create_column`,
+`kangentic_update_column`, `kangentic_delete_column` and `kangentic_set_automations` succeed once
+the change is in the database. When the file was not rewritten (it was saved by a newer version of
+Kangentic, it holds automations this build cannot read, or it could not be read at all), the reply
+ends with "The change is on the board but was not saved to kangentic.json:" and the reason. See
+[File format version](../../settings/board-config.md#file-format-version).
+
 ## kangentic_create_column
 
 Add a new swimlane (column) to the board. Column names must be unique (case-insensitive) across
