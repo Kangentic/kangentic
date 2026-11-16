@@ -76,7 +76,9 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 // module scope after the mock declaration runs.
 const adapterRef = adapter;
 
-import { prepareAgentSpawn } from '../../src/main/transition-engine/session-startup/prepare-spawn';
+import { prepareAgentSpawn, type StartupResume } from '../../src/main/transition-engine/session-startup/prepare-spawn';
+
+type StartupSessionRepoStub = NonNullable<Parameters<typeof prepareAgentSpawn>[0]['sessionRepo']>;
 
 const TASK_ID = 'task-resume-reconcile-001';
 const LANE_ID = 'lane-main';
@@ -273,7 +275,7 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
   // comes from the task and its column. A record of another agent (the
   // column's agent changed, or #821 left one behind) must never hand its
   // session id to this agent's CLI. The stub adapter here is Claude, so the
-  // record is Codex's: the same mismatch as the report, mirrored.
+  // record to resume is a Codex record under a Claude-run column.
   describe('a record of another agent than the one this spawn runs', () => {
     const OWN_RECORD = {
       id: 'claude-record-in-review',
@@ -285,11 +287,15 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
       status: 'exited',
     };
 
-    async function runMismatched(ownRecord: typeof OWN_RECORD | undefined) {
-      const sessionRepo = {
-        updateAgentSessionId: vi.fn(),
-        getLatestForTaskByTypeAndIsolation: vi.fn(() => ownRecord as never),
-      };
+    const CODEX_RESUME: StartupResume = {
+      agentSessionId: 'codex-conversation',
+      recordId: 'codex-record-in-review',
+      recordCwd: '/mock/codex-record-cwd',
+      sessionType: 'codex_agent',
+      isolatedSwimlaneId: 'lane-review',
+    };
+
+    async function runWith<Repo extends StartupSessionRepoStub>(sessionRepo: Repo, resume: StartupResume = CODEX_RESUME) {
       const result = await prepareAgentSpawn({
         task: makeTask(),
         swimlane: makeSwimlane(),
@@ -302,18 +308,19 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
         projectDefaultEffort: null,
         resolvedShell: 'bash',
         mcpServerHandle: null,
-        resume: {
-          agentSessionId: 'codex-conversation',
-          recordId: 'codex-record-in-review',
-          recordCwd: '/mock/codex-record-cwd',
-          sessionType: 'codex_agent',
-          isolatedSwimlaneId: 'lane-review',
-        },
+        resume,
         sessionRepo,
         hasSessionRecord: true,
         tasks: { update: vi.fn() },
       });
       return { result, sessionRepo };
+    }
+
+    function runMismatched(ownRecord: typeof OWN_RECORD | undefined) {
+      return runWith({
+        updateAgentSessionId: vi.fn(),
+        getLatestForTaskByTypeAndIsolation: vi.fn(() => ownRecord as never),
+      });
     }
 
     it("resumes this agent's own conversation on the same track, and names its record for retiring", async () => {
@@ -327,6 +334,26 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
       expect(result.data.rematchedRecordId).toBe('claude-record-in-review');
       const commandOptions = buildCommandMock.mock.calls[0][0] as { sessionId?: string };
       expect(commandOptions.sessionId).toBe('claude-own-conversation');
+    });
+
+    it.each([
+      ['null', null],
+      ['omitted', undefined],
+    ])('looks up this agent\'s record on the main track with null when the resume track is %s', async (_label, isolatedSwimlaneId) => {
+      const mainTrackResume = {
+        agentSessionId: 'codex-conversation',
+        recordId: 'codex-record-on-main',
+        recordCwd: '/mock/codex-record-cwd',
+        sessionType: 'codex_agent',
+        ...(isolatedSwimlaneId === undefined ? {} : { isolatedSwimlaneId }),
+      } as StartupResume;
+
+      const { sessionRepo } = await runWith({
+        updateAgentSessionId: vi.fn(),
+        getLatestForTaskByTypeAndIsolation: vi.fn(() => undefined as never),
+      }, mainTrackResume);
+
+      expect(sessionRepo.getLatestForTaskByTypeAndIsolation).toHaveBeenCalledWith(TASK_ID, 'claude_agent', null);
     });
 
     it('starts fresh, never handing over the other agent\'s id, when this agent has no conversation there', async () => {
@@ -359,30 +386,7 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
     });
 
     it('starts fresh, without throwing, when the repository has no lookup method', async () => {
-      const sessionRepo = { updateAgentSessionId: vi.fn() };
-      const result = await prepareAgentSpawn({
-        task: makeTask(),
-        swimlane: makeSwimlane(),
-        cwd: '/mock/spawn-cwd',
-        projectId: 'proj-123',
-        projectPath,
-        effectiveConfig: makeEffectiveConfig(),
-        projectDefaultAgent: 'claude',
-        projectDefaultModel: null,
-        projectDefaultEffort: null,
-        resolvedShell: 'bash',
-        mcpServerHandle: null,
-        resume: {
-          agentSessionId: 'codex-conversation',
-          recordId: 'codex-record-in-review',
-          recordCwd: '/mock/codex-record-cwd',
-          sessionType: 'codex_agent',
-          isolatedSwimlaneId: 'lane-review',
-        },
-        sessionRepo,
-        hasSessionRecord: true,
-        tasks: { update: vi.fn() },
-      });
+      const { result } = await runWith({ updateAgentSessionId: vi.fn() });
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -419,24 +423,10 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
     });
 
     it('takes a record of its own agent as given, with no lookup', async () => {
-      const sessionRepo = { updateAgentSessionId: vi.fn(), getLatestForTaskByTypeAndIsolation: vi.fn() };
-      const result = await prepareAgentSpawn({
-        task: makeTask(),
-        swimlane: makeSwimlane(),
-        cwd: '/mock/spawn-cwd',
-        projectId: 'proj-123',
-        projectPath,
-        effectiveConfig: makeEffectiveConfig(),
-        projectDefaultAgent: 'claude',
-        projectDefaultModel: null,
-        projectDefaultEffort: null,
-        resolvedShell: 'bash',
-        mcpServerHandle: null,
-        resume: { agentSessionId: STORED_ID, recordId: RECORD_ID, sessionType: 'claude_agent', isolatedSwimlaneId: null },
-        sessionRepo,
-        hasSessionRecord: true,
-        tasks: { update: vi.fn() },
-      });
+      const { result, sessionRepo } = await runWith(
+        { updateAgentSessionId: vi.fn(), getLatestForTaskByTypeAndIsolation: vi.fn() },
+        { agentSessionId: STORED_ID, recordId: RECORD_ID, sessionType: 'claude_agent', isolatedSwimlaneId: null },
+      );
 
       expect(sessionRepo.getLatestForTaskByTypeAndIsolation).not.toHaveBeenCalled();
       expect(result.ok).toBe(true);
