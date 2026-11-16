@@ -47,7 +47,7 @@ import { SessionIdManager } from '../../src/main/pty/lifecycle/session-id-manage
 import { InProcessPtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
-import type { AgentParser, SessionIdStoreEvidence } from '../../src/shared/types';
+import type { AgentParser, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
 
 const WINDOW_MS = 30_000;
 
@@ -195,6 +195,18 @@ describe('a session whose id the capture window did not see', () => {
     // A local session names no CLI target, and its folder is the one it was started in.
     expect(storeEvidence).toHaveBeenCalledWith({ cwd: tmpDir, cliTarget: null });
     expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags.id_store).toBe('present');
+  });
+
+  it("forwards the row's stored CLI target to the adapter's store check", async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager);
+    const wslTarget: StoredCliTarget = { kind: 'wsl', distro: 'TestDistro', homeLinux: '/home/dev' };
+    registryRowOf(manager, sessionId).cliTarget = wslTarget;
+
+    await passTheWindow();
+
+    expect(storeEvidence).toHaveBeenCalledTimes(1);
+    expect(storeEvidence).toHaveBeenCalledWith({ cwd: tmpDir, cliTarget: wslTarget });
   });
 
   it('reports the store as unknown when the adapter has no check', async () => {

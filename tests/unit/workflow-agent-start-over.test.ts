@@ -394,6 +394,33 @@ describe('a workflow\'s own agent starting over', () => {
     expect(buildCommand.mock.calls[1][0]).toMatchObject({ resume: false, prompt: 'FIRST MESSAGE' });
   });
 
+  // `openingPrompt` is read only by the session-id report, which must tell a start
+  // that sent nothing from one whose message rode the command line or was typed.
+  describe('the openingPrompt a start hands the spawn', () => {
+    it('is none for a resume that sends the agent nothing', async () => {
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      expect(manager.spawn.mock.calls[0][0].openingPrompt).toBe('none');
+    });
+
+    it('is command_line when the first message rides the command line', async () => {
+      await resumeThatFails();
+
+      expect(manager.spawn.mock.calls[1][0].openingPrompt).toBe('command_line');
+    });
+
+    it('is typed when the adapter has the first message typed in once it is ready', async () => {
+      (harness.adapter as { freshPromptDelivery?: string }).freshPromptDelivery = 'typed';
+      // The fake manager has no input-ready wait, so the background paste warns; not what this test reads.
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      await resumeThatFails();
+
+      const buildCommand = (harness.adapter as { buildCommand: ReturnType<typeof vi.fn> }).buildCommand;
+      expect(buildCommand.mock.calls[1][0].prompt).toBeUndefined();
+      expect(manager.spawn.mock.calls[1][0].openingPrompt).toBe('typed');
+    });
+  });
+
   it('keeps saying so while that session is paused', async () => {
     await resumeThatFails();
     await vi.waitFor(() => expect(harness.notifyWorkflowChanged).toHaveBeenCalled());

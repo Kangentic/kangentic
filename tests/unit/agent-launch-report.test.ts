@@ -721,6 +721,12 @@ describe('the session id capture reports', () => {
     await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalled());
   }
 
+  /** Past every microtask the report's store-check chain takes, so a report that was going to fire has. */
+  async function flushReportChain(): Promise<void> {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
   it('sends a never-captured session under a fixed message, grouped per agent, with fixed facts', async () => {
     await settle(
       { agentName: 'codex', agentCliVersion: '0.163.0 (Codex CLI)', openingPrompt: 'typed', agentHookObservedAt: STARTED_AT_MS + 2_000, firstOutputAt: STARTED_AT_MS + 900 },
@@ -815,16 +821,27 @@ describe('the session id capture reports', () => {
     const anotherSession = session({ agentName: 'claude', id: 'session-2-long-id' });
     noteSessionIdCaptureWindowPassed(anotherSession, storeCheck);
     reportSessionIdCaptureOutcome(anotherSession.id, never, null);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushReportChain();
 
     expect(storeCheck).not.toHaveBeenCalled();
     expect(reportHandledError).not.toHaveBeenCalled();
   });
 
+  it('sends nothing for a kind the agent already spent, though the other kind still holds the session', async () => {
+    await settle({ agentName: 'claude' }, never);
+    reportHandledError.mockClear();
+
+    const anotherSession = session({ agentName: 'claude', id: 'session-2-long-id' });
+    noteSessionIdCaptureWindowPassed(anotherSession, null);
+    reportSessionIdCaptureOutcome(anotherSession.id, never, null);
+    await flushReportChain();
+
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
   it('sends nothing for a session never held at the window', async () => {
     reportSessionIdCaptureOutcome('no-such-session', never, null);
-    await Promise.resolve();
+    await flushReportChain();
     expect(reportHandledError).not.toHaveBeenCalled();
   });
 
@@ -832,7 +849,7 @@ describe('the session id capture reports', () => {
     shuttingDown.value = true;
     noteSessionIdCaptureWindowPassed(session(), null);
     reportSessionIdCaptureOutcome('session-1-long-id', never, null);
-    await Promise.resolve();
+    await flushReportChain();
     expect(reportHandledError).not.toHaveBeenCalled();
 
     shuttingDown.value = false;

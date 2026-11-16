@@ -596,9 +596,25 @@ export function reportPtyPortFailure(): void {
   reportLaunchFailure({ stage: 'pty_port', cause: 'not_delivered', tags: {} });
 }
 
-/** Agents whose session id went uncaptured this run, and those captured late. */
-const uncapturedSessionIdAgents = new Set<string>();
+/** Agents whose session id was never captured this run, and those captured late. */
+const neverCapturedSessionIdAgents = new Set<string>();
 const lateSessionIdAgents = new Set<string>();
+
+/** What each kind of session-id outcome sends: the latch it spends, its error name and fingerprint head. */
+const SESSION_ID_OUTCOME_REPORTS = {
+  late: {
+    latch: lateSessionIdAgents,
+    errorName: 'AgentSessionIdCapturedLateError',
+    message: 'Agent session id captured late',
+    fingerprintHead: 'agent-session-id-captured-late',
+  },
+  never: {
+    latch: neverCapturedSessionIdAgents,
+    errorName: 'AgentSessionIdNotCapturedError',
+    message: 'Agent session id not captured',
+    fingerprintHead: 'agent-session-id-not-captured',
+  },
+} as const;
 
 /** The longest a session-id report waits on the agent's own store check. */
 const STORE_EVIDENCE_WAIT_MS = 2_000;
@@ -657,7 +673,7 @@ export function noteSessionIdCaptureWindowPassed(
   storeCheck: (() => Promise<SessionIdStoreEvidence>) | null,
 ): void {
   const agent = agentTag(session.agentName);
-  if (uncapturedSessionIdAgents.has(agent) && lateSessionIdAgents.has(agent)) return;
+  if (neverCapturedSessionIdAgents.has(agent) && lateSessionIdAgents.has(agent)) return;
   pendingSessionIdReports.set(session.id, {
     agent,
     tags: {
@@ -688,19 +704,16 @@ export function reportSessionIdCaptureOutcome(
   const pending = pendingSessionIdReports.get(sessionId);
   pendingSessionIdReports.delete(sessionId);
   if (!pending || isShuttingDown()) return;
-  const late = outcome.kind === 'late';
-  const latch = late ? lateSessionIdAgents : uncapturedSessionIdAgents;
-  if (latch.has(pending.agent)) return;
-  latch.add(pending.agent);
-  const outcomeTags: Record<string, string> = late
+  const outcomeReport = SESSION_ID_OUTCOME_REPORTS[outcome.kind];
+  if (outcomeReport.latch.has(pending.agent)) return;
+  outcomeReport.latch.add(pending.agent);
+  const outcomeTags: Record<string, string> = outcome.kind === 'late'
     ? { captured_after_s: secondsBucket(outcome.capturedAfterMs) }
     : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed' };
   void pending.storeEvidence.then((idStore) => {
     if (isShuttingDown()) return;
-    const error = new Error(late
-      ? `Agent session id captured late (${pending.agent})`
-      : `Agent session id not captured (${pending.agent})`);
-    error.name = late ? 'AgentSessionIdCapturedLateError' : 'AgentSessionIdNotCapturedError';
+    const error = new Error(`${outcomeReport.message} (${pending.agent})`);
+    error.name = outcomeReport.errorName;
     reportHandledError(
       error,
       {
@@ -712,7 +725,7 @@ export function reportSessionIdCaptureOutcome(
         id_store: idStore,
       },
       {},
-      [late ? 'agent-session-id-captured-late' : 'agent-session-id-not-captured', pending.agent],
+      [outcomeReport.fingerprintHead, pending.agent],
     );
   });
 }
@@ -720,7 +733,7 @@ export function reportSessionIdCaptureOutcome(
 /** Forget what this run reported. Tests only. */
 export function resetLaunchReports(): void {
   reported.clear();
-  uncapturedSessionIdAgents.clear();
+  neverCapturedSessionIdAgents.clear();
   lateSessionIdAgents.clear();
   pendingSessionIdReports.clear();
 }

@@ -135,6 +135,27 @@ describe('runInitScript', () => {
       await expect(promise).rejects.not.toHaveProperty('exitCode');
     });
 
+    // The timeout kills the tree and the call settles only when the tree closes or
+    // after TREE_EXIT_WAIT_MS. A caller's abort landing inside that wait must not
+    // rewrite who stopped the script: the timeout did, first.
+    it('still reports a timeout when the caller aborts while the killed tree is exiting', async () => {
+      vi.useFakeTimers();
+      spawnOverrides.push({ match: () => true, behavior: { hang: true } });
+      mockKillChildTreeNow.mockImplementationOnce(() => undefined);
+      const controller = new AbortController();
+
+      const promise = runInitScript('slow-script', '/worktree/path', { timeoutMs: 1000, signal: controller.signal });
+      const assertion = expect(promise).rejects.toMatchObject({
+        timedOut: true,
+        message: expect.stringContaining('aborted (timeout after 1000ms)'),
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(mockKillChildTreeNow).toHaveBeenCalledTimes(1);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(TREE_EXIT_WAIT_MS);
+      await assertion;
+    });
+
     it('names the signal of a script something else killed', async () => {
       spawnOverrides.push({ match: () => true, behavior: { hang: true } });
 

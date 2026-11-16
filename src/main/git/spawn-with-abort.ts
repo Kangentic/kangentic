@@ -65,7 +65,7 @@ export interface SpawnWithAbortTarget {
  * non-zero exit from a timeout or a kill. Not `code`, which callers of a spawn
  * error read as an errno.
  */
-export interface SpawnExitFields {
+interface SpawnExitFields {
   /** The exit code of a child that exited non-zero on its own. */
   exitCode?: number;
   /** The signal that ended a child nobody here asked to stop. */
@@ -113,7 +113,14 @@ export function spawnWithAbort(
   const env = withoutCrashpadPipeName(options.env ?? process.env);
   return new Promise((resolve, reject) => {
     const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+    // Who stopped the child, decided when it was stopped: a tree kill settles
+    // only once the tree exits, and a caller's abort can land in that wait.
+    let abortCause: 'timeout' | 'external' | null = null;
+    const abortFor = (cause: 'timeout' | 'external'): void => {
+      if (abortCause === null) abortCause = cause;
+      controller.abort();
+    };
+    const timeoutHandle = setTimeout(() => abortFor('timeout'), timeoutMs);
 
     let externalAbortHandler: (() => void) | null = null;
     if (externalSignal) {
@@ -122,7 +129,7 @@ export function spawnWithAbort(
         reject(new Error(`${label} aborted before spawn`));
         return;
       }
-      externalAbortHandler = () => controller.abort();
+      externalAbortHandler = () => abortFor('external');
       externalSignal.addEventListener('abort', externalAbortHandler, { once: true });
     }
 
@@ -151,7 +158,7 @@ export function spawnWithAbort(
     };
 
     const abortedError = (): Error => {
-      const timedOut = externalSignal?.aborted !== true;
+      const timedOut = abortCause !== 'external';
       const reason = timedOut ? `timeout after ${timeoutMs}ms` : 'external abort';
       return withExitFields(new Error(`${label} aborted (${reason}) (child process killed)`), { timedOut });
     };
@@ -179,19 +186,19 @@ export function spawnWithAbort(
         // deliberate cancellation (a superseding move's AbortController) as a
         // 'timeout' failure downstream (classifyFetchFailure), turning a
         // clean cancel into a spurious staleness toast.
-        if (externalSignal?.aborted) {
+        if (abortCause === 'external') {
           settleReject(withExitFields(new Error(`${label} aborted (external abort) (child process killed)`), { timedOut: false }));
           return;
         }
         const timeoutSuffix = signalKillAssertsTimeout ? ` after ${timeoutMs}ms timeout` : '';
         // A binary's timeout kills it through Node's `signal` option, and its
         // close can win the race with the `error` the abort raises.
-        const timedOut = controller.signal.aborted;
+        const timedOut = abortCause === 'timeout';
         settleReject(withExitFields(new Error(`${label} killed by signal ${signalName}${timeoutSuffix}`), { signal: signalName, timedOut }));
         return;
       }
       if (code !== 0) {
-        const exitFields: SpawnExitFields = typeof code === 'number' ? { exitCode: code, timedOut: false } : { timedOut: false };
+        const exitFields: SpawnExitFields = { timedOut: false, ...(typeof code === 'number' ? { exitCode: code } : {}) };
         settleReject(withExitFields(new Error(`${label} exited with code ${code}: ${stderr.trim() || stdout.trim()}`), exitFields));
         return;
       }

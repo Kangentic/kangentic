@@ -133,8 +133,9 @@ contract was kept in sync across three files by prose comments alone.
   asks `launchRefusal` (`typed-launch.ts`) before it has a PTY, ahead of the sibling drain, so no
   path needs a check of its own. It throws `AgentCommandTooLongError` for a command past its
   shell's limit, and `AgentBatchShimUnresolvedError` for a launch past cmd's typed budget whose
-  `.cmd` shim it cannot read past, which would otherwise type a refusal and show a working agent. An opening prompt that does not fit is typed
-  in only on an adapter whose `firstPromptMayBeTyped` says so. Do not widen that to an agent whose
+  `.cmd` shim it cannot read past. Without that refusal the launch would type a refusal and show a
+  working agent. An opening prompt that does not fit is typed in only on an adapter whose
+  `firstPromptMayBeTyped` says so. Do not widen that to an agent whose
   input box cannot be told from a boot screen: the paste's Enter would answer the screen. An
   opening that waits for a person to answer one waits in the background, and every later message
   waits behind it. `tests/unit/task-description-limit.test.ts` holds

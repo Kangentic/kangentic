@@ -446,7 +446,9 @@ in one Sentry org, one triage surface.
   - `agent_session_id`: a session whose id no capture path found within the 30 s window
     (`SessionIdManager`), reported once its outcome is known, never at the window (Sentry
     DESKTOP-36 reported there and could not tell late from never). An id that arrives later sends
-    `AgentSessionIdCapturedLateError` with `captured_after_s` (a seconds bucket). A session removed
+    `AgentSessionIdCapturedLateError` with `captured_after_s` (a seconds bucket, counted to when
+    Kangentic noticed the id, so an upper bound: an id the suspend-time scrollback scan finds
+    counts at the suspend). A session removed
     with no id, or still without one five minutes after its spawn (a paused row is never removed),
     sends `AgentSessionIdNotCapturedError` with `settled_by` (`removed`, `ceiling`) and
     `session_status`. Each kind reports once per agent per run, as its own issue. Both carry
@@ -621,7 +623,7 @@ in one Sentry org, one triage surface.
   refused before it had a PTY (`AgentStartRefusedError`): `worktree-missing` or `folder-missing`
   for a gone folder, `prompt-too-long` for a command its shell cannot run. The folder's path is
   redacted, so this tag is what tells a gone worktree from a gone project folder (Sentry DESKTOP-2P
-  could not). A launch past cmd's typed budget whose `.cmd` shim cannot be read past, in any shell,
+  could not). In any shell, a launch past cmd's typed budget whose `.cmd` shim cannot be read past
   (`AgentBatchShimUnresolvedError`) is refused the same way, with the same card reason, and goes
   under the cause `batch_shim_unresolved` whichever path started it, with `batch_shim` naming why
   the shim gave up (`unreadable`, `unparsed`, `target_missing`, `target_not_script`, `node_path`).

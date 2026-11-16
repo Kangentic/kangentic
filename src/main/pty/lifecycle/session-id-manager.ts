@@ -80,7 +80,7 @@ export interface SessionIdManagerCallbacks {
  * session could own (the folder-match check), `empty` a scan that found nothing
  * in its budget, `pending` one still polling.
  */
-export type FilesystemScanOutcome = 'none' | 'pending' | 'found' | 'empty' | 'dropped' | 'failed';
+type FilesystemScanOutcome ='none' | 'pending' | 'found' | 'empty' | 'dropped' | 'failed';
 
 /**
  * The end of a session whose id the diagnostic window did not see. Sentry
@@ -184,6 +184,13 @@ export class SessionIdManager {
     hasKnownAgentSessionId: boolean = false,
     cliTarget: StoredCliTarget | null = null,
   ): void {
+    // An earlier spawn under this id still waiting past the window ended with no
+    // id. Settled before anything else, so its ceiling never fires on this spawn,
+    // and never read as a late capture from an id this spawn starts with.
+    if (this.pastWindow.has(sessionId)) {
+      this.settlePastWindow(sessionId);
+      this.callbacks.onCaptureOutcome?.(sessionId, { kind: 'never', settledBy: 'removed', filesystemScan: this.filesystemScanOf(sessionId) });
+    }
     const strategy = agentParser?.runtime?.sessionId;
     if (!strategy) return;
     const spawnedAt = new Date();
