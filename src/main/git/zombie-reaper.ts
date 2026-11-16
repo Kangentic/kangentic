@@ -414,7 +414,7 @@ export function parseProcessRowsFromJson(stdout: string): ProcessRow[] {
   if (!stdout) return [];
   let parsed: unknown;
   try {
-    parsed = JSON.parse(stdout);
+    parsed = parseScanJson(stdout);
   } catch {
     return [];
   }
@@ -439,6 +439,26 @@ export function parseProcessRowsFromJson(stdout: string): ProcessRow[] {
     });
   }
   return result;
+}
+
+/**
+ * A scan's JSON, read even when Windows PowerShell wrote a control character
+ * into a string raw. `ConvertTo-Json` on 5.1 leaves U+001A unescaped (measured),
+ * JSON forbids it, and one process whose command line held one made the whole
+ * scan parse to nothing, so a removal reap found no holder at all. Both scans
+ * are `-Compress`: one line, with no control character outside a string once
+ * the trailing newline is trimmed. So each one left is inside a string, and is
+ * written as its escape, which keeps the command line as the process has it.
+ */
+function parseScanJson(stdout: string): unknown {
+  try {
+    return JSON.parse(stdout);
+  } catch { // report-ok: a raw control character in the scan's JSON, which the retry below reads
+    return JSON.parse(stdout.trim().replace(
+      /[\u0000-\u001f]/g,
+      (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    ));
+  }
 }
 
 /** Test-only: clear the scan caches between cases. */

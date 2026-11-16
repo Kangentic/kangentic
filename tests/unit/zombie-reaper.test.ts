@@ -921,6 +921,21 @@ describe('parseProcessRowsFromJson', () => {
     expect(parseProcessRowsFromJson('{ truncated')).toEqual([]);
   });
 
+  it('reads a scan in which Windows PowerShell wrote a control character raw, rather than losing every row', () => {
+    // ConvertTo-Json on Windows PowerShell 5.1 leaves U+001A unescaped inside a string (measured
+    // on a live scan). JSON.parse refuses it, so one such command line emptied the whole scan.
+    const stdout = '[{"ProcessId":100,"ParentProcessId":4,"CommandLine":"a.exe \u001a tail","CreationDate":"\\/Date(1792057142367)\\/"},'
+      + '{"ProcessId":200,"ParentProcessId":4,"CommandLine":"b.exe","CreationDate":null}]\r\n';
+    expect(() => JSON.parse(stdout)).toThrow();
+
+    const rows = parseProcessRowsFromJson(stdout);
+
+    expect(rows.map((row) => row.pid)).toEqual([100, 200]);
+    // The command line is the process's own, control character included.
+    expect(rows[0].commandLine).toBe('a.exe \u001a tail');
+    expect(rows[0].startedAtMs).toBe(1_792_057_142_367);
+  });
+
   it('reads CreationDate in the form Windows PowerShell writes it, and leaves it undefined when absent', () => {
     // ConvertTo-Json on Windows PowerShell 5.1 writes a DateTime as "\/Date(<ms>)\/" (measured).
     const rows = parseProcessRowsFromJson('[{"ProcessId":100,"ParentProcessId":4,"CommandLine":"a.exe","CreationDate":"\\/Date(1792057142367)\\/"},{"ProcessId":200,"ParentProcessId":4,"CommandLine":"b.exe","CreationDate":null}]');
