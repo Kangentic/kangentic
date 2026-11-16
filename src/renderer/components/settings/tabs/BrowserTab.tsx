@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eraser, Globe, Loader2, Trash2 } from 'lucide-react';
+import { Eraser, Globe, LoaderCircle, Trash2 } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { SettingTextInput, useScopedUpdate } from '../shared';
@@ -87,7 +87,7 @@ export function BrowserTab({ config }: { config: AppConfig }) {
             className="inline-flex w-fit items-center gap-2 px-3 py-1.5 text-xs rounded border border-red-500/40 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {clearState === 'clearing'
-              ? <Loader2 size={14} className="animate-spin" />
+              ? <LoaderCircle size={14} className="animate-spin" />
               : <Trash2 size={14} />}
             <span>{clearState === 'clearing' ? t`Clearing...` : t`Clear data`}</span>
           </button>

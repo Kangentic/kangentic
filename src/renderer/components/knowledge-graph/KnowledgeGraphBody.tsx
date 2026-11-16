@@ -21,7 +21,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Compass, CornerDownLeft, Loader2, Sparkles, X } from 'lucide-react';
+import { Brain, Compass, CornerDownLeft, LoaderCircle, Sparkles, X } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
@@ -707,7 +707,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
   if (!loaded) {
     return (
       <CenteredNotice
-        icon={<Loader2 size={22} className="animate-spin" />}
+        icon={<LoaderCircle size={22} className="animate-spin" />}
         title={t`Reading the index`}
         body={t`Loading what this project has indexed.`}
       />

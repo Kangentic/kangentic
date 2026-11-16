@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { MoreHorizontal, Check } from 'lucide-react';
+import { Ellipsis, Check } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
 import { OverlayPopover } from './OverlayPopover';
@@ -95,7 +95,7 @@ export function KebabMenu({ children, icon, label: labelProp, triggerClassName, 
           aria-expanded={open}
           data-testid={triggerTestId}
         >
-          {icon ?? <MoreHorizontal size={16} />}
+          {icon ?? <Ellipsis size={16} />}
         </button>
       </Tooltip>
       <OverlayPopover

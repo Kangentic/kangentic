@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Trans, useLingui } from '@lingui/react/macro';
-import { Bot, Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Search, Settings, X } from 'lucide-react';
+import { Bot, Info, LoaderCircle, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Search, Settings, X } from 'lucide-react';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../../shared/workflow-agent-choice';
 import { awaitsFirstAgent } from '../../../shared/workflow-agent-first-open';
@@ -440,7 +440,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           <WorkflowAgentTerminal key={session.id} sessionId={session.id} shell={session.shell} agentName={terminalAgent} />
         ) : queued ? (
           <PaneNotice testId="workflow-agent-queued">
-            <Loader2 size={14} className="animate-spin" />
+            <LoaderCircle size={14} className="animate-spin" />
             <Trans>Waiting for a free agent slot...</Trans>
           </PaneNotice>
         ) : showSetup ? (
@@ -456,13 +456,13 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
               data-testid="workflow-agent-resume"
               className="flex items-center gap-2.5 rounded-lg border border-accent/40 bg-accent/20 px-6 py-3 text-base text-accent-fg transition-colors hover:bg-accent/30 disabled:opacity-50"
             >
-              {toggling ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+              {toggling ? <LoaderCircle size={16} className="animate-spin" /> : <Play size={16} />}
               {toggling ? t`Resuming agent...` : t`Resume session`}
             </button>
           </div>
         ) : (
           <PaneNotice testId="workflow-agent-starting">
-            <Loader2 size={14} className="animate-spin" />
+            <LoaderCircle size={14} className="animate-spin" />
             <Trans>Starting the workflow agent...</Trans>
           </PaneNotice>
         )}
@@ -566,7 +566,7 @@ function WorkflowAgentPlanSaved({ starting, onAsk }: { starting: boolean; onAsk:
         data-testid="workflow-agent-ask-for-changes"
         className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-accent/40 bg-accent/20 px-6 py-3 text-base text-accent-fg transition-colors hover:bg-accent/30 disabled:opacity-50"
       >
-        {starting ? <Loader2 size={16} className="animate-spin" /> : <MessageSquare size={16} />}
+        {starting ? <LoaderCircle size={16} className="animate-spin" /> : <MessageSquare size={16} />}
         {starting ? t`Starting agent...` : t`Ask for changes`}
       </button>
     </div>

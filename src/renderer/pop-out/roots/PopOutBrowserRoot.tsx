@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
 import { reportRendererFailure } from '../../utils/renderer-failure';
@@ -88,7 +88,7 @@ export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
   if (taskLoading || !sessionsSynced) {
     return (
       <div className="flex items-center justify-center h-full" data-testid="popout-browser-loading">
-        <Loader2 size={20} className="animate-spin text-fg-muted" />
+        <LoaderCircle size={20} className="animate-spin text-fg-muted" />
       </div>
     );
   }

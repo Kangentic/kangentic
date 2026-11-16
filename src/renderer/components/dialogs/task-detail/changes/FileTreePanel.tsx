@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Search, Copy, ChevronRight, ChevronDown, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
+import { Search, Copy, ChevronRight, ChevronDown, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, LoaderCircle, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
 import { BaseKindIcon } from './BaseKindIcon';
 import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit } from '../../../../../shared/types';
@@ -809,7 +809,7 @@ function FileHistoryPopover({
       </Tooltip>
       {commits === null ? (
         <div className="flex items-center justify-center py-4">
-          <Loader2 size={14} className="animate-spin text-fg-faint" />
+          <LoaderCircle size={14} className="animate-spin text-fg-faint" />
         </div>
       ) : commits.length === 0 ? (
         <div className="px-3 py-3 text-xs text-fg-disabled text-center"><Trans>No history found</Trans></div>

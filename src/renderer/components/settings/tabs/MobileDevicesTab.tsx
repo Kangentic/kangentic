@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleExclamationPoint, Copy, Loader2, Pencil, QrCode, Shield, Signal, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
+import { Check, CircleExclamationPoint, Copy, LoaderCircle, Pencil, QrCode, Shield, Signal, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
 import type { I18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -91,9 +91,9 @@ function connectionStateDisplay(state: MobileDeviceConnectionState, i18n: I18n):
     case 'connected':
       return { label: i18n._(msg`Connected`), className: 'text-green-400', icon: <Check size={12} /> };
     case 'connecting':
-      return { label: i18n._(msg`Connecting…`), className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
+      return { label: i18n._(msg`Connecting…`), className: 'text-amber-400', icon: <LoaderCircle size={12} className="animate-spin" /> };
     case 'reconnecting':
-      return { label: i18n._(msg`Reconnecting…`), className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
+      return { label: i18n._(msg`Reconnecting…`), className: 'text-amber-400', icon: <LoaderCircle size={12} className="animate-spin" /> };
     case 'offline':
       return { label: i18n._(msg`Offline`), className: 'text-fg-faint', icon: <WifiOff size={12} /> };
     case 'closed':
@@ -450,7 +450,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
 
                     agent-execution-fields.tsx has the same button for the agent
                     execution-server probe and must keep the same glyph. */}
-                {testingRelay ? <Loader2 size={13} className="animate-spin" /> : <Signal size={13} />}
+                {testingRelay ? <LoaderCircle size={13} className="animate-spin" /> : <Signal size={13} />}
                 <Trans>Test connection</Trans>
               </button>
 

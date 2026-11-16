@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CircleExclamationPoint, Loader2, Signal } from 'lucide-react';
+import { Check, CircleExclamationPoint, LoaderCircle, Signal } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { AgentDetectionInfo, AgentExecutionServer, AgentProjectExecution, AppConfig, RemoteServerStatus } from '../../../../shared/types';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
@@ -124,7 +124,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                     the same thing must not drift to different glyphs. See that
                     file for why Server was dropped and why Signal was picked
                     over the other candidates. */}
-                {probing ? <Loader2 size={13} className="animate-spin" /> : <Signal size={13} />}
+                {probing ? <LoaderCircle size={13} className="animate-spin" /> : <Signal size={13} />}
                 <Trans>Test connection</Trans>
               </button>
             </div>

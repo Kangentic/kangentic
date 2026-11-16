@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Search, ClipboardList, Loader2 } from 'lucide-react';
+import { Search, ClipboardList, LoaderCircle } from 'lucide-react';
 import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
 import { BaseDialog } from './BaseDialog';
@@ -263,7 +263,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
             <h3 className="text-base font-semibold text-fg flex items-center gap-2">
               <Trans>Completed Tasks ({archivedTotalCount})</Trans>
               {loadingFullArchive && (
-                <Loader2 size={14} className="animate-spin text-fg-disabled" data-testid="archive-loading" />
+                <LoaderCircle size={14} className="animate-spin text-fg-disabled" data-testid="archive-loading" />
               )}
             </h3>
             <div className="flex-1" />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react';
-import { Activity, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { Activity, ChevronDown, ChevronUp, LoaderCircle } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
@@ -226,7 +226,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
                   }`}
                 >
                   {session.status === 'running' && isActive(sessionActivity[session.id]) ? (
-                    <Loader2 size={8} className="text-active animate-spin" />
+                    <LoaderCircle size={8} className="text-active animate-spin" />
                   ) : session.status === 'running' && requiresUserInteraction(sessionActivity[session.id]) ? (
                     <div className={`w-1.5 h-1.5 rounded-full bg-attention${
                       effectiveActiveId !== session.id && !seenIdleSessions[session.id] ? ' animate-pulse' : ''

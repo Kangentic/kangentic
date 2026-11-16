@@ -1,4 +1,4 @@
-import { Loader2 } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { useConfigStore } from '../stores/config-store';
 import { resolveTerminalBackground, resolveTerminalForeground } from '../hooks/useTerminal';
 
@@ -37,7 +37,7 @@ export function LaunchOverlay({ label }: LaunchOverlayProps) {
         className="flex items-center gap-2 text-sm"
         style={{ color: resolveTerminalForeground(terminalColors), opacity: TERMINAL_LABEL_MUTED_OPACITY }}
       >
-        <Loader2 size={14} className="animate-spin" />
+        <LoaderCircle size={14} className="animate-spin" />
         {label}
       </span>
     </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue } from 'react';
-import { Check, Loader2, Paperclip, Search, CircleExclamationPoint, RefreshCw, EyeOff, Eye } from 'lucide-react';
+import { Check, LoaderCircle, Paperclip, Search, CircleExclamationPoint, RefreshCw, EyeOff, Eye } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
@@ -456,7 +456,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
           data-testid="import-execute-btn"
         >
-          {importing && <Loader2 size={12} className="animate-spin" />}
+          {importing && <LoaderCircle size={12} className="animate-spin" />}
           {importButtonLabel}
         </button>
       </div>
@@ -637,7 +637,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             data-testid="import-loading"
             className="flex items-center justify-center h-full min-h-[400px]"
           >
-            <Loader2 size={48} className="animate-spin text-fg-faint" />
+            <LoaderCircle size={48} className="animate-spin text-fg-faint" />
           </div>
         )}
 
@@ -689,7 +689,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           data-testid="import-syncing"
           className="flex items-center justify-center gap-2 py-2 border-t border-edge/30 text-xs text-fg-faint flex-shrink-0"
         >
-          <Loader2 size={12} className="animate-spin" />
+          <LoaderCircle size={12} className="animate-spin" />
           <Trans>Syncing...</Trans>
         </div>
       )}

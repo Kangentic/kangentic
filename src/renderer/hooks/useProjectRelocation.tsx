@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
@@ -119,7 +119,7 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
       className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-surface border border-edge rounded-lg shadow-lg"
       data-testid="project-move-progress"
     >
-      <Loader2 size={16} className="animate-spin text-fg-muted" />
+      <LoaderCircle size={16} className="animate-spin text-fg-muted" />
       <span className="text-sm text-fg">
         {moveProgress && moveProgress.phase === 'copying' ? (
           <Trans>

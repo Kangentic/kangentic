@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Loader2, Archive, MessageSquare, Terminal, History, Sparkles, Brain, CornerDownLeft } from 'lucide-react';
+import { Search, X, LoaderCircle, Archive, MessageSquare, Terminal, History, Sparkles, Brain, CornerDownLeft } from 'lucide-react';
 import { i18n, type MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Plural, Trans, useLingui } from '@lingui/react/macro';
@@ -329,7 +329,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
                 re-query); the empty "Searching..." state carries its own inline
                 spinner, so the two never show at once. */}
             {searching && hasResults ? (
-              <Loader2 size={14} className="text-fg-muted animate-spin flex-shrink-0" />
+              <LoaderCircle size={14} className="text-fg-muted animate-spin flex-shrink-0" />
             ) : null}
             <ScopeToggle scope={scope} onChange={setScope} />
             <button
@@ -364,7 +364,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
                 className="flex items-center justify-center gap-2 px-4 py-6 text-sm text-fg-muted"
                 data-testid="search-searching"
               >
-                <Loader2 size={14} className="animate-spin flex-shrink-0" />
+                <LoaderCircle size={14} className="animate-spin flex-shrink-0" />
                 <Trans>Searching...</Trans>
               </div>
             ) : (

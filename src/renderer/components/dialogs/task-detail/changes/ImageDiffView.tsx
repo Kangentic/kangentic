@@ -1,5 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import { Blend, ChevronsLeftRight, Columns2, ImageOff, Loader2, Rows2, ScanSearch, SquareSplitHorizontal } from 'lucide-react';
+import { Blend, ChevronsLeftRight, Columns2, ImageOff, LoaderCircle, Rows2, ScanSearch, SquareSplitHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
@@ -324,7 +324,7 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
             )}
             {pixelDiff.status === 'pending' && (
               <div className="absolute inset-0 flex items-center justify-center">
-                <Loader2 size={20} className="animate-spin text-fg-muted" aria-label={t`Comparing pixels`} />
+                <LoaderCircle size={20} className="animate-spin text-fg-muted" aria-label={t`Comparing pixels`} />
               </div>
             )}
           </>

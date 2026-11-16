@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleExclamationPoint, KeyRound, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, X } from 'lucide-react';
+import { Check, CircleExclamationPoint, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Server, Trash2, X } from 'lucide-react';
 import type { I18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -41,9 +41,9 @@ function connectionDisplay(state: SshHostConnectionState, i18n: I18n): { label: 
     case 'connected':
       return { label: i18n._(msg`Connected`), className: 'text-green-400', icon: <Check size={12} /> };
     case 'connecting':
-      return { label: i18n._(msg`Connecting…`), className: 'text-fg-muted', icon: <Loader2 size={12} className="animate-spin" /> };
+      return { label: i18n._(msg`Connecting…`), className: 'text-fg-muted', icon: <LoaderCircle size={12} className="animate-spin" /> };
     case 'reconnecting':
-      return { label: i18n._(msg`Reconnecting…`), className: 'text-fg-muted', icon: <Loader2 size={12} className="animate-spin" /> };
+      return { label: i18n._(msg`Reconnecting…`), className: 'text-fg-muted', icon: <LoaderCircle size={12} className="animate-spin" /> };
     case 'unreachable':
       return { label: i18n._(msg`Unreachable`), className: 'text-danger', icon: <CircleExclamationPoint size={12} /> };
     case 'stopped':
@@ -85,7 +85,7 @@ function NewHostKeyDialog({ probe, busy, onConfirm, onClose }: {
             className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on disabled:opacity-50"
             data-testid="ssh-trust-new-key-confirm"
           >
-            {busy ? <Loader2 size={12} className="animate-spin" /> : null}
+            {busy ? <LoaderCircle size={12} className="animate-spin" /> : null}
             <Trans>Trust new key</Trans>
           </button>
         </div>
@@ -721,7 +721,7 @@ export function SshTab() {
                             data-testid="ssh-edit-save"
                             onClick={() => void saveEdit()}
                           >
-                            {editBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                            {editBusy ? <LoaderCircle size={14} className="animate-spin" /> : null}
                             {editAddressChanged && !editProbe ? <Trans>Continue</Trans> : editProbe ? <Trans>Trust this key and save</Trans> : <Trans>Save</Trans>}
                           </button>
                           <button
@@ -891,7 +891,7 @@ export function SshTab() {
                     data-testid="ssh-add-continue"
                     onClick={() => void handleContinue()}
                   >
-                    {busy ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {busy ? <LoaderCircle size={14} className="animate-spin" /> : null}
                     <Trans>Continue</Trans>
                   </button>
                 ) : null}
@@ -916,7 +916,7 @@ export function SshTab() {
                     data-testid="ssh-add-submit"
                     onClick={() => void handleAdd()}
                   >
-                    {busy ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {busy ? <LoaderCircle size={14} className="animate-spin" /> : null}
                     <Trans>Add host</Trans>
                   </button>
                 ) : null}

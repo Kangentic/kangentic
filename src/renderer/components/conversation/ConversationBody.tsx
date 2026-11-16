@@ -10,7 +10,7 @@
  */
 
 import { useMemo } from 'react';
-import { Loader2, MessageSquare } from 'lucide-react';
+import { LoaderCircle, MessageSquare } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { Tabs, tabIds, type TabItem } from '../Tabs';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
@@ -78,7 +78,7 @@ export function ConversationBody({
   if (!ready || !response) {
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center">
-        <Loader2 size={20} className="animate-spin text-fg-muted" />
+        <LoaderCircle size={20} className="animate-spin text-fg-muted" />
       </div>
     );
   }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, MessageSquare } from 'lucide-react';
+import { LoaderCircle, MessageSquare } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { ConversationBody } from '../../../conversation/ConversationBody';
 import { useConversationState } from '../../../conversation/use-conversation-state';
@@ -44,7 +44,7 @@ export function CompletedConversationTab({ taskId, projectId, isFocused, tabRequ
   if (!current) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <Loader2 size={20} className="animate-spin text-fg-muted" />
+        <LoaderCircle size={20} className="animate-spin text-fg-muted" />
       </div>
     );
   }

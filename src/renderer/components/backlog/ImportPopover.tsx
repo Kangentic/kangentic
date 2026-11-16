@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Plus, Trash2, ChevronRight, ArrowLeft, Loader2, X } from 'lucide-react';
+import { Download, Plus, Trash2, ChevronRight, ArrowLeft, LoaderCircle, X } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { translateText } from '../../i18n/translate';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -391,7 +391,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
                   data-testid="import-source-connect-btn"
                 >
-                  {loading ? <Loader2 size={14} className="animate-spin" /> : null}
+                  {loading ? <LoaderCircle size={14} className="animate-spin" /> : null}
                   <Trans>Connect</Trans>
                 </button>
                 <button

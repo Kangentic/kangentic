@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, CircleExclamationPoint, Loader2, Plug, Signal } from 'lucide-react';
+import { Check, CircleExclamationPoint, LoaderCircle, Plug, Signal } from 'lucide-react';
 import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig, McpConnectionCheck } from '../../../../shared/types';
@@ -95,7 +95,7 @@ function McpConnectionRow() {
             data-testid="mcp-connection-test"
           >
             {/* Signal, as every Test connection button in Settings draws it. */}
-            {checking ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Signal size={13} aria-hidden="true" />}
+            {checking ? <LoaderCircle size={13} className="animate-spin" aria-hidden="true" /> : <Signal size={13} aria-hidden="true" />}
             <Trans>Test connection</Trans>
           </button>
         </div>

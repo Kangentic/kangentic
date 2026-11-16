@@ -22,7 +22,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { CircleStop, Loader2 } from 'lucide-react';
+import { CircleStop, LoaderCircle } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 
@@ -39,7 +39,7 @@ export function StopButtonIcon({ isThinking, isIdle, stopping }: StopButtonIconP
 }
 
 function stopGlyph({ isThinking, isIdle, stopping }: StopButtonIconProps): ReactNode {
-  if (stopping) return <Loader2 size={18} className="animate-spin" />;
+  if (stopping) return <LoaderCircle size={18} className="animate-spin" />;
   if (isThinking || isIdle) {
     return (
       <ActivityMark

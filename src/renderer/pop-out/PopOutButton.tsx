@@ -1,4 +1,4 @@
-import { SquareArrowOutUpRight } from 'lucide-react';
+import { SquareArrowUpRightExit } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { usePopOut } from './usePopOut';
 import { Tooltip } from '../components/Tooltip';
@@ -24,7 +24,7 @@ export function PopOutButton<K extends PopOutKind>({ kind, params, label }: {
         aria-label={name}
         data-testid={`pop-out-button-${kind}`}
       >
-        <SquareArrowOutUpRight size={16} />
+        <SquareArrowUpRightExit size={16} />
       </button>
     </Tooltip>
   );

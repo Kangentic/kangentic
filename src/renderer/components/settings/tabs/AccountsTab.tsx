@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeftRight, Bot, ChevronDown, Plus, TriangleAlert } from 'lucide-react';
+import { ArrowLeftRight, Bot, ChevronDown, Plus, TriangleExclamationPoint } from 'lucide-react';
 import { AgentLogo } from '../../VendorMark';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -204,7 +204,7 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
           >
             {card.overrides.map(({ variable }) => (
               <CardTile key={variable} className="flex items-center gap-2" testId="accounts-override-line">
-                <TriangleAlert size={14} className="flex-shrink-0 text-warning" aria-hidden="true" />
+                <TriangleExclamationPoint size={14} className="flex-shrink-0 text-warning" aria-hidden="true" />
                 <span className="min-w-0 truncate text-xs text-warning">
                   <Trans><span className="font-mono">{variable}</span> overrides these accounts.</Trans>
                 </span>

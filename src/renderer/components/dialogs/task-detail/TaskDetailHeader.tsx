@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Search, Workflow as WorkflowIcon } from 'lucide-react';
+import { X, Trash2, Pencil, LoaderCircle, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Search, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { ShortcutGlyph, SwimlaneIcon, shortcutIcon } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
@@ -77,7 +77,7 @@ function pauseGlyph({
   isIdle: boolean;
   isSessionActive: boolean;
 }): ReactNode {
-  if (toggling) return <Loader2 size={18} className="animate-spin" />;
+  if (toggling) return <LoaderCircle size={18} className="animate-spin" />;
 
   // Active and idle/permission share one packaged mark, differing only by color and motion
   // (a rotating dashed arc vs a static ring), so the two states read as one visual language.
@@ -103,7 +103,7 @@ function pauseGlyph({
   // once the session is running the engine seeds 'thinking' and this flips to the
   // active ring. Suspended -> the resume control.
   if (isSessionActive) {
-    return <Loader2 size={18} className="animate-spin text-fg-muted" />;
+    return <LoaderCircle size={18} className="animate-spin text-fg-muted" />;
   }
   return <CirclePlay size={18} />;
 }
@@ -996,7 +996,7 @@ function TaskDetailKebabItems({
           re-checks merge readiness between background sweeps. */}
       {(task.branch_name || task.worktree_path || task.pushed_branch || task.pr_number != null) && (
         <KebabMenuItem
-          icon={linkingPr ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          icon={linkingPr ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           label={task.pr_url ? t`Refresh PR` : t`Link PR`}
           onClick={() => { closeAll(); void handleLinkPr(); }}
           disabled={linkingPr}
@@ -1010,7 +1010,7 @@ function TaskDetailKebabItems({
           never land on the handler's error path. */}
       {Boolean(task.worktree_path) && !isArchived && (
         <KebabMenuItem
-          icon={updatingFromBase ? <Loader2 size={14} className="animate-spin" /> : <GitMerge size={14} />}
+          icon={updatingFromBase ? <LoaderCircle size={14} className="animate-spin" /> : <GitMerge size={14} />}
           label={t`Update from base`}
           onClick={() => { closeAll(); void handleUpdateFromBase(); }}
           disabled={updatingFromBase || isSessionActive || fixedBaseReason !== null}

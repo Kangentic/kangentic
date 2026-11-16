@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ArrowUp, ArrowDown, Loader2, Clock, Wrench, Hourglass, ChevronDown, Gauge } from 'lucide-react';
+import { ArrowUp, ArrowDown, LoaderCircle, Clock, Wrench, Hourglass, ChevronDown, Gauge } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { RateLimitWindow } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
@@ -340,7 +340,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
         data-no-dismiss
       >
         <span className={`${pill} text-fg-muted flex items-center gap-1.5`}>
-          <Loader2 size={12} className="animate-spin" />
+          <LoaderCircle size={12} className="animate-spin" />
           {spinnerLabel}
         </span>
       </div>

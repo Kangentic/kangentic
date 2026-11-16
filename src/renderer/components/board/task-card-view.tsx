@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Loader2, CircleExclamationPoint, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
+import { LoaderCircle, CircleExclamationPoint, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { formatRelativeTime } from '../../lib/datetime';
@@ -167,7 +167,7 @@ function StartBlockedCompactLine({ reason }: { reason: StartBlockedReason }) {
 export function WorkflowWaitingBar({ label, paused }: { label: string; paused: boolean }) {
   return (
     <CardStatusBar testId="workflow-status-bar" tip={label}>
-      {paused ? <CirclePause size={12} className="shrink-0" /> : <Loader2 size={12} className="shrink-0" />}
+      {paused ? <CirclePause size={12} className="shrink-0" /> : <LoaderCircle size={12} className="shrink-0" />}
       <span className="truncate">{label}</span>
     </CardStatusBar>
   );
@@ -426,7 +426,7 @@ export function PendingFooter({ state, divider, testId, sessionId, startBlockedR
   if (state === 'queued') return <QueuedFooter sessionId={sessionId} divider={divider} testId={testId} />;
   return (
     <CardStatusBar testId={testId ?? 'usage-bar'} divider={divider}>
-      <Loader2 size={12} className="animate-spin shrink-0" />
+      <LoaderCircle size={12} className="animate-spin shrink-0" />
       <span className="truncate">{state === 'resuming' ? <Trans>Resuming agent...</Trans> : <Trans>Starting agent...</Trans>}</span>
     </CardStatusBar>
   );
@@ -707,7 +707,7 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
     case 'initializing':
       return (
         <CardStatusBar testId="status-bar" tip={displayState.label} divider={divider}>
-          <Loader2 size={12} className="animate-spin shrink-0" />
+          <LoaderCircle size={12} className="animate-spin shrink-0" />
           <span className="truncate">{displayState.label}</span>
         </CardStatusBar>
       );

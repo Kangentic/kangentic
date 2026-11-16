@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
-import { Loader2, Sparkles } from 'lucide-react';
+import { LoaderCircle, Sparkles } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { namingAgentReady } from '../../shared/answer-agent';
 import { useConfigStore } from '../stores/config-store';
@@ -117,7 +117,7 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
         // swap there would be invisible or inverted.
         className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 text-fg-muted hover:text-accent-fg bg-surface-control border border-edge-input hover:border-accent rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {isPending ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+        {isPending ? <LoaderCircle size={14} className="animate-spin" /> : <Sparkles size={14} />}
       </button>
     </Tooltip>
   );

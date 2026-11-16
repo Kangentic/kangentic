@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, Filter, X } from 'lucide-react';
+import { Search, Funnel, X } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { CountBadge } from './CountBadge';
 import { FilterPopover } from './FilterPopover';
@@ -134,7 +134,7 @@ export function ToolbarSearchFilter({
             }`}
             data-testid={filterTestId}
           >
-            <Filter size={14} className="shrink-0" />
+            <Funnel size={14} className="shrink-0" />
             <span className={filterCollapse?.label}><Trans>Filter</Trans></span>
             {/* Tinted from the button's own tone, which is the accent while a
                 filter is active. It stays when the label collapses, so the
