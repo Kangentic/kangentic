@@ -141,7 +141,7 @@ test.describe('Changes panel: per-file history popover', () => {
     // widen any individual step's own timeout. The three steps that are
     // gated on an async IPC fetch (file-tree row: dialog-open ->
     // toggle-click -> diffFiles -> re-render; history popover + its rows:
-    // fileHistory fetch, see the Loader2 spinner state in
+    // fileHistory fetch, see the LoaderCircle spinner state in
     // FileHistoryPopover) are the ones exposed to CI worker contention - the
     // file-tree row is also the FIRST async render right after the dialog's
     // own open animation, so it additionally competes with that animation

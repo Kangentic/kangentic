@@ -106,8 +106,9 @@ function stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch, log = 
 }
 
 /**
- * Removes better-sqlite3's `build/` folder, on every path through the strip
- * above, and says so when it does. `fs.rmSync` throws on any failure but a
+ * Removes better-sqlite3's `build/` folder, on both paths the strip above
+ * returns by, and says so when it does. The third path throws and fails the
+ * build, so nothing ships from it. `fs.rmSync` throws on any failure but a
  * missing path, so the log line never follows a folder that is still there.
  */
 function removeCompiledBetterSqlite({ packageDir, log }) {

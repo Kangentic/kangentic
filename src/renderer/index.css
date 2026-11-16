@@ -521,8 +521,8 @@
    Remove in the inspector took the release the same way, so the rule covers
    the whole window. While a gesture is in flight no disabled control takes the
    pointer, and the release lands on what is beneath it. At rest each keeps it,
-   for the tip that says why it is disabled. The tag names keep the restyle at
-   each end of a gesture to form controls. */
+   for the tip that says why it is disabled. The tag names are there so that
+   only form controls are restyled when a gesture starts and when it ends. */
 :root:has(.workflow-canvas .react-flow__node.dragging, .workflow-canvas .react-flow__pane.dragging, .workflow-canvas[data-linking]) :is(button, input, select, textarea):disabled {
   pointer-events: none;
 }
