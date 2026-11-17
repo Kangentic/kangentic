@@ -169,40 +169,41 @@ for (const collapseUnchanged of [false, true]) {
   const mode = collapseUnchanged ? 'collapse on' : 'collapse off';
 
   test.describe(`DiffViewer data-diff-state (${mode})`, () => {
-    test('opening a Changes diff reaches laid-out for that file', async () => {
+    // One Monaco boot per mode: the first file's reads come before the switch to the second.
+    test('opening a Changes diff reaches laid-out for that file, and switching files goes back to pending and reaches laid-out on the new file, never stale', async () => {
       await launch(collapseUnchanged);
       const area = page.locator('[data-testid="diff-editor-area"]');
       await expect(area).toHaveAttribute('data-diff-state', 'laid-out', { timeout: 15000 });
-      expect(await readModifiedFirstChangeLine(page)).toBe(FIRST_CHANGE_LINE);
-      if (collapseUnchanged) {
-        // The fold is part of "laid out": the unchanged span must already be hidden.
-        // Read at once, not polled: laid-out was already reached above.
-        expect(await page.locator('.diff-hidden-lines').count()).toBeGreaterThan(0);
-      }
-    });
 
-    test('switching files goes back to pending and reaches laid-out on the new file, never stale', async () => {
-      await launch(collapseUnchanged);
-      const area = page.locator('[data-testid="diff-editor-area"]');
-      await expect(area).toHaveAttribute('data-diff-state', 'laid-out', { timeout: 15000 });
-      const logLengthBeforeSwap = (await readLog()).length;
+      await test.step('opening a Changes diff reaches laid-out for that file', async () => {
+        expect(await readModifiedFirstChangeLine(page)).toBe(FIRST_CHANGE_LINE);
+        if (collapseUnchanged) {
+          // The fold is part of "laid out": the unchanged span must already be hidden.
+          // Read at once, not polled: laid-out was already reached above.
+          expect(await page.locator('.diff-hidden-lines').count()).toBeGreaterThan(0);
+        }
+      });
 
-      await page.locator('button', { hasText: SECOND_FILE }).first().click();
-      // The swap sets pending from an effect after the click, so the attribute can still read the
-      // first file's laid-out here. Wait until the log shows the swap went pending first.
-      await expect.poll(async () => (await readLog()).slice(logLengthBeforeSwap).some((entry) => entry.state === 'pending'), { timeout: 15000 }).toBe(true);
-      await expect(area).toHaveAttribute('data-diff-state', 'laid-out', { timeout: 15000 });
-      // laid-out must describe the NEW file: its diff has landed, not the previous file's.
-      expect(await readModifiedFirstChangeLine(page)).toBe(SECOND_CHANGE_LINE);
+      await test.step('switching files goes back to pending and reaches laid-out on the new file, never stale', async () => {
+        const logLengthBeforeSwap = (await readLog()).length;
 
-      const swapLog = (await readLog()).slice(logLengthBeforeSwap);
-      expect(swapLog.map((entry) => entry.state), 'the swap must pass through pending').toContain('pending');
-      const finalEntry = swapLog[swapLog.length - 1];
-      expect(finalEntry.state).toBe('laid-out');
-      // Every laid-out reading after the swap saw the new file's diff, or no diff at all.
-      for (const entry of swapLog) {
-        if (entry.state === 'laid-out') expect(entry.changeLine).toBe(SECOND_CHANGE_LINE);
-      }
+        await page.locator('button', { hasText: SECOND_FILE }).first().click();
+        // The swap sets pending from an effect after the click, so the attribute can still read the
+        // first file's laid-out here. Wait until the log shows the swap went pending first.
+        await expect.poll(async () => (await readLog()).slice(logLengthBeforeSwap).some((entry) => entry.state === 'pending'), { timeout: 15000 }).toBe(true);
+        await expect(area).toHaveAttribute('data-diff-state', 'laid-out', { timeout: 15000 });
+        // laid-out must describe the NEW file: its diff has landed, not the previous file's.
+        expect(await readModifiedFirstChangeLine(page)).toBe(SECOND_CHANGE_LINE);
+
+        const swapLog = (await readLog()).slice(logLengthBeforeSwap);
+        expect(swapLog.map((entry) => entry.state), 'the swap must pass through pending').toContain('pending');
+        const finalEntry = swapLog[swapLog.length - 1];
+        expect(finalEntry.state).toBe('laid-out');
+        // Every laid-out reading after the swap saw the new file's diff, or no diff at all.
+        for (const entry of swapLog) {
+          if (entry.state === 'laid-out') expect(entry.changeLine).toBe(SECOND_CHANGE_LINE);
+        }
+      });
     });
   });
 }

@@ -95,7 +95,9 @@ test('a bound combo resets the focused terminal, replays it, and types nothing',
     // The mount replay and any corrective reload settle first, so the count
     // below moves only for the reset.
     await expect(page.getByTestId('terminal-replay-veil')).toHaveCount(0);
+    await settleMountResizes(page);
     const replaysBefore = await replayCount(page);
+    const resizesBefore = await resizeCount(page);
     const writtenBefore = await writtenToSession(page, SESSION_ID);
 
     await page.keyboard.press(RESET_COMBO);
@@ -104,6 +106,11 @@ test('a bound combo resets the focused terminal, replays it, and types nothing',
     await expect.poll(() => replayCount(page)).toBeGreaterThan(replaysBefore);
     expect(await writtenToSession(page, SESSION_ID)).toBe(writtenBefore);
     await expect(textarea).toBeFocused();
+
+    await test.step('the replay after a reset asks for no resize', async () => {
+      await expect(page.getByTestId('terminal-replay-veil')).toHaveCount(0);
+      expect(await resizeCount(page)).toBe(resizesBefore);
+    });
   } finally {
     await browser.close();
   }
@@ -196,26 +203,6 @@ test('a rejected reset is swallowed: no page error and no replay', async () => {
     await expect(page.getByTestId('terminal-replay-veil')).toHaveCount(0);
     expect(await replayCount(page)).toBe(replaysBefore + 1);
     expect(pageErrors).toEqual([]);
-  } finally {
-    await browser.close();
-  }
-});
-
-test('the replay after a reset asks for no resize', async () => {
-  const { browser, page } = await launch({ 'terminal.reset': RESET_COMBO });
-  try {
-    const commandWindow = await openTransientCommandTerminal(page, SESSION_ID);
-    await focusedTerminal(commandWindow);
-    await expect(page.getByTestId('terminal-replay-veil')).toHaveCount(0);
-    await settleMountResizes(page);
-    const replaysBefore = await replayCount(page);
-    const resizesBefore = await resizeCount(page);
-
-    await page.keyboard.press(RESET_COMBO);
-    await expect.poll(() => replayCount(page)).toBeGreaterThan(replaysBefore);
-    await expect(page.getByTestId('terminal-replay-veil')).toHaveCount(0);
-
-    expect(await resizeCount(page)).toBe(resizesBefore);
   } finally {
     await browser.close();
   }

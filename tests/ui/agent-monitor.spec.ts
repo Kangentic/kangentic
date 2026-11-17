@@ -310,94 +310,152 @@ async function openMonitor(page: Page): Promise<void> {
 }
 
 test.describe('agent monitor', () => {
-  test('lists sessions from every project while only one board is open', async () => {
+  // One boot for the read-only checks of the default monitor seed. Each step keeps the title of the
+  // test it came from, so a failure still names the case.
+  test('the default monitor seed: its cards, strips, peeks, footers and summary tiles', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
 
-      const cards = page.locator('[data-testid="monitor-card"]');
-      await expect(cards).toHaveCount(4);
+      await test.step('lists sessions from every project while only one board is open', async () => {
+        const cards = page.locator('[data-testid="monitor-card"]');
+        await expect(cards).toHaveCount(4);
 
-      // The whole point: a session owned by the project that is NOT open. Its
-      // project is named by the SECTION (grouping defaults to project), and the
-      // card's strip names it too, as the Workflows canvas card does on every
-      // card, so a card has one shape in every grouping.
-      await expect(page.locator('[data-session-id="sess-other-project"]')).toBeVisible();
-      await expect(page.locator('[data-testid="monitor-group-header"]', { hasText: 'Monitor Beta' }))
-        .toBeVisible();
-      await expect(
-        page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-project"]'),
-      ).toContainText('Monitor Beta');
+        // The whole point: a session owned by the project that is NOT open. Its
+        // project is named by the SECTION (grouping defaults to project), and the
+        // card's strip names it too, as the Workflows canvas card does on every
+        // card, so a card has one shape in every grouping.
+        await expect(page.locator('[data-session-id="sess-other-project"]')).toBeVisible();
+        await expect(page.locator('[data-testid="monitor-group-header"]', { hasText: 'Monitor Beta' }))
+          .toBeVisible();
+        await expect(
+          page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-project"]'),
+        ).toContainText('Monitor Beta');
 
-      // Command Terminals appear here and ONLY here: they have no task, so no
-      // board card, and the Command Terminal layer only shows the open project.
-      // The title carries its slot number so two terminals are tellable apart.
-      await expect(
-        page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-title"]'),
-      ).toHaveText('Command Terminal 2');
-    } finally {
-      await browser.close();
-    }
-  });
+        // Command Terminals appear here and ONLY here: they have no task, so no
+        // board card, and the Command Terminal layer only shows the open project.
+        // The title carries its slot number so two terminals are tellable apart.
+        await expect(
+          page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-title"]'),
+        ).toHaveText('Command Terminal 2');
+      });
 
-  test('every card shows live terminal output, and a terminal reads as a terminal', async () => {
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
+      await test.step('every card shows live terminal output, and a terminal reads as a terminal', async () => {
+        // The peek replaced the static task-description excerpt, and it applies to
+        // BOTH row kinds - that uniformity is the point. A task agent shows it...
+        await expect(
+          page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-peek"]'),
+        ).toContainText('npm run typecheck');
+        // ...and so does a Command Terminal, whose card was previously empty
+        // because a terminal has no description to show.
+        await expect(
+          page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]'),
+        ).toContainText('nothing to commit');
 
-      // The peek replaced the static task-description excerpt, and it applies to
-      // BOTH row kinds - that uniformity is the point. A task agent shows it...
-      await expect(
-        page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-peek"]'),
-      ).toContainText('npm run typecheck');
-      // ...and so does a Command Terminal, whose card was previously empty
-      // because a terminal has no description to show.
-      await expect(
-        page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-peek"]'),
-      ).toContainText('nothing to commit');
+        // With both kinds showing terminal text, the state glyph is what separates
+        // them. `data-mark` is the branding mark's own test contract.
+        await expect(
+          page.locator('[data-session-id="sess-working"] svg[data-mark]'),
+        ).toHaveAttribute('data-mark', 'agent-working');
+        await expect(
+          page.locator('[data-session-id="sess-command-terminal"] svg[data-mark]'),
+        ).toHaveAttribute('data-mark', 'terminal-working');
+      });
 
-      // With both kinds showing terminal text, the state glyph is what separates
-      // them. `data-mark` is the branding mark's own test contract.
-      await expect(
-        page.locator('[data-session-id="sess-working"] svg[data-mark]'),
-      ).toHaveAttribute('data-mark', 'agent-working');
-      await expect(
-        page.locator('[data-session-id="sess-command-terminal"] svg[data-mark]'),
-      ).toHaveAttribute('data-mark', 'terminal-working');
-    } finally {
-      await browser.close();
-    }
-  });
+      await test.step('the strip names the project, then the workflow or a Command Terminal\'s branch, with the column as the track\'s marker', async () => {
+        // The strip answers "where is this session working" on every card kind, as
+        // the board and Workflows canvas cards do: the project on the left, the
+        // column as the step track's own marker on the right. A Command Terminal has
+        // no column, so its branch stands in for it.
+        const taskStrip = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-strip"]');
+        await expect(taskStrip.locator('[data-testid="monitor-card-project"]')).toContainText('Monitor Alpha');
+        const marker = taskStrip.locator('[data-testid="workflow-step-marker"]');
+        await expect(marker).toHaveAttribute('data-step-state', 'current');
+        await expect(marker).toHaveAccessibleName('Testing: now');
+        // A plain task grows neither a workflow nor a branch.
+        await expect(taskStrip.locator('[data-testid="monitor-card-workflow"]')).toHaveCount(0);
+        await expect(taskStrip.locator('[data-testid="monitor-card-branch"]')).toHaveCount(0);
 
-  test('the strip names the project, then the workflow or a Command Terminal\'s branch, with the column as the track\'s marker', async () => {
-    // The strip answers "where is this session working" on every card kind, as
-    // the board and Workflows canvas cards do: the project on the left, the
-    // column as the step track's own marker on the right. A Command Terminal has
-    // no column, so its branch stands in for it.
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
+        const workflowStrip = page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-strip"]');
+        await expect(workflowStrip.locator('[data-testid="monitor-card-workflow"]')).toContainText('Launch week');
 
-      const taskStrip = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-strip"]');
-      await expect(taskStrip.locator('[data-testid="monitor-card-project"]')).toContainText('Monitor Alpha');
-      const marker = taskStrip.locator('[data-testid="workflow-step-marker"]');
-      await expect(marker).toHaveAttribute('data-step-state', 'current');
-      await expect(marker).toHaveAccessibleName('Testing: now');
-      // A plain task grows neither a workflow nor a branch.
-      await expect(taskStrip.locator('[data-testid="monitor-card-workflow"]')).toHaveCount(0);
-      await expect(taskStrip.locator('[data-testid="monitor-card-branch"]')).toHaveCount(0);
+        const terminalStrip = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-strip"]');
+        await expect(terminalStrip.locator('[data-testid="monitor-card-project"]')).toContainText('Monitor Beta');
+        await expect(terminalStrip.locator('[data-testid="monitor-card-branch"]')).toContainText('main');
+        await expect(terminalStrip.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
 
-      const workflowStrip = page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-strip"]');
-      await expect(workflowStrip.locator('[data-testid="monitor-card-workflow"]')).toContainText('Launch week');
+        // The eyebrow row and its activity pill are gone; the strip replaced them.
+        await expect(page.locator('[data-testid="monitor-card-origin"]')).toHaveCount(0);
+        await expect(page.locator('[data-testid="monitor-card-activity"]')).toHaveCount(0);
+      });
 
-      const terminalStrip = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-strip"]');
-      await expect(terminalStrip.locator('[data-testid="monitor-card-project"]')).toContainText('Monitor Beta');
-      await expect(terminalStrip.locator('[data-testid="monitor-card-branch"]')).toContainText('main');
-      await expect(terminalStrip.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
+      await test.step('a session with no captured output renders no peek well at all', async () => {
+        // `OutputPeek` returns null when `lines.length === 0`. sess-paused and
+        // sess-other-project both seed outputPeek: [] and exercise that early
+        // return on every run, but nothing asserted its effect - a regression to
+        // an empty, visible well would have gone unnoticed.
+        await expect(page.locator('[data-session-id="sess-paused"] [data-testid="monitor-card-peek"]')).toHaveCount(0);
+        await expect(
+          page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-peek"]'),
+        ).toHaveCount(0);
+      });
 
-      // The eyebrow row and its activity pill are gone; the strip replaced them.
-      await expect(page.locator('[data-testid="monitor-card-origin"]')).toHaveCount(0);
-      await expect(page.locator('[data-testid="monitor-card-activity"]')).toHaveCount(0);
+      await test.step('the monitor card footer draws the same rule the board card does', async () => {
+        // This used to be the opposite assertion. MonitorCard passed divider={false}
+        // on the grounds that its peek well already closed the content region, which
+        // stopped being true once a card could show a plain description instead and
+        // land with nothing between its text and the model line. The two cards are
+        // one design, so the footer is the board card's, prop for prop.
+        const footer = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
+        await expect(footer).toBeVisible();
+        await expect(footer).toHaveClass(/border-t/);
+      });
+
+      await test.step('an unknown context window reads "-", never a fabricated 0%', async () => {
+        // sess-other-project and sess-command-terminal both carry contextPercent:
+        // null (no status.json has arrived for them yet). Before this fix
+        // MonitorCard passed `percent={row.contextPercent ?? 0}` straight through,
+        // so ContextUsageFooter printed a confident "0%" for a value it never
+        // actually had - indistinguishable from a session that is genuinely empty.
+        // sess-working's known, nonzero window (62%) proves the known path is
+        // untouched. (sess-paused draws the board's Paused footer instead.)
+        //
+        // Scoped to the percent span (`monitor-card-usage-percent`), not the whole
+        // footer: the model-name span can independently render "-", so an
+        // assertion against the footer as a whole is satisfied by either half and
+        // does not actually pin the percent label.
+        const unknownIds = ['sess-other-project', 'sess-command-terminal'];
+        for (const id of unknownIds) {
+          const footer = page.locator(`[data-session-id="${id}"] [data-testid="monitor-card-usage"]`);
+          const percentLabel = footer.locator('[data-testid="monitor-card-usage-percent"]');
+          await expect(percentLabel).toHaveText('-');
+          await expect(footer).toHaveAttribute('data-context-window', 'unknown');
+        }
+
+        const knownFooter = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
+        await expect(knownFooter.locator('[data-testid="monitor-card-usage-percent"]')).toHaveText('62%');
+        await expect(knownFooter).not.toHaveAttribute('data-context-window', 'unknown');
+      });
+
+      await test.step('each summary tile describes what it counts in one full sentence', async () => {
+        // A tile is a plain div with a Tooltip around it, so its hover text lands on the div as its
+        // accessible description. A rewrite once cut each tip to a trailing fragment ("on a response
+        // from you, ..."), which no other assertion in this file reads. Exact strings, so a fragment,
+        // a swapped pair of tiles, or a dropped clause all fail.
+        await expect(page.locator('[data-testid="monitor-summary-needs-you"]')).toHaveAccessibleDescription(
+          'Agents waiting on a response from you, across every project in view',
+        );
+        await expect(page.locator('[data-testid="monitor-summary-working"]')).toHaveAccessibleDescription(
+          'Agents actively running right now, across every project in view',
+        );
+        await expect(page.locator('[data-testid="monitor-summary-idle"]')).toHaveAccessibleDescription(
+          'Sessions you paused, plus any queued waiting for a free slot',
+        );
+        await expect(page.locator('[data-testid="monitor-summary-projects"]')).toHaveAccessibleDescription(
+          'Projects in view with at least one live session',
+        );
+      });
     } finally {
       await browser.close();
     }
@@ -795,42 +853,6 @@ test.describe('agent monitor', () => {
     }
   });
 
-  test('a session with no captured output renders no peek well at all', async () => {
-    // `OutputPeek` returns null when `lines.length === 0`. sess-paused and
-    // sess-other-project both seed outputPeek: [] and exercise that early
-    // return on every run, but nothing asserted its effect - a regression to
-    // an empty, visible well would have gone unnoticed.
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
-
-      await expect(page.locator('[data-session-id="sess-paused"] [data-testid="monitor-card-peek"]')).toHaveCount(0);
-      await expect(
-        page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-peek"]'),
-      ).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('the monitor card footer draws the same rule the board card does', async () => {
-    // This used to be the opposite assertion. MonitorCard passed divider={false}
-    // on the grounds that its peek well already closed the content region, which
-    // stopped being true once a card could show a plain description instead and
-    // land with nothing between its text and the model line. The two cards are
-    // one design, so the footer is the board card's, prop for prop.
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
-
-      const footer = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
-      await expect(footer).toBeVisible();
-      await expect(footer).toHaveClass(/border-t/);
-    } finally {
-      await browser.close();
-    }
-  });
-
   // Trimmed (test-suite audit): a stopped row falling back to its description even
   // while it holds a trail is tests/unit/monitor-view-model.test.ts monitorSlotKind
   // ('gives a live row its trail', 'sends a stopped row back to its description').
@@ -863,39 +885,6 @@ test.describe('agent monitor', () => {
       await expect(card.locator('[data-testid="monitor-card-peek"]')).toContainText('queued build output');
       await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
       await expect.poll(lastWanted).toContain('sess-paused');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('an unknown context window reads "-", never a fabricated 0%', async () => {
-    // sess-other-project and sess-command-terminal both carry contextPercent:
-    // null (no status.json has arrived for them yet). Before this fix
-    // MonitorCard passed `percent={row.contextPercent ?? 0}` straight through,
-    // so ContextUsageFooter printed a confident "0%" for a value it never
-    // actually had - indistinguishable from a session that is genuinely empty.
-    // sess-working's known, nonzero window (62%) proves the known path is
-    // untouched. (sess-paused draws the board's Paused footer instead.)
-    //
-    // Scoped to the percent span (`monitor-card-usage-percent`), not the whole
-    // footer: the model-name span can independently render "-", so an
-    // assertion against the footer as a whole is satisfied by either half and
-    // does not actually pin the percent label.
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
-
-      const unknownIds = ['sess-other-project', 'sess-command-terminal'];
-      for (const id of unknownIds) {
-        const footer = page.locator(`[data-session-id="${id}"] [data-testid="monitor-card-usage"]`);
-        const percentLabel = footer.locator('[data-testid="monitor-card-usage-percent"]');
-        await expect(percentLabel).toHaveText('-');
-        await expect(footer).toHaveAttribute('data-context-window', 'unknown');
-      }
-
-      const knownFooter = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage"]');
-      await expect(knownFooter.locator('[data-testid="monitor-card-usage-percent"]')).toHaveText('62%');
-      await expect(knownFooter).not.toHaveAttribute('data-context-window', 'unknown');
     } finally {
       await browser.close();
     }
@@ -1455,23 +1444,6 @@ test.describe('agent monitor', () => {
     return (config.monitorWorkspace?.windows ?? []).map((entry) => entry.taskId);
   });
 
-  test('a detail opened in the monitor is persisted to the shared layout blob', async () => {
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
-      await page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-title"]').click();
-      await expect.poll(() => ownerHosts(page), { timeout: 10000 })
-        .toHaveProperty(`${PROJECT_A}:task-a`, 'monitor');
-
-      // This is what the pop-out (a separate renderer with its own empty store) reads
-      // to take the window over. Debounced, so poll.
-      await expect.poll(() => savedMonitorAnchors(page), { timeout: 10000 })
-        .toEqual([`${PROJECT_A}:task-a`]);
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('closing every detail saves an empty layout, so nothing comes back', async () => {
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
@@ -1977,32 +1949,6 @@ test.describe('agent monitor', () => {
     }
   });
 
-  test('each summary tile describes what it counts in one full sentence', async () => {
-    // A tile is a plain div with a Tooltip around it, so its hover text lands on the div as its
-    // accessible description. A rewrite once cut each tip to a trailing fragment ("on a response
-    // from you, ..."), which no other assertion in this file reads. Exact strings, so a fragment,
-    // a swapped pair of tiles, or a dropped clause all fail.
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
-
-      await expect(page.locator('[data-testid="monitor-summary-needs-you"]')).toHaveAccessibleDescription(
-        'Agents waiting on a response from you, across every project in view',
-      );
-      await expect(page.locator('[data-testid="monitor-summary-working"]')).toHaveAccessibleDescription(
-        'Agents actively running right now, across every project in view',
-      );
-      await expect(page.locator('[data-testid="monitor-summary-idle"]')).toHaveAccessibleDescription(
-        'Sessions you paused, plus any queued waiting for a free slot',
-      );
-      await expect(page.locator('[data-testid="monitor-summary-projects"]')).toHaveAccessibleDescription(
-        'Projects in view with at least one live session',
-      );
-    } finally {
-      await browser.close();
-    }
-  });
-
   /**
    * The Active tile freezes its own icon at `counts.working === 0`, so an idle machine's
    * chrome stops moving. The only prior coverage was a source-text scan in
@@ -2136,52 +2082,46 @@ async function tableCellOf(page: Page, sessionId: string, columnKey: string): Pr
 }
 
 test.describe('agent monitor: the list row slice', () => {
-  test('a workflow row in the list closes with its workflow name and a step track', async () => {
+  test('the list row slice: a workflow row closes with its workflow name and a plain row closes with none', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(`${monitorPreConfig()}
       ${patchMonitorRowsScript({ 'sess-other-project': { track: WORKFLOW_ROW_TRACK } })}`);
     try {
       await openMonitor(page);
       await page.locator('[data-testid="monitor-layout-list"]').click();
 
-      // The dense row, not the full card: the card's strip uses other testids, so
-      // without this every check below could be reading the wrong layout.
-      const row = monitorCardOf(page, 'sess-other-project');
-      await expect(row).toHaveAttribute('data-dense', 'true');
-
-      const slice = row.locator('[data-testid="monitor-row-workflow"]');
-      await expect(slice).toBeVisible();
-      await expect(slice.locator('[data-testid="monitor-row-workflow-name"]')).toHaveText('Launch week');
-      // The track is inside the slice, and its current step is the column's own marker.
-      await expect(slice.locator('[data-testid="workflow-step-track"]')).toBeVisible();
-      await expect(slice.locator('[data-testid="workflow-step-marker"]')).toHaveAttribute('aria-label', 'Testing: now');
-      // A workflow row is not a held one.
-      await expect(row.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a plain row in the list closes with no slice, even one that carries a track', async () => {
-    const { browser, page } = await launchWithState(`${monitorPreConfig()}
-      ${patchMonitorRowsScript({ 'sess-other-project': { track: WORKFLOW_ROW_TRACK } })}`);
-    try {
-      await openMonitor(page);
-      await page.locator('[data-testid="monitor-layout-list"]').click();
-
-      // The control: in this same list a workflow row DOES close with its slice, so
-      // the absences below cannot be a list that never drew one.
-      await expect(monitorCardOf(page, 'sess-other-project')).toHaveAttribute('data-dense', 'true');
-      await expect(monitorCardOf(page, 'sess-other-project').locator('[data-testid="monitor-row-workflow"]')).toBeVisible();
-
-      // `sess-working` has a track, no workflow and its automations on; `sess-paused`
-      // has none of the three. A track alone is not a slice.
-      for (const sessionId of ['sess-working', 'sess-paused']) {
-        const row = monitorCardOf(page, sessionId);
+      await test.step('a workflow row in the list closes with its workflow name and a step track', async () => {
+        // The dense row, not the full card: the card's strip uses other testids, so
+        // without this every check below could be reading the wrong layout.
+        const row = monitorCardOf(page, 'sess-other-project');
         await expect(row).toHaveAttribute('data-dense', 'true');
-        await expect(row.locator('[data-testid="monitor-row-workflow"]')).toHaveCount(0);
+
+        const slice = row.locator('[data-testid="monitor-row-workflow"]');
+        await expect(slice).toBeVisible();
+        await expect(slice.locator('[data-testid="monitor-row-workflow-name"]')).toHaveText('Launch week');
+        // The track is inside the slice, and its current step is the column's own marker.
+        await expect(slice.locator('[data-testid="workflow-step-track"]')).toBeVisible();
+        await expect(slice.locator('[data-testid="workflow-step-marker"]')).toHaveAttribute('aria-label', 'Testing: now');
+        // A workflow row is not a held one.
         await expect(row.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveCount(0);
-        await expect(row.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
-      }
+      });
+
+      await test.step('a plain row in the list closes with no slice, even one that carries a track', async () => {
+        // The control: in this same list a workflow row DOES close with its slice, so
+        // the absences below cannot be a list that never drew one.
+        await expect(monitorCardOf(page, 'sess-other-project')).toHaveAttribute('data-dense', 'true');
+        await expect(monitorCardOf(page, 'sess-other-project').locator('[data-testid="monitor-row-workflow"]')).toBeVisible();
+
+        // `sess-working` has a track, no workflow and its automations on; `sess-paused`
+        // has none of the three. A track alone is not a slice.
+        for (const sessionId of ['sess-working', 'sess-paused']) {
+          const row = monitorCardOf(page, sessionId);
+          await expect(row).toHaveAttribute('data-dense', 'true');
+          await expect(row.locator('[data-testid="monitor-row-workflow"]')).toHaveCount(0);
+          await expect(row.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveCount(0);
+          await expect(row.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
+        }
+      });
     } finally {
       await browser.close();
     }

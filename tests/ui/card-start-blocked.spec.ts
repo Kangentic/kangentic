@@ -79,32 +79,29 @@ test.describe('A start that never reached an agent', () => {
   test('says so in place of Paused, with the reason in its tip', async () => {
     const { browser, page } = await launch();
     try {
-      for (const [taskId, label, tip] of [
-        ['task-worktree', 'Worktree missing', 'Its worktree folder is gone. Resume makes it again from the branch.'],
-        ['task-folder', 'Folder missing', 'The folder this agent starts in is gone.'],
-        ['task-never', 'Didn\'t start', 'The agent never reported that it started.'],
-        ['task-spawn', 'Didn\'t start', 'The terminal could not start. Its window shows why.'],
-        ['task-prompt', 'Didn\'t start', 'Its prompt is too long for this agent to start with.'],
-      ]) {
-        const footer = footerOf(page, taskId);
-        await expect(footer).toHaveText(label);
-        await footer.getByText(label).hover();
-        await expect(page.getByRole('tooltip')).toHaveText(tip);
-        await page.mouse.move(0, 0);
-        await expect(page.getByRole('tooltip')).toHaveCount(0);
-      }
-    } finally {
-      await browser.close();
-    }
-  });
+      await test.step('says so in place of Paused, with the reason in its tip', async () => {
+        for (const [taskId, label, tip] of [
+          ['task-worktree', 'Worktree missing', 'Its worktree folder is gone. Resume makes it again from the branch.'],
+          ['task-folder', 'Folder missing', 'The folder this agent starts in is gone.'],
+          ['task-never', 'Didn\'t start', 'The agent never reported that it started.'],
+          ['task-spawn', 'Didn\'t start', 'The terminal could not start. Its window shows why.'],
+          ['task-prompt', 'Didn\'t start', 'Its prompt is too long for this agent to start with.'],
+        ]) {
+          const footer = footerOf(page, taskId);
+          await expect(footer).toHaveText(label);
+          await footer.getByText(label).hover();
+          await expect(page.getByRole('tooltip')).toHaveText(tip);
+          await page.mouse.move(0, 0);
+          await expect(page.getByRole('tooltip')).toHaveCount(0);
+        }
+      });
 
-  test('a plain pause still reads Paused, in the quiet tone', async () => {
-    const { browser, page } = await launch();
-    try {
-      const paused = footerOf(page, 'task-paused');
-      await expect(paused).toHaveText('Paused');
-      await expect(paused.locator('span.text-fg-faint')).toHaveCount(1);
-      await expect(footerOf(page, 'task-never').locator('span.text-warning')).toHaveCount(1);
+      await test.step('a plain pause still reads Paused, in the quiet tone', async () => {
+        const paused = footerOf(page, 'task-paused');
+        await expect(paused).toHaveText('Paused');
+        await expect(paused.locator('span.text-fg-faint')).toHaveCount(1);
+        await expect(footerOf(page, 'task-never').locator('span.text-warning')).toHaveCount(1);
+      });
     } finally {
       await browser.close();
     }

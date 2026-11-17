@@ -278,6 +278,32 @@ test.describe('column agent limit', () => {
       await expect(page.getByTestId('queue-row-self')).toContainText('Fix login redirect');
       await expect(page.getByTestId('queue-row-self')).toContainText('#421');
       await expect(page.getByText('agent slots in use')).toHaveCount(0);
+
+      // The same open and the same seed, read only, so the other cases on this snapshot are steps.
+      await test.step('the bottom bar shows what the task will run with and offers no picker', async () => {
+        const bar = page.getByTestId('queued-context-bar');
+        await expect(bar).toContainText('Claude Code');
+        await expect(bar.getByRole('button')).toHaveCount(0);
+        await expect(page.getByTestId('context-bar-model-trigger')).toHaveCount(0);
+      });
+
+      await test.step('a holder whose live session has reported no activity reads as needing you', async () => {
+        // The contrast to the restart case: the same row with a session id and no activity
+        // pushed yet is not "working".
+        const holderRow = page.getByTestId('queue-row').first();
+        await expect(holderRow).toContainText('Migrate settings');
+        await expect(holderRow.getByRole('img', { name: 'Needs you' })).toBeVisible();
+        await expect(holderRow.getByRole('img', { name: 'Working' })).toHaveCount(0);
+        await expect(holderRow).toHaveClass(/border-attention/);
+      });
+
+      await test.step('draws no model or effort pill when nothing resolves', async () => {
+        const contextBar = page.getByTestId('queued-context-bar');
+        await expect(contextBar).toBeVisible();
+        await expect(contextBar.getByTestId('queued-context-bar-model')).toHaveCount(0);
+        await expect(contextBar.getByTestId('queued-context-bar-effort')).toHaveCount(0);
+        await expect(contextBar).toHaveText('Claude Code');
+      });
     });
 
     test('Max concurrent sessions uses the same shape, and names the limit', async () => {
@@ -324,16 +350,6 @@ test.describe('column agent limit', () => {
       await expect(page.getByTestId('queued-title')).toHaveText('1 task ahead');
     });
 
-    test('the bottom bar shows what the task will run with and offers no picker', async () => {
-      await open(COLUMN_SNAPSHOT);
-      await openQueuedTask('Fix login redirect');
-
-      const bar = page.getByTestId('queued-context-bar');
-      await expect(bar).toContainText('Claude Code');
-      await expect(bar.getByRole('button')).toHaveCount(0);
-      await expect(page.getByTestId('context-bar-model-trigger')).toHaveCount(0);
-    });
-
     test('a row opens its task', async () => {
       await open(COLUMN_SNAPSHOT);
       await openQueuedTask('Fix login redirect');
@@ -358,19 +374,6 @@ test.describe('column agent limit', () => {
       await expect(holderRow.getByRole('img', { name: 'Working' })).toBeVisible();
       await expect(holderRow.getByRole('img', { name: 'Needs you' })).toHaveCount(0);
       await expect(holderRow).not.toHaveClass(/border-attention/);
-    });
-
-    test('a holder whose live session has reported no activity reads as needing you', async () => {
-      // The contrast to the restart above, and what keeps that case honest: the same
-      // row with a session id and no activity pushed yet is not "working".
-      await open(COLUMN_SNAPSHOT);
-      await openQueuedTask('Fix login redirect');
-
-      const holderRow = page.getByTestId('queue-row').first();
-      await expect(holderRow).toContainText('Migrate settings');
-      await expect(holderRow.getByRole('img', { name: 'Needs you' })).toBeVisible();
-      await expect(holderRow.getByRole('img', { name: 'Working' })).toHaveCount(0);
-      await expect(holderRow).toHaveClass(/border-attention/);
     });
 
     test('a row shows the title the board has now, since a rename sends no new snapshot', async () => {
@@ -445,16 +448,6 @@ test.describe('column agent limit', () => {
       await expect(bar().getByTestId('queued-context-bar-effort')).toHaveText('high');
       await expect(bar().getByTestId('queued-context-bar-model')).toHaveAccessibleDescription('Pause this task to change it');
       await expect(bar().getByTestId('queued-context-bar-effort')).toHaveAccessibleDescription('Pause this task to change it');
-    });
-
-    test('draws no model or effort pill when nothing resolves', async () => {
-      await open(COLUMN_SNAPSHOT);
-      await openQueuedTask('Fix login redirect');
-
-      await expect(bar()).toBeVisible();
-      await expect(bar().getByTestId('queued-context-bar-model')).toHaveCount(0);
-      await expect(bar().getByTestId('queued-context-bar-effort')).toHaveCount(0);
-      await expect(bar()).toHaveText('Claude Code');
     });
 
     test('names the task\'s board profile', async () => {

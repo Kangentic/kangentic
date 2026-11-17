@@ -276,15 +276,36 @@ test.describe('a push-to-talk hold with the left button in play', () => {
     });
   });
 
-  test('Back keeps its own mouse events off the page, and focus where it was', async () => {
+  // One press and release of Back, read three ways: what the page saw of the press, what it saw
+  // of the lift, and where focus stayed. The log of lifts is cleared first because the launch
+  // click on the search field left its own.
+  test('a Back press is left uncanceled, Back keeps its own mouse events off the page, and only its lift is kept from the page', async () => {
     await withHold(async ({ page, cdp }) => {
+      const pageSaw = (): Promise<number[]> => page.evaluate(() => (window as unknown as ProbeWindow).__pageSawPointerUp);
+      await page.evaluate(() => { (window as unknown as ProbeWindow).__pageSawPointerUp.length = 0; });
+
       await pressBack(page, cdp);
+      await test.step('a Back press is left uncanceled, so the page still sees it', async () => {
+        const mouseDown = (await inputLog(page)).filter((entry) => entry.type === 'pointerdown' && entry.button === 3);
+        expect(mouseDown).toEqual([{ type: 'pointerdown', button: 3, defaultPrevented: false }]);
+      });
+
       await mouseEvent(cdp, 'mouseReleased', 'back', 0);
       await expect.poll(() => status(page), { timeout: 5000 }).toBe('idle');
-      expect((await probe(page)).events).toEqual([]);
-      await expect(page.locator('[data-testid="board-search"]')).toBeFocused();
+
+      await test.step('Back keeps its own mouse events off the page, and focus where it was', async () => {
+        expect((await probe(page)).events).toEqual([]);
+        await expect(page.locator('[data-testid="board-search"]')).toBeFocused();
+      });
+
+      await test.step('only the lift of the bound button is kept from the page', async () => {
+        // Back lifting ends the hold and is consumed.
+        expect((await probe(page)).ends).toEqual(['released']);
+        expect(await pageSaw()).toEqual([]);
+      });
     });
   });
+
   test('a second Back press with no release between ends the hold once, and starts nothing', async () => {
     await withHold(async ({ page, cdp }) => {
       await pressBack(page, cdp);
@@ -299,18 +320,13 @@ test.describe('a push-to-talk hold with the left button in play', () => {
     });
   });
 
-  test('only the lift of the bound button is kept from the page', async () => {
+  // The lift of Back alone is read in the combined Back test above; this is the other half.
+  test('a lift of Left with Back\'s release never seen is kept for the page', async () => {
     await withHold(async ({ page, cdp }) => {
       const pageSaw = (): Promise<number[]> => page.evaluate(() => (window as unknown as ProbeWindow).__pageSawPointerUp);
 
       // The launch click on the search field left its own lift in the log.
       await page.evaluate(() => { (window as unknown as ProbeWindow).__pageSawPointerUp.length = 0; });
-
-      // Back lifting ends the hold and is consumed.
-      await pressBack(page, cdp);
-      await mouseEvent(cdp, 'mouseReleased', 'back', 0);
-      await expect.poll(() => status(page), { timeout: 5000 }).toBe('idle');
-      expect(await pageSaw()).toEqual([]);
 
       // Left lifting with Back's release never seen also ends a hold, but it is
       // the user's own click, so it reaches the page.
@@ -318,7 +334,7 @@ test.describe('a push-to-talk hold with the left button in play', () => {
       await mouseEvent(cdp, 'mousePressed', 'left', BACK | LEFT);
       await mouseEvent(cdp, 'mouseReleased', 'left', 0);
       await expect.poll(() => status(page), { timeout: 5000 }).toBe('idle');
-      expect((await probe(page)).ends).toEqual(['released', 'missed-release']);
+      expect((await probe(page)).ends).toEqual(['missed-release']);
       expect(await pageSaw()).toEqual([0]);
     });
   });
@@ -360,16 +376,6 @@ test.describe('a push-to-talk hold with the left button in play', () => {
       await mouseEvent(cdp, 'mouseReleased', 'middle', 0);
       await expect(sidebar).toHaveAttribute('data-open', 'false');
     }, { 'view.toggleSidebar': 'Mouse:Middle' });
-  });
-
-  test('a Back press is left uncanceled, so the page still sees it', async () => {
-    await withHold(async ({ page, cdp }) => {
-      await pressBack(page, cdp);
-      const mouseDown = (await inputLog(page)).filter((entry) => entry.type === 'pointerdown' && entry.button === 3);
-      expect(mouseDown).toEqual([{ type: 'pointerdown', button: 3, defaultPrevented: false }]);
-      await mouseEvent(cdp, 'mouseReleased', 'back', 0);
-      await expect.poll(() => status(page), { timeout: 5000 }).toBe('idle');
-    });
   });
 
   test('a keyboard-bound hold has its keydown canceled', async () => {

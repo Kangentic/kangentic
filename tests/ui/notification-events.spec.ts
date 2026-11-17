@@ -147,10 +147,13 @@ async function fireWorkflowCompleted(page: Page): Promise<void> {
   }, PROJECT_ID);
 }
 
-/** The sound file each `Audio` started, by name ("chime" for chime.wav). */
+/**
+ * The sound file each `Audio` started, by name ("chime" for chime.wav). The name is
+ * read from a dev-server path (chime.wav) or a hashed build asset (chime-Dk3z.wav).
+ */
 async function startedSounds(page: Page): Promise<string[]> {
   const sources = await page.evaluate(() => (window as unknown as { __audioCreated: string[] }).__audioCreated);
-  return sources.map((source) => /([a-z]+)\.wav/.exec(source)?.[1] ?? source);
+  return sources.map((source) => /([a-z]+)(?:-[\w-]+)?\.wav/.exec(source)?.[1] ?? source);
 }
 
 test.describe('Mute reaches the toasts and the sounds', () => {
@@ -191,44 +194,43 @@ test.describe('Mute reaches the toasts and the sounds', () => {
 });
 
 test.describe('A desktop notice leaves its sound to this window', () => {
-  test('main\'s play-sound push starts that event\'s chosen sound', async () => {
+  // One boot for two reads of call logs: the sound step reads the Audio log, the
+  // notice step swaps the notification calls it then reads.
+  test('main\'s play-sound push starts that event\'s chosen sound, and a desktop notice carries its event key', async () => {
     const { browser, page } = await launchWithRunningSession();
     try {
-      await patchNotifications(page, { sounds: { onAgentIdle: 'rise' } });
-      await waitForListener(page, '__mockFirePlaySound');
-      await page.evaluate(() => {
-        (window as unknown as { __mockFirePlaySound: (eventKey: string) => void }).__mockFirePlaySound('onAgentIdle');
+      await test.step('main\'s play-sound push starts that event\'s chosen sound', async () => {
+        await patchNotifications(page, { sounds: { onAgentIdle: 'rise' } });
+        await waitForListener(page, '__mockFirePlaySound');
+        await page.evaluate(() => {
+          (window as unknown as { __mockFirePlaySound: (eventKey: string) => void }).__mockFirePlaySound('onAgentIdle');
+        });
+        await expect.poll(() => startedSounds(page)).toEqual(['rise']);
       });
-      await expect.poll(() => startedSounds(page)).toEqual(['rise']);
-    } finally {
-      await browser.close();
-    }
-  });
 
-  test('a desktop notice carries its event key, for the plan and workflow paths', async () => {
-    const { browser, page } = await launchWithRunningSession();
-    try {
-      await page.evaluate(() => {
-        const api = window.electronAPI as unknown as {
-          window: { isFocused: () => Promise<boolean> };
-          notifications: { show: (notice: unknown) => void };
-        };
-        const shown: unknown[] = [];
-        (window as unknown as { __shownNotices: unknown[] }).__shownNotices = shown;
-        // Away from the window, so main-side gating lets the notice through.
-        api.window.isFocused = async () => false;
-        api.notifications.show = (notice) => { shown.push(notice); };
+      await test.step('a desktop notice carries its event key, for the plan and workflow paths', async () => {
+        await page.evaluate(() => {
+          const api = window.electronAPI as unknown as {
+            window: { isFocused: () => Promise<boolean> };
+            notifications: { show: (notice: unknown) => void };
+          };
+          const shown: unknown[] = [];
+          (window as unknown as { __shownNotices: unknown[] }).__shownNotices = shown;
+          // Away from the window, so main-side gating lets the notice through.
+          api.window.isFocused = async () => false;
+          api.notifications.show = (notice) => { shown.push(notice); };
+        });
+        const shownEvents = () => page.evaluate(() => (window as unknown as { __shownNotices: Array<{ event?: string }> }).__shownNotices.map((notice) => notice.event));
+
+        await waitForListener(page, '__mockFireTaskAutoMoved');
+        await page.evaluate(({ taskId, projectId }) => {
+          (window as unknown as { __mockFireTaskAutoMoved: (...args: unknown[]) => void }).__mockFireTaskAutoMoved(taskId, 'lane-notification-events-done', 'Tune the board', projectId);
+        }, { taskId: TASK_ID, projectId: PROJECT_ID });
+        await expect.poll(shownEvents).toEqual(['onPlanComplete']);
+
+        await fireWorkflowCompleted(page);
+        await expect.poll(shownEvents).toEqual(['onPlanComplete', 'onWorkflowComplete']);
       });
-      const shownEvents = () => page.evaluate(() => (window as unknown as { __shownNotices: Array<{ event?: string }> }).__shownNotices.map((notice) => notice.event));
-
-      await waitForListener(page, '__mockFireTaskAutoMoved');
-      await page.evaluate(({ taskId, projectId }) => {
-        (window as unknown as { __mockFireTaskAutoMoved: (...args: unknown[]) => void }).__mockFireTaskAutoMoved(taskId, 'lane-notification-events-done', 'Tune the board', projectId);
-      }, { taskId: TASK_ID, projectId: PROJECT_ID });
-      await expect.poll(shownEvents).toEqual(['onPlanComplete']);
-
-      await fireWorkflowCompleted(page);
-      await expect.poll(shownEvents).toEqual(['onPlanComplete', 'onWorkflowComplete']);
     } finally {
       await browser.close();
     }

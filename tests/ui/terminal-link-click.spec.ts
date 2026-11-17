@@ -119,22 +119,9 @@ async function launch(options: { browserEnabled?: boolean; linkClickTarget?: 'de
   return launched;
 }
 
-test('a Ctrl+click on a printed URL opens the other browser, the Kangentic one by default, and sends the TUI nothing', async () => {
-  const { browser, page } = await launch();
-  try {
-    await drawFirstRow(page, URL_TEXT);
-    await pointAtFirstRow(page);
-    await waitForLinkUnderPointer(page);
-
-    await ctrlClick(page);
-
-    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
-    expect(await openedExternally(page)).toEqual([]);
-    expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
-  } finally {
-    await browser.close();
-  }
-});
+// 'a Ctrl+click on a printed URL opens the other browser, the Kangentic one by default, and sends the TUI
+// nothing' made the same three assertions as the Ctrl+click step of the hover test below, after the same
+// launch, draw, point and click.
 
 test('a plain click on a printed URL in a focused terminal opens the default browser and sends the TUI nothing', async () => {
   const { browser, page } = await launch();
@@ -274,28 +261,14 @@ test('hovering a URL shows both clicks, the plain click first, and the click clo
 
     await expect(tip).toBeHidden();
     await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
-  } finally {
-    await browser.close();
-  }
-});
 
-/**
- * The Kangentic browser beside the terminal: a Ctrl+click shows it and loads the
- * link, the default browser opens nothing, and the click never reaches the TUI.
- */
-test('a Ctrl+click opens the link in this terminal\'s Kangentic browser and sends the TUI nothing', async () => {
-  const { browser, page } = await launch();
-  try {
-    await drawFirstRow(page, URL_TEXT);
-    await pointAtFirstRow(page);
-    await waitForLinkUnderPointer(page);
-
-    await ctrlClick(page);
-
-    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
-    await expect(page.getByTestId('browser-webview')).toHaveAttribute('src', URL_TEXT);
-    expect(await openedExternally(page)).toEqual([]);
-    expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
+    // The Kangentic browser beside the terminal: a Ctrl+click shows it and loads the link, the default
+    // browser opens nothing, and the click never reaches the TUI.
+    await test.step('a Ctrl+click opens the link in this terminal\'s Kangentic browser and sends the TUI nothing', async () => {
+      await expect(page.getByTestId('browser-webview')).toHaveAttribute('src', URL_TEXT);
+      expect(await openedExternally(page)).toEqual([]);
+      expect(await writtenToSession(page, SESSION_ID)).not.toMatch(SGR_PRESS);
+    });
   } finally {
     await browser.close();
   }

@@ -13,7 +13,8 @@
  * meant the design, a menu clipped by its column or one Escape cannot close, a
  * name typed as "Filterchips", or an edit that saves nothing.
  *
- * Each test launches its own page with its own seed, so none leans on another.
+ * Each test launches its own page with its own seed, so none leans on another. A test that
+ * boots a seed once and only reads or closes what it opens holds one test.step per case.
  */
 import { test, expect, chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -156,70 +157,119 @@ async function openEditor(page: Page, taskId: string): Promise<void> {
 }
 
 test.describe('Artifacts on a board card', () => {
-  test('one artifact shows its name and opens it on a click, not the task', async () => {
+  // One page for the one-artifact card: its row fill is a read, and the click that opens
+  // its link changes nothing the read depends on, so the read runs first.
+  test('one artifact fills the row, shows its name and opens it on a click, not the task', async () => {
+    test.setTimeout(30_000);
     const page = await openBoard({ tasks: [{ id: 'task-one', title: 'One link', lane: 'To Do', artifacts: [FIGMA] }] });
     await trackOpenExternal(page);
     const one = chip(page, 'task-one');
 
-    await expect(one).toContainText('My File');
-    // Only a count steps down; one artifact's name just cuts off.
-    await expect(one).not.toHaveAttribute('data-count-step');
-    // Its tip names it and where it goes, and says what a click does.
-    await expect(one).toHaveAccessibleDescription(/My File, Figma/);
-    await expect(one).toHaveAccessibleDescription(/Open in default browser/);
+    await test.step('alone, one artifact fills the row', async () => {
+      // It stopped after its name and left the rest of the row empty.
+      await expect(one).toBeVisible();
+      const measured = await measureLinkRow(page, 'task-one');
+      expect(measured.chip / measured.row).toBeGreaterThan(0.98);
+    });
 
-    await one.click();
-    await expect.poll(() => openedUrls(page)).toEqual([FIGMA]);
-    await expect(dialog(page)).toHaveCount(0);
+    await test.step('one artifact shows its name and opens it on a click, not the task', async () => {
+      await expect(one).toContainText('My File');
+      // Only a count steps down; one artifact's name just cuts off.
+      await expect(one).not.toHaveAttribute('data-count-step');
+      // Its tip names it and where it goes, and says what a click does.
+      await expect(one).toHaveAccessibleDescription(/My File, Figma/);
+      await expect(one).toHaveAccessibleDescription(/Open in default browser/);
+
+      await one.click();
+      await expect.poll(() => openedUrls(page)).toEqual([FIGMA]);
+      await expect(dialog(page)).toHaveCount(0);
+    });
   });
 
-  test('several artifacts show a count; a click opens a menu that is not inside the card, and Escape closes it', async () => {
+  // One page for the To Do card with three artifacts. Each step ends with its menu closed and
+  // the open-link record cleared, so the next step starts from the card as it was.
+  test('a card with three artifacts: the row fill, the menu, a menu row, an unrecognised link and the keyboard', async () => {
+    test.setTimeout(45_000);
     const page = await openBoard({ tasks: [{ id: 'task-many', title: 'Many links', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI] }] });
     const many = chip(page, 'task-many');
-    // innerText: the number the chip falls back to is in the DOM, hidden.
-    await expect(many).toHaveText('3 artifacts', { useInnerText: true });
 
-    await many.click();
-    await expect(menu(page)).toBeVisible();
-    await expect(dialog(page)).toHaveCount(0);
+    await test.step('alone, a count fills the row', async () => {
+      // It stopped after its name and left the rest of the row empty.
+      await expect(many).toBeVisible();
+      const measured = await measureLinkRow(page, 'task-many');
+      expect(measured.chip / measured.row).toBeGreaterThan(0.98);
+    });
 
-    // Portaled to the body, so a column or card never clips it.
-    await expect(card(page, 'task-many').getByTestId('task-card-artifacts-menu')).toHaveCount(0);
-    await expect(menuRows(page)).toHaveCount(3);
-    await expect(page.getByRole('menuitem', { name: 'Edit artifacts' })).toBeVisible();
+    await test.step('several artifacts show a count; a click opens a menu that is not inside the card, and Escape closes it', async () => {
+      // innerText: the number the chip falls back to is in the DOM, hidden.
+      await expect(many).toHaveText('3 artifacts', { useInnerText: true });
 
-    // The first row takes focus on open; ArrowDown moves to the second.
-    await expect(menuRows(page).nth(0)).toBeFocused();
-    await page.keyboard.press('ArrowDown');
-    await expect(menuRows(page).nth(1)).toBeFocused();
+      await many.click();
+      await expect(menu(page)).toBeVisible();
+      await expect(dialog(page)).toHaveCount(0);
 
-    await page.keyboard.press('Escape');
-    await expect(menu(page)).toBeHidden();
-    await expect(dialog(page)).toHaveCount(0);
-    await expect(many).toBeFocused();
-  });
+      // Portaled to the body, so a column or card never clips it.
+      await expect(card(page, 'task-many').getByTestId('task-card-artifacts-menu')).toHaveCount(0);
+      await expect(menuRows(page)).toHaveCount(3);
+      await expect(page.getByRole('menuitem', { name: 'Edit artifacts' })).toBeVisible();
 
-  test('a menu row opens its link in the default browser and closes the menu', async () => {
-    const page = await openBoard({ tasks: [{ id: 'task-row', title: 'Row click', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI] }] });
-    await trackOpenExternal(page);
-    await chip(page, 'task-row').click();
-    await menuRows(page).nth(1).click();
+      // The first row takes focus on open; ArrowDown moves to the second.
+      await expect(menuRows(page).nth(0)).toBeFocused();
+      await page.keyboard.press('ArrowDown');
+      await expect(menuRows(page).nth(1)).toBeFocused();
 
-    await expect.poll(() => openedUrls(page)).toEqual([MIRO]);
-    await expect(menu(page)).toBeHidden();
-    await expect(dialog(page)).toHaveCount(0);
-  });
+      // Read on this same open menu: its rows are the card's links.
+      await test.step('a link Kangentic does not recognise shows its host as the tool', async () => {
+        const row = page.locator(`[data-testid="task-card-artifacts-menu-row"][data-artifact-url="${WIKI}"]`);
+        await expect(row).toContainText('wiki.example.com');
+        await expect(row).toHaveAttribute('data-artifact-platform', '');
+        // A recognised one carries its platform.
+        await expect(page.locator(`[data-testid="task-card-artifacts-menu-row"][data-artifact-url="${FIGMA}"]`))
+          .not.toHaveAttribute('data-artifact-platform', '');
+      });
 
-  test('a link Kangentic does not recognise shows its host as the tool', async () => {
-    const page = await openBoard({ tasks: [{ id: 'task-wiki', title: 'Wiki link', lane: 'To Do', artifacts: [FIGMA, WIKI] }] });
-    await chip(page, 'task-wiki').click();
+      await page.keyboard.press('Escape');
+      await expect(menu(page)).toBeHidden();
+      await expect(dialog(page)).toHaveCount(0);
+      await expect(many).toBeFocused();
+    });
 
-    const row = page.locator(`[data-testid="task-card-artifacts-menu-row"][data-artifact-url="${WIKI}"]`);
-    await expect(row).toContainText('wiki.example.com');
-    await expect(row).toHaveAttribute('data-artifact-platform', '');
-    // A recognised one carries its platform.
-    await expect(page.locator(`[data-testid="task-card-artifacts-menu-row"][data-artifact-url="${FIGMA}"]`))
-      .not.toHaveAttribute('data-artifact-platform', '');
+    await test.step('a menu row opens its link in the default browser and closes the menu', async () => {
+      await trackOpenExternal(page);
+      await many.click();
+      await menuRows(page).nth(1).click();
+
+      await expect.poll(() => openedUrls(page)).toEqual([MIRO]);
+      await expect(menu(page)).toBeHidden();
+      await expect(dialog(page)).toHaveCount(0);
+    });
+
+    await test.step('arrows wrap round the rows, and Enter on a row closes the menu and returns focus to the chip', async () => {
+      // A fresh record, so this step's one open is the only one it reads.
+      await trackOpenExternal(page);
+
+      await many.focus();
+      await page.keyboard.press('Enter');
+      await expect(menu(page)).toBeVisible();
+      const items = menu(page).getByRole('menuitem');
+      // Three links, then Edit artifacts.
+      await expect(items).toHaveCount(4);
+      await expect(items.first()).toBeFocused();
+
+      await page.keyboard.press('ArrowUp');
+      await expect(items.last()).toBeFocused();
+      await page.keyboard.press('ArrowDown');
+      await expect(items.first()).toBeFocused();
+
+      await page.keyboard.press('ArrowDown');
+      await expect(items.nth(1)).toBeFocused();
+      await page.keyboard.press('Enter');
+
+      await expect.poll(() => openedUrls(page)).toEqual([MIRO]);
+      await expect(menu(page)).toBeHidden();
+      await expect(many).toBeFocused();
+      await expect(dialog(page)).toHaveCount(0);
+    });
   });
 
   test('a task with no artifacts renders no chip', async () => {
@@ -234,44 +284,39 @@ test.describe('Artifacts on a board card', () => {
     await expect(card(page, 'task-none').getByTestId('task-card-artifacts')).toHaveCount(0);
   });
 
-  for (const columnWidth of ['narrow', 'default'] as const) {
-    test(`beside a PR pill at ${columnWidth} width, the count stays one line inside the card`, async () => {
-      // At Narrow the pill and "3 artifacts" do not both fit, and the label
-      // wrapped to two lines inside the chip, taller than the pill beside it.
-      const page = await openBoard({
-        tasks: [{ id: 'task-pr', title: 'Pill and chip', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
-        config: { columnWidth },
-      });
-      const many = chip(page, 'task-pr');
-      await expect(many).toBeVisible();
-      // Whatever it shows, it is still named for a screen reader.
-      await expect(many).toHaveAccessibleName('3 artifacts');
-      // The chevron says the chip opens a menu, so it comes back beside the
-      // number at Narrow rather than leaving with the word. Asserted first, so
-      // the reads below wait for the step to settle.
-      await expect(many).toHaveAttribute('data-count-step', columnWidth === 'narrow' ? 'number-chevron' : 'full');
+  /** The count's chip beside a PR pill: named, one line tall, inside the card, and stepped to the column width. */
+  async function expectCountStaysOneLine(page: Page, columnWidth: 'narrow' | 'default'): Promise<void> {
+    // At Narrow the pill and "3 artifacts" do not both fit, and the label
+    // wrapped to two lines inside the chip, taller than the pill beside it.
+    const many = chip(page, 'task-pr');
+    await expect(many).toBeVisible();
+    // Whatever it shows, it is still named for a screen reader.
+    await expect(many).toHaveAccessibleName('3 artifacts');
+    // The chevron says the chip opens a menu, so it comes back beside the
+    // number at Narrow rather than leaving with the word. Asserted first, so
+    // the reads below wait for the step to settle.
+    await expect(many).toHaveAttribute('data-count-step', columnWidth === 'narrow' ? 'number-chevron' : 'full');
 
-      const measured = await page.evaluate(() => {
-        const cardElement = document.querySelector('[data-task-id="task-pr"]') as HTMLElement;
-        const pill = cardElement.querySelector('[data-testid="task-card-pr-link"]') as HTMLElement;
-        const chipElement = cardElement.querySelector('[data-testid="task-card-artifacts"]') as HTMLElement;
-        const pillBox = pill.getBoundingClientRect();
-        const chipBox = chipElement.getBoundingClientRect();
-        return {
-          pillHeight: pillBox.height,
-          chipHeight: chipBox.height,
-          chipRight: chipBox.right,
-          cardRight: cardElement.getBoundingClientRect().right,
-          clipped: chipElement.scrollWidth > chipElement.clientWidth + 1,
-          shown: chipElement.innerText.trim(),
-        };
-      });
-      expect(Math.abs(measured.chipHeight - measured.pillHeight)).toBeLessThan(2);
-      expect(measured.chipRight).toBeLessThanOrEqual(measured.cardRight);
-      expect(measured.clipped).toBe(false);
-      // The word shows where there is room for it, and the number where there is not.
-      expect(measured.shown).toBe(columnWidth === 'narrow' ? '3' : '3 artifacts');
+    const measured = await page.evaluate(() => {
+      const cardElement = document.querySelector('[data-task-id="task-pr"]') as HTMLElement;
+      const pill = cardElement.querySelector('[data-testid="task-card-pr-link"]') as HTMLElement;
+      const chipElement = cardElement.querySelector('[data-testid="task-card-artifacts"]') as HTMLElement;
+      const pillBox = pill.getBoundingClientRect();
+      const chipBox = chipElement.getBoundingClientRect();
+      return {
+        pillHeight: pillBox.height,
+        chipHeight: chipBox.height,
+        chipRight: chipBox.right,
+        cardRight: cardElement.getBoundingClientRect().right,
+        clipped: chipElement.scrollWidth > chipElement.clientWidth + 1,
+        shown: chipElement.innerText.trim(),
+      };
     });
+    expect(Math.abs(measured.chipHeight - measured.pillHeight)).toBeLessThan(2);
+    expect(measured.chipRight).toBeLessThanOrEqual(measured.cardRight);
+    expect(measured.clipped).toBe(false);
+    // The word shows where there is room for it, and the number where there is not.
+    expect(measured.shown).toBe(columnWidth === 'narrow' ? '3' : '3 artifacts');
   }
 
   /** The link row's box and its two pills' widths, read in one pass. */
@@ -292,57 +337,72 @@ test.describe('Artifacts on a board card', () => {
     }, taskId);
   }
 
-  for (const artifacts of [[FIGMA], [FIGMA, MIRO, WIKI]]) {
-    test(`alone, ${artifacts.length === 1 ? 'one artifact' : 'a count'} fills the row`, async () => {
-      // It stopped after its name and left the rest of the row empty.
-      const page = await openBoard({ tasks: [{ id: 'task-alone', title: 'Alone', lane: 'To Do', artifacts }] });
-      await expect(chip(page, 'task-alone')).toBeVisible();
-      const measured = await measureLinkRow(page, 'task-alone');
-      expect(measured.chip / measured.row).toBeGreaterThan(0.98);
-    });
-  }
-
-  test('beside a PR pill, a count shares the row 50/50', async () => {
+  // One page for the Narrow card with a PR pill and three artifacts. The hover is last, so the
+  // measurements read a card the pointer has not touched.
+  test('beside a PR pill at Narrow, the count stays one line, the PR keeps its label, and hovering the count shows its label', async () => {
+    test.setTimeout(30_000);
     const page = await openBoard({
-      tasks: [{ id: 'task-split', title: 'Split', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
-      config: { columnWidth: 'default' },
-    });
-    await expect(chip(page, 'task-split')).toBeVisible();
-    const measured = await measureLinkRow(page, 'task-split');
-    expect(Math.abs(measured.chip / measured.pill - 1)).toBeLessThan(0.05);
-    expect(Math.abs((measured.pill + measured.gap + measured.chip) / measured.row - 1)).toBeLessThan(0.02);
-    // Stretched pills start their content at the left, not the middle.
-    const justify = await page.evaluate(() => {
-      const cardElement = document.querySelector('[data-task-id="task-split"]') as HTMLElement;
-      const read = (testId: string) => getComputedStyle(cardElement.querySelector(`[data-testid="${testId}"]`) as HTMLElement).justifyContent;
-      return { pill: read('task-card-pr-link'), chip: read('task-card-artifacts') };
-    });
-    // Chromium reports `justify-start` as "flow-start", the spec's "flex-start" elsewhere.
-    expect(justify.pill).toMatch(/^(flex|flow)-start$/);
-    expect(justify.chip).toMatch(/^(flex|flow)-start$/);
-  });
-
-  test('hovering the count shows its label once a step has hidden the word, and nothing while the word shows', async () => {
-    const narrowPage = await openBoard({
-      tasks: [{ id: 'task-tip-narrow', title: 'Tip narrow', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
+      tasks: [{ id: 'task-pr', title: 'Pill and chip', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
       config: { columnWidth: 'narrow' },
     });
-    const narrowChip = chip(narrowPage, 'task-tip-narrow');
-    await expect(narrowChip).toHaveAttribute('data-count-step', 'number-chevron');
-    await narrowChip.hover();
-    await expect(narrowPage.locator('[role="tooltip"]')).toHaveText('3 artifacts', { timeout: 5000 });
 
-    const widePage = await openBoard({
-      tasks: [{ id: 'task-tip-wide', title: 'Tip wide', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
+    await test.step('beside a PR pill at narrow width, the count stays one line inside the card', async () => {
+      await expectCountStaysOneLine(page, 'narrow');
+    });
+
+    await test.step('beside a PR pill at Narrow, the PR keeps its label and the count takes the rest', async () => {
+      // Half a Narrow card is narrower than "PR #1071", so 50/50 would cut the PR's label.
+      const measured = await measureLinkRow(page, 'task-pr');
+      expect(measured.pillClipped).toBe(false);
+      expect(measured.pill).toBeGreaterThan(measured.chip);
+      expect(Math.abs((measured.pill + measured.gap + measured.chip) / measured.row - 1)).toBeLessThan(0.02);
+    });
+
+    await test.step('hovering the count shows its label once a step has hidden the word', async () => {
+      const narrowChip = chip(page, 'task-pr');
+      await expect(narrowChip).toHaveAttribute('data-count-step', 'number-chevron');
+      await narrowChip.hover();
+      await expect(page.locator('[role="tooltip"]')).toHaveText('3 artifacts', { timeout: 5000 });
+    });
+  });
+
+  // One page for the default-width card with a PR pill and three artifacts, hover last.
+  test('beside a PR pill at default width, the count stays one line, shares the row 50/50, and shows no tip while the word shows', async () => {
+    test.setTimeout(30_000);
+    const page = await openBoard({
+      tasks: [{ id: 'task-pr', title: 'Pill and chip', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
       config: { columnWidth: 'default' },
     });
-    const wideChip = chip(widePage, 'task-tip-wide');
-    await expect(wideChip).toHaveAttribute('data-count-step', 'full');
-    await wideChip.hover();
-    // Intentional fixed wait: a tip that never opens cannot be polled for. 1000ms is
-    // well past the 400ms dwell, so a tip that would open has opened.
-    await widePage.waitForTimeout(1000);
-    await expect(widePage.locator('[role="tooltip"]')).toHaveCount(0);
+
+    await test.step('beside a PR pill at default width, the count stays one line inside the card', async () => {
+      await expectCountStaysOneLine(page, 'default');
+    });
+
+    await test.step('beside a PR pill, a count shares the row 50/50', async () => {
+      await expect(chip(page, 'task-pr')).toBeVisible();
+      const measured = await measureLinkRow(page, 'task-pr');
+      expect(Math.abs(measured.chip / measured.pill - 1)).toBeLessThan(0.05);
+      expect(Math.abs((measured.pill + measured.gap + measured.chip) / measured.row - 1)).toBeLessThan(0.02);
+      // Stretched pills start their content at the left, not the middle.
+      const justify = await page.evaluate(() => {
+        const cardElement = document.querySelector('[data-task-id="task-pr"]') as HTMLElement;
+        const read = (testId: string) => getComputedStyle(cardElement.querySelector(`[data-testid="${testId}"]`) as HTMLElement).justifyContent;
+        return { pill: read('task-card-pr-link'), chip: read('task-card-artifacts') };
+      });
+      // Chromium reports `justify-start` as "flow-start", the spec's "flex-start" elsewhere.
+      expect(justify.pill).toMatch(/^(flex|flow)-start$/);
+      expect(justify.chip).toMatch(/^(flex|flow)-start$/);
+    });
+
+    await test.step('hovering the count shows nothing while the word shows', async () => {
+      const wideChip = chip(page, 'task-pr');
+      await expect(wideChip).toHaveAttribute('data-count-step', 'full');
+      await wideChip.hover();
+      // Intentional fixed wait: a tip that never opens cannot be polled for. 1000ms is
+      // well past the 400ms dwell, so a tip that would open has opened.
+      await page.waitForTimeout(1000);
+      await expect(page.locator('[role="tooltip"]')).toHaveCount(0);
+    });
   });
 
   test('beside a PR pill at the Fill floor, the count gives up the chevron and keeps the number', async () => {
@@ -357,19 +417,6 @@ test.describe('Artifacts on a board card', () => {
     await expect(many).toHaveText('3', { useInnerText: true });
     await expect(many.locator('.lucide-chevron-down')).toBeHidden();
     await expect(many).toHaveAccessibleName('3 artifacts');
-  });
-
-  test('beside a PR pill at Narrow, the PR keeps its label and the count takes the rest', async () => {
-    // Half a Narrow card is narrower than "PR #1071", so 50/50 would cut the PR's label.
-    const page = await openBoard({
-      tasks: [{ id: 'task-narrow', title: 'Narrow', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI], prNumber: 1071 }],
-      config: { columnWidth: 'narrow' },
-    });
-    await expect(chip(page, 'task-narrow')).toBeVisible();
-    const measured = await measureLinkRow(page, 'task-narrow');
-    expect(measured.pillClipped).toBe(false);
-    expect(measured.pill).toBeGreaterThan(measured.chip);
-    expect(Math.abs((measured.pill + measured.gap + measured.chip) / measured.row - 1)).toBeLessThan(0.02);
   });
 
   test('beside a PR pill, one artifact takes the rest and the PR keeps its own width', async () => {
@@ -651,36 +698,6 @@ test.describe('Artifacts edit form: unsaved edits', () => {
     await page.getByTestId('artifacts-button-menu-edit').click();
     await expect(page.getByTestId('artifacts-field')).toBeVisible();
     await expect(rows).toHaveCount(2);
-  });
-});
-
-test.describe('Artifacts menu keyboard', () => {
-  test('arrows wrap round the rows, and Enter on a row closes the menu and returns focus to the chip', async () => {
-    const page = await openBoard({ tasks: [{ id: 'task-keys', title: 'Keys links', lane: 'To Do', artifacts: [FIGMA, MIRO, WIKI] }] });
-    await trackOpenExternal(page);
-    const many = chip(page, 'task-keys');
-
-    await many.focus();
-    await page.keyboard.press('Enter');
-    await expect(menu(page)).toBeVisible();
-    const items = menu(page).getByRole('menuitem');
-    // Three links, then Edit artifacts.
-    await expect(items).toHaveCount(4);
-    await expect(items.first()).toBeFocused();
-
-    await page.keyboard.press('ArrowUp');
-    await expect(items.last()).toBeFocused();
-    await page.keyboard.press('ArrowDown');
-    await expect(items.first()).toBeFocused();
-
-    await page.keyboard.press('ArrowDown');
-    await expect(items.nth(1)).toBeFocused();
-    await page.keyboard.press('Enter');
-
-    await expect.poll(() => openedUrls(page)).toEqual([MIRO]);
-    await expect(menu(page)).toBeHidden();
-    await expect(many).toBeFocused();
-    await expect(dialog(page)).toHaveCount(0);
   });
 });
 

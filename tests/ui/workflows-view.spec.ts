@@ -1596,50 +1596,50 @@ test.describe('Workflows canvas tools and search', () => {
     }
   });
 
-  test('Fit view, Auto layout and Add task are one width', async () => {
+  // One boot for the two read-only button checks of a draft workflow at 2000px. Each step keeps the
+  // title of the test it came from.
+  test('the draft workflow\'s buttons: the view tools are one width, and only Start is filled', async () => {
+    test.slow();
     // Wide enough that the canvas keeps the tools' words (480px of canvas and up).
     const { browser, page } = await launch('draft', { width: 2000 });
     try {
-      await expect(byTestId(page, 'workflow-auto-layout')).toContainText('Auto layout');
-      const tools = await page.evaluate(() => ['workflow-fit-view', 'workflow-auto-layout', 'workflow-add-task'].map((testId) => {
-        const element = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
-        return { testId, width: element?.getBoundingClientRect().width ?? 0, overflows: element ? element.scrollWidth > element.clientWidth : true };
-      }));
-      // The shared floor is wider than every label, so no platform's font makes one tool wider than the rest.
-      expect(tools.filter((tool) => tool.overflows)).toEqual([]);
-      const widths = tools.map((tool) => tool.width);
-      expect(Math.min(...widths)).toBeGreaterThan(0);
-      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('Start is the one filled button; Add task and Open task wear the accent tint, and New workflow stays plain', async () => {
-    // Each region's main action is tinted (the canvas's, the inspector's); the
-    // header's is Start, the view's one fill. New workflow, tinted, would be the
-    // only blue in a running workflow's header.
-    const { browser, page } = await launch('draft', { width: 2000 });
-    try {
-      await expect(byTestId(page, 'workflow-open-task')).toBeVisible();
-      const accentFg = await computedColor(page, 'var(--color-accent-fg)');
-      const accentEmphasis = await computedColor(page, 'var(--color-accent-emphasis)');
-      const look = (testId: string) => byTestId(page, testId).evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { color: style.color, background: style.backgroundColor };
+      await test.step('Fit view, Auto layout and Add task are one width', async () => {
+        await expect(byTestId(page, 'workflow-auto-layout')).toContainText('Auto layout');
+        const tools = await page.evaluate(() => ['workflow-fit-view', 'workflow-auto-layout', 'workflow-add-task'].map((testId) => {
+          const element = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+          return { testId, width: element?.getBoundingClientRect().width ?? 0, overflows: element ? element.scrollWidth > element.clientWidth : true };
+        }));
+        // The shared floor is wider than every label, so no platform's font makes one tool wider than the rest.
+        expect(tools.filter((tool) => tool.overflows)).toEqual([]);
+        const widths = tools.map((tool) => tool.width);
+        expect(Math.min(...widths)).toBeGreaterThan(0);
+        expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
       });
-      const raised = await computedColor(page, 'var(--color-surface-raised)', 'backgroundColor');
-      expect((await look('workflow-start')).background).toBe(accentEmphasis);
-      for (const testId of ['workflow-add-task', 'workflow-open-task']) {
-        const tinted = await look(testId);
-        expect(tinted.color, testId).toBe(accentFg);
-        // A tint, really drawn: not the fill, not the plain raised surface, and
-        // not transparent (an arbitrary class that failed to generate).
-        expect(tinted.background, testId).not.toBe(accentEmphasis);
-        expect(tinted.background, testId).not.toBe(raised);
-        expect(tinted.background, testId).not.toBe('rgba(0, 0, 0, 0)');
-      }
-      expect((await look('workflow-new')).color).not.toBe(accentFg);
+
+      await test.step('Start is the one filled button; Add task and Open task wear the accent tint, and New workflow stays plain', async () => {
+        // Each region's main action is tinted (the canvas's, the inspector's); the
+        // header's is Start, the view's one fill. New workflow, tinted, would be the
+        // only blue in a running workflow's header.
+        await expect(byTestId(page, 'workflow-open-task')).toBeVisible();
+        const accentFg = await computedColor(page, 'var(--color-accent-fg)');
+        const accentEmphasis = await computedColor(page, 'var(--color-accent-emphasis)');
+        const look = (testId: string) => byTestId(page, testId).evaluate((element) => {
+          const style = getComputedStyle(element);
+          return { color: style.color, background: style.backgroundColor };
+        });
+        const raised = await computedColor(page, 'var(--color-surface-raised)', 'backgroundColor');
+        expect((await look('workflow-start')).background).toBe(accentEmphasis);
+        for (const testId of ['workflow-add-task', 'workflow-open-task']) {
+          const tinted = await look(testId);
+          expect(tinted.color, testId).toBe(accentFg);
+          // A tint, really drawn: not the fill, not the plain raised surface, and
+          // not transparent (an arbitrary class that failed to generate).
+          expect(tinted.background, testId).not.toBe(accentEmphasis);
+          expect(tinted.background, testId).not.toBe(raised);
+          expect(tinted.background, testId).not.toBe('rgba(0, 0, 0, 0)');
+        }
+        expect((await look('workflow-new')).color).not.toBe(accentFg);
+      });
     } finally {
       await browser.close();
     }

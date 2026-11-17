@@ -46,7 +46,7 @@ const SESSION_ID = 'sess-activity-test';
 const SWIMLANE_ID = 'lane-backlog';
 
 /** Base pre-configure that creates a project with a task linked to a running session */
-function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean; emptyRateLimits?: boolean; rateLimitResetsInPast?: boolean; rateLimitResetsWithin24h?: boolean; agent?: string | null; modelOverride?: string | null }): string {
+function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean; emptyRateLimits?: boolean; rateLimitResetsInPast?: boolean; agent?: string | null; modelOverride?: string | null }): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -128,8 +128,8 @@ function makePreConfig(opts: { sessionStatus: string; activity: string; withUsag
         contextWindow: { usedPercentage: 25, usedTokens: 1500, cacheTokens: 0, totalInputTokens: 1000, totalOutputTokens: 500, contextWindowSize: 200000 },
         cost: { totalCostUsd: 0.01, totalDurationMs: 5000 },
         ${opts.withRateLimits ? `rateLimits: [
-          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: ${opts.rateLimitResetsInPast ? 'Math.floor(Date.now() / 1000) - 60' : opts.rateLimitResetsWithin24h ? 'Math.floor(Date.now() / 1000) + 1800' : 'Math.floor(Date.now() / 1000) + 3600'} },
-          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: ${opts.rateLimitResetsInPast ? 'Math.floor(Date.now() / 1000) - 60' : opts.rateLimitResetsWithin24h ? 'Math.floor(Date.now() / 1000) + 7200' : 'Math.floor(Date.now() / 1000) + 86400 * 5'} },
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: ${opts.rateLimitResetsInPast ? 'Math.floor(Date.now() / 1000) - 60' : 'Math.floor(Date.now() / 1000) + 3600'} },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: ${opts.rateLimitResetsInPast ? 'Math.floor(Date.now() / 1000) - 60' : 'Math.floor(Date.now() / 1000) + 86400 * 5'} },
         ],` : opts.emptyRateLimits ? 'rateLimits: [],' : ''}
       };
       return result;
@@ -231,6 +231,14 @@ test.describe('Task Activity Indicators', () => {
       const cardEl = page.locator(`[data-task-id="${TASK_ID}"]`);
       await expect(cardEl.locator('[data-testid="usage-bar"]')).toBeVisible();
       await expect(cardEl.locator('[data-testid="status-bar"]')).not.toBeVisible();
+
+      await test.step('shows resolved model name once usage.model.displayName arrives', async () => {
+        const usageBar = page.locator(`[data-task-id="${TASK_ID}"] [data-testid="usage-bar"]`);
+        await expect(usageBar).toBeVisible({ timeout: 10000 });
+        await expect(usageBar).toContainText('Claude Sonnet');
+        await expect(usageBar).not.toContainText('Starting agent...');
+        await expect(usageBar).not.toContainText('Resuming agent...');
+      });
     });
 
     test('context bar renders cost before token counts', async () => {
@@ -606,22 +614,6 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('shows resolved model name once usage.model.displayName arrives', async () => {
-      const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true }),
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        const usageBar = page.locator(`[data-task-id="${TASK_ID}"] [data-testid="usage-bar"]`);
-        await expect(usageBar).toBeVisible({ timeout: 10000 });
-        await expect(usageBar).toContainText('Claude Sonnet');
-        await expect(usageBar).not.toContainText('Starting agent...');
-        await expect(usageBar).not.toContainText('Resuming agent...');
-      } finally {
-        await browser.close();
-      }
-    });
-
     test('default session (no override) shows the loading spinner, never "Loading agent..." or an agent-name fallback', async () => {
       // No model override and no live usage yet: the model is the agent's own
       // default, which Kangentic only learns from status.json. The footer shows
@@ -819,7 +811,7 @@ test.describe('Task Activity Indicators', () => {
   // A real thinking session emits events quickly and self-corrects.
   // The bottom-bar "Starting agent..." overlay is unchanged (Group G).
   test.describe('running session with missing activity cache entry', () => {
-    test('title row shows idle mail icon (not spinner) when activity cache is empty', async () => {
+    test('title row shows idle mail icon (not spinner) when activity cache is empty, and the idle card carries no pulse', async () => {
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, noActivityCache: true }),
       );
@@ -827,30 +819,22 @@ test.describe('Task Activity Indicators', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await expect(page.locator('[data-testid="usage-bar"]').first()).toBeVisible({ timeout: 10000 });
 
-        const titleRow = page.locator('text=Test Initializing Task').first().locator('..');
-        await expect(titleRow.locator('[data-mark="agent-idle"]')).toBeVisible({ timeout: 10000 });
-        await expect(titleRow.locator('[data-mark="agent-working"]')).not.toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
+        await test.step('title row shows idle mail icon (not spinner) when activity cache is empty', async () => {
+          const titleRow = page.locator('text=Test Initializing Task').first().locator('..');
+          await expect(titleRow.locator('[data-mark="agent-idle"]')).toBeVisible({ timeout: 10000 });
+          await expect(titleRow.locator('[data-mark="agent-working"]')).not.toBeVisible();
+        });
 
-    test('an idle card carries no pulse when activity cache is empty', async () => {
-      const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, noActivityCache: true }),
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        await expect(page.locator('[data-testid="usage-bar"]').first()).toBeVisible({ timeout: 10000 });
+        await test.step('an idle card carries no pulse when activity cache is empty', async () => {
+          const card = page.locator(`[data-task-id="${TASK_ID}"]`);
+          await expect(card).toBeVisible();
 
-        const card = page.locator(`[data-task-id="${TASK_ID}"]`);
-        await expect(card).toBeVisible();
-
-        // The idle mark alone says the agent is waiting. The radiating ring
-        // the card used to wear drew a large halo on wide cards and was removed.
-        const classAttr = await card.getAttribute('class');
-        expect(classAttr).toBeTruthy();
-        expect(classAttr).not.toContain('animate-pulse-subtle');
+          // The idle mark alone says the agent is waiting. The radiating ring
+          // the card used to wear drew a large halo on wide cards and was removed.
+          const classAttr = await card.getAttribute('class');
+          expect(classAttr).toBeTruthy();
+          expect(classAttr).not.toContain('animate-pulse-subtle');
+        });
       } finally {
         await browser.close();
       }
@@ -859,7 +843,7 @@ test.describe('Task Activity Indicators', () => {
 
   // Group: rate-limits pill (Claude-only field, ContextBar component)
   test.describe('rate limits pill', () => {
-    test('renders 5h and 7d bars in task detail ContextBar when usage.rateLimits is present', async () => {
+    test('renders 5h and 7d bars in task detail ContextBar when usage.rateLimits is present, with a Clock icon for 5h and a Calendar icon for 7d', async () => {
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
       );
@@ -879,6 +863,18 @@ test.describe('Task Activity Indicators', () => {
         await expect(pill).toContainText('4%');
         // Clock icon for 5h session, CalendarDays icon for 7d weekly
         await expect(pill.locator('svg')).toHaveCount(2);
+
+        await test.step('pill renders Clock icon for 5h session and Calendar icon for 7d weekly (iconKind identity)', async () => {
+          // Regression guard for RATE_LIMIT_ICON mapping: session -> Clock, period -> Calendar.
+          // Swapping them would not be caught by the svg count assertion.
+          // ContextBar renders: <Icon aria-label={limitWindow.label} />
+          // .lucide-clock is the CSS class lucide adds to the Clock SVG.
+          // .lucide-calendar is the CSS class lucide adds to the Calendar SVG.
+          // We prefer class selectors here because they survive aria-label changes;
+          // both checks together confirm the iconKind-to-icon mapping is correct.
+          await expect(pill.locator('.lucide-clock')).toHaveCount(1);
+          await expect(pill.locator('.lucide-calendar')).toHaveCount(1);
+        });
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -900,40 +896,6 @@ test.describe('Task Activity Indicators', () => {
         const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
         await expect(contextBar).toBeVisible({ timeout: 10000 });
         await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
-
-        await page.locator('[data-testid="task-detail-close"]').click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
-      } finally {
-        await browser.close();
-      }
-    });
-
-    test('pill description contains "Resets " text for a reset time more than 24 h in the future', async () => {
-      // sevenDay.resetsAt is set to Date.now()/1000 + 5 days in makePreConfig withRateLimits:true.
-      // formatResetTime returns `Resets ${formatMonthDayTime(...)}` when ms > 24 h.
-      // We assert the pill description contains "Resets " (from the sevenDay window) followed by
-      // non-empty text -- we deliberately do NOT assert exact locale output since that
-      // is covered by the unit tier datetime.test.ts tests.
-      const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.locator('text=Test Initializing Task').first().click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
-
-        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
-        await expect(contextBar).toBeVisible({ timeout: 10000 });
-
-        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
-        await expect(pill).toBeVisible();
-
-        const description = await pill.getAttribute('aria-description');
-        expect(description).toBeTruthy();
-        // The description is "5h session N%. <reset>. 7d weekly N%. <reset>".
-        // sevenDay resets in 5 days so its part uses "Resets <formatted date>".
-        expect(description).toMatch(/Resets [^\s]/);
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -1151,38 +1113,6 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('pill description names each window ("5h session" and "7d weekly")', async () => {
-      // Regression guard: the description is built as
-      // `${limitWindow.label} ${percent}%. ${formatResetTime(limitWindow.resetsAt)}` per window.
-      // Dropping the label would silently break what a screen reader hears without
-      // failing the percentage-rendering or pill-visibility assertions.
-      const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.locator('text=Test Initializing Task').first().click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
-
-        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
-        await expect(contextBar).toBeVisible({ timeout: 10000 });
-
-        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
-        await expect(pill).toBeVisible();
-
-        const description = await pill.getAttribute('aria-description');
-        expect(description).toBeTruthy();
-        expect(description).toContain('5h session');
-        expect(description).toContain('7d weekly');
-
-        await page.locator('[data-testid="task-detail-close"]').click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
-      } finally {
-        await browser.close();
-      }
-    });
-
     test('hides the pill once every window\'s resetsAt has passed', async () => {
       // Claude Code stops reporting a window once its resets_at passes, so a
       // lapsed window is dropped rather than shown as "Resets now". Both windows
@@ -1202,71 +1132,6 @@ test.describe('Task Activity Indicators', () => {
         // a missing pill below is the expiry, not a seed that never arrived.
         await expect.poll(() => page.evaluate('window.__zustandStores.session.getState().latestRateLimits !== null')).toBe(true);
         await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
-
-        await page.locator('[data-testid="task-detail-close"]').click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
-      } finally {
-        await browser.close();
-      }
-    });
-
-    test('formatResetTime returns "Resets in ..." when resetsAt is within 24 hours', async () => {
-      // The <24h branch in formatResetTime: ms > 0 and ms < 24 * 60 * 60 * 1000.
-      // Both windows use resetsAt within 2 hours so both lines should say "Resets in ".
-      const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true, rateLimitResetsWithin24h: true })
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.locator('text=Test Initializing Task').first().click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
-
-        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
-        await expect(contextBar).toBeVisible({ timeout: 10000 });
-
-        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
-        await expect(pill).toBeVisible();
-
-        const description = await pill.getAttribute('aria-description');
-        expect(description).toBeTruthy();
-        expect(description).toContain('Resets in ');
-
-        await page.locator('[data-testid="task-detail-close"]').click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
-      } finally {
-        await browser.close();
-      }
-    });
-
-    test('pill renders Clock icon for 5h session and Calendar icon for 7d weekly (iconKind identity)', async () => {
-      // Regression guard for RATE_LIMIT_ICON mapping: session -> Clock, period -> Calendar.
-      // Swapping them would not be caught by the svg count assertion.
-      // Lucide renders aria-label on the <svg> element, so we can check by
-      // svg[aria-label="5h session"] and svg[aria-label="7d weekly"].
-      const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.locator('text=Test Initializing Task').first().click();
-        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
-
-        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
-        await expect(contextBar).toBeVisible({ timeout: 10000 });
-
-        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
-        await expect(pill).toBeVisible();
-
-        // ContextBar renders: <Icon aria-label={limitWindow.label} />
-        // Lucide forwards aria-label to the <svg> element.
-        // .lucide-clock is the CSS class lucide adds to the Clock SVG.
-        // .lucide-calendar is the CSS class lucide adds to the Calendar SVG.
-        // We prefer class selectors here because they survive aria-label changes;
-        // both checks together confirm the iconKind-to-icon mapping is correct.
-        await expect(pill.locator('.lucide-clock')).toHaveCount(1);
-        await expect(pill.locator('.lucide-calendar')).toHaveCount(1);
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -1296,7 +1161,7 @@ test.describe('Task Activity Indicators', () => {
   //      intermediate idle/mail flash (the renderer-side invariant the fix
   //      preserves: transitions go direct without passing through idle first)
   test.describe('permission activity state', () => {
-    test('permission state shows the wait mark (not spinner) on task card', async () => {
+    test('permission state shows the wait mark (not spinner) on task card, and the card carries no pulse', async () => {
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'permission', withUsage: true }),
       );
@@ -1304,36 +1169,28 @@ test.describe('Task Activity Indicators', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await expect(page.locator('[data-testid="usage-bar"]').first()).toBeVisible({ timeout: 10000 });
 
-        const titleRow = page.locator('text=Test Initializing Task').first().locator('..');
+        await test.step('permission state shows the wait mark (not spinner) on task card', async () => {
+          const titleRow = page.locator('text=Test Initializing Task').first().locator('..');
 
-        // permission maps to isIdle=true: the wait's mark appears (amber, "needs attention"),
-        // the bubble for a wait whose kind no reason has reported
-        await expect(titleRow.locator('[data-mark="agent-question"]')).toBeVisible({ timeout: 10000 });
-        await expect(titleRow.locator('[data-mark="agent-idle"]')).toHaveCount(0);
+          // permission maps to isIdle=true: the wait's mark appears (amber, "needs attention"),
+          // the bubble for a wait whose kind no reason has reported
+          await expect(titleRow.locator('[data-mark="agent-question"]')).toBeVisible({ timeout: 10000 });
+          await expect(titleRow.locator('[data-mark="agent-idle"]')).toHaveCount(0);
 
-        // Spinner must NOT appear - permission is not a thinking state
-        await expect(titleRow.locator('[data-mark="agent-working"]')).not.toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
+          // Spinner must NOT appear - permission is not a thinking state
+          await expect(titleRow.locator('[data-mark="agent-working"]')).not.toBeVisible();
+        });
 
-    test('permission state card carries no pulse', async () => {
-      const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'permission', withUsage: true }),
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        await expect(page.locator('[data-testid="usage-bar"]').first()).toBeVisible({ timeout: 10000 });
+        await test.step('permission state card carries no pulse', async () => {
+          const card = page.locator(`[data-task-id="${TASK_ID}"]`);
+          await expect(card).toBeVisible();
 
-        const card = page.locator(`[data-task-id="${TASK_ID}"]`);
-        await expect(card).toBeVisible();
-
-        // Permission reads as idle (the amber mark above), and an idle card
-        // carries no pulse.
-        const classAttr = await card.getAttribute('class');
-        expect(classAttr).toBeTruthy();
-        expect(classAttr).not.toContain('animate-pulse-subtle');
+          // Permission reads as idle (the amber mark above), and an idle card
+          // carries no pulse.
+          const classAttr = await card.getAttribute('class');
+          expect(classAttr).toBeTruthy();
+          expect(classAttr).not.toContain('animate-pulse-subtle');
+        });
       } finally {
         await browser.close();
       }
@@ -1404,25 +1261,6 @@ test.describe('Task Activity Indicators', () => {
         });
         `;
     }
-
-    test('thinking session shows a spinning ring with a centered pause on the header button', async () => {
-      const { browser, page } = await launchWithState(inExecutingLane('thinking'));
-      try {
-        await page.locator('text=Test Initializing Task').first().waitFor({ state: 'visible', timeout: 15000 });
-        await page.locator('text=Test Initializing Task').first().click();
-        const dialog = page.locator('[data-testid="task-detail-dialog"]');
-        await dialog.waitFor({ state: 'visible', timeout: 5000 });
-
-        const pauseButton = dialog.locator('button[aria-label="Pause session"]');
-        await expect(pauseButton).toBeVisible({ timeout: 10000 });
-        // Active: the rotating ring with the pause centered inside it. Ring and bars are one
-        // packaged mark now, so the mark's identity carries both facts.
-        await expect(pauseButton.locator('[data-mark="control-pause-working"]')).toBeVisible();
-        await expect(pauseButton.locator('[data-mark="control-pause-idle"]')).toHaveCount(0);
-      } finally {
-        await browser.close();
-      }
-    });
 
     test('idle session shows a static amber ring with a centered pause on the header button', async () => {
       const { browser, page } = await launchWithState(inExecutingLane('idle'));

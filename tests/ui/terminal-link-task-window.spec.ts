@@ -113,31 +113,6 @@ function openedExternally(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []);
 }
 
-test('a task window\'s terminal lists both clicks, and Ctrl+click shows its Kangentic browser on the link', async () => {
-  const page = await openBoard();
-  try {
-    await page.locator('[data-swimlane-name="Code Review"]').locator('text=Link Window Task').first().click();
-    const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await expect(page.locator('[data-testid="browser-pane"]')).toHaveCount(0);
-
-    await drawFirstRow(page, URL_TEXT);
-    const screen = dialog.locator('.xterm-screen').first();
-    await hoverFirstRow(page, screen);
-    const tip = page.getByTestId('terminal-link-tip');
-    await expect(tip).toBeVisible({ timeout: 5000 });
-    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser', 'Open in Kangentic browser']);
-
-    await ctrlClick(page);
-
-    await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
-    await expect(page.getByTestId('browser-webview')).toHaveAttribute('src', URL_TEXT);
-    expect(await openedExternally(page)).toEqual([]);
-  } finally {
-    await page.context().close();
-  }
-});
-
 const OTHER_URL_TEXT = 'http://localhost:5173/login';
 const BROWSER_POP_OUT_KEY = `browser:${PROJECT_ID}:${TASK_ID}`;
 
@@ -217,28 +192,45 @@ test('with the task\'s Browser popped out, the tip has one row and Ctrl+click op
   }
 });
 
-test('a second Ctrl+click with the pane already showing keeps it open and loads the link through its page', async () => {
+// The first Ctrl+click is the task window's own case, with its extra reads: the pane is absent
+// before it, the tip lists both clicks, and the link goes to the pane and not the default browser.
+test('a task window\'s terminal lists both clicks and Ctrl+click shows its Kangentic browser on the link, and a second Ctrl+click keeps it open and loads the link through its page', async () => {
   const page = await openBoard();
   try {
     const dialog = await openTaskDialog(page);
-    await drawFirstRow(page, URL_TEXT);
     const screen = dialog.locator('.xterm-screen').first();
-    await hoverFirstRow(page, screen);
-    await ctrlClick(page);
     const webview = page.getByTestId('browser-webview');
-    await expect(webview).toHaveAttribute('src', URL_TEXT, { timeout: 10000 });
-    await stubWebview(page);
-    await page.evaluate(() => document.querySelector('[data-testid="browser-webview"]')!.dispatchEvent(new Event('dom-ready')));
-    await expect.poll(() => paneFlags(page)).toEqual({ open: true, held: false });
 
-    await drawFirstRow(page, OTHER_URL_TEXT);
-    await hoverFirstRowAgain(page, screen);
-    await ctrlClick(page);
+    await test.step('a task window\'s terminal lists both clicks, and Ctrl+click shows its Kangentic browser on the link', async () => {
+      await expect(page.locator('[data-testid="browser-pane"]')).toHaveCount(0);
 
-    await expect.poll(() => webviewLoads(page)).toEqual([OTHER_URL_TEXT]);
-    // The pill's toggle would have held the showing pane away.
-    expect(await paneFlags(page)).toEqual({ open: true, held: false });
-    await expect(webview).toHaveCount(1);
+      await drawFirstRow(page, URL_TEXT);
+      await hoverFirstRow(page, screen);
+      const tip = page.getByTestId('terminal-link-tip');
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser', 'Open in Kangentic browser']);
+
+      await ctrlClick(page);
+
+      await expect(page.getByTestId('browser-url-input')).toHaveValue(URL_TEXT, { timeout: 10000 });
+      await expect(webview).toHaveAttribute('src', URL_TEXT, { timeout: 10000 });
+      expect(await openedExternally(page)).toEqual([]);
+    });
+
+    await test.step('a second Ctrl+click with the pane already showing keeps it open and loads the link through its page', async () => {
+      await stubWebview(page);
+      await page.evaluate(() => document.querySelector('[data-testid="browser-webview"]')!.dispatchEvent(new Event('dom-ready')));
+      await expect.poll(() => paneFlags(page)).toEqual({ open: true, held: false });
+
+      await drawFirstRow(page, OTHER_URL_TEXT);
+      await hoverFirstRowAgain(page, screen);
+      await ctrlClick(page);
+
+      await expect.poll(() => webviewLoads(page)).toEqual([OTHER_URL_TEXT]);
+      // The pill's toggle would have held the showing pane away.
+      expect(await paneFlags(page)).toEqual({ open: true, held: false });
+      await expect(webview).toHaveCount(1);
+    });
   } finally {
     await page.context().close();
   }
@@ -308,40 +300,41 @@ test('a clicked link is the first page of a task whose pane was closed and has a
   }
 });
 
-test('with no Kangentic browser beside the terminal, an OSC 8 link whose text is not its URL stacks its destination over one row', async () => {
+// One boot and one bottom panel for both cases. The OSC 8 link comes first because it only
+// hovers; the plain link then redraws the row and Ctrl+clicks it.
+test('with no Kangentic browser beside the terminal, an OSC 8 link stacks its destination over one row, and a plain link has one row and Ctrl+click opens the default browser', async () => {
   const page = await openBoard();
   try {
     const pane = page.getByTestId('terminal-session-pane').first();
     await pane.waitFor({ state: 'visible', timeout: 10000 });
-    await drawFirstRow(page, `\x1b]8;;${URL_TEXT}\x1b\\canvas\x1b]8;;\x1b\\`);
-    await hoverFirstRow(page, pane.locator('.xterm-screen').first());
-
-    const tip = page.getByTestId('terminal-link-tip');
-    await expect(tip).toBeVisible({ timeout: 5000 });
-    await expect(tip).toHaveAttribute('data-shape', 'stack');
-    await expect(tip.locator('[data-tooltip-part="destination"]')).toHaveText(URL_TEXT);
-    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
-  } finally {
-    await page.context().close();
-  }
-});
-
-test('the bottom panel has no Kangentic browser, so its tip has one row and Ctrl+click opens the default browser', async () => {
-  const page = await openBoard();
-  try {
-    const pane = page.getByTestId('terminal-session-pane').first();
-    await pane.waitFor({ state: 'visible', timeout: 10000 });
-    await drawFirstRow(page, URL_TEXT);
     const screen = pane.locator('.xterm-screen').first();
-    await hoverFirstRow(page, screen);
     const tip = page.getByTestId('terminal-link-tip');
-    await expect(tip).toBeVisible({ timeout: 5000 });
-    await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
 
-    await ctrlClick(page);
+    await test.step('with no Kangentic browser beside the terminal, an OSC 8 link whose text is not its URL stacks its destination over one row', async () => {
+      await drawFirstRow(page, `\x1b]8;;${URL_TEXT}\x1b\\canvas\x1b]8;;\x1b\\`);
+      await hoverFirstRow(page, screen);
 
-    await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
-    await expect(page.getByTestId('browser-webview')).toHaveCount(0);
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      await expect(tip).toHaveAttribute('data-shape', 'stack');
+      await expect(tip.locator('[data-tooltip-part="destination"]')).toHaveText(URL_TEXT);
+      await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
+      // Off the link, so the next step's tip is its own and not this one still showing.
+      await page.mouse.move(0, 0);
+      await expect(tip).toHaveCount(0);
+    });
+
+    await test.step('the bottom panel has no Kangentic browser, so its tip has one row and Ctrl+click opens the default browser', async () => {
+      await drawFirstRow(page, URL_TEXT);
+      // Off the link and back in: xterm looks for a link only when the pointer enters a new cell.
+      await hoverFirstRowAgain(page, screen);
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      await expect(tip.locator('[data-link-target]')).toHaveText(['Open in default browser']);
+
+      await ctrlClick(page);
+
+      await expect.poll(() => openedExternally(page)).toEqual([URL_TEXT]);
+      await expect(page.getByTestId('browser-webview')).toHaveCount(0);
+    });
   } finally {
     await page.context().close();
   }

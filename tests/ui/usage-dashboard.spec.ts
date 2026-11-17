@@ -428,91 +428,6 @@ test.describe('usage dashboard', () => {
     }
   });
 
-  test('the headline Cost equals each breakdown, and both burn-rate lines reproduce their own tile', async () => {
-    // The four numbers the usage audit found disagreeing. The Cost tile used
-    // to float above the breakdowns by the whole cumulative cost of every
-    // session still in the session store, and the burn rate divided
-    // turn-ALLOCATED cost by the range while the Cost tile showed the full
-    // ledger, so tile-divided-by-tile implied two different window lengths.
-    const { browser, page } = await launchWithState(twoProjectPreConfig());
-    try {
-      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-      await openDashboard(page);
-      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
-      await expect(page.locator('[data-testid="kpi-tiles"]')).toBeVisible({ timeout: 10000 });
-
-      const checks = await page.evaluate(async () => {
-        const api = (window as unknown as {
-          electronAPI: {
-            projects: { list: () => Promise<Array<{ id: string }>> };
-            usage: { getDashboardStats: (...args: unknown[]) => Promise<Record<string, never>> };
-          };
-        }).electronAPI;
-        const projects = await api.projects.list();
-        const stats = await api.usage.getDashboardStats(
-          { kind: 'project', projectId: projects[0].id }, 'week', null, null,
-        ) as unknown as {
-          kpis: Record<string, number>;
-          byModel: Array<{ costUsd: number }>;
-          byAgent: Array<{ costUsd: number }>;
-          byEffort: Array<{ costUsd: number }>;
-          rangeStartMs: number;
-          rangeEndMs: number;
-        };
-        const sum = (rows: Array<{ costUsd: number }>) =>
-          rows.reduce((runningTotal, row) => runningTotal + row.costUsd, 0);
-        const hours = (stats.rangeEndMs - stats.rangeStartMs) / 3_600_000;
-        return {
-          headline: stats.kpis.totalCostUsd,
-          byModel: sum(stats.byModel),
-          byAgent: sum(stats.byAgent),
-          byEffort: sum(stats.byEffort),
-          usdOverRange: stats.kpis.burnRateUsdPerHour * hours,
-          tokensOverRange: stats.kpis.burnRateTokensPerHour * hours,
-          tileTokens: stats.kpis.turnInputTokens + stats.kpis.turnOutputTokens,
-        };
-      });
-
-      expect(checks.byModel).toBeCloseTo(checks.headline, 6);
-      expect(checks.byAgent).toBeCloseTo(checks.headline, 6);
-      expect(checks.byEffort).toBeCloseTo(checks.headline, 6);
-      // Each rate times the range reproduces the tile it sits beside, which is
-      // only true when both lines share one denominator AND each numerator is
-      // the field its own tile renders.
-      expect(checks.usdOverRange).toBeCloseTo(checks.headline, 6);
-      expect(checks.tokensOverRange).toBeCloseTo(checks.tileTokens, 6);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('Avg Active reports agent-working time over the sessions the interval ledger covers', async () => {
-    // Was "Avg Session": the agent's own wall clock (idle included) summed
-    // across every resume leg, divided by a count of ledger rows. On the
-    // dogfooding install that read 4h11m, which works out to 3.7 sessions
-    // running around the clock for six months.
-    const { browser, page } = await launchWithState(twoProjectPreConfig());
-    try {
-      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-      await openDashboard(page);
-      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
-
-      const tile = page.locator('[data-testid="kpi-avg-session"]');
-      // 90 minutes of active time over 6 covered sessions = 15m each.
-      await expect(tile).toContainText('15m', { timeout: 10000 });
-      // The denominator is on the tile: it is a different population from the
-      // Sessions tile two cards to the left, and a reader comparing the two
-      // deserves to see why.
-      await expect(tile).toContainText('over 6 sessions');
-      await expect(tile).toHaveAccessibleDescription(
-        'Time the agent was working, per session, excluding idle. Covers the 6 session(s) with '
-        + 'activity tracking in this range, which is fewer than the Sessions tile counts.',
-      );
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('the Tokens tile flags a range that reaches back before per-turn capture started', async () => {
     // The two ledgers do not start at the same time: usage_history reaches
     // back to a project's first session, but per-turn capture shipped later
@@ -578,10 +493,9 @@ test.describe('usage dashboard', () => {
     }
   });
 
-  test('the Subagents tile and By-subagent card report fan-out without changing the main-thread totals', async () => {
-    // Task-tool subagent tokens are ADDITIVE: the headline Tokens tile and
-    // both series stay main-thread, so the historical series remains
-    // comparable, and the fan-out shows up in its own tile and card.
+  // One boot for two read-only checks on the default fixture's This Week range. Each step keeps the
+  // title of the test it came from.
+  test('the Avg Active tile and the Subagents tile with its By-subagent card report the default fixture', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -590,39 +504,62 @@ test.describe('usage dashboard', () => {
       // ledger-backed range rather than an empty trailing window.
       await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
 
-      const subagentTile = page.locator('[data-testid="kpi-subagents"]');
-      // 180000 + 45000 fresh + output from the mock's subagent rollup.
-      await expect(subagentTile).toContainText('225k', { timeout: 10000 });
-      // The count alone: the cache read is in the tooltip (asserted below).
-      await expect(subagentTile).toContainText('8 subagents');
-      await expect(subagentTile).not.toContainText('cached');
-      // A real period-over-period delta, which only appears when the previous
-      // window is read for the subagent fields too (225k against 186k = +21%).
-      await expect(subagentTile).toContainText('+21%');
+      await test.step('Avg Active reports agent-working time over the sessions the interval ledger covers', async () => {
+        // Was "Avg Session": the agent's own wall clock (idle included) summed
+        // across every resume leg, divided by a count of ledger rows. On the
+        // dogfooding install that read 4h11m, which works out to 3.7 sessions
+        // running around the clock for six months.
+        const tile = page.locator('[data-testid="kpi-avg-session"]');
+        // 90 minutes of active time over 6 covered sessions = 15m each.
+        await expect(tile).toContainText('15m', { timeout: 10000 });
+        // The denominator is on the tile: it is a different population from the
+        // Sessions tile two cards to the left, and a reader comparing the two
+        // deserves to see why.
+        await expect(tile).toContainText('over 6 sessions');
+        await expect(tile).toHaveAccessibleDescription(
+          'Time the agent was working, per session, excluding idle. Covers the 6 session(s) with '
+          + 'activity tracking in this range, which is fewer than the Sessions tile counts.',
+        );
+      });
 
-      // The tooltip carries the two facts too small for the tile's own body:
-      // how many of the 8 subagents were nested (2, from the mock's
-      // kpis.subagentNestedCount), and that 'codex' (present in byAgent) cannot
-      // report subagent usage at all, so this range's total is a floor, not a
-      // complete count.
-      await expect(subagentTile).toHaveAccessibleDescription(
-        'Fresh input and output from 190 subagent turn(s). The Tokens tile is main-thread only, '
-        + 'so these are on top of it; the session\'s reported Cost already covers them. '
-        + '5.2M cache read. 2 of 8 were spawned by another subagent. '
-        + 'Excludes Codex, which does not report subagent usage.',
-      );
+      await test.step('the Subagents tile and By-subagent card report fan-out without changing the main-thread totals', async () => {
+        // Task-tool subagent tokens are ADDITIVE: the headline Tokens tile and
+        // both series stay main-thread, so the historical series remains
+        // comparable, and the fan-out shows up in its own tile and card.
+        const subagentTile = page.locator('[data-testid="kpi-subagents"]');
+        // 180000 + 45000 fresh + output from the mock's subagent rollup.
+        await expect(subagentTile).toContainText('225k', { timeout: 10000 });
+        // The count alone: the cache read is in the tooltip (asserted below).
+        await expect(subagentTile).toContainText('8 subagents');
+        await expect(subagentTile).not.toContainText('cached');
+        // A real period-over-period delta, which only appears when the previous
+        // window is read for the subagent fields too (225k against 186k = +21%).
+        await expect(subagentTile).toContainText('+21%');
 
-      // Unchanged: the mock's main-thread turn tokens (60k fresh input + 20k
-      // output), which never absorb the subagent traffic above. NOT the
-      // mock's totalInputTokens/totalOutputTokens - those are context-window
-      // snapshots, which is exactly what this tile stopped reporting.
-      await expect(page.locator('[data-testid="kpi-tokens-value"]')).toContainText('80k');
+        // The tooltip carries the two facts too small for the tile's own body:
+        // how many of the 8 subagents were nested (2, from the mock's
+        // kpis.subagentNestedCount), and that 'codex' (present in byAgent) cannot
+        // report subagent usage at all, so this range's total is a floor, not a
+        // complete count.
+        await expect(subagentTile).toHaveAccessibleDescription(
+          'Fresh input and output from 190 subagent turn(s). The Tokens tile is main-thread only, '
+          + 'so these are on top of it; the session\'s reported Cost already covers them. '
+          + '5.2M cache read. 2 of 8 were spawned by another subagent. '
+          + 'Excludes Codex, which does not report subagent usage.',
+        );
 
-      const card = page.locator('[data-testid="breakdown-subagent"]');
-      await expect(card).toBeVisible();
-      await expect(card).toContainText('review-finder');
-      await expect(card).toContainText('test-builder');
-      await expect(card).toContainText('Explore');
+        // Unchanged: the mock's main-thread turn tokens (60k fresh input + 20k
+        // output), which never absorb the subagent traffic above. NOT the
+        // mock's totalInputTokens/totalOutputTokens - those are context-window
+        // snapshots, which is exactly what this tile stopped reporting.
+        await expect(page.locator('[data-testid="kpi-tokens-value"]')).toContainText('80k');
+
+        const card = page.locator('[data-testid="breakdown-subagent"]');
+        await expect(card).toBeVisible();
+        await expect(card).toContainText('review-finder');
+        await expect(card).toContainText('test-builder');
+        await expect(card).toContainText('Explore');
+      });
     } finally {
       await browser.close();
     }

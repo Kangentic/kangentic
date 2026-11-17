@@ -164,6 +164,7 @@ test.describe('Onboarding checklist', () => {
   });
 
   test('opens for a freshly created project, listing five steps at 0 of 5', async () => {
+    test.setTimeout(30000);
     ({ browser, page } = await launch());
     await createProjectKeepingChecklist(page, 'walkthrough-fresh');
 
@@ -174,6 +175,14 @@ test.describe('Onboarding checklist', () => {
     for (const key of ['defaultsChosen', 'boardShaped', 'taskCreated', 'draggedToAutoSpawnLane', 'taskDetailOpened']) {
       await expect(page.locator(`[data-testid="onboarding-step-${key}"]`)).toBeVisible();
     }
+
+    await test.step('stays on screen with no auto-dismiss timer', async () => {
+      // The original WelcomeOverlay auto-dismissed after 15s, which fails WCAG 2.2.1
+      // (Timing Adjustable). There is no timer at all now, so the only way to prove a
+      // negative is to wait and re-check.
+      await page.waitForTimeout(3000);
+      await expect(checklist).toBeVisible();
+    });
   });
 
   test('does NOT reopen after an explicit skip, even on a backfill-shaped rewrite', async () => {
@@ -224,19 +233,6 @@ test.describe('Onboarding checklist', () => {
     await expect(page.locator('[data-testid="onboarding-checklist"]')).toHaveCount(0);
     await page.waitForTimeout(1000);
     await expect(page.locator('[data-testid="onboarding-checklist"]')).toHaveCount(0);
-  });
-
-  test('stays on screen with no auto-dismiss timer', async () => {
-    // The original WelcomeOverlay auto-dismissed after 15s, which fails WCAG 2.2.1
-    // (Timing Adjustable). There is no timer at all now, so the only way to prove a
-    // negative is to wait and re-check.
-    ({ browser, page } = await launch());
-    await createProjectKeepingChecklist(page, 'walkthrough-no-timer');
-
-    const checklist = page.locator('[data-testid="onboarding-checklist"]');
-    await expect(checklist).toBeVisible();
-    await page.waitForTimeout(3000);
-    await expect(checklist).toBeVisible();
   });
 
   test('the Developer settings tab reopens it after it was skipped', async () => {
@@ -384,24 +380,18 @@ test.describe('Onboarding checklist', () => {
     await expect(page.locator('[data-testid="walkthrough-callout"]')).toContainText('Step 1 of 5');
     await expect(page.locator('[data-testid="walkthrough-ring"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="walkthrough-layer"]')).toHaveCount(0);
-  });
 
-  test('a redirect callout never lands on top of the panel it accompanies', async () => {
-    // The callout is the one part of this overlay with pointer-events, so covering the
-    // panel would make the settings it points at unclickable.
-    ({ browser, page } = await launch());
-    await createProjectKeepingChecklist(page, 'walkthrough-callout-clear');
-
-    await page.locator('[data-testid="onboarding-step-defaultsChosen"]').click();
-    await expect(page.locator('[data-testid="project-default-agent"]')).toBeVisible({ timeout: 5000 });
-
-    const callout = await page.locator('[data-testid="walkthrough-callout"]').boundingBox();
-    const panel = await page.locator('[data-testid="settings-panel"]').boundingBox();
-    expect(callout).not.toBeNull();
-    expect(panel).not.toBeNull();
-    const horizontallyClear = callout!.x + callout!.width <= panel!.x
-      || callout!.x >= panel!.x + panel!.width;
-    expect(horizontallyClear).toBe(true);
+    await test.step('a redirect callout never lands on top of the panel it accompanies', async () => {
+      // The callout is the one part of this overlay with pointer-events, so covering the
+      // panel would make the settings it points at unclickable.
+      const callout = await page.locator('[data-testid="walkthrough-callout"]').boundingBox();
+      const panel = await page.locator('[data-testid="settings-panel"]').boundingBox();
+      expect(callout).not.toBeNull();
+      expect(panel).not.toBeNull();
+      const horizontallyClear = callout!.x + callout!.width <= panel!.x
+        || callout!.x >= panel!.x + panel!.width;
+      expect(horizontallyClear).toBe(true);
+    });
   });
 
   test('step 2 redirects to Board manager, keeps its callout, and dims nothing', async () => {
@@ -537,21 +527,10 @@ test.describe('Onboarding checklist', () => {
     await expect(page.locator('[data-testid="walkthrough-callout"]')).toContainText('Step 2 of 5', { timeout: 5000 });
   });
 
-  test('closing the surface a step opened brings the checklist back', async () => {
-    // The flow used to just end here: change a default, close Settings, and nothing
-    // returned - no next step, nowhere to go. Dismissing the New Task dialog by clicking
-    // outside it was worse, leaving a dimmed board with a ring and no way forward.
-    ({ browser, page } = await launch());
-    await createProjectKeepingChecklist(page, 'walkthrough-return');
-
-    await page.locator('[data-testid="onboarding-step-boardShaped"]').click();
-    await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
-
-    await pressEscapeUntilChecklistReturns(page);
-
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeVisible();
-  });
+  // Trimmed (test-suite audit): 'closing the surface a step opened brings the checklist back' is
+  // 'backing out of a step returns to the checklist rather than pushing on', below: the same click,
+  // dialog wait and pressEscapeUntilChecklistReturns. The helper's first wait is the checklist
+  // detaching while the dialog is open, and expectChecklistProgress needs it present again.
 
   test('step 5 rings the task card once one is running', async () => {
     ({ browser, page } = await launch());
@@ -872,40 +851,30 @@ test.describe('Walkthrough spotlight', () => {
     // padding and sub-pixel layout differs across platforms (cross-platform-parity.md).
     expect(ringBox!.x).toBeLessThanOrEqual(todoBox!.x + 2);
     expect(ringBox!.x + ringBox!.width).toBeGreaterThanOrEqual(laneBox!.x + laneBox!.width - 2);
-  });
 
-  test('the callout stays fully on screen when its target fills the board', async () => {
-    // Step 4 lights two whole columns from the top of the board down, so there is no room
-    // above and placement has to fall sideways. It used to give up and hang the callout off
-    // the top of the window - and the overlay's OWN scrim counted as an obstacle to avoid,
-    // so which position won depended on whether the scrim had painted yet that frame.
-    ({ browser, page } = await launch());
-    await createProjectKeepingChecklist(page, 'walkthrough-onscreen');
-    await page.locator('[data-testid="onboarding-skip"]').click();
-    await expect(page.locator('[data-testid="onboarding-checklist"]')).toBeHidden();
+    await test.step('the callout stays fully on screen when its target fills the board', async () => {
+      // Step 4 lights two whole columns from the top of the board down, so there is no room
+      // above and placement has to fall sideways. It used to give up and hang the callout off
+      // the top of the window - and the overlay's OWN scrim counted as an obstacle to avoid,
+      // so which position won depended on whether the scrim had painted yet that frame.
+      const box = await callout.boundingBox();
+      const viewport = page.viewportSize();
+      expect(box).not.toBeNull();
+      expect(viewport).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
 
-    await renameLaneAndSpotlight(page, 'Design first');
-    const callout = page.locator('[data-testid="walkthrough-callout"]');
-    await expect(callout).toBeVisible({ timeout: 5000 });
-
-    const box = await callout.boundingBox();
-    const viewport = page.viewportSize();
-    expect(box).not.toBeNull();
-    expect(viewport).not.toBeNull();
-    expect(box!.x).toBeGreaterThanOrEqual(0);
-    expect(box!.y).toBeGreaterThanOrEqual(0);
-    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
-    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
-
-    // And beside the cutout, never on it: covering the columns the copy is telling the user
-    // to drag between defeats the point of lighting them.
-    const ringBox = await page.locator('[data-testid="walkthrough-ring"]').boundingBox();
-    expect(ringBox).not.toBeNull();
-    const overlapsRing = box!.x < ringBox!.x + ringBox!.width
-      && box!.x + box!.width > ringBox!.x
-      && box!.y < ringBox!.y + ringBox!.height
-      && box!.y + box!.height > ringBox!.y;
-    expect(overlapsRing).toBe(false);
+      // And beside the cutout, never on it: covering the columns the copy is telling the user
+      // to drag between defeats the point of lighting them.
+      expect(ringBox).not.toBeNull();
+      const overlapsRing = box!.x < ringBox!.x + ringBox!.width
+        && box!.x + box!.width > ringBox!.x
+        && box!.y < ringBox!.y + ringBox!.height
+        && box!.y + box!.height > ringBox!.y;
+      expect(overlapsRing).toBe(false);
+    });
   });
 
   test('the ring sits centred on the control it points at', async () => {

@@ -303,53 +303,57 @@ async function forcedLinesWhileOpening(fileName: string, marker: string): Promis
 }
 
 test.describe('DiffViewer up-front tokenize limit', () => {
-  test('a diff over 1000 lines reaches laid-out without being force-tokenized to its last line', async () => {
+  // One boot and one spy for both files: forcedLinesWhileOpening clears the call log itself,
+  // and DiffViewer reuses the models across file switches, so the spy sees the second file's pass.
+  test('a diff over 1000 lines is not force-tokenized to its last line, and a diff of exactly 1000 lines is', async () => {
     await launch();
     await waitForLaidOut();
     expect(await installForceTokenizationSpy(), 'both models expose forceTokenization').toBe(true);
-    const forcedLines = await forcedLinesWhileOpening(OVER_LIMIT_FILE, OVER_LIMIT_MARKER);
-    // Monaco forces the lines it draws, which are near line 500; only the up-front pass asks for the end.
-    expect(forcedLines.filter((lineNumber) => lineNumber >= OVER_LIMIT_LINES), `forceTokenization line numbers: ${forcedLines.join(',')}`).toEqual([]);
-  });
 
-  test('a diff of exactly 1000 lines is force-tokenized to its last line', async () => {
-    await launch();
-    await waitForLaidOut();
-    expect(await installForceTokenizationSpy(), 'both models expose forceTokenization').toBe(true);
-    const forcedLines = await forcedLinesWhileOpening(AT_LIMIT_FILE, AT_LIMIT_MARKER);
-    expect(forcedLines, 'the up-front pass reached the last line').toContain(AT_LIMIT_LINES);
+    await test.step('a diff over 1000 lines reaches laid-out without being force-tokenized to its last line', async () => {
+      const forcedLines = await forcedLinesWhileOpening(OVER_LIMIT_FILE, OVER_LIMIT_MARKER);
+      // Monaco forces the lines it draws, which are near line 500; only the up-front pass asks for the end.
+      expect(forcedLines.filter((lineNumber) => lineNumber >= OVER_LIMIT_LINES), `forceTokenization line numbers: ${forcedLines.join(',')}`).toEqual([]);
+    });
+
+    await test.step('a diff of exactly 1000 lines is force-tokenized to its last line', async () => {
+      const forcedLines = await forcedLinesWhileOpening(AT_LIMIT_FILE, AT_LIMIT_MARKER);
+      expect(forcedLines, 'the up-front pass reached the last line').toContain(AT_LIMIT_LINES);
+    });
   });
 });
 
 test.describe('DiffViewer laid-out on a tokenized file', () => {
-  test('a deleted line is drawn in token colours by the time it is laid out', async () => {
+  // One boot: the stamp snapshot is a read of the first laid-out, so it comes before the reopen.
+  test('a deleted line is drawn in token colours by the time it is laid out, and the first position rests', async () => {
     await launch();
     await waitForLaidOut();
-    // Laid-out is the promise that the deleted block is already coloured, so read what the page
-    // saw in the very task the stamp landed, not what it looks like a poll later.
-    const classNames = await page.evaluate(() => (window as unknown as { __stampSnapshot: string[] | null }).__stampSnapshot);
-    expect(classNames, 'the stamp was observed').not.toBeNull();
-    expect((classNames as string[]).length, 'the deleted block is drawn at the stamp').toBeGreaterThan(0);
-    const coloured = (classNames as string[]).filter((className) => /\bmtk(?!1\b)\d+\b/.test(className));
-    expect(coloured.length, `deleted-line token classes at the stamp: ${(classNames as string[]).slice(0, 6).join(' | ')}`).toBeGreaterThan(0);
-  });
 
-  test('the first position rests: the same at laid-out, a frame later and on a reopen', async () => {
-    await launch();
-    await waitForLaidOut();
-    const atLaidOut = await modifiedScrollTop();
-    expect(atLaidOut, 'the first change is below the first screen, so the position is not the top').toBeGreaterThan(100);
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    expect(await modifiedScrollTop()).toBe(atLaidOut);
-
-    // Close the task window (document-level Escape: a focused xterm would swallow the key), reopen.
-    await page.evaluate(() => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await test.step('a deleted line is drawn in token colours by the time it is laid out', async () => {
+      // Laid-out is the promise that the deleted block is already coloured, so read what the page
+      // saw in the very task the stamp landed, not what it looks like a poll later.
+      const classNames = await page.evaluate(() => (window as unknown as { __stampSnapshot: string[] | null }).__stampSnapshot);
+      expect(classNames, 'the stamp was observed').not.toBeNull();
+      expect((classNames as string[]).length, 'the deleted block is drawn at the stamp').toBeGreaterThan(0);
+      const coloured = (classNames as string[]).filter((className) => /\bmtk(?!1\b)\d+\b/.test(className));
+      expect(coloured.length, `deleted-line token classes at the stamp: ${(classNames as string[]).slice(0, 6).join(' | ')}`).toBeGreaterThan(0);
     });
-    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 5000 });
-    await openChanges();
-    await waitForLaidOut();
-    expect(Math.abs((await modifiedScrollTop()) - atLaidOut)).toBeLessThanOrEqual(1);
+
+    await test.step('the first position rests: the same at laid-out, a frame later and on a reopen', async () => {
+      const atLaidOut = await modifiedScrollTop();
+      expect(atLaidOut, 'the first change is below the first screen, so the position is not the top').toBeGreaterThan(100);
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(await modifiedScrollTop()).toBe(atLaidOut);
+
+      // Close the task window (document-level Escape: a focused xterm would swallow the key), reopen.
+      await page.evaluate(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+      await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 5000 });
+      await openChanges();
+      await waitForLaidOut();
+      expect(Math.abs((await modifiedScrollTop()) - atLaidOut)).toBeLessThanOrEqual(1);
+    });
   });
 
   test('a position knocked off by layout before laid-out is put back with no user input', async () => {

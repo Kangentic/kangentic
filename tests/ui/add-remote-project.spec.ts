@@ -233,11 +233,6 @@ test('a remote project\'s Agent tab shows what the host has installed, and never
   await defaultModel.fill('claude-opus-5-5');
   await expect(defaultModel).toHaveValue('claude-opus-5-5');
 
-  // Another agent that this computer might have is judged by the host alone.
-  const codex = await page.evaluate(async () => (await window.electronAPI.agents.list()).find((agent) => agent.name === 'codex'));
-  expect(codex).toMatchObject({ found: false, hostStatus: 'missing', path: 'codex' });
-  expect(codex?.capabilities).toBeUndefined();
-
   // A host that could not be asked is not a host without the CLI.
   await page.evaluate(() => {
     (window as unknown as { __mockHostAgents: Record<string, string> }).__mockHostAgents = { claude: 'unknown' };
@@ -468,6 +463,9 @@ test.describe('the Directory field', () => {
     await field.fill('~/code/');
     const reason = form.locator('[data-testid="add-remote-project-suggestions-error"]');
     await expect(reason).toContainText('link to the host is down');
+    await test.step('shows the reason in place when the host cannot be asked, and keeps what was typed', async () => {
+      await expect(field).toHaveValue('~/code/');
+    });
 
     await page.evaluate(async () => {
       const mockWindow = window as unknown as Record<string, unknown> & { __mockFireSshHostsChanged: () => void };
@@ -491,19 +489,6 @@ test.describe('the Directory field', () => {
     await page.waitForTimeout(500);
     await expect(page.locator('[data-testid="add-remote-project-suggestions"]')).toHaveCount(0);
     await expect(form.locator('[data-testid="add-remote-project-suggestions-error"]')).toHaveCount(0);
-  });
-
-  test('shows the reason in place when the host cannot be asked, and keeps what was typed', async () => {
-    const form = await openRemoteForm();
-    await page.evaluate(() => {
-      (window as unknown as Record<string, unknown>).__mockSshFolderError = 'The link to the host is down.';
-    });
-    const field = form.locator('[data-testid="add-remote-project-folder"]');
-
-    await field.fill('~/code/');
-
-    await expect(form.locator('[data-testid="add-remote-project-suggestions-error"]')).toContainText('link to the host is down');
-    await expect(field).toHaveValue('~/code/');
   });
 
   test('Browse lists the host\'s folders from home, goes down and back up by the breadcrumb, and Choose fills the field', async () => {

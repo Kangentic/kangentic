@@ -311,25 +311,24 @@ test('the PR pill shows one tip: the PR with the readiness caveat as its detail,
     await expect(tip).toContainText('PR #302');
     await expect(tip).toContainText('Open in default browser');
     await expect(tip).toContainText(/Merge blocked/);
+
+    await test.step('a PR with no verdict names its state in the tip instead', async () => {
+      await parkPointer(page);
+      await expect(tip).toHaveCount(0);
+      const mergedPill = prLinkOf(page, MERGED_TASK_ID);
+      await mergedPill.hover({ position: { x: 4, y: 4 } });
+      await expect(tip).toHaveCount(1);
+      await expect(tip).toContainText('PR #305');
+      await expect(tip).toContainText('Open in default browser');
+      await expect(tip).toContainText('merged');
+    });
   } finally {
     await browser.close();
   }
 });
 
-test('a PR with no verdict names its state in the tip instead', async () => {
-  const { browser, page } = await launchSeeded();
-  try {
-    const pill = prLinkOf(page, MERGED_TASK_ID);
-    const tip = page.locator(TIP);
-    await pill.hover({ position: { x: 4, y: 4 } });
-    await expect(tip).toHaveCount(1);
-    await expect(tip).toContainText('PR #305');
-    await expect(tip).toContainText('Open in default browser');
-    await expect(tip).toContainText('merged');
-  } finally {
-    await browser.close();
-  }
-});
+// 'a PR with no verdict names its state in the tip instead' is the second step of the test above: the
+// same seed, one hover on a different pill.
 
 test('a keyboard click made with the pointer elsewhere does not keep the next hover shut', async () => {
   const { browser, page, infoTips } = await launchOnSettingsInfoTips('hotkeys');

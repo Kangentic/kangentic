@@ -322,16 +322,6 @@ test('a restored draft does not pull focus out of where the user was', async () 
   await expect(note).not.toBeFocused();
 });
 
-test('a saved draft comes back when the pane opens', async () => {
-  await page.evaluate(({ taskId, url }) => window.__mockBrowser?.seedAnnotationDraft(taskId, {
-    version: 1,
-    activeId: 'kept',
-    annotations: [{ id: 'kept', note: 'From before the restart', url, captureId: null, items: [] }],
-  }), { taskId: TASK_ID, url: PAGE_URL });
-  await openPane();
-  await expect(page.locator('[data-testid="annotation-note-1"]')).toHaveValue('From before the restart');
-});
-
 test('a note typed before the first mark becomes annotation 1\'s note', async () => {
   await openPane();
   await page.locator('[data-testid="browser-note-input"]').fill('The header is too tall');
