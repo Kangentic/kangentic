@@ -99,6 +99,9 @@ const ALLOWLIST: Record<string, string> = {
   'src/main/transition-engine/session-startup/missing-worktree.ts':
     'Pure helper. `canRecreateWorktree` takes a lane its caller already folded: auto-spawn.ts carries '
     + 'the folded lane on each candidate, and resume-suspended.ts passes `laneForTask(task)`.',
+  'src/main/ipc/helpers/move-ends-agent.ts':
+    'Pure helper. Its only caller, task-move.ts, passes the destination lane after folding the task\'s '
+    + 'profile over it, so a task on a Board Profile is judged by its profile\'s Start an agent value.',
 };
 
 /**
