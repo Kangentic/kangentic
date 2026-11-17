@@ -9,7 +9,8 @@
  *
  * Usage: node scripts/ui-shard-timings.mjs <run-id>
  *
- * Pick a green run with little queueing. It needs the `gh` CLI signed in to this repository.
+ * Pick a green run where you can: a run with a red shard is accepted with a warning, and one with
+ * a cancelled or timed-out shard is refused. It needs the `gh` CLI signed in to this repository.
  * Refresh it when one UI shard runs about 25% past the average (docs/audits/test-suite-audit.md,
  * "When to revisit"). A stale file costs balance only: a spec it does not know is weighed by its
  * test count.
@@ -68,9 +69,15 @@ function main() {
   const jobs = JSON.parse(gh(['run', 'view', runId, '--json', 'jobs'])).jobs;
   const shardJobs = jobs.filter((job) => UI_SHARD_JOB_NAME.test(job.name));
   if (shardJobs.length === 0) throw new Error(`Run ${runId} has no UI shard job.`);
-  const unfinished = shardJobs.filter((job) => job.conclusion !== 'success').map((job) => job.name);
-  if (unfinished.length > 0) {
-    throw new Error(`Run ${runId} is not a green UI run, so its timings are partial: ${unfinished.join(', ')}`);
+  // A shard that failed still ran every test it was given, so its log is whole. One that was
+  // cancelled or timed out stopped part way, and its specs would read as cheap.
+  const partial = shardJobs.filter((job) => job.conclusion !== 'success' && job.conclusion !== 'failure').map((job) => job.name);
+  if (partial.length > 0) {
+    throw new Error(`Run ${runId} has UI shards that did not run to the end, so its timings are partial: ${partial.join(', ')}`);
+  }
+  const red = shardJobs.filter((job) => job.conclusion === 'failure').map((job) => job.name);
+  if (red.length > 0) {
+    console.warn(`[ui-shard-timings] ${red.join(', ')} failed. A failed test is retried once, so its spec reads a little heavy.`);
   }
 
   const files = {};

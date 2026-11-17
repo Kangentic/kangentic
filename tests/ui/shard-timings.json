@@ -1,176 +1,176 @@
 {
-  "run": 44134798608,
+  "run": 44150778238,
   "files": {
     "tests/ui/activity-log-first-frame.spec.ts": {
-      "seconds": 0.2,
+      "seconds": 0.1,
       "tests": 1
     },
     "tests/ui/activity-marks.spec.ts": {
-      "seconds": 55.5,
+      "seconds": 26.8,
       "tests": 14
     },
     "tests/ui/add-project-flow.spec.ts": {
-      "seconds": 27.3,
+      "seconds": 22.8,
       "tests": 8
     },
     "tests/ui/add-remote-project.spec.ts": {
-      "seconds": 30.5,
+      "seconds": 26.2,
       "tests": 23
     },
     "tests/ui/agent-auth-warning.spec.ts": {
-      "seconds": 29,
+      "seconds": 26.8,
       "tests": 11
     },
     "tests/ui/agent-driven-invalidation.spec.ts": {
-      "seconds": 69.2,
+      "seconds": 68.4,
       "tests": 16
     },
     "tests/ui/agent-monitor.spec.ts": {
-      "seconds": 239,
+      "seconds": 143.8,
       "tests": 59
     },
     "tests/ui/agent-open-pane-focus.spec.ts": {
-      "seconds": 12.4,
+      "seconds": 7.3,
       "tests": 5
     },
     "tests/ui/agent-open-pane-hosting.spec.ts": {
-      "seconds": 18.2,
+      "seconds": 15.9,
       "tests": 5
     },
     "tests/ui/agent-tab-auth-warning.spec.ts": {
-      "seconds": 37.1,
+      "seconds": 22.4,
       "tests": 8
     },
     "tests/ui/agent-tab-force-refresh.spec.ts": {
-      "seconds": 13.4,
+      "seconds": 10.6,
       "tests": 3
     },
     "tests/ui/agent-tab-launch-options.spec.ts": {
-      "seconds": 22.6,
+      "seconds": 19.6,
       "tests": 5
     },
     "tests/ui/agent-tab-remote-execution.spec.ts": {
-      "seconds": 45.9,
+      "seconds": 36.3,
       "tests": 10
     },
     "tests/ui/agent-tab-wsl-status.spec.ts": {
-      "seconds": 17.2,
+      "seconds": 9.6,
       "tests": 4
     },
     "tests/ui/announcements.spec.ts": {
-      "seconds": 16.8,
+      "seconds": 11.5,
       "tests": 18
     },
     "tests/ui/app.spec.ts": {
-      "seconds": 17.7,
+      "seconds": 15.1,
       "tests": 36
     },
     "tests/ui/archived-context-menu.spec.ts": {
-      "seconds": 33.4,
+      "seconds": 21.6,
       "tests": 11
     },
     "tests/ui/archived-lazy-load.spec.ts": {
-      "seconds": 16.5,
+      "seconds": 12,
       "tests": 5
     },
     "tests/ui/asana-auth.spec.ts": {
-      "seconds": 30.6,
+      "seconds": 24.6,
       "tests": 7
     },
     "tests/ui/attachment-add-failure.spec.ts": {
-      "seconds": 2.2,
+      "seconds": 2,
       "tests": 2
     },
     "tests/ui/attachment-open-failure.spec.ts": {
-      "seconds": 4.3,
+      "seconds": 5.2,
       "tests": 5
     },
     "tests/ui/auto-command-result-toast.spec.ts": {
-      "seconds": 15.5,
+      "seconds": 7.8,
       "tests": 4
     },
     "tests/ui/auto-name-from-prompt.spec.ts": {
-      "seconds": 4.3,
+      "seconds": 5,
       "tests": 6
     },
     "tests/ui/automation-run-again-toast.spec.ts": {
-      "seconds": 33.4,
+      "seconds": 16.2,
       "tests": 10
     },
     "tests/ui/automation-user-message-unsupported.spec.ts": {
-      "seconds": 0.6,
+      "seconds": 0.9,
       "tests": 1
     },
     "tests/ui/backlog-dialog-ux.spec.ts": {
-      "seconds": 18.5,
+      "seconds": 17.6,
       "tests": 23
     },
     "tests/ui/backlog-mcp-push.spec.ts": {
-      "seconds": 8,
+      "seconds": 8.3,
       "tests": 2
     },
     "tests/ui/backlog.spec.ts": {
-      "seconds": 101,
+      "seconds": 48.6,
       "tests": 23
     },
     "tests/ui/base-ref-picker.spec.ts": {
-      "seconds": 17.7,
+      "seconds": 11.9,
       "tests": 12
     },
     "tests/ui/board-collapse.spec.ts": {
-      "seconds": 26.8,
+      "seconds": 15.9,
       "tests": 13
     },
     "tests/ui/board-config-save-refusals.spec.ts": {
-      "seconds": 21.5,
+      "seconds": 9.4,
       "tests": 4
     },
     "tests/ui/board-config.spec.ts": {
-      "seconds": 10.1,
+      "seconds": 3.4,
       "tests": 2
     },
     "tests/ui/board-cross-column-drop-gap.spec.ts": {
-      "seconds": 87.2,
+      "seconds": 42.1,
       "tests": 16
     },
     "tests/ui/board-drag-skips-card-content.spec.ts": {
-      "seconds": 2.9,
+      "seconds": 2.1,
       "tests": 2
     },
     "tests/ui/board-filter.spec.ts": {
-      "seconds": 4.5,
+      "seconds": 3.8,
       "tests": 12
     },
     "tests/ui/board-keyboard-drag-intent.spec.ts": {
-      "seconds": 65.7,
+      "seconds": 21.8,
       "tests": 13
     },
     "tests/ui/board-manager-agent-gate.spec.ts": {
-      "seconds": 11.2,
+      "seconds": 8.2,
       "tests": 2
     },
     "tests/ui/board-manager-automations.spec.ts": {
-      "seconds": 50.6,
+      "seconds": 49.7,
       "tests": 26
     },
     "tests/ui/board-manager-dialog-ext.spec.ts": {
-      "seconds": 33.9,
+      "seconds": 30.2,
       "tests": 27
     },
     "tests/ui/board-manager-dialog.spec.ts": {
-      "seconds": 33.8,
+      "seconds": 29.3,
       "tests": 19
     },
     "tests/ui/board-manager-legacy-role.spec.ts": {
-      "seconds": 8,
+      "seconds": 3.2,
       "tests": 2
     },
     "tests/ui/board-manager-profiles.spec.ts": {
-      "seconds": 15.6,
+      "seconds": 11,
       "tests": 9
     },
     "tests/ui/browser-annotations.spec.ts": {
-      "seconds": 80,
+      "seconds": 30.5,
       "tests": 14
     },
     "tests/ui/browser-download-toast.spec.ts": {
@@ -178,99 +178,99 @@
       "tests": 3
     },
     "tests/ui/browser-empty-state.spec.ts": {
-      "seconds": 9.3,
+      "seconds": 7.5,
       "tests": 6
     },
     "tests/ui/browser-offscreen-surface.spec.ts": {
-      "seconds": 28.2,
+      "seconds": 8,
       "tests": 6
     },
     "tests/ui/browser-pane-active.spec.ts": {
-      "seconds": 44.7,
+      "seconds": 22.5,
       "tests": 10
     },
     "tests/ui/browser-pane-agent-input-focus.spec.ts": {
-      "seconds": 136.7,
+      "seconds": 67.4,
       "tests": 24
     },
     "tests/ui/browser-pane-close.spec.ts": {
-      "seconds": 24,
+      "seconds": 9,
       "tests": 5
     },
     "tests/ui/browser-pane-hold-on-hide.spec.ts": {
-      "seconds": 34.5,
+      "seconds": 13.4,
       "tests": 7
     },
     "tests/ui/browser-pane-jar-sync-gate.spec.ts": {
-      "seconds": 33.3,
+      "seconds": 13.2,
       "tests": 5
     },
     "tests/ui/browser-pane-park-on-close.spec.ts": {
-      "seconds": 40.3,
+      "seconds": 16.8,
       "tests": 8
     },
     "tests/ui/browser-pane-refetch-guard.spec.ts": {
-      "seconds": 6,
+      "seconds": 2.7,
       "tests": 1
     },
     "tests/ui/browser-pane-registration.spec.ts": {
-      "seconds": 15.9,
+      "seconds": 8.7,
       "tests": 4
     },
     "tests/ui/browser-pane-request-bridge.spec.ts": {
-      "seconds": 18,
+      "seconds": 8.7,
       "tests": 5
     },
     "tests/ui/browser-pane-shortcuts.spec.ts": {
-      "seconds": 69.7,
+      "seconds": 28.7,
       "tests": 15
     },
     "tests/ui/browser-pane-viewport-chip.spec.ts": {
-      "seconds": 32.5,
+      "seconds": 14.7,
       "tests": 7
     },
     "tests/ui/browser-pill-gate.spec.ts": {
-      "seconds": 19.2,
+      "seconds": 6.8,
       "tests": 3
     },
     "tests/ui/browser-pop-out-pane.spec.ts": {
-      "seconds": 29,
+      "seconds": 5.9,
       "tests": 7
     },
     "tests/ui/browser-settings.spec.ts": {
-      "seconds": 10.5,
+      "seconds": 9.6,
       "tests": 10
     },
     "tests/ui/bulk-delete-failures.spec.ts": {
-      "seconds": 26,
+      "seconds": 10.8,
       "tests": 5
     },
     "tests/ui/bulk-delete-progress.spec.ts": {
-      "seconds": 4.6,
+      "seconds": 1.8,
       "tests": 1
     },
     "tests/ui/card-start-blocked.spec.ts": {
-      "seconds": 12.6,
+      "seconds": 5.3,
       "tests": 3
     },
     "tests/ui/changes-blame-gutter.spec.ts": {
-      "seconds": 18.3,
+      "seconds": 11.1,
       "tests": 4
     },
     "tests/ui/changes-commit-selection-bar.spec.ts": {
-      "seconds": 48.4,
+      "seconds": 21.1,
       "tests": 5
     },
     "tests/ui/changes-diff-scroll-memory.spec.ts": {
-      "seconds": 40.5,
+      "seconds": 36.7,
       "tests": 8
     },
     "tests/ui/changes-file-history.spec.ts": {
-      "seconds": 4.5,
+      "seconds": 3.2,
       "tests": 1
     },
     "tests/ui/changes-file-popout.spec.ts": {
-      "seconds": 7.8,
+      "seconds": 5.1,
       "tests": 5
     },
     "tests/ui/changes-history-section.spec.ts": {
@@ -278,347 +278,347 @@
       "tests": 3
     },
     "tests/ui/changes-panel-base-label.spec.ts": {
-      "seconds": 8.3,
+      "seconds": 6.3,
       "tests": 4
     },
     "tests/ui/changes-panel-branch-header.spec.ts": {
-      "seconds": 6.7,
+      "seconds": 3.1,
       "tests": 2
     },
     "tests/ui/changes-panel-collapse-unchanged.spec.ts": {
-      "seconds": 6.5,
+      "seconds": 3.5,
       "tests": 1
     },
     "tests/ui/changes-panel-diff-disposal.spec.ts": {
-      "seconds": 5,
-      "tests": 1
-    },
-    "tests/ui/changes-panel-diffviewer-copy.spec.ts": {
-      "seconds": 12.2,
-      "tests": 6
-    },
-    "tests/ui/changes-panel-fetch-guard.spec.ts": {
       "seconds": 3.6,
       "tests": 1
     },
+    "tests/ui/changes-panel-diffviewer-copy.spec.ts": {
+      "seconds": 8,
+      "tests": 6
+    },
+    "tests/ui/changes-panel-fetch-guard.spec.ts": {
+      "seconds": 1.9,
+      "tests": 1
+    },
     "tests/ui/changes-panel-file-actions.spec.ts": {
-      "seconds": 3.4,
+      "seconds": 2.3,
       "tests": 1
     },
     "tests/ui/changes-panel-file-list.spec.ts": {
-      "seconds": 11.8,
+      "seconds": 6.8,
       "tests": 3
     },
     "tests/ui/changes-panel-keyboard-nav.spec.ts": {
-      "seconds": 6.9,
+      "seconds": 4.1,
       "tests": 2
     },
     "tests/ui/changes-panel-lazy-retry.spec.ts": {
-      "seconds": 6.4,
+      "seconds": 5.8,
       "tests": 1
     },
     "tests/ui/changes-panel-remote-refresh.spec.ts": {
-      "seconds": 4,
+      "seconds": 2.2,
       "tests": 1
     },
     "tests/ui/changes-panel-scope.spec.ts": {
-      "seconds": 9.9,
-      "tests": 3
-    },
-    "tests/ui/changes-panel-viewed.spec.ts": {
-      "seconds": 4.3,
-      "tests": 1
-    },
-    "tests/ui/changes-pull-request-section.spec.ts": {
-      "seconds": 27.2,
-      "tests": 10
-    },
-    "tests/ui/changes-stale-selection.spec.ts": {
-      "seconds": 6.1,
-      "tests": 2
-    },
-    "tests/ui/collapsed-rail.spec.ts": {
-      "seconds": 30.3,
-      "tests": 10
-    },
-    "tests/ui/collect-page-errors.spec.ts": {
-      "seconds": 0.5,
-      "tests": 3
-    },
-    "tests/ui/column-agent-limit.spec.ts": {
-      "seconds": 134,
-      "tests": 31
-    },
-    "tests/ui/column-icon-catalog.spec.ts": {
-      "seconds": 46.9,
-      "tests": 10
-    },
-    "tests/ui/combobox-current-row-check.spec.ts": {
-      "seconds": 29,
-      "tests": 5
-    },
-    "tests/ui/combobox-escape-layering.spec.ts": {
-      "seconds": 24.7,
-      "tests": 4
-    },
-    "tests/ui/combobox-portal-clipping.spec.ts": {
-      "seconds": 27.6,
-      "tests": 6
-    },
-    "tests/ui/command-terminal-branch.spec.ts": {
-      "seconds": 15.5,
-      "tests": 3
-    },
-    "tests/ui/command-terminal-browser.spec.ts": {
-      "seconds": 70.2,
-      "tests": 12
-    },
-    "tests/ui/command-terminal-earlier.spec.ts": {
-      "seconds": 44.9,
-      "tests": 8
-    },
-    "tests/ui/command-terminal-launch-overlay.spec.ts": {
-      "seconds": 14,
-      "tests": 3
-    },
-    "tests/ui/command-terminal-rail.spec.ts": {
-      "seconds": 146.8,
-      "tests": 16
-    },
-    "tests/ui/command-terminal-rename.spec.ts": {
-      "seconds": 66.6,
-      "tests": 12
-    },
-    "tests/ui/command-terminal.spec.ts": {
-      "seconds": 892.7,
-      "tests": 153
-    },
-    "tests/ui/commit-detail-selection.spec.ts": {
-      "seconds": 13,
-      "tests": 4
-    },
-    "tests/ui/commit-graph-hash-link.spec.ts": {
-      "seconds": 12.8,
-      "tests": 2
-    },
-    "tests/ui/commit-graph-panel.spec.ts": {
-      "seconds": 10.2,
-      "tests": 6
-    },
-    "tests/ui/completed-task-changes.spec.ts": {
-      "seconds": 71.7,
-      "tests": 15
-    },
-    "tests/ui/completed-task-tabs-scroll.spec.ts": {
-      "seconds": 7.8,
-      "tests": 2
-    },
-    "tests/ui/completed-task-view.spec.ts": {
-      "seconds": 197.9,
-      "tests": 57
-    },
-    "tests/ui/config-write-failed-toast.spec.ts": {
-      "seconds": 7.6,
-      "tests": 2
-    },
-    "tests/ui/context-bar-effort.spec.ts": {
-      "seconds": 17.7,
-      "tests": 6
-    },
-    "tests/ui/context-bar-fold.spec.ts": {
-      "seconds": 10.6,
-      "tests": 3
-    },
-    "tests/ui/context-bar-popover.spec.ts": {
-      "seconds": 18.7,
-      "tests": 13
-    },
-    "tests/ui/context-bar-stale-session-id.spec.ts": {
-      "seconds": 3.1,
-      "tests": 1
-    },
-    "tests/ui/context-bar-tool-breakdown.spec.ts": {
-      "seconds": 18.5,
-      "tests": 19
-    },
-    "tests/ui/context-bar-unknown-window.spec.ts": {
-      "seconds": 6.3,
-      "tests": 2
-    },
-    "tests/ui/context-bar-version-pill.spec.ts": {
-      "seconds": 3.1,
-      "tests": 1
-    },
-    "tests/ui/controls-have-names.spec.ts": {
-      "seconds": 20.5,
-      "tests": 4
-    },
-    "tests/ui/conversation-auto-follow.spec.ts": {
-      "seconds": 7.6,
-      "tests": 1
-    },
-    "tests/ui/conversation-expired-toast.spec.ts": {
-      "seconds": 1.7,
-      "tests": 1
-    },
-    "tests/ui/conversation-open-position.spec.ts": {
-      "seconds": 4.3,
-      "tests": 2
-    },
-    "tests/ui/conversation-paging.spec.ts": {
-      "seconds": 66.8,
-      "tests": 18
-    },
-    "tests/ui/conversation-pill-disabled-state.spec.ts": {
-      "seconds": 16.6,
-      "tests": 5
-    },
-    "tests/ui/conversation-pill-session-flips.spec.ts": {
-      "seconds": 6.6,
-      "tests": 2
-    },
-    "tests/ui/conversation-route-tabs.spec.ts": {
-      "seconds": 77.6,
-      "tests": 23
-    },
-    "tests/ui/conversation-scrollbar.spec.ts": {
-      "seconds": 6.6,
-      "tests": 2
-    },
-    "tests/ui/conversation-search.spec.ts": {
-      "seconds": 21,
-      "tests": 6
-    },
-    "tests/ui/conversation-viewer.spec.ts": {
-      "seconds": 83.1,
-      "tests": 21
-    },
-    "tests/ui/conversation-window-workspace-restore.spec.ts": {
       "seconds": 6.9,
       "tests": 3
     },
+    "tests/ui/changes-panel-viewed.spec.ts": {
+      "seconds": 2.9,
+      "tests": 1
+    },
+    "tests/ui/changes-pull-request-section.spec.ts": {
+      "seconds": 18.3,
+      "tests": 10
+    },
+    "tests/ui/changes-stale-selection.spec.ts": {
+      "seconds": 4,
+      "tests": 2
+    },
+    "tests/ui/collapsed-rail.spec.ts": {
+      "seconds": 13.6,
+      "tests": 10
+    },
+    "tests/ui/collect-page-errors.spec.ts": {
+      "seconds": 0.4,
+      "tests": 3
+    },
+    "tests/ui/column-agent-limit.spec.ts": {
+      "seconds": 73.8,
+      "tests": 31
+    },
+    "tests/ui/column-icon-catalog.spec.ts": {
+      "seconds": 18.6,
+      "tests": 10
+    },
+    "tests/ui/combobox-current-row-check.spec.ts": {
+      "seconds": 17,
+      "tests": 5
+    },
+    "tests/ui/combobox-escape-layering.spec.ts": {
+      "seconds": 12.3,
+      "tests": 4
+    },
+    "tests/ui/combobox-portal-clipping.spec.ts": {
+      "seconds": 16,
+      "tests": 6
+    },
+    "tests/ui/command-terminal-branch.spec.ts": {
+      "seconds": 10.3,
+      "tests": 3
+    },
+    "tests/ui/command-terminal-browser.spec.ts": {
+      "seconds": 34.5,
+      "tests": 12
+    },
+    "tests/ui/command-terminal-earlier.spec.ts": {
+      "seconds": 23.5,
+      "tests": 8
+    },
+    "tests/ui/command-terminal-launch-overlay.spec.ts": {
+      "seconds": 7.2,
+      "tests": 3
+    },
+    "tests/ui/command-terminal-rail.spec.ts": {
+      "seconds": 138.1,
+      "tests": 16
+    },
+    "tests/ui/command-terminal-rename.spec.ts": {
+      "seconds": 34.5,
+      "tests": 12
+    },
+    "tests/ui/command-terminal.spec.ts": {
+      "seconds": 555.3,
+      "tests": 153
+    },
+    "tests/ui/commit-detail-selection.spec.ts": {
+      "seconds": 9.6,
+      "tests": 4
+    },
+    "tests/ui/commit-graph-hash-link.spec.ts": {
+      "seconds": 5.4,
+      "tests": 2
+    },
+    "tests/ui/commit-graph-panel.spec.ts": {
+      "seconds": 9.6,
+      "tests": 6
+    },
+    "tests/ui/completed-task-changes.spec.ts": {
+      "seconds": 44.6,
+      "tests": 15
+    },
+    "tests/ui/completed-task-tabs-scroll.spec.ts": {
+      "seconds": 3.8,
+      "tests": 2
+    },
+    "tests/ui/completed-task-view.spec.ts": {
+      "seconds": 97.5,
+      "tests": 57
+    },
+    "tests/ui/config-write-failed-toast.spec.ts": {
+      "seconds": 2.8,
+      "tests": 2
+    },
+    "tests/ui/context-bar-effort.spec.ts": {
+      "seconds": 10.2,
+      "tests": 6
+    },
+    "tests/ui/context-bar-fold.spec.ts": {
+      "seconds": 5.7,
+      "tests": 3
+    },
+    "tests/ui/context-bar-popover.spec.ts": {
+      "seconds": 16.2,
+      "tests": 13
+    },
+    "tests/ui/context-bar-stale-session-id.spec.ts": {
+      "seconds": 1.3,
+      "tests": 1
+    },
+    "tests/ui/context-bar-tool-breakdown.spec.ts": {
+      "seconds": 11.1,
+      "tests": 19
+    },
+    "tests/ui/context-bar-unknown-window.spec.ts": {
+      "seconds": 2.8,
+      "tests": 2
+    },
+    "tests/ui/context-bar-version-pill.spec.ts": {
+      "seconds": 2,
+      "tests": 1
+    },
+    "tests/ui/controls-have-names.spec.ts": {
+      "seconds": 15.1,
+      "tests": 4
+    },
+    "tests/ui/conversation-auto-follow.spec.ts": {
+      "seconds": 6.3,
+      "tests": 1
+    },
+    "tests/ui/conversation-expired-toast.spec.ts": {
+      "seconds": 1.4,
+      "tests": 1
+    },
+    "tests/ui/conversation-open-position.spec.ts": {
+      "seconds": 3.2,
+      "tests": 2
+    },
+    "tests/ui/conversation-paging.spec.ts": {
+      "seconds": 36.9,
+      "tests": 18
+    },
+    "tests/ui/conversation-pill-disabled-state.spec.ts": {
+      "seconds": 6.4,
+      "tests": 5
+    },
+    "tests/ui/conversation-pill-session-flips.spec.ts": {
+      "seconds": 4.4,
+      "tests": 2
+    },
+    "tests/ui/conversation-route-tabs.spec.ts": {
+      "seconds": 54.3,
+      "tests": 23
+    },
+    "tests/ui/conversation-scrollbar.spec.ts": {
+      "seconds": 4.2,
+      "tests": 2
+    },
+    "tests/ui/conversation-search.spec.ts": {
+      "seconds": 8.4,
+      "tests": 6
+    },
+    "tests/ui/conversation-viewer.spec.ts": {
+      "seconds": 49.2,
+      "tests": 21
+    },
+    "tests/ui/conversation-window-workspace-restore.spec.ts": {
+      "seconds": 5.8,
+      "tests": 3
+    },
     "tests/ui/cursor-context-bar.spec.ts": {
-      "seconds": 13,
+      "seconds": 5.4,
       "tests": 4
     },
     "tests/ui/cycle-shortcuts.spec.ts": {
-      "seconds": 65.8,
+      "seconds": 50.7,
       "tests": 17
     },
     "tests/ui/delete-task-optimistic.spec.ts": {
-      "seconds": 23.5,
+      "seconds": 11.3,
       "tests": 7
     },
     "tests/ui/description-editor-file-mentions.spec.ts": {
-      "seconds": 19.4,
+      "seconds": 20.3,
       "tests": 20
     },
     "tests/ui/dev-restart.spec.ts": {
-      "seconds": 15.4,
+      "seconds": 23.6,
       "tests": 9
     },
     "tests/ui/developer-tab-defaults.spec.ts": {
-      "seconds": 2.8,
+      "seconds": 2.3,
       "tests": 3
     },
     "tests/ui/dialog-save-hotkey.spec.ts": {
-      "seconds": 100.6,
+      "seconds": 54.8,
       "tests": 21
     },
     "tests/ui/dictation-live-chip.spec.ts": {
-      "seconds": 24,
+      "seconds": 8.2,
       "tests": 9
     },
     "tests/ui/dictation-mouse-hold.spec.ts": {
-      "seconds": 43.1,
+      "seconds": 21.3,
       "tests": 12
     },
     "tests/ui/dictation-note-input.spec.ts": {
-      "seconds": 148,
+      "seconds": 76.1,
       "tests": 42
     },
     "tests/ui/dictation-settings-models.spec.ts": {
-      "seconds": 78.6,
+      "seconds": 43.7,
       "tests": 18
     },
     "tests/ui/dictation-settings-search.spec.ts": {
-      "seconds": 15.5,
+      "seconds": 13.1,
       "tests": 4
     },
     "tests/ui/dictation-stop-failure.spec.ts": {
-      "seconds": 3.7,
+      "seconds": 2.2,
       "tests": 1
     },
     "tests/ui/dictation-worker-unavailable.spec.ts": {
-      "seconds": 4,
+      "seconds": 3.9,
       "tests": 5
     },
     "tests/ui/diff-laid-out-state.spec.ts": {
-      "seconds": 29.6,
+      "seconds": 22,
       "tests": 4
     },
     "tests/ui/diff-laid-out-tokenized.spec.ts": {
-      "seconds": 56.3,
+      "seconds": 40.7,
       "tests": 7
     },
     "tests/ui/diff-swap-stale-view-model.spec.ts": {
-      "seconds": 43,
+      "seconds": 38.9,
       "tests": 4
     },
     "tests/ui/diff-view-mode-preference.spec.ts": {
-      "seconds": 5.3,
+      "seconds": 3.5,
       "tests": 2
     },
     "tests/ui/diff-viewer-theme-preview.spec.ts": {
-      "seconds": 1.6,
+      "seconds": 1.4,
       "tests": 2
     },
     "tests/ui/display-language.spec.ts": {
-      "seconds": 55.2,
+      "seconds": 28.8,
       "tests": 17
     },
     "tests/ui/drag-and-drop.spec.ts": {
-      "seconds": 15,
+      "seconds": 16.1,
       "tests": 6
     },
     "tests/ui/drag-coalesce.spec.ts": {
-      "seconds": 0.6,
+      "seconds": 0.7,
       "tests": 1
     },
     "tests/ui/drag-prefetch-remotes.spec.ts": {
-      "seconds": 2,
+      "seconds": 2.4,
       "tests": 2
     },
     "tests/ui/edit-automation-guards.spec.ts": {
-      "seconds": 58.1,
+      "seconds": 56.4,
       "tests": 42
     },
     "tests/ui/embedding-model-picker.spec.ts": {
-      "seconds": 86.2,
+      "seconds": 59.4,
       "tests": 24
     },
     "tests/ui/feature-usage-telemetry.spec.ts": {
-      "seconds": 26.3,
+      "seconds": 12.2,
       "tests": 7
     },
     "tests/ui/git-hold-prompt-setting.spec.ts": {
-      "seconds": 19.2,
+      "seconds": 16.9,
       "tests": 5
     },
     "tests/ui/goto-vite-boot-retry.spec.ts": {
-      "seconds": 9.8,
+      "seconds": 18.5,
       "tests": 2
     },
     "tests/ui/graphics-recovery.spec.ts": {
-      "seconds": 52.1,
+      "seconds": 35.3,
       "tests": 16
     },
     "tests/ui/handoff-suspend-preserves-spawn-label.spec.ts": {
-      "seconds": 5.7,
+      "seconds": 4.3,
       "tests": 2
     },
     "tests/ui/hotkeys-settings.spec.ts": {
-      "seconds": 16.4,
+      "seconds": 18.3,
       "tests": 12
     },
     "tests/ui/idle-hint-activity-log.spec.ts": {
@@ -626,51 +626,51 @@
       "tests": 4
     },
     "tests/ui/idle-timeout-toast.spec.ts": {
-      "seconds": 5.6,
+      "seconds": 5.1,
       "tests": 2
     },
     "tests/ui/idle-toast-own-call.spec.ts": {
-      "seconds": 6.9,
+      "seconds": 5.3,
       "tests": 2
     },
     "tests/ui/idle-toast.spec.ts": {
-      "seconds": 38.1,
+      "seconds": 16.8,
       "tests": 11
     },
     "tests/ui/image-compression.spec.ts": {
-      "seconds": 4.2,
+      "seconds": 3.3,
       "tests": 3
     },
     "tests/ui/import-attachments.spec.ts": {
-      "seconds": 4,
+      "seconds": 3.4,
       "tests": 1
     },
     "tests/ui/import-filter.spec.ts": {
-      "seconds": 131.4,
+      "seconds": 66.6,
       "tests": 26
     },
     "tests/ui/kebab-menu-escape-guard.spec.ts": {
-      "seconds": 4.3,
+      "seconds": 2.8,
       "tests": 1
     },
     "tests/ui/kimi-subagent-activity-log.spec.ts": {
-      "seconds": 0.2,
+      "seconds": 0.1,
       "tests": 4
     },
     "tests/ui/knowledge-graph.spec.ts": {
-      "seconds": 436.4,
+      "seconds": 309.4,
       "tests": 108
     },
     "tests/ui/label-input.spec.ts": {
-      "seconds": 12.4,
+      "seconds": 8.9,
       "tests": 3
     },
     "tests/ui/label-promotion.spec.ts": {
-      "seconds": 3.7,
+      "seconds": 2.3,
       "tests": 1
     },
     "tests/ui/launch-overlay-terminal-surface.spec.ts": {
-      "seconds": 16.5,
+      "seconds": 8.4,
       "tests": 5
     },
     "tests/ui/layout-change-hold-then-draw.spec.ts": {
@@ -678,27 +678,27 @@
       "tests": 8
     },
     "tests/ui/leftover-processes.spec.ts": {
-      "seconds": 60,
+      "seconds": 38.6,
       "tests": 19
     },
     "tests/ui/link-click-setting.spec.ts": {
-      "seconds": 4.5,
+      "seconds": 2.5,
       "tests": 1
     },
     "tests/ui/mcp-connection-row.spec.ts": {
-      "seconds": 19.1,
+      "seconds": 8.1,
       "tests": 6
     },
     "tests/ui/mobile-devices-settings.spec.ts": {
-      "seconds": 48.9,
+      "seconds": 50.5,
       "tests": 48
     },
     "tests/ui/model-picker-aliases.spec.ts": {
-      "seconds": 114.6,
+      "seconds": 65.9,
       "tests": 35
     },
     "tests/ui/monaco-error-funnel.spec.ts": {
-      "seconds": 98.4,
+      "seconds": 75.2,
       "tests": 11
     },
     "tests/ui/monitor-card-priority.spec.ts": {
@@ -706,199 +706,199 @@
       "tests": 2
     },
     "tests/ui/monitor-confirm-and-detail-writes.spec.ts": {
-      "seconds": 40.5,
+      "seconds": 32.3,
       "tests": 9
     },
     "tests/ui/monitor-writes-reach-board.spec.ts": {
-      "seconds": 43,
+      "seconds": 23.5,
       "tests": 11
     },
     "tests/ui/move-stale-reload-no-lane-flash.spec.ts": {
-      "seconds": 4.8,
-      "tests": 1
-    },
-    "tests/ui/move-to-done-archives.spec.ts": {
-      "seconds": 9.3,
-      "tests": 2
-    },
-    "tests/ui/move-to-done-completion-store.spec.ts": {
-      "seconds": 6.2,
-      "tests": 2
-    },
-    "tests/ui/move-to-done-confirm-animation.spec.ts": {
-      "seconds": 4.1,
-      "tests": 1
-    },
-    "tests/ui/move-to-done-confirm.spec.ts": {
-      "seconds": 46.3,
-      "tests": 13
-    },
-    "tests/ui/move-to-done-continuous-visibility.spec.ts": {
-      "seconds": 4.1,
-      "tests": 1
-    },
-    "tests/ui/move-to-done-cross-project.spec.ts": {
       "seconds": 1.9,
       "tests": 1
     },
-    "tests/ui/move-to-done-no-snapback.spec.ts": {
-      "seconds": 12.9,
-      "tests": 3
-    },
-    "tests/ui/move-to-done-reload-no-source-flash.spec.ts": {
-      "seconds": 8,
+    "tests/ui/move-to-done-archives.spec.ts": {
+      "seconds": 6.4,
       "tests": 2
     },
-    "tests/ui/move-to-done-worktree-await-no-source-flash.spec.ts": {
-      "seconds": 8.7,
+    "tests/ui/move-to-done-completion-store.spec.ts": {
+      "seconds": 4.3,
+      "tests": 2
+    },
+    "tests/ui/move-to-done-confirm-animation.spec.ts": {
+      "seconds": 2.3,
       "tests": 1
     },
-    "tests/ui/move-to-done-worktree-rect-fallback.spec.ts": {
-      "seconds": 8.7,
-      "tests": 1
-    },
-    "tests/ui/move-to-todo-confirm.spec.ts": {
-      "seconds": 33.5,
-      "tests": 6
-    },
-    "tests/ui/new-task-dialog.spec.ts": {
-      "seconds": 33.1,
-      "tests": 28
-    },
-    "tests/ui/no-motion-tailwind-variant.spec.ts": {
-      "seconds": 5.1,
-      "tests": 3
-    },
-    "tests/ui/non-done-drop-settle.spec.ts": {
-      "seconds": 3.7,
-      "tests": 1
-    },
-    "tests/ui/notification-events.spec.ts": {
-      "seconds": 18.4,
-      "tests": 4
-    },
-    "tests/ui/notifications-tab.spec.ts": {
-      "seconds": 65.4,
+    "tests/ui/move-to-done-confirm.spec.ts": {
+      "seconds": 34.3,
       "tests": 13
     },
-    "tests/ui/onboarding-walkthrough.spec.ts": {
-      "seconds": 149,
-      "tests": 32
-    },
-    "tests/ui/onboarding-welcome-screen.spec.ts": {
-      "seconds": 42.8,
-      "tests": 13
-    },
-    "tests/ui/overlay-exit-fallback.spec.ts": {
-      "seconds": 2.2,
-      "tests": 3
-    },
-    "tests/ui/pattern-lines-field.spec.ts": {
-      "seconds": 16.2,
-      "tests": 9
-    },
-    "tests/ui/plan-approval-controls.spec.ts": {
-      "seconds": 33.6,
-      "tests": 8
-    },
-    "tests/ui/plan-complete-toast.spec.ts": {
-      "seconds": 11,
-      "tests": 3
-    },
-    "tests/ui/popout-terminal-webgl-unavailable.spec.ts": {
+    "tests/ui/move-to-done-continuous-visibility.spec.ts": {
       "seconds": 3,
       "tests": 1
     },
+    "tests/ui/move-to-done-cross-project.spec.ts": {
+      "seconds": 0.9,
+      "tests": 1
+    },
+    "tests/ui/move-to-done-no-snapback.spec.ts": {
+      "seconds": 10.4,
+      "tests": 3
+    },
+    "tests/ui/move-to-done-reload-no-source-flash.spec.ts": {
+      "seconds": 5.3,
+      "tests": 2
+    },
+    "tests/ui/move-to-done-worktree-await-no-source-flash.spec.ts": {
+      "seconds": 2.7,
+      "tests": 1
+    },
+    "tests/ui/move-to-done-worktree-rect-fallback.spec.ts": {
+      "seconds": 1.9,
+      "tests": 1
+    },
+    "tests/ui/move-to-todo-confirm.spec.ts": {
+      "seconds": 14.6,
+      "tests": 6
+    },
+    "tests/ui/new-task-dialog.spec.ts": {
+      "seconds": 22.1,
+      "tests": 28
+    },
+    "tests/ui/no-motion-tailwind-variant.spec.ts": {
+      "seconds": 1.9,
+      "tests": 3
+    },
+    "tests/ui/non-done-drop-settle.spec.ts": {
+      "seconds": 1.1,
+      "tests": 1
+    },
+    "tests/ui/notification-events.spec.ts": {
+      "seconds": 31.4,
+      "tests": 6
+    },
+    "tests/ui/notifications-tab.spec.ts": {
+      "seconds": 60,
+      "tests": 14
+    },
+    "tests/ui/onboarding-walkthrough.spec.ts": {
+      "seconds": 77.5,
+      "tests": 32
+    },
+    "tests/ui/onboarding-welcome-screen.spec.ts": {
+      "seconds": 13.2,
+      "tests": 13
+    },
+    "tests/ui/overlay-exit-fallback.spec.ts": {
+      "seconds": 3.2,
+      "tests": 3
+    },
+    "tests/ui/pattern-lines-field.spec.ts": {
+      "seconds": 13.3,
+      "tests": 9
+    },
+    "tests/ui/plan-approval-controls.spec.ts": {
+      "seconds": 16.3,
+      "tests": 8
+    },
+    "tests/ui/plan-complete-toast.spec.ts": {
+      "seconds": 5.6,
+      "tests": 3
+    },
+    "tests/ui/popout-terminal-webgl-unavailable.spec.ts": {
+      "seconds": 0.7,
+      "tests": 1
+    },
     "tests/ui/popout-window-frame-escape.spec.ts": {
-      "seconds": 2.9,
+      "seconds": 2.6,
       "tests": 7
     },
     "tests/ui/popover-clipping-promote-restore-shortcuts.spec.ts": {
-      "seconds": 35.1,
+      "seconds": 21,
       "tests": 9
     },
     "tests/ui/popover-first-open-alignment.spec.ts": {
-      "seconds": 59.2,
+      "seconds": 32.7,
       "tests": 12
     },
     "tests/ui/popover-viewport-flip.spec.ts": {
-      "seconds": 4.6,
+      "seconds": 2.6,
       "tests": 1
     },
     "tests/ui/pr-link-badge.spec.ts": {
-      "seconds": 6.4,
+      "seconds": 6.2,
       "tests": 12
     },
     "tests/ui/pr-link-resolve-toast.spec.ts": {
-      "seconds": 12.1,
+      "seconds": 8.3,
       "tests": 10
     },
     "tests/ui/pr-url.spec.ts": {
-      "seconds": 13.1,
+      "seconds": 5.1,
       "tests": 4
     },
     "tests/ui/project-groups.spec.ts": {
-      "seconds": 128.3,
+      "seconds": 61.6,
       "tests": 26
     },
     "tests/ui/project-move.spec.ts": {
-      "seconds": 3.8,
+      "seconds": 3.6,
       "tests": 7
     },
     "tests/ui/project-open-not-found.spec.ts": {
-      "seconds": 11.5,
+      "seconds": 4.4,
       "tests": 3
     },
     "tests/ui/project-session-scope.spec.ts": {
-      "seconds": 52.2,
+      "seconds": 21.1,
       "tests": 13
     },
     "tests/ui/project-sidebar-actions.spec.ts": {
-      "seconds": 61.4,
+      "seconds": 29.5,
       "tests": 13
     },
     "tests/ui/project-sidebar-search.spec.ts": {
-      "seconds": 25.8,
+      "seconds": 16.3,
       "tests": 6
     },
     "tests/ui/project-switch-warm-cache.spec.ts": {
-      "seconds": 11.4,
+      "seconds": 4.4,
       "tests": 2
     },
     "tests/ui/rate-limits-pill-tick.spec.ts": {
-      "seconds": 12.8,
+      "seconds": 9.1,
       "tests": 3
     },
     "tests/ui/rate-limits-sync.spec.ts": {
-      "seconds": 23.8,
+      "seconds": 17.4,
       "tests": 9
     },
     "tests/ui/reduced-motion-animate-pulse.spec.ts": {
-      "seconds": 7,
+      "seconds": 1.6,
       "tests": 2
     },
     "tests/ui/release-notes-modal.spec.ts": {
-      "seconds": 39.8,
+      "seconds": 19.1,
       "tests": 9
     },
     "tests/ui/remember-active-task.spec.ts": {
-      "seconds": 19.9,
+      "seconds": 8.2,
       "tests": 5
     },
     "tests/ui/restore-from-done-shows-progress.spec.ts": {
-      "seconds": 6.9,
+      "seconds": 2.4,
       "tests": 2
     },
     "tests/ui/root-boundary-releases-focus.spec.ts": {
-      "seconds": 4.6,
+      "seconds": 1.6,
       "tests": 1
     },
     "tests/ui/search-palette.spec.ts": {
-      "seconds": 70.4,
+      "seconds": 40.7,
       "tests": 18
     },
     "tests/ui/segmented-control.spec.ts": {
-      "seconds": 13.4,
+      "seconds": 9.5,
       "tests": 10
     },
     "tests/ui/session-exit-intentional.spec.ts": {
@@ -906,523 +906,523 @@
       "tests": 1
     },
     "tests/ui/session-fork-toast.spec.ts": {
-      "seconds": 4.7,
+      "seconds": 4.5,
       "tests": 5
     },
     "tests/ui/session-pause-move.spec.ts": {
-      "seconds": 4.1,
+      "seconds": 3.4,
       "tests": 3
     },
     "tests/ui/session-resume-drops-paused-row.spec.ts": {
-      "seconds": 7.2,
+      "seconds": 1.7,
       "tests": 1
     },
     "tests/ui/session-resume-self-heal-toast.spec.ts": {
-      "seconds": 2.1,
+      "seconds": 2.5,
       "tests": 2
     },
     "tests/ui/setting-text-input-commit.spec.ts": {
-      "seconds": 37.6,
+      "seconds": 22.2,
       "tests": 8
     },
     "tests/ui/settings-accounts-flows.spec.ts": {
-      "seconds": 64.2,
+      "seconds": 35.7,
       "tests": 15
     },
     "tests/ui/settings-accounts.spec.ts": {
-      "seconds": 77.4,
+      "seconds": 43.5,
       "tests": 18
     },
     "tests/ui/settings-panel-agent-gate.spec.ts": {
-      "seconds": 7.7,
-      "tests": 2
-    },
-    "tests/ui/settings-panel-scroll.spec.ts": {
-      "seconds": 3.9,
-      "tests": 1
-    },
-    "tests/ui/settings-panel.spec.ts": {
-      "seconds": 56.4,
-      "tests": 60
-    },
-    "tests/ui/settings-pausing-agents.spec.ts": {
-      "seconds": 18.8,
-      "tests": 5
-    },
-    "tests/ui/settings-project-target.spec.ts": {
-      "seconds": 25.7,
-      "tests": 8
-    },
-    "tests/ui/settings-tab-rail.spec.ts": {
-      "seconds": 20.4,
-      "tests": 5
-    },
-    "tests/ui/settings-write-failure-toast.spec.ts": {
-      "seconds": 29.8,
-      "tests": 7
-    },
-    "tests/ui/sidebar-command-terminals.spec.ts": {
-      "seconds": 81.8,
-      "tests": 27
-    },
-    "tests/ui/sidebar-divider.spec.ts": {
-      "seconds": 15.4,
-      "tests": 6
-    },
-    "tests/ui/spawn-blocked-toast.spec.ts": {
-      "seconds": 11.4,
-      "tests": 4
-    },
-    "tests/ui/spawn-progress-clear-on-todo-move.spec.ts": {
-      "seconds": 5.8,
-      "tests": 2
-    },
-    "tests/ui/spawn-stall-toast.spec.ts": {
-      "seconds": 20.8,
-      "tests": 7
-    },
-    "tests/ui/spawn-warning-toast.spec.ts": {
-      "seconds": 8.7,
-      "tests": 3
-    },
-    "tests/ui/ssh-host-removal-next-project.spec.ts": {
-      "seconds": 13.4,
-      "tests": 2
-    },
-    "tests/ui/ssh-settings.spec.ts": {
-      "seconds": 35.3,
-      "tests": 34
-    },
-    "tests/ui/stats-lazy-retry.spec.ts": {
-      "seconds": 10,
-      "tests": 2
-    },
-    "tests/ui/status-bar-agent-not-found.spec.ts": {
-      "seconds": 5.6,
-      "tests": 2
-    },
-    "tests/ui/stop-script-setting.spec.ts": {
-      "seconds": 55.3,
-      "tests": 13
-    },
-    "tests/ui/surface-error-boundary.spec.ts": {
-      "seconds": 2.9,
-      "tests": 1
-    },
-    "tests/ui/task-activity-indicators.spec.ts": {
-      "seconds": 126.5,
-      "tests": 45
-    },
-    "tests/ui/task-artifacts.spec.ts": {
-      "seconds": 45.9,
-      "tests": 27
-    },
-    "tests/ui/task-attachments.spec.ts": {
-      "seconds": 11.9,
-      "tests": 17
-    },
-    "tests/ui/task-automations-disabled.spec.ts": {
-      "seconds": 109.5,
-      "tests": 21
-    },
-    "tests/ui/task-card-agent-trail.spec.ts": {
-      "seconds": 1.2,
-      "tests": 9
-    },
-    "tests/ui/task-card-context-window.spec.ts": {
-      "seconds": 18.9,
-      "tests": 4
-    },
-    "tests/ui/task-card-display-id.spec.ts": {
-      "seconds": 0.3,
-      "tests": 3
-    },
-    "tests/ui/task-card-priority.spec.ts": {
-      "seconds": 0.8,
-      "tests": 6
-    },
-    "tests/ui/task-changes-dialog-lazy-retry.spec.ts": {
-      "seconds": 5.7,
-      "tests": 1
-    },
-    "tests/ui/task-changes-dialog.spec.ts": {
-      "seconds": 1,
-      "tests": 1
-    },
-    "tests/ui/task-create-hotkey.spec.ts": {
-      "seconds": 2.4,
-      "tests": 3
-    },
-    "tests/ui/task-detail-archived-no-resume.spec.ts": {
-      "seconds": 8.4,
-      "tests": 2
-    },
-    "tests/ui/task-detail-attachments.spec.ts": {
-      "seconds": 3.3,
-      "tests": 2
-    },
-    "tests/ui/task-detail-changes-diffviewer-toolbar.spec.ts": {
-      "seconds": 34.9,
-      "tests": 12
-    },
-    "tests/ui/task-detail-changes-image-diff.spec.ts": {
-      "seconds": 65.4,
-      "tests": 29
-    },
-    "tests/ui/task-detail-changes-markdown-document.spec.ts": {
-      "seconds": 18.4,
-      "tests": 6
-    },
-    "tests/ui/task-detail-changes-markdown-links.spec.ts": {
-      "seconds": 23.7,
-      "tests": 8
-    },
-    "tests/ui/task-detail-changes-panel.spec.ts": {
-      "seconds": 3,
-      "tests": 1
-    },
-    "tests/ui/task-detail-changes-popout-close.spec.ts": {
-      "seconds": 13.6,
-      "tests": 2
-    },
-    "tests/ui/task-detail-close-on-pause.spec.ts": {
-      "seconds": 60.3,
-      "tests": 10
-    },
-    "tests/ui/task-detail-description-limit.spec.ts": {
-      "seconds": 4.4,
-      "tests": 5
-    },
-    "tests/ui/task-detail-description-peek.spec.ts": {
-      "seconds": 15.1,
-      "tests": 11
-    },
-    "tests/ui/task-detail-folder-controls.spec.ts": {
-      "seconds": 5.9,
-      "tests": 1
-    },
-    "tests/ui/task-detail-header-overflow.spec.ts": {
-      "seconds": 16.8,
-      "tests": 4
-    },
-    "tests/ui/task-detail-isolated-badge.spec.ts": {
-      "seconds": 10.9,
-      "tests": 2
-    },
-    "tests/ui/task-detail-launch-overlay.spec.ts": {
-      "seconds": 16.9,
-      "tests": 3
-    },
-    "tests/ui/task-detail-maximize.spec.ts": {
-      "seconds": 215,
-      "tests": 28
-    },
-    "tests/ui/task-detail-move-column-hotkeys.spec.ts": {
-      "seconds": 15.6,
-      "tests": 10
-    },
-    "tests/ui/task-detail-prespawn-layout.spec.ts": {
-      "seconds": 0.7,
-      "tests": 1
-    },
-    "tests/ui/task-detail-save-hotkey.spec.ts": {
-      "seconds": 31.2,
-      "tests": 18
-    },
-    "tests/ui/task-detail-split-divider.spec.ts": {
-      "seconds": 25.5,
-      "tests": 15
-    },
-    "tests/ui/task-detail-suspended-self-heal.spec.ts": {
-      "seconds": 5.8,
-      "tests": 4
-    },
-    "tests/ui/task-detail-update-from-base.spec.ts": {
-      "seconds": 12.8,
-      "tests": 6
-    },
-    "tests/ui/task-detail-view-state-persistence.spec.ts": {
-      "seconds": 12.6,
-      "tests": 2
-    },
-    "tests/ui/task-level-overrides.spec.ts": {
-      "seconds": 81.2,
-      "tests": 55
-    },
-    "tests/ui/task-menu-session-toggle-hosts.spec.ts": {
-      "seconds": 118,
-      "tests": 17
-    },
-    "tests/ui/task-menu-session-toggle.spec.ts": {
-      "seconds": 49.3,
-      "tests": 9
-    },
-    "tests/ui/task-move-revert-on-spawn-failure.spec.ts": {
-      "seconds": 9.2,
-      "tests": 2
-    },
-    "tests/ui/task-resume-on-open.spec.ts": {
-      "seconds": 34.2,
-      "tests": 7
-    },
-    "tests/ui/template-text-field.spec.ts": {
-      "seconds": 26.7,
-      "tests": 17
-    },
-    "tests/ui/terminal-arrival-focus-hidden.spec.ts": {
-      "seconds": 9.6,
-      "tests": 2
-    },
-    "tests/ui/terminal-arrival-focus.spec.ts": {
-      "seconds": 31.3,
-      "tests": 4
-    },
-    "tests/ui/terminal-backspace-bytes.spec.ts": {
-      "seconds": 5.6,
-      "tests": 1
-    },
-    "tests/ui/terminal-ctrl-c-interrupt.spec.ts": {
-      "seconds": 17,
-      "tests": 3
-    },
-    "tests/ui/terminal-dispose-mouse-tracking.spec.ts": {
-      "seconds": 10.5,
-      "tests": 2
-    },
-    "tests/ui/terminal-find-bar.spec.ts": {
-      "seconds": 215.2,
-      "tests": 34
-    },
-    "tests/ui/terminal-held-grid-conform.spec.ts": {
-      "seconds": 47,
-      "tests": 7
-    },
-    "tests/ui/terminal-image-paste-reference.spec.ts": {
-      "seconds": 55.9,
-      "tests": 10
-    },
-    "tests/ui/terminal-init-timing-trace.spec.ts": {
-      "seconds": 5.6,
-      "tests": 1
-    },
-    "tests/ui/terminal-link-click.spec.ts": {
-      "seconds": 156.8,
-      "tests": 25
-    },
-    "tests/ui/terminal-link-task-window.spec.ts": {
-      "seconds": 49.9,
-      "tests": 8
-    },
-    "tests/ui/terminal-no-flash-on-switch.spec.ts": {
-      "seconds": 20.1,
-      "tests": 4
-    },
-    "tests/ui/terminal-osc52-copy.spec.ts": {
-      "seconds": 18.1,
-      "tests": 3
-    },
-    "tests/ui/terminal-panel-collapsed-focus.spec.ts": {
-      "seconds": 5.4,
-      "tests": 1
-    },
-    "tests/ui/terminal-panel-hidden-webgl.spec.ts": {
-      "seconds": 10.5,
-      "tests": 2
-    },
-    "tests/ui/terminal-panel-reveal.spec.ts": {
-      "seconds": 84,
-      "tests": 14
-    },
-    "tests/ui/terminal-query-replies.spec.ts": {
-      "seconds": 5.6,
-      "tests": 1
-    },
-    "tests/ui/terminal-replay-veil.spec.ts": {
-      "seconds": 11.7,
-      "tests": 2
-    },
-    "tests/ui/terminal-reset.spec.ts": {
-      "seconds": 35.3,
-      "tests": 6
-    },
-    "tests/ui/terminal-resize-echo-reassert.spec.ts": {
-      "seconds": 45.3,
-      "tests": 7
-    },
-    "tests/ui/terminal-tab-isolated-badge.spec.ts": {
-      "seconds": 15.1,
-      "tests": 3
-    },
-    "tests/ui/terminal-webgl-retry.spec.ts": {
-      "seconds": 8.1,
-      "tests": 1
-    },
-    "tests/ui/terminal-webgl-subpixel-font.spec.ts": {
-      "seconds": 13.8,
-      "tests": 2
-    },
-    "tests/ui/terminal-webgl-unavailable.spec.ts": {
-      "seconds": 4.5,
-      "tests": 1
-    },
-    "tests/ui/theme-swatch-grid.spec.ts": {
-      "seconds": 25.6,
-      "tests": 16
-    },
-    "tests/ui/toast-behavior.spec.ts": {
-      "seconds": 48.4,
-      "tests": 11
-    },
-    "tests/ui/toast-click-through.spec.ts": {
-      "seconds": 50.2,
-      "tests": 10
-    },
-    "tests/ui/todo-reset-no-ghost-session.spec.ts": {
-      "seconds": 5.5,
-      "tests": 1
-    },
-    "tests/ui/todo-stale-exited-row-opens-edit.spec.ts": {
-      "seconds": 16.1,
-      "tests": 3
-    },
-    "tests/ui/toggle-card.spec.ts": {
-      "seconds": 27.1,
-      "tests": 23
-    },
-    "tests/ui/toolbar-collapse-remeasure.spec.ts": {
-      "seconds": 5.9,
-      "tests": 1
-    },
-    "tests/ui/toolbar-narrow-window.spec.ts": {
-      "seconds": 106.2,
-      "tests": 19
-    },
-    "tests/ui/tooltip-behaviour.spec.ts": {
-      "seconds": 139.5,
-      "tests": 22
-    },
-    "tests/ui/tooltip.spec.ts": {
-      "seconds": 66,
-      "tests": 11
-    },
-    "tests/ui/turn-retrying-activity-log.spec.ts": {
-      "seconds": 0.2,
-      "tests": 4
-    },
-    "tests/ui/unarchive-task-optimistic.spec.ts": {
-      "seconds": 34.2,
-      "tests": 6
-    },
-    "tests/ui/unarchive-to-todo-no-paused-row.spec.ts": {
-      "seconds": 3.8,
-      "tests": 1
-    },
-    "tests/ui/update-blocked-toast.spec.ts": {
-      "seconds": 20.6,
-      "tests": 3
-    },
-    "tests/ui/usage-dashboard.spec.ts": {
-      "seconds": 158.8,
-      "tests": 29
-    },
-    "tests/ui/use-value-pulse-reset-key.spec.ts": {
-      "seconds": 14.5,
-      "tests": 3
-    },
-    "tests/ui/view-toggle-no-cross-fade.spec.ts": {
-      "seconds": 12.3,
-      "tests": 3
-    },
-    "tests/ui/wait-for-settled.spec.ts": {
-      "seconds": 13.8,
-      "tests": 11
-    },
-    "tests/ui/whats-new-dialog.spec.ts": {
-      "seconds": 19.9,
-      "tests": 8
-    },
-    "tests/ui/window-auto-close-on-done.spec.ts": {
-      "seconds": 0.6,
-      "tests": 1
-    },
-    "tests/ui/window-click-outside-close.spec.ts": {
-      "seconds": 28.5,
-      "tests": 20
-    },
-    "tests/ui/window-content-deep-archive-self-heal.spec.ts": {
-      "seconds": 8.1,
-      "tests": 2
-    },
-    "tests/ui/window-drag-free-move.spec.ts": {
-      "seconds": 34.7,
-      "tests": 8
-    },
-    "tests/ui/window-hidden-on-backlog.spec.ts": {
-      "seconds": 4.9,
-      "tests": 1
-    },
-    "tests/ui/window-light-dismiss-terminal-panel.spec.ts": {
-      "seconds": 18.5,
-      "tests": 4
-    },
-    "tests/ui/window-no-entrance-animation-on-restore.spec.ts": {
       "seconds": 7,
       "tests": 2
     },
+    "tests/ui/settings-panel-scroll.spec.ts": {
+      "seconds": 2.9,
+      "tests": 1
+    },
+    "tests/ui/settings-panel.spec.ts": {
+      "seconds": 68.9,
+      "tests": 60
+    },
+    "tests/ui/settings-pausing-agents.spec.ts": {
+      "seconds": 13.3,
+      "tests": 5
+    },
+    "tests/ui/settings-project-target.spec.ts": {
+      "seconds": 15.3,
+      "tests": 8
+    },
+    "tests/ui/settings-tab-rail.spec.ts": {
+      "seconds": 12.3,
+      "tests": 5
+    },
+    "tests/ui/settings-write-failure-toast.spec.ts": {
+      "seconds": 21,
+      "tests": 7
+    },
+    "tests/ui/sidebar-command-terminals.spec.ts": {
+      "seconds": 51.5,
+      "tests": 27
+    },
+    "tests/ui/sidebar-divider.spec.ts": {
+      "seconds": 6.2,
+      "tests": 6
+    },
+    "tests/ui/spawn-blocked-toast.spec.ts": {
+      "seconds": 6,
+      "tests": 4
+    },
+    "tests/ui/spawn-progress-clear-on-todo-move.spec.ts": {
+      "seconds": 3.7,
+      "tests": 2
+    },
+    "tests/ui/spawn-stall-toast.spec.ts": {
+      "seconds": 8.7,
+      "tests": 7
+    },
+    "tests/ui/spawn-warning-toast.spec.ts": {
+      "seconds": 3.4,
+      "tests": 3
+    },
+    "tests/ui/ssh-host-removal-next-project.spec.ts": {
+      "seconds": 12.8,
+      "tests": 2
+    },
+    "tests/ui/ssh-settings.spec.ts": {
+      "seconds": 36.7,
+      "tests": 34
+    },
+    "tests/ui/stats-lazy-retry.spec.ts": {
+      "seconds": 8.4,
+      "tests": 2
+    },
+    "tests/ui/status-bar-agent-not-found.spec.ts": {
+      "seconds": 2,
+      "tests": 2
+    },
+    "tests/ui/stop-script-setting.spec.ts": {
+      "seconds": 29.1,
+      "tests": 13
+    },
+    "tests/ui/surface-error-boundary.spec.ts": {
+      "seconds": 1.5,
+      "tests": 1
+    },
+    "tests/ui/task-activity-indicators.spec.ts": {
+      "seconds": 77.2,
+      "tests": 45
+    },
+    "tests/ui/task-artifacts.spec.ts": {
+      "seconds": 44.7,
+      "tests": 27
+    },
+    "tests/ui/task-attachments.spec.ts": {
+      "seconds": 11.3,
+      "tests": 17
+    },
+    "tests/ui/task-automations-disabled.spec.ts": {
+      "seconds": 47.9,
+      "tests": 21
+    },
+    "tests/ui/task-card-agent-trail.spec.ts": {
+      "seconds": 0.4,
+      "tests": 9
+    },
+    "tests/ui/task-card-context-window.spec.ts": {
+      "seconds": 5.2,
+      "tests": 4
+    },
+    "tests/ui/task-card-display-id.spec.ts": {
+      "seconds": 0.1,
+      "tests": 3
+    },
+    "tests/ui/task-card-priority.spec.ts": {
+      "seconds": 0.9,
+      "tests": 6
+    },
+    "tests/ui/task-changes-dialog-lazy-retry.spec.ts": {
+      "seconds": 5.2,
+      "tests": 1
+    },
+    "tests/ui/task-changes-dialog.spec.ts": {
+      "seconds": 0.6,
+      "tests": 1
+    },
+    "tests/ui/task-create-hotkey.spec.ts": {
+      "seconds": 2,
+      "tests": 3
+    },
+    "tests/ui/task-detail-archived-no-resume.spec.ts": {
+      "seconds": 5.2,
+      "tests": 2
+    },
+    "tests/ui/task-detail-attachments.spec.ts": {
+      "seconds": 2.7,
+      "tests": 2
+    },
+    "tests/ui/task-detail-changes-diffviewer-toolbar.spec.ts": {
+      "seconds": 28.3,
+      "tests": 12
+    },
+    "tests/ui/task-detail-changes-image-diff.spec.ts": {
+      "seconds": 48,
+      "tests": 29
+    },
+    "tests/ui/task-detail-changes-markdown-document.spec.ts": {
+      "seconds": 10.3,
+      "tests": 6
+    },
+    "tests/ui/task-detail-changes-markdown-links.spec.ts": {
+      "seconds": 15.4,
+      "tests": 8
+    },
+    "tests/ui/task-detail-changes-panel.spec.ts": {
+      "seconds": 1.7,
+      "tests": 1
+    },
+    "tests/ui/task-detail-changes-popout-close.spec.ts": {
+      "seconds": 5.2,
+      "tests": 2
+    },
+    "tests/ui/task-detail-close-on-pause.spec.ts": {
+      "seconds": 23.1,
+      "tests": 10
+    },
+    "tests/ui/task-detail-description-limit.spec.ts": {
+      "seconds": 2.4,
+      "tests": 5
+    },
+    "tests/ui/task-detail-description-peek.spec.ts": {
+      "seconds": 12.3,
+      "tests": 11
+    },
+    "tests/ui/task-detail-folder-controls.spec.ts": {
+      "seconds": 2.9,
+      "tests": 1
+    },
+    "tests/ui/task-detail-header-overflow.spec.ts": {
+      "seconds": 7.8,
+      "tests": 4
+    },
+    "tests/ui/task-detail-isolated-badge.spec.ts": {
+      "seconds": 3.4,
+      "tests": 2
+    },
+    "tests/ui/task-detail-launch-overlay.spec.ts": {
+      "seconds": 6.3,
+      "tests": 3
+    },
+    "tests/ui/task-detail-maximize.spec.ts": {
+      "seconds": 119.6,
+      "tests": 28
+    },
+    "tests/ui/task-detail-move-column-hotkeys.spec.ts": {
+      "seconds": 8.4,
+      "tests": 10
+    },
+    "tests/ui/task-detail-prespawn-layout.spec.ts": {
+      "seconds": 0.6,
+      "tests": 1
+    },
+    "tests/ui/task-detail-save-hotkey.spec.ts": {
+      "seconds": 19.5,
+      "tests": 18
+    },
+    "tests/ui/task-detail-split-divider.spec.ts": {
+      "seconds": 22.9,
+      "tests": 15
+    },
+    "tests/ui/task-detail-suspended-self-heal.spec.ts": {
+      "seconds": 4.1,
+      "tests": 4
+    },
+    "tests/ui/task-detail-update-from-base.spec.ts": {
+      "seconds": 9.1,
+      "tests": 6
+    },
+    "tests/ui/task-detail-view-state-persistence.spec.ts": {
+      "seconds": 4.5,
+      "tests": 2
+    },
+    "tests/ui/task-level-overrides.spec.ts": {
+      "seconds": 61.4,
+      "tests": 55
+    },
+    "tests/ui/task-menu-session-toggle-hosts.spec.ts": {
+      "seconds": 40.4,
+      "tests": 17
+    },
+    "tests/ui/task-menu-session-toggle.spec.ts": {
+      "seconds": 14.3,
+      "tests": 9
+    },
+    "tests/ui/task-move-revert-on-spawn-failure.spec.ts": {
+      "seconds": 2.5,
+      "tests": 2
+    },
+    "tests/ui/task-resume-on-open.spec.ts": {
+      "seconds": 9.8,
+      "tests": 7
+    },
+    "tests/ui/template-text-field.spec.ts": {
+      "seconds": 21.4,
+      "tests": 17
+    },
+    "tests/ui/terminal-arrival-focus-hidden.spec.ts": {
+      "seconds": 3.3,
+      "tests": 2
+    },
+    "tests/ui/terminal-arrival-focus.spec.ts": {
+      "seconds": 17.9,
+      "tests": 4
+    },
+    "tests/ui/terminal-backspace-bytes.spec.ts": {
+      "seconds": 2.8,
+      "tests": 1
+    },
+    "tests/ui/terminal-ctrl-c-interrupt.spec.ts": {
+      "seconds": 8.9,
+      "tests": 3
+    },
+    "tests/ui/terminal-dispose-mouse-tracking.spec.ts": {
+      "seconds": 4.7,
+      "tests": 2
+    },
+    "tests/ui/terminal-find-bar.spec.ts": {
+      "seconds": 80.7,
+      "tests": 34
+    },
+    "tests/ui/terminal-held-grid-conform.spec.ts": {
+      "seconds": 23.2,
+      "tests": 7
+    },
+    "tests/ui/terminal-image-paste-reference.spec.ts": {
+      "seconds": 25.2,
+      "tests": 10
+    },
+    "tests/ui/terminal-init-timing-trace.spec.ts": {
+      "seconds": 2.8,
+      "tests": 1
+    },
+    "tests/ui/terminal-link-click.spec.ts": {
+      "seconds": 66.8,
+      "tests": 25
+    },
+    "tests/ui/terminal-link-task-window.spec.ts": {
+      "seconds": 20.6,
+      "tests": 8
+    },
+    "tests/ui/terminal-no-flash-on-switch.spec.ts": {
+      "seconds": 7.1,
+      "tests": 4
+    },
+    "tests/ui/terminal-osc52-copy.spec.ts": {
+      "seconds": 6.6,
+      "tests": 3
+    },
+    "tests/ui/terminal-panel-collapsed-focus.spec.ts": {
+      "seconds": 2.7,
+      "tests": 1
+    },
+    "tests/ui/terminal-panel-hidden-webgl.spec.ts": {
+      "seconds": 2.6,
+      "tests": 2
+    },
+    "tests/ui/terminal-panel-reveal.spec.ts": {
+      "seconds": 31.4,
+      "tests": 14
+    },
+    "tests/ui/terminal-query-replies.spec.ts": {
+      "seconds": 2.3,
+      "tests": 1
+    },
+    "tests/ui/terminal-replay-veil.spec.ts": {
+      "seconds": 6.1,
+      "tests": 2
+    },
+    "tests/ui/terminal-reset.spec.ts": {
+      "seconds": 12.1,
+      "tests": 6
+    },
+    "tests/ui/terminal-resize-echo-reassert.spec.ts": {
+      "seconds": 18.6,
+      "tests": 7
+    },
+    "tests/ui/terminal-tab-isolated-badge.spec.ts": {
+      "seconds": 4.7,
+      "tests": 3
+    },
+    "tests/ui/terminal-webgl-retry.spec.ts": {
+      "seconds": 4.6,
+      "tests": 1
+    },
+    "tests/ui/terminal-webgl-subpixel-font.spec.ts": {
+      "seconds": 6.8,
+      "tests": 2
+    },
+    "tests/ui/terminal-webgl-unavailable.spec.ts": {
+      "seconds": 1.8,
+      "tests": 1
+    },
+    "tests/ui/theme-swatch-grid.spec.ts": {
+      "seconds": 17.4,
+      "tests": 16
+    },
+    "tests/ui/toast-behavior.spec.ts": {
+      "seconds": 21.4,
+      "tests": 11
+    },
+    "tests/ui/toast-click-through.spec.ts": {
+      "seconds": 19.4,
+      "tests": 10
+    },
+    "tests/ui/todo-reset-no-ghost-session.spec.ts": {
+      "seconds": 1.2,
+      "tests": 1
+    },
+    "tests/ui/todo-stale-exited-row-opens-edit.spec.ts": {
+      "seconds": 5,
+      "tests": 3
+    },
+    "tests/ui/toggle-card.spec.ts": {
+      "seconds": 19.1,
+      "tests": 23
+    },
+    "tests/ui/toolbar-collapse-remeasure.spec.ts": {
+      "seconds": 2.9,
+      "tests": 1
+    },
+    "tests/ui/toolbar-narrow-window.spec.ts": {
+      "seconds": 46.4,
+      "tests": 19
+    },
+    "tests/ui/tooltip-behaviour.spec.ts": {
+      "seconds": 71,
+      "tests": 22
+    },
+    "tests/ui/tooltip.spec.ts": {
+      "seconds": 30.9,
+      "tests": 11
+    },
+    "tests/ui/turn-retrying-activity-log.spec.ts": {
+      "seconds": 0.1,
+      "tests": 4
+    },
+    "tests/ui/unarchive-task-optimistic.spec.ts": {
+      "seconds": 10.8,
+      "tests": 6
+    },
+    "tests/ui/unarchive-to-todo-no-paused-row.spec.ts": {
+      "seconds": 1.3,
+      "tests": 1
+    },
+    "tests/ui/update-blocked-toast.spec.ts": {
+      "seconds": 15.9,
+      "tests": 3
+    },
+    "tests/ui/usage-dashboard.spec.ts": {
+      "seconds": 78.1,
+      "tests": 29
+    },
+    "tests/ui/use-value-pulse-reset-key.spec.ts": {
+      "seconds": 10.8,
+      "tests": 3
+    },
+    "tests/ui/view-toggle-no-cross-fade.spec.ts": {
+      "seconds": 5.1,
+      "tests": 3
+    },
+    "tests/ui/wait-for-settled.spec.ts": {
+      "seconds": 12.8,
+      "tests": 11
+    },
+    "tests/ui/whats-new-dialog.spec.ts": {
+      "seconds": 8.7,
+      "tests": 8
+    },
+    "tests/ui/window-auto-close-on-done.spec.ts": {
+      "seconds": 0.5,
+      "tests": 1
+    },
+    "tests/ui/window-click-outside-close.spec.ts": {
+      "seconds": 18.3,
+      "tests": 20
+    },
+    "tests/ui/window-content-deep-archive-self-heal.spec.ts": {
+      "seconds": 2.5,
+      "tests": 2
+    },
+    "tests/ui/window-drag-free-move.spec.ts": {
+      "seconds": 17.6,
+      "tests": 8
+    },
+    "tests/ui/window-hidden-on-backlog.spec.ts": {
+      "seconds": 2.2,
+      "tests": 1
+    },
+    "tests/ui/window-light-dismiss-terminal-panel.spec.ts": {
+      "seconds": 10.2,
+      "tests": 4
+    },
+    "tests/ui/window-no-entrance-animation-on-restore.spec.ts": {
+      "seconds": 2.6,
+      "tests": 2
+    },
     "tests/ui/window-park-reveal.spec.ts": {
-      "seconds": 8.6,
+      "seconds": 5.7,
       "tests": 2
     },
     "tests/ui/window-reveal-grid-width.spec.ts": {
-      "seconds": 5.8,
+      "seconds": 2.5,
       "tests": 1
     },
     "tests/ui/workflow-agent-pane.spec.ts": {
-      "seconds": 162.2,
+      "seconds": 110.6,
       "tests": 36
     },
     "tests/ui/workflow-agent-prompt-setting.spec.ts": {
-      "seconds": 21.1,
+      "seconds": 17.1,
       "tests": 4
     },
     "tests/ui/workflow-agent-setting-rows.spec.ts": {
-      "seconds": 16.2,
+      "seconds": 7,
       "tests": 4
     },
     "tests/ui/workflow-complete-toast.spec.ts": {
-      "seconds": 10.2,
+      "seconds": 3.7,
       "tests": 3
     },
     "tests/ui/workflow-planned-task-form.spec.ts": {
-      "seconds": 33.7,
+      "seconds": 24,
       "tests": 7
     },
     "tests/ui/workflow-stalled-toast.spec.ts": {
-      "seconds": 19,
+      "seconds": 8.3,
       "tests": 5
     },
     "tests/ui/workflows-board.spec.ts": {
-      "seconds": 200.8,
+      "seconds": 84.6,
       "tests": 48
     },
     "tests/ui/workflows-canvas-card-fit.spec.ts": {
-      "seconds": 28.6,
+      "seconds": 19.8,
       "tests": 6
     },
     "tests/ui/workflows-canvas-gestures.spec.ts": {
-      "seconds": 99.7,
+      "seconds": 64.5,
       "tests": 22
     },
     "tests/ui/workflows-canvas.spec.ts": {
-      "seconds": 37.7,
+      "seconds": 21.4,
       "tests": 9
     },
     "tests/ui/workflows-view.spec.ts": {
-      "seconds": 263.1,
+      "seconds": 163.4,
       "tests": 56
     },
     "tests/ui/write-batcher-integration.spec.ts": {
-      "seconds": 19,
+      "seconds": 9.9,
       "tests": 5
     }
   }
