@@ -134,12 +134,14 @@ Use for: pure logic, parsers, state machines, file-content transforms, schema va
 - No build required, no browser
 - Examples: `event-bridge.test.ts`, `hook-manager.test.ts`, `hmr-resync.test.ts`, `task-lifecycle-lock.test.ts`
 
-### `tests/ui/` (Playwright headless Chromium, ~4s per test on CI)
+### `tests/ui/` (Playwright headless Chromium, each test that boots its own page pays that boot)
 
 Use for: dialog flows, form validation, DnD interactions, store mutations, anything UI-only that does NOT need real PTY/IPC/Electron.
 
 - Run with `npx playwright test --project=ui`
 - Headless, and far slower than a unit test, so a test here must need the browser
+- Locally the page loads from the Vite dev server. CI serves a static development bundle instead (`npm run test:ui:bundle -- <spec>` runs that way). So reach the app through `window.__zustandStores` or `window.__kangenticTestModules`, never `import('/src/renderer/...')` in the page, and load from `DEV_SERVER_URL` (`tests/ui/dev-server.ts`) only when the test needs the dev server itself. `tests/unit/ui-bundle.test.ts` fails a spec that does neither
+- Two tests that boot the same seed and only read belong in one test with a `test.step` each: one boot, and a failure still names the case
 - The `tests/ui/mock-electron-api.js` injects a full in-memory mock of `window.electronAPI` via `addInitScript()`. Extend it if you need new IPC methods.
 - Examples: `app.spec.ts`, `drag-and-drop.spec.ts`, `command-terminal.spec.ts`, `project-sidebar-actions.spec.ts`
 

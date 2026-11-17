@@ -9,8 +9,17 @@
  * Paste-engine submission-evidence behavior:
  *   - First \r: swallow silently (no stdout). The engine's 3s window times
  *     out -> retry path triggers with a second \r.
- *   - Second \r: write a single ack byte ('.'). The engine's 2s retry
- *     window resolves on data evidence -> pasteAndSubmit succeeds.
+ *   - Second \r: write a reply line. The engine's 2s retry window resolves
+ *     on data evidence -> pasteAndSubmit succeeds.
+ *
+ * The reply has to be longer than the engine's post-Enter data floor
+ * (POST_ENTER_DATA_FLOOR_BYTES, 50 bytes), below which output reads as a
+ * cursor blip and not as a submit. This fixture once answered with a single
+ * '.' and a 22-byte marker. That was under the floor, so on Linux CI the
+ * retry window timed out and the send ended in "Paste landed but Enter did
+ * not submit". The spec did not assert the error strip then and passed
+ * anyway. The same send passed on Windows, where ConPTY writes sequences of
+ * its own around an agent's output.
  *
  * Used by tests/e2e/browser-evidence-retry.spec.ts to verify the engine's
  * retry path lands the message on a session that initially swallows \r.
@@ -85,9 +94,10 @@ process.stdin.on('data', (chunk) => {
         // Swallow first \r silently to force the engine into the retry path.
         continue;
       }
-      // Second \r: emit an ack byte so the engine's evidence wait wins.
-      process.stdout.write('.');
+      // Second \r: reply as an agent that took the submit does, with more
+      // output than the engine's 50-byte floor (see the header).
       console.log('MOCK_CLAUDE_CR_COUNT:' + crCount);
+      console.log('MOCK_CLAUDE_REPLY: the retried Enter reached the prompt and the turn started.');
     }
   }
 });

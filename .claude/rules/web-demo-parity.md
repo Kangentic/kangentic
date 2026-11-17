@@ -412,8 +412,10 @@ three things staying in step, and each is enforced rather than remembered.
   region pills. Its maps are fetched once, by the frame that opens the graph, and never by a board
   frame. A scene-only row's script loads once, on the frame that names the row and never on a
   board, and a frame whose row script fails to load shows the error card naming the row. The tier
-  runs as the `demo` job in `.github/workflows/ci.yml` and again inside
-  `.github/workflows/deploy-demo.yml` before the Pages deploy.
+  runs as two shards behind the `demo` gate in `.github/workflows/ci.yml` and again, unsharded,
+  inside `.github/workflows/deploy-demo.yml` before the Pages deploy. The spec starts its static
+  server from a worker fixture and never a file-level `beforeAll`, which would fix the shard cut
+  at the file's midpoint (`tests/unit/ui-shard-plan.test.ts`).
 - **Test (behavior, CI):** `tests/demo/heap-budget.spec.ts` boots one board frame, still and
   looping, on a host page and fails when its JS heap after a forced GC passes a stated budget, the
   number kangentic.com caps its figures by. It reads through `demo/heap.mjs`, the same read

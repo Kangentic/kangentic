@@ -155,11 +155,12 @@ perfectly able to make.
    branch-protection-required subset. That is the real gate; do not rely on the merge command to
    enforce it.
 
-   **Never gate on `gh pr checks --required`.** This repo marks only four checks required (build,
-   lint, typecheck, cla), so `--required` reports all-green while every UI shard, E2E shard, and
-   unit shard is still running. That has already happened once: `--required` said green with 16
-   checks in flight, and an `--admin` merge at that moment would have waived all 16. Use
-   `gh pr checks <pr> --json name,state` and confirm the count of SUCCESS equals the total.
+   **Never gate on `gh pr checks --required`.** This repo requires five checks (cla, the Lint,
+   Typecheck, Build job, and the unit, UI and E2E gates), so `--required` reports all-green while
+   the web demo and any path-filtered check are still running. When only four were required it
+   happened once: `--required` said green with 16 checks in flight, and an `--admin` merge at that
+   moment would have waived all 16. Use `gh pr checks <pr> --json name,state` and confirm the count
+   of SUCCESS equals the total.
 
    `mergeStateStatus` will usually read `BLOCKED` rather than `CLEAN` here because the maintainer's
    own PR has no approving review. It reads `BEHIND` instead when another PR landed on

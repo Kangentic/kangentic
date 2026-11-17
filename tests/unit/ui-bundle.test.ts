@@ -105,6 +105,15 @@ describe('a UI spec that needs the dev server says so', () => {
     expect(stale).toEqual([]);
   });
 
+  it('warms the dev server before a spec that loads from it', () => {
+    // On CI nothing else loads from the dev server, so the first boot from it is a cold start
+    // that outruns a 15 s test. stats-lazy-retry.spec.ts flaked that way in two of four runs.
+    const cold = files
+      .filter((file) => usesDevServerUrl(file.source) && !/\bawait warmDevServer\(\)/.test(file.source))
+      .map((file) => `tests/ui/${file.name}`);
+    expect(cold, 'Call warmDevServer() (tests/ui/dev-server.ts) before the first boot from DEV_SERVER_URL.').toEqual([]);
+  });
+
   it('finds the specs known to need it', () => {
     const onDevServer = files.filter((file) => usesDevServerUrl(file.source)).map((file) => file.name);
     expect(onDevServer).toEqual(expect.arrayContaining([

@@ -439,9 +439,28 @@ npx playwright test --project=ui
 ```
 
 - **Runner:** Playwright with headless Chromium
-- **Speed:** about 4s per test on CI, so a test here must need a browser
+- **Speed:** a test that boots its own page pays that boot before its first assertion, so a test
+  here must need a browser
 - **What to test here:** React components, forms, dialogs, drag-and-drop, board interactions
-- **No build needed** -- runs against Vite dev server (auto-started by Playwright)
+- **Two ways to load the app.** Locally the specs load it from the Vite dev server, which
+  Playwright starts: no build, and an edit shows on the next run. CI builds the renderer once per
+  shard as a static development bundle (`npm run build:ui-bundle`, into `dist/ui-bundle/`) and
+  serves that with `KANGENTIC_UI_BUNDLE=1`. The dev server answers one request per source module,
+  759 of them into a browser context with no cache, and that boot was most of what a UI test cost.
+  The bundle is the development app, so every test hook is in it.
+  `npm run test:ui:bundle -- tests/ui/<spec>` builds and runs the CI way, for a spec that fails on
+  CI and passes locally.
+- **Reaching the app from a spec:** through `window.__zustandStores` and
+  `window.__kangenticTestModules` (`src/renderer/App.tsx`), never `import('/src/renderer/...')` in
+  the page, because a bundle serves no source path. A spec that needs the dev server itself (it
+  fails a module by its source path, or drives the HMR client) loads the page from
+  `DEV_SERVER_URL` in `tests/ui/dev-server.ts`, after one `warmDevServer()` call: on CI nothing
+  else loads from the dev server, so its first boot is a cold start. `tests/unit/ui-bundle.test.ts`
+  fails a spec that does neither, and one that skips the warm-up.
+- **CI shards:** each UI shard runs the spec files `scripts/ui-shard-plan.mjs` assigns it by
+  measured time, from `tests/ui/shard-timings.json`. A new spec needs no entry: it is weighed by
+  its test count until `node scripts/ui-shard-timings.mjs <run-id>` refreshes the file from a green
+  run's logs.
 - **Vite's log:** the webServer pipes Vite's stdout, so its "page reload", "new dependencies
   optimized" and "server restarted" lines print as `[WebServer]` lines in the run. `gotoVite`
   (`tests/ui/helpers.ts`) logs every navigation it retried or adopted, with what navigated the page.
@@ -516,8 +535,8 @@ npm run test:demo
   scene shows the error card, a `state=` blob naming only part of a nested config block is
   refused, the console stays clean, and boot makes no request off the serving
   origin
-- **Build required** before running; the `demo` CI job and the Pages deploy both run it on the
-  exact bytes they ship
+- **Build required** before running; CI's two web demo shards and the Pages deploy both run it on
+  the exact bytes they ship
 - **Type check:** the root `tsconfig.json` covers only `src/` and `packages/protocol/src/`, so
   `npm run typecheck` chains `npm run typecheck:src` (the root program) and
   `npm run typecheck:demo`, a second program (`tsconfig.demo.json`)
@@ -614,7 +633,9 @@ npm run i18n:compile              # Compile the catalogs main reads into .vite/b
 |----------|---------|---------|
 | `KANGENTIC_DATA_DIR` | Runtime/Test | Override per-project data directory path |
 | `VITE_PORT` | Dev | Explicit Vite port (enables external server reuse) |
-| `PLAYWRIGHT_VITE_PORT` | Test | Port passed to Playwright's webServer |
+| `PLAYWRIGHT_VITE_PORT` | Test | Port the UI specs load the app from: the Vite dev server, or the static bundle when `KANGENTIC_UI_BUNDLE=1` |
+| `PLAYWRIGHT_VITE_DEV_PORT` | Test | Port of the Vite dev server itself, for the few specs that need one (`tests/ui/dev-server.ts`). The same port unless `KANGENTIC_UI_BUNDLE=1` |
+| `KANGENTIC_UI_BUNDLE` | Test | Set to `1` to serve the UI tier the bundle `npm run build:ui-bundle` wrote. CI sets it; `npm run test:ui:bundle` sets it locally |
 | `HEADED` | Test | Set to `1` for visible Electron windows in E2E |
 | `NODE_ENV` | Build | `development` or `production` |
 | `MAIN_WINDOW_VITE_DEV_SERVER_URL` | Dev | Injected by esbuild, points Electron to Vite |

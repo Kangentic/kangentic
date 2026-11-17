@@ -2175,7 +2175,7 @@ compiled code.
 `demo/heap.mjs`. That was about 15 percent over what it read on 2026-10-20: 18.3 and 24.5 MB here,
 and 18.2 and 23.9 to 24.4 MB on Ubuntu 24.04 with the same Chromium build (Playwright 1.63's
 headless shell, run under WSL, three runs each). Repeated reads agree to 0.1 MB still and 0.6 MB
-looping, so the headroom is for creep rather than noise, and the `demo` job logs CI's own reading on
+looping, so the headroom is for creep rather than noise, and CI's web demo shard logs its own reading on
 every run. The still budget went from 21 to 21.5 MB with the shipped faces (Fonts, above), read back
 to back against the tree before them on 2026-11-12: a still board frame 20.5 MB before and 20.9
 after, a looping one 25.2 and 25.4, four still frames 42.6 and 43.9. A heap snapshot puts the 0.4 MB
