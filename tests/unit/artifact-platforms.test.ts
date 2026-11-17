@@ -96,6 +96,7 @@ describe('artifactPlatformOf', () => {
     ['a Figma community plugin', 'https://www.figma.com/community/plugin/123456/Name'],
     ['a pull request', 'https://github.com/owner/repo/pull/3'],
     ['the Google Docs root', 'https://docs.google.com/'],
+    ['the bare Obsidian Publish host', 'https://publish.obsidian.md/'],
     ['Excalidraw with no drawing in the fragment', 'https://excalidraw.com/'],
     ['a host that only ends like Figma', 'https://notfigma.com/design/abc123/x'],
     ['the bare domain of a wildcard pattern', 'https://framer.app/'],

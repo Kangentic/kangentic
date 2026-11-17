@@ -1,7 +1,6 @@
 import { collectEmbeddedFiles, type VaultIndex } from './embeds';
-import { splitNote } from './frontmatter';
-import { codeLineMask, inlineTags, noteName, uniqueTags } from './markdown-text';
-import { isKanbanBoard } from './note-mapper';
+import { isKanbanBoard, splitNote } from './frontmatter';
+import { codeLineMask, inlineTags, noteName, stripInlineTags, uniqueTags } from './markdown-text';
 import type { VaultNote } from './vault';
 import type { VaultItem } from './vault-item';
 
@@ -31,7 +30,6 @@ const PRIORITY_MARKERS: ReadonlyArray<[string, string]> = [
   ['⏬', 'Low'],
 ];
 const PRIORITY_MARKER = /[🔺⏫🔼🔽⏬]️?/gu;
-const INLINE_TAG = /(?:^|\s)#[\p{L}\p{N}_/-]+/gu;
 
 /** The checkbox's states, in the order the Status filter lists them. */
 const CHECKBOX_STATES: ReadonlyArray<{ state: string; closed: boolean }> = [
@@ -48,16 +46,16 @@ function checkboxStateIndex(mark: string): number {
   return 0;
 }
 
-/** The task's own words: no checkbox, no Tasks fields, no tags, no block id. */
+/** The task's own words: no checkbox, no Tasks fields, no tags, no block id. A `#123` is text and stays. */
 export function taskTitle(text: string): string {
-  return text
+  const withoutFields = text
     .replace(BLOCK_ID, '')
     .replace(DATE_FIELD, ' ')
     .replace(RECURRENCE_FIELD, ' ')
     .replace(ID_FIELDS, ' ')
     .replace(COMPLETION_FIELD, ' ')
-    .replace(PRIORITY_MARKER, ' ')
-    .replace(INLINE_TAG, ' ')
+    .replace(PRIORITY_MARKER, ' ');
+  return stripInlineTags(withoutFields)
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -127,8 +125,9 @@ export async function mapChecklistItems(note: VaultNote, index: VaultIndex, vaul
       externalId = seen === 1 ? `${note.vaultPath}#${words}` : `${note.vaultPath}#${words}~${seen}`;
     }
 
-    const checkbox = CHECKBOX_STATES[checkboxStateIndex(taskMatch[1])];
-    const inLane = kanban && laneName !== null;
+    const stateIndex = checkboxStateIndex(taskMatch[1]);
+    const checkbox = CHECKBOX_STATES[stateIndex];
+    const lane = kanban ? laneName : null;
     const embedded = await collectEmbeddedFiles(text, note.vaultPath, index, vaultRoot);
     const origin = heading ? `From ${name}, under ${heading}.` : `From ${name}.`;
 
@@ -138,9 +137,9 @@ export async function mapChecklistItems(note: VaultNote, index: VaultIndex, vaul
       body: `${trimmed}\n\n${origin}`,
       labels: uniqueTags(inlineTags(text)),
       priorityName: taskPriorityName(text),
-      state: inLane ? (laneName as string) : checkbox.state,
-      stateOrder: inLane ? laneIndex : checkboxStateIndex(taskMatch[1]),
-      closed: (inLane && laneComplete) || checkbox.closed,
+      state: lane ?? checkbox.state,
+      stateOrder: lane !== null ? laneIndex : stateIndex,
+      closed: (lane !== null && laneComplete) || checkbox.closed,
       noteVaultPath: note.vaultPath,
       displayText: name,
       embeddedFiles: embedded.files,

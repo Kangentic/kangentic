@@ -1,5 +1,5 @@
 import { collectEmbeddedFiles, type VaultIndex } from './embeds';
-import { propertyList, propertyText, propertyValue, splitNote, type NoteProperty } from './frontmatter';
+import { isKanbanBoard, propertyList, propertyText, splitNote, type NoteProperty } from './frontmatter';
 import { bodyTags, noteName, uniqueTags } from './markdown-text';
 import type { VaultNote } from './vault';
 import { CLOSED_NOTE_STATUSES, type VaultItem } from './vault-item';
@@ -13,11 +13,6 @@ import { CLOSED_NOTE_STATUSES, type VaultItem } from './vault-item';
 const NO_STATUS = 'No status';
 /** Properties the mapping reads, or that mean nothing outside Obsidian. */
 const CONSUMED_PROPERTIES = new Set(['title', 'tags', 'tag', 'priority', 'status', 'aliases', 'alias', 'cssclasses', 'cssclass']);
-
-/** A Kanban plugin board file holds cards, not one piece of work. */
-export function isKanbanBoard(properties: NoteProperty[]): boolean {
-  return propertyValue(properties, 'kanban-plugin') !== undefined;
-}
 
 export async function mapNote(note: VaultNote, index: VaultIndex, vaultRoot: string): Promise<VaultItem | null> {
   const { properties, body } = splitNote(note.text);
