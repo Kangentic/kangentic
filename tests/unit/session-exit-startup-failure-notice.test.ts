@@ -137,6 +137,7 @@ function fireExit(fixture: ExitFixture = {}) {
       getSession: vi.fn(() => session),
       getSessionTaskId: vi.fn(() => session.taskId),
       getSessionProjectId: vi.fn(() => 'proj-test'),
+      shellDiedBeforeLaunch: vi.fn(() => false),
       getSessionAgentName: vi.fn(() => fixture.agentName ?? 'claude'),
       getRawScrollback: vi.fn(() => Promise.resolve(CLI_OUTPUT)),
       // Reports what the CLI named. A throw here is swallowed with the notice.
