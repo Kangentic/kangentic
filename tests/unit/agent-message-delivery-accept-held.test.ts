@@ -103,6 +103,7 @@ describe('acceptHeld on the paste path', () => {
       sessionManager: {
         getSession: vi.fn((id: string) => ({ id, status: 'running' })),
         awaitInputReady: vi.fn(async () => true),
+        awaitAgentLaunched: vi.fn(async () => true),
       },
       terminalSubmit: { submitContent: vi.fn(async () => undefined) },
       terminalSubmitScheduler: { hasPending: vi.fn(() => false) },
