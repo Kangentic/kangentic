@@ -3516,6 +3516,266 @@ test('a visitor\'s own click stops the choreography and takes the pointer away',
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
+// ---- the pointer (demo/pointer.ts) ---------------------------------------------------------------
+// @kangentic/branding's demo pointer, the dot kangentic.com's hero draws too. The package owns its
+// look; these hold what the demo does with it: a ring left where each press landed, the host's
+// scale, the tone of the ground under it, and the core held through a drag.
+
+/** A ring the pointer drew, read the moment it was added and again a beat later. */
+type PointerPoint = { x: number; y: number };
+type RingSample = {
+  insideCursor: boolean;
+  center: PointerPoint;
+  pill: { left: number; top: number; right: number; bottom: number };
+  later: PointerPoint | null;
+  dotLater: PointerPoint | null;
+};
+
+test('the pointer is the package\'s dot, and each press leaves its ring where it landed', async ({ page }) => {
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript((rate) => {
+    (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+    const rings: RingSample[] = [];
+    (window as unknown as { __rings: RingSample[] }).__rings = rings;
+    const centerOf = (element: Element): { x: number; y: number } => {
+      const box = element.getBoundingClientRect();
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    };
+    const ringNodes: SVGSVGElement[] = [];
+    (window as unknown as { __ringNodes: SVGSVGElement[] }).__ringNodes = ringNodes;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if (!(node instanceof SVGSVGElement) || node.getAttribute('data-pointer') !== 'ring') continue;
+          ringNodes.push(node);
+          const pill = document.querySelector('[data-testid="filter-priority"][data-priority="3"]');
+          if (!pill) continue;
+          const box = pill.getBoundingClientRect();
+          const sample: RingSample = { insideCursor: node.closest('[data-demo-cursor]') !== null, center: centerOf(node), pill: { left: box.left, top: box.top, right: box.right, bottom: box.bottom }, later: null, dotLater: null };
+          rings.push(sample);
+          // Read again at 300 ms: inside the ring's 450 ms (pointer.json's ringGrow), so it is still
+          // drawn, and late enough that the next travel has started at the test pacing.
+          setTimeout(() => {
+            sample.later = node.isConnected ? centerOf(node) : null;
+            const dot = document.querySelector('[data-demo-cursor] svg[data-pointer="dot"]');
+            sample.dotLater = dot ? centerOf(dot) : null;
+          }, 300);
+        }
+      }
+    }).observe(document, { subtree: true, childList: true });
+  }, CHOREOGRAPHY_TEST_RATE);
+  await gotoScene(page, { view: 'board-filter', embed: '1', loop: '1', theme: 'rust' });
+  await expect(page.locator('html')).toHaveAttribute('data-demo-choreography', 'playing', { timeout: 15_000 });
+  const dot = page.locator('[data-demo-cursor] svg[data-pointer="dot"]');
+  await expect(dot).toHaveCount(1);
+  await expect(dot.locator('[data-part="core"]')).toHaveCount(1);
+  await expect(dot.locator('[data-part="halo"]')).toHaveCount(1);
+  await expect(page.locator('[data-demo-cursor] path'), 'the old arrow is gone').toHaveCount(0);
+  await expect.poll(
+    () => page.evaluate(() => (window as unknown as { __rings: RingSample[] }).__rings.filter((ring) => ring.dotLater !== null).length),
+    { timeout: 30_000, message: 'a press on High drew a ring and the pointer moved on' },
+  ).toBeGreaterThan(0);
+  const [first] = await page.evaluate(() => (window as unknown as { __rings: RingSample[] }).__rings.filter((ring) => ring.dotLater !== null));
+  expect(first.insideCursor, 'the ring lives inside the pointer, so the veil and a takeover reach it').toBe(true);
+  expect(first.center.x).toBeGreaterThanOrEqual(first.pill.left);
+  expect(first.center.x).toBeLessThanOrEqual(first.pill.right);
+  expect(first.center.y).toBeGreaterThanOrEqual(first.pill.top);
+  expect(first.center.y).toBeLessThanOrEqual(first.pill.bottom);
+  expect(first.later, 'the ring is still drawn 300 ms after the press').not.toBeNull();
+  expect(Math.abs(first.later!.x - first.center.x), 'the ring stays where the press landed').toBeLessThan(1);
+  expect(Math.abs(first.later!.y - first.center.y)).toBeLessThan(1);
+  // Once its grow (450 ms) and fade (400 ms) are done the ring is taken out of the DOM, so rings do
+  // not pile up under a looping frame.
+  await expect.poll(
+    () => page.evaluate(() => (window as unknown as { __ringNodes: SVGSVGElement[] }).__ringNodes[0].isConnected),
+    { timeout: 5_000, message: 'a finished ring is removed from the DOM' },
+  ).toBe(false);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+/** What the player pressed and what the pointer drew for it, counted from page load. */
+type PressLog = { pointerDowns: number; pointerDownsInView: number; ringsInView: number; ringsOutOfView: number; doubleClicks: number };
+
+// The player marks a frame as in view while data-demo-choreography is 'playing' and no cut phase is
+// set (data-demo-cut). A pose's press and a cut's reset run unpaced, and draw no ring.
+for (const scene of [
+  { view: 'card-drag', unpaced: true, note: 'a held pose press and a cut reset drag are unpaced and draw no ring' },
+  { view: 'board-filter', unpaced: false, note: 'every paced press draws one ring' },
+  { view: 'command-terminal-tiled', unpaced: false, note: 'a double-click is two presses and leaves two rings' },
+] as const) {
+  test(`${scene.view}: one ring per in-view press and none otherwise (${scene.note})`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const getUnexpectedErrors = collectUnexpectedErrors(page);
+    await page.addInitScript((rate) => {
+      (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+      const log: PressLog = { pointerDowns: 0, pointerDownsInView: 0, ringsInView: 0, ringsOutOfView: 0, doubleClicks: 0 };
+      (window as unknown as { __pressLog: PressLog }).__pressLog = log;
+      const inView = (): boolean => {
+        const root = document.documentElement;
+        return root.getAttribute('data-demo-choreography') === 'playing' && !root.hasAttribute('data-demo-cut');
+      };
+      // The player's own events are untrusted; a visitor's are not.
+      document.addEventListener('pointerdown', (event) => {
+        if (event.isTrusted) return;
+        log.pointerDowns += 1;
+        if (inView()) log.pointerDownsInView += 1;
+      }, true);
+      document.addEventListener('dblclick', (event) => {
+        if (!event.isTrusted) log.doubleClicks += 1;
+      }, true);
+      // The ring is added in the press's own task, so the phase read here is the press's.
+      new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of Array.from(record.addedNodes)) {
+            if (!(node instanceof SVGSVGElement) || node.getAttribute('data-pointer') !== 'ring') continue;
+            if (inView()) log.ringsInView += 1; else log.ringsOutOfView += 1;
+          }
+        }
+      }).observe(document, { subtree: true, childList: true });
+    }, CHOREOGRAPHY_TEST_RATE);
+    await gotoScene(page, { view: scene.view, embed: '1', loop: '1' });
+    await expect(page.locator('html')).toHaveAttribute('data-demo-cycles', '1', { timeout: 75_000 });
+    const log = await page.evaluate(() => (window as unknown as { __pressLog: PressLog }).__pressLog);
+    expect(log.pointerDowns, 'the player pressed at least once, so the counts below are not vacuous').toBeGreaterThan(0);
+    expect(log.ringsOutOfView, 'no ring for a pose or a cut reset press').toBe(0);
+    expect(log.ringsInView, 'one ring for each press made in view').toBe(log.pointerDownsInView);
+    expect(log.pointerDownsInView, 'the scene presses in view too').toBeGreaterThan(0);
+    if (scene.unpaced) expect(log.pointerDowns, 'the pose and the reset pressed unpaced as well').toBeGreaterThan(log.pointerDownsInView);
+    if (scene.view === 'command-terminal-tiled') {
+      expect(log.doubleClicks, 'the scene double-clicks the seam').toBeGreaterThan(0);
+      expect(log.pointerDownsInView, 'a double-click is two presses').toBeGreaterThanOrEqual(2 * log.doubleClicks);
+    }
+    expect(getUnexpectedErrors()).toEqual([]);
+  });
+}
+
+test('the host\'s scale sizes the pointer, and only the parent is heard', async ({ page }) => {
+  test.setTimeout(60_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await setChoreographyRate(page, CHOREOGRAPHY_TEST_RATE);
+  await hostFrame(page, 'board-filter', { params: { loop: '1' } });
+  const frame = await demoContentFrame(page);
+  const scaleVar = (): Promise<string> => frame.evaluate(() => document.documentElement.style.getPropertyValue('--demo-pointer-scale'));
+  const postFromHost = (message: Record<string, unknown>): Promise<void> => page.evaluate((data) => {
+    (document.getElementById('demo') as HTMLIFrameElement).contentWindow?.postMessage(data, '*');
+  }, message);
+  await postFromHost({ type: 'kangentic-demo-scale', scale: 1 });
+  await expect.poll(scaleVar).toBe('1');
+  // A sentinel posted after the refused messages: once the frame has it, boot.js has read them all,
+  // since its listener was added first and posted messages arrive in order.
+  const sentinelSeen = frame.evaluate(() => new Promise<void>((resolve) => {
+    window.addEventListener('message', function onSentinel(event) {
+      if ((event.data as { type?: string } | null)?.type !== 'test-sentinel') return;
+      window.removeEventListener('message', onSentinel);
+      resolve();
+    });
+  }));
+  // The frame's own window is not its host, and only a bounded number is taken: zero and a
+  // runaway scale are refused.
+  await frame.evaluate(() => window.postMessage({ type: 'kangentic-demo-scale', scale: 0.5 }, '*'));
+  await postFromHost({ type: 'kangentic-demo-scale', scale: 0 });
+  await postFromHost({ type: 'kangentic-demo-scale', scale: 9 });
+  await postFromHost({ type: 'test-sentinel' });
+  await sentinelSeen;
+  expect(await scaleVar()).toBe('1');
+  await postFromHost({ type: 'kangentic-demo-scale', scale: 0.5 });
+  await expect.poll(scaleVar).toBe('0.5');
+  const dot = page.frameLocator('#demo').locator('[data-demo-cursor] svg[data-pointer="dot"]');
+  await expect(dot).toHaveCount(1, { timeout: 15_000 });
+  // pointer.json's 28px box, divided by 0.5: the dot is the hero's size on a page that halves the frame.
+  await expect.poll(() => dot.evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(56);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+/** One frame of the pointer, read under command-terminal-tiled on a light theme. */
+type ToneSample = { tone: string; deepInTerminal: boolean };
+
+test('the pointer is cream over a terminal and ink over a light panel on a light theme', async ({ page }) => {
+  // Clay's surfaces are light and its terminals are #0c0c0c, so the theme alone would draw an ink
+  // dot that vanishes over every terminal this scene hovers, clicks and drags across.
+  test.setTimeout(90_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript((rate) => {
+    (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+    const samples: ToneSample[] = [];
+    (window as unknown as { __toneSamples: ToneSample[] }).__toneSamples = samples;
+    (function sample() {
+      const cursor = document.querySelector<HTMLElement>('[data-demo-cursor]');
+      const dot = cursor?.querySelector('svg[data-pointer="dot"]');
+      if (cursor && dot && cursor.style.opacity === '1') {
+        const box = dot.getBoundingClientRect();
+        const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        // Well inside a terminal, clear of its edges, so a boundary the dot straddles is not counted.
+        const deepInTerminal = Array.from(document.querySelectorAll('.xterm')).some((terminal) => {
+          const area = terminal.getBoundingClientRect();
+          return center.x > area.left + 40 && center.x < area.right - 40 && center.y > area.top + 40 && center.y < area.bottom - 40;
+        });
+        samples.push({ tone: cursor.getAttribute('data-tone') ?? '', deepInTerminal });
+      }
+      window.requestAnimationFrame(sample);
+    })();
+  }, CHOREOGRAPHY_TEST_RATE);
+  await gotoScene(page, { view: 'command-terminal-tiled', embed: '1', loop: '1', theme: 'clay' });
+  await expect(page.locator('html')).toHaveAttribute('data-demo-cycles', '1', { timeout: 75_000 });
+  const samples = await page.evaluate(() => (window as unknown as { __toneSamples: ToneSample[] }).__toneSamples);
+  expect(samples.some((sample) => sample.tone === 'ink' && !sample.deepInTerminal), 'ink over the light header').toBe(true);
+  expect(samples.some((sample) => sample.tone === 'cream' && sample.deepInTerminal), 'cream inside a terminal').toBe(true);
+  // A crossfade starts as the dot crosses an edge, so a frame or two inside may still read the old
+  // tone; never more than a crossfade's worth.
+  const inkDeepInTerminal = samples.filter((sample) => sample.tone === 'ink' && sample.deepInTerminal).length;
+  expect(inkDeepInTerminal, 'an ink dot deep inside a black terminal').toBeLessThanOrEqual(2);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+/** The pointer's core, read on each move the player sends. */
+type CoreSample = { pressed: boolean; coreScale: number };
+
+test('a held drag holds the core pressed, and a released pointer is at rest', async ({ page }) => {
+  // card-drag's pose holds a card over Executing, pressed before the live pointer exists; the
+  // cycle drops it and carries it back, held, through a 900 ms carry.
+  test.setTimeout(90_000);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.addInitScript((rate) => {
+    (window as { __demoChoreographyRate?: number }).__demoChoreographyRate = rate;
+    const samples: CoreSample[] = [];
+    const firstRest: number[] = [];
+    Object.assign(window, { __coreSamples: samples, __coreAtFirstRest: firstRest });
+    const coreScale = (): number | null => {
+      const core = document.querySelector('[data-demo-cursor] [data-part="core"]');
+      if (!core) return null;
+      const transform = getComputedStyle(core).transform;
+      return transform === 'none' ? 1 : Number(transform.slice(transform.indexOf('(') + 1).split(',')[0]);
+    };
+    // The player's own moves are untrusted; each says whether its button is down.
+    document.addEventListener('pointermove', (event) => {
+      if (event.isTrusted) return;
+      const scale = coreScale();
+      if (scale !== null) samples.push({ pressed: (event.buttons & 1) === 1, coreScale: scale });
+    }, true);
+    new MutationObserver(() => {
+      const root = document.documentElement;
+      if (firstRest.length > 0 || root.getAttribute('data-demo-choreography') !== 'rest' || root.getAttribute('data-demo-cycles') !== '0') return;
+      const scale = coreScale();
+      if (scale !== null) firstRest.push(scale);
+    }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-demo-choreography'] });
+  }, CHOREOGRAPHY_TEST_RATE);
+  await gotoScene(page, { view: 'card-drag', embed: '1', loop: '1' });
+  await expect(page.locator('html')).toHaveAttribute('data-demo-cycles', '1', { timeout: 75_000 });
+  const { samples, firstRest } = await page.evaluate(() => ({
+    samples: (window as unknown as { __coreSamples: CoreSample[] }).__coreSamples,
+    firstRest: (window as unknown as { __coreAtFirstRest: number[] }).__coreAtFirstRest,
+  }));
+  expect(firstRest, 'the pointer drawn over the posed card shows the hand that holds it').toEqual([0.7]);
+  const pressed = samples.filter((sample) => sample.pressed);
+  const released = samples.filter((sample) => !sample.pressed);
+  expect(pressed.length, 'the cycle carries the card held').toBeGreaterThan(0);
+  expect(released.length, 'the cycle moves with the button up too').toBeGreaterThan(0);
+  expect(pressed.filter((sample) => Math.abs(sample.coreScale - 0.7) > 0.01), 'a move with the button down and the core at rest').toEqual([]);
+  expect(released.filter((sample) => Math.abs(sample.coreScale - 1) > 0.01), 'a move with the button up and the core pressed').toEqual([]);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
 test('a visitor\'s click after the frame is ready but before the player has loaded stops the loop before it starts', async ({ page }) => {
   // boot.js marks the frame ready and only then fetches the choreography chunk, which is what
   // listens for a visitor. Input in that gap used to be missed: the loop started anyway, on the
@@ -4666,6 +4926,27 @@ test('opened directly, the page hosts the frame at the site size and scales it t
   expect(geometry.width).toBe(1600);
   expect(geometry.height).toBe(1000);
   expect(geometry.scale).toBeCloseTo(Math.min(1280 / 1600, 720 / 1000), 2);
+  // The host tells the frame its scale, which the pointer divides its sizes by (demo/README.md).
+  // data-stage-scale is rounded to 3 places, the message carries the exact scale.
+  const pointerScale = (): Promise<number> => page.frameLocator('iframe#stage').locator('html').evaluate(
+    (root) => Number(root.style.getPropertyValue('--demo-pointer-scale')),
+  );
+  await expect.poll(async () => Math.abs((await pointerScale()) - geometry.scale), { message: 'the frame was told the stage scale' }).toBeLessThan(0.001);
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-stage-scale'))).toBe('0.5');
+  await expect.poll(pointerScale, { message: 'a resize tells the frame its new scale' }).toBeCloseTo(0.5, 3);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('opened directly on a light theme, the page is toned light for the stage', async ({ page }) => {
+  // The stage's margin around a scaled frame is dark by default and light for a light theme, so the
+  // frame's edge does not read as a hole. clay is one of the light themes.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(`${server.url}?view=board&theme=clay`);
+  await expect(page).toHaveURL(/stage\.html\?/);
+  await expect(page.locator('html')).toHaveAttribute('data-tone', 'light');
+  await expect(page.frameLocator('iframe#stage').locator('html')).toHaveAttribute('data-demo-ready', '1', { timeout: 20_000 });
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

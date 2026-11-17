@@ -889,6 +889,21 @@
     if (window.parent && window.parent !== window) window.parent.postMessage(message, '*');
   }
 
+  // The one message that comes in. A host that shows the frame scaled (a docs column at 0.45, a
+  // tour panel, stage.html in a small window) posts { type: 'kangentic-demo-scale', scale }, and
+  // the pointer (demo/pointer.ts) divides its sizes by it so its dot is the hero's size on the
+  // page. A frame cannot measure the transform its host puts on it, so the host has to say. Only
+  // the parent is heard, with no origin check: the hosts include localhost and the docs as well
+  // as the site, and the message carries one bounded number that sizes nothing but the pointer.
+  window.addEventListener('message', function (event) {
+    if (window.parent === window || event.source !== window.parent) return;
+    var data = event.data;
+    if (!data || data.type !== 'kangentic-demo-scale') return;
+    var scale = Number(data.scale);
+    if (!(scale > 0 && scale <= 4)) return;
+    document.documentElement.style.setProperty('--demo-pointer-scale', String(scale));
+  });
+
   function renderErrorCard() {
     var card = document.createElement('div');
     card.setAttribute('data-testid', 'demo-error');

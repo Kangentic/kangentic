@@ -242,6 +242,17 @@ does what the desktop does with the pointer outside: the terminal never gets the
 window closes through its own X. A terminal's open find bar comes first in both: it takes the key
 from its own pane, as on the desktop, and the window stays open.
 
+One message comes in. A host that shows the frame scaled posts
+`{ type: 'kangentic-demo-scale', scale }` to it on load and again whenever that scale changes:
+a docs figure shows the 1600 by 1000 frame at about 0.45, a landing-page tour at 0.44 to 0.77, and
+`stage.html` scales it down in a window smaller than the frame. The choreography's pointer divides
+its sizes by the scale, so its dot is the hero's size on the page wherever it shows. A frame
+cannot measure the transform its host puts on it, so the host has to say. With no message the
+scale is 1, which is right for a host that shows the frame at 1:1 (the site's take-control dialog).
+`boot.js` hears only its parent and takes a finite number in (0, 4]. It does not check the origin:
+the hosts include localhost and the docs as well as the site, and the number sizes nothing but the
+pointer.
+
 Three kinds of open frame are no sign the app will act on the key, so none of them is claimed:
 
 - The Command Terminal has no Escape of its own. Its layer hides on the panel-close combo, the
@@ -540,13 +551,33 @@ in for: `:hover` is mirrored (each same-origin `:hover` rule copied under `[data
 same parent rule, the attribute set on the element under the pointer and its ancestors); pointer
 capture is kept by the player for its own pointer, since no browser captures a pointer that is not
 pressed for real (Firefox even throws), so a window drag's moves and release reach the frame that
-captured them as they would; and the pointer itself is drawn, the product accent arrow, so a menu
-that opens reads as a visitor's click. The arrow fades in when a cycle starts and out at
-rest, where the pointer leaves the page, so no hover style or tooltip stays up in the rest frame; a
-cycle of keys alone never draws it. A travel follows its target until it stops moving, so a click
-lands on a control a collapsing group is still carrying, while a drag's drop point is measured once,
-since a sortable list moves its items out of the dragged one's way. The renderer reads none of it. The demo tier runs Chromium only, so a change to the player is
-checked by hand in Playwright's Firefox and WebKit too; Firefox is where the capture refusal showed.
+captured them as they would; and the pointer itself is drawn, so a menu that opens reads as a
+visitor's click. The pointer fades in when a cycle starts and out at rest, where it leaves the
+page, so no hover style or tooltip stays up in the rest frame; a cycle of keys alone never draws it.
+
+The pointer is `@kangentic/branding`'s demo pointer (`assets/pointer/`: the dot, its ring, and
+`pointer.json`), drawn by `demo/pointer.ts`. kangentic.com's hero draws the same asset in
+`DemoPointer.astro` with a beat of its own, so a visitor sees one pointer across the site. Change
+the dot in the package, never here: the player reads every size, tone, weight, duration and
+easing from `pointer.json`. What the player decides is where the pointer goes and when, plus
+three things the package leaves to its consumer. Its tone is cream over a dark ground and ink over
+a light one, read on every draw from the first opaque background under eight points on the halo's
+edge, averaged (cream below a luminance of 0.4, crossfading over 120 ms). That keeps it visible
+over a terminal on a light theme, and a hairline under its center, such as a terminal seam's light
+line between two black terminals, does not flip it. Once a tone is drawn it changes only when the
+ground clears the threshold by 0.1, so a dot dragged along the edge between a light rail and a
+black terminal does not flicker.
+Each press leaves a ring where it landed, and a double-click leaves two. The core holds pressed
+from the press to the release, through a drag's carry, and a release draws no ring. The rings live
+inside `[data-demo-cursor]`, so the show and hide, a cut's veil and a visitor's takeover take them
+too. The pointer's sizes are page pixels. The frame divides them by the scale its host posts (the
+scale message, above).
+
+A travel follows its target until it stops moving, so a click lands on a control a collapsing
+group is still carrying, while a drag's drop point is measured once, since a sortable list moves
+its items out of the dragged one's way. The renderer reads none of it. The demo tier runs Chromium
+only, so a change to the player is checked by hand in Playwright's Firefox and WebKit too; Firefox
+is where the capture refusal showed.
 
 Each cycle starts and ends on the poster's state. A choreography with a `pose` (a card held
 mid-drag, a menu open) plays up to it before the reveal, in a still too, unpaced, with no pointer
@@ -586,7 +617,7 @@ held to the fade-in, since a session's own clock can flip one at any moment; the
 the `browser` scene's mark to the reset.
 
 A visitor's own click, key, wheel or touch stops the choreography for the frame's life: a held
-pointer is released where it stands, the hover marks clear, the arrow goes, and a veil mid-cut is
+pointer is released where it stands, the hover marks clear, the pointer goes, and a veil mid-cut is
 taken away, leaving the frame where the reset had got to. Sessions keep
 looping. The site's loop frames are `inert`, so in a loop that is for a direct visit. A pose is
 let go the same way in every frame, loop or not and a still too, because the site's take-control
