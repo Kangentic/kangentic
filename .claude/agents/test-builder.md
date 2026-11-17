@@ -629,23 +629,20 @@ Signals that a test will exceed 45s:
 
 **Pitfall**: Playwright's `afterAll` hook inherits the test timeout. When a spec spawns PTY sessions, `app.close()` in afterAll triggers PTY cleanup which can be slow. 45s typically suffices; if it doesn't, prefer `test.setTimeout(60_000)` inside the afterAll over raising the global default.
 
-### Mock CLI non-determinism on Windows ConPTY is a real flake source
+### A mock CLI cannot stay silent on Windows ConPTY
 
-The `mock-claude-eats-all-cr` fixture swallows stdin in JS and even calls `setRawMode(true)`, but Windows ConPTY's kernel-side echo can still leak a CR back to the engine ~20-40% of the time. When that happens the engine's no-evidence path doesn't fire, and assertions on the error-state outcome fail.
+The `mock-claude-eats-all-cr` fixture swallows stdin in JS and calls `setRawMode(true)`, and on Windows output still arrives after the Enter: ConPTY writes control sequences of its own (cursor moves, `\x1b[?1004h`) with no visible text, and they pass the paste engine's 50-byte data floor. Measured on 2026-11-17, four of four sends logged `evidence=data` 98 to 161 ms after the Enter, so the engine's no-evidence path never ran and every assertion on the error state failed. This was once written up here as a 20 to 40% flake with a Windows-gated `retries: 2`. By then all three attempts failed on every run.
 
-**This is a test-infrastructure limitation, not a product bug, and it exists only on Windows.** The right response is a Windows-gated retry with a comment that documents the root cause. An unconditional per-spec retry does nothing on CI, where `--fail-on-flaky-tests` fails a pass on retry, so `tests/unit/test-value-budget.test.ts` rejects one. The wrong response is to chase phantom React rendering races - rendering is in-tick and not the issue.
-
-Pattern to remember:
+**When a path cannot be reached through a real ConPTY, gate the test off on Windows and say what covers it.** Read the engine's own log line before deciding (`app.on('console', ...)` in the spec prints main's `[paste-engine]` lines), so the gate rests on a measurement. The wrong responses are a retry, which only spends time on a test that cannot pass, and chasing React rendering races, which are in-tick and not the issue.
 
 ```ts
-test.describe('...', () => {
-  // Mock-CLI non-determinism on Windows ConPTY: <fixture> swallows stdin in
-  // JS but kernel-side echo can leak the CR back ~20-40% of the time. The
-  // product is correct; this is a test-infra limit on Windows alone.
-  if (process.platform === 'win32') test.describe.configure({ retries: 2 });
+test('no-evidence path surfaces the error', async () => {
+  test.fixme(process.platform === 'win32', 'ConPTY writes its own output after the Enter; covered at unit tier and on Linux.');
   // ...
 });
 ```
+
+A Windows-gated per-spec retry is still what `tests/unit/test-value-budget.test.ts` allows for a race that exists only on Windows, whose local runs have no retry. No spec uses one today. An unconditional per-spec retry does nothing on CI, where `--fail-on-flaky-tests` fails a pass on retry, so that test rejects one.
 
 ### `data-testid="browser-send-error"` exists on the BrowserPane inline error strip
 
@@ -697,7 +694,7 @@ The `intervals` array tells Playwright how often to poll - start fast (200ms) fo
 
 Two distinct flake classes show up in full-suite runs:
 
-1. **Mock CLI variance** (handled by a Windows-gated `retries: 2` with documented root cause). Affects: `browser-evidence-retry.spec.ts`.
+1. **A path a real ConPTY cannot reach** (gated off on Windows with `test.fixme` and a measured reason, see above). Affects: `browser-evidence-retry.spec.ts`, `browser-send-roundtrip.spec.ts`.
 2. **Worker process crashes** (`worker process exited unexpectedly (code=3221226505, signal=null)`, i.e. 0xC0000409, at `(0ms)` test start). This is NOT a one-off and NOT spec-specific: it recurred 9+ times over 5 days (2026-06-07..06-11), random across specs, hitting BOTH the `[ui]` project (headless Chromium, no Electron) and `[electron]`. The common factor is the Playwright worker host itself (`node.exe`), not any app-under-test teardown path.
 
 **Root cause (verified from a real minidump, 2026-06-11):** 0xC0000409 here is `__fastfail(FAST_FAIL_FATAL_APP_EXIT)`, subcode 0x7, raised by `abort()` (`electron!abort+0x35` -> `int 29h`). It is a deliberate fatal-abort (a V8/Node/Chromium FATAL check or an uncaught C++ exception), NOT a literal stack-buffer overrun despite the NTSTATUS name, and NOT the Jan-2026 Node stack-exhaustion CVE (CVE-2025-59466): the faulting stack is shallow (no deep recursion) and the local Node 24.15.0 already carries that mitigation (shipped in 24.13.0+). Upgrading Node does not address it.
