@@ -5729,16 +5729,14 @@
       importSourcesAdd: async function (input) {
         // Tests read window.__mockImportSourcesAddCalls (and the last input as
         // window.__lastImportSourcesAddInput), and seed
-        // window.__mockImportSourcesAddError with the line main would refuse the
-        // add with. It arrives decorated the way Electron decorates a rejection
-        // from main, so the UI's own stripping is what makes the line readable.
+        // window.__mockImportSourcesAddError with the message to refuse the add
+        // with, exactly as the UI should receive it (a spec that wants the
+        // decoration Electron adds to a rejection from main writes it itself).
         if (typeof window !== 'undefined') {
           if (!window.__mockImportSourcesAddCalls) window.__mockImportSourcesAddCalls = [];
           window.__mockImportSourcesAddCalls.push(input);
           window.__lastImportSourcesAddInput = input;
-          if (window.__mockImportSourcesAddError) {
-            throw new Error("Error invoking remote method 'backlog:importSourcesAdd': RefusalError: " + window.__mockImportSourcesAddError);
-          }
+          if (window.__mockImportSourcesAddError) throw new Error(window.__mockImportSourcesAddError);
           // Like main, adding a folder that is already saved answers the saved source
           // (same id) instead of a new one. Reads window.__mockImportSourcesPreset.
           var savedSources = Array.isArray(window.__mockImportSourcesPreset) ? window.__mockImportSourcesPreset : [];
