@@ -113,8 +113,12 @@ export interface BoardAdapter {
    * Legacy check used by the current import IPC flow. Wraps checkPrerequisites()
    * into the older `{available, authenticated, error}` shape. Kept for IPC
    * back-compat during the refactor.
+   *
+   * `repository` is passed when a saved source is opened, so a provider whose
+   * source can disappear on its own (a vault folder that moved) can say so before
+   * the list loads. Providers that check only a CLI or a sign-in ignore it.
    */
-  checkCli(): Promise<ImportCheckCliResult>;
+  checkCli(repository?: string): Promise<ImportCheckCliResult>;
 
   /**
    * Fetch a page of issues from the remote source. Receives the original

@@ -103,6 +103,21 @@ msgstr "取消"
 msgid "Change color"
 msgstr "更改颜色"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Checklist items"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import folder dialog"
+msgid "Choose a folder in your Obsidian vault"
+msgstr ""
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import error banner"
+msgid "Choose folder"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Clear filters"
 msgstr "清除筛选"
@@ -244,6 +259,16 @@ msgstr "丢弃未保存的更改？"
 msgid "Drop files here"
 msgstr "将文件拖放到此处"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each - [ ] line becomes a task"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each note becomes a task"
+msgstr ""
+
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 msgctxt "button"
 msgid "Edit"
@@ -257,6 +282,7 @@ msgstr "编辑待办任务"
 msgid "Edit item"
 msgstr "编辑条目"
 
+#: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgid "Failed to add source"
 msgstr "添加来源失败"
@@ -428,10 +454,20 @@ msgctxt "priority"
 msgid "None"
 msgstr "无"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Notes"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgctxt "import state filter"
 msgid "Open"
 msgstr "打开"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgid "Open file"
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx

@@ -5918,7 +5918,9 @@ export type ExternalSource =
   | 'asana'
   | 'jira'
   | 'linear'
-  | 'trello';
+  | 'trello'
+  | 'obsidian_notes'
+  | 'obsidian_checklist';
 
 export interface ImportSource {
   id: string;
@@ -9804,7 +9806,8 @@ export interface ElectronAPI {
     remapPriorities: (mapping: Record<number, number>) => Promise<number>;
     onChangedByAgent: (callback: (projectId?: string) => void) => () => void;
     onLabelColorsChanged: (callback: () => void) => () => void;
-    importCheckCli: (source: ExternalSource) => Promise<ImportCheckCliResult>;
+    /** `repository` names a saved source, for a provider whose source can go missing (a moved vault folder). */
+    importCheckCli: (source: ExternalSource, repository?: string) => Promise<ImportCheckCliResult>;
     importGetCached: (input: ImportCacheQuery) => Promise<ImportCachedResult>;
     importReconcile: (input: ImportReconcileInput) => Promise<ImportReconcileResult>;
     importExecute: (input: ImportExecuteInput) => Promise<ImportExecuteResult>;

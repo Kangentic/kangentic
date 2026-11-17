@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Backlog
-description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana and Linear items with incremental sync and duplicate detection."
+description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana and Linear items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
 tags: [backlog, import, labels, priorities]
 sources:
   - resource: src/renderer/components/backlog/
@@ -66,6 +66,8 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **Azure DevOps Work Items** - import work items from Azure DevOps boards, sprints, or backlogs
 - **Asana** - import tasks from an Asana project (its list, board, or calendar view URL)
 - **Linear** - import issues from a Linear team, picked from a list of your teams
+- **Obsidian Notes** - import each note in a folder of an Obsidian vault as a task
+- **Obsidian Checklist items** - import each task line in a folder's notes (`- [ ]`, and the done, in-progress and cancelled marks) as a task
 
 **Prerequisites:**
 - **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
@@ -77,17 +79,29 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
   Linear OAuth client id also offers **Sign in with Linear** beside the key: it opens Linear's
   approval page in your browser, and approving Kangentic closes the dialog. A browser sign-in renews
   itself, but after 30 days without an import Linear asks you to sign in again.
+- **Obsidian:** nothing to install or sign in to. The vault is read from this computer, also for a
+  remote project, and Kangentic never writes to it.
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub, Azure DevOps, Asana, or Linear) and source type (GitHub has Issues and Projects)
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). Linear lists your teams instead: click one. A team you already added says **Added** and opens its source.
+2. Choose a provider (GitHub, Azure DevOps, Asana, Linear, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). Linear lists your teams instead: click one. A team you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
 4. Click **Connect** - Kangentic verifies CLI authentication and saves the source
 5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
 
+An Obsidian vault is the folder that holds `.obsidian`. Choose a folder inside one and Kangentic
+finds the vault above it; the source reads that folder and its subfolders. A source is named for
+the vault, then the folder (`Work: Projects`), and its row's tooltip shows the full path. A folder
+in no vault is refused with "Not in a vault" and nothing is saved. To import both notes and
+checklist items from one vault, add it twice, once with each type.
+
 If a saved sign-in stops working (a revoked Asana token or Linear key, or a Linear sign-in that
 lapsed), the import dialog's error banner carries a **Connect Asana** or **Connect Linear** button.
-It reopens the setup dialog, and once the new credential works the dialog syncs.
+It reopens the setup dialog, and once the new credential works the dialog syncs. If an Obsidian
+source's folder moved, its drive is gone, or it is no longer inside a vault, the banner says
+"Folder not found" or "Not in a vault" and carries **Choose folder**, which saves the new folder in
+the old source's place. Items already imported still read as imported. Choosing the same folder
+again checks it again in place.
 
 **Importing items:**
 1. Click a saved source to open the import dialog
@@ -106,13 +120,44 @@ state refetches the whole source rather than only the changes.
 See [Board integration](../integrations/boards.md) for the adapter contract behind the incremental
 fetch.
 
-Imported items include the title, description (markdown), labels, and assignee from the source. Inline images in issue bodies are downloaded as backlog attachments. A small icon beside an imported item's title opens the original ticket: the GitHub mark for a GitHub import, a link icon for every other source.
+Imported items include the title, description (markdown), labels, and assignee from the source. Inline images in issue bodies are downloaded as backlog attachments. A small icon beside an imported item's title opens the original ticket: the GitHub mark for a GitHub import, a link icon for every other source. For an Obsidian import it opens the note's file in your system's app for markdown.
 
 Linear issues show their own ids (`ENG-214`) in the dialog, and the Status filter lists the team's
 states in the order its board shows them. An imported Linear issue keeps its priority when the
 project's scale still has a level of the same name (Urgent, High, Medium or Low). With no priority
 in Linear, or no level of that name in the project, it imports at the bottom level. Its project, cycle, estimate and due date go into a **Linear** section at
 the end of the description.
+
+### What an Obsidian note or item becomes
+
+Only the properties and markers named here are read. Folders whose name starts with a dot
+(`.obsidian`, `.trash`, `.git`), the folder the Templates core plugin uses, and any note over 5 MB
+are skipped.
+
+| | A note (Notes source) | A checklist line (Checklist items source) |
+|---|---|---|
+| Title | the `title` property, else the file name | the line without its checkbox, Tasks plugin fields, tags and block id |
+| Labels | the `tags` property and the `#tags` in the text | the `#tags` on the line |
+| Priority | the `priority` property, matched by name to the project's scale | the Tasks plugin marker: 🔺 Urgent, ⏫ High, 🔼 Medium, 🔽 and ⏬ Low |
+| Closed | `status` is done, complete, completed, closed, cancelled or canceled | `[x]` or `[-]` |
+| Status filter | the `status` value, or No status | To do, In progress, Done or Cancelled |
+| Description | the body, then the other properties under **## Obsidian** | the line as written, then the note and heading it sits under |
+
+The dialog shows a note's folder (`Projects/`), or a line's note, where other sources show an id.
+A Kanban plugin board file is read by a Checklist items source only: each `##` lane is a card's
+status, the Status filter lists the lanes in board order, and cards in the lane marked Complete are
+closed.
+
+A note is matched across re-imports by its path in the vault, and a checklist line by its block id
+(`^abc123`) or, without one, by its words. Editing a note, ticking a line, adding a date or moving a
+card to another lane keep the match. Renaming or moving a note, or rewording a line with no block
+id, makes a new row; the task imported before stays as it was.
+
+Every file a note embeds (`![[file]]` or `![](file)`) is copied in as an attachment, found the way
+Obsidian finds it, without regard to case: a path as written, or a bare name anywhere in the vault,
+the one beside the note first. An embedded note and a wiki-link stay as text. A file counts as a
+skipped attachment when it cannot be found, is over 10 MB, sits in a dot folder, or is on a network
+share.
 
 Items that have already been imported are detected by `external_source` + `external_id` and shown with a checkmark. Re-importing the same source skips duplicates automatically.
 

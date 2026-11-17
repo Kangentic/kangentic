@@ -12,12 +12,17 @@ import { Tooltip } from '../Tooltip';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
-import { getProviderForSource, getProviderLabel, getSourceIcon } from './import-providers';
+import { getProviderForSource, getProviderLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
+import { translateText } from '../../i18n/translate';
+import { reportRendererFailure } from '../../utils/renderer-failure';
+import { describeIpcError } from '../../lib/ipc-error';
 import type { ExternalIssue, ImportSource } from '../../../shared/types';
 
 interface ImportDialogProps {
   source: ImportSource;
   onClose: () => void;
+  /** A folder source's Choose folder saved a new source in place of this one. */
+  onSourceReplaced?: (source: ImportSource) => void;
 }
 
 type StateFilter = 'open' | 'closed' | 'all';
@@ -106,7 +111,7 @@ function searchHaystack(issue: ExternalIssue): string {
   return haystack;
 }
 
-export function ImportDialog({ source, onClose }: ImportDialogProps) {
+export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialogProps) {
   const { t, i18n } = useLingui();
   const [issues, setIssues] = useState<ExternalIssue[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -123,6 +128,9 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   // sign-in no longer works (a revoked key, an expired sign-in).
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
   const providerAuth = getProviderForSource(source.source)?.auth;
+  // A source added by folder (an Obsidian vault) whose folder can move away.
+  const folderSource = getSourceTypeOption(source.source)?.folder;
+  const [choosingFolder, setChoosingFolder] = useState(false);
 
   // Client-side filters, evaluated live over the full (unbounded) issue set
   const [filterText, setFilterText] = useState('');
@@ -189,7 +197,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   // overwritten by a slower cache read. A failed check shows the error banner.
   const checkThenReconcile = useCallback((afterCache: Promise<unknown>) => {
     const token = fetchSequenceRef.current;
-    window.electronAPI.backlog.importCheckCli(source.source).then(async (cli) => {
+    window.electronAPI.backlog.importCheckCli(source.source, source.repository).then(async (cli) => {
       if (fetchSequenceRef.current !== token) return;
       if (!cli.available || !cli.authenticated) {
         setCliError(cli.error ?? t`CLI not available`);
@@ -206,7 +214,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       setLoading(false);
       setSyncing(false);
     });
-  }, [source.source, reconcile, t]);
+  }, [source.source, source.repository, reconcile, t]);
 
   // On mount: check the CLI, paint the persistent cache instantly, then reconcile
   // in the background. First-ever open has an empty cache, so the spinner stays up
@@ -232,6 +240,39 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     checkThenReconcile(cachedPromise);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A folder source whose folder is gone: pick where it went. The new folder is
+  // added as a source, this one is removed, and the dialog opens on the new one.
+  // Item ids are vault-relative, so what was imported still reads as imported.
+  const handleChooseFolder = async () => {
+    if (!folderSource || choosingFolder) return;
+    setChoosingFolder(true);
+    let replacement: ImportSource;
+    try {
+      const folder = await window.electronAPI.dialog.selectFolder({ title: translateText(folderSource.dialogTitle) });
+      if (!folder) return;
+      replacement = await window.electronAPI.backlog.importSourcesAdd({ source: source.source, url: folder });
+    } catch (chooseError: unknown) {
+      // A refused folder (not in a vault) is a rejection main saw, which the reporter skips.
+      reportRendererFailure('backlog', 'import-choose-folder', chooseError);
+      setCliError(describeIpcError(chooseError, t`Failed to add source`));
+      return;
+    } finally {
+      setChoosingFolder(false);
+    }
+    if (replacement.id === source.id) {
+      // The same folder, back where it was (a drive plugged in again): check it again here.
+      handleReconnected();
+      return;
+    }
+    try {
+      await window.electronAPI.backlog.importSourcesRemove(source.id);
+    } catch (removeError: unknown) {
+      // The new source is saved either way; the old one stays listed until removed by hand.
+      reportRendererFailure('backlog', 'import-remove-replaced-source', removeError);
+    }
+    onSourceReplaced?.(replacement);
+  };
 
   // After the banner's Connect saved a working credential: check again and sync.
   const handleReconnected = () => {
@@ -610,9 +651,20 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       {/* CLI error */}
       {cliError && (
         <div className="px-4 py-3 m-3 rounded bg-danger/10 border border-danger/20" data-testid="import-cli-error">
-          <div className={`flex gap-2 ${providerAuth ? 'items-center' : 'items-start'}`}>
-            <CircleExclamationPoint size={14} className={`text-danger shrink-0 ${providerAuth ? '' : 'mt-0.5'}`} />
-            <div className="flex-1 min-w-0 text-xs text-danger whitespace-pre-wrap">{cliError}</div>
+          <div className={`flex gap-2 ${providerAuth || folderSource ? 'items-center' : 'items-start'}`}>
+            <CircleExclamationPoint size={14} className={`text-danger shrink-0 ${providerAuth || folderSource ? '' : 'mt-0.5'}`} />
+            <div className="flex-1 min-w-0 text-xs text-danger whitespace-pre-wrap break-words">{cliError}</div>
+            {folderSource && (
+              <button
+                type="button"
+                onClick={() => void handleChooseFolder()}
+                disabled={choosingFolder}
+                className="shrink-0 px-3 py-1 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors whitespace-nowrap disabled:opacity-50"
+                data-testid="import-choose-folder-btn"
+              >
+                <Trans context="import error banner">Choose folder</Trans>
+              </button>
+            )}
             {providerAuth && (
               <button
                 type="button"
