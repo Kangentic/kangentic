@@ -719,7 +719,10 @@ Four more things were settled on the way:
   closing with no fit in it. `useTerminal` now reports each container fit that lands in a landing,
   and the landing does not settle on stillness until one has. Six repeats of that test, the
   held-grid conform test and the tiled edge-drag test then passed on two cores, and the four
-  related UI specs (166 tests) passed there with no retries.
+  related UI specs (166 tests) passed there with no retries. The 500 ms is a floor on time, not on
+  frames: a page stalled for 1.5 s drew its first frame past it with no fit in the landing, so
+  until a terminal has fitted, the landing also waits for 8 drawn frames, up to 5 s in all
+  ([Output streaming](../sessions/output-streaming.md)).
 - The send waits one still frame, so a grid about to move again is not sent. On a task window that
   costs nothing measurable: the send goes out 1 to 3 ms after the hold starts, because the change
   lands before that frame's callbacks run.
