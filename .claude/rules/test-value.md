@@ -23,7 +23,9 @@ Pick the lowest tier that can fail for the reason the bug would.
 - **Unit (`tests/unit/`):** logic, parsers, stores, state machines, and repo conventions. This is the
   default. A test costs milliseconds and the tier has no flakes on record.
 - **UI (`tests/ui/`):** what only a browser proves: layout, focus, keyboard, drag, portal clipping,
-  and a visible state. Never a test whose whole body evaluates a store.
+  and a visible state. Never a test whose whole body evaluates a store. A test that boots its own
+  page pays that boot before its first assertion, so tests that boot the same seed and only read
+  are one test with a `test.step` each, not one boot apiece.
 - **E2E (`tests/e2e/`):** real wiring a mock cannot stand in for: a PTY, `fs.watch`, a restart, a kill,
   a real worktree. Name that wiring in the spec's header.
 - **Demo (`tests/demo/`):** what only the built web bundle proves. See `web-demo-parity.md`.
@@ -47,6 +49,10 @@ proves the wiring, not a copy of the logic's cases.
 - **A flake is fixed, rewritten or removed.** No quarantine lane, and no per-spec `retries`:
   `--fail-on-flaky-tests` makes a pass on retry a failure anyway. The one exception is a race that
   exists only on Windows, whose local runs have no retry. That one is gated on `process.platform`.
+- **A UI spec runs on a bundle on CI.** It reaches the app through `window.__zustandStores` and
+  `window.__kangenticTestModules`, never `import('/src/renderer/...')` in the page, which only the
+  Vite dev server answers. A spec that needs the dev server itself loads from `DEV_SERVER_URL`
+  (`tests/ui/dev-server.ts`). Either other shape passes locally and fails on CI.
 
 ### The bar for a CI job or workflow
 
@@ -63,8 +69,13 @@ proves the wiring, not a copy of the logic's cases.
   passed on, so a second run can only find a flake. A direct push still runs everything.
 - **A check off the PR path fails loudly somewhere.** A nightly leg is read by `/release` before a tag.
 - **`--only-changed` and `--changed` never gate a PR.** Playwright documents the first as a heuristic
-  to run ahead of a full run. UI specs reach the app through Vite in a browser, so its import graph
+  to run ahead of a full run. UI specs reach the app through a browser, so its import graph
   cannot see a source change. Vitest's graph cannot see the tests that read source as text.
+- **Size the tiers to finish together.** A PR waits for its slowest job, so a slot belongs to the
+  tier that is the pole and a tier far under it gives one up. The UI shards are cut by measured
+  time (`scripts/ui-shard-plan.mjs` over `tests/ui/shard-timings.json`), never by Playwright's
+  equal-count `--shard`. Refresh the timings with `node scripts/ui-shard-timings.mjs <run-id>` when
+  one UI shard runs about 25% past the average, and split a spec that outweighs an average shard.
 - **Measure a CI change by paired runs.** Identical code has spread 231-357s. Use at least three runs
   against the same commit, decide on max per-shard aggregate test-seconds, and discard a run with
   over 20s of queue, since the cap is account-wide.
@@ -80,6 +91,14 @@ proves the wiring, not a copy of the logic's cases.
 - **Test (mechanical, CI):** `tests/unit/tested-tree.test.ts` runs the gate's decision through every
   way it must keep running the tests, and fails on a job in a gated workflow that does not answer to
   it. `tests/unit/ci-workflow-hygiene.test.ts` pins `--fail-on-flaky-tests` and the path filters.
+- **Test (mechanical, CI):** `tests/unit/ui-shard-plan.test.ts` fails when a UI spec on disk is in
+  no shard or in two, when a spec outweighs an average shard, when the demo spec regains a
+  file-level `beforeAll` (which fixes its shard cut at the midpoint), and when the installed
+  Playwright stops reading the demo's shard weights. The `checks` job then proves the plan against
+  Playwright's own listing (`node scripts/ui-shard-plan.mjs --verify`), since a `--test-list` line
+  that matches no file is not an error. `tests/unit/ui-bundle.test.ts` fails a UI spec that imports
+  or routes a source path without loading from `DEV_SERVER_URL`, and a bundle build that would
+  drop the test hooks.
 - **Review:** `/code-review` judges what no scan can: whether a test can fail for the reason it
   exists, whether a new test is a mirror or a literal pin, and whether a job names what only it
   catches. Mutation testing settles a disputed removal: run StrykerJS with `mutate` on the shared code

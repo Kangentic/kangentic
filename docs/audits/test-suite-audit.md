@@ -1,7 +1,7 @@
 ---
 type: Audit
 title: Test suite audit
-description: "What the test suite and CI cost on 2026-11-02 and what each tier has caught: 37,794 tests and 16.8 minutes to green, set by one web demo job and the UI tier, with little true duplication. CI structure took a PR to 10 to 12 minutes; removals barely move it. Baseline, research with sources, every workflow's verdict, and the options rejected."
+description: "What the test suite and CI cost on 2026-11-02 and what each tier has caught: 37,794 tests and 16.8 minutes to green, set by one web demo job and the UI tier, with little true duplication. CI structure took a PR to 10 to 12 minutes; removals barely move it. Baseline, research with sources, every workflow's verdict, and the options rejected. A 2026-11-17 follow-up took a quiet PR from about 10 minutes to about 6: the UI tier loads a static bundle on CI, its shards are cut by measured time, and main no longer retests merged trees."
 tags: [audit, testing, ci, performance]
 sources:
   - resource: .github/workflows/ci.yml
@@ -12,6 +12,10 @@ sources:
   - resource: playwright.config.ts
   - resource: vitest.config.mts
   - resource: scripts/tested-tree.mjs
+  - resource: scripts/build-ui-bundle.mjs
+  - resource: scripts/ui-shard-plan.mjs
+  - resource: scripts/ui-shard-timings.mjs
+  - resource: tests/ui/dev-server.ts
   - resource: tests/unit/test-value-budget.test.ts
 ---
 # Test suite audit (2026-11-02)
@@ -284,13 +288,15 @@ to cover it, and that read overturned three, so those tests stayed.
 - **A merge queue.** It needs `merge_group` on every required workflow, and I could not confirm it for
   the Free plan: GitHub's 2023 changelog says all public repos owned by organizations, and the current
   docs do not say. 1,000 CI runs over 533 branches is a median of 2 per branch, and faster CI shrinks
-  what a queue would save. Revisit if PRs spend real time waiting on `strict` rebases.
+  what a queue would save. Revisit if PRs spend real time waiting on `strict` rebases. Looked at
+  again on 2026-11-17 with the same answer, for other reasons (see Follow-up).
 - **A quarantine lane.** It keeps a flake green. See Research.
 - **Removing push runs outright.** `/release` and `/merge-back` would each need a new path, and a hand
   push would get no CI. The gate keeps the run, so `/release` needed no change for it.
 - **Skipping CI on docs-only PRs.** One of the last 99 merged PRs was docs-only.
 - **Sharding the demo job.** Three workers took it to about 7 minutes with no new job, and it stopped
-  being the pole. A second job would have spent a slot for nothing.
+  being the pole. A second job would have spent a slot for nothing. Reversed on 2026-11-17: once
+  the UI tier came down the demo was the pole again, and it runs as two shards (see Follow-up).
 - **Folding the demo's cut veil into its cycle test and a session-clock divisor.** These were planned
   at 100s and 150-200s. Once the demo stopped being the pole they would have bought no wall clock, and
   `web-demo-parity.md` leans on both.
@@ -303,11 +309,149 @@ to cover it, and that read overturned three, so those tests stayed.
 - **Reading every test file.** 800,000 lines for a list the signals already narrow, against a finding
   that duplication is rare.
 
+## Follow-up: 2026-11-17
+
+Two weeks on, a PR took about 13 minutes to go green again, and a PR in the Merge column paid that
+twice, since it rebases onto each merge ahead of it. 450 test files had been added: 405 unit, 35 UI,
+8 E2E and 2 demo. The question this time was only the wait.
+
+**Verdict: the wait was how a UI test loads the app, not how many tests there are.** Serving the UI
+tier a static bundle on CI cut its test time by 41% with no test changed. Combining and removing
+tests on top of that bought another 6%, which is the first audit's finding again.
+
+### What set the time
+
+Measured over 30 green PR runs and 40 pushes to `main`, 2026-11-09 to 11-17, plus two runs
+dispatched on the untouched branch.
+
+- **A UI test paid about 3 seconds to boot.** The tier loaded the app from the Vite dev server: 759
+  source modules, each its own request, into a browser context with no cache, from one
+  single-threaded server the shard's three workers share. A test that makes three assertions took
+  3.7s, and about 2,300 of the tier's 3,425 tests boot per test.
+- **`main` tested 13 of 31 merged trees a second time.** `cla.yml` runs again when a PR closes, the
+  `tested-tree` gate read the PR head at that moment, and an unfinished check meant "run
+  everything". That was 21 jobs for 11 to 20 minutes, started as the next PR in Merge rebased and
+  needed the same 20 slots.
+- **Queueing.** 26 of 30 runs had shards start more than 20s late. The worst waited 16 minutes.
+- **Shards cut by test count.** One run's eleven UI shards held 799 to 1,675 test-seconds.
+
+Not the cause: setup and caching (about 30s a job, every cache a hit), docs-only PRs (none of the
+last 40 merged), and Vitest's configuration. 60% of a unit shard is the tests themselves, and
+Vitest's own estimate for `isolate: false` is 40s a shard, against 912 files that use `vi.mock`.
+
+### What changed
+
+- **The gate stopped reading the CLA check** (`scripts/tested-tree.mjs`). It says who signed, not
+  whether the tree works.
+- **The UI tier runs against a static bundle on CI** (`scripts/build-ui-bundle.mjs`, served when
+  `KANGENTIC_UI_BUNDLE=1`). It is the development app, built with `NODE_ENV=development` and a
+  development mode, so `window.__zustandStores` and every other test hook is in it and a release
+  build still has none. It builds in 6 to 9s a shard. Local runs stay on the dev server. A spec that
+  imported a module by its source path in the page reads it from `window.__kangenticTestModules`
+  instead. Six specs need the dev server itself and load from `DEV_SERVER_URL`, after one warm-up
+  boot.
+- **UI shards are cut by measured time** (`scripts/ui-shard-plan.mjs` over
+  `tests/ui/shard-timings.json`). The `checks` job proves the plan against Playwright's own listing
+  on every PR, because a `--test-list` line that matches no file is not an error.
+- **Two job slots moved to the pole,** inside the same 21. E2E went from 5 shards to 3, the unit tier
+  from 2 to 3, and the web demo from one job to 2 shards behind a gate.
+- **Tests.** Tests that booted the same seed and only read are one test with a `test.step` each,
+  which removed about 120 page boots across 34 spec files. 16 tests were removed as duplicates of a
+  named test, and one that evaluated only the mock moved to the unit tier. About 70 seconds of fixed
+  sleeps and observation windows now end on a condition. The UI tier went from 3,425 tests to 3,314.
+
+### Before and after
+
+Before is the range over the 30 PR runs and the two baseline runs. After is the range over the
+runs dispatched on the branch once the bundle was in place.
+
+| Measure | Before | After |
+|---|---:|---:|
+| Slowest UI shard, job (s) | 541 to 787 | 348 to 389 |
+| Slowest UI shard, test step (s) | 517 to 754 | 303 to 344 |
+| UI test steps, all eleven shards (s) | 4,320 to 4,838 | 2,575 to 2,742 |
+| UI test-seconds a run | 12,355 | 6,841 |
+| Web demo (s) | 441 to 613, one job | 248 to 337 a shard |
+| Unit shard (s), before its 35s gate | 216 to 330 | 165 to 241 |
+| E2E job (s) | 120 to 190 on 5 shards | 143 to 253 on 3 |
+| Lint, typecheck, build (s) | 124 to 173 | 152 to 206 |
+| Job-seconds a run | 6,581 to 7,775 | 5,060 to 5,070 |
+| Concurrent jobs on a PR | 21 | 21 |
+| UI tests | 3,425 | 3,314 |
+
+**A PR's wait went from about 10 minutes to about 6, which is 40% and not the half that was asked
+for.** On a quiet account the wait is the slowest job plus a gate of a few seconds. Before, the
+quiet runs took 581 to 661s. After, the slowest job took 348 to 389s. No run after the change was
+quiet, since other tasks on the board were using the same 20 slots, so the after figure is the
+slowest job and not a measured total. The UI tier's own work fell by 45%. What is left is spread:
+the eleven UI test steps average 245s and the slowest runs 303 to 344s, on shards planned to hold
+the same work.
+
+- **Balancing by time did nothing while the tier was on the dev server.** The rebalanced run's
+  slowest shard spent 539s in tests, against 517 to 544 before. Its shards were planned at 1,123
+  test-seconds each and ran 897 to 1,492, because on the dev server a spec's cost depends on its
+  neighbours: `agent-monitor.spec.ts` took 383s beside other boot-heavy specs and 239s in the run
+  its timing came from. On the bundle it takes 144s wherever it runs, so the plan needs the bundle.
+- **The slowest shard is partly a draw.** In one bundle run a shard ran every spec it held 36 to 68%
+  slower than the timings, on a plan that gave it the same work as the others. The first web demo
+  shard ran the same 183 tests in 581 test-seconds in one run and 748 in the next. That is a slow
+  runner, and no plan removes it.
+- **A fourth UI worker is worth about 20s a shard.** The eleven test steps summed to 2,430s at 4
+  workers against 2,655s at 3. Not taken on one run: the project went from 4 to 3 once already
+  because load tipped it (see the note in `playwright.config.ts`). It is the next thing to try,
+  with three runs per count.
+- **Combining tests is worth what the first audit said.** 7,282 test-seconds became 6,841.
+- **In bundle mode the dev server starts cold.** Nothing else loads from it, so the first of the
+  six specs paid its whole cold start inside a 15s test. `stats-lazy-retry.spec.ts` flaked that way
+  in two of four runs until `warmDevServer` (`tests/ui/dev-server.ts`).
+- **The job checks grew by about 40s.** `checks` lists the UI project twice to prove the shard
+  plan. It is still the shortest job.
+- **One E2E test could not fail for its title.** "engine retry succeeds when the agent swallows the
+  first \r" in `tests/e2e/browser-evidence-retry.spec.ts` slept 7s and asserted that a capture
+  file existed, which is written before the paste. Given the assertion its own comment described,
+  no error strip, it failed on CI in both runs that had it: the mock agent answered the retried
+  Enter with 25 bytes, and since 2026-05-03 the paste engine takes output as proof of a submit
+  only past 50. On Linux the send ended in "Paste landed but Enter did not submit" and the test
+  passed anyway. The fixture now replies with a line longer than the floor. The engine did not
+  change.
+
+The contended numbers are not in the table. Every run here shared the account with other PRs, and
+their totals ran from 700s to 1,735s on queue alone. What a contended PR gains is the 25% fewer
+job-seconds and a `main` that no longer starts 21 jobs after a merge.
+
+### A merge queue, looked at again
+
+Not now. The repository qualifies (public, owned by an organization), but:
+
+- `/merge-pull-request` merges with `gh pr merge --admin --rebase`, and `--admin` bypasses a queue.
+  It uses `--admin` because branch protection requires one approving review that a sole maintainer
+  cannot give. A queue needs that rule dropped or met, which is a branch protection change.
+- `ci.yml` and `cla.yml` would each need a `merge_group` trigger, and the `tested-tree` gate would
+  have to accept a tree the queue tested.
+- Two queue builds cannot run side by side inside a 20-job cap, so the gain would be batching
+  several waiting PRs into one run.
+
+With a run at about 6 minutes and `main` quiet after a merge, a PR in Merge waits one short run.
+Revisit if Merge stays stack up anyway.
+
+### Not done
+
+- **Path filters for docs-only PRs.** None of the last 40 merged PRs was docs-only, and the unit
+  tier reads `docs/`.
+- **A third web demo shard.** It would take a UI slot, and ten UI shards land where the demo is now.
+- **Skipping the typecheck in the E2E shards' `npm run build`.** About 20s on a job under the pole,
+  in the script the release builds through.
+- **`isolate: false` for Vitest,** and **one browser per worker.** See above and Rejected options.
+
 ## When to revisit
 
-- **A UI shard passes 10 minutes,** or the demo job passes 10.
+- **A UI shard or a web demo shard passes 7 minutes.**
+- **One UI shard runs about 25% past the average in several runs.** Refresh the timings with
+  `node scripts/ui-shard-timings.mjs <run-id>`. If `tests/unit/ui-shard-plan.test.ts` then names a
+  spec heavier than an average shard, split it.
 - **The job budget test fails.** Give a slot up, or lift the cap with a support ticket or a paid plan.
-- **Median PR time to green passes 15 minutes again.**
+- **Median PR time to green passes 9 minutes again.**
+- **A spec passes on the dev server and fails on CI.** Run it with `npm run test:ui:bundle`.
 - **The `hold-unsampled` annotation becomes common.** It means the runner is too starved for these
   readings. Read the shard's utilisation before the spec.
 - **A flake recurs in the specs above.** Their fixes are unproven under CI's load.

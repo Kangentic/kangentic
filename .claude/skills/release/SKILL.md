@@ -144,8 +144,8 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    reading a stale run as a pass.
 
    This is the authoritative gate, and it is strictly broader than Step 1's local run. CI covers
-   lint, typecheck, build, 2 unit shards, 11 UI shards, 5 Linux Electron E2E shards, and the web
-   demo for this exact tree. On a merged PR's push the run's `Tree already tested` job passes it
+   lint, typecheck, build, 3 unit shards, 11 UI shards, 3 Linux Electron E2E shards, and the 2 web
+   demo shards for this exact tree. On a merged PR's push the run's `Tree already tested` job passes it
    without running them again, because the PR's head passed all of them on the same tree
    (`scripts/tested-tree.mjs`); read that job's log if you want to see which head. Step 1 runs
    typecheck and the UI tier, and nothing else: a lint error, a unit regression, a broken build, or

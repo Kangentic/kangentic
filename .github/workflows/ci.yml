@@ -48,6 +48,14 @@ env:
 # 2026-11-17 that moved two slots off E2E, whose five shards ran 2 to 3 minutes,
 # to the unit tier (216 to 330s a shard plus its gate) and the web demo.
 #
+# The UI tier came down by loading the app from a static bundle instead of the
+# Vite dev server (see its job): its tests went from 12,355 seconds a run to
+# 6,841, and a shard's test step from 282 to 754s to 190 to 345s. After that no
+# tier is far ahead: a UI shard's job takes 235 to 390s, a web demo shard 250 to
+# 340s, and a unit shard with its gate 200 to 275s. So no tier has a slot to
+# give, and the next cut is cheaper tests, a fourth UI worker measured over
+# several runs, or more runners.
+#
 # Concurrency budget. GitHub Free caps an account at 20 concurrent jobs and 5
 # concurrent macOS jobs. On a PR: UI 11 + E2E 3 + unit 3 + demo 2 = 19 shards, plus
 # `checks` and the CLA workflow (a separate workflow, so it never appears in this
@@ -62,8 +70,10 @@ env:
 # costs from under a second to 24, so the eleven windows held 799 to 1,675
 # test-seconds and the slowest one set every PR's time. scripts/ui-shard-plan.mjs
 # assigns whole spec files instead, heaviest first, each to the shard holding the
-# least, from the timings in tests/ui/shard-timings.json. On the run those timings
-# came from, every shard holds 1,123. A --test-list line that matches no file is
+# least, from the timings in tests/ui/shard-timings.json. Planned from that same
+# run, every shard held 1,123. On the bundle a shard holds about 620. The plan
+# only holds on the bundle: on the dev server a spec's cost depends on which
+# specs run beside it. A --test-list line that matches no file is
 # not an error to Playwright, so `checks` proves the plan against Playwright's own
 # listing on every PR. The demo tier keeps --shard, since nearly all of it is one
 # spec file, with weights that level its two halves (see the job). Unit and E2E
