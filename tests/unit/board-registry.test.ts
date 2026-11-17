@@ -41,6 +41,8 @@ const EXPECTED_PROVIDERS: ExternalSource[] = [
   'jira',
   'linear',
   'trello',
+  'obsidian_notes',
+  'obsidian_checklist',
 ];
 
 describe('boardRegistry', () => {
@@ -60,7 +62,7 @@ describe('boardRegistry', () => {
     }
   });
 
-  it('registers all 7 supported providers', () => {
+  it('registers every supported provider', () => {
     expect(boardRegistry.list().length).toBe(EXPECTED_PROVIDERS.length);
     for (const id of EXPECTED_PROVIDERS) {
       expect(boardRegistry.has(id)).toBe(true);
@@ -82,6 +84,8 @@ describe('boardRegistry', () => {
     expect(boardRegistry.getOrThrow('azure_devops').status).toBe('stable');
     expect(boardRegistry.getOrThrow('asana').status).toBe('stable');
     expect(boardRegistry.getOrThrow('linear').status).toBe('stable');
+    expect(boardRegistry.getOrThrow('obsidian_notes').status).toBe('stable');
+    expect(boardRegistry.getOrThrow('obsidian_checklist').status).toBe('stable');
   });
 
   it('the 2 remaining placeholder providers are status: stub', () => {

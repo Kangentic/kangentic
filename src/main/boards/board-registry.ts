@@ -8,6 +8,7 @@ import { AsanaAdapter } from './adapters/asana';
 import { JiraAdapter } from './adapters/jira';
 import { LinearAdapter } from './adapters/linear';
 import { TrelloAdapter } from './adapters/trello';
+import { ObsidianChecklistAdapter, ObsidianNotesAdapter } from './adapters/obsidian';
 import { trackFeatureUsed } from '../analytics/usage';
 import { RefusalError } from '../../shared/refusal';
 
@@ -84,3 +85,5 @@ boardRegistry.register(new AsanaAdapter());
 boardRegistry.register(new JiraAdapter());
 boardRegistry.register(new LinearAdapter());
 boardRegistry.register(new TrelloAdapter());
+boardRegistry.register(new ObsidianNotesAdapter());
+boardRegistry.register(new ObsidianChecklistAdapter());

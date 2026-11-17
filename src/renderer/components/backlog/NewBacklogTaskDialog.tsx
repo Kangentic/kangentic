@@ -21,6 +21,8 @@ import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaTyp
 import { compressClipboardImage } from '../dialogs/image-compress';
 import { formatRelativeTime } from '../../lib/datetime';
 import type { BacklogTask, BacklogTaskCreateInput, BacklogTaskUpdateInput } from '../../../shared/types';
+import { getProviderLabel } from './import-providers';
+import { isLocalNoteLink, openExternalIssueLink } from '../../utils/external-issue-link';
 
 interface PendingAttachment {
   id: string;
@@ -62,8 +64,8 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
   const { t } = useLingui();
   const isEditMode = !!editTask;
   // A provider's own name is not translated; any other source shows its raw id.
-  const sourceName = editTask?.external_source?.startsWith('github') ? 'GitHub' : editTask?.external_source; // i18n-ok: a provider's own name
-  const openInSourceLabel = t`Open in ${sourceName}`;
+  const sourceName = editTask?.external_source ? getProviderLabel(editTask.external_source) : editTask?.external_source;
+  const openInSourceLabel = editTask?.external_url && isLocalNoteLink(editTask.external_url) ? t`Open file` : t`Open in ${sourceName}`;
   const createdAgo = editTask ? formatRelativeTime(editTask.created_at) : '';
   const updatedAgo = editTask ? formatRelativeTime(editTask.updated_at) : '';
   const currentProject = useProjectStore((state) => state.currentProject);
@@ -414,7 +416,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
                 <Tooltip label={openInSourceLabel}>
                   <button
                     type="button"
-                    onClick={() => window.electronAPI.shell.openExternal(editTask.external_url!)}
+                    onClick={() => openExternalIssueLink(editTask.external_url!)}
                     className="flex-shrink-0 text-fg-faint hover:text-fg-secondary transition-colors"
                     aria-label={openInSourceLabel}
                     data-testid="backlog-task-external-link"

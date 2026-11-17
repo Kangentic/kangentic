@@ -51,11 +51,21 @@ export interface SourceTypeOption {
   value: ExternalSource;
   label: LocalizedText;
   description: LocalizedText;
-  placeholder: string;
-  hint: LocalizedText;
-  icon: React.ReactNode;
+  /** The URL field's example. Absent for a source added by folder. */
+  placeholder?: string;
+  hint?: LocalizedText;
+  /** Absent: the row shows its label and description alone. */
+  icon?: React.ReactNode;
   /** Shown in place of the URL field: the provider lists its sources and the user picks one. */
   picker?: React.ComponentType<SourcePickerProps>;
+  /**
+   * Present for a source added by choosing a folder on this computer (an
+   * Obsidian vault): picking the type opens the system folder dialog with this
+   * title, and the chosen path is the source's URL. A saved source of this type
+   * shows its path in a tooltip, and the Import dialog offers Choose folder when
+   * the folder has gone.
+   */
+  folder?: { dialogTitle: LocalizedText };
 }
 
 export interface Provider {
@@ -68,6 +78,8 @@ export interface Provider {
   auth?: ProviderAuth;
   sourceTypes: SourceTypeOption[];
 }
+
+const OBSIDIAN_FOLDER_DIALOG_TITLE = msg({ message: 'Choose a folder in your Obsidian vault', context: 'import folder dialog' });
 
 export const PROVIDERS: Provider[] = [
   {
@@ -151,7 +163,36 @@ export const PROVIDERS: Provider[] = [
       },
     ],
   },
+  {
+    id: 'obsidian',
+    label: 'Obsidian', // i18n-ok: a provider's own name
+    icon: <ArtifactPlatformLogo platformId="obsidian" size={16} />,
+    available: true,
+    sourceTypes: [
+      {
+        value: 'obsidian_notes',
+        label: msg({ message: 'Notes', context: 'import source type' }),
+        description: msg({ message: 'Each note becomes a task', context: 'import source type' }),
+        folder: { dialogTitle: OBSIDIAN_FOLDER_DIALOG_TITLE },
+      },
+      {
+        value: 'obsidian_checklist',
+        label: msg({ message: 'Checklist items', context: 'import source type' }),
+        description: msg({ message: 'Each - [ ] line becomes a task', context: 'import source type' }),
+        folder: { dialogTitle: OBSIDIAN_FOLDER_DIALOG_TITLE },
+      },
+    ],
+  },
 ];
+
+/** The source type `source` names, for its per-type behavior (a folder source's tooltip). */
+export function getSourceTypeOption(source: ExternalSource): SourceTypeOption | undefined {
+  for (const provider of PROVIDERS) {
+    const sourceType = provider.sourceTypes.find((candidate) => candidate.value === source);
+    if (sourceType) return sourceType;
+  }
+  return undefined;
+}
 
 /** The provider whose source types include `source`. */
 export function getProviderForSource(source: ExternalSource): Provider | undefined {
@@ -163,36 +204,31 @@ const SOURCE_LABEL_MESSAGE = msg({ message: '{provider} {sourceType}', context: 
 
 /** Get a human-readable label for a source type (e.g., "GitHub Issues", "Azure DevOps Work Items"). */
 export function getSourceLabel(source: ExternalSource): string {
-  for (const provider of PROVIDERS) {
-    for (const sourceType of provider.sourceTypes) {
-      if (sourceType.value === source) {
-        return translateText(SOURCE_LABEL_MESSAGE, {
-          provider: translateText(provider.label),
-          sourceType: translateText(sourceType.label),
-        });
-      }
-    }
-  }
-  return source;
+  const provider = getProviderForSource(source);
+  const sourceType = getSourceTypeOption(source);
+  if (!provider || !sourceType) return source;
+  return translateText(SOURCE_LABEL_MESSAGE, {
+    provider: translateText(provider.label),
+    sourceType: translateText(sourceType.label),
+  });
 }
 
 /** Get the provider icon for a source type. Returns the icon at its default size. */
 export function getSourceIcon(source: ExternalSource, size?: number): React.ReactNode {
-  for (const provider of PROVIDERS) {
-    for (const sourceType of provider.sourceTypes) {
-      if (sourceType.value === source) {
-        if (size !== undefined) {
-          return React.cloneElement(provider.icon as React.ReactElement<{ size: number }>, { size });
-        }
-        return provider.icon;
-      }
-    }
+  const provider = getProviderForSource(source);
+  if (!provider) return <GitHubIcon size={size ?? 18} />;
+  if (size !== undefined) {
+    return React.cloneElement(provider.icon as React.ReactElement<{ size: number }>, { size });
   }
-  return <GitHubIcon size={size ?? 18} />;
+  return provider.icon;
 }
 
-/** Get the provider's display label (e.g., "GitHub", "Azure DevOps"). */
-export function getProviderLabel(source: ExternalSource): string {
+/**
+ * Get the provider's display label (e.g., "GitHub", "Azure DevOps"). Takes any
+ * string, since a stored item's source may predate today's list; an unknown
+ * source shows its raw id.
+ */
+export function getProviderLabel(source: string): string {
   for (const provider of PROVIDERS) {
     for (const sourceType of provider.sourceTypes) {
       if (sourceType.value === source) return translateText(provider.label);

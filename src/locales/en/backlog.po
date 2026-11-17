@@ -103,6 +103,21 @@ msgstr "Cancel"
 msgid "Change color"
 msgstr "Change color"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Checklist items"
+msgstr "Checklist items"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import folder dialog"
+msgid "Choose a folder in your Obsidian vault"
+msgstr "Choose a folder in your Obsidian vault"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import error banner"
+msgid "Choose folder"
+msgstr "Choose folder"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Clear filters"
 msgstr "Clear filters"
@@ -243,6 +258,16 @@ msgstr "Discard unsaved changes?"
 msgid "Drop files here"
 msgstr "Drop files here"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each - [ ] line becomes a task"
+msgstr "Each - [ ] line becomes a task"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each note becomes a task"
+msgstr "Each note becomes a task"
+
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 msgctxt "button"
 msgid "Edit"
@@ -256,6 +281,7 @@ msgstr "Edit Backlog Task"
 msgid "Edit item"
 msgstr "Edit item"
 
+#: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgid "Failed to add source"
 msgstr "Failed to add source"
@@ -426,10 +452,20 @@ msgctxt "priority"
 msgid "None"
 msgstr "None"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Notes"
+msgstr "Notes"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgctxt "import state filter"
 msgid "Open"
 msgstr "Open"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgid "Open file"
+msgstr "Open file"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx

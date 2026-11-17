@@ -125,6 +125,21 @@ msgstr "Отмена"
 msgid "Change color"
 msgstr "Изменить цвет"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Checklist items"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import folder dialog"
+msgid "Choose a folder in your Obsidian vault"
+msgstr ""
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import error banner"
+msgid "Choose folder"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Clear filters"
@@ -297,6 +312,16 @@ msgstr "Отменить несохранённые изменения?"
 msgid "Drop files here"
 msgstr "Перетащите файлы сюда"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each - [ ] line becomes a task"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each note becomes a task"
+msgstr ""
+
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
 msgctxt "button"
@@ -313,6 +338,7 @@ msgstr "Редактирование задачи бэклога"
 msgid "Edit item"
 msgstr "Изменить элемент"
 
+#: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 #, fuzzy
 msgid "Failed to add source"
@@ -521,11 +547,21 @@ msgctxt "priority"
 msgid "None"
 msgstr "Нет"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Notes"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgctxt "import state filter"
 msgid "Open"
 msgstr "Открытые"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgid "Open file"
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx

@@ -1037,6 +1037,10 @@
   //   - window.__mockInitialExit: one session-exit push fired when sessions.onExit registers
   //   - window.__mockBoardConfigChanged: a projectId pushed when boardConfig.onChanged registers
   //   - window.__mockFolderPath: path returned by dialog.selectFolder() (consume-once)
+  //   - window.__mockSelectFolderCancel: dialog.selectFolder() answers null, as a dismissed dialog does
+  //   - window.__mockSelectFolderError: dialog.selectFolder() rejects with this message, as a dialog that fails to open does
+  //   - window.__mockImportSourcesRemoveError: backlog.importSourcesRemove() rejects with this message (the id is still recorded)
+  //   - window.__mockOpenedPaths: every path shell.openPath() was asked to open, in order
   //   - window.__mockDefaultAgentOverride: default_agent for the next project created
   //     via projects.create() or projects.openByPath(); cleared after first use
   //     (used by agent-tab-auth-warning.spec.ts to seed projects with kimi/opencode/etc.)
@@ -4856,7 +4860,12 @@
       getDefault: async function () {
         return 'bash';
       },
-      openPath: async function () {
+      openPath: async function (targetPath) {
+        // Test hook: record window.__mockOpenedPaths; '' is success, as in Electron.
+        if (typeof window !== 'undefined') {
+          window.__mockOpenedPaths = window.__mockOpenedPaths || [];
+          window.__mockOpenedPaths.push(targetPath);
+        }
         return '';
       },
       openExternal: async function () {
@@ -5286,10 +5295,15 @@
     },
 
     dialog: {
-      // options is accepted to match the real API surface (title, message,
-      // buttonLabel, defaultPath) but ignored: the mock always returns the
-      // fixture path, dialog chrome or not.
-      selectFolder: async function (_options) {
+      // options matches the real API surface (title, message, buttonLabel,
+      // defaultPath). The mock records it and returns the fixture path, dialog
+      // chrome or not.
+      selectFolder: async function (options) {
+        // Tests read window.__mockSelectFolderLastOptions, and set
+        // window.__mockSelectFolderCancel to answer as a dismissed dialog does.
+        window.__mockSelectFolderLastOptions = options || null;
+        if (window.__mockSelectFolderError) throw new Error(window.__mockSelectFolderError);
+        if (window.__mockSelectFolderCancel) return null;
         var override = window.__mockFolderPath;
         if (override) {
           window.__mockFolderPath = null;
@@ -5567,11 +5581,13 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
-      importCheckCli: async function (source) {
+      importCheckCli: async function (source, repository) {
         // Tests seed window.__mockImportCheckCli with a result object (or a map of
-        // source -> result) to show the dialog's error banner.
+        // source -> result, or of repository -> result for a source that can go
+        // missing) to show the dialog's error banner.
         var checkPreset = (typeof window !== 'undefined' && window.__mockImportCheckCli) || null;
         if (checkPreset && typeof checkPreset.available === 'boolean') return checkPreset;
+        if (checkPreset && repository && checkPreset[repository]) return checkPreset[repository];
         if (checkPreset && checkPreset[source]) return checkPreset[source];
         return { available: true, authenticated: true };
       },
@@ -5648,6 +5664,21 @@
         return [];
       },
       importSourcesAdd: async function (input) {
+        // Tests read window.__mockImportSourcesAddCalls, and seed
+        // window.__mockImportSourcesAddError with a message to refuse the add the
+        // way main's URL parser does.
+        if (typeof window !== 'undefined') {
+          if (!window.__mockImportSourcesAddCalls) window.__mockImportSourcesAddCalls = [];
+          window.__mockImportSourcesAddCalls.push(input);
+          if (window.__mockImportSourcesAddError) throw new Error(window.__mockImportSourcesAddError);
+          // Like main, adding a folder that is already saved answers the saved source
+          // (same id) instead of a new one. Reads window.__mockImportSourcesPreset.
+          var savedSources = Array.isArray(window.__mockImportSourcesPreset) ? window.__mockImportSourcesPreset : [];
+          var alreadySaved = savedSources.find(function (saved) {
+            return saved.source === input.source && saved.repository === input.url;
+          });
+          if (alreadySaved) return alreadySaved;
+        }
         return {
           id: 'import-src-' + Date.now(),
           source: input.source,
@@ -5657,7 +5688,14 @@
           createdAt: new Date().toISOString(),
         };
       },
-      importSourcesRemove: async function (/* id */) {},
+      importSourcesRemove: async function (id) {
+        // Tests read window.__mockImportSourcesRemoved.
+        if (typeof window !== 'undefined') {
+          if (!window.__mockImportSourcesRemoved) window.__mockImportSourcesRemoved = [];
+          window.__mockImportSourcesRemoved.push(id);
+          if (window.__mockImportSourcesRemoveError) throw new Error(window.__mockImportSourcesRemoveError);
+        }
+      },
       asana: (function () {
         // Stateful mock. Tests can override via window.__mockAsanaPreset;
         // preset values are read on every call so tests can inject after

@@ -115,7 +115,7 @@ sources:
 ## Backlog Import (7 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `backlog:importCheckCli` | invoke | Check if the CLI tool for a source is available and authenticated. An optional saved `repository` lets a folder source report a folder that moved |
+| `backlog:importCheckCli` | invoke | Check that a source can be read: its CLI and sign-in, or for a folder source (Obsidian) that the folder exists and is inside a vault. An optional saved `repository` lets a folder source report a folder that moved |
 | `backlog:importGetCached` | invoke | Read the persistent remote-item cache for a source (no network), for an instant dialog paint |
 | `backlog:importReconcile` | invoke | Fetch items changed since the cache high-water mark, merge and prune, and return the merged set |
 | `backlog:importExecute` | invoke | Import selected items into the backlog, hydrating deferred per-item detail (e.g. Azure DevOps comments) and downloading attachments |

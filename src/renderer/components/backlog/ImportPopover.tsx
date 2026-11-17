@@ -5,11 +5,12 @@ import { translateText } from '../../i18n/translate';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
-import { PROVIDERS, getSourceLabel, getSourceIcon } from './import-providers';
+import { PROVIDERS, getSourceLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
 import type { ImportSource } from '../../../shared/types';
 import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
 import { reportRendererFailure } from '../../utils/renderer-failure';
+import { describeIpcError } from '../../lib/ipc-error';
 
 interface ImportPopoverProps {
   onOpenImportDialog: (source: ImportSource) => void;
@@ -200,20 +201,42 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   };
 
   const handleSelectSourceType = (sourceType: SourceTypeOption) => {
+    if (sourceType.folder) {
+      void handlePickFolder(sourceType);
+      return;
+    }
     setSelectedSourceType(sourceType);
     setAddPhase('url');
   };
 
-  /** Add the source at `url`: the typed URL, or the one a source picker hands over. */
-  const handleConnect = async (pickedUrl?: string) => {
+  /**
+   * A source added by folder skips the URL step: the system folder dialog opens
+   * at once, and the chosen folder is added. A cancel leaves the source types up.
+   */
+  const handlePickFolder = async (sourceType: SourceTypeOption) => {
+    if (!sourceType.folder || loading) return;
+    setError(null);
+    let folder: string | null;
+    try {
+      folder = await window.electronAPI.dialog.selectFolder({ title: translateText(sourceType.folder.dialogTitle) });
+    } catch (pickError) {
+      reportRendererFailure('backlog', 'import-select-folder', pickError);
+      return;
+    }
+    if (folder) await handleConnect(folder, sourceType);
+  };
+
+  /** Add the source at `url`: the typed URL, or the one a source picker or folder dialog hands over. */
+  const handleConnect = async (pickedUrl?: string, pickedSourceType?: SourceTypeOption) => {
     const sourceUrl = (pickedUrl ?? newSourceUrl).trim();
-    if (!sourceUrl || !selectedSourceType || loading) return;
+    const sourceType = pickedSourceType ?? selectedSourceType;
+    if (!sourceUrl || !sourceType || loading) return;
     setLoading(true);
     setError(null);
 
     try {
       // Check CLI availability first
-      const cliStatus = await window.electronAPI.backlog.importCheckCli(selectedSourceType.value);
+      const cliStatus = await window.electronAPI.backlog.importCheckCli(sourceType.value);
       if (!cliStatus.available || !cliStatus.authenticated) {
         setError(cliStatus.error ?? t`CLI not available or not authenticated`);
         setLoading(false);
@@ -221,7 +244,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
       }
 
       const source = await window.electronAPI.backlog.importSourcesAdd({
-        source: selectedSourceType.value,
+        source: sourceType.value,
         url: sourceUrl,
       });
 
@@ -230,7 +253,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
       setOpen(false);
       onOpenImportDialog(source);
     } catch (addError: unknown) {
-      setError(addError instanceof Error ? addError.message : t`Failed to add source`);
+      setError(describeIpcError(addError, t`Failed to add source`));
     } finally {
       setLoading(false);
     }
@@ -307,7 +330,9 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                 >
                   <span className="w-5 flex justify-center text-fg-muted shrink-0">{getSourceIcon(source.source)}</span>
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm text-fg truncate block">{source.label}</span>
+                    <Tooltip label={getSourceTypeOption(source.source)?.folder ? source.url : ''}>
+                      <span className="text-sm text-fg truncate block">{source.label}</span>
+                    </Tooltip>
                     <span className="text-[11px] text-fg-faint">{getSourceLabel(source.source)}</span>
                   </div>
                   <button
@@ -372,19 +397,24 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                   key={sourceType.value}
                   type="button"
                   onClick={() => handleSelectSourceType(sourceType)}
-                  className="flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-hover/40 transition-colors"
+                  disabled={loading}
+                  className="flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-hover/40 transition-colors disabled:opacity-50"
+                  data-testid={`import-source-type-${sourceType.value}`}
                 >
-                  <span className="w-5 flex justify-center text-fg-muted shrink-0">{sourceType.icon}</span>
+                  {sourceType.icon && <span className="w-5 flex justify-center text-fg-muted shrink-0">{sourceType.icon}</span>}
                   <div className="flex-1 min-w-0">
                     <span className="text-sm text-fg">{translateText(sourceType.label)}</span>
-                    <span className="text-[11px] text-fg-faint block">{translateText(sourceType.description)}</span>
+                    <span className="text-[11px] text-fg-faint block truncate">{translateText(sourceType.description)}</span>
                   </div>
                 </button>
               ))}
+              {error && (
+                <p className="px-3 py-2 border-t border-edge/50 text-xs text-danger break-words" data-testid="import-source-error">{error}</p>
+              )}
               <div className="px-3 py-2 border-t border-edge/50">
                 <button
                   type="button"
-                  onClick={() => { setAddPhase('provider'); setSelectedProvider(null); }}
+                  onClick={() => { setAddPhase('provider'); setSelectedProvider(null); setError(null); }}
                   className="flex items-center gap-1 text-xs text-fg-faint hover:text-fg transition-colors"
                 >
                   <ArrowLeft size={12} />
@@ -427,7 +457,9 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                 className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted px-2.5 py-1.5 outline-none focus:border-edge-input mb-1"
                 data-testid="import-source-url-input"
               />
-              <p className="text-[11px] text-fg-faint mb-2">{translateText(selectedSourceType.hint)}</p>
+              {selectedSourceType.hint && (
+                <p className="text-[11px] text-fg-faint mb-2">{translateText(selectedSourceType.hint)}</p>
+              )}
               {error && (
                 <p className="text-xs text-danger mb-2" data-testid="import-source-error">{error}</p>
               )}

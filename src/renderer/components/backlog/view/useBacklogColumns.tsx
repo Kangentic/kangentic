@@ -9,6 +9,8 @@ import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { PriorityBadge } from '../PriorityBadge';
 import { stripMarkdown } from '../../../utils/strip-markdown';
 import type { BacklogTask } from '../../../../shared/types';
+import { getProviderLabel } from '../import-providers';
+import { isLocalNoteLink, openExternalIssueLink } from '../../../utils/external-issue-link';
 import type { useBoardStore } from '../../../stores/board-store';
 import { BacklogRowActions } from './BacklogRowActions';
 
@@ -46,9 +48,10 @@ export function useBacklogColumns(input: {
 
   // `t` is in the memo's deps so the headers and tips follow the session's catalog.
   return useMemo(() => {
-    const openInSourceLabel = (externalSource: string | null | undefined): string => {
+    const openInSourceLabel = (externalSource: string | null | undefined, externalUrl: string): string => {
+      if (isLocalNoteLink(externalUrl)) return t`Open file`;
       // A provider's own name, so it is not translated; any other source shows its raw id.
-      const sourceName = externalSource?.startsWith('github') ? 'GitHub' : externalSource; // i18n-ok: a provider's own name
+      const sourceName = externalSource ? getProviderLabel(externalSource) : externalSource;
       return t`Open in ${sourceName}`;
     };
     return [
@@ -96,15 +99,15 @@ export function useBacklogColumns(input: {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             {item.external_source && item.external_url && (
-              <Tooltip label={openInSourceLabel(item.external_source)}>
+              <Tooltip label={openInSourceLabel(item.external_source, item.external_url)}>
                 <button
                   type="button"
                   className="shrink-0 text-fg-faint hover:text-fg transition-colors"
                   onClick={(event) => {
                     event.stopPropagation();
-                    window.electronAPI.shell.openExternal(item.external_url!);
+                    openExternalIssueLink(item.external_url!);
                   }}
-                  aria-label={openInSourceLabel(item.external_source)}
+                  aria-label={openInSourceLabel(item.external_source, item.external_url)}
                 >
                   {item.external_source?.startsWith('github') ? <GitHubIcon size={13} /> : <ExternalLink size={13} />}
                 </button>

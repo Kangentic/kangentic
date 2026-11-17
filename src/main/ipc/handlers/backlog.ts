@@ -463,12 +463,12 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
   // --- Import handlers ---
 
-  ipcMain.handle(IPC.BACKLOG_IMPORT_CHECK_CLI, async (_, source: ExternalSource) => {
+  ipcMain.handle(IPC.BACKLOG_IMPORT_CHECK_CLI, async (_, source: ExternalSource, repository?: string) => {
     const adapter = boardRegistry.get(source);
     if (!adapter) {
       return { available: false, authenticated: false, error: `Unsupported source: ${source}` };
     }
-    return adapter.checkCli();
+    return adapter.checkCli(typeof repository === 'string' ? repository : undefined);
   });
 
   // Paint instantly from the persistent cache, no network. alreadyImported is

@@ -125,6 +125,21 @@ msgstr "취소"
 msgid "Change color"
 msgstr "색상 변경"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Checklist items"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import folder dialog"
+msgid "Choose a folder in your Obsidian vault"
+msgstr ""
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import error banner"
+msgid "Choose folder"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Clear filters"
@@ -297,6 +312,16 @@ msgstr "저장되지 않은 변경 사항을 삭제할까요?"
 msgid "Drop files here"
 msgstr "여기에 파일 놓기"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each - [ ] line becomes a task"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each note becomes a task"
+msgstr ""
+
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
 msgctxt "button"
@@ -313,6 +338,7 @@ msgstr "백로그 작업 편집"
 msgid "Edit item"
 msgstr "항목 편집"
 
+#: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 #, fuzzy
 msgid "Failed to add source"
@@ -521,11 +547,21 @@ msgctxt "priority"
 msgid "None"
 msgstr "없음"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Notes"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgctxt "import state filter"
 msgid "Open"
 msgstr "열림"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgid "Open file"
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx

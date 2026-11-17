@@ -110,7 +110,7 @@ WSL users install the Windows version and can pick a WSL distro as the terminal 
 ## How it works
 
 1. **Configure your board.** Keep the default columns or reshape them, and pick the agent and permission mode each one runs.
-2. **Create a task.** Give it a title and a prompt, or import one from GitHub Issues, GitHub Projects, Azure DevOps, Asana, or Linear.
+2. **Create a task.** Give it a title and a prompt, or import one from GitHub Issues, GitHub Projects, Azure DevOps, Asana, Linear, or an Obsidian vault.
 3. **Drag to run.** Kangentic creates the worktree, applies the column's permission mode, and starts the agent.
 4. **Watch it code.** Follow the agent in its live terminal, answer when it asks, and drag the card on when it is done.
 

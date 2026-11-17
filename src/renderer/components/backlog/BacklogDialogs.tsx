@@ -125,8 +125,11 @@ export function BacklogDialogs() {
 
       {importSource && (
         <ImportDialog
+          // A source swapped for its moved folder (Choose folder) opens as a fresh dialog.
+          key={importSource.id}
           source={importSource}
           onClose={handleCloseImport}
+          onSourceReplaced={setImportSource}
         />
       )}
     </>
