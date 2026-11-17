@@ -59,7 +59,15 @@ export async function downloadFile(
           resolve(null);
           return;
         }
-        const redirectUrl = response.headers.location;
+        // A relative Location (`/secure/attachment/1/a.png`) is on the same site,
+        // so it resolves against the URL that answered before anything compares it.
+        let redirectUrl: string;
+        try {
+          redirectUrl = new URL(response.headers.location, url).toString();
+        } catch { // report-ok: a Location that does not parse names nowhere to follow, so the file is counted as skipped
+          resolve(null);
+          return;
+        }
         let redirectOptions = options;
         if (options?.headers && !redirectKeepsSignIn(url, redirectUrl)) {
           const filteredHeaders = Object.fromEntries(

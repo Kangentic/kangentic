@@ -65,6 +65,13 @@ describe('formatCommentsSection', () => {
     expect(section.match(/^### Unknown - /gm)).toHaveLength(2);
   });
 
+  it('gives a comment with no createdAt a bare author heading, never Invalid Date', () => {
+    const section = formatCommentsSection([{ author: 'Ada', createdAt: '', html: '<p>hello</p>' }]);
+    const headings = section.split('\n').filter((line) => line.startsWith('### '));
+    expect(headings).toEqual(['### Ada']);
+    expect(section).not.toContain('Invalid Date');
+  });
+
   it('renders a Comments heading, then each comment as an author heading over its Markdown body', () => {
     const section = formatCommentsSection([
       { author: ' Ada ', createdAt: '2026-11-12T15:07:00.000Z', html: '<p>hello <strong>there</strong></p>' },

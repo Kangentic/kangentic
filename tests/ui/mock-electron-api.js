@@ -1126,6 +1126,8 @@
   //   - window.__mockAsanaPreset: { state: { connected, email }, invalidToken, email }
   //   - window.__mockJiraPreset: { sites: { 'acme.atlassian.net': { method, email, username, account } },
   //       deployments: { host: 'cloud' | 'datacenter' }, rejectSecret, connectResult }
+  //   - window.__mockJiraConnectHook: function (input) { return promise | undefined; } holds jira.connect
+  //       until the returned promise settles (see __mockJiraDetectSiteHook for detectSite).
   var mockBoardAuth = {
     asana: { connected: false, email: undefined },
     jiraSites: {},
@@ -1137,7 +1139,8 @@
       var value = typeof text === 'string' ? text.trim() : '';
       if (value.indexOf('::') >= 0) value = value.slice(0, value.indexOf('::'));
       if (!value) return '';
-      var looksLikeLink = /^https?:\/\//i.test(value) || (!/\s/.test(value) && /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/|$)/i.test(value));
+      // Matches the adapter's own rule: a dotted host, or a dotless one with a port or `localhost`.
+      var looksLikeLink = /^https?:\/\//i.test(value) || (!/\s/.test(value) && /^(?:[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?|[a-z0-9-]+:\d+|localhost)(\/|$)/i.test(value));
       if (!looksLikeLink) return '';
       return value.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
     },
@@ -5775,10 +5778,21 @@
             if (held) await held;
           }
           var host = mockBoardAuth.jiraHost(siteOrUrl);
-          return { site: 'https://' + host, deployment: mockBoardAuth.jiraDeployment(host) };
+          var deployment = mockBoardAuth.jiraDeployment(host);
+          // A typed http:// is kept for Data Center and dropped for Cloud, as normalizeSiteBase does.
+          var scheme = deployment === 'datacenter' && /^http:\/\//i.test(String(siteOrUrl).trim()) ? 'http://' : 'https://';
+          return { site: scheme + host, deployment: deployment };
         },
         connect: async function (input) {
           if (typeof window !== 'undefined') window.__lastJiraConnectInput = input;
+          // A test can hold a Connect with
+          // window.__mockJiraConnectHook = function (input) { return promise | undefined; }.
+          // A returned promise is awaited before the result is computed, so the test decides when it lands.
+          var connectHook = typeof window !== 'undefined' && window.__mockJiraConnectHook;
+          if (typeof connectHook === 'function') {
+            var heldConnect = connectHook(input);
+            if (heldConnect) await heldConnect;
+          }
           var preset = mockBoardAuth.jiraPreset();
           var host = mockBoardAuth.jiraHost(input && input.site);
           if (preset.connectResult) return preset.connectResult;

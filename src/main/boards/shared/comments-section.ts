@@ -18,7 +18,8 @@ export function formatCommentsSection(comments: ImportedComment[]): string {
   const lines = ['## Comments', ''];
   for (const comment of comments) {
     const author = comment.author?.trim() || 'Unknown';
-    lines.push(`### ${author} - ${formatCommentDate(comment.createdAt)}`);
+    const date = formatCommentDate(comment.createdAt);
+    lines.push(date ? `### ${author} - ${date}` : `### ${author}`);
     lines.push('');
     lines.push(convertHtmlToMarkdown(comment.html));
     lines.push('');
@@ -26,17 +27,18 @@ export function formatCommentsSection(comments: ImportedComment[]): string {
   return lines.join('\n').trim();
 }
 
-/** Format an ISO date string for comment display. */
+/**
+ * Format an ISO date string for comment display. A date that does not parse
+ * (a comment Jira sent with no `created`) shows as sent, which may be empty.
+ */
 function formatCommentDate(isoDate: string): string {
-  try {
-    return new Date(isoDate).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch { // report-ok: a date the provider sent malformed shows as sent; nothing else depends on it
-    return isoDate;
-  }
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) return isoDate.trim();
+  return parsed.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

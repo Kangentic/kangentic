@@ -22,4 +22,3 @@ export { encryptSecret, decryptSecret, isGenuineEncryptionAvailable } from './au
 export { withBackoff, sleep } from './rate-limit';
 export { convertHtmlToMarkdown } from './html-to-markdown';
 export { formatCommentsSection } from './comments-section';
-export type { ImportedComment } from './comments-section';

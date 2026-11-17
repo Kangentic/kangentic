@@ -32,11 +32,10 @@ function readableSite(site: string): string {
 }
 
 /**
- * Connect Jira. Opens on the site a link
- * named, asks the site whether it runs Cloud or Data Center, and shows that
- * deployment's ways in: Data Center offers a personal access token or a
- * password as two equal choices; Cloud opens straight on the API token steps
- * until its browser sign-in ships, so Back is hidden there.
+ * Connect Jira. Opens on the site a link named, asks the site whether it runs
+ * Cloud or Data Center, and shows that deployment's ways in: Data Center offers
+ * a personal access token or a password as two equal choices; Cloud has one way
+ * in, the API token steps, so Back is hidden there.
  */
 export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: ProviderSetupDialogProps) {
   const { t } = useLingui();
@@ -54,9 +53,15 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<Extract<JiraConnectResult, { ok: false }> | null>(null);
   const detectedSiteRef = useRef<string | null>(null);
+  // A Connect still running when the user cancels must not carry the add on once it lands.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-  // Ask the site which Jira it runs, then show that deployment's ways in. A
-  // Reopened for a rejected token (prefill carries a method), it opens the method last used.
+  // Ask the site which Jira it runs, then show that deployment's ways in. A dialog
+  // reopened for a rejected token (prefill carries a method) opens the method last used.
   const applyDetection = (typed: string, detected: JiraDetectSiteResult, openedOnSite: boolean) => {
     if (detectedSiteRef.current !== typed) return;
     setSiteBase(detected.site);
@@ -122,6 +127,7 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
         username: method === 'password' ? username : undefined,
         secret,
       });
+      if (!mountedRef.current) return;
       if (result.ok) {
         onSaved();
         return;
@@ -129,9 +135,9 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
       setFailure(result);
     } catch (error) {
       reportRendererFailure('jira-connect', 'connect', error);
-      setFailure({ ok: false, code: 'unreachable', site: readableSite(site) });
+      if (mountedRef.current) setFailure({ ok: false, code: 'unreachable', site: readableSite(site) });
     } finally {
-      setSubmitting(false);
+      if (mountedRef.current) setSubmitting(false);
     }
   };
 
@@ -182,6 +188,13 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
 
   const errorLine = failure ? failureLine(failure.code, failure.site, failure.detail) : reopenReason;
 
+  const fieldsFooter = (
+    <>
+      <ConnectFootnote />
+      <ConnectError message={errorLine} testId="jira-connect-error" />
+    </>
+  );
+
   const stepsFor = (selected: TokenMethod): ConnectStep[] | null => {
     if (selected === 'api-token') {
       return [
@@ -214,8 +227,7 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
                 testId="jira-connect-email-input"
               />
               {secretField(t`API token`, t`Paste your token`)}
-              <ConnectFootnote />
-              <ConnectError message={errorLine} testId="jira-connect-error" />
+              {fieldsFooter}
             </>
           ),
         },
@@ -245,8 +257,7 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
             <>
               {siteField}
               {secretField(t`Personal access token`, t`Paste your token`)}
-              <ConnectFootnote />
-              <ConnectError message={errorLine} testId="jira-connect-error" />
+              {fieldsFooter}
             </>
           ),
         },
@@ -306,8 +317,7 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
           testId="jira-connect-username-input"
         />
         {secretField(t`Password`, t`Your Jira password`)}
-        <ConnectFootnote />
-        <ConnectError message={errorLine} testId="jira-connect-error" />
+        {fieldsFooter}
       </div>
     );
   })();

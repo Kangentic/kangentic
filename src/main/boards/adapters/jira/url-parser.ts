@@ -5,7 +5,7 @@ import { siteBaseFromUrl } from './site';
  * What a Jira source reads: a board's issues, a project's issues, a saved
  * filter's results, or a JQL query's results.
  */
-export type JiraSourceKind = 'board' | 'project' | 'filter' | 'jql';
+type JiraSourceKind ='board' | 'project' | 'filter' | 'jql';
 
 export interface JiraSourceRef {
   /**
@@ -55,11 +55,13 @@ const PROJECT_KEY = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 /**
  * True for text that is a link rather than JQL: it starts with a scheme, or it
- * is a host with a path and no spaces (`acme.atlassian.net/browse/ENG`).
+ * is a host with a path and no spaces (`acme.atlassian.net/browse/ENG`). A host
+ * with no dot counts when it has a port or is `localhost`, as a Data Center
+ * site on a company network often is (`jira:8080/browse/ENG`).
  */
 function looksLikeLink(text: string): boolean {
   if (/^https?:\/\//i.test(text)) return true;
-  return !/\s/.test(text) && /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?\//i.test(text);
+  return !/\s/.test(text) && /^(?:[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?|[a-z0-9-]+:\d+|localhost)\//i.test(text);
 }
 
 /**

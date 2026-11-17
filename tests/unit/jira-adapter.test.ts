@@ -22,7 +22,8 @@ vi.mock('../../src/main/boards/shared/download-file', async () => {
 });
 
 import { JiraAdapter } from '../../src/main/boards/adapters/jira/adapter';
-import { JiraClient } from '../../src/main/boards/adapters/jira/client';
+import { JiraClient, JiraHttpError } from '../../src/main/boards/adapters/jira/client';
+import { RefusalError } from '../../src/shared/refusal';
 import { connectJiraSite } from '../../src/main/boards/adapters/jira/ipc-handlers';
 import { mapJiraIssues, type JiraIssueRaw } from '../../src/main/boards/adapters/jira/mapper';
 import type { JiraSiteCredential } from '../../src/main/boards/adapters/jira/credential-store';
@@ -782,6 +783,126 @@ describe('connectJiraSite failure branches', () => {
     expect(await connectJiraSite({ site: CLOUD, method: 'api-token', email: 'dana@acme.example', secret: 'bad' }, fetchImpl, save))
       .toEqual({ ok: false, code: 'rejected', site: 'acme.atlassian.net' });
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe('Cloud search page with a cursor and no isLast', () => {
+  const repository = `${CLOUD}::jql::project = ENG`;
+  const route: Route = (url) => (url.searchParams.get('nextPageToken') === 'page-2'
+    ? { body: { issues: [{ ...ISSUE, id: '10002', key: 'ENG-143' }] } }
+    : { body: { issues: [ISSUE], nextPageToken: 'page-2' } });
+
+  it('fetch reports hasNextPage: a token with no isLast is not the last page', async () => {
+    const { adapter } = adapterWith({ [CLOUD]: credential() }, route);
+    const first = await adapter.fetch({ source: 'jira', repository, page: 1, perPage: 100 }, findNone);
+    expect(first.hasNextPage).toBe(true);
+    const second = await adapter.fetch({ source: 'jira', repository, page: 2, perPage: 100 }, findNone);
+    expect(second.hasNextPage).toBe(false);
+    expect(second.issues[0].displayId).toBe('ENG-143');
+  });
+
+  it('listExternalIds requests the second page and returns the ids of both', async () => {
+    const { adapter, calls } = adapterWith({ [CLOUD]: credential() }, route);
+    const ids = await adapter.listExternalIds({ source: 'jira', repository });
+    expect(ids).toEqual(['10001', '10002']);
+    expect(calls.map((call) => call.url.searchParams.get('nextPageToken'))).toEqual([null, 'page-2']);
+  });
+});
+
+describe('JiraAdapter.getAuthStatus with text that names no source', () => {
+  it('rejects with the parse refusal for link-shaped text that names no Jira source', async () => {
+    const { adapter } = adapterWith({ [CLOUD]: credential() }, () => undefined);
+    const rejection = adapter.getAuthStatus('https://acme.atlassian.net/wiki/spaces/X');
+    await expect(rejection).rejects.toBeInstanceOf(RefusalError);
+    await expect(rejection).rejects.toThrow("That link doesn't name a Jira board, project, filter or search.");
+  });
+
+  it('answers none with no target and no saved site', async () => {
+    const { adapter } = adapterWith({}, () => undefined);
+    expect(await adapter.getAuthStatus()).toEqual({ connected: false, reason: 'none' });
+    expect(await adapter.getAuthStatus('   ')).toEqual({ connected: false, reason: 'none' });
+  });
+
+  it('answers none for typed JQL when no site is saved', async () => {
+    const { adapter } = adapterWith({}, () => undefined);
+    expect(await adapter.getAuthStatus('assignee = currentUser()')).toEqual({ connected: false, reason: 'none' });
+  });
+});
+
+describe('JiraClient retries and non-JSON answers', () => {
+  it('waits the 429 Retry-After before the second attempt and returns its answer', async () => {
+    let attempt = 0;
+    const { fetchImpl, calls } = stubFetch(() => {
+      attempt += 1;
+      return attempt === 1
+        ? { status: 429, body: {}, headers: { 'retry-after': '1' } }
+        : { body: { accountId: 'abc' } };
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const pending = new JiraClient(credential(), fetchImpl).myself();
+      // The default backoff would retry after 500 ms; Retry-After: 1 asks for 1000 ms.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(calls).toHaveLength(2);
+      expect(await pending).toEqual({ accountId: 'abc' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a 200 whose body is an HTML page with a JiraHttpError carrying status 200', async () => {
+    const { fetchImpl } = stubFetch(() => ({ body: '<html><body>Sign in</body></html>' }));
+    const failure = await new JiraClient(credential(), fetchImpl).myself().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(JiraHttpError);
+    expect((failure as JiraHttpError).status).toBe(200);
+  });
+});
+
+describe('connectJiraSite remaining branches', () => {
+  const serverInfo = (deploymentType: string): StubResponse => ({ body: { deploymentType } });
+
+  it('reports a 200 HTML answer from /myself as unreachable with no detail', async () => {
+    const save = vi.fn(async () => {});
+    const { fetchImpl } = stubFetch((url) => (url.pathname.endsWith('/serverInfo')
+      ? serverInfo('Server')
+      : { body: '<html>SSO sign-in</html>' }));
+    const result = await connectJiraSite({ site: DATA_CENTER, method: 'pat', secret: 'token' }, fetchImpl, save);
+    expect(result).toEqual({ ok: false, code: 'unreachable', site: 'jira.example.com' });
+    expect(result).not.toHaveProperty('detail');
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown method as invalid', async () => {
+    const save = vi.fn(async () => {});
+    const { fetchImpl, calls } = stubFetch(() => undefined);
+    const input = { site: DATA_CENTER, method: 'oauth', secret: 'token' } as unknown as Parameters<typeof connectJiraSite>[0];
+    expect(await connectJiraSite(input, fetchImpl, save)).toEqual({ ok: false, code: 'invalid' });
+    expect(calls).toHaveLength(0);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('refuses a site that is not a site as invalid, without calling out', async () => {
+    const save = vi.fn(async () => {});
+    const { fetchImpl, calls } = stubFetch(() => undefined);
+    expect(await connectJiraSite({ site: 'not a site', method: 'pat', secret: 'token' }, fetchImpl, save))
+      .toEqual({ ok: false, code: 'invalid' });
+    expect(calls).toHaveLength(0);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('names the account from /myself: emailAddress, else name, else displayName', async () => {
+    const accountFor = async (myself: Record<string, string>) => {
+      const save = vi.fn(async () => {});
+      const { fetchImpl } = stubFetch((url) => (url.pathname.endsWith('/serverInfo') ? serverInfo('Server') : { body: myself }));
+      const result = await connectJiraSite({ site: DATA_CENTER, method: 'pat', secret: 'token' }, fetchImpl, save);
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ account: (result as { account: string }).account }));
+      return (result as { account: string }).account;
+    };
+    expect(await accountFor({ emailAddress: 'dana@acme.example', name: 'dpark', displayName: 'Dana Park' })).toBe('dana@acme.example');
+    expect(await accountFor({ name: 'dpark', displayName: 'Dana Park' })).toBe('dpark');
+    expect(await accountFor({ displayName: 'Dana Park' })).toBe('Dana Park');
   });
 });
 

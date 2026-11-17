@@ -56,6 +56,7 @@ vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({ withTaskLock: vi.fn()
 interface FakeAdapter {
   prepareSource?: ReturnType<typeof vi.fn>;
   resolveLabel?: ReturnType<typeof vi.fn>;
+  checkCli?: ReturnType<typeof vi.fn>;
 }
 
 let registeredAdapter: FakeAdapter | undefined;
@@ -106,6 +107,28 @@ beforeEach(() => {
   capturedHandlers.clear();
   registeredAdapter = {};
   registerBacklogHandlers(context);
+});
+
+describe('BACKLOG_IMPORT_CHECK_CLI repository forwarding', () => {
+  it('forwards a string repository to the adapter checkCli', async () => {
+    const checkCli = vi.fn(async () => ({ available: true, authenticated: true }));
+    registeredAdapter = { checkCli };
+
+    await handlerFor(IPC.BACKLOG_IMPORT_CHECK_CLI)(null, 'jira', 'https://acme.atlassian.net::project::ENG');
+
+    expect(checkCli).toHaveBeenCalledWith('https://acme.atlassian.net::project::ENG');
+  });
+
+  it('passes undefined when the repository is absent or not a string', async () => {
+    const checkCli = vi.fn(async () => ({ available: true, authenticated: true }));
+    registeredAdapter = { checkCli };
+
+    await handlerFor(IPC.BACKLOG_IMPORT_CHECK_CLI)(null, 'jira');
+    await handlerFor(IPC.BACKLOG_IMPORT_CHECK_CLI)(null, 'jira', 42);
+
+    expect(checkCli).toHaveBeenNthCalledWith(1, undefined);
+    expect(checkCli).toHaveBeenNthCalledWith(2, undefined);
+  });
 });
 
 describe('BACKLOG_IMPORT_SOURCES_ADD with a validating adapter', () => {

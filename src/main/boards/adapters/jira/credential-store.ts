@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import type { JiraConnectMethod, JiraDeployment } from '../../../../shared/types';
 import { PATHS } from '../../../config/paths';
@@ -83,6 +84,22 @@ export async function loadJiraCredentials(): Promise<Record<string, JiraSiteCred
 }
 
 /**
+ * The saved sign-ins a save starts from. A file that is there but cannot be read
+ * (the OS keychain refused the decrypt, the file is damaged) reads as no sites,
+ * and writing one site over it would sign every other site out for good, so it
+ * is copied aside first. A failed copy fails the save, and the file stays as it was.
+ */
+async function loadSitesForSave(): Promise<Record<string, JiraSiteCredential>> {
+  const file = credentialFile();
+  const read = await readEncryptedSecretFile(file, parseStored);
+  if (read) return read.value.sites;
+  if (fs.existsSync(file.filePath)) {
+    await fs.promises.copyFile(file.filePath, `${file.filePath}.unreadable-${Date.now()}`);
+  }
+  return {};
+}
+
+/**
  * Saves run one at a time. Each one reads the whole file, changes one site and
  * writes it back, so two overlapping connects would otherwise each drop the
  * other's site.
@@ -92,7 +109,7 @@ let saveChain: Promise<void> = Promise.resolve();
 /** Save or replace the sign-in for one site. */
 export function saveJiraCredential(credential: JiraSiteCredential): Promise<void> {
   const save = saveChain.then(async () => {
-    const sites = await loadJiraCredentials();
+    const sites = await loadSitesForSave();
     sites[credential.site] = credential;
     await writeEncryptedSecretFile(credentialFile(), JSON.stringify({ sites } satisfies StoredCredentials));
   });

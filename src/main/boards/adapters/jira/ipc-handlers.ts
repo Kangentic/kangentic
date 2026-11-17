@@ -44,8 +44,9 @@ function networkCode(error: unknown): string | undefined {
 /**
  * Check a credential against the site and save it when Jira accepts it. Every
  * failure Jira or the network explains is a code the renderer turns into its
- * line, so the dialog keeps what was typed. Anything else (an answer that is not
- * Jira's JSON) is thrown for the IPC wrap to report. Exported for tests.
+ * line, so the dialog keeps what was typed. A page that is not Jira's JSON (a
+ * proxy's sign-in page) reads as unreachable. Anything else is thrown for the IPC
+ * wrap to report. Exported for tests.
  */
 export async function connectJiraSite(
   input: JiraConnectInput,
@@ -105,11 +106,14 @@ export async function connectJiraSite(
     if (deployment === 'cloud' && method === 'api-token' && (error.status === 401 || error.status === 404)) {
       const viaGateway = await tryGateway(credential, fetchImpl);
       if (viaGateway) {
-        await save({ ...viaGateway.credential, account: viaGateway.myself.emailAddress || email });
-        return { ok: true, site: label, account: viaGateway.myself.emailAddress || email };
+        const gatewayAccount = viaGateway.myself.emailAddress || email;
+        await save({ ...viaGateway.credential, account: gatewayAccount });
+        return { ok: true, site: label, account: gatewayAccount };
       }
     }
     if (error.status === 401 || error.status === 403) return { ok: false, code: 'rejected', site: label };
+    // A 2xx here is a page that is not Jira's JSON, and its status explains nothing.
+    if (error.status < 300) return { ok: false, code: 'unreachable', site: label };
     return { ok: false, code: 'unreachable', site: label, detail: String(error.status) };
   }
 
