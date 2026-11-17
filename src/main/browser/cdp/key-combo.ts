@@ -74,13 +74,18 @@ const US_PUNCTUATION_KEYS: Record<string, { code: string; vk: number }> = {
  * own there (a shifted symbol, non-Latin text) gets no `code` rather than an
  * invented one: `Key1`, or "Key" plus a backtick, is a code no real keyboard
  * ever sends, and a handler matching `event.code` never fired on it.
+ *
+ * Such a character gets no virtual-key code either. Its character code is not
+ * one: below 48 it lands on a navigation key (`!` is 33, VK_PRIOR; `(` is 40,
+ * VK_DOWN), so `Ctrl+(` pressed Down. `typeText` had the same bug for every
+ * `.` it typed.
  */
-export function chordKeyIdentity(character: string): { code?: string; vk: number } {
+export function chordKeyIdentity(character: string): { code?: string; vk?: number } {
   const upper = character.toUpperCase();
   if (/^[A-Z]$/.test(upper)) return { code: `Key${upper}`, vk: upper.charCodeAt(0) };
   if (/^[0-9]$/.test(character)) return { code: `Digit${character}`, vk: character.charCodeAt(0) };
   if (Object.hasOwn(US_PUNCTUATION_KEYS, character)) return US_PUNCTUATION_KEYS[character];
-  return { vk: upper.charCodeAt(0) };
+  return {};
 }
 
 export const MODIFIER_FLAGS: Record<string, number> = {

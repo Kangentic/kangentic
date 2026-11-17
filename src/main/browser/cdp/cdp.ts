@@ -1778,10 +1778,16 @@ export async function typeText(webContents: WebContents, text: string): Promise<
  * `key` / `code` / `windowsVirtualKeyCode` for a printable character, so a
  * page's `keydown` handler sees a plausible event rather than an empty one.
  *
- * Only letters, digits, and Enter get a real `code`; everything else (symbols,
- * punctuation, non-Latin text) carries `key` and the uppercased char code, which
- * is what matters to handlers keying off `event.key`. A full physical-layout map
- * would be a lie for any non-US keyboard, so it is deliberately not attempted.
+ * Only letters, digits, and Enter get a real `code`. Everything else (symbols,
+ * punctuation, non-Latin text) carries `key` alone, which is what handlers keying
+ * off `event.key` read. A full physical-layout map would be a lie for any non-US
+ * keyboard, so it is deliberately not attempted.
+ *
+ * NEVER derive a virtual-key code from the character code of punctuation. The
+ * two only coincide for letters, digits and space; below 48 they land on
+ * navigation keys (`.` is 46, VK_DELETE; `-` is 45, VK_INSERT; `(` is 40,
+ * VK_DOWN), and Chromium honored those over the text: every `.` in a typed URL
+ * or email arrived as Delete and inserted nothing.
  */
 function printableKeyIdentity(character: string): {
   key: string;
@@ -1801,7 +1807,8 @@ function printableKeyIdentity(character: string): {
   if (character >= '0' && character <= '9') {
     return { key: character, code: `Digit${character}`, windowsVirtualKeyCode: character.charCodeAt(0) };
   }
-  return { key: character, windowsVirtualKeyCode: upper.charCodeAt(0) };
+  if (character === ' ') return { key: ' ', code: 'Space', windowsVirtualKeyCode: 32 };
+  return { key: character };
 }
 
 /**
@@ -1877,7 +1884,7 @@ export async function dispatchKeypress(
       type: 'keyDown',
       key,
       ...(code ? { code } : {}),
-      windowsVirtualKeyCode: vk,
+      ...(vk !== undefined ? { windowsVirtualKeyCode: vk } : {}),
       modifiers: modifierFlags,
       // On the keyDown, never on a separate `char`: see `typeText`.
       ...(shiftedText ? { text: shiftedText, unmodifiedText: shiftedText } : {}),
@@ -1886,7 +1893,7 @@ export async function dispatchKeypress(
       type: 'keyUp',
       key,
       ...(code ? { code } : {}),
-      windowsVirtualKeyCode: vk,
+      ...(vk !== undefined ? { windowsVirtualKeyCode: vk } : {}),
       modifiers: modifierFlags,
     });
     return true;

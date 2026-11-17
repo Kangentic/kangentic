@@ -101,6 +101,7 @@ msgctxt "import filter"
 msgid "Assignee"
 msgstr "Исполнитель"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 #, fuzzy
 msgctxt "button"
@@ -112,6 +113,7 @@ msgstr "Назад"
 msgid "Backlog is empty"
 msgstr "Бэклог пуст"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 #, fuzzy
@@ -186,6 +188,7 @@ msgstr "Скоро"
 msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
 msgstr "{detailUnavailableCount, plural, one {комментарии недоступны для # элемента} few {комментарии недоступны для # элементов} many {комментарии недоступны для # элементов} other {комментарии недоступны для # элемента}}"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 #, fuzzy
 msgid "Connect"
@@ -359,6 +362,10 @@ msgstr "Файл слишком большой"
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "Фильтр по ID, названию, метке или исполнителю..."
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+msgid "Hide"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Hide imported items"
@@ -391,6 +398,11 @@ msgstr "Ошибка импорта"
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "Импорт с доски GitHub Project"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a Jira board, project, filter or search"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -570,6 +582,15 @@ msgid "Open in {sourceName}"
 msgstr "Открыть в {sourceName}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste a Jira link, or type JQL."
+msgstr ""
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Paste a search link so the site is known."
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"
 msgid "Paste any Asana project URL (list, board, or calendar view)."
@@ -657,6 +678,11 @@ msgstr "Сохранить"
 msgid "Select all"
 msgstr "Выбрать все"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Show"
+msgstr "Показать"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Show imported items"
@@ -667,6 +693,11 @@ msgstr "Показать импортированные"
 msgctxt "import filter"
 msgid "Status"
 msgstr "Статус"
+
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Stored encrypted in your OS keychain."
+msgstr "Хранится в зашифрованном виде в связке ключей ОС."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy

@@ -457,6 +457,11 @@ export const IPC = {
   BACKLOG_IMPORT_SOURCES_ADD: 'backlog:importSourcesAdd',
   BACKLOG_IMPORT_SOURCES_REMOVE: 'backlog:importSourcesRemove',
 
+  // Board Auth - Jira
+  BOARDS_JIRA_AUTH_STATUS: 'boards:jira:authStatus',
+  BOARDS_JIRA_DETECT_SITE: 'boards:jira:detectSite',
+  BOARDS_JIRA_CONNECT: 'boards:jira:connect',
+
   // Board Auth - Asana
   BOARDS_ASANA_AUTH_STATUS: 'boards:asana:authStatus',
   BOARDS_ASANA_SET_PAT: 'boards:asana:setPat',

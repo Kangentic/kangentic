@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Backlog
-description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana and Linear items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
+description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira and Linear items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
 tags: [backlog, import, labels, priorities]
 sources:
   - resource: src/renderer/components/backlog/
@@ -65,6 +65,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **GitHub Projects** - import items from a GitHub Project board
 - **Azure DevOps Work Items** - import work items from Azure DevOps boards, sprints, or backlogs
 - **Asana** - import tasks from an Asana project (its list, board, or calendar view URL)
+- **Jira** - import issues from a Jira Cloud or Data Center board, project, saved filter, or JQL query
 - **Linear** - import issues from a Linear team, picked from a list of your teams
 - **Obsidian Notes** - import each note in a folder of an Obsidian vault as a task
 - **Obsidian Checklist items** - import each task line in a folder's notes (`- [ ]`, and the done, in-progress and cancelled marks) as a task
@@ -73,6 +74,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
 - **Azure DevOps:** The `az` CLI must be installed, authenticated (`az login`), and the azure-devops extension installed (`az extension add --name azure-devops`).
 - **Asana:** a Personal Access Token, created at `app.asana.com/0/my-apps`. The first time you pick Asana, a setup dialog asks for it, checks it against Asana, and stores it encrypted on this machine.
+- **Jira:** a sign-in for the site, asked for the first time a link names it. **Connect Jira** asks the site whether it runs Cloud or Data Center. Jira Cloud takes your Atlassian email and an API token (created at `id.atlassian.com`; a token with scopes works too, and needs the Jira Software board scopes to read boards). Jira Data Center offers two ways in: a personal access token from your Jira profile, or your username and password. The sign-in is checked against Jira and stored encrypted on this machine, one per site.
 - **Linear:** the first time you pick Linear, **Connect Linear** asks for a personal API key. Create
   one in Linear under Settings > Account > Security & Access (Read access is enough), paste it, and
   Kangentic checks it against Linear and stores it encrypted on this machine. A build that carries a
@@ -84,9 +86,9 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub, Azure DevOps, Asana, Linear, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). Linear lists your teams instead: click one. A team you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
-4. Click **Connect** - Kangentic verifies CLI authentication and saves the source
+2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. Linear lists your teams instead: click one. A team you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
+4. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it.
 5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
 
 An Obsidian vault is the folder that holds `.obsidian`. Choose a folder inside one and Kangentic
@@ -95,10 +97,10 @@ the vault, then the folder (`Work: Projects`), and its row's tooltip shows the f
 in no vault is refused with "Not in a vault" and nothing is saved. To import both notes and
 checklist items from one vault, add it twice, once with each type.
 
-If a saved sign-in stops working (a revoked Asana token or Linear key, or a Linear sign-in that
-lapsed), the import dialog's error banner carries a **Connect Asana** or **Connect Linear** button.
-It reopens the setup dialog, and once the new credential works the dialog syncs. If an Obsidian
-source's folder moved, its drive is gone, or it is no longer inside a vault, the banner says
+If a saved sign-in stops working (a revoked Asana token, Jira token or Linear key, or a Linear
+sign-in that lapsed), the import dialog's error banner carries a **Connect Asana**, **Connect
+Jira** or **Connect Linear** button. It reopens the setup dialog, with a Jira site and email filled
+in again, and once the new credential works the dialog syncs. If an Obsidian source's folder moved, its drive is gone, or it is no longer inside a vault, the banner says
 "Folder not found" or "Not in a vault" and carries **Choose folder**, which saves the new folder in
 the old source's place. Items already imported still read as imported. Choosing the same folder
 again checks it again in place.
@@ -127,6 +129,12 @@ states in the order its board shows them. An imported Linear issue keeps its pri
 project's scale still has a level of the same name (Urgent, High, Medium or Low). With no priority
 in Linear, or no level of that name in the project, it imports at the bottom level. Its project, cycle, estimate and due date go into a **Linear** section at
 the end of the description.
+
+Jira issues show their keys (`ENG-142`) in the dialog, and for a board source the row's status and
+the Status filter use the board's own column names, in board order. A Jira or Azure DevOps item
+also brings its comments, its type and its due date. A Jira priority matches your priority scale by
+name the same way, and Jira's Highest and Lowest, which no stock scale has, take the top level and
+Low.
 
 ### What an Obsidian note or item becomes
 

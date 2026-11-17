@@ -47,11 +47,17 @@ export class ImportSourceStore {
     return config.importSources ?? [];
   }
 
-  add(source: ExternalSource, url: string): ImportSource {
+  /**
+   * Save a source, or return the one already saved for the same repository.
+   * `prepared` carries what a validating provider (`BoardAdapter.prepareSource`)
+   * resolved: the label it read from the remote, and a repository it completed
+   * (typed JQL gains its site).
+   */
+  add(source: ExternalSource, url: string, prepared?: { label: string; repository: string }): ImportSource {
     const config = this.readConfig();
     const sources = config.importSources ?? [];
 
-    const { repository } = parseUrlForSource(source, url);
+    const repository = prepared?.repository ?? parseUrlForSource(source, url).repository;
 
     const existing = sources.find(
       (existingSource) => existingSource.source === source && existingSource.repository === repository,
@@ -61,10 +67,11 @@ export class ImportSourceStore {
     }
 
     const parser = urlParsers.get(source);
+    const fallbackLabel = parser ? parser.buildLabel(repository) : repository;
     const newSource: ImportSource = {
       id: uuidv4(),
       source,
-      label: parser ? parser.buildLabel(repository) : repository,
+      label: prepared?.label.trim() || fallbackLabel,
       repository,
       url,
       createdAt: new Date().toISOString(),

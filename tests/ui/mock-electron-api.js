@@ -1120,6 +1120,59 @@
     listeners.forEach(function (fn) { fn(projectId, taskId); });
   };
 
+  // Board sign-ins (Asana, Jira), answered by each provider's own authStatus and
+  // changed by its connect call. Presets are read on every call so a spec can set
+  // them after the mock loads:
+  //   - window.__mockAsanaPreset: { state: { connected, email }, invalidToken, email }
+  //   - window.__mockJiraPreset: { sites: { 'acme.atlassian.net': { method, email, username, account } },
+  //       deployments: { host: 'cloud' | 'datacenter' }, rejectSecret, connectResult }
+  var mockBoardAuth = {
+    asana: { connected: false, email: undefined },
+    jiraSites: {},
+    jiraPreset: function () {
+      return (typeof window !== 'undefined' && window.__mockJiraPreset) || {};
+    },
+    // The host a site field, a link or a saved repository names ('' for typed JQL).
+    jiraHost: function (text) {
+      var value = typeof text === 'string' ? text.trim() : '';
+      if (value.indexOf('::') >= 0) value = value.slice(0, value.indexOf('::'));
+      if (!value) return '';
+      var looksLikeLink = /^https?:\/\//i.test(value) || (!/\s/.test(value) && /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/|$)/i.test(value));
+      if (!looksLikeLink) return '';
+      return value.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
+    },
+    jiraDeployment: function (host) {
+      var deployments = mockBoardAuth.jiraPreset().deployments || {};
+      if (deployments[host]) return deployments[host];
+      return /\.atlassian\.net$/.test(host) ? 'cloud' : 'datacenter';
+    },
+    jiraConnected: function () {
+      return Object.assign({}, mockBoardAuth.jiraPreset().sites || {}, mockBoardAuth.jiraSites);
+    },
+    jiraStatus: function (target) {
+      var sites = mockBoardAuth.jiraConnected();
+      var hosts = Object.keys(sites);
+      var host = mockBoardAuth.jiraHost(target);
+      var statusFor = function (siteHost) {
+        var saved = sites[siteHost];
+        return {
+          connected: true,
+          site: 'https://' + siteHost,
+          account: saved.account,
+          prefill: { site: siteHost, method: saved.method, email: saved.email, username: saved.username },
+        };
+      };
+      if (!target || !String(target).trim()) return hosts.length > 0 ? { connected: true } : { connected: false, reason: 'none' };
+      if (!host) {
+        if (hosts.length === 1) return statusFor(hosts[0]);
+        if (hosts.length === 0) return { connected: false, reason: 'none' };
+        return { connected: false, reason: 'ambiguous-site' };
+      }
+      if (!sites[host]) return { connected: false, reason: 'none', site: 'https://' + host, prefill: { site: host } };
+      return statusFor(host);
+    },
+  };
+
   window.electronAPI = {
     projects: {
       list: async function () {
@@ -5584,11 +5637,18 @@
       importCheckCli: async function (source, repository) {
         // Tests seed window.__mockImportCheckCli with a result object (or a map of
         // source -> result, or of repository -> result for a source that can go
-        // missing) to show the dialog's error banner.
+        // missing) to show the dialog's error banner, or with
+        // function (source, repository) { return {...}; } to answer per saved
+        // source (a per-site provider, Jira, is checked against its repository).
         var checkPreset = (typeof window !== 'undefined' && window.__mockImportCheckCli) || null;
-        if (checkPreset && typeof checkPreset.available === 'boolean') return checkPreset;
-        if (checkPreset && repository && checkPreset[repository]) return checkPreset[repository];
-        if (checkPreset && checkPreset[source]) return checkPreset[source];
+        if (typeof checkPreset === 'function') {
+          var answer = checkPreset(source, repository);
+          if (answer) return answer;
+        } else {
+          if (checkPreset && typeof checkPreset.available === 'boolean') return checkPreset;
+          if (checkPreset && repository && checkPreset[repository]) return checkPreset[repository];
+          if (checkPreset && checkPreset[source]) return checkPreset[source];
+        }
         return { available: true, authenticated: true };
       },
       importGetCached: async function (input) {
@@ -5664,13 +5724,18 @@
         return [];
       },
       importSourcesAdd: async function (input) {
-        // Tests read window.__mockImportSourcesAddCalls, and seed
-        // window.__mockImportSourcesAddError with a message to refuse the add the
-        // way main's URL parser does.
+        // Tests read window.__mockImportSourcesAddCalls (and the last input as
+        // window.__lastImportSourcesAddInput), and seed
+        // window.__mockImportSourcesAddError with the line main would refuse the
+        // add with. It arrives decorated the way Electron decorates a rejection
+        // from main, so the UI's own stripping is what makes the line readable.
         if (typeof window !== 'undefined') {
           if (!window.__mockImportSourcesAddCalls) window.__mockImportSourcesAddCalls = [];
           window.__mockImportSourcesAddCalls.push(input);
-          if (window.__mockImportSourcesAddError) throw new Error(window.__mockImportSourcesAddError);
+          window.__lastImportSourcesAddInput = input;
+          if (window.__mockImportSourcesAddError) {
+            throw new Error("Error invoking remote method 'backlog:importSourcesAdd': RefusalError: " + window.__mockImportSourcesAddError);
+          }
           // Like main, adding a folder that is already saved answers the saved source
           // (same id) instead of a new one. Reads window.__mockImportSourcesPreset.
           var savedSources = Array.isArray(window.__mockImportSourcesPreset) ? window.__mockImportSourcesPreset : [];
@@ -5696,14 +5761,40 @@
           if (window.__mockImportSourcesRemoveError) throw new Error(window.__mockImportSourcesRemoveError);
         }
       },
+      jira: {
+        authStatus: async function (target) {
+          return mockBoardAuth.jiraStatus(target);
+        },
+        detectSite: async function (siteOrUrl) {
+          // A test can watch or hold a detection with
+          // window.__mockJiraDetectSiteHook = function (siteOrUrl) { return promise | undefined; }.
+          // A returned promise is awaited, so it can resolve late or reject.
+          var detectHook = typeof window !== 'undefined' && window.__mockJiraDetectSiteHook;
+          if (typeof detectHook === 'function') {
+            var held = detectHook(siteOrUrl);
+            if (held) await held;
+          }
+          var host = mockBoardAuth.jiraHost(siteOrUrl);
+          return { site: 'https://' + host, deployment: mockBoardAuth.jiraDeployment(host) };
+        },
+        connect: async function (input) {
+          if (typeof window !== 'undefined') window.__lastJiraConnectInput = input;
+          var preset = mockBoardAuth.jiraPreset();
+          var host = mockBoardAuth.jiraHost(input && input.site);
+          if (preset.connectResult) return preset.connectResult;
+          var secret = input && typeof input.secret === 'string' ? input.secret.trim() : '';
+          if (!host || !secret) return { ok: false, code: 'invalid' };
+          if (preset.rejectSecret && secret === preset.rejectSecret) return { ok: false, code: 'rejected', site: host };
+          var account = input.method === 'api-token' ? input.email : input.method === 'password' ? input.username : 'mock-user';
+          mockBoardAuth.jiraSites[host] = { method: input.method, email: input.email, username: input.username, account: account };
+          return { ok: true, site: host, account: account };
+        },
+      },
       asana: (function () {
         // Stateful mock. Tests can override via window.__mockAsanaPreset;
         // preset values are read on every call so tests can inject after
         // the mock loads (addInitScript runs before, page.evaluate after).
-        const state = {
-          connected: false,
-          email: undefined,
-        };
+        const state = mockBoardAuth.asana;
         function preset() {
           return (typeof window !== 'undefined' && window.__mockAsanaPreset) || {};
         }

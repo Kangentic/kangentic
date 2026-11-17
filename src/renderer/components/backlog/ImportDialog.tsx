@@ -16,7 +16,7 @@ import { getProviderForSource, getProviderLabel, getSourceIcon, getSourceTypeOpt
 import { translateText } from '../../i18n/translate';
 import { reportRendererFailure } from '../../utils/renderer-failure';
 import { describeIpcError } from '../../lib/ipc-error';
-import type { ExternalIssue, ImportSource } from '../../../shared/types';
+import type { BoardConnectPrefill, ExternalIssue, ImportSource } from '../../../shared/types';
 
 interface ImportDialogProps {
   source: ImportSource;
@@ -127,6 +127,8 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
   // The provider's Connect dialog, opened from the error banner when the saved
   // sign-in no longer works (a revoked key, an expired sign-in).
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  // What Connect fills in again, for a provider whose sign-in belongs to a site (Jira's site and email).
+  const [setupDialogPrefill, setSetupDialogPrefill] = useState<BoardConnectPrefill | undefined>(undefined);
   const providerAuth = getProviderForSource(source.source)?.auth;
   // A source added by folder (an Obsidian vault) whose folder can move away.
   const folderSource = getSourceTypeOption(source.source)?.folder;
@@ -183,20 +185,36 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       setIssues(sortByCreatedDesc(result.issues));
     } catch (reconcileError: unknown) {
       if (fetchSequenceRef.current !== token) return;
-      setError(reconcileError instanceof Error ? reconcileError.message : t`Failed to sync issues`);
+      setError(describeIpcError(reconcileError, t`Failed to sync issues`));
+      // A sign-in that stopped working mid-session (a token revoked since the
+      // open) fails the sync, not the open's check: ask again, so the banner
+      // offers Connect instead of a Retry that would fail the same way.
+      if (providerAuth) {
+        try {
+          const cli = await window.electronAPI.backlog.importCheckCli(source.source, source.repository);
+          if (fetchSequenceRef.current === token && cli.available && !cli.authenticated) {
+            setError(null);
+            setCliError(cli.error ?? t`CLI not available`);
+          }
+        } catch (checkError) {
+          reportRendererFailure('backlog', 'import-recheck-sign-in', checkError);
+        }
+      }
     } finally {
       if (fetchSequenceRef.current === token) {
         setSyncing(false);
         setLoading(false);
       }
     }
-  }, [source.source, source.repository, t]);
+  }, [source.source, source.repository, t, providerAuth]);
 
   // Check the CLI or sign-in, then reconcile once `afterCache` (the cached paint)
   // has landed, so the reconcile's result never races ahead of it and gets
   // overwritten by a slower cache read. A failed check shows the error banner.
   const checkThenReconcile = useCallback((afterCache: Promise<unknown>) => {
     const token = fetchSequenceRef.current;
+    // The repository scopes the check for a provider whose sign-ins are per site (Jira),
+    // and lets a folder source (an Obsidian vault) say its folder moved.
     window.electronAPI.backlog.importCheckCli(source.source, source.repository).then(async (cli) => {
       if (fetchSequenceRef.current !== token) return;
       if (!cli.available || !cli.authenticated) {
@@ -272,6 +290,21 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       reportRendererFailure('backlog', 'import-remove-replaced-source', removeError);
     }
     onSourceReplaced?.(replacement);
+  };
+
+  // Open the provider's Connect from the banner. A sign-in that belongs to a site
+  // (Jira) reopens with that site and the email or username filled in.
+  const openSetupDialog = async () => {
+    let prefill: BoardConnectPrefill | undefined;
+    if (providerAuth?.checksPastedLink) {
+      try {
+        prefill = (await providerAuth.getStatus(source.repository)).prefill;
+      } catch (statusError) {
+        reportRendererFailure('backlog', 'import-connect-prefill', statusError);
+      }
+    }
+    setSetupDialogPrefill(prefill);
+    setSetupDialogOpen(true);
   };
 
   // After the banner's Connect saved a working credential: check again and sync.
@@ -452,6 +485,8 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
           assignee: issue.assignee,
           fileAttachments: issue.fileAttachments,
           priority: issue.priority,
+          itemType: issue.workItemType,
+          dueDate: issue.dueDate,
         })),
       });
 
@@ -668,7 +703,7 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
             {providerAuth && (
               <button
                 type="button"
-                onClick={() => setSetupDialogOpen(true)}
+                onClick={() => void openSetupDialog()}
                 className="shrink-0 px-3 py-1 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors whitespace-nowrap"
                 data-testid="import-connect-provider-btn"
               >
@@ -813,6 +848,7 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
         onClose={() => setSetupDialogOpen(false)}
         onSaved={handleReconnected}
         initialError={cliError}
+        prefill={setupDialogPrefill}
       />
     )}
     </>

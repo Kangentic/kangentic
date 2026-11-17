@@ -14,10 +14,19 @@ export function priorityScaleFrom(priorities: PriorityScale | undefined): Priori
  * import uses it to land a provider's "High" on the project's own "High" while a
  * project that renamed its levels imports at the bottom rather than at a guess.
  * `name` arrives over IPC, so anything but a string also imports at the bottom.
+ *
+ * Two names no stock scale carries still land: "Highest" on the top level and
+ * "Lowest" on the lowest level above the bottom (Jira's defaults include both).
+ * A level the scale names wins over either, and a one-level scale never yields
+ * a level it lacks.
  */
-export function priorityIndexForName(name: unknown, scale: PriorityScale): number {
-  if (typeof name !== 'string' || name.length === 0) return 0;
+export function priorityIndexForName(name: unknown, scale: ReadonlyArray<{ label: string }>): number {
+  if (typeof name !== 'string') return 0;
   const wanted = name.trim().toLowerCase();
+  if (wanted.length === 0 || scale.length === 0) return 0;
   const index = scale.findIndex((entry) => entry.label.trim().toLowerCase() === wanted);
-  return index === -1 ? 0 : index;
+  if (index !== -1) return index;
+  if (wanted === 'highest') return scale.length - 1;
+  if (wanted === 'lowest') return scale.length > 1 ? 1 : 0;
+  return 0;
 }

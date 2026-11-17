@@ -91,6 +91,31 @@ describe('call sites on an unwritable config directory', () => {
     expect(notifications).toHaveLength(1);
   });
 
+  it('saveJiraCredential does not throw and notifies the "jira_credential" source once', async () => {
+    const { setSyncWriteFailureNotifier, __resetForTest } = await import(
+      '../../src/main/config/write-failure-notice'
+    );
+    __resetForTest();
+    const notifications: string[] = [];
+    setSyncWriteFailureNotifier((message) => notifications.push(message));
+
+    const { saveJiraCredential } = await import('../../src/main/boards/adapters/jira/credential-store');
+
+    await expect(
+      saveJiraCredential({
+        site: 'https://acme.atlassian.net',
+        deployment: 'cloud',
+        method: 'api-token',
+        email: 'dev@example.com',
+        secret: 'token-value',
+        account: 'dev@example.com',
+        savedAt: new Date().toISOString(),
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(notifications).toHaveLength(1);
+  });
+
   it('loadOrCreateBridgeIdentity does not throw generating a fresh identity and notifies the "mobile_bridge_identity" source once', async () => {
     const { setSyncWriteFailureNotifier, __resetForTest } = await import(
       '../../src/main/config/write-failure-notice'

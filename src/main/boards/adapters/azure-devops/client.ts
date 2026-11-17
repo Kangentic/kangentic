@@ -2,7 +2,8 @@ import which from 'which';
 import { execFileAsync } from '../../../utility-process/off-main-exec';
 import type { ExternalIssue } from '../../../../shared/types';
 import { extractInlineImageUrls } from '../../shared';
-import { convertHtmlToMarkdown } from './html-to-markdown';
+import { convertHtmlToMarkdown } from '../../shared/html-to-markdown';
+import { formatCommentsSection as formatSharedCommentsSection } from '../../shared/comments-section';
 import { AZURE_CLOSED_STATES, buildWiqlQuery, buildWorkItemIdsWiql } from './wiql';
 import { RefusalError } from '../../../../shared/refusal';
 
@@ -1116,35 +1117,12 @@ function resolveAssignee(value: string | { displayName: string; uniqueName: stri
   return null;
 }
 
-/** Format work item comments as a markdown section. */
+/** Format work item comments as the shared markdown Comments section. */
 function formatCommentsSection(comments: AzureDevOpsComment[]): string {
-  const lines = ['## Comments', ''];
-
-  for (const comment of comments) {
-    const author = comment.createdBy?.displayName ?? 'Unknown';
-    const date = formatCommentDate(comment.createdDate);
-    lines.push(`### ${author} - ${date}`);
-    lines.push('');
-    lines.push(convertHtmlToMarkdown(comment.text));
-    lines.push('');
-  }
-
-  return lines.join('\n').trim();
-}
-
-/** Format an ISO date string for comment display. */
-function formatCommentDate(isoDate: string): string {
-  try {
-    const date = new Date(isoDate);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return isoDate;
-  }
+  return formatSharedCommentsSection(comments.map((comment) => ({
+    author: comment.createdBy?.displayName ?? null,
+    createdAt: comment.createdDate,
+    html: comment.text,
+  })));
 }
 

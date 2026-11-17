@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana and Linear and notes from an Obsidian vault, the Jira and Trello stubs, safeStorage async-API behavior for stored credentials, Linear's API key and OAuth sign-in, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira and Linear and notes from an Obsidian vault, the Trello stub, safeStorage async-API behavior for stored credentials, Jira's per-site sign-ins, Linear's API key and OAuth sign-in, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -13,7 +13,7 @@ sources:
 ---
 # Board integration
 
-Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Linear), and notes and checklist items from an Obsidian vault, into the backlog, and is being extended to two more providers (Jira, Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
+Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear), and notes and checklist items from an Obsidian vault, into the backlog, and is being extended to one more provider (Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
 This doc covers the adapter system and how to add a new board provider.
 
@@ -29,13 +29,15 @@ src/main/boards/
     download-file.ts
     rate-limit.ts
     source-store.ts
+    html-to-markdown.ts  # rich-text HTML to Markdown (ADO descriptions, Jira's rendered HTML)
+    comments-section.ts  # the "## Comments" section ADO and Jira fold in at import
   adapters/
     github-common/    # shared `gh` CLI client (not a BoardAdapter)
     github-issues/
     github-projects/
     azure-devops/
     asana/            # Personal Access Token auth, dedicated IPC group
-    jira/             # stub
+    jira/             # Cloud and Data Center; per-site sign-ins, dedicated IPC group
     linear/           # API key or OAuth sign-in, GraphQL client, dedicated IPC group
     obsidian/         # a vault on this computer: two source types, added by folder
     trello/           # stub
@@ -55,8 +57,10 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `displayName` | yes | Human-readable product name shown in the settings UI |
 | `icon` | yes | lucide-react icon name for the picker |
 | `status` | yes | `'stable'` for working providers, `'stub'` for placeholder folders. IPC handlers short-circuit stubs before dispatch. |
-| `checkPrerequisites()` | yes | Structured check of CLI availability + auth state. Returns `{ cliOk, authOk, message? }`. |
-| `checkCli(repository?)` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. The Import dialog passes the saved source's `repository` (`importCheckCli(source, repository)`), so a provider whose source can disappear on its own says so before the list loads; Obsidian answers "Folder not found" here. Providers that check only a CLI or a sign-in ignore it. |
+| `checkPrerequisites(repository?)` | yes | Structured check of CLI availability + auth state. Returns `{ cliOk, authOk, message? }`. `repository` scopes the check for a provider whose sign-ins are per site (Jira); others ignore it. |
+| `checkCli(repository?)` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. The Import dialog passes the saved source's `repository` (`importCheckCli(source, repository)`), so a provider whose sign-ins are per site (Jira) checks the right one, and one whose source can disappear on its own says so before the list loads (Obsidian answers "Folder not found" here). An `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect. Providers that check only a CLI ignore the repository. |
+| `prepareSource(repository)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. Implemented by Jira; other providers keep `resolveLabel`. |
+| `workItemTypeIsItemType` | optional | True when `ExternalIssue.workItemType` is the item's type, so the import stores it as the backlog item's type. Set by Azure DevOps and Jira; Asana uses the field for its section and leaves it off. |
 | `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. |
 | `hydrateForImport(repository, issues)` | optional | Fetch deferred per-item detail for the SELECTED import set and fold it into each body, called at import time only. Lets a provider keep the list fetch cheap. Implemented by Azure DevOps to fetch work item comments (one `az rest` per item) for just the items being imported instead of every listed one. |
 | `listExternalIds(input)` | optional | Cheap, id-only listing of every current remote item, used by the reconcile to prune cache rows the remote no longer has. Implemented by Azure DevOps as an ids-only WIQL, and by Obsidian as a vault walk that shares the fetch's read (see Obsidian below). Providers without a cheap listing omit it; their deletions clear on a full reconcile, which the reconcile escalates to on its own once their cache goes a day without one. An empty result must mean the remote genuinely has no items, so an adapter that cannot answer THROWS rather than returning `[]`: the reconcile prunes against whatever this resolves to, and an empty list claims the remote is empty. |
@@ -68,7 +72,7 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
 | `pushUpdates(tasks, credentials)` | optional | Future: write task updates back to the remote. |
 
-Not every adapter honours `input.since`. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause, Linear to an inclusive `updatedAt: { gte }` issue filter, and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana, GitHub Projects and Obsidian ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
+Not every adapter honours `input.since`. Jira adds `updated >= "yyyy/MM/dd HH:mm"` to the source's JQL (before any `ORDER BY`), formatted in the signed-in user's Jira time zone from `/myself` and rewound five minutes, because JQL compares to the minute and Cloud's search is eventually consistent. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause, Linear to an inclusive `updatedAt: { gte }` issue filter, and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana, GitHub Projects and Obsidian ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
 
 ### `FileAttachmentRef`
 
@@ -83,7 +87,7 @@ Reference to an attachment to download. Defined in `src/shared/types.ts`:
 
 ### `Credentials`
 
-Opaque per-adapter credential bag (`Record<string, string>`). Each adapter's `auth.ts` owns serialization. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Linear stores either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), Jira stores `{email, apiToken}`, Trello stores `{apiKey, userToken}`. Keep adapter-specific shapes inside each adapter folder.
+Opaque per-adapter credential bag (`Record<string, string>`). Each adapter owns its own stored shape. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Asana one Personal Access Token, Linear either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), and Jira one sign-in per site (`jira/credential-store.ts`: the site's base URL, Cloud or Data Center, the method, an email or username, the secret, and for a scoped Cloud token its `cloudId` and `viaGateway`). Keep adapter-specific shapes inside each adapter folder.
 
 ### `safeStorage` semantics
 
@@ -115,7 +119,7 @@ under `src/` calls it; `tests/unit/boards-auth.test.ts` fails if anything does.
   when no encryption is available). Credentials older builds wrote through the sync API read
   through the async one. `decryptSecret` reports when a blob should be written again: a key
   rotation, or plaintext once genuine encryption exists.
-- The Asana and Linear stores and the mobile bridge identity all store their secret through
+- The Asana, Jira and Linear stores and the mobile bridge identity all store their secret through
   `shared/encrypted-secret-file.ts` (`readEncryptedSecretFile`, `writeEncryptedSecretFile`,
   `rewriteEncryptedSecretFile`). The read reports `shouldRewrite`, and each store calls the rewrite
   on load when it is set; the identity also requires `isGenuineEncryptionAvailable()` first, the
@@ -147,7 +151,9 @@ The registry is a singleton populated at module import time. Adapters self-regis
 
 Backlog Import group (7 channels): `backlog:importCheckCli`, `backlog:importGetCached`, `backlog:importReconcile`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. The fetch/import channels dispatch through `boardRegistry.requireStable(source)` in `src/main/ipc/handlers/backlog.ts`. `importGetCached` reads the per-project `remote_item_cache` table with no network; `importReconcile` fetches only items changed since the cache high-water mark, merges them, and auto-prunes items the remote no longer has.
 
-Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
+A provider that signs in through Kangentic declares `Provider.auth` in `import-providers.tsx`: a `getStatus` that asks its own `boards:<provider>:authStatus` channel, and the `SetupDialog` that connects it. The Add Source popover asks `getStatus` when an account-wide provider is picked (Asana, Linear). Jira's sign-ins are per site, so it sets `checksPastedLink`: the popover asks with the pasted link when Connect is clicked, shows "Paste a search link so the site is known." for typed JQL with several sites connected, and continues the add once the dialog saves. The Import dialog's error banner offers the same dialog as a Connect button, prefilled with Jira's site and email.
+
+Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle, Jira a `boards:jira:*` group (3 channels: `authStatus`, which takes the pasted link because sign-ins are per site; `detectSite`, which normalizes a site and asks its anonymous `serverInfo` whether it runs Cloud or Data Center; and `connect`, which checks a credential against `/myself` and saves it, returning an error code the renderer turns into its line), and Linear its `boards:linear:*` group. Handlers live in each adapter's `ipc-handlers.ts` and are registered from the backlog handler. Keeping the surface adapter-local means provider specifics never leak into the generic backlog handler.
 
 Linear ships a `boards:linear:*` group (6 channels: `authStatus`, `setApiKey`, `signIn`, `reopenSignIn`, `cancelSignIn`, `listTeams`), registered by `registerLinearIpcHandlers()` the same way. The renderer reaches either group only through its provider's `auth` entry in `import-providers.tsx` (`getStatus` plus a `SetupDialog`), so the popover and the Import dialog's **Connect** button never branch on a provider name.
 
@@ -241,13 +247,13 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | GitHub Projects | stable | `gh` | Projects v2 via `gh project item-list`. Requires `project` scope. |
 | Azure DevOps | stable | `az` | Work items via `az boards`. Requires `azure-devops` extension. |
 | Asana | stable | none | Personal Access Token. User creates the token at `app.asana.com/0/my-apps`, pastes it into the setup dialog; the token is validated against `/users/me` and stored encrypted via `safeStorage`. Ships its own `boards:asana:*` IPC group. |
+| Jira | stable | none | Cloud and Data Center. A source is a board, a project, a saved filter or a JQL query (`repository` is `<site base>::<kind>::<value>`). Cloud signs in with an Atlassian API token and email (Basic), retried through `api.atlassian.com/ex/jira/{cloudId}` for a scoped token; Data Center with a personal access token (Bearer) or a username and password. Sign-ins are per site, so its `boards:jira:authStatus` takes the pasted link and the popover checks it when Connect is clicked (`ProviderAuth.checksPastedLink`). Descriptions and comments come from `renderedFields` HTML, so one path reads Cloud's ADF and Data Center's wiki markup. A board source shows its column names, in board order, from `/rest/agile/1.0/board/{id}/configuration`. Ships its own `boards:jira:*` IPC group. The Cloud browser sign-in (OAuth through a Kangentic token service) is not built yet. |
 | Linear | stable | none | Personal API key or OAuth sign-in in the browser, both stored encrypted via `safeStorage`. Teams are picked from a list. Ships its own `boards:linear:*` IPC group. |
 | Obsidian Notes | stable | none | A vault folder on this computer, chosen in the folder dialog. Each note is a task. |
 | Obsidian Checklist items | stable | none | Same folder source. Each task line (`- [ ]`, `- [x]`, `- [/]`, `- [-]`) is a task, with the Tasks plugin's markers and Kanban plugin lanes. |
-| Jira | stub | - | Tracked in #481. |
 | Trello | stub | - | Tracked in #483. |
 
-The registry enumerates all 9 providers. Stable providers dispatch normally. Stub providers (`jira`, `trello`) are not offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers short-circuit them before any throwing method runs.
+The registry enumerates all 9 providers. Stable providers dispatch normally. The stub provider (`trello`) is not offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers short-circuit it before any throwing method runs.
 
 ## See Also
 

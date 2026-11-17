@@ -1,12 +1,10 @@
 /**
- * Convert Azure DevOps rich-text HTML work item descriptions and
- * comments into Markdown. Azure returns HTML for these fields; every
- * other board adapter Kangentic supports (GitHub, Linear, Jira,
- * Asana, Trello) uses Markdown natively, so we normalize here.
+ * Convert rich-text HTML descriptions and comments into Markdown. Azure DevOps
+ * returns HTML for these fields, and the Jira adapter reads Jira's rendered HTML
+ * (`renderedFields`), which covers both Cloud's ADF and Data Center's wiki markup
+ * with one path.
  *
- * Pure string parsing - no DOM dependency, no Azure-specific state.
- * Lives alongside the Azure DevOps adapter because that's its only
- * consumer, but the logic itself is generic HTML->Markdown.
+ * Pure string parsing - no DOM dependency, no provider-specific state.
  *
  * Tested in tests/unit/azure-devops-html-converter.test.ts.
  */

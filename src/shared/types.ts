@@ -5954,8 +5954,9 @@ export interface ExternalIssue {
   stateCategory: 'open' | 'closed';
   workItemType?: string;
   /**
-   * The id the provider shows people (Linear's `ENG-214`), when it differs from
-   * `externalId`. Absent on providers whose rows print `#<externalId>`.
+   * The id the provider shows people (Linear's `ENG-214`, a Jira key like
+   * `ENG-142`), when it differs from `externalId`. Absent on providers whose rows
+   * print `#<externalId>`.
    */
   displayId?: string;
   /**
@@ -5963,6 +5964,8 @@ export interface ExternalIssue {
    * matches it against the project's priority scale; no match imports at 0.
    */
   priority?: string;
+  /** Due date as `YYYY-MM-DD`, carried to the backlog item on import. */
+  dueDate?: string;
   /**
    * The state's place on the provider's board, left to right, so the Import
    * dialog's Status filter lists states in board order. Absent: alphabetical.
@@ -6023,6 +6026,13 @@ export interface ImportExecuteInput {
     fileAttachments?: Array<FileAttachmentRef>;
     /** `ExternalIssue.priority`: a priority name matched against the project's scale. */
     priority?: string;
+    /**
+     * ExternalIssue.workItemType. Stored as the backlog item's type only for a
+     * provider whose adapter says the field is a type (`workItemTypeIsItemType`).
+     */
+    itemType?: string;
+    /** See ExternalIssue.dueDate. */
+    dueDate?: string;
   }>;
 }
 
@@ -6081,6 +6091,38 @@ export interface AsanaAuthStatus {
   message?: string;
 }
 
+/**
+ * Whether Kangentic holds a Jira sign-in for the site a pasted link, typed JQL or
+ * saved source names. Jira's sign-ins are per site, so the answer depends on the
+ * target, unlike Asana's and Linear's account-wide ones.
+ */
+export interface JiraAuthStatus {
+  connected: boolean;
+  /** Who the saved sign-in belongs to (an email or username), when known. */
+  account?: string;
+  /**
+   * Why it is not connected: `none` (nothing saved), `ambiguous-site` (the target
+   * names no site and several are connected, so a link is needed).
+   */
+  reason?: 'none' | 'ambiguous-site';
+  /** The site the target resolved to. */
+  site?: string;
+  /** What Connect can fill in again after a rejected token: never a secret. */
+  prefill?: BoardConnectPrefill;
+}
+
+/**
+ * The non-secret fields a provider's Connect dialog fills in again when it is
+ * reopened for a sign-in that stopped working: the site, the method last used,
+ * and the email or username. Never a secret.
+ */
+export interface BoardConnectPrefill {
+  site?: string;
+  method?: string;
+  email?: string;
+  username?: string;
+}
+
 export interface AsanaSetPatInput {
   token: string;
 }
@@ -6125,6 +6167,52 @@ export interface LinearListTeamsResult {
   /** Linear's message when the list could not load (a revoked key, an expired sign-in). */
   error?: string;
 }
+
+/** Which Jira a site runs. Decides the Connect dialog's ways in and the REST paths. */
+export type JiraDeployment = 'cloud' | 'datacenter';
+
+/**
+ * How Kangentic signs in to a Jira site: an Atlassian API token with an email
+ * (Cloud), or a personal access token or a username and password (Data Center).
+ */
+export type JiraConnectMethod = 'api-token' | 'pat' | 'password';
+
+export interface JiraDetectSiteResult {
+  /** The site's host, normalized (`acme.atlassian.net`, `jira.example.com:8443`). */
+  site: string;
+  deployment: JiraDeployment;
+}
+
+export interface JiraConnectInput {
+  /** A host, or any URL on the site. */
+  site: string;
+  method: JiraConnectMethod;
+  /** Cloud API token only. */
+  email?: string;
+  /** Data Center password only. */
+  username?: string;
+  /** The API token, personal access token or password. */
+  secret: string;
+}
+
+/**
+ * Why a Connect failed. The renderer owns the line each code shows (the Jira
+ * Connect dialog's error line): `rejected` a 401, `unreachable` no answer, `captcha` a Data Center
+ * site that wants a CAPTCHA before password sign-in, `password-off` a site that
+ * refuses password sign-in on API calls, `invalid` a field the user left empty.
+ */
+export type JiraConnectErrorCode = 'rejected' | 'unreachable' | 'captcha' | 'password-off' | 'invalid';
+
+export type JiraConnectResult =
+  | { ok: true; site: string; account: string }
+  | {
+      ok: false;
+      code: JiraConnectErrorCode;
+      /** The site, for the lines that name it. */
+      site?: string;
+      /** The network's own reason for `unreachable` (an errno such as ENOTFOUND). */
+      detail?: string;
+    };
 
 export interface ImportCheckCliResult {
   available: boolean;
@@ -9812,7 +9900,11 @@ export interface ElectronAPI {
     remapPriorities: (mapping: Record<number, number>) => Promise<number>;
     onChangedByAgent: (callback: (projectId?: string) => void) => () => void;
     onLabelColorsChanged: (callback: () => void) => () => void;
-    /** `repository` names a saved source, for a provider whose source can go missing (a moved vault folder). */
+    /**
+     * Check the provider's prerequisites. `repository` names a saved source: it
+     * scopes the check for a provider whose sign-ins are per site (Jira), and lets
+     * one whose source can go missing say so (a moved vault folder). Others ignore it.
+     */
     importCheckCli: (source: ExternalSource, repository?: string) => Promise<ImportCheckCliResult>;
     importGetCached: (input: ImportCacheQuery) => Promise<ImportCachedResult>;
     importReconcile: (input: ImportReconcileInput) => Promise<ImportReconcileResult>;
@@ -9820,6 +9912,17 @@ export interface ElectronAPI {
     importSourcesList: () => Promise<ImportSource[]>;
     importSourcesAdd: (input: { source: ExternalSource; url: string }) => Promise<ImportSource>;
     importSourcesRemove: (id: string) => Promise<void>;
+    jira: {
+      /**
+       * Whether a sign-in is saved for the site `target` names: a pasted link,
+       * typed JQL, or a saved source's repository.
+       */
+      authStatus: (target?: string) => Promise<JiraAuthStatus>;
+      /** Normalize a site or link and say whether it runs Jira Cloud or Data Center. */
+      detectSite: (siteOrUrl: string) => Promise<JiraDetectSiteResult>;
+      /** Check a credential against the site and save it when Jira accepts it. */
+      connect: (input: JiraConnectInput) => Promise<JiraConnectResult>;
+    };
     asana: {
       authStatus: () => Promise<AsanaAuthStatus>;
       setPat: (input: AsanaSetPatInput) => Promise<AsanaSetPatResult>;

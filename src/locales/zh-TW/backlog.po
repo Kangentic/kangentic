@@ -83,6 +83,7 @@ msgctxt "import filter"
 msgid "Assignee"
 msgstr "負責人"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgctxt "button"
 msgid "Back"
@@ -92,6 +93,7 @@ msgstr "返回"
 msgid "Backlog is empty"
 msgstr "待辦清單為空"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgctxt "button"
@@ -155,6 +157,7 @@ msgstr "即將推出"
 msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
 msgstr "{detailUnavailableCount, plural, other {# 個項目無法取得留言}}"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgid "Connect"
 msgstr "連線"
@@ -299,6 +302,10 @@ msgstr "檔案太大"
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "依 ID、標題、標籤或負責人篩選..."
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+msgid "Hide"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Hide imported items"
 msgstr "隱藏已匯入的項目"
@@ -325,6 +332,11 @@ msgstr "匯入失敗"
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "從 GitHub Project 看板匯入"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a Jira board, project, filter or search"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -476,6 +488,15 @@ msgstr "在 {sourceName} 中開啟"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
+msgid "Paste a Jira link, or type JQL."
+msgstr ""
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Paste a search link so the site is known."
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
 msgid "Paste any Asana project URL (list, board, or calendar view)."
 msgstr "貼上任一 Asana 專案 URL（清單、看板或行事曆檢視）。"
 
@@ -548,6 +569,11 @@ msgstr "儲存"
 msgid "Select all"
 msgstr "全選"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Show"
+msgstr "顯示"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Show imported items"
 msgstr "顯示已匯入的項目"
@@ -556,6 +582,11 @@ msgstr "顯示已匯入的項目"
 msgctxt "import filter"
 msgid "Status"
 msgstr "狀態"
+
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Stored encrypted in your OS keychain."
+msgstr "已加密儲存在作業系統的金鑰鏈中。"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Syncing..."

@@ -109,7 +109,7 @@ src/
         github-projects/   # GitHub Projects v2 adapter (stable)
         azure-devops/      # Azure DevOps adapter (stable)
         asana/             # Asana adapter (stable)
-        jira/              # Jira adapter (stub)
+        jira/              # Jira adapter (stable, Cloud and Data Center)
         linear/            # Linear adapter (stable)
         trello/            # Trello adapter (stub)
     ipc/
