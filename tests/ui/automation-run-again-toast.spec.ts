@@ -336,6 +336,33 @@ test.describe('Automation failure toast: Run again', () => {
   });
 });
 
+// Main refuses to re-run an On task exit message (the task has left the column
+// whose agent it was for), so its notice says so and the toast offers no button
+// that could only answer "Couldn't run again". With no button it is timed.
+test.describe('Automation failure toast: a row main will not run again', () => {
+  test('has no Run again, is timed, and its card still opens the task', async () => {
+    const { browser, page } = await launchOnProject();
+    try {
+      await holdRunAgain(page, { kind: 'result', result: runResult('succeeded', null) });
+      await fireRunFailed(page, { ...FAILURE, runAgainOffered: false });
+
+      const failureToast = toastTitled(page, 'Automation failed');
+      await expect(failureToast).toBeVisible();
+      await expect(failureToast.getByTestId('toast-body')).toHaveText(FAILURE_BODY);
+      await expect(failureToast).toHaveAttribute('data-variant', 'warning');
+      // Red: the toast was persistent with a Run again main refuses.
+      await expect(failureToast.getByTestId('toast-action')).toHaveCount(0);
+      await expect(failureToast).not.toHaveAttribute('data-persistent', 'true');
+
+      await failureToast.getByTestId('toast-body').click();
+      await expect.poll(() => detailTaskId(page), { timeout: 5000 }).toBe(TASK_ID);
+      expect(await runAgainCalls(page)).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
 // The toast is persistent, so it outlives a project switch: the user can be
 // looking at another board when they reach for it. Both of its actions belong
 // to the failure's project, never to whichever project is open at the click.

@@ -1,7 +1,7 @@
 import type { AutoCommandMode } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { CommandVerifier } from '../../pty/terminal-submit';
-import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
+import { AGENT_NOT_STARTED_REASON, type InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import { deliverExitMessage, EXIT_BUDGET_ABORT_REASON } from '../../ipc/helpers/exit-message-delivery';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { PAINT_GIVE_UP_MS } from '../../transition-engine/paint-give-up';
@@ -106,6 +106,10 @@ export async function deliverAgentMessageAndWait(
   await runInPasteOrder(input.taskId, input.signal, async () => {
     if (input.signal.aborted) throw new RefusalError(abortReason);
     if (!isSessionLive(context, input.sessionId)) throw new RefusalError(SESSION_GONE_REASON);
+    // A session the caller did not just start may still be starting (an exit
+    // row right after the column's spawn): a paste now lands in the shell.
+    const launched = await context.sessionManager.awaitAgentLaunched(input.sessionId, PASTE_TURN_WAIT_MS, input.signal);
+    if (!launched) throw new RefusalError(launchWaitFailure(context, input.sessionId, input.signal, abortReason));
     if (input.turnWait === 'always' || input.mode === 'deferred') {
       const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
         signal: input.signal,
@@ -283,6 +287,15 @@ async function runBackgroundPaste(
       return;
     }
     const deadline = Date.now() + BACKGROUND_TURN_WAIT_MS;
+    // An agent still starting reads input only once it is on screen. The input
+    // box check below sees that only for an agent that draws in the alternate
+    // screen, so it is asked first, of every agent.
+    const launched = await context.sessionManager.awaitAgentLaunched(input.sessionId, BACKGROUND_TURN_WAIT_MS, signal);
+    if (!launched) {
+      if (signal.aborted) report('cancelled', SUPERSEDED_REASON);
+      else report('failed', launchWaitFailure(context, input.sessionId, signal, SUPERSEDED_REASON));
+      return;
+    }
     // A screen the agent shows before its input box (Claude's approval of a
     // new project MCP server) would take the paste and its Enter as an answer.
     // The stale-thinking reclaim reads such an agent idle after 3 minutes, so
@@ -348,6 +361,13 @@ async function runBackgroundPaste(
 function isSessionLive(context: IpcContext, sessionId: string): boolean {
   const status = context.sessionManager.getSession(sessionId)?.status;
   return status === 'running' || status === 'queued';
+}
+
+/** Why a wait for a starting agent (`awaitAgentLaunched`) ended without it. */
+function launchWaitFailure(context: IpcContext, sessionId: string, signal: AbortSignal, abortReason: string): string {
+  if (signal.aborted) return abortReason;
+  if (!isSessionLive(context, sessionId)) return SESSION_GONE_REASON;
+  return AGENT_NOT_STARTED_REASON;
 }
 
 function turnWaitFailure(result: Exclude<TurnCompletionResult, 'completed'>, abortReason: string): string {

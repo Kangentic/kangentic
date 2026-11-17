@@ -41,6 +41,7 @@ import {
   needsPaste,
   shouldPaste,
 } from '../../src/main/automations/turn-end/agent-message-delivery';
+import { AGENT_NOT_STARTED_REASON } from '../../src/main/transition-engine/terminal-submit-scheduler';
 import { supersedeMessageDeliveries } from '../../src/main/automations/turn-end/turn-end-passes';
 
 const TASK_ID = 'task-paste-0001';
@@ -54,6 +55,8 @@ function makeContext(sessionStatus: string | null = 'running') {
       awaitAgentReady: vi.fn(async () => true),
       // At its input box, or an agent that draws none in the alternate screen.
       awaitInputReady: vi.fn(async () => true),
+      isAgentLaunching: vi.fn(() => false),
+      awaitAgentLaunched: vi.fn(async () => true),
     },
     terminalSubmitScheduler: {
       scheduleKeystrokes: vi.fn(),
@@ -206,6 +209,105 @@ describe('deliverAgentMessageInBackground', () => {
     );
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
     expect(turnWaits).toHaveLength(0);
+  });
+
+  it('holds a background paste while the agent is still starting, then pastes once it launched', async () => {
+    const context = makeContext();
+    let launch: (launched: boolean) => void = () => undefined;
+    context.sessionManager.awaitAgentLaunched.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { launch = resolve; }),
+    );
+    deliverAgentMessageInBackground(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      onOutcome: vi.fn(),
+    });
+
+    await settle();
+    // Red: without the launch wait the turn wait starts, and the paste lands in the shell.
+    expect(context.sessionManager.awaitAgentLaunched).toHaveBeenCalledWith(SESSION_ID, expect.any(Number), expect.any(AbortSignal));
+    expect(turnWaits).toHaveLength(0);
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+
+    launch(true);
+    await settle();
+    expect(turnWaits).toHaveLength(1);
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports failed with the not-started reason and pastes nothing when the agent never launched', async () => {
+    const context = makeContext();
+    context.sessionManager.awaitAgentLaunched.mockResolvedValueOnce(false);
+    const reports: InjectionReport[] = [];
+    deliverAgentMessageInBackground(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      onOutcome: (report) => reports.push(report),
+    });
+
+    await settle();
+    expect(reports).toHaveLength(1);
+    expect(reports[0].outcome).toBe('failed');
+    expect(reports[0].reason).toBe(AGENT_NOT_STARTED_REASON);
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    expect(turnWaits).toHaveLength(0);
+  });
+
+  it('reports failed with the session-gone reason when the session ended while the launch wait ran', async () => {
+    const context = makeContext();
+    context.sessionManager.getSession.mockReturnValueOnce({ id: SESSION_ID, status: 'running' });
+    context.sessionManager.getSession.mockReturnValue(undefined);
+    context.sessionManager.awaitAgentLaunched.mockResolvedValueOnce(false);
+    const reports: InjectionReport[] = [];
+    deliverAgentMessageInBackground(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      onOutcome: (report) => reports.push(report),
+    });
+
+    await settle();
+    expect(reports).toHaveLength(1);
+    expect(reports[0].outcome).toBe('failed');
+    expect(reports[0].reason).toBe('The session was no longer running.');
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('reports cancelled with the superseded reason when the move aborts the launch wait', async () => {
+    const context = makeContext();
+    context.sessionManager.awaitAgentLaunched.mockImplementationOnce(
+      (_sessionId: string, _timeoutMs: number, signal: AbortSignal) => new Promise<boolean>((resolve) => {
+        signal.addEventListener('abort', () => resolve(false), { once: true });
+      }),
+    );
+    const reports: InjectionReport[] = [];
+    deliverAgentMessageInBackground(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      onOutcome: (report) => reports.push(report),
+    });
+    await settle();
+    expect(reports).toHaveLength(0);
+
+    supersedeMessageDeliveries(TASK_ID);
+    await settle();
+    expect(reports).toHaveLength(1);
+    expect(reports[0].outcome).toBe('cancelled');
+    expect(reports[0].reason).toBe('The task left the column before the message was sent.');
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
   });
 
   it('pastes a multi-line message once the turn ends and the scheduler is done with the task', async () => {
@@ -511,6 +613,96 @@ describe('deliverAgentMessageAndWait', () => {
     finishPaste();
     await delivery;
     expect(delivered).toBe(true);
+  });
+
+  // An exit row's message reached a session two seconds after its column
+  // spawned it, before the CLI had started: typed then, it went to the shell.
+  it('on exit, waits for an agent still starting before it pastes', async () => {
+    const context = makeContext();
+    let launch: (launched: boolean) => void = () => undefined;
+    context.sessionManager.awaitAgentLaunched.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { launch = resolve; }),
+    );
+    const runController = new AbortController();
+    const delivery = deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: runController.signal,
+      turnWait: 'when-deferred',
+    });
+
+    await settle();
+    expect(context.sessionManager.awaitAgentLaunched).toHaveBeenCalledWith(SESSION_ID, expect.any(Number), runController.signal);
+    // Red: without the wait the paste went straight into the shell.
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+
+    launch(true);
+    await delivery;
+    expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('on exit, refuses with a reason and pastes nothing when the agent never started', async () => {
+    const context = makeContext();
+    context.sessionManager.awaitAgentLaunched.mockResolvedValueOnce(false);
+
+    await expect(deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: new AbortController().signal,
+      turnWait: 'when-deferred',
+    })).rejects.toThrow('The agent had not started, so the message was not sent.');
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('on exit, refuses with the abort reason when the run aborts while the agent is starting', async () => {
+    const context = makeContext();
+    context.sessionManager.awaitAgentLaunched.mockImplementationOnce(
+      (_sessionId: string, _timeoutMs: number, signal: AbortSignal) => new Promise<boolean>((resolve) => {
+        signal.addEventListener('abort', () => resolve(false), { once: true });
+      }),
+    );
+    const runController = new AbortController();
+    const delivery = deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: runController.signal,
+      turnWait: 'when-deferred',
+      abortReason: 'The run budget ran out while the agent started.',
+    });
+    const outcome = expect(delivery).rejects.toThrow('The run budget ran out while the agent started.');
+    await settle();
+    runController.abort();
+    await outcome;
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('on exit, refuses with the session-gone reason when the session ended while the agent was starting', async () => {
+    const context = makeContext();
+    // First liveness check passes, the one after the failed launch wait sees an exited row.
+    context.sessionManager.getSession
+      .mockReturnValueOnce({ id: SESSION_ID, status: 'running' })
+      .mockReturnValue({ id: SESSION_ID, status: 'exited' });
+    context.sessionManager.awaitAgentLaunched.mockResolvedValueOnce(false);
+
+    await expect(deliverAgentMessageAndWait(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      signal: new AbortController().signal,
+      turnWait: 'when-deferred',
+    })).rejects.toThrow('The session was no longer running.');
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
   });
 
   it('at a turn end, waits behind a background paste for the same task, bounded by its own signal', async () => {

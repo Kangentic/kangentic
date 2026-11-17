@@ -15,12 +15,16 @@ sources:
   - resource: src/shared/final-line-match.ts
   - resource: src/shared/automation-manifest.ts
     title: AUTOMATION_TRIGGERS and canTaskRunAutomations
+  - resource: src/main/automations/automation-runner.ts
+    title: the exit group's agentEndingReason skip
+  - resource: src/main/ipc/handlers/task-move.ts
+    title: the exit hook, which runs before the priority branches
 ---
 # Automation triggers
 
 An automation's `trigger` is `enter`, `turn_end` or `exit`. `enter` and `exit` mean any move into or out of the column it belongs to; `turn_end` means each time the agent working the task finishes a turn there. There is no `from -> to` pair and no wildcard, because a list belongs to one column rather than to a lane pair. The three are declared once in `AUTOMATION_TRIGGERS`.
 
-**On exit runs in Phase 1**, inside the short task lock, after the DB write and the `board:changed` emit and BEFORE the priority branches. That order is load-bearing: Priority 1 kills the session, so an exit automation that needs the agent has to find it still attached. Two consequences:
+**On exit runs in Phase 1**, inside the short task lock, after the DB write and the `board:changed` emit and BEFORE the priority branches. That order is load-bearing: Priority 1 removes the worktree and the session's files, so a script or webhook row has to run while they are still there. A row that needs the agent is skipped with a recorded reason when the move ends that agent (To Do kills it, Done and a column with "Start an agent here" off suspend it), because a message it could never act on only held the move and left a failure notice (see [command injection](command-injection.md#the-exit-path-is-rung-2-only-and-it-is-awaited)). Two consequences:
 
 - **An exit automation never aborts the move.** The rollback only reverts Phase 2 and Phase 3, and the group runs after the commit point. A throw, a timeout, or the whole group failing records its outcome and the move proceeds to its priority branch.
 - **The exit group is capped at 60 seconds in aggregate** (`EXIT_GROUP_BUDGET_MS`), overriding the adapters' own budgets, because holding the short lock is what wedges that task's next move. A row that would exceed the cap is recorded `failed` with "Exit automations are capped so the board stays responsive." Exit is for quick handoffs; long work belongs on enter, where Phase 3 already holds the lock across the spawn and has a progress spinner to show for it.

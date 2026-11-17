@@ -187,6 +187,7 @@ function makeContext() {
       drainQueue: vi.fn(), columnBlocks: vi.fn(() => false), isResuming: vi.fn(() => false), holdColumnSlot: vi.fn(() => () => undefined),
       removeByTaskId: vi.fn(), killByTaskId: vi.fn(), listSessions: vi.fn(() => []), suspend: vi.fn(async () => {}),
       getSession: vi.fn((id: string) => ({ id, status: 'running' })), awaitInputReady: vi.fn(async () => true),
+      isAgentLaunching: vi.fn(() => false), awaitAgentLaunched: vi.fn(async () => true),
       findLiveSessionByTaskId: vi.fn(() => null), getUsageCache: vi.fn((): Record<string, unknown> => ({})),
       getFirstReportedEffort: vi.fn((): string | null => null),
     },

@@ -56,6 +56,14 @@ class MockSessionManager extends EventEmitter {
     return Promise.resolve(this.getPendingDraft(id));
   }
 
+  isAgentLaunching(): boolean {
+    return false;
+  }
+
+  awaitAgentLaunched(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
   emitExit(id: string): void {
     this.emit('exit', id);
   }

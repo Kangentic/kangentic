@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Command injection
-description: "How a column message reaches a live agent: the settings delta that restarts instead of typing /model, the verifier contract, the four-rung delivery ladder, handshake keystrokes (Ctrl+U, one Esc, retried Enter), the prompt-draft ledger, the automated keystrokes guard, outcomes, awaited exit delivery, test coverage and the file map."
+description: "How a column message reaches a live agent: the settings delta that restarts instead of typing /model, the verifier contract, the four-rung delivery ladder, handshake keystrokes (Ctrl+U, one Esc, retried Enter), the prompt-draft ledger, the automated keystrokes guard, outcomes, awaited exit delivery, the wait for a starting agent, test coverage and the file map."
 tags: [command-injection, keystrokes, verifier, delivery]
 sources:
   - resource: src/main/transition-engine/injection-plan.ts
@@ -15,6 +15,20 @@ sources:
   - resource: src/main/pty/output-settle.ts
   - resource: src/main/ipc/helpers/auto-command-outcome.ts
   - resource: src/main/ipc/helpers/exit-message-delivery.ts
+  - resource: src/main/pty/session-manager.ts
+    title: isAgentLaunching and awaitAgentLaunched
+  - resource: src/main/ipc/handlers/task-move.ts
+    title: the exit hook passes agentEndingReason
+  - resource: src/main/automations/automation-runner.ts
+    title: the agentEndingReason skip
+  - resource: src/shared/automation-manifest.ts
+    title: isExitAgentRow
+  - resource: src/main/ipc/helpers/move-ends-agent.ts
+    title: an exit message is skipped when the move ends the agent
+  - resource: src/main/ipc/helpers/automation-run-again.ts
+    title: Run again refuses an exit message
+  - resource: src/main/ipc/helpers/automation-failures.ts
+    title: the failure notice for an exit message offers no Run again
   - resource: src/main/automations/turn-end/agent-message-delivery.ts
   - resource: src/main/automations/turn-end/deliver-message.ts
     title: a moved task's message waits for the agent's turn, with the paint give-up
@@ -234,6 +248,21 @@ Measured in a preview against a live session: the run row read `succeeded` / "De
 - **`unconfirmed` counts as delivered.** Eleven of twelve adapters have no submission verifier, so failing the row on "could not be checked" would fail it on every agent but Claude.
 - **The wait is bounded by the run's own signal**, which is this row's slice of the 60s exit budget. That cap is why holding the short lock is acceptable: the budget that bounds a hung exit script bounds a hung exit message too.
 
+Two more rules keep an exit message from being typed where it cannot land:
+
+- **A move that ends the agent sends it nothing.** When the task has a live session and the destination is To Do (which kills the session), Done, or a column with "Start an agent here" off (both suspend it), the exit group runs with `agentEndingReason` and every row that needs the agent is recorded `skipped` with that reason. A task with no session gets the runner's own "not running" skip instead, since there is no agent to end. The message could only land a moment before the agent stops, and waiting on its confirmation held the move: a To Do cleanup sat 13 s on one and left a failure toast. `moveEndsAgent` (`src/main/ipc/helpers/move-ends-agent.ts`) is the one test of those three destinations, read by the exit hook and the Priority 1, 2 and 2.5 branches alike.
+- **Run again never re-sends an exit message.** `runAutomationAgain` works on the task as it is now, which is past the column the message was for, and nothing records which session the failed run targeted. So it refuses an On task exit row that needs the agent, and the failure notice for one carries `runAgainOffered: false`, which the renderer turns into a timed toast with no Run again.
+
+### A session that is still starting waits
+
+The scheduler used to read any `running` session the caller did not flag `freshlySpawned` as ready. An exit message two seconds after its column's spawn was typed into the shell 1.4 s before the Claude CLI started, every verifier poll read `stop=unreadable, newest=none`, and the row failed after its grace.
+
+Readiness is now asked of the session itself. `SessionManager.isAgentLaunching` is true while the agent is not on screen yet, by the same evidence that lifts the launch overlay (`markAgentReady`): the agent's first visible text after the shell ran the launch line, its alternate-screen entry, or its SessionStart hook. It is bounded by `AGENT_READY_CEILING_MS` from the spawn, the overlay's own 15 s backstop, so an agent that never shows that evidence holds a message no longer than that. A cold Claude reaches it about 3 s after spawn.
+
+Such a burst is held (`scheduleAfterLaunch`) until `awaitAgentLaunched` answers. Later bursts for the same session queue behind it rather than replacing it, and a burst for a different session drops the held ones as cancelled, since the task no longer uses that session. Once the agent is up, the row's own mode decides, as on any live session. A timeout, or the session exiting during the wait, ends the hold with every held burst reported `failed` and nothing typed ("The agent had not started, so the message was not sent." or "The session exited before the command could be sent."), and a cancel reports them `cancelled`. This is not the fresh-spawn wait: that one cancels the task's other bursts, and its alive edge for a prompted spawn is the end of the agent's whole first turn. Both paste paths ask `awaitAgentLaunched` too.
+
+The adapter's own start evidence (`agent_ran`) is not the signal, on purpose. It needs a hook, an agent id or an alternate-screen entry, and the E2E mock Claude prints plain lines and fires none of them, so every early message to it would have waited out the bound. An agent's first output after the launch line is what the overlay already trusts.
+
 The ENTER path deliberately does not await. Nothing there cancels, and awaiting would hold Phase 3's lock across a deferred message's full 120s wait.
 
 ## Handshakes, not fixed sleeps
@@ -373,7 +402,9 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 - `tests/unit/terminal-submit.test.ts` - byte contract, prompt-state policy, verification modes, retry recovery, that exhaustion never writes Ctrl+C, the late-flush cases (a submission visible only 900ms or 2300ms after the Enter confirms on a later attempt or in the grace; five swallowed Enters still fail), the prompt hook's confirmation, a burst held by the keys guard, and an Enter that reached a permission prompt.
 - `tests/unit/paste-engine.test.ts` - an automated paste's wait for the keys guard before it writes and before each Enter, and that a person's paste never waits.
 - `tests/unit/mcp-session-send.test.ts` - the `now` refusal on an open prompt or an open tool call.
-- `tests/unit/terminal-submit-scheduler.test.ts` - scheduling, the FIFO queue (no silent drop), deferred mode, escalation, outcome reporting, and the late confirmation at the escalation gate (a verifier that confirms during the wait or on the final check cancels the restart; one that never confirms still restarts; one that throws is a miss on the poll and on the final check alike; a cancelled burst stops polling).
+- `tests/unit/terminal-submit-scheduler.test.ts` - scheduling, the FIFO queue (no silent drop), deferred mode, escalation, outcome reporting, and the late confirmation at the escalation gate (a verifier that confirms during the wait or on the final check cancels the restart; one that never confirms still restarts; one that throws is a miss on the poll and on the final check alike; a cancelled burst stops polling), and the hold for a session still starting (typed once after launch, later bursts queued behind it, a timeout or exit reported with nothing typed, a cancel that reports every held burst).
+- `tests/unit/session-manager-agent-launching.test.ts` - `isAgentLaunching` and `awaitAgentLaunched` on the real `SessionManager`: an agent not on screen yet, its first output ending the wait, the overlay's ceiling, an ended session, and a queued one waited through its promotion.
+- `tests/unit/task-move-message-paste.test.ts` - an exit message skipped with its reason on a move to To Do, Done and a column that starts no agent, and still sent on any other move. `tests/unit/automation-run-again-exit.test.ts` and `tests/unit/automation-failures-run-again.test.ts` - Run again refuses an exit message, and its failure notice offers none.
 - `tests/unit/turn-completion.test.ts` - the two-signal predicate, including the sustained false-idle cases.
 - `tests/unit/prompt-draft-ledger.test.ts` - draft accounting.
 - `tests/unit/auto-command-outcome.test.ts` - what is persisted vs what notifies.

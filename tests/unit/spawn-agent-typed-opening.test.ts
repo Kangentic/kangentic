@@ -153,6 +153,8 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
       off: sessionEvents.off.bind(sessionEvents),
       awaitAgentReady: vi.fn(async () => true),
       awaitInputReady: vi.fn(async (): Promise<boolean> => true),
+      isAgentLaunching: vi.fn(() => false),
+      awaitAgentLaunched: vi.fn(async (): Promise<boolean> => true),
       getSession: vi.fn(() => ({ id: ADOPTED_SESSION_ID, status: 'running' })),
       agentStartPending: vi.fn(() => false),
     },

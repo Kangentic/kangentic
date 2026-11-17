@@ -1,6 +1,7 @@
 import type { AutomationRunSummary } from '../../automations/automation-runner';
 import { notifyAutomationFailure } from '../../automations/automation-run-outcome';
-import type { Task } from '../../../shared/types';
+import type { AutomationTrigger, Task } from '../../../shared/types';
+import { isExitAgentRow } from '../../../shared/automation-manifest';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -22,10 +23,14 @@ export function reportAutomationFailures(
   summary: AutomationRunSummary,
   task: Pick<Task, 'id' | 'title'>,
   projectId: string | null | undefined,
+  trigger: AutomationTrigger,
 ): void {
   if (summary.failures.length === 0) return;
 
   for (const failure of summary.failures) {
+    // An exit row that talks to the agent is never run again
+    // (`runAutomationAgain`), so its notice does not offer to.
+    const runAgainRefused = isExitAgentRow(trigger, failure.type);
     notifyAutomationFailure({
       window: context.mainWindow,
       projectId,
@@ -43,6 +48,7 @@ export function reportAutomationFailures(
         projectId: projectId ?? context.currentProjectId ?? '',
         status: 'failed',
         detail: failure.detail,
+        ...(runAgainRefused ? { runAgainOffered: false as const } : {}),
       },
     });
   }

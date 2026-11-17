@@ -54,6 +54,14 @@ class SchedulerSessionManager extends SimulatedSessionManager {
   readPendingDraft(): Promise<string | null> {
     return Promise.resolve(null);
   }
+
+  isAgentLaunching(): boolean {
+    return false;
+  }
+
+  awaitAgentLaunched(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
 }
 
 describe('late confirmation at the escalation gate (real scheduler, submit engine, and Claude verifier)', () => {

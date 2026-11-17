@@ -61,6 +61,8 @@ function makeContext() {
     sessionManager: {
       getSession: vi.fn((id: string) => ({ id, status: 'running' })),
       awaitInputReady: vi.fn(async () => true),
+      isAgentLaunching: vi.fn(() => false),
+      awaitAgentLaunched: vi.fn(async () => true),
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn(), hasPending: vi.fn(() => false) },
     terminalSubmit: { submitContent: vi.fn(async () => undefined) },

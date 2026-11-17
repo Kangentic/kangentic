@@ -33,6 +33,7 @@ function makeContext(): IpcContext {
   return {
     sessionManager: {
       getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+      awaitAgentLaunched: vi.fn(async () => true),
     },
     terminalSubmit: {
       submitContent: vi.fn(async () => undefined),

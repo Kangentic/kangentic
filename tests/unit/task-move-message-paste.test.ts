@@ -35,7 +35,11 @@ const hoisted = vi.hoisted(() => ({
   /** Send message rows per `${laneId}:${trigger}`. */
   rows: new Map<string, MessageRow[]>(),
   /** Every group the stub runner was asked to run, with the skip list the move handed it. */
-  engineRuns: [] as Array<{ trigger: 'enter' | 'exit'; alreadyDelivered: ReadonlySet<string> | undefined }>,
+  engineRuns: [] as Array<{
+    trigger: 'enter' | 'exit';
+    alreadyDelivered: ReadonlySet<string> | undefined;
+    agentEndingReason: string | undefined;
+  }>,
   /**
    * Rows the REAL runner would skip after its own checks: a Condition the
    * Automation agent answered no, or a spent Frequency limit. The stub honors
@@ -81,6 +85,8 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
     findByAnyId = vi.fn(() => undefined);
     updateGitStats = vi.fn();
     updateAppliedSettings = vi.fn();
+    // Read by a move to Done's completion analytics.
+    getSummaryForTask = vi.fn(() => null);
   },
 }));
 vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({ SwimlaneRepository: class {} }));
@@ -163,10 +169,18 @@ function makeEngine() {
       runOptions: {
         signal: AbortSignal;
         alreadyDelivered?: Set<string>;
+        agentEndingReason?: string;
         deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
       },
     ) => {
-      hoisted.engineRuns.push({ trigger, alreadyDelivered: runOptions.alreadyDelivered });
+      hoisted.engineRuns.push({
+        trigger,
+        alreadyDelivered: runOptions.alreadyDelivered,
+        agentEndingReason: runOptions.agentEndingReason,
+      });
+      // The real runner skips every Send message row when the move ends the
+      // agent (pinned in automation-runner.test.ts), so the stub does too.
+      if (runOptions.agentEndingReason) return { outcomes: [], failures: [] };
       // Mirrors the real engine's gate (TransitionEngine.executeTransition, pinned
       // in transition-engine-automations-disabled.test.ts): a task whose
       // automations are disabled has every row recorded as skipped and nothing
@@ -224,6 +238,10 @@ const SESSION_ID = 'active-session-1';
 const LANE_A = 'lane-a';
 const LANE_B = 'lane-b';
 const LANE_C = 'lane-c';
+const LANE_TODO = 'lane-todo';
+const LANE_DONE = 'lane-done';
+/** A column with "Start an agent here" off. */
+const LANE_PARKED = 'lane-parked';
 const MULTI_LINE = 'The reviewer says:\n- fix the null check\n- add a test';
 
 function makeSwimlane(id: string): Swimlane {
@@ -321,8 +339,13 @@ function makeHarness(
     update: vi.fn(),
     list: vi.fn(() => [makeTask(currentLane, taskOverrides)]),
     archive: vi.fn(),
+    // Cleared by a move to Done.
+    setWorktreeSkipReason: vi.fn(),
   };
   const lanes = new Map([LANE_A, LANE_B, LANE_C].map((id) => [id, makeSwimlane(id)]));
+  lanes.set(LANE_TODO, { ...makeSwimlane(LANE_TODO), name: 'To Do', role: 'todo' });
+  lanes.set(LANE_DONE, { ...makeSwimlane(LANE_DONE), name: 'Done', role: 'done' });
+  lanes.set(LANE_PARKED, { ...makeSwimlane(LANE_PARKED), name: 'Code Review', auto_spawn: false });
   const swimlaneRepo = {
     getById: vi.fn((id: string) => lanes.get(id) ?? null),
     list: vi.fn(() => [...lanes.values()]),
@@ -353,6 +376,8 @@ function makeHarness(
       suspend: vi.fn(async () => {}),
       getSession: vi.fn((id: string) => ({ id, status: 'running' })),
       awaitInputReady: vi.fn(async () => true),
+      isAgentLaunching: vi.fn(() => false),
+      awaitAgentLaunched: vi.fn(async () => true),
       findLiveSessionByTaskId: vi.fn(() => null),
       getUsageCache: vi.fn((): Record<string, unknown> => ({})),
       getFirstReportedEffort: vi.fn((): string | null => null),
@@ -470,6 +495,69 @@ describe('On task exit: a message with line breaks is pasted, awaited inside the
 
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
     expect(hoisted.rowErrors).toEqual(['The message was not delivered before the exit budget ran out.']);
+  });
+});
+
+// A task moved into a column with an agent and straight back to To Do.
+// Design's exit message failed against an agent the To Do move was about to
+// kill, the cleanup sat 13 s on it, and a failure toast with Run again was left
+// up. A move that ends the agent now skips the row with a reason instead.
+describe('On task exit: a move that ends the agent sends it no message', () => {
+  it.each([
+    ['To Do, which kills it', LANE_TODO, 'Not sent: moving to To Do ends the agent, so it could not act on the message.'],
+    ['Done, which suspends it', LANE_DONE, 'Not sent: moving to Done stops the agent, so it could not act on the message.'],
+    [
+      'a column that starts no agent, which suspends it',
+      LANE_PARKED,
+      'Not sent: Code Review starts no agent and stops this one, so it could not act on the message.',
+    ],
+  ])('a move to %s skips the row with a reason, types and pastes nothing, and waits on nothing', async (_label, target, reason) => {
+    hoisted.rows.set(`${LANE_A}:exit`, [
+      { id: 'row-exit-line', message: 'Signed off', mode: 'immediate' },
+      { id: 'row-exit-paste', message: MULTI_LINE, mode: 'immediate' },
+    ]);
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, target);
+
+    const exitRun = hoisted.engineRuns.find((run) => run.trigger === 'exit');
+    // Red: the exit group ran with no reason and delivered both messages.
+    expect(exitRun?.agentEndingReason).toBe(reason);
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    expect(hoisted.turnWaits).toHaveLength(0);
+  });
+
+  it('a task with no live session moved to To Do passes no ending reason, so the runner records its own not-running skip', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A, { session_id: null });
+
+    await move(context, LANE_TODO);
+
+    const exitRun = hoisted.engineRuns.find((run) => run.trigger === 'exit');
+    expect(exitRun).toBeDefined();
+    // Red: with the reason passed regardless, the row would claim the move ended an agent that was never there.
+    expect(exitRun?.agentEndingReason).toBeUndefined();
+  });
+
+  it('a move to a column that keeps the agent still delivers the message', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: MULTI_LINE, mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(hoisted.engineRuns.find((run) => run.trigger === 'exit')?.agentEndingReason).toBeUndefined();
+    expect(context.terminalSubmit.submitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the exit group\'s failures as exit failures, so the notice can leave out Run again', async () => {
+    const { reportAutomationFailures } = await import('../../src/main/ipc/helpers/index');
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_TODO);
+
+    expect(reportAutomationFailures).toHaveBeenCalledWith(context, expect.anything(), expect.anything(), 'proj-test', 'exit');
   });
 });
 

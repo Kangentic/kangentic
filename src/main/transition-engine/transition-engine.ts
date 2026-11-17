@@ -331,6 +331,8 @@ interface AutomationGroupOptions {
   suppressAgentMessages?: boolean;
   /** The task's agent is paused. See `RunAutomationsOptions`. */
   agentPaused?: boolean;
+  /** Exit only: the move ends the agent, so rows that need it skip with this reason. See `RunAutomationsOptions`. */
+  agentEndingReason?: string;
   groupBudgetMs?: number;
   /** Turn end only: the agent's final message of the turn, for `{{agentReply}}` and Conditions. */
   agentReply?: string | null;
@@ -478,11 +480,11 @@ export class TransitionEngine {
       const runId = randomUUID();
       if (alreadyDelivered?.has(automation.id)) {
         this.automationRunRepo?.recordDeliveredByCaller({ id: runId, automation, taskId: task.id }, SENT_WITH_THE_MOVE);
-        summary.outcomes.push({ runId, automationId: automation.id, name: automation.name, columnName: column.name, status: 'succeeded', detail: SENT_WITH_THE_MOVE });
+        summary.outcomes.push({ runId, automationId: automation.id, name: automation.name, type: automation.type, columnName: column.name, status: 'succeeded', detail: SENT_WITH_THE_MOVE });
         continue;
       }
       this.automationRunRepo?.recordSkipped({ id: runId, automation, taskId: task.id }, reason);
-      summary.outcomes.push({ runId, automationId: automation.id, name: automation.name, columnName: column.name, status: 'skipped', detail: reason });
+      summary.outcomes.push({ runId, automationId: automation.id, name: automation.name, type: automation.type, columnName: column.name, status: 'skipped', detail: reason });
     }
     return summary;
   }
@@ -648,6 +650,7 @@ export class TransitionEngine {
       alreadyDelivered: options.alreadyDelivered,
       suppressAgentMessages: options.suppressAgentMessages,
       agentPaused: options.agentPaused,
+      agentEndingReason: options.agentEndingReason,
       groupBudgetMs: options.groupBudgetMs,
       conditionAnswers: options.conditionAnswers,
       conditionUnavailableReason: options.conditionUnavailableReason,
