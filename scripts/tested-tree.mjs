@@ -12,6 +12,10 @@
  * this relies on: each answers false, and the reason is printed on every run. A required check counts
  * only when GitHub Actions posted it, so another app's run of the same name passes nothing.
  *
+ * The one check left out is the CLA check (NOT_ABOUT_THE_TREE). It says who signed, not whether the
+ * tree works, and cla.yml runs it again when a PR closes. That run was still in progress when this
+ * read the head, so 13 of 31 merges answered "still running: cla" and tested main a second time.
+ *
  * Usage (from .github/actions/tested-tree): node scripts/tested-tree.mjs <sha>
  * Reads GITHUB_REPOSITORY and GITHUB_TOKEN, and writes `tested=` to GITHUB_OUTPUT.
  */
@@ -26,6 +30,13 @@ export const REQUIRED_PASSES = [
   'E2E tests (Electron)',
   'Web demo (build + smoke)',
 ];
+
+/**
+ * Checks on a head that say nothing about its tree, so neither an unfinished nor a failed one is
+ * doubt. Each is a job id in cla.yml with no `name:`, which is what GitHub names the check run;
+ * tested-tree.test.ts fails when one stops matching a job.
+ */
+export const NOT_ABOUT_THE_TREE = ['cla'];
 
 const PASSING_CONCLUSIONS = new Set(['success', 'skipped', 'neutral']);
 
@@ -70,7 +81,7 @@ async function judgePull(sha, pull, api) {
       return { tested: false, reason: `${label}: the pushed tree differs from its head's` };
     }
 
-    const checks = await api.checksOn(pull.head.sha);
+    const checks = (await api.checksOn(pull.head.sha)).filter((check) => !NOT_ABOUT_THE_TREE.includes(check.name));
     const unfinished = checks.filter((check) => check.status !== 'completed').map((check) => check.name);
     if (unfinished.length > 0) {
       return { tested: false, reason: `${label}: still running on its head: ${unfinished.join(', ')}` };

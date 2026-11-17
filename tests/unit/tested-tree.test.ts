@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { REQUIRED_PASSES, decideTestedTree, githubApi } from '../../scripts/tested-tree.mjs';
+import { NOT_ABOUT_THE_TREE, REQUIRED_PASSES, decideTestedTree, githubApi } from '../../scripts/tested-tree.mjs';
 import { readWorkflow } from './helpers/read-workflow';
 
 // The gate that lets a push to main skip its tests. A wrong yes lands a tree nothing tested, so
@@ -89,6 +89,35 @@ describe('decideTestedTree', () => {
     const decision = await decideTestedTree(PUSHED_SHA, fakeApi({ checks }));
     expect(decision.tested).toBe(false);
     expect(decision.reason).toContain('slow');
+  });
+
+  // cla.yml runs again when a PR closes, so its check is in progress on the head at the moment the
+  // merge's push run reads it. 13 of 31 merges tested main a second time for that alone.
+  it('skips while the CLA check runs again on the merged PR', async () => {
+    const checks = greenChecks().map((check) => (
+      check.name === 'cla' ? { ...check, status: 'in_progress', conclusion: null } : check
+    ));
+    const decision = await decideTestedTree(PUSHED_SHA, fakeApi({ checks }));
+    expect(decision.tested).toBe(true);
+    expect(decision.reason).toContain('PR #7');
+  });
+
+  it('skips when the CLA check did not pass, which says nothing about the tree', async () => {
+    for (const conclusion of ['failure', 'cancelled']) {
+      const checks = greenChecks().map((check) => (check.name === 'cla' ? { ...check, conclusion } : check));
+      expect((await decideTestedTree(PUSHED_SHA, fakeApi({ checks }))).tested).toBe(true);
+    }
+  });
+
+  it('still runs for another unfinished check beside the CLA one, and names only that check', async () => {
+    const checks = [
+      ...greenChecks().map((check) => (check.name === 'cla' ? { ...check, status: 'queued', conclusion: null } : check)),
+      { name: 'slow', status: 'in_progress', conclusion: null },
+    ];
+    const decision = await decideTestedTree(PUSHED_SHA, fakeApi({ checks }));
+    expect(decision.tested).toBe(false);
+    expect(decision.reason).toContain('still running on its head: slow');
+    expect(decision.reason).not.toContain('cla');
   });
 
   it.each(REQUIRED_PASSES)('runs when the head has no passing %s', async (missing) => {
@@ -206,6 +235,18 @@ describe('the workflows wire the gate', () => {
     for (const name of REQUIRED_PASSES) {
       expect(ciSource, `ci.yml has no job named "${name}"`).toContain(`name: ${name}`);
     }
+  });
+
+  it('NOT_ABOUT_THE_TREE names cla.yml jobs by the id GitHub names their check run with', () => {
+    const claSource = readWorkflow('cla.yml');
+    expect(NOT_ABOUT_THE_TREE.length).toBeGreaterThan(0);
+    for (const name of NOT_ABOUT_THE_TREE) {
+      const start = claSource.indexOf(`\n  ${name}:\n`);
+      expect(start, `cla.yml has no job with the id "${name}"`).toBeGreaterThan(-1);
+      // A job with a `name:` posts its check run under that name, and the id would match nothing.
+      expect(claSource.slice(start), `the ${name} job gained a name:, so its check run is no longer "${name}"`).not.toMatch(/^ {4}name:/m);
+    }
+    expect(REQUIRED_PASSES.filter((name: string) => NOT_ABOUT_THE_TREE.includes(name))).toEqual([]);
   });
 
   it.each([

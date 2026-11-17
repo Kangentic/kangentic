@@ -37,7 +37,10 @@ the realign and main-checkout stops) ends on `Needs owner:` and stays in Merge.
 The push to `main` that a merge makes does not run those checks again. `main` requires a PR to be
 up to date and PRs land by rebase, so the push carries the tree the PR's head already passed on, and
 the run's `Tree already tested` job passes it in seconds (`scripts/tested-tree.mjs`). A `/merge-back`
-has no PR behind it, so its push runs everything, and so does any doubt about the tree. What earns a
+has no PR behind it, so its push runs everything, and so does any doubt about the tree: a check on the
+head that failed or has not finished. The CLA check is the one the job does not read. It says who
+signed, not whether the tree works, and `cla.yml` runs it again when the PR closes, so it was still
+in progress when the push run looked and 13 of 31 merges tested `main` a second time. What earns a
 check here, and what one costs an unrelated PR, is in `.claude/rules/test-value.md`.
 
 A contributor's PR from a fork goes through the same two columns with three differences, each spelled
