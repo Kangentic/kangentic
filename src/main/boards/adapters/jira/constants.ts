@@ -5,6 +5,7 @@
  * and seals Atlassian's answer to this attempt's key before redirecting to the
  * loopback listener (`../../shared/sealed-token.ts`).
  */
+import { DOCS_BASE_URL } from '../../../../shared/docs-links';
 
 /**
  * Public client id of Kangentic's Atlassian OAuth app. Not a secret: Atlassian's
@@ -17,10 +18,10 @@ export const JIRA_OAUTH_CLIENT_ID = '';
 export const JIRA_OAUTH_AUTHORIZE_URL = 'https://auth.atlassian.com/authorize';
 
 /** The callback registered on the Atlassian app: kangentic.com, never the loopback address. */
-export const JIRA_OAUTH_REDIRECT_URI = 'https://kangentic.com/oauth/jira/callback';
+export const JIRA_OAUTH_REDIRECT_URI = `${DOCS_BASE_URL}/oauth/jira/callback`;
 
 /** kangentic.com's refresh route: `{ "refresh_token" }` in, Atlassian's answer out. */
-export const JIRA_OAUTH_REFRESH_URL = 'https://kangentic.com/oauth/jira/refresh';
+export const JIRA_OAUTH_REFRESH_URL = `${DOCS_BASE_URL}/oauth/jira/refresh`;
 
 /** Where kangentic.com sends the browser back to, on the loopback listener. */
 export const JIRA_OAUTH_CALLBACK_PATH = '/jira/callback';

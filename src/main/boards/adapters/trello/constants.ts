@@ -6,6 +6,7 @@
  * A token comes from Trello's approval page for that key. Every request sends both in an
  * `Authorization: OAuth` header, never in the URL.
  */
+import { DOCS_BASE_URL } from '../../../../shared/docs-links';
 
 export const TRELLO_API_BASE = 'https://api.trello.com/1';
 
@@ -25,7 +26,7 @@ export function isTrelloSignInAvailable(): boolean {
  * sent to a server), seals it to this attempt's key, and sends the browser to the loopback
  * listener at `TRELLO_SIGN_IN_CALLBACK_PATH`.
  */
-export const TRELLO_RETURN_URL = 'https://kangentic.com/oauth/trello/return';
+export const TRELLO_RETURN_URL = `${DOCS_BASE_URL}/oauth/trello/return`;
 export const TRELLO_SIGN_IN_CALLBACK_PATH = '/trello/callback';
 
 /** How long Sign in with Trello waits for the browser to hand back before it gives up. */
