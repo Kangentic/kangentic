@@ -130,6 +130,7 @@ Two agents have no transcript reader. For those, `registerArtifactDetection` sca
 | Microsoft 365 | description | `*.sharepoint.com/:w:/` (and x, p, b, f), `1drv.ms` |
 | Loom | description | `loom.com/share/` and `/embed/` |
 | Coda | description | `coda.io/d/`, `docs.superhuman.com/d/` |
+| Obsidian | description | `publish.obsidian.md/<site>/` |
 | GitHub | manual | `github.com/<owner>/<repo>/issues/<n>`, `github.com/(orgs or users)/<name>/projects/<n>` |
 | Azure DevOps | manual | `dev.azure.com/.../_workitems/`, `/_boards/`, `/_wiki/` |
 | Jira | manual | `<site>.atlassian.net/browse/<KEY-1>` |
