@@ -121,6 +121,10 @@ msgstr "「{loginCommand}」をクリップボードにコピー"
 msgid "Copy <0>{loginCommand}</0>"
 msgstr "<0>{loginCommand}</0> をコピー"
 
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy login"
+msgstr ""
+
 #: src/renderer/components/layout/ToastItem.tsx
 #, fuzzy
 msgid "Copy message"

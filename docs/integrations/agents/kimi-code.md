@@ -133,7 +133,7 @@ A live model swap has nothing to type: `/model <alias>` opens the picker rather 
 
 ## Authentication
 
-`probeAuth` answers `true` for a `credentials/*.json` from `/login`, or a model configured in `config.toml`, and `false` for neither. It reads a WSL install in its distro's home. A row of its `AGENT_LIST` result drives the amber "Copy `kimi login`" hint in the welcome grid and Settings > Agent.
+`probeAuth` answers `true` for a `credentials/*.json` from `/login`, or a model configured in `config.toml`, and `false` for neither. It reads a WSL install in its distro's home. A row of its `AGENT_LIST` result drives the sign-in hint in the welcome grid and Settings > Agent. The welcome grid marks it with the attention color only when no other agent is ready; beside a ready agent it is a plain **Copy login** link.
 
 ## Accounts
 

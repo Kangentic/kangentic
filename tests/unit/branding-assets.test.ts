@@ -21,12 +21,11 @@ const THEMED_MARK_ASSETS = [
 ];
 const BRAND_MARK_COMPONENT = 'src/renderer/components/BrandMark.tsx';
 // The theme-tinted mark is for app chrome that sits on a themed surface. The
-// welcome screen deliberately uses the FULL-COLOR mark instead (see below), so
-// it is not in this list.
+// welcome screen carries no mark beside its wordmark: the mascot above it is the
+// brand there, so it is not in this list.
 const BRAND_MARK_IMPORTERS = [
   'src/renderer/components/layout/TitleBar.tsx',
 ];
-const COLOR_MARK_CONSUMER = 'src/renderer/components/layout/WelcomeScreen.tsx';
 
 // The Overseer mascot: consumed via the shipped animation contract
 // (assets/mascot/animations.css + animations.json), never hand-authored
@@ -284,23 +283,6 @@ describe('@kangentic/branding desktop assets', () => {
       notReferencing,
       `These renderer files should render the shared BrandMark component:\n${notReferencing.join('\n')}`,
     ).toEqual([]);
-  });
-
-  it('the welcome screen consumes the full-color mark from the package', () => {
-    // The welcome screen is the app's identity moment and first launch defaults
-    // to the dark theme, so it uses the fixed-palette colored mark rather than
-    // the theme-tinted BrandMark. brandmark-small.svg (the F4k board glyph) is
-    // the right tier for a mark displayed this small - the card-K master fails
-    // structurally below ~128px (see the icon-drafting skill).
-    expect(
-      fs.existsSync(FAVICON_ASSET),
-      '@kangentic/branding is missing assets/brandmark-small.svg',
-    ).toBe(true);
-    const welcomeSource = fs.readFileSync(path.join(REPO_ROOT, COLOR_MARK_CONSUMER), 'utf-8');
-    expect(
-      welcomeSource.includes('@kangentic/branding/assets/brandmark-small.svg'),
-      `${COLOR_MARK_CONSUMER} should import the full-color mark from @kangentic/branding`,
-    ).toBe(true);
   });
 });
 

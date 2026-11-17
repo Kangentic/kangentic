@@ -5,6 +5,7 @@ description: "First launch and the welcome screen, the seven default columns, th
 tags: [board, sidebar, search, columns]
 sources:
   - resource: src/renderer/components/layout/WelcomeScreen.tsx
+  - resource: src/renderer/components/layout/welcome-readiness.ts
   - resource: src/renderer/components/search/SearchPalette.tsx
   - resource: src/renderer/components/FilterPopover.tsx
   - resource: src/renderer/components/sidebar/ProjectSidebar.tsx
@@ -20,7 +21,7 @@ projects, the CLI and the status bar. Tasks themselves are in [Tasks](tasks.md).
 
 When you first open Kangentic with no existing projects, a welcome screen greets you with an **Open a Project** button. Click it to select a project folder and get started.
 
-The welcome screen also detects Git and your installed agent CLIs, showing each one's version, or an install link when it is missing and a login command when it is found but unauthenticated. Two links in the footer open in your browser: **Read the setup guide** and **Pair a phone**, the latter covering the mobile companion app (see [Mobile bridge overview](../integrations/mobile-bridge/overview.md)).
+The welcome screen also detects Git and your installed agent CLIs, showing each one's version, or an install link when it is missing and a login command when it is found but unauthenticated. Setup counts as ready once Git and one agent that is not signed out are found. The setup panel then starts collapsed and names what it found. An agent that is installed but signed out does not block a working setup: it is listed after the ready agents with a **Copy login** link. The panel opens and asks you to sign in only when no agent can run. Two links in the footer open in your browser: **Read the setup guide** and **Pair a phone**, the latter covering the mobile companion app (see [Mobile bridge overview](../integrations/mobile-bridge/overview.md)).
 
 On subsequent launches, Kangentic automatically re-opens the last activated project so you pick up right where you left off. If you launch with the `--cwd` flag, that path takes priority.
 

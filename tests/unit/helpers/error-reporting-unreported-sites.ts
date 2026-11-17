@@ -681,7 +681,6 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/renderer/components/knowledge-graph/useKnowledgeGraphScene.ts': 1,
   'src/renderer/components/language/LanguageSuggestion.tsx': 2,
   'src/renderer/components/language/useLanguageRestart.ts': 1,
-  'src/renderer/components/layout/WelcomeScreen.tsx': 1,
   'src/renderer/components/monitor/MonitorRowContextMenu.tsx': 2,
   'src/renderer/components/monitor/useMonitorDetailOwnership.ts': 1,
   'src/renderer/components/search/SearchPalette.tsx': 1,

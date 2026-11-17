@@ -121,6 +121,10 @@ msgstr "„{loginCommand}“ in die Zwischenablage kopieren"
 msgid "Copy <0>{loginCommand}</0>"
 msgstr "<0>{loginCommand}</0> kopieren"
 
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy login"
+msgstr ""
+
 #: src/renderer/components/layout/ToastItem.tsx
 #, fuzzy
 msgid "Copy message"

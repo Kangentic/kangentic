@@ -121,6 +121,10 @@ msgstr "Kopírovat „{loginCommand}“ do schránky"
 msgid "Copy <0>{loginCommand}</0>"
 msgstr "Zkopírovat <0>{loginCommand}</0>"
 
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy login"
+msgstr ""
+
 #: src/renderer/components/layout/ToastItem.tsx
 #, fuzzy
 msgid "Copy message"

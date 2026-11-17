@@ -99,6 +99,10 @@ msgstr "將「{loginCommand}」複製到剪貼簿"
 msgid "Copy <0>{loginCommand}</0>"
 msgstr "複製 <0>{loginCommand}</0>"
 
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy login"
+msgstr ""
+
 #: src/renderer/components/layout/ToastItem.tsx
 msgid "Copy message"
 msgstr "複製訊息"

@@ -121,6 +121,10 @@ msgstr "Copiar \"{loginCommand}\" para a área de transferência"
 msgid "Copy <0>{loginCommand}</0>"
 msgstr "Copiar <0>{loginCommand}</0>"
 
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy login"
+msgstr ""
+
 #: src/renderer/components/layout/ToastItem.tsx
 #, fuzzy
 msgid "Copy message"
