@@ -12,6 +12,7 @@ import {
   LAYOUT_LANDING_CAP_MS,
   LAYOUT_LANDING_IDLE_MS,
   LAYOUT_LANDING_MIN_MS,
+  LAYOUT_LANDING_STARVED_CAP_MS,
   nextFrame,
   noteTerminalFitInLanding,
   runTerminalLayoutChange,
@@ -69,6 +70,7 @@ describe('runTerminalLayoutChange', () => {
     vi.stubGlobal('document', { visibilityState: 'visible' });
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -136,6 +138,40 @@ describe('runTerminalLayoutChange', () => {
     // not at the idle ceiling.
     expect(fittedAt).not.toBeNull();
     expect(performance.now() - fittedAt!).toBeLessThan(LAYOUT_LANDING_MIN_MS + 100);
+  });
+
+  it('keeps a landing open past its cap while a starved page has drawn too few frames for the change to reach a terminal', async () => {
+    // A page starved of CPU stalls one task for 1.5 to 2.5 s (a 20x throttle, a loaded CI runner).
+    // The change reaches its terminals in hops a frame apart, and a resize observer delivers after
+    // its frame's animation frame callbacks, so the first frame back was past the cap with no
+    // terminal fitted, the landing closed, and the terminals reflowed instead of holding their
+    // frames. The cap counts time, but the hops travel in frames.
+    const scope = fakeScope();
+    const clickedAt = performance.now();
+    runTerminalLayoutChange(asElement(scope), () => {});
+    // The stall: this thread does nothing else until the cap has passed. A timer set after it is
+    // due after the frame the landing already has queued, as an observer's delivery is.
+    while (performance.now() - clickedAt < LAYOUT_LANDING_CAP_MS + 50) { /* busy: the starved page */ }
+    let openAtFit: boolean | null = null;
+    setTimeout(() => {
+      openAtFit = isTerminalLayoutLandingFor(scope.terminal as Element);
+      noteTerminalFitInLanding(scope.terminal as Element);
+    }, 0);
+    await tick(20);
+    await landingDuration(scope);
+    expect(openAtFit).toBe(true);
+  });
+
+  it('ends a landing no terminal fitted in at the starved cap when the page draws no frames at all', async () => {
+    // A window that goes hidden mid-landing draws none, so the frame floor alone would hold it open for good.
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const scope = fakeScope();
+    runTerminalLayoutChange(asElement(scope), () => {});
+    await vi.advanceTimersByTimeAsync(LAYOUT_LANDING_STARVED_CAP_MS - 100);
+    expect(isTerminalLayoutLandingFor(scope.terminal as Element)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(isTerminalLayoutLandingFor(scope.terminal as Element)).toBe(false);
   });
 
   it('ends near its minimum once a terminal has fitted and the scope holds still', async () => {

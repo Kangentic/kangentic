@@ -23,8 +23,27 @@
 
 import { traceTerminalRenderer } from './terminal-grid-registry';
 
-/** A landing ends by this long after it started, however long its layout keeps moving. */
+/**
+ * A landing ends by this long after it started, however long its layout keeps moving, once the
+ * page has drawn `LAYOUT_LANDING_MIN_FRAMES` frames or a terminal has fitted in it.
+ */
 export const LAYOUT_LANDING_CAP_MS = 700;
+/**
+ * A landing no terminal has fitted in stays open until the page has drawn this many frames. The
+ * change reaches its terminals in hops a frame apart (four at most in the traces: the panel's box,
+ * the layer's observer, the windows, each terminal's own observer), and a resize observer delivers
+ * after its frame's animation frame callbacks. A starved page (a 20x CPU throttle, a loaded runner)
+ * drew its first frame 1.5 to 2.5 s after the click, past both time bounds with no terminal fitted
+ * yet: the landing closed on that frame, and the terminals reflowed instead of holding their
+ * frames. The hops travel in frames, so the floor counts frames. A page that draws at its usual rate
+ * has 8 frames in well under the idle bound, so this costs it nothing.
+ */
+export const LAYOUT_LANDING_MIN_FRAMES = 8;
+/**
+ * A landing ends by this long after it started whatever its frames, since a window that goes
+ * hidden mid-landing draws none and would hold the frame floor open for good.
+ */
+export const LAYOUT_LANDING_STARVED_CAP_MS = 5000;
 /**
  * A landing stays open at least this long, however still its layout looks. A
  * refit this soon after a user's change is that change's.
@@ -156,14 +175,19 @@ async function settle(landing: Landing): Promise<void> {
   let seenActivity = -1;
   let seenLayout: string | null = null;
   let stillFrames = 0;
+  let drawnFrames = 0;
   for (;;) {
-    await nextFrame();
+    // null: the 50 ms fallback fired in a window that draws no frames, which is no frame drawn.
+    if (await nextFrame() !== null) drawnFrames += 1;
     const elapsed = performance.now() - landing.startedAt;
-    if (elapsed >= LAYOUT_LANDING_CAP_MS) return;
+    // Until a terminal has fitted, the change may still be on its way: no bound but the starved
+    // cap ends the landing before the page has drawn the frames its hops travel in.
+    const mayEnd = landing.fits > 0 || drawnFrames >= LAYOUT_LANDING_MIN_FRAMES || elapsed >= LAYOUT_LANDING_STARVED_CAP_MS;
+    if (elapsed >= LAYOUT_LANDING_CAP_MS && mayEnd) return;
     const layout = layoutSignature(landing.scope);
     if (landing.activity === seenActivity && layout === seenLayout) {
       stillFrames += 1;
-      if (stillFrames >= SETTLED_FRAMES && elapsed >= (landing.fits > 0 ? LAYOUT_LANDING_MIN_MS : LAYOUT_LANDING_IDLE_MS)) return;
+      if (stillFrames >= SETTLED_FRAMES && elapsed >= (landing.fits > 0 ? LAYOUT_LANDING_MIN_MS : LAYOUT_LANDING_IDLE_MS) && mayEnd) return;
     } else {
       stillFrames = 0;
     }
