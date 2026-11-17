@@ -18,8 +18,9 @@
  * '.' and a 22-byte marker. That was under the floor, so on Linux CI the
  * retry window timed out and the send ended in "Paste landed but Enter did
  * not submit". The spec did not assert the error strip then and passed
- * anyway. The same send passed on Windows, where ConPTY writes sequences of
- * its own around an agent's output.
+ * anyway. On Windows the same send passes without a retry: ConPTY writes
+ * control sequences of its own after the Enter, and they pass the floor
+ * (see the header of tests/e2e/browser-evidence-retry.spec.ts).
  *
  * Used by tests/e2e/browser-evidence-retry.spec.ts to verify the engine's
  * retry path lands the message on a session that initially swallows \r.

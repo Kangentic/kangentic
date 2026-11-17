@@ -127,16 +127,19 @@ async function openBrowserPaneForNewTask(page: Page, title: string): Promise<str
 }
 
 test.describe('Claude Agent -- Browser Send evidence/retry paths', () => {
-  // Mock-CLI non-determinism on Windows ConPTY: the `eats-all-cr` fixture
-  // swallows stdin in JS, but ConPTY's kernel-side echo path can still leak
-  // a CR back to the engine ~20-40% of the time even with setRawMode(true).
-  // When that happens the engine succeeds instead of raising PasteSubmitError,
-  // so the no-evidence test's error path never fires. The product is correct
-  // - this is a test-infrastructure limitation that exists only on Windows,
-  // whose local runs have no retry. On CI's Linux a retry would only add time,
-  // since --fail-on-flaky-tests fails a pass on retry. The proper fix is a
-  // ConPTY-level CR-suppression fixture, which is out of scope here.
-  if (process.platform === 'win32') test.describe.configure({ retries: 2 });
+  // Windows cannot reach the engine's retry or no-evidence path through a real
+  // ConPTY. A mock that swallows every \r and writes nothing still has output
+  // arrive after the Enter: ConPTY writes control sequences of its own (cursor
+  // moves, `\x1b[?1004h`), with no visible text, and they pass the engine's
+  // 50-byte data floor. Measured on Windows 11 on 2026-11-17, four of four
+  // sends to `eats-all-cr` logged `evidence=data` 98 to 161 ms after the Enter
+  // with no retry. This file once called that a 20 to 40% flake and gave
+  // Windows two retries, and by then all three attempts failed every run.
+  //
+  // So on Windows the first test proves only that a Send completes with no
+  // error (browser-send-roundtrip.spec.ts leans on it for that), and the other
+  // two do not run. Linux, which CI runs, exercises all three for real, and
+  // tests/unit/paste-engine.test.ts owns the engine's windows on every OS.
 
   test('engine retry succeeds when the agent swallows the first \\r', async () => {
     const ctx = await setupVariant('eats-first-cr');
@@ -169,6 +172,7 @@ test.describe('Claude Agent -- Browser Send evidence/retry paths', () => {
   });
 
   test('no-evidence path surfaces "Paste landed but Enter did not submit"', async () => {
+    test.fixme(process.platform === 'win32', 'ConPTY writes its own output after the Enter, which the engine takes as a submit; covered at unit tier and on Linux.');
     // Internal 30s `toBeEnabled` wait + ~10s of setup pushes this past the
     // 30s electron default; opt into the 3x slow budget.
     test.slow();
