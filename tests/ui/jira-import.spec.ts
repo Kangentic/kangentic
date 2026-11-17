@@ -1,8 +1,10 @@
 /**
  * Jira import in the browser: the provider row, the Connect dialog per site
- * (Cloud opens straight on the API token steps; Data Center on two equal
- * choices), its error lines, the popover's own lines, and the Import dialog's
- * Jira rows and Reconnect banner. Driven against the headless mock
+ * (Cloud on Sign in with Atlassian and the API token, or the token steps alone in
+ * a build with no client id; Data Center on two equal choices), the sign-in's
+ * waiting screen and a declined approval, its error lines, the popover's own
+ * lines, and the Import dialog's Jira rows and Reconnect banner, which reopens the
+ * way the user signed in. Driven against the headless mock
  * (`window.__mockJiraPreset`, `__mockImportCheckCli`, `__mockImportSourcesAddError`).
  */
 import { test, expect, type Page } from '@playwright/test';
@@ -39,7 +41,7 @@ test.describe('Jira in Add Source', () => {
     const dialog = page.locator('[data-testid="jira-connect-dialog"]');
     await expect(dialog).toBeVisible();
     await expect(page.locator('[data-testid="jira-connect-site-input"]')).toHaveValue('acme.atlassian.net');
-    // Cloud opens straight on its steps until the browser sign-in ships, so there is no Back.
+    // With no Atlassian client id in the build, Cloud opens straight on its steps, so there is no Back.
     await expect(page.locator('[data-testid="jira-connect-back-btn"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="jira-connect-connect-btn"]')).toBeDisabled();
 
@@ -134,6 +136,225 @@ test.describe('Jira in Add Source', () => {
     await openJiraLinkStep(page);
     await pasteAndConnect(page, 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12');
     await expect(page.locator('[data-testid="import-source-error"]')).toHaveText('No board 12 that this account can open.');
+    await browser.close();
+  });
+});
+
+async function signInCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __mockJiraSignInCallCount?: number }).__mockJiraSignInCallCount ?? 0);
+}
+
+test.describe('Sign in with Atlassian', () => {
+  test('a Cloud link opens on two equal choices, and sign-in waits on the browser', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-sign-in-wait');
+    await setJiraPreset(page, { signInAvailable: true });
+    await openJiraLinkStep(page);
+    await pasteAndConnect(page, 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12');
+
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toContainText('Sign in with Atlassian');
+    await expect(page.locator('[data-testid="jira-connect-choice-api-token"]')).toContainText('Use an API token');
+    await page.locator('[data-testid="jira-connect-choice-sign-in"]').click();
+
+    await expect(page.locator('[data-testid="jira-connect-waiting"]')).toContainText('Waiting for Atlassian in your browser');
+    await expect.poll(() => signInCount(page)).toBe(1);
+    const sent = await page.evaluate(() => (window as unknown as { __lastJiraSignInInput?: unknown }).__lastJiraSignInInput);
+    expect(sent).toEqual({ site: 'https://acme.atlassian.net' });
+
+    await page.locator('[data-testid="jira-connect-reopen-btn"]').click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __mockJiraReopenCount?: number }).__mockJiraReopenCount ?? 0)).toBe(1);
+
+    // Back stops the wait and returns to the choices, silently.
+    await page.locator('[data-testid="jira-connect-back-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveCount(0);
+
+    // The token way in has Back to the choices too.
+    await page.locator('[data-testid="jira-connect-choice-api-token"]').click();
+    await expect(page.locator('[data-testid="jira-connect-email-input"]')).toBeVisible();
+    await page.locator('[data-testid="jira-connect-back-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toBeVisible();
+    await browser.close();
+  });
+
+  test("a declined approval goes back to the choices with Atlassian's message", async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-sign-in-declined');
+    await setJiraPreset(page, {
+      signInAvailable: true,
+      signInResult: { ok: false, cancelled: false, error: 'The user did not authorize the app.' },
+    });
+    await openJiraLinkStep(page);
+    await pasteAndConnect(page, 'https://acme.atlassian.net/browse/ENG');
+
+    await page.locator('[data-testid="jira-connect-choice-sign-in"]').click();
+    await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveText('The user did not authorize the app.');
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-choice-api-token"]')).toBeVisible();
+    await browser.close();
+  });
+
+  test('a sign-in that hands back closes Connect and adds the source', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-sign-in-done');
+    await setJiraPreset(page, { signInAvailable: true, signInResult: { ok: true, site: 'acme.atlassian.net', account: 'dana@acme.example' } });
+    await openJiraLinkStep(page);
+    await pasteAndConnect(page, 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12');
+
+    await page.locator('[data-testid="jira-connect-choice-sign-in"]').click();
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeHidden();
+    await expect(page.locator('[data-testid="import-dialog"]')).toBeVisible();
+    await browser.close();
+  });
+
+  test('Data Center offers no browser sign-in', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-dc-no-sign-in');
+    await setJiraPreset(page, { signInAvailable: true });
+    await openJiraLinkStep(page);
+    await pasteAndConnect(page, 'https://jira.example.com/secure/RapidBoard.jspa?rapidView=12');
+
+    await expect(page.locator('[data-testid="jira-connect-choice-pat"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toHaveCount(0);
+    await browser.close();
+  });
+});
+
+async function cancelCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __mockJiraCancelSignInCount?: number }).__mockJiraCancelSignInCount ?? 0);
+}
+
+async function openWaiting(page: Page, projectName: string, preset: unknown): Promise<void> {
+  await createProject(page, projectName);
+  await setJiraPreset(page, preset);
+  await openJiraLinkStep(page);
+  await pasteAndConnect(page, 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12');
+  await page.locator('[data-testid="jira-connect-choice-sign-in"]').click();
+}
+
+test.describe('Sign in with Atlassian cancels what waits', () => {
+  test('Back from the waiting screen sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await openWaiting(page, 'jira-cancel-back', { signInAvailable: true });
+    await expect(page.locator('[data-testid="jira-connect-waiting"]')).toBeVisible();
+    await page.locator('[data-testid="jira-connect-back-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toBeVisible();
+    await expect.poll(() => cancelCount(page)).toBe(1);
+    await flushRender(page);
+    expect(await cancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('Cancel during the wait sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await openWaiting(page, 'jira-cancel-btn', { signInAvailable: true });
+    await expect(page.locator('[data-testid="jira-connect-waiting"]')).toBeVisible();
+    await page.locator('[data-testid="jira-connect-cancel-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeHidden();
+    await expect.poll(() => cancelCount(page)).toBe(1);
+    await flushRender(page);
+    expect(await cancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('Escape during the wait sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await openWaiting(page, 'jira-cancel-escape', { signInAvailable: true });
+    await expect(page.locator('[data-testid="jira-connect-waiting"]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeHidden();
+    await expect.poll(() => cancelCount(page)).toBe(1);
+    await flushRender(page);
+    expect(await cancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('a sign-in that already ended sends no cancel on Back or on close', async () => {
+    const { browser, page } = await launchPage();
+    await openWaiting(page, 'jira-cancel-resolved', {
+      signInAvailable: true,
+      signInResult: { ok: false, cancelled: false, error: 'The user did not authorize the app.' },
+    });
+    await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveText('The user did not authorize the app.');
+    await page.locator('[data-testid="jira-connect-choice-api-token"]').click();
+    await page.locator('[data-testid="jira-connect-back-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toBeVisible();
+    await page.locator('[data-testid="jira-connect-cancel-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeHidden();
+    await flushRender(page);
+    expect(await signInCount(page)).toBe(1);
+    expect(await cancelCount(page)).toBe(0);
+    await browser.close();
+  });
+});
+
+test.describe('Jira Connect dialog detection branches', () => {
+  test('editing the Site to a Cloud site keeps the API token steps even when sign-in is offered', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-edit-site-cloud');
+    await setJiraPreset(page, { signInAvailable: true });
+    await page.evaluate(() => {
+      const host = window as unknown as Record<string, unknown>;
+      host.__detectCalls = [];
+      host.__mockJiraDetectSiteHook = (siteOrUrl: string) => {
+        (host.__detectCalls as string[]).push(siteOrUrl);
+        return undefined;
+      };
+    });
+    await openJiraLinkStep(page);
+    // Typed JQL with no site connected opens Connect on the steps with an empty Site field.
+    await pasteAndConnect(page, 'project = ENG');
+    const siteInput = page.locator('[data-testid="jira-connect-site-input"]');
+    await expect(siteInput).toBeVisible();
+    await siteInput.fill('acme.atlassian.net');
+    await siteInput.blur();
+    await expect.poll(async () => page.evaluate(() => (window as unknown as { __detectCalls: string[] }).__detectCalls))
+      .toContain('acme.atlassian.net');
+    await flushRender(page);
+
+    await expect(page.locator('[data-testid="jira-connect-email-input"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toHaveCount(0);
+    expect(await signInCount(page)).toBe(0);
+    await browser.close();
+  });
+
+  test('a remembered browser sign-in falls to the token steps in a build with no sign-in', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-oauth-unavailable');
+    await seedJiraSource(page);
+    await page.evaluate(() => {
+      const host = window as unknown as Record<string, unknown>;
+      host.__mockJiraPreset = {
+        signInAvailable: false,
+        sites: { 'acme.atlassian.net': { method: 'oauth', account: 'dana@acme.example' } },
+      };
+      host.__mockImportCheckCli = (source: string) =>
+        (source === 'jira' ? { available: true, authenticated: false, error: 'Jira rejected the saved token.' } : null);
+    });
+    await openJiraSource(page);
+    await page.locator('[data-testid="import-connect-provider-btn"]').click();
+
+    await expect(page.locator('[data-testid="jira-connect-email-input"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-waiting"]')).toHaveCount(0);
+    expect(await signInCount(page)).toBe(0);
+    await browser.close();
+  });
+
+  test('choosing the API token clears a shown sign-in error, and Back does not bring it back', async () => {
+    const { browser, page } = await launchPage();
+    await openWaiting(page, 'jira-token-clears-error', {
+      signInAvailable: true,
+      signInResult: { ok: false, cancelled: false, error: 'The user did not authorize the app.' },
+    });
+    await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveText('The user did not authorize the app.');
+
+    await page.locator('[data-testid="jira-connect-choice-api-token"]').click();
+    await expect(page.locator('[data-testid="jira-connect-email-input"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveCount(0);
+
+    await page.locator('[data-testid="jira-connect-back-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveCount(0);
     await browser.close();
   });
 });
@@ -242,6 +463,55 @@ test.describe('Import dialog with a Jira source', () => {
     await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeHidden();
     await expect(page.locator('[data-testid="import-cli-error"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="import-issue-10001"]')).toBeVisible();
+    await browser.close();
+  });
+
+  test('Reconnect on a browser sign-in starts the sign-in again, straight away', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-reconnect-oauth');
+    await seedJiraSource(page);
+    await page.evaluate(() => {
+      const host = window as unknown as Record<string, unknown>;
+      host.__mockJiraPreset = {
+        signInAvailable: true,
+        sites: { 'acme.atlassian.net': { method: 'oauth', account: 'dana@acme.example' } },
+      };
+      host.__mockImportCheckCli = (source: string) =>
+        (source === 'jira' ? { available: true, authenticated: false, error: 'Jira rejected the saved token.' } : null);
+    });
+    await openJiraSource(page);
+
+    await page.locator('[data-testid="import-connect-provider-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-waiting"]')).toBeVisible();
+    await expect.poll(() => signInCount(page)).toBe(1);
+    await expect(page.locator('[data-testid="jira-connect-email-input"]')).toHaveCount(0);
+
+    // Back from there offers both ways in.
+    await page.locator('[data-testid="jira-connect-back-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-choice-api-token"]')).toBeVisible();
+    await browser.close();
+  });
+
+  test('Reconnect on an API token reopens its steps, with Back to the choices when sign-in is offered', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-reconnect-token');
+    await seedJiraSource(page);
+    await page.evaluate(() => {
+      const host = window as unknown as Record<string, unknown>;
+      host.__mockJiraPreset = {
+        signInAvailable: true,
+        sites: { 'acme.atlassian.net': { method: 'api-token', email: 'dana@acme.example', account: 'dana@acme.example' } },
+      };
+      host.__mockImportCheckCli = (source: string) =>
+        (source === 'jira' ? { available: true, authenticated: false, error: 'Jira rejected the saved token.' } : null);
+    });
+    await openJiraSource(page);
+
+    await page.locator('[data-testid="import-connect-provider-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-email-input"]')).toHaveValue('dana@acme.example');
+    expect(await signInCount(page)).toBe(0);
+    await page.locator('[data-testid="jira-connect-back-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-choice-sign-in"]')).toBeVisible();
     await browser.close();
   });
 

@@ -20,16 +20,44 @@ export function isTrelloSignInAvailable(): boolean {
 }
 
 /**
- * Trello's approval page for `apiKey`, asking for a read-only token that never expires. With no
- * `return_url`, Trello shows the token on the page for the user to copy.
+ * kangentic.com's Trello return page. Trello only returns a token to an origin listed on the key,
+ * and Kangentic's key lists kangentic.com. The page reads the token from the URL fragment (never
+ * sent to a server), seals it to this attempt's key, and sends the browser to the loopback
+ * listener at `TRELLO_SIGN_IN_CALLBACK_PATH`.
  */
-export function buildAuthorizeUrl(apiKey: string): string {
+export const TRELLO_RETURN_URL = 'https://kangentic.com/oauth/trello/return';
+export const TRELLO_SIGN_IN_CALLBACK_PATH = '/trello/callback';
+
+/** How long Sign in with Trello waits for the browser to hand back before it gives up. */
+export const TRELLO_SIGN_IN_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * The return page address for one attempt. The one place the sign-in state rides, so moving it
+ * from the query to the path is a change here alone. `URLSearchParams` encodes it once.
+ */
+export function buildTrelloReturnUrl(state: string): string {
+  const url = new URL(TRELLO_RETURN_URL);
+  url.searchParams.set('state', state);
+  return url.toString();
+}
+
+/**
+ * Trello's approval page for `apiKey`, asking for a read-only token that never expires. With no
+ * `returnState`, Trello shows the token on the page for the user to copy, which is the only way
+ * for the user's own key: its allowed origins are not ours. With one (Kangentic's key), Trello
+ * sends the browser on to kangentic.com's return page with the token in the fragment.
+ */
+export function buildAuthorizeUrl(apiKey: string, options: { returnState?: string } = {}): string {
   const params = new URLSearchParams();
   params.set('key', apiKey);
   params.set('name', 'Kangentic');
   params.set('scope', 'read');
   params.set('expiration', 'never');
   params.set('response_type', 'token');
+  if (options.returnState !== undefined) {
+    params.set('return_url', buildTrelloReturnUrl(options.returnState));
+    params.set('callback_method', 'fragment');
+  }
   return `https://trello.com/1/authorize?${params.toString()}`;
 }
 

@@ -12,6 +12,16 @@ msgid "API token"
 msgstr ""
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "在浏览器中授权 Kangentic"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Atlassian sign-in did not finish."
+msgstr "Atlassian 登录未完成。"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Check the site address."
 msgstr ""
 
@@ -92,6 +102,11 @@ msgstr "密码"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 #, fuzzy
+msgid "Paste a token from your Atlassian account"
+msgstr "粘贴来自你的 Atlassian 帐户的令牌"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
 msgid "Paste it here"
 msgstr "粘贴到此处"
 
@@ -103,6 +118,11 @@ msgstr "粘贴你的令牌"
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Personal access token"
 msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Sign in with Atlassian"
+msgstr "使用 Atlassian 登录"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Site"
@@ -117,6 +137,11 @@ msgid "Use a personal access token"
 msgstr ""
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Use an API token"
+msgstr "使用 API 令牌"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Use your password"
 msgstr ""
 
@@ -124,6 +149,11 @@ msgstr ""
 #, fuzzy
 msgid "Username"
 msgstr "用户名"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Waiting for Atlassian in your browser"
+msgstr "正在等待浏览器中的 Atlassian"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Your Jira password"

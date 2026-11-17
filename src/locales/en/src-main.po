@@ -94,6 +94,31 @@ msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
 msgstr "Another program is using the Linear sign-in ports."
 
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "Atlassian didn't answer the sign-in."
+msgstr "Atlassian didn't answer the sign-in."
+
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira sign-in browser page"
+msgid "Atlassian sign-in did not finish. Return to Kangentic to try again."
+msgstr "Atlassian sign-in did not finish. Return to Kangentic to try again."
+
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in timed out."
+msgstr "Atlassian sign-in timed out."
+
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in was declined."
+msgstr "Atlassian sign-in was declined."
+
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "Atlassian's answer had no refresh token."
+msgstr "Atlassian's answer had no refresh token."
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Available system memory at the time: {availableMb} MB."
 msgstr "Available system memory at the time: {availableMb} MB."
@@ -115,10 +140,20 @@ msgstr "Copy"
 msgid "Copy Image"
 msgstr "Copy Image"
 
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "Could not open the browser for Atlassian sign-in."
+msgstr "Could not open the browser for Atlassian sign-in."
+
 #: src/main/boards/adapters/linear/oauth.ts
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
 msgstr "Could not open the browser for Linear sign-in."
+
+#: src/main/boards/adapters/trello/oauth.ts
+msgctxt "Trello connect error"
+msgid "Could not open the browser for Trello sign-in."
+msgstr "Could not open the browser for Trello sign-in."
 
 #: src/main/updater.ts
 msgid "Download Kangentic again to keep it updated."
@@ -135,6 +170,16 @@ msgstr "Kangentic can't create its data folder"
 #: src/main/db/global-db-dialog.ts
 msgid "Kangentic can't read its database"
 msgstr "Kangentic can't read its database"
+
+#: src/main/boards/adapters/trello/oauth.ts
+msgctxt "Trello connect error"
+msgid "Kangentic's sign-in page failed."
+msgstr "Kangentic's sign-in page failed."
+
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "Kangentic's sign-in service failed."
+msgstr "Kangentic's sign-in service failed."
 
 #: src/main/index.ts
 msgid "Kangentic's window stopped responding"
@@ -153,6 +198,16 @@ msgstr "Linear sign-in timed out."
 #: src/main/updater.ts
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Move Kangentic to Applications to keep it updated."
+
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "No local port was free for the Atlassian sign-in."
+msgstr "No local port was free for the Atlassian sign-in."
+
+#: src/main/boards/adapters/trello/oauth.ts
+msgctxt "Trello connect error"
+msgid "No local port was free for the Trello sign-in."
+msgstr "No local port was free for the Trello sign-in."
 
 #: src/main/window-open-policy.ts
 msgid "Not secure - {host}"
@@ -206,6 +261,11 @@ msgstr "Select All"
 msgid "Session crashed: {label}"
 msgstr "Session crashed: {label}"
 
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira connect error"
+msgid "Sign in with Atlassian is not available in this build."
+msgstr "Sign in with Atlassian is not available in this build."
+
 #: src/main/boards/adapters/linear/oauth.ts
 msgctxt "Linear connect error"
 msgid "Sign in with Linear is not available in this build."
@@ -228,6 +288,7 @@ msgid "The window crashed ({crashReason}) and could not recover after {attempts,
 msgstr "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 
 #: src/main/boards/adapters/trello/ipc-handlers.ts
+#: src/main/boards/adapters/trello/oauth.ts
 msgctxt "Trello connect error"
 msgid "This build has no Kangentic Trello key. Use your own API key."
 msgstr "This build has no Kangentic Trello key. Use your own API key."
@@ -236,16 +297,45 @@ msgstr "This build has no Kangentic Trello key. Use your own API key."
 msgid "This path has characters Windows does not allow."
 msgstr "This path has characters Windows does not allow."
 
+#: src/main/boards/adapters/jira/oauth.ts
+msgid "This sign-in can't open {site}."
+msgstr "This sign-in can't open {site}."
+
 #: src/main/db/global-db-dialog.ts
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
 msgstr "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
+
+#: src/main/boards/adapters/trello/oauth.ts
+msgctxt "Trello sign-in browser page"
+msgid "Trello sign-in did not finish. Return to Kangentic to try again."
+msgstr "Trello sign-in did not finish. Return to Kangentic to try again."
+
+#: src/main/boards/adapters/trello/oauth.ts
+msgctxt "Trello connect error"
+msgid "Trello sign-in timed out."
+msgstr "Trello sign-in timed out."
+
+#: src/main/boards/adapters/trello/oauth.ts
+msgctxt "Trello connect error"
+msgid "Trello sign-in was declined."
+msgstr "Trello sign-in was declined."
 
 #: src/main/window-open-policy.ts
 msgid "Unknown site"
 msgstr "Unknown site"
 
+#: src/main/boards/adapters/jira/oauth.ts
+msgctxt "Jira sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "You can close this tab and return to Kangentic."
+
 #: src/main/boards/adapters/linear/oauth.ts
 msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "You can close this tab and return to Kangentic."
+
+#: src/main/boards/adapters/trello/oauth.ts
+msgctxt "Trello sign-in browser page"
 msgid "You can close this tab and return to Kangentic."
 msgstr "You can close this tab and return to Kangentic."
 

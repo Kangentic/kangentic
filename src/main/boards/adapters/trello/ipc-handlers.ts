@@ -10,10 +10,12 @@ import type {
   TrelloConnectResult,
   TrelloListBoardsResult,
   TrelloOpenApprovalInput,
+  TrelloSignInResult,
 } from '../../../../shared/types';
 import { TrelloClient, TrelloError } from './client';
 import { TRELLO_API_KEY, buildAuthorizeUrl, isTrelloSignInAvailable } from './constants';
 import { clearTrelloCredential } from './credential-store';
+import { cancelTrelloSignIn, reopenTrelloSignIn, signInWithTrello } from './oauth';
 
 const EMPTY_KEY_MESSAGE = msg({ message: 'Paste your API key.', context: 'Trello connect error' });
 const EMPTY_TOKEN_MESSAGE = msg({ message: 'Paste the token Trello shows.', context: 'Trello connect error' });
@@ -114,6 +116,17 @@ export function registerTrelloIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle(IPC.BOARDS_TRELLO_SIGN_IN, async (): Promise<TrelloSignInResult> =>
+    signInTrello((url) => shell.openExternal(url)));
+
+  ipcMain.handle(IPC.BOARDS_TRELLO_REOPEN_SIGN_IN, async (): Promise<void> => {
+    await reopenTrelloSignIn();
+  });
+
+  ipcMain.handle(IPC.BOARDS_TRELLO_CANCEL_SIGN_IN, async (): Promise<void> => {
+    cancelTrelloSignIn();
+  });
+
   ipcMain.handle(IPC.BOARDS_TRELLO_LIST_BOARDS, async (): Promise<TrelloListBoardsResult> => {
     try {
       return { boards: await new TrelloClient().listBoards() };
@@ -126,4 +139,24 @@ export function registerTrelloIpcHandlers(): void {
   ipcMain.handle(IPC.BOARDS_TRELLO_CLEAR_CREDENTIAL, async (): Promise<void> => {
     clearTrelloCredential();
   });
+}
+
+/**
+ * Sign in with Trello on Kangentic's key and save the token once Trello accepts it.
+ * Exported for tests.
+ */
+export async function signInTrello(
+  openExternal: (url: string) => Promise<void>,
+  signIn: typeof signInWithTrello = signInWithTrello,
+  client: Pick<TrelloClient, 'validate' | 'saveCredential'> = new TrelloClient(),
+): Promise<TrelloSignInResult> {
+  const result = await signIn({
+    openExternal,
+    validate: async (token) => {
+      await client.validate(TRELLO_API_KEY, token);
+    },
+  });
+  if (!result.ok) return result;
+  await client.saveCredential('kangentic-key', TRELLO_API_KEY, result.value);
+  return { ok: true };
 }

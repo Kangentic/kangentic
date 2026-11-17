@@ -602,6 +602,11 @@ msgstr "파일 열기"
 msgid "Open in {sourceName}"
 msgstr "{sourceName}에서 열기"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "페이지 다시 열기"
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"

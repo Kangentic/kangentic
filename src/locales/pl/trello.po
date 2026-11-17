@@ -30,11 +30,6 @@ msgstr "Zatwierdź i wklej token"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
 #, fuzzy
-msgid "Approve Kangentic and paste the token"
-msgstr "Zatwierdź Kangentic i wklej token"
-
-#: src/renderer/components/trello/TrelloSetupDialog.tsx
-#, fuzzy
 msgid "Approve Kangentic in your browser"
 msgstr "Zatwierdź Kangentic w przeglądarce"
 
@@ -144,5 +139,15 @@ msgstr "Token"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
 #, fuzzy
+msgid "Trello sign-in did not finish."
+msgstr "Logowanie do Trello nie zostało ukończone."
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
 msgid "Use your own API key"
 msgstr "Użyj własnego klucza API"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Waiting for Trello in your browser"
+msgstr "Oczekiwanie na Trello w przeglądarce"

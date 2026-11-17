@@ -75,7 +75,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
 - **Azure DevOps:** The `az` CLI must be installed, authenticated (`az login`), and the azure-devops extension installed (`az extension add --name azure-devops`).
 - **Asana:** a Personal Access Token, created at `app.asana.com/0/my-apps`. The first time you pick Asana, a setup dialog asks for it, checks it against Asana, and stores it encrypted on this machine.
-- **Jira:** a sign-in for the site, asked for the first time a link names it. **Connect Jira** asks the site whether it runs Cloud or Data Center. Jira Cloud takes your Atlassian email and an API token (created at `id.atlassian.com`; a token with scopes works too, and needs the Jira Software board scopes to read boards). Jira Data Center offers two ways in: a personal access token from your Jira profile, or your username and password. The sign-in is checked against Jira and stored encrypted on this machine, one per site.
+- **Jira:** a sign-in for the site, asked for the first time a link names it. **Connect Jira** asks the site whether it runs Cloud or Data Center. Jira Cloud takes your Atlassian email and an API token (created at `id.atlassian.com`; a token with scopes works too, and needs the Jira Software board scopes to read boards). Jira Data Center offers two ways in: a personal access token from your Jira profile, or your username and password. The sign-in is checked against Jira and stored encrypted on this machine, one per site. A build that carries Kangentic's Atlassian client id also offers **Sign in with Atlassian** for Jira Cloud, beside the API token: it opens Atlassian's approval page in your browser and waits there ("Waiting for Atlassian in your browser", with **Open the page again** for a tab you closed). Approving Kangentic closes the dialog. If you decline, or your account can't open the site ("This sign-in can't open acme.atlassian.net."), the dialog goes back to the two choices with the reason. A browser sign-in renews itself, but after 90 days without an import Atlassian asks you to sign in again. The sign-in and every renewal go through Kangentic's sign-in service at kangentic.com, which holds the secret Atlassian requires and seals the tokens to this computer before they reach your browser.
 - **Linear:** the first time you pick Linear, **Connect Linear** asks for a personal API key. Create
   one in Linear under Settings > Account > Security & Access (Read access is enough), paste it, and
   Kangentic checks it against Linear and stores it encrypted on this machine. A build that carries a
@@ -87,7 +87,9 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
   and paste it. **Open Trello's approval page** then asks Trello for a read-only token that never
   expires, and Trello shows it for you to paste. Kangentic checks both against Trello and stores
   them encrypted on this machine. A build that carries Kangentic's own Trello key also offers
-  **Sign in with Trello**, which skips making an app: approve Kangentic and paste the token.
+  **Sign in with Trello**, which skips making an app and the paste: approve Kangentic in your
+  browser and the dialog closes on its own. A declined approval goes back to the two choices with
+  the reason.
 - **Obsidian:** nothing to install or sign in to. The vault is read from this computer, also for a
   remote project, and Kangentic never writes to it.
 
@@ -105,12 +107,14 @@ in no vault is refused with "Not in a vault" and nothing is saved. To import bot
 checklist items from one vault, add it twice, once with each type.
 
 If a saved sign-in stops working (a revoked Asana token, Jira token, Linear key or Trello token, or
-a Linear sign-in that lapsed), the import dialog's error banner carries a **Connect Asana**,
-**Connect Jira**, **Connect Linear** or **Connect Trello** button. It reopens the setup dialog, with
-a Jira site and email filled in again, and once the new credential works the dialog syncs. If an
-Obsidian source's folder moved, its drive is gone, or it is no longer inside a vault, the banner says
-"Folder not found" or "Not in a vault" and carries **Choose folder**, which saves the new folder in
-the old source's place. Items already imported still read as imported. Choosing the same folder
+a Linear or Atlassian sign-in that lapsed), the import dialog's error banner carries a **Connect Asana**,
+**Connect Jira**, **Connect Linear** or **Connect Trello** button. It reopens the setup dialog
+the way you signed in: Sign in with Atlassian starts the browser sign-in again, and a Jira token
+reopens its steps with the site and email filled in. Once the new credential works the dialog syncs.
+If Atlassian or Kangentic's sign-in service is down, a browser sign-in is kept and the banner offers
+**Retry** instead. If an Obsidian source's folder moved, its drive is gone, or it is no longer
+inside a vault, the banner says "Folder not found" or "Not in a vault" and carries **Choose
+folder**, which saves the new folder in the old source's place. Items already imported still read as imported. Choosing the same folder
 again checks it again in place.
 
 **Importing items:**

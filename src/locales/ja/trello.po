@@ -30,11 +30,6 @@ msgstr "承認してトークンを貼り付け"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
 #, fuzzy
-msgid "Approve Kangentic and paste the token"
-msgstr "Kangentic を承認してトークンを貼り付け"
-
-#: src/renderer/components/trello/TrelloSetupDialog.tsx
-#, fuzzy
 msgid "Approve Kangentic in your browser"
 msgstr "ブラウザーで Kangentic を承認してください"
 
@@ -144,5 +139,15 @@ msgstr "トークン"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
 #, fuzzy
+msgid "Trello sign-in did not finish."
+msgstr "Trello へのサインインが完了しませんでした。"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
 msgid "Use your own API key"
 msgstr "独自の API キーを使用"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Waiting for Trello in your browser"
+msgstr "ブラウザーで Trello の応答を待っています"

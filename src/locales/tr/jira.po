@@ -12,6 +12,16 @@ msgid "API token"
 msgstr ""
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "Tarayıcınızda Kangentic'i onaylayın"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Atlassian sign-in did not finish."
+msgstr "Atlassian oturum açma işlemi tamamlanmadı."
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Check the site address."
 msgstr ""
 
@@ -92,6 +102,11 @@ msgstr "Parola"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 #, fuzzy
+msgid "Paste a token from your Atlassian account"
+msgstr "Atlassian hesabınızdan bir belirteç yapıştırın"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
 msgid "Paste it here"
 msgstr "Buraya yapıştırın"
 
@@ -103,6 +118,11 @@ msgstr "Belirtecinizi yapıştırın"
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Personal access token"
 msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Sign in with Atlassian"
+msgstr "Atlassian ile oturum aç"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Site"
@@ -117,6 +137,11 @@ msgid "Use a personal access token"
 msgstr ""
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Use an API token"
+msgstr "API belirteci kullanın"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Use your password"
 msgstr ""
 
@@ -124,6 +149,11 @@ msgstr ""
 #, fuzzy
 msgid "Username"
 msgstr "Kullanıcı adı"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Waiting for Atlassian in your browser"
+msgstr "Tarayıcınızda Atlassian bekleniyor"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Your Jira password"

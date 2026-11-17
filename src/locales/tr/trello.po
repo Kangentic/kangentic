@@ -30,11 +30,6 @@ msgstr "Onaylayın ve belirteci yapıştırın"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
 #, fuzzy
-msgid "Approve Kangentic and paste the token"
-msgstr "Kangentic'i onaylayın ve belirteci yapıştırın"
-
-#: src/renderer/components/trello/TrelloSetupDialog.tsx
-#, fuzzy
 msgid "Approve Kangentic in your browser"
 msgstr "Tarayıcınızda Kangentic'i onaylayın"
 
@@ -144,5 +139,15 @@ msgstr "Belirteç"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
 #, fuzzy
+msgid "Trello sign-in did not finish."
+msgstr "Trello oturum açma işlemi tamamlanmadı."
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
 msgid "Use your own API key"
 msgstr "Kendi API anahtarınızı kullanın"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Waiting for Trello in your browser"
+msgstr "Tarayıcınızda Trello bekleniyor"

@@ -602,6 +602,11 @@ msgstr "Otevřít soubor"
 msgid "Open in {sourceName}"
 msgstr "Otevřít v {sourceName}"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "Otevřít stránku znovu"
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"

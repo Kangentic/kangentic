@@ -115,6 +115,36 @@ msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
 msgstr "Un altro programma sta usando le porte di accesso a Linear."
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian didn't answer the sign-in."
+msgstr "Atlassian non ha risposto all'accesso."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "Atlassian sign-in did not finish. Return to Kangentic to try again."
+msgstr "L'accesso ad Atlassian non è stato completato. Torna a Kangentic per riprovare."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in timed out."
+msgstr "Timeout dell'accesso ad Atlassian."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in was declined."
+msgstr "L'accesso ad Atlassian è stato rifiutato."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian's answer had no refresh token."
+msgstr "La risposta di Atlassian non conteneva un token di aggiornamento."
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -141,11 +171,23 @@ msgstr "Copia"
 msgid "Copy Image"
 msgstr "Copia immagine"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Could not open the browser for Atlassian sign-in."
+msgstr "Impossibile aprire il browser per l'accesso ad Atlassian."
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
 msgstr "Impossibile aprire il browser per l'accesso a Linear."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Could not open the browser for Trello sign-in."
+msgstr "Impossibile aprire il browser per l'accesso a Trello."
 
 #: src/main/updater.ts
 #, fuzzy
@@ -166,6 +208,18 @@ msgstr "Kangentic non riesce a creare la propria cartella dei dati"
 #, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic non riesce a leggere il proprio database"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Kangentic's sign-in page failed."
+msgstr "La pagina di accesso di Kangentic non ha funzionato."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Kangentic's sign-in service failed."
+msgstr "Il servizio di accesso di Kangentic non è riuscito."
 
 #: src/main/index.ts
 #, fuzzy
@@ -188,6 +242,18 @@ msgstr "Timeout dell'accesso a Linear."
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Sposta Kangentic in Applicazioni per mantenerlo aggiornato."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "No local port was free for the Atlassian sign-in."
+msgstr "Nessuna porta locale libera per l'accesso ad Atlassian."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "No local port was free for the Trello sign-in."
+msgstr "Nessuna porta locale libera per l'accesso a Trello."
 
 #: src/main/window-open-policy.ts
 #, fuzzy
@@ -253,6 +319,12 @@ msgstr "Seleziona tutto"
 msgid "Session crashed: {label}"
 msgstr "Sessione arrestata in modo anomalo: {label}"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Sign in with Atlassian is not available in this build."
+msgstr "L'accesso con Atlassian non è disponibile in questa build."
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -280,6 +352,7 @@ msgid "The window crashed ({crashReason}) and could not recover after {attempts,
 msgstr "La finestra si è arrestata in modo anomalo ({crashReason}) e non è riuscita a ripristinarsi dopo {attempts, plural, one {# tentativo} many {# tentativi} other {# tentativi}} in {minutes, plural, one {# minuto} many {# minuti} other {# minuti}}."
 
 #: src/main/boards/adapters/trello/ipc-handlers.ts
+#: src/main/boards/adapters/trello/oauth.ts
 #, fuzzy
 msgctxt "Trello connect error"
 msgid "This build has no Kangentic Trello key. Use your own API key."
@@ -290,19 +363,54 @@ msgstr "Questa build non include una chiave Trello di Kangentic. Usa la tua chia
 msgid "This path has characters Windows does not allow."
 msgstr "Questo percorso contiene caratteri non consentiti da Windows."
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgid "This sign-in can't open {site}."
+msgstr "Questo accesso non può aprire {site}."
+
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
 msgstr "Di solito significa che un altro programma sta bloccando il file: una scansione antivirus, una sincronizzazione di OneDrive o Dropbox, oppure un'unità guasta."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
+msgid "Trello sign-in did not finish. Return to Kangentic to try again."
+msgstr "L'accesso a Trello non è stato completato. Torna a Kangentic per riprovare."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in timed out."
+msgstr "Timeout dell'accesso a Trello."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in was declined."
+msgstr "L'accesso a Trello è stato rifiutato."
 
 #: src/main/window-open-policy.ts
 #, fuzzy
 msgid "Unknown site"
 msgstr "Sito sconosciuto"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "Puoi chiudere questa scheda e tornare a Kangentic."
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "Puoi chiudere questa scheda e tornare a Kangentic."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
 msgid "You can close this tab and return to Kangentic."
 msgstr "Puoi chiudere questa scheda e tornare a Kangentic."
 

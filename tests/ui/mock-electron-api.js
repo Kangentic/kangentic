@@ -1131,6 +1131,8 @@
   var mockBoardAuth = {
     asana: { connected: false, email: undefined },
     jiraSites: {},
+    // The resolver of a Sign in with Atlassian still waiting on the "browser".
+    jiraPendingSignIn: null,
     jiraPreset: function () {
       return (typeof window !== 'undefined' && window.__mockJiraPreset) || {};
     },
@@ -5763,8 +5765,45 @@
         }
       },
       jira: {
+        // Sign in with Atlassian reads window.__mockJiraPreset too: signInAvailable (default false,
+        // as in a build with no JIRA_OAUTH_CLIENT_ID) and signInResult. With no signInResult,
+        // signIn waits until cancelSignIn, the way the real one waits on the browser.
         authStatus: async function (target) {
-          return mockBoardAuth.jiraStatus(target);
+          return Object.assign(
+            { signInAvailable: mockBoardAuth.jiraPreset().signInAvailable === true },
+            mockBoardAuth.jiraStatus(target),
+          );
+        },
+        signIn: async function (input) {
+          if (typeof window !== 'undefined') {
+            window.__mockJiraSignInCallCount = (window.__mockJiraSignInCallCount || 0) + 1;
+            window.__lastJiraSignInInput = input;
+          }
+          var result = mockBoardAuth.jiraPreset().signInResult;
+          if (result) {
+            if (result.ok) {
+              var signedInHost = mockBoardAuth.jiraHost(input && input.site);
+              mockBoardAuth.jiraSites[signedInHost] = { method: 'oauth', account: result.account };
+            }
+            return result;
+          }
+          return new Promise(function (resolve) {
+            mockBoardAuth.jiraPendingSignIn = resolve;
+          });
+        },
+        reopenSignIn: async function () {
+          if (typeof window !== 'undefined') {
+            window.__mockJiraReopenCount = (window.__mockJiraReopenCount || 0) + 1;
+          }
+        },
+        cancelSignIn: async function () {
+          // Counts every call the dialog sends, whether or not a sign-in still waits.
+          if (typeof window !== 'undefined') {
+            window.__mockJiraCancelSignInCount = (window.__mockJiraCancelSignInCount || 0) + 1;
+          }
+          var resolve = mockBoardAuth.jiraPendingSignIn;
+          mockBoardAuth.jiraPendingSignIn = null;
+          if (resolve) resolve({ ok: false, cancelled: true });
         },
         detectSite: async function (siteOrUrl) {
           // A test can watch or hold a detection with
@@ -5906,6 +5945,10 @@
             }
           },
           cancelSignIn: async function () {
+            // Counts every call the dialog sends, whether or not a sign-in still waits.
+            if (typeof window !== 'undefined') {
+              window.__mockLinearCancelSignInCount = (window.__mockLinearCancelSignInCount || 0) + 1;
+            }
             if (pendingSignIn) {
               const resolve = pendingSignIn;
               pendingSignIn = null;
@@ -5924,11 +5967,13 @@
         // Stateful mock. Tests override via window.__mockTrelloPreset, read on every
         // call: { state: { connected, kind }, signInAvailable, invalidKey, invalidToken,
         // boards, listBoardsError, listBoardsRejects, connectRejects, openApprovalRejects,
-        // authStatusRejects }. Each *Rejects is a message that makes that method reject (default
-        // off). signInAvailable defaults to false,
+        // authStatusRejects, signInResult }. Each *Rejects is a message that makes that method reject
+        // (default off). signInAvailable defaults to false,
         // as in a build with no Kangentic Trello key (TRELLO_API_KEY), so the web demo
         // offers only what the app does. Trello's 401 text is "invalid key" / "invalid token".
+        // With no signInResult, signIn waits until cancelSignIn, the way the real one waits on the browser.
         const state = { connected: false, kind: undefined };
+        let pendingSignIn = null;
         function preset() {
           return (typeof window !== 'undefined' && window.__mockTrelloPreset) || {};
         }
@@ -5979,6 +6024,38 @@
             if (input && input.kind === 'own-key' && approvalKey.length === 0) throw new Error('Paste your API key.');
             if (typeof window !== 'undefined') {
               window.__mockTrelloApprovalCount = (window.__mockTrelloApprovalCount || 0) + 1;
+            }
+          },
+          signIn: async function () {
+            if (typeof window !== 'undefined') {
+              window.__mockTrelloSignInCallCount = (window.__mockTrelloSignInCallCount || 0) + 1;
+            }
+            const result = preset().signInResult;
+            if (result) {
+              if (result.ok) {
+                state.connected = true;
+                state.kind = 'kangentic-key';
+              }
+              return result;
+            }
+            return new Promise(function (resolve) {
+              pendingSignIn = resolve;
+            });
+          },
+          reopenSignIn: async function () {
+            if (typeof window !== 'undefined') {
+              window.__mockTrelloReopenCount = (window.__mockTrelloReopenCount || 0) + 1;
+            }
+          },
+          cancelSignIn: async function () {
+            // Counts every call the dialog sends, whether or not a sign-in still waits.
+            if (typeof window !== 'undefined') {
+              window.__mockTrelloCancelSignInCount = (window.__mockTrelloCancelSignInCount || 0) + 1;
+            }
+            if (pendingSignIn) {
+              const resolve = pendingSignIn;
+              pendingSignIn = null;
+              resolve({ ok: false, cancelled: true });
             }
           },
           listBoards: async function () {

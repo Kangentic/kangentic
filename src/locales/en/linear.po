@@ -73,10 +73,6 @@ msgid "Open Linear's security settings"
 msgstr "Open Linear's security settings"
 
 #: src/renderer/components/linear/LinearSetupDialog.tsx
-msgid "Open the page again"
-msgstr "Open the page again"
-
-#: src/renderer/components/linear/LinearSetupDialog.tsx
 msgid "Paste a key from Linear's settings"
 msgstr "Paste a key from Linear's settings"
 

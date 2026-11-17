@@ -25,10 +25,6 @@ msgid "Approve it and paste the token"
 msgstr "Approve it and paste the token"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
-msgid "Approve Kangentic and paste the token"
-msgstr "Approve Kangentic and paste the token"
-
-#: src/renderer/components/trello/TrelloSetupDialog.tsx
 msgid "Approve Kangentic in your browser"
 msgstr "Approve Kangentic in your browser"
 
@@ -117,5 +113,13 @@ msgid "Token"
 msgstr "Token"
 
 #: src/renderer/components/trello/TrelloSetupDialog.tsx
+msgid "Trello sign-in did not finish."
+msgstr "Trello sign-in did not finish."
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
 msgid "Use your own API key"
 msgstr "Use your own API key"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+msgid "Waiting for Trello in your browser"
+msgstr "Waiting for Trello in your browser"

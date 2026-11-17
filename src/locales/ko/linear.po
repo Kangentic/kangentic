@@ -89,11 +89,6 @@ msgstr "Linear 보안 설정 열기"
 
 #: src/renderer/components/linear/LinearSetupDialog.tsx
 #, fuzzy
-msgid "Open the page again"
-msgstr "페이지 다시 열기"
-
-#: src/renderer/components/linear/LinearSetupDialog.tsx
-#, fuzzy
 msgid "Paste a key from Linear's settings"
 msgstr "Linear 설정에서 키 붙여넣기"
 

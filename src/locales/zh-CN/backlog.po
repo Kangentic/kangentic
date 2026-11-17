@@ -507,6 +507,11 @@ msgstr "打开文件"
 msgid "Open in {sourceName}"
 msgstr "在 {sourceName} 中打开"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "重新打开页面"
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"

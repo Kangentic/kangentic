@@ -461,6 +461,9 @@ export const IPC = {
   BOARDS_JIRA_AUTH_STATUS: 'boards:jira:authStatus',
   BOARDS_JIRA_DETECT_SITE: 'boards:jira:detectSite',
   BOARDS_JIRA_CONNECT: 'boards:jira:connect',
+  BOARDS_JIRA_SIGN_IN: 'boards:jira:signIn',
+  BOARDS_JIRA_REOPEN_SIGN_IN: 'boards:jira:reopenSignIn',
+  BOARDS_JIRA_CANCEL_SIGN_IN: 'boards:jira:cancelSignIn',
 
   // Board Auth - Asana
   BOARDS_ASANA_AUTH_STATUS: 'boards:asana:authStatus',
@@ -479,6 +482,9 @@ export const IPC = {
   BOARDS_TRELLO_AUTH_STATUS: 'boards:trello:authStatus',
   BOARDS_TRELLO_CONNECT: 'boards:trello:connect',
   BOARDS_TRELLO_OPEN_APPROVAL: 'boards:trello:openApproval',
+  BOARDS_TRELLO_SIGN_IN: 'boards:trello:signIn',
+  BOARDS_TRELLO_REOPEN_SIGN_IN: 'boards:trello:reopenSignIn',
+  BOARDS_TRELLO_CANCEL_SIGN_IN: 'boards:trello:cancelSignIn',
   BOARDS_TRELLO_LIST_BOARDS: 'boards:trello:listBoards',
   BOARDS_TRELLO_CLEAR_CREDENTIAL: 'boards:trello:clearCredential',
 

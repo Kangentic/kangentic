@@ -602,6 +602,11 @@ msgstr "Fájl megnyitása"
 msgid "Open in {sourceName}"
 msgstr "Megnyitás itt: {sourceName}"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "Oldal újbóli megnyitása"
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"

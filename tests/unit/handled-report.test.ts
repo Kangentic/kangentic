@@ -62,6 +62,7 @@ describe('isExpectedFailure', () => {
       new (await import('../../src/main/retrieval/retrieval-client')).RetrievalUnavailableError('down'),
       new (await import('../../src/main/transcription/engines/transcription-engine')).ModelLoadError('model', new Error('x')),
       new (await import('../../src/main/boards/adapters/trello/client')).TrelloError('invalid token', 401),
+      new (await import('../../src/main/boards/adapters/jira/oauth-tokens')).JiraRefreshUnavailableError(502),
     ];
     for (const error of constructed) {
       expect(EXPECTED_FAILURE_NAMES.has(error.name), error.name).toBe(true);

@@ -115,6 +115,36 @@ msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
 msgstr "別のプログラムが Linear のサインイン用ポートを使用しています。"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian didn't answer the sign-in."
+msgstr "Atlassian からサインインの応答がありませんでした。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "Atlassian sign-in did not finish. Return to Kangentic to try again."
+msgstr "Atlassian へのサインインが完了しませんでした。Kangentic に戻ってもう一度お試しください。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in timed out."
+msgstr "Atlassian へのサインインがタイムアウトしました。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in was declined."
+msgstr "Atlassian へのサインインが拒否されました。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian's answer had no refresh token."
+msgstr "Atlassian の応答にリフレッシュ トークンが含まれていませんでした。"
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -141,11 +171,23 @@ msgstr "コピー"
 msgid "Copy Image"
 msgstr "画像をコピー"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Could not open the browser for Atlassian sign-in."
+msgstr "Atlassian へのサインイン用のブラウザーを開けませんでした。"
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
 msgstr "Linear へのサインイン用にブラウザーを開けませんでした。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Could not open the browser for Trello sign-in."
+msgstr "Trello サインイン用のブラウザーを開けませんでした。"
 
 #: src/main/updater.ts
 #, fuzzy
@@ -166,6 +208,18 @@ msgstr "Kangentic がデータ フォルダーを作成できません"
 #, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic がデータベースを読み取れません"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Kangentic's sign-in page failed."
+msgstr "Kangentic のサインインページでエラーが発生しました。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Kangentic's sign-in service failed."
+msgstr "Kangentic のサインイン サービスでエラーが発生しました。"
 
 #: src/main/index.ts
 #, fuzzy
@@ -188,6 +242,18 @@ msgstr "Linear へのサインインがタイムアウトしました。"
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Kangentic を最新の状態に保つには、アプリケーションフォルダーに移動してください。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "No local port was free for the Atlassian sign-in."
+msgstr "Atlassian へのサインインに使用できるローカル ポートがありません。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "No local port was free for the Trello sign-in."
+msgstr "Trello サインイン用に空いているローカルポートがありませんでした。"
 
 #: src/main/window-open-policy.ts
 #, fuzzy
@@ -253,6 +319,12 @@ msgstr "すべて選択"
 msgid "Session crashed: {label}"
 msgstr "セッションがクラッシュしました: {label}"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Sign in with Atlassian is not available in this build."
+msgstr "このビルドでは Atlassian でのサインインを利用できません。"
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -280,6 +352,7 @@ msgid "The window crashed ({crashReason}) and could not recover after {attempts,
 msgstr "ウィンドウがクラッシュし（{crashReason}）、{minutes, plural, other {# 分}}間に {attempts, plural, other {# 回}}試行しても回復できませんでした。"
 
 #: src/main/boards/adapters/trello/ipc-handlers.ts
+#: src/main/boards/adapters/trello/oauth.ts
 #, fuzzy
 msgctxt "Trello connect error"
 msgid "This build has no Kangentic Trello key. Use your own API key."
@@ -290,19 +363,54 @@ msgstr "このビルドには Kangentic の Trello キーがありません。�
 msgid "This path has characters Windows does not allow."
 msgstr "このパスには Windows で使用できない文字が含まれています。"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgid "This sign-in can't open {site}."
+msgstr "このサインインでは {site} を開けません。"
+
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
 msgstr "通常、別のプログラムがファイルを使用中であることが原因です (ウイルス対策スキャン、OneDrive や Dropbox の同期、ドライブの故障など)。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
+msgid "Trello sign-in did not finish. Return to Kangentic to try again."
+msgstr "Trello のサインインが完了しませんでした。Kangentic に戻って再試行してください。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in timed out."
+msgstr "Trello のサインインがタイムアウトしました。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in was declined."
+msgstr "Trello のサインインが拒否されました。"
 
 #: src/main/window-open-policy.ts
 #, fuzzy
 msgid "Unknown site"
 msgstr "不明なサイト"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "このタブを閉じて Kangentic に戻ってください。"
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "このタブを閉じて Kangentic に戻ってください。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
 msgid "You can close this tab and return to Kangentic."
 msgstr "このタブを閉じて Kangentic に戻ってください。"
 

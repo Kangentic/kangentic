@@ -7,6 +7,7 @@
  * Software agile 1.0); the owner has no Jira instance to record from.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { JiraSiteCredential } from '../../src/main/boards/adapters/jira/credential-store';
 
 vi.mock('electron', () => ({ app: { isReady: () => true }, safeStorage: {}, ipcMain: { handle: vi.fn() } }));
 
@@ -21,12 +22,31 @@ vi.mock('../../src/main/boards/shared/download-file', async () => {
   return { ...actual, downloadFile: downloadFileSpy };
 });
 
+// Whether this build offers Sign in with Atlassian. The real answer follows the
+// build's OAuth client id, so a test that pins the auth status sets it here.
+const signInOffer = vi.hoisted(() => ({ available: false }));
+
+vi.mock('../../src/main/boards/adapters/jira/constants', async () => {
+  const actual = await vi.importActual<typeof import('../../src/main/boards/adapters/jira/constants')>(
+    '../../src/main/boards/adapters/jira/constants',
+  );
+  return { ...actual, isJiraSignInAvailable: () => signInOffer.available };
+});
+
+// A browser sign-in's renewal saves the rotated pair here, not to the real keychain file.
+const storedCredentials = vi.hoisted(() => ({ sites: {} as Record<string, JiraSiteCredential> }));
+vi.mock('../../src/main/boards/adapters/jira/credential-store', () => ({
+  loadJiraCredentials: async () => ({ ...storedCredentials.sites }),
+  saveJiraCredential: async (saved: JiraSiteCredential) => {
+    storedCredentials.sites[saved.site] = saved;
+  },
+}));
+
 import { JiraAdapter } from '../../src/main/boards/adapters/jira/adapter';
 import { JiraClient, JiraHttpError } from '../../src/main/boards/adapters/jira/client';
 import { RefusalError } from '../../src/shared/refusal';
 import { connectJiraSite } from '../../src/main/boards/adapters/jira/ipc-handlers';
 import { mapJiraIssues, type JiraIssueRaw } from '../../src/main/boards/adapters/jira/mapper';
-import type { JiraSiteCredential } from '../../src/main/boards/adapters/jira/credential-store';
 import { priorityIndexForName } from '../../src/shared/priority-scale';
 import { DEFAULT_PRIORITY_CONFIG } from '../../src/shared/types';
 
@@ -327,7 +347,7 @@ describe('JiraAdapter.prepareSource', () => {
   it('asks for a link when typed JQL could run on two connected sites', async () => {
     const { adapter } = adapterWith({ [CLOUD]: credential(), [DATA_CENTER]: credential({ site: DATA_CENTER }) }, () => undefined);
     await expect(adapter.prepareSource('::jql::project = ENG')).rejects.toThrow('Paste a search link so the site is known.');
-    expect(await adapter.getAuthStatus('project = ENG')).toEqual({ connected: false, reason: 'ambiguous-site' });
+    expect(await adapter.getAuthStatus('project = ENG')).toEqual({ connected: false, reason: 'ambiguous-site', signInAvailable: false });
   });
 });
 
@@ -819,13 +839,84 @@ describe('JiraAdapter.getAuthStatus with text that names no source', () => {
 
   it('answers none with no target and no saved site', async () => {
     const { adapter } = adapterWith({}, () => undefined);
-    expect(await adapter.getAuthStatus()).toEqual({ connected: false, reason: 'none' });
-    expect(await adapter.getAuthStatus('   ')).toEqual({ connected: false, reason: 'none' });
+    // signInAvailable is false: the mocked build offers no Sign in with Atlassian.
+    expect(await adapter.getAuthStatus()).toEqual({ connected: false, reason: 'none', signInAvailable: false });
+    expect(await adapter.getAuthStatus('   ')).toEqual({ connected: false, reason: 'none', signInAvailable: false });
   });
 
   it('answers none for typed JQL when no site is saved', async () => {
     const { adapter } = adapterWith({}, () => undefined);
-    expect(await adapter.getAuthStatus('assignee = currentUser()')).toEqual({ connected: false, reason: 'none' });
+    expect(await adapter.getAuthStatus('assignee = currentUser()')).toEqual({ connected: false, reason: 'none', signInAvailable: false });
+  });
+});
+
+describe('JiraAdapter.getAuthStatus signInAvailable', () => {
+  const offered = async (run: () => Promise<void>) => {
+    signInOffer.available = true;
+    try {
+      await run();
+    } finally {
+      signInOffer.available = false;
+    }
+  };
+
+  it('reports signInAvailable true on a not-connected answer when the build offers Sign in with Atlassian', async () => {
+    await offered(async () => {
+      const { adapter } = adapterWith({}, () => undefined);
+      expect(await adapter.getAuthStatus()).toEqual({ connected: false, reason: 'none', signInAvailable: true });
+    });
+  });
+
+  it('reports signInAvailable true on a connected answer when the build offers Sign in with Atlassian', async () => {
+    await offered(async () => {
+      const { adapter } = adapterWith({ [CLOUD]: credential() }, () => undefined);
+      expect(await adapter.getAuthStatus()).toEqual({ connected: true, signInAvailable: true });
+      expect(await adapter.getAuthStatus(`${CLOUD}/jira/software/projects/ENG/boards/1`)).toMatchObject({
+        connected: true,
+        site: CLOUD,
+        signInAvailable: true,
+      });
+    });
+  });
+});
+
+describe('JiraAdapter downloads for a browser sign-in', () => {
+  const REFRESH_URL = 'https://kangentic.com/oauth/jira/refresh';
+
+  beforeEach(() => {
+    downloadFileSpy.mockReset();
+    downloadFileSpy.mockImplementation(async (url: string, filename: string) => ({
+      filename, data: 'AAAA', mediaType: 'application/octet-stream', sizeBytes: 4, sourceUrl: url,
+    }));
+    storedCredentials.sites = {};
+  });
+
+  it('sends the renewed bearer, not the expired one, with a file attachment', async () => {
+    const expired = credential({
+      method: 'oauth',
+      email: undefined,
+      secret: 'access-old',
+      refreshToken: 'refresh-old',
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      cloudId: 'cloud-123',
+      viaGateway: true,
+    });
+    storedCredentials.sites[CLOUD] = expired;
+    const { adapter, calls } = adapterWith({ [CLOUD]: expired }, (url) => {
+      if (url.toString() === REFRESH_URL) {
+        return { body: { access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 } };
+      }
+      return undefined;
+    });
+
+    await adapter.downloadFileAttachments([
+      { url: `${CLOUD}/rest/api/3/attachment/content/20001`, filename: 'trace.log', sizeBytes: 1, externalRef: '20001' },
+    ]);
+
+    expect(calls.some((call) => call.url.toString() === REFRESH_URL)).toBe(true);
+    const downloaded = downloadFileSpy.mock.calls.find(([calledUrl]) => calledUrl.includes('/attachment/content/20001'));
+    expect(downloaded?.[2]?.headers).toEqual({ Authorization: 'Bearer access-new' });
+    expect(storedCredentials.sites[CLOUD]).toMatchObject({ secret: 'access-new', refreshToken: 'refresh-new' });
   });
 });
 

@@ -602,6 +602,11 @@ msgstr "Dosyayı aç"
 msgid "Open in {sourceName}"
 msgstr "{sourceName} içinde aç"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "Sayfayı yeniden aç"
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"

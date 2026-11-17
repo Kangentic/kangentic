@@ -115,6 +115,36 @@ msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
 msgstr "다른 프로그램이 Linear 로그인 포트를 사용하고 있습니다."
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian didn't answer the sign-in."
+msgstr "Atlassian에서 로그인에 응답하지 않았습니다."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "Atlassian sign-in did not finish. Return to Kangentic to try again."
+msgstr "Atlassian 로그인이 완료되지 않았습니다. Kangentic으로 돌아가서 다시 시도하세요."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in timed out."
+msgstr "Atlassian 로그인 시간이 초과되었습니다."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in was declined."
+msgstr "Atlassian 로그인이 거부되었습니다."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian's answer had no refresh token."
+msgstr "Atlassian 응답에 새로 고침 토큰이 없습니다."
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -141,11 +171,23 @@ msgstr "복사"
 msgid "Copy Image"
 msgstr "이미지 복사"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Could not open the browser for Atlassian sign-in."
+msgstr "Atlassian 로그인용 브라우저를 열 수 없습니다."
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
 msgstr "Linear 로그인을 위한 브라우저를 열 수 없습니다."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Could not open the browser for Trello sign-in."
+msgstr "Trello 로그인을 위한 브라우저를 열 수 없습니다."
 
 #: src/main/updater.ts
 #, fuzzy
@@ -166,6 +208,18 @@ msgstr "Kangentic에서 데이터 폴더를 만들 수 없습니다"
 #, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic에서 데이터베이스를 읽을 수 없습니다"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Kangentic's sign-in page failed."
+msgstr "Kangentic 로그인 페이지에서 오류가 발생했습니다."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Kangentic's sign-in service failed."
+msgstr "Kangentic 로그인 서비스에 실패했습니다."
 
 #: src/main/index.ts
 #, fuzzy
@@ -188,6 +242,18 @@ msgstr "Linear 로그인 시간이 초과되었습니다."
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Kangentic을 계속 업데이트하려면 응용 프로그램 폴더로 옮기세요."
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "No local port was free for the Atlassian sign-in."
+msgstr "Atlassian 로그인에 사용할 수 있는 로컬 포트가 없습니다."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "No local port was free for the Trello sign-in."
+msgstr "Trello 로그인에 사용할 수 있는 로컬 포트가 없습니다."
 
 #: src/main/window-open-policy.ts
 #, fuzzy
@@ -253,6 +319,12 @@ msgstr "모두 선택"
 msgid "Session crashed: {label}"
 msgstr "세션 충돌: {label}"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Sign in with Atlassian is not available in this build."
+msgstr "이 빌드에서는 Atlassian으로 로그인을 사용할 수 없습니다."
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -280,6 +352,7 @@ msgid "The window crashed ({crashReason}) and could not recover after {attempts,
 msgstr "창이 충돌했으며({crashReason}) {minutes, plural, other {#분}} 동안 {attempts, plural, other {#회 시도}}한 후에도 복구하지 못했습니다."
 
 #: src/main/boards/adapters/trello/ipc-handlers.ts
+#: src/main/boards/adapters/trello/oauth.ts
 #, fuzzy
 msgctxt "Trello connect error"
 msgid "This build has no Kangentic Trello key. Use your own API key."
@@ -290,19 +363,54 @@ msgstr "이 빌드에는 Kangentic Trello 키가 없습니다. 직접 발급받�
 msgid "This path has characters Windows does not allow."
 msgstr "이 경로에 Windows에서 허용되지 않는 문자가 있습니다."
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgid "This sign-in can't open {site}."
+msgstr "이 로그인으로는 {site}을(를) 열 수 없습니다."
+
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
 msgstr "일반적으로 다른 프로그램이 파일을 사용 중이라는 의미입니다. 바이러스 백신 검사, OneDrive 또는 Dropbox 동기화, 드라이브 고장 등이 원인일 수 있습니다."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
+msgid "Trello sign-in did not finish. Return to Kangentic to try again."
+msgstr "Trello 로그인이 완료되지 않았습니다. Kangentic으로 돌아가 다시 시도하세요."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in timed out."
+msgstr "Trello 로그인 시간이 초과되었습니다."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in was declined."
+msgstr "Trello 로그인이 거부되었습니다."
 
 #: src/main/window-open-policy.ts
 #, fuzzy
 msgid "Unknown site"
 msgstr "알 수 없는 사이트"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "이 탭을 닫고 Kangentic으로 돌아가도 됩니다."
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "이 탭을 닫고 Kangentic으로 돌아가도 됩니다."
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
 msgid "You can close this tab and return to Kangentic."
 msgstr "이 탭을 닫고 Kangentic으로 돌아가도 됩니다."
 

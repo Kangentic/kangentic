@@ -12,6 +12,14 @@ msgid "API token"
 msgstr "API token"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Approve Kangentic in your browser"
+msgstr "Approve Kangentic in your browser"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Atlassian sign-in did not finish."
+msgstr "Atlassian sign-in did not finish."
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Check the site address."
 msgstr "Check the site address."
 
@@ -90,6 +98,10 @@ msgid "Password"
 msgstr "Password"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Paste a token from your Atlassian account"
+msgstr "Paste a token from your Atlassian account"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Paste it here"
 msgstr "Paste it here"
 
@@ -100,6 +112,10 @@ msgstr "Paste your token"
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Personal access token"
 msgstr "Personal access token"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Sign in with Atlassian"
+msgstr "Sign in with Atlassian"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Site"
@@ -114,12 +130,20 @@ msgid "Use a personal access token"
 msgstr "Use a personal access token"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Use an API token"
+msgstr "Use an API token"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Use your password"
 msgstr "Use your password"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Username"
 msgstr "Username"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Waiting for Atlassian in your browser"
+msgstr "Waiting for Atlassian in your browser"
 
 #: src/renderer/components/jira/JiraConnectDialog.tsx
 msgid "Your Jira password"

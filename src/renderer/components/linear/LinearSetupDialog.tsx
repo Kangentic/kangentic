@@ -5,6 +5,8 @@ import { BaseDialog } from '../dialogs/BaseDialog';
 import { ArtifactPlatformLogo } from '../VendorMark';
 import { reportRendererFailure } from '../../utils/renderer-failure';
 import type { ProviderSetupDialogProps } from '../backlog/import-providers';
+import { ConnectWaiting } from '../backlog/connect/ConnectParts';
+import { useBrowserSignIn } from '../backlog/connect/useBrowserSignIn';
 
 const LINEAR_SECURITY_SETTINGS_URL = 'https://linear.app/settings/account/security';
 
@@ -39,11 +41,7 @@ export function LinearSetupDialog({ onClose, onSaved, initialError }: ProviderSe
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(initialError ?? null);
   const keyInputRef = useRef<HTMLInputElement>(null);
-  // Which sign-in is current. A Back, a Cancel or a newer sign-in moves it on, so
-  // an earlier sign-in that answers late cannot change what the dialog shows.
-  const signInAttemptRef = useRef(0);
-  // True while a sign-in waits on the browser, so a close asks main to stop it.
-  const signInPendingRef = useRef(false);
+  const browserSignIn = useBrowserSignIn('linear');
 
   useEffect(() => {
     let cancelled = false;
@@ -64,54 +62,26 @@ export function LinearSetupDialog({ onClose, onSaved, initialError }: ProviderSe
     if (view === 'key') keyInputRef.current?.focus();
   }, [view]);
 
-  const cancelPendingSignIn = () => {
-    signInAttemptRef.current += 1;
-    if (!signInPendingRef.current) return;
-    signInPendingRef.current = false;
-    window.electronAPI.backlog.linear.cancelSignIn().catch((cancelError: unknown) => {
-      reportRendererFailure('linear', 'cancel-sign-in', cancelError);
-    });
-  };
-
   const handleClose = () => {
-    cancelPendingSignIn();
+    browserSignIn.cancel();
     onClose();
   };
 
   const handleSignIn = async () => {
-    signInAttemptRef.current += 1;
-    const attempt = signInAttemptRef.current;
-    signInPendingRef.current = true;
     setError(null);
     setView('waiting');
-    try {
-      const result = await window.electronAPI.backlog.linear.signIn();
-      if (attempt === signInAttemptRef.current) signInPendingRef.current = false;
-      // A saved sign-in is saved whichever screen is showing, so the caller hears of it.
-      if (result.ok) {
-        onSaved();
-        return;
-      }
-      if (attempt !== signInAttemptRef.current) return;
-      setView('choice');
-      if (!result.cancelled) setError(result.error ?? t`Linear sign-in did not finish.`);
-    } catch (signInError: unknown) {
-      reportRendererFailure('linear', 'sign-in', signInError);
-      if (attempt !== signInAttemptRef.current) return;
-      signInPendingRef.current = false;
-      setView('choice');
-      setError(signInError instanceof Error ? signInError.message : t`Linear sign-in did not finish.`);
+    const outcome = await browserSignIn.run(() => window.electronAPI.backlog.linear.signIn());
+    if (outcome.kind === 'saved') {
+      onSaved();
+      return;
     }
-  };
-
-  const handleReopen = () => {
-    window.electronAPI.backlog.linear.reopenSignIn().catch((reopenError: unknown) => {
-      reportRendererFailure('linear', 'reopen-sign-in', reopenError);
-    });
+    if (outcome.kind === 'stale') return;
+    setView('choice');
+    if (outcome.kind === 'failed') setError(outcome.error ?? t`Linear sign-in did not finish.`);
   };
 
   const handleBackFromWaiting = () => {
-    cancelPendingSignIn();
+    browserSignIn.cancel();
     setView('choice');
   };
 
@@ -244,18 +214,11 @@ export function LinearSetupDialog({ onClose, onSaved, initialError }: ProviderSe
       )}
 
       {view === 'waiting' && (
-        <div className="flex flex-col items-center gap-2.5 py-2 text-sm" data-testid="linear-setup-waiting">
-          <LoaderCircle size={24} className="animate-spin text-fg-faint" />
-          <span className="text-fg"><Trans>Waiting for Linear in your browser</Trans></span>
-          <button
-            type="button"
-            onClick={handleReopen}
-            className="text-xs text-accent-fg hover:underline"
-            data-testid="linear-setup-reopen-btn"
-          >
-            <Trans>Open the page again</Trans>
-          </button>
-        </div>
+        <ConnectWaiting
+          message={<Trans>Waiting for Linear in your browser</Trans>}
+          onReopen={browserSignIn.reopen}
+          testIdPrefix="linear-setup"
+        />
       )}
 
       {view === 'key' && (

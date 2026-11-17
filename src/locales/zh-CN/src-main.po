@@ -106,6 +106,36 @@ msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
 msgstr "另一个程序正在使用 Linear 登录端口。"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian didn't answer the sign-in."
+msgstr "Atlassian 未响应登录请求。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "Atlassian sign-in did not finish. Return to Kangentic to try again."
+msgstr "Atlassian 登录未完成。请返回 Kangentic 重试。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in timed out."
+msgstr "Atlassian 登录超时。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian sign-in was declined."
+msgstr "Atlassian 登录被拒绝。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Atlassian's answer had no refresh token."
+msgstr "Atlassian 的响应中没有刷新令牌。"
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Available system memory at the time: {availableMb} MB."
 msgstr "当时可用系统内存：{availableMb} MB。"
@@ -127,11 +157,23 @@ msgstr "复制"
 msgid "Copy Image"
 msgstr "复制图像"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Could not open the browser for Atlassian sign-in."
+msgstr "无法打开浏览器进行 Atlassian 登录。"
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
 msgstr "无法打开浏览器进行 Linear 登录。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Could not open the browser for Trello sign-in."
+msgstr "无法打开浏览器进行 Trello 登录。"
 
 #: src/main/updater.ts
 #, fuzzy
@@ -150,6 +192,18 @@ msgstr "Kangentic 无法创建数据文件夹"
 #: src/main/db/global-db-dialog.ts
 msgid "Kangentic can't read its database"
 msgstr "Kangentic 无法读取数据库"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Kangentic's sign-in page failed."
+msgstr "Kangentic 登录页面出错。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Kangentic's sign-in service failed."
+msgstr "Kangentic 登录服务出错。"
 
 #: src/main/index.ts
 msgid "Kangentic's window stopped responding"
@@ -171,6 +225,18 @@ msgstr "Linear 登录超时。"
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "请将 Kangentic 移至“应用程序”文件夹以保持更新。"
+
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "No local port was free for the Atlassian sign-in."
+msgstr "没有可用于 Atlassian 登录的本地端口。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "No local port was free for the Trello sign-in."
+msgstr "没有可用于 Trello 登录的本地端口。"
 
 #: src/main/window-open-policy.ts
 msgid "Not secure - {host}"
@@ -228,6 +294,12 @@ msgstr "全选"
 msgid "Session crashed: {label}"
 msgstr "会话已崩溃：{label}"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira connect error"
+msgid "Sign in with Atlassian is not available in this build."
+msgstr "此版本不支持使用 Atlassian 登录。"
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -253,6 +325,7 @@ msgid "The window crashed ({crashReason}) and could not recover after {attempts,
 msgstr "窗口崩溃（{crashReason}），在 {minutes, plural, other {# 分钟}}内尝试 {attempts, plural, other {# 次}}后仍无法恢复。"
 
 #: src/main/boards/adapters/trello/ipc-handlers.ts
+#: src/main/boards/adapters/trello/oauth.ts
 #, fuzzy
 msgctxt "Trello connect error"
 msgid "This build has no Kangentic Trello key. Use your own API key."
@@ -263,17 +336,52 @@ msgstr "此版本没有 Kangentic Trello 密钥。请使用你自己的 API 密�
 msgid "This path has characters Windows does not allow."
 msgstr "此路径包含 Windows 不允许使用的字符。"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgid "This sign-in can't open {site}."
+msgstr "此登录无法打开 {site}。"
+
 #: src/main/db/global-db-dialog.ts
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
 msgstr "这通常表示有其他程序正占用该文件：防病毒扫描、OneDrive 或 Dropbox 同步，或硬盘故障。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
+msgid "Trello sign-in did not finish. Return to Kangentic to try again."
+msgstr "Trello 登录未完成。请返回 Kangentic 重试。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in timed out."
+msgstr "Trello 登录超时。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Trello sign-in was declined."
+msgstr "Trello 登录被拒绝。"
 
 #: src/main/window-open-policy.ts
 msgid "Unknown site"
 msgstr "未知站点"
 
+#: src/main/boards/adapters/jira/oauth.ts
+#, fuzzy
+msgctxt "Jira sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "可以关闭此标签页并返回 Kangentic。"
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "你可以关闭此标签页并返回 Kangentic。"
+
+#: src/main/boards/adapters/trello/oauth.ts
+#, fuzzy
+msgctxt "Trello sign-in browser page"
 msgid "You can close this tab and return to Kangentic."
 msgstr "你可以关闭此标签页并返回 Kangentic。"
 
