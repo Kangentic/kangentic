@@ -396,10 +396,13 @@ runs 287 to 344s, on shards planned to hold the same work.
   slower than the timings, on a plan that gave it the same work as the others. The first web demo
   shard ran the same 183 tests in 581 test-seconds in one run and 748 in the next. That is a slow
   runner, and no plan removes it.
-- **A fourth UI worker is worth about 20s a shard.** The eleven test steps summed to 2,430s at 4
-  workers against 2,655s at 3. Not taken on one run: the project went from 4 to 3 once already
-  because load tipped it (see the note in `playwright.config.ts`). It is the next thing to try,
-  with three runs per count.
+- **A fourth UI worker is not worth taking.** Three runs at 4 workers against two at 3, on the same
+  shard plan: the eleven test steps summed to 2,300, 2,309 and 2,639s at 4, and to 2,461 and
+  2,701s at 3. That is 6% on the means and inside the spread between two runs of one count. One of
+  the three runs at 4 had a flaky test, and none of the five runs at 3 did. The test read a
+  card's height a frame before it settled (`edit-automation-guards.spec.ts`), and it now waits
+  for two reads to agree, since a slow runner could do the same at 3. A flake is a red shard and a
+  fix round, so 3 workers stays.
 - **Combining tests is worth what the first audit said.** 7,282 test-seconds became 6,841.
 - **In bundle mode the dev server starts cold.** Nothing else loads from it, so the first of the
   six specs paid its whole cold start inside a 15s test. `stats-lazy-retry.spec.ts` flaked that way
@@ -414,6 +417,16 @@ runs 287 to 344s, on shards planned to hold the same work.
   only past 50. On Linux the send ended in "Paste landed but Enter did not submit" and the test
   passed anyway. The fixture now replies with a line longer than the floor, and the test passes
   on CI with the assertion in place. The engine did not change.
+- **A second test in that file could not pass on Windows.** "no-evidence path surfaces 'Paste
+  landed but Enter did not submit'" failed all three attempts of a local Windows run, behind a
+  Windows-only `retries: 2` that called it a 20 to 40% flake. The engine's log says why: after the
+  Enter, ConPTY writes control sequences of its own with no visible text, and they pass the
+  50-byte floor. Four of four sends to a mock that writes nothing logged `evidence=data` 98 to
+  161 ms after the Enter. The test is `test.fixme` on Windows now, as the third test in the file
+  already was, and the retries are gone. Linux, which CI runs, exercises it for real, and
+  `tests/unit/paste-engine.test.ts` owns the engine's windows. The engine did not change. The
+  alternative is to count only visible text toward the floor, which would change how a submit is
+  detected for every agent on every OS, and the floor was set from per-agent captures.
 
 The contended numbers are not in the table. Every run here shared the account with other PRs, and
 their totals ran from 700s to 1,735s on queue alone. What a contended PR gains is the 25% fewer

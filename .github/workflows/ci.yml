@@ -53,8 +53,8 @@ env:
 # 6,841, and a shard's test step from 265 to 754s to 190 to 345s. After that no
 # tier is far ahead: a UI shard's job takes 225 to 390s, a web demo shard 250 to
 # 340s, and a unit shard with its gate 200 to 275s. So no tier has a slot to
-# give, and the next cut is cheaper tests, a fourth UI worker measured over
-# several runs, or more runners.
+# give, and the next cut is cheaper tests or more runners. A fourth UI worker
+# was measured and not taken (see the ui project in playwright.config.ts).
 #
 # Concurrency budget. GitHub Free caps an account at 20 concurrent jobs and 5
 # concurrent macOS jobs. On a PR: UI 11 + E2E 3 + unit 3 + demo 2 = 19 shards, plus

@@ -1072,15 +1072,31 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
   });
 
   test('the Condition card holds its height across both kinds, with a field or with the setup notice', async () => {
+    /**
+     * The card's height once two reads in a row agree. The radio reports checked a frame before
+     * the kind's body has laid out, and one read taken straight after it came back 6.5px off on
+     * a loaded CI runner (it passed on the retry). What the test pins is the height the card
+     * comes to rest at, so it waits for the card to rest.
+     */
+    async function settledHeight(): Promise<number> {
+      let previousHeight = -1;
+      await expect.poll(async () => {
+        const box = await card('condition').boundingBox();
+        if (!box) throw new Error('The Condition card has no box');
+        const settled = box.height === previousHeight;
+        previousHeight = box.height;
+        return settled;
+      }, { intervals: [50, 100, 100, 200], timeout: 5000 }).toBe(true);
+      return previousHeight;
+    }
+
     /** The card's height on each kind, switched off, as the user flips between them. */
     async function heightsByKind(): Promise<number[]> {
       const heights: number[] = [];
       for (const kind of ['agent', 'text', 'agent'] as const) {
         await conditionKind(kind).click();
         await expect(conditionKind(kind)).toHaveAttribute('aria-checked', 'true');
-        const box = await card('condition').boundingBox();
-        if (!box) throw new Error('The Condition card has no box');
-        heights.push(box.height);
+        heights.push(await settledHeight());
       }
       return heights;
     }
