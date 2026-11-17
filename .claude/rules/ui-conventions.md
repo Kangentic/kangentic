@@ -18,9 +18,10 @@ chrome unless these are stated.
   `components/workflows/NoWorkflowsIllustration.tsx`, is the Workflows empty state's drawing of
   four linked cards: its curves are a diagram, not an icon, so no lucide glyph can draw them. It
   paints only theme tokens and never moves. The fifth, `components/VendorMark.tsx`, draws a
-  vendor's own mark: an agent's on its Accounts card (`AgentLogo`) and a tool's beside an artifact
-  that lives there (`ArtifactPlatformLogo`). No lucide glyph is a logo, and a list of logins or of
-  links is where vendors have to be told apart. The marks are all `currentColor`, held as element
+  vendor's own mark: an agent's on its Accounts card (`AgentLogo`), a tool's beside an artifact
+  that lives there (`ArtifactPlatformLogo`), and a board provider's in Import Tasks (Linear, through
+  `ArtifactPlatformLogo`). No lucide glyph is a logo, and a list of logins, links or providers is
+  where vendors have to be told apart. The marks are all `currentColor`, held as element
   data in `agent-marks.ts` (the set kangentic.com draws) and `artifact-platform-marks.ts`. It
   never moves, and a vendor with no mark gets a generic lucide icon, never a guessed one. Each
   exempt file carries a comment naming this rule.
@@ -143,7 +144,7 @@ chrome unless these are stated.
     92px. "Nothing clipped" is not the same as "still usable", and only the first is visible in
     a layout check.
 - **Copy for labels and descriptions.** House writing style is the always-on
-  [[writing-style]]; this bullet adds only what is specific to a settings row.
+  [[writing-style]]; this bullet adds what is specific to UI copy, most of it to a settings row.
   - **One sentence, about 110 characters.** That is what fits the row's `text-xs` column without
     wrapping past two lines. "Two sentences" is not a budget; it wrapped to four lines in practice.
     State the effect and, if it is genuinely needed, one distinguishing clause. Drop flag names,
@@ -160,6 +161,14 @@ chrome unless these are stated.
     every open and learned once. When asked to cut text load, give a verdict per string (essential?
     non-obvious? keep or cut), not layout variants that relocate the same sentences. A hint that
     compensates for an unclear control means the control needs fixing, not the hint.
+  - **Static messages are as short as clarity allows.** Intros, step text, hints, footnotes,
+    banners and error lines carry the fewest words that stay clear. Cut text before explaining
+    more, and cut a sentence that a heading or the control already says (a dialog intro that
+    repeats its own steps).
+  - **No wrapping where avoidable.** A label, button, hint, step, banner or static message fits on
+    one line at its container's real width. When it does not, cut words before widening the
+    container or accepting a second line. Text the user or a provider wrote (a task title, a
+    description, an error message from a server) is exempt.
   - No raw hex, byte codes, control-code literals, or escape sequences in a label or description
     (not "Send Ctrl+H (0x08) instead of Delete (0x7F)"). Describe the behavior a user sees
     ("Backspace deletes the whole previous word instead of one character").

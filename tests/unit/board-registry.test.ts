@@ -81,11 +81,11 @@ describe('boardRegistry', () => {
     expect(boardRegistry.getOrThrow('github_projects').status).toBe('stable');
     expect(boardRegistry.getOrThrow('azure_devops').status).toBe('stable');
     expect(boardRegistry.getOrThrow('asana').status).toBe('stable');
+    expect(boardRegistry.getOrThrow('linear').status).toBe('stable');
   });
 
-  it('the 3 remaining placeholder providers are status: stub', () => {
+  it('the 2 remaining placeholder providers are status: stub', () => {
     expect(boardRegistry.getOrThrow('jira').status).toBe('stub');
-    expect(boardRegistry.getOrThrow('linear').status).toBe('stub');
     expect(boardRegistry.getOrThrow('trello').status).toBe('stub');
   });
 
@@ -94,7 +94,7 @@ describe('boardRegistry', () => {
   });
 
   it('stub adapters return an unauthenticated checkCli result instead of throwing', async () => {
-    for (const id of ['jira', 'linear', 'trello'] as const) {
+    for (const id of ['jira', 'trello'] as const) {
       const adapter = boardRegistry.getOrThrow(id);
       const result = await adapter.checkCli();
       expect(result.available).toBe(false);
@@ -113,11 +113,20 @@ describe('boardRegistry', () => {
     expect(result.error).toMatch(/connect|personal access token/i);
   });
 
-  it('stub adapter fetch() throws not-implemented', async () => {
+  it('linear reports not-connected via checkCli when no credential is stored (not a stub)', async () => {
     const adapter = boardRegistry.getOrThrow('linear');
+    const result = await adapter.checkCli();
+    // Linear signs in through Kangentic, so `available` stays true; Connect Linear is the fix.
+    expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.error).toMatch(/not connected to linear/i);
+  });
+
+  it('stub adapter fetch() throws not-implemented', async () => {
+    const adapter = boardRegistry.getOrThrow('jira');
     await expect(
       adapter.fetch(
-        { source: 'linear', repository: 'team', page: 1, perPage: 10 },
+        { source: 'jira', repository: 'team', page: 1, perPage: 10 },
         () => new Set<string>(),
       ),
     ).rejects.toThrow(/not yet implemented/);
@@ -154,9 +163,10 @@ describe('boardRegistry.requireStable()', () => {
     expect(() => boardRegistry.requireStable('jira')).toThrow(jiraAdapter.displayName);
   });
 
-  it('throws for linear (stub) with displayName in the message', () => {
-    const linearAdapter = boardRegistry.getOrThrow('linear');
-    expect(() => boardRegistry.requireStable('linear')).toThrow(linearAdapter.displayName);
+  it('returns the adapter for linear (runtime-configured, not a stub)', () => {
+    const adapter = boardRegistry.requireStable('linear');
+    expect(adapter.id).toBe('linear');
+    expect(adapter.status).toBe('stable');
   });
 
   it('throws for trello (stub) with displayName in the message', () => {
@@ -169,6 +179,6 @@ describe('boardRegistry.requireStable()', () => {
   });
 
   it('error message for stub adapters mentions not yet implemented', () => {
-    expect(() => boardRegistry.requireStable('linear')).toThrow(/not yet implemented/);
+    expect(() => boardRegistry.requireStable('jira')).toThrow(/not yet implemented/);
   });
 });

@@ -12,7 +12,7 @@ import { Tooltip } from '../Tooltip';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
-import { getProviderLabel, getSourceIcon } from './import-providers';
+import { getProviderForSource, getProviderLabel, getSourceIcon } from './import-providers';
 import type { ExternalIssue, ImportSource } from '../../../shared/types';
 
 interface ImportDialogProps {
@@ -24,14 +24,33 @@ type StateFilter = 'open' | 'closed' | 'all';
 
 const ESTIMATED_ROW_HEIGHT = 64;
 
+/**
+ * Status filter order: the provider's board order first (a state with none sorts
+ * after every state that has one), then alphabetical, which is the whole order
+ * for a provider that sets no `stateOrder`.
+ */
+function compareStatesByBoardOrder(
+  [stateA, orderA]: [string, number],
+  [stateB, orderB]: [string, number],
+): number {
+  if (orderA !== orderB) return orderA < orderB ? -1 : 1;
+  if (stateA === stateB) return 0;
+  return stateA < stateB ? -1 : 1;
+}
+
 function sortByCreatedDesc(list: ExternalIssue[]): ExternalIssue[] {
   return list.slice().sort(
     (itemA, itemB) => new Date(itemB.createdAt).getTime() - new Date(itemA.createdAt).getTime(),
   );
 }
 
-/** For project items, extract the linked issue number from the external URL if available. */
+/**
+ * The id a row prints. A provider whose people know an issue by another id than
+ * its `externalId` sets `displayId` (Linear's `ENG-214`). For project items,
+ * extract the linked issue number from the external URL if available.
+ */
 function displayId(issue: ExternalIssue): string {
+  if (issue.displayId) return issue.displayId;
   if (issue.externalSource === 'github_projects') {
     const issueNumberMatch = /\/issues\/(\d+)$/.exec(issue.externalUrl);
     if (issueNumberMatch) return `#${issueNumberMatch[1]}`;
@@ -100,6 +119,10 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [stateFilter, setStateFilter] = useState<StateFilter>('open');
   const [error, setError] = useState<string | null>(null);
   const [cliError, setCliError] = useState<string | null>(null);
+  // The provider's Connect dialog, opened from the error banner when the saved
+  // sign-in no longer works (a revoked key, an expired sign-in).
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const providerAuth = getProviderForSource(source.source)?.auth;
 
   // Client-side filters, evaluated live over the full (unbounded) issue set
   const [filterText, setFilterText] = useState('');
@@ -161,6 +184,30 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     }
   }, [source.source, source.repository, t]);
 
+  // Check the CLI or sign-in, then reconcile once `afterCache` (the cached paint)
+  // has landed, so the reconcile's result never races ahead of it and gets
+  // overwritten by a slower cache read. A failed check shows the error banner.
+  const checkThenReconcile = useCallback((afterCache: Promise<unknown>) => {
+    const token = fetchSequenceRef.current;
+    window.electronAPI.backlog.importCheckCli(source.source).then(async (cli) => {
+      if (fetchSequenceRef.current !== token) return;
+      if (!cli.available || !cli.authenticated) {
+        setCliError(cli.error ?? t`CLI not available`);
+        setLoading(false);
+        setSyncing(false);
+        return;
+      }
+      await afterCache;
+      if (fetchSequenceRef.current !== token) return;
+      void reconcile('incremental');
+    }).catch((cliError: unknown) => {
+      if (fetchSequenceRef.current !== token) return;
+      setCliError(cliError instanceof Error ? cliError.message : t`CLI check failed`);
+      setLoading(false);
+      setSyncing(false);
+    });
+  }, [source.source, reconcile, t]);
+
   // On mount: check the CLI, paint the persistent cache instantly, then reconcile
   // in the background. First-ever open has an empty cache, so the spinner stays up
   // until the reconcile lands.
@@ -182,27 +229,18 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       // A cache-read failure is non-fatal; the reconcile below will populate.
     });
 
-    window.electronAPI.backlog.importCheckCli(source.source).then(async (cli) => {
-      if (fetchSequenceRef.current !== token) return;
-      if (!cli.available || !cli.authenticated) {
-        setCliError(cli.error ?? t`CLI not available`);
-        setLoading(false);
-        setSyncing(false);
-        return;
-      }
-      // Let the cached paint land first so the reconcile's result never races
-      // ahead of it and gets overwritten by a slower cache read.
-      await cachedPromise;
-      if (fetchSequenceRef.current !== token) return;
-      void reconcile('incremental');
-    }).catch((cliError: unknown) => {
-      if (fetchSequenceRef.current !== token) return;
-      setCliError(cliError instanceof Error ? cliError.message : t`CLI check failed`);
-      setLoading(false);
-      setSyncing(false);
-    });
+    checkThenReconcile(cachedPromise);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // After the banner's Connect saved a working credential: check again and sync.
+  const handleReconnected = () => {
+    setSetupDialogOpen(false);
+    setCliError(null);
+    setSyncing(true);
+    if (issues.length === 0) setLoading(true);
+    checkThenReconcile(Promise.resolve());
+  };
 
   // The open/closed/all toggle is a client-side filter over the single cache
   // bucket (every item carries a normalized stateCategory), so it never refetches.
@@ -215,10 +253,18 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   // this is a useMemo over `issues`, every streamed page recomputes it - a
   // filter option that only exists on a later page appears as soon as that
   // page lands, with no user action required.
-  const uniqueStatuses = useMemo(() =>
-    [...new Set(issues.map((issue) => issue.state).filter((state): state is string => Boolean(state) && state !== 'unknown'))].sort(),
-    [issues],
-  );
+  // In the provider's board order when its issues carry `stateOrder` (Linear),
+  // so the menu reads like the board's columns; alphabetical otherwise.
+  const uniqueStatuses = useMemo(() => {
+    const boardOrderByState = new Map<string, number>();
+    for (const issue of issues) {
+      if (!issue.state || issue.state === 'unknown') continue;
+      const order = issue.stateOrder ?? Number.POSITIVE_INFINITY;
+      const known = boardOrderByState.get(issue.state);
+      if (known === undefined || order < known) boardOrderByState.set(issue.state, order);
+    }
+    return [...boardOrderByState.entries()].sort(compareStatesByBoardOrder).map(([state]) => state);
+  }, [issues]);
 
   const uniqueAssignees = useMemo(() =>
     [...new Set(issues.map((issue) => issue.assignee).filter((assignee): assignee is string => Boolean(assignee)))].sort(),
@@ -364,6 +410,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           labels: issue.labels,
           assignee: issue.assignee,
           fileAttachments: issue.fileAttachments,
+          priority: issue.priority,
         })),
       });
 
@@ -466,6 +513,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const virtualItems = virtualizer.getVirtualItems();
 
   return (
+    <>
     <BaseDialog
       onClose={onClose}
       header={header}
@@ -473,6 +521,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       rawBody
       className="w-[900px] h-[80vh]"
       preventBackdropClose={importing}
+      // The Connect dialog over this one owns Escape while it is open.
+      suppressEscape={setupDialogOpen}
       testId="import-dialog"
     >
       {/* Universal filter toolbar - live client-side over the full loaded set */}
@@ -559,10 +609,20 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
 
       {/* CLI error */}
       {cliError && (
-        <div className="px-4 py-3 m-3 rounded bg-danger/10 border border-danger/20">
-          <div className="flex items-start gap-2">
-            <CircleExclamationPoint size={14} className="text-danger mt-0.5 shrink-0" />
-            <div className="text-xs text-danger whitespace-pre-wrap">{cliError}</div>
+        <div className="px-4 py-3 m-3 rounded bg-danger/10 border border-danger/20" data-testid="import-cli-error">
+          <div className={`flex gap-2 ${providerAuth ? 'items-center' : 'items-start'}`}>
+            <CircleExclamationPoint size={14} className={`text-danger shrink-0 ${providerAuth ? '' : 'mt-0.5'}`} />
+            <div className="flex-1 min-w-0 text-xs text-danger whitespace-pre-wrap">{cliError}</div>
+            {providerAuth && (
+              <button
+                type="button"
+                onClick={() => setSetupDialogOpen(true)}
+                className="shrink-0 px-3 py-1 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors whitespace-nowrap"
+                data-testid="import-connect-provider-btn"
+              >
+                {t({ message: `Connect ${sourceTypeLabel}`, context: 'import error banner' })}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -694,6 +754,16 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         </div>
       )}
     </BaseDialog>
+
+    {/* A sibling, not a child: the dialog's content box would clip a fixed overlay. */}
+    {setupDialogOpen && providerAuth && (
+      <providerAuth.SetupDialog
+        onClose={() => setSetupDialogOpen(false)}
+        onSaved={handleReconnected}
+        initialError={cliError}
+      />
+    )}
+    </>
   );
 }
 

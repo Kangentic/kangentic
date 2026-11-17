@@ -88,6 +88,16 @@ msgstr "代理需要你輸入"
 msgid "Agent went idle"
 msgstr "代理已閒置"
 
+#: src/main/boards/adapters/linear/ipc-handlers.ts
+msgctxt "Linear connect error"
+msgid "An API key has no spaces. Copy it again from Linear."
+msgstr ""
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Another program is using the Linear sign-in ports."
+msgstr ""
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Available system memory at the time: {availableMb} MB."
 msgstr "當時可用的系統記憶體：{availableMb} MB。"
@@ -108,6 +118,11 @@ msgstr "複製"
 #: src/main/index.ts
 msgid "Copy Image"
 msgstr "複製圖片"
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Could not open the browser for Linear sign-in."
+msgstr ""
 
 #: src/main/updater.ts
 #, fuzzy
@@ -131,6 +146,17 @@ msgstr "Kangentic 無法讀取其資料庫"
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic 的視窗沒有回應"
 
+#: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
+msgctxt "Linear sign-in browser page"
+msgid "Linear sign-in did not finish. Return to Kangentic to try again."
+msgstr "Linear 登入未完成。請返回 Kangentic 再試一次。"
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Linear sign-in timed out."
+msgstr ""
+
 #: src/main/updater.ts
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
@@ -145,12 +171,18 @@ msgid "OK"
 msgstr "確定"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Open in default browser"
-msgstr ""
+msgstr "在預設瀏覽器中開啟"
 
 #: src/main/index.ts
 msgid "Paste"
 msgstr "貼上"
+
+#: src/main/boards/adapters/linear/ipc-handlers.ts
+msgctxt "Linear connect error"
+msgid "Paste your API key."
+msgstr ""
 
 #: src/main/db/global-db-dialog.ts
 msgid "Quit"
@@ -172,6 +204,11 @@ msgstr "全選"
 #: src/main/notifications/desktop-notifier.ts
 msgid "Session crashed: {label}"
 msgstr "工作階段當機：{label}"
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Sign in with Linear is not available in this build."
+msgstr ""
 
 #: src/main/notifications/custom-sound.ts
 #, fuzzy
@@ -203,6 +240,12 @@ msgstr "這通常表示有其他程式正在占用該檔案，例如防毒掃描
 #: src/main/window-open-policy.ts
 msgid "Unknown site"
 msgstr "未知網站"
+
+#: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
+msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "您可以關閉此分頁並返回 Kangentic。"
 
 #: src/main/index.ts
 msgid "Your agents are still running in the background. Restart Kangentic to reconnect to them."

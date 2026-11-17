@@ -37,6 +37,8 @@ import type {
 } from '../../../shared/types';
 import { boardRegistry, ImportSourceStore } from '../../boards';
 import { registerAsanaIpcHandlers } from '../../boards/adapters/asana';
+import { registerLinearIpcHandlers } from '../../boards/adapters/linear';
+import { priorityIndexForName, priorityScaleFrom } from '../../../shared/priority-scale';
 import { RefusalError } from '../../../shared/refusal';
 
 /**
@@ -613,6 +615,11 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const importedItems = [];
     let skippedDuplicates = 0;
     let totalSkippedAttachments = 0;
+    // A provider's priority arrives as a name ("High"); the project's own scale,
+    // which a person may have renamed, decides which index it lands on.
+    const priorityScale = priorityScaleFrom(
+      context.configManager.getEffectiveConfig(context.currentProjectPath).backlog?.priorities,
+    );
 
     for (const issue of issuesToImport) {
       if (alreadyImportedIds.has(issue.externalId)) {
@@ -642,7 +649,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
       const item = backlogRepo.create({
         title: issue.title,
         description: issue.body,
-        priority: 0,
+        priority: priorityIndexForName(issue.priority, priorityScale),
         labels: issue.labels,
         assignee: issue.assignee ?? undefined,
         externalId: issue.externalId,
@@ -713,4 +720,5 @@ export function registerBacklogHandlers(context: IpcContext): void {
   // self-contained. Register it here because Asana auth is part of the
   // backlog import flow.
   registerAsanaIpcHandlers();
+  registerLinearIpcHandlers();
 }

@@ -9,11 +9,11 @@
  * popover lets a person rename, reorder and extend. So the bound and the names
  * come from that scale, never from the five levels Kangentic seeds.
  */
-import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 import { HEX_LABEL_COLOR } from '../../../shared/label-palette';
+import { priorityScaleFrom, type PriorityScale } from '../../../shared/priority-scale';
 import type { CommandContext } from './types';
 
-export type PriorityScale = ReadonlyArray<{ label: string; color: string }>;
+export { priorityScaleFrom, type PriorityScale };
 
 /** The refusal for a `labels` value that is not a list. */
 export const LABELS_NOT_A_LIST = 'labels must be a list of names or { name, color } entries.';
@@ -56,11 +56,6 @@ export function splitLabelEntries(rawEntries: ReadonlyArray<unknown> | null | un
 /** The project's priority scale, bottom entry first. An empty one reads as the seeded scale. */
 export function priorityScaleOf(context: CommandContext): PriorityScale {
   return priorityScaleFrom(context.getBacklogDisplayConfig?.().priorities);
-}
-
-/** A stored priority scale as every reader takes it: an absent or empty one reads as the seeded scale. */
-export function priorityScaleFrom(priorities: PriorityScale | undefined): PriorityScale {
-  return priorities && priorities.length > 0 ? priorities : DEFAULT_PRIORITY_CONFIG;
 }
 
 /** The project's label colors, keyed by exact label text. */

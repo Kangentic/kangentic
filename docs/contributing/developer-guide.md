@@ -108,9 +108,9 @@ src/
         github-issues/     # GitHub Issues adapter (stable)
         github-projects/   # GitHub Projects v2 adapter (stable)
         azure-devops/      # Azure DevOps adapter (stable)
-        asana/             # Asana adapter (stub)
+        asana/             # Asana adapter (stable)
         jira/              # Jira adapter (stub)
-        linear/            # Linear adapter (stub)
+        linear/            # Linear adapter (stable)
         trello/            # Trello adapter (stub)
     ipc/
       register-all.ts      # Thin orchestrator, creates IpcContext, re-exports

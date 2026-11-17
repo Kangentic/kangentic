@@ -104,7 +104,14 @@ function makeIssue(
   };
 }
 
-const context = { currentProjectId: 'proj-1', currentProjectPath: '/mock/proj' } as unknown as IpcContext;
+/** The project's priority scale, as `config.backlog.priorities`; empty reads as the seeded five. */
+let projectPriorities: Array<{ label: string; color: string }> = [];
+
+const context = {
+  currentProjectId: 'proj-1',
+  currentProjectPath: '/mock/proj',
+  configManager: { getEffectiveConfig: vi.fn(() => ({ backlog: { priorities: projectPriorities } })) },
+} as unknown as IpcContext;
 
 function executeHandler() {
   const handler = capturedHandlers.get(IPC.BACKLOG_IMPORT_EXECUTE);
@@ -118,6 +125,7 @@ beforeEach(() => {
   backlogRepoMock.findByExternalIds.mockReturnValue(new Set<string>());
   backlogRepoMock.create.mockImplementation((input: Record<string, unknown>) => ({ id: 'backlog-new', ...input }));
   backlogRepoMock.getById.mockReturnValue(undefined);
+  projectPriorities = [];
   adapter = {
     downloadImages: vi.fn(async () => ({ attachments: [], skippedCount: 0 })),
   };
@@ -205,5 +213,46 @@ describe('importExecute - hydrateForImport branch', () => {
     );
     // Reflects the RETURNED count, not input.issues.length (which is 3).
     expect(result.items).toHaveLength(2);
+  });
+});
+
+// A provider's priority arrives as a name (Linear's "High"). The project's own
+// scale decides the index, so a renamed scale must not land an issue on a guess.
+describe('importExecute - priority names', () => {
+  async function importedPriority(priority: string | undefined): Promise<unknown> {
+    await executeHandler()(null, {
+      source: 'linear',
+      repository: 'ENG',
+      issues: [makeIssue({ externalId: 'issue-uuid', priority })],
+    });
+    return backlogRepoMock.create.mock.calls[0][0].priority;
+  }
+
+  it('lands a name on the seeded scale at its index, ignoring case', async () => {
+    expect(await importedPriority('High')).toBe(3);
+    backlogRepoMock.create.mockClear();
+    expect(await importedPriority('urgent')).toBe(4);
+  });
+
+  it('imports at 0 with no priority', async () => {
+    expect(await importedPriority(undefined)).toBe(0);
+  });
+
+  it('follows a project scale that reorders the levels', async () => {
+    projectPriorities = [
+      { label: 'None', color: '#6b7280' },
+      { label: 'High', color: '#f97316' },
+      { label: 'Low', color: '#3b82f6' },
+    ];
+    expect(await importedPriority('High')).toBe(1);
+  });
+
+  it('imports at 0 when the project renamed the level away', async () => {
+    projectPriorities = [
+      { label: 'Someday', color: '#6b7280' },
+      { label: 'Soon', color: '#3b82f6' },
+      { label: 'Now', color: '#ef4444' },
+    ];
+    expect(await importedPriority('Urgent')).toBe(0);
   });
 });

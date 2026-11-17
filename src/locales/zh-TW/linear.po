@@ -1,0 +1,138 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-17 11:30-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: zh-TW\n"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "import source"
+msgid "Added"
+msgstr "已新增"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "在瀏覽器中核准 Kangentic"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Back"
+msgstr "返回"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Cancel"
+msgstr "取消"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "Choose a team"
+msgstr "選擇團隊"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect"
+msgstr "連線"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect Linear"
+msgstr "連線 Linear"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Couldn't save the key."
+msgstr "無法儲存金鑰。"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Create a personal API key"
+msgstr "建立個人 API 金鑰"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Hide key"
+msgstr "隱藏金鑰"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Linear sign-in did not finish."
+msgstr "Linear 登入未完成。"
+
+#. Read is the name of an access level in Linear's own English interface. Keep it as written.
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Name it \"Kangentic\", give it <0>Read</0> access, and copy it."
+msgstr "將其命名為「Kangentic」，授予 <0>Read</0> 存取權，然後複製。"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "No teams are visible to this sign-in."
+msgstr "此登入身分看不到任何團隊。"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open linear.app/settings/account/security"
+msgstr "開啟 linear.app/settings/account/security"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open Linear's security settings"
+msgstr "開啟 Linear 的安全性設定"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "重新開啟頁面"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste a key from Linear's settings"
+msgstr "貼上 Linear 設定中的金鑰"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "貼上到這裡"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste your key"
+msgstr "貼上您的金鑰"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Personal API key"
+msgstr "個人 API 金鑰"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Show key"
+msgstr "顯示金鑰"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Sign in with Linear"
+msgstr "使用 Linear 登入"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Stored encrypted in your OS keychain."
+msgstr "已加密儲存在作業系統的金鑰鏈中。"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Use a personal API key"
+msgstr "使用個人 API 金鑰"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Waiting for Linear in your browser"
+msgstr "正在等待瀏覽器中的 Linear"

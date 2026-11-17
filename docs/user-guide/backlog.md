@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Backlog
-description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects and Azure DevOps items through the gh and az CLIs with incremental sync and duplicate detection."
+description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana and Linear items with incremental sync and duplicate detection."
 tags: [backlog, import, labels, priorities]
 sources:
   - resource: src/renderer/components/backlog/
@@ -65,18 +65,29 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **GitHub Projects** - import items from a GitHub Project board
 - **Azure DevOps Work Items** - import work items from Azure DevOps boards, sprints, or backlogs
 - **Asana** - import tasks from an Asana project (its list, board, or calendar view URL)
+- **Linear** - import issues from a Linear team, picked from a list of your teams
 
 **Prerequisites:**
 - **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
 - **Azure DevOps:** The `az` CLI must be installed, authenticated (`az login`), and the azure-devops extension installed (`az extension add --name azure-devops`).
 - **Asana:** a Personal Access Token, created at `app.asana.com/0/my-apps`. The first time you pick Asana, a setup dialog asks for it, checks it against Asana, and stores it encrypted on this machine.
+- **Linear:** the first time you pick Linear, **Connect Linear** offers two ways in. **Sign in with
+  Linear** opens Linear's approval page in your browser; approve Kangentic and the dialog closes.
+  **Use a personal API key** takes a key you create in Linear under Settings > Account > Security &
+  Access (Read access is enough). Either way Kangentic checks it against Linear and stores it
+  encrypted on this machine. A browser sign-in renews itself, but after 30 days without an import
+  Linear asks you to sign in again.
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub, Azure DevOps, or Asana) and source type
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`)
+2. Choose a provider (GitHub, Azure DevOps, Asana, or Linear) and source type (GitHub has Issues and Projects)
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). Linear lists your teams instead: click one. A team you already added says **Added** and opens its source.
 4. Click **Connect** - Kangentic verifies CLI authentication and saves the source
 5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
+
+If a saved sign-in stops working (a revoked Asana token or Linear key, or a Linear sign-in that
+lapsed), the import dialog's error banner carries a **Connect Asana** or **Connect Linear** button.
+It reopens the setup dialog, and once the new credential works the dialog syncs.
 
 **Importing items:**
 1. Click a saved source to open the import dialog
@@ -95,7 +106,13 @@ state refetches the whole source rather than only the changes.
 See [Board integration](../integrations/boards.md) for the adapter contract behind the incremental
 fetch.
 
-Imported items include the title, description (markdown), labels, and assignee from the source. Inline images in issue bodies are downloaded as backlog attachments. A small GitHub icon appears on imported items linking back to the original ticket.
+Imported items include the title, description (markdown), labels, and assignee from the source. Inline images in issue bodies are downloaded as backlog attachments. A small icon beside an imported item's title opens the original ticket: the GitHub mark for a GitHub import, a link icon for every other source.
+
+Linear issues show their own ids (`ENG-214`) in the dialog, and the Status filter lists the team's
+states in the order its board shows them. An imported Linear issue keeps its priority when the
+project's scale still has a level of the same name (Urgent, High, Medium or Low). With no priority
+in Linear, or no level of that name in the project, it imports at the bottom level. Its project, cycle, estimate and due date go into a **Linear** section at
+the end of the description.
 
 Items that have already been imported are detected by `external_source` + `external_id` and shown with a checkmark. Re-importing the same source skips duplicates automatically.
 

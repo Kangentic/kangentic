@@ -462,6 +462,14 @@ export const IPC = {
   BOARDS_ASANA_SET_PAT: 'boards:asana:setPat',
   BOARDS_ASANA_CLEAR_CREDENTIAL: 'boards:asana:clearCredential',
 
+  // Board Auth - Linear
+  BOARDS_LINEAR_AUTH_STATUS: 'boards:linear:authStatus',
+  BOARDS_LINEAR_SET_API_KEY: 'boards:linear:setApiKey',
+  BOARDS_LINEAR_SIGN_IN: 'boards:linear:signIn',
+  BOARDS_LINEAR_REOPEN_SIGN_IN: 'boards:linear:reopenSignIn',
+  BOARDS_LINEAR_CANCEL_SIGN_IN: 'boards:linear:cancelSignIn',
+  BOARDS_LINEAR_LIST_TEAMS: 'boards:linear:listTeams',
+
   // Backlog Attachments
   BACKLOG_ATTACHMENT_LIST: 'backlogAttachment:list',
   BACKLOG_ATTACHMENT_ADD: 'backlogAttachment:add',

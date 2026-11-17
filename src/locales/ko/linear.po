@@ -1,0 +1,138 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-17 11:30-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: ko\n"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "import source"
+msgid "Added"
+msgstr "추가됨"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "브라우저에서 Kangentic 승인"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Back"
+msgstr "뒤로"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Cancel"
+msgstr "취소"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "Choose a team"
+msgstr "팀 선택"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect"
+msgstr "연결"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect Linear"
+msgstr "Linear 연결"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Couldn't save the key."
+msgstr "키를 저장할 수 없습니다."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Create a personal API key"
+msgstr "개인 API 키 만들기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Hide key"
+msgstr "키 숨기기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Linear sign-in did not finish."
+msgstr "Linear 로그인이 완료되지 않았습니다."
+
+#. Read is the name of an access level in Linear's own English interface. Keep it as written.
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Name it \"Kangentic\", give it <0>Read</0> access, and copy it."
+msgstr "이름을 Kangentic으로 지정하고 <0>Read</0> 권한을 부여한 후 복사하세요."
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "No teams are visible to this sign-in."
+msgstr "이 로그인으로 볼 수 있는 팀이 없습니다."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open linear.app/settings/account/security"
+msgstr "linear.app/settings/account/security 열기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open Linear's security settings"
+msgstr "Linear 보안 설정 열기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "페이지 다시 열기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste a key from Linear's settings"
+msgstr "Linear 설정에서 키 붙여넣기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "여기에 붙여넣기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste your key"
+msgstr "키 붙여넣기"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Personal API key"
+msgstr "개인 API 키"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Show key"
+msgstr "키 표시"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Sign in with Linear"
+msgstr "Linear로 로그인"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Stored encrypted in your OS keychain."
+msgstr "OS 키체인에 암호화되어 저장됩니다."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Use a personal API key"
+msgstr "개인 API 키 사용"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Waiting for Linear in your browser"
+msgstr "브라우저에서 Linear 대기 중"

@@ -1,0 +1,113 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-17 11:30-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: en\n"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+msgctxt "import source"
+msgid "Added"
+msgstr "Added"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Approve Kangentic in your browser"
+msgstr "Approve Kangentic in your browser"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+msgctxt "button"
+msgid "Back"
+msgstr "Back"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgctxt "button"
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+msgid "Choose a team"
+msgstr "Choose a team"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Connect"
+msgstr "Connect"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Connect Linear"
+msgstr "Connect Linear"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Couldn't save the key."
+msgstr "Couldn't save the key."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Create a personal API key"
+msgstr "Create a personal API key"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Hide key"
+msgstr "Hide key"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Linear sign-in did not finish."
+msgstr "Linear sign-in did not finish."
+
+#. Read is the name of an access level in Linear's own English interface. Keep it as written.
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Name it \"Kangentic\", give it <0>Read</0> access, and copy it."
+msgstr "Name it \"Kangentic\", give it <0>Read</0> access, and copy it."
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+msgid "No teams are visible to this sign-in."
+msgstr "No teams are visible to this sign-in."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Open linear.app/settings/account/security"
+msgstr "Open linear.app/settings/account/security"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Open Linear's security settings"
+msgstr "Open Linear's security settings"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Open the page again"
+msgstr "Open the page again"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Paste a key from Linear's settings"
+msgstr "Paste a key from Linear's settings"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Paste it here"
+msgstr "Paste it here"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Paste your key"
+msgstr "Paste your key"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Personal API key"
+msgstr "Personal API key"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Show key"
+msgstr "Show key"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Sign in with Linear"
+msgstr "Sign in with Linear"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Stored encrypted in your OS keychain."
+msgstr "Stored encrypted in your OS keychain."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Use a personal API key"
+msgstr "Use a personal API key"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+msgid "Waiting for Linear in your browser"
+msgstr "Waiting for Linear in your browser"

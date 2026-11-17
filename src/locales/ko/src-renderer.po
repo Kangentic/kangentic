@@ -1348,8 +1348,9 @@ msgid "Open a project first."
 msgstr "먼저 프로젝트를 여세요."
 
 #: src/renderer/utils/link-open.ts
+#, fuzzy
 msgid "Open in default browser"
-msgstr ""
+msgstr "기본 브라우저에서 열기"
 
 #: src/renderer/utils/link-open.ts
 msgid "Open in Kangentic browser"

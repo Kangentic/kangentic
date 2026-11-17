@@ -5945,6 +5945,21 @@ export interface ExternalIssue {
    */
   stateCategory: 'open' | 'closed';
   workItemType?: string;
+  /**
+   * The id the provider shows people (Linear's `ENG-214`), when it differs from
+   * `externalId`. Absent on providers whose rows print `#<externalId>`.
+   */
+  displayId?: string;
+  /**
+   * The provider's priority as a priority NAME ("Urgent", "High"...). The import
+   * matches it against the project's priority scale; no match imports at 0.
+   */
+  priority?: string;
+  /**
+   * The state's place on the provider's board, left to right, so the Import
+   * dialog's Status filter lists states in board order. Absent: alphabetical.
+   */
+  stateOrder?: number;
   createdAt: string;
   updatedAt: string;
   alreadyImported: boolean;
@@ -5998,6 +6013,8 @@ export interface ImportExecuteInput {
     labels: string[];
     assignee: string | null;
     fileAttachments?: Array<FileAttachmentRef>;
+    /** `ExternalIssue.priority`: a priority name matched against the project's scale. */
+    priority?: string;
   }>;
 }
 
@@ -6063,6 +6080,41 @@ export interface AsanaSetPatInput {
 export interface AsanaSetPatResult {
   ok: boolean;
   email?: string;
+  error?: string;
+}
+
+export interface LinearAuthStatus {
+  /** True when a Linear credential (API key or browser sign-in) is saved. */
+  connected: boolean;
+  kind?: 'api_key' | 'oauth';
+  userName?: string;
+  /** False when this build carries no OAuth client id, so only the API key is offered. */
+  signInAvailable: boolean;
+}
+
+export interface LinearSetApiKeyInput {
+  apiKey: string;
+}
+
+/** The answer to a Connect: saved, cancelled, or Linear's own message for why not. */
+export interface LinearConnectResult {
+  ok: boolean;
+  cancelled?: boolean;
+  error?: string;
+}
+
+export interface LinearTeamSummary {
+  id: string;
+  /** The issue-id prefix (ENG in ENG-214), and the saved source's repository. */
+  key: string;
+  name: string;
+  /** The team URL a picked team is saved with; the Linear URL parser reads the key from it. */
+  url: string;
+}
+
+export interface LinearListTeamsResult {
+  teams: LinearTeamSummary[];
+  /** Linear's message when the list could not load (a revoked key, an expired sign-in). */
   error?: string;
 }
 
@@ -9763,6 +9815,17 @@ export interface ElectronAPI {
       authStatus: () => Promise<AsanaAuthStatus>;
       setPat: (input: AsanaSetPatInput) => Promise<AsanaSetPatResult>;
       clearCredential: () => Promise<void>;
+    };
+    linear: {
+      authStatus: () => Promise<LinearAuthStatus>;
+      setApiKey: (input: LinearSetApiKeyInput) => Promise<LinearConnectResult>;
+      /** Open Linear's approval page in the browser and resolve when it hands back. */
+      signIn: () => Promise<LinearConnectResult>;
+      /** Open the pending sign-in's page again. */
+      reopenSignIn: () => Promise<void>;
+      /** Stop waiting for the browser; the pending `signIn` resolves as cancelled. */
+      cancelSignIn: () => Promise<void>;
+      listTeams: () => Promise<LinearListTeamsResult>;
     };
   };
 

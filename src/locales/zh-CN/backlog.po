@@ -144,6 +144,12 @@ msgstr "{detailUnavailableCount, plural, other {# 项的评论不可用}}"
 msgid "Connect"
 msgstr "连接"
 
+#: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
+msgctxt "import error banner"
+msgid "Connect {sourceTypeLabel}"
+msgstr "连接 {sourceTypeLabel}"
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't delete backlog task"
 msgstr "无法删除待办任务"
@@ -304,6 +310,12 @@ msgctxt "import source type"
 msgid "Import from Azure DevOps boards"
 msgstr "从 Azure DevOps 看板导入"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Import issues from a Linear team"
+msgstr "从 Linear 团队导入议题"
+
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgid "Import Sources"
 msgstr "导入来源"
@@ -446,6 +458,12 @@ msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
 msgstr "粘贴 GitHub 仓库的完整 URL"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Paste the URL of any page in your Linear team."
+msgstr "粘贴 Linear 团队中任意页面的 URL。"
+
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 msgctxt "toolbar button"
 msgid "Priorities"
@@ -510,6 +528,12 @@ msgstr "正在同步..."
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Task title"
 msgstr "任务标题"
+
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Team"
+msgstr "团队"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx

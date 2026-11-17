@@ -1348,8 +1348,9 @@ msgid "Open a project first."
 msgstr "Najpierw otwórz projekt."
 
 #: src/renderer/utils/link-open.ts
+#, fuzzy
 msgid "Open in default browser"
-msgstr ""
+msgstr "Otwórz w domyślnej przeglądarce"
 
 #: src/renderer/utils/link-open.ts
 msgid "Open in Kangentic browser"

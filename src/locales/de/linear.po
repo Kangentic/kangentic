@@ -1,0 +1,138 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-17 11:30-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: de\n"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "import source"
+msgid "Added"
+msgstr "Hinzugefügt"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "Kangentic im Browser genehmigen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Back"
+msgstr "Zurück"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Cancel"
+msgstr "Abbrechen"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "Choose a team"
+msgstr "Team auswählen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect"
+msgstr "Verbinden"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect Linear"
+msgstr "Linear verbinden"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Couldn't save the key."
+msgstr "Der Schlüssel konnte nicht gespeichert werden."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Create a personal API key"
+msgstr "Persönlichen API-Schlüssel erstellen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Hide key"
+msgstr "Schlüssel ausblenden"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Linear sign-in did not finish."
+msgstr "Die Linear-Anmeldung wurde nicht abgeschlossen."
+
+#. Read is the name of an access level in Linear's own English interface. Keep it as written.
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Name it \"Kangentic\", give it <0>Read</0> access, and copy it."
+msgstr "Nennen Sie ihn „Kangentic“, erteilen Sie <0>Read</0>-Zugriff und kopieren Sie ihn."
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "No teams are visible to this sign-in."
+msgstr "Für diese Anmeldung sind keine Teams sichtbar."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open linear.app/settings/account/security"
+msgstr "linear.app/settings/account/security öffnen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open Linear's security settings"
+msgstr "Linear-Sicherheitseinstellungen öffnen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "Seite erneut öffnen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste a key from Linear's settings"
+msgstr "Schlüssel aus den Linear-Einstellungen einfügen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "Hier einfügen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste your key"
+msgstr "Schlüssel einfügen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Personal API key"
+msgstr "Persönlicher API-Schlüssel"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Show key"
+msgstr "Schlüssel anzeigen"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Sign in with Linear"
+msgstr "Mit Linear anmelden"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Stored encrypted in your OS keychain."
+msgstr "Verschlüsselt im Schlüsselbund des Betriebssystems gespeichert."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Use a personal API key"
+msgstr "Persönlichen API-Schlüssel verwenden"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Waiting for Linear in your browser"
+msgstr "Warten auf Linear im Browser"

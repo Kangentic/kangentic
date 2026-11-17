@@ -1,0 +1,138 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-17 11:30-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: cs\n"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "import source"
+msgid "Added"
+msgstr "Přidáno"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "Schvalte Kangentic v prohlížeči"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Back"
+msgstr "Zpět"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Cancel"
+msgstr "Zrušit"
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "Choose a team"
+msgstr "Vyberte tým"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect"
+msgstr "Připojit"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Connect Linear"
+msgstr "Připojit Linear"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Couldn't save the key."
+msgstr "Klíč se nepodařilo uložit."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Create a personal API key"
+msgstr "Vytvořte osobní klíč API"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Hide key"
+msgstr "Skrýt klíč"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Linear sign-in did not finish."
+msgstr "Přihlášení k Linearu nebylo dokončeno."
+
+#. Read is the name of an access level in Linear's own English interface. Keep it as written.
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Name it \"Kangentic\", give it <0>Read</0> access, and copy it."
+msgstr "Pojmenujte ho „Kangentic“, udělte mu přístup <0>Read</0> a zkopírujte ho."
+
+#: src/renderer/components/linear/LinearTeamPicker.tsx
+#, fuzzy
+msgid "No teams are visible to this sign-in."
+msgstr "Pro toto přihlášení nejsou viditelné žádné týmy."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open linear.app/settings/account/security"
+msgstr "Otevřete linear.app/settings/account/security"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open Linear's security settings"
+msgstr "Otevřít nastavení zabezpečení Linearu"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "Otevřít stránku znovu"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste a key from Linear's settings"
+msgstr "Vložte klíč z nastavení Linearu"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "Vložte ho sem"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Paste your key"
+msgstr "Vložte svůj klíč"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Personal API key"
+msgstr "Osobní klíč API"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Show key"
+msgstr "Zobrazit klíč"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Sign in with Linear"
+msgstr "Přihlásit se přes Linear"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Stored encrypted in your OS keychain."
+msgstr "Uloženo šifrovaně v klíčence systému."
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Use a personal API key"
+msgstr "Použít osobní klíč API"
+
+#: src/renderer/components/linear/LinearSetupDialog.tsx
+#, fuzzy
+msgid "Waiting for Linear in your browser"
+msgstr "Čeká se na Linear v prohlížeči"

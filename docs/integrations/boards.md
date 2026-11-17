@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps and Asana, the Jira, Linear and Trello stubs, safeStorage async-API behavior for stored credentials, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana and Linear, the Jira and Trello stubs, safeStorage async-API behavior for stored credentials, Linear's API key and OAuth sign-in, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -12,7 +12,7 @@ sources:
 ---
 # Board integration
 
-Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana) into the backlog, and is being extended to three more providers (Jira, Linear, Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
+Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Linear) into the backlog, and is being extended to two more providers (Jira, Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
 This doc covers the adapter system and how to add a new board provider.
 
@@ -35,7 +35,7 @@ src/main/boards/
     azure-devops/
     asana/            # Personal Access Token auth, dedicated IPC group
     jira/             # stub
-    linear/           # stub
+    linear/           # API key or OAuth sign-in, GraphQL client, dedicated IPC group
     trello/           # stub
   board-registry.ts   # BoardRegistry + boardRegistry singleton
   index.ts
@@ -60,13 +60,13 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `listExternalIds(input)` | optional | Cheap, id-only listing of every current remote item, used by the reconcile to prune cache rows the remote no longer has. Implemented by Azure DevOps as an ids-only WIQL. Providers without a cheap listing omit it; their deletions clear on a full reconcile, which the reconcile escalates to on its own once their cache goes a day without one. An empty result must mean the remote genuinely has no items, so an adapter that cannot answer THROWS rather than returning `[]`: the reconcile prunes against whatever this resolves to, and an empty list claims the remote is empty. |
 | `downloadImages(markdownBody)` | yes | Download inline markdown images referenced in an issue body. |
 | `downloadFileAttachments(...)` | optional | Download authenticated file attachments. Takes `Array<FileAttachmentRef>` (see below). Implemented by Azure DevOps for `AttachedFile` relations and by Asana for inline images and uploaded attachments. |
-| `resolveLabel(repository)` | optional | Resolve a human-readable display label from a repository identifier, called by the backlog handler after a source is added (Asana: project GID to project name). Best-effort: returning `null`, or throwing, keeps the label the URL parser built. |
+| `resolveLabel(repository)` | optional | Resolve a human-readable display label from a repository identifier, called by the backlog handler after a source is added (Asana: project GID to project name; Linear: team key to team name). Best-effort: returning `null`, or throwing, keeps the label the URL parser built. |
 | `authenticate(input)` | optional | Future: PAT / OAuth flow. Not wired to any IPC handler yet. |
 | `listProjects(credentials)` | optional | Future: list boards/projects the user can pick from. |
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
 | `pushUpdates(tasks, credentials)` | optional | Future: write task updates back to the remote. |
 
-Not every adapter honours `input.since`. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana and GitHub Projects ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
+Not every adapter honours `input.since`. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause, Linear to an inclusive `updatedAt: { gte }` issue filter, and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana and GitHub Projects ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
 
 ### `FileAttachmentRef`
 
@@ -81,7 +81,7 @@ Reference to an attachment to download. Defined in `src/shared/types.ts`:
 
 ### `Credentials`
 
-Opaque per-adapter credential bag (`Record<string, string>`). Each adapter's `auth.ts` owns serialization. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Linear stores an API key, Jira stores `{email, apiToken}`, Trello stores `{apiKey, userToken}`. Keep adapter-specific shapes inside each adapter folder.
+Opaque per-adapter credential bag (`Record<string, string>`). Each adapter's `auth.ts` owns serialization. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Linear stores either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), Jira stores `{email, apiToken}`, Trello stores `{apiKey, userToken}`. Keep adapter-specific shapes inside each adapter folder.
 
 ### `safeStorage` semantics
 
@@ -113,7 +113,7 @@ under `src/` calls it; `tests/unit/boards-auth.test.ts` fails if anything does.
   when no encryption is available). Credentials older builds wrote through the sync API read
   through the async one. `decryptSecret` reports when a blob should be written again: a key
   rotation, or plaintext once genuine encryption exists.
-- The Asana store and the mobile bridge identity both store their secret through
+- The Asana and Linear stores and the mobile bridge identity all store their secret through
   `shared/encrypted-secret-file.ts` (`readEncryptedSecretFile`, `writeEncryptedSecretFile`,
   `rewriteEncryptedSecretFile`). The read reports `shouldRewrite`, and each store calls the rewrite
   on load when it is set; the identity also requires `isGenuineEncryptionAvailable()` first, the
@@ -147,6 +147,44 @@ Backlog Import group (7 channels): `backlog:importCheckCli`, `backlog:importGetC
 
 Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
 
+Linear ships a `boards:linear:*` group (6 channels: `authStatus`, `setApiKey`, `signIn`, `reopenSignIn`, `cancelSignIn`, `listTeams`), registered by `registerLinearIpcHandlers()` the same way. The renderer reaches either group only through its provider's `auth` entry in `import-providers.tsx` (`getStatus` plus a `SetupDialog`), so the popover and the Import dialog's **Connect** button never branch on a provider name.
+
+## Linear
+
+`src/main/boards/adapters/linear/`. A source is one team, and the repository is its key (`ENG`). The
+team picker saves `https://linear.app/<workspace>/team/<KEY>/all`, which the URL parser reads back;
+a team whose key is renamed in Linear stops matching its saved source.
+
+- **Two ways in.** A personal API key is sent as `Authorization: <key>` with no `Bearer`. The browser
+  sign-in is OAuth 2.0 with PKCE (S256, no client secret, `read` scope): `oauth.ts` binds a loopback
+  server on the first free registered port (`LINEAR_OAUTH_REDIRECT_PORTS`, `http://127.0.0.1:<port>/callback`,
+  matched exactly by Linear), opens the authorize page in the system browser, refuses a callback whose
+  `state` does not match, and gives up after five minutes. An empty `LINEAR_OAUTH_CLIENT_ID` hides the
+  sign-in choice.
+- **Tokens.** Access tokens last 24 hours and refresh tokens 30 days, and Linear rotates the refresh
+  token on every refresh. The client renews five minutes before expiry and after a 401, one refresh at
+  a time across every client, and saves the new pair at once. A caller holding a refresh token another
+  refresh already spent takes the saved pair instead of asking Linear. A refused API key, or a refresh
+  token Linear refuses (a 400 or 401), clears the credential, so the next open shows **Connect Linear**.
+  A rate-limited or failed refresh keeps it, and a credential a Connect saved meanwhile is never cleared.
+- **Errors.** GraphQL reports failures inside a 200 as `errors[]`; the client throws `LinearError` with
+  Linear's own message for those and for any non-2xx. A 429 is retried after its `Retry-After`.
+- **Pruning.** Linear has no `listExternalIds`: an id walk costs one request per 250 issues on every
+  open. An issue deleted or archived in Linear leaves the cache on the next full reconcile, which the
+  reconcile runs on its own once the cache goes a day without one.
+- **Mapping.** `externalId` is the issue UUID and `displayId` its identifier (`ENG-214`). `state` is
+  the workflow state's name; completed, canceled and duplicate states are closed. `stateOrder` is the
+  state's rank on the team's board (by state type, then `position`), which orders the Status filter.
+  `priority` is Urgent, High, Medium or Low (Linear's 1 to 4), which the executor matches by name
+  against the project's scale. Project, cycle, estimate and due date go into a `## Linear` section
+  after the description.
+- **Images.** Files on `uploads.linear.app` are downloaded with the same Authorization header; no
+  other host gets it.
+- **Known limits.** The team list is sorted by name, since the API exposes no user ordering. Each
+  cached issue carries its `stateOrder` from the fetch that last saw it, so reordering a team's states
+  in Linear reorders the Status filter only after a full sync (the all-imported state's Refresh) or as
+  issues change.
+
 ## Adding a New Provider
 
 1. **Folder.** Create `src/main/boards/adapters/<provider>/` with at minimum `adapter.ts` (implementing `BoardAdapter`) and `index.ts` (exporting the class).
@@ -165,11 +203,11 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | GitHub Projects | stable | `gh` | Projects v2 via `gh project item-list`. Requires `project` scope. |
 | Azure DevOps | stable | `az` | Work items via `az boards`. Requires `azure-devops` extension. |
 | Asana | stable | none | Personal Access Token. User creates the token at `app.asana.com/0/my-apps`, pastes it into the setup dialog; the token is validated against `/users/me` and stored encrypted via `safeStorage`. Ships its own `boards:asana:*` IPC group. |
+| Linear | stable | none | Personal API key or OAuth sign-in in the browser, both stored encrypted via `safeStorage`. Teams are picked from a list. Ships its own `boards:linear:*` IPC group. |
 | Jira | stub | - | Tracked in #481. |
-| Linear | stub | - | Tracked in #482. |
 | Trello | stub | - | Tracked in #483. |
 
-The registry enumerates all 7 providers. Stable providers dispatch normally. Stub providers (`jira`, `linear`, `trello`) are not offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers short-circuit them before any throwing method runs.
+The registry enumerates all 7 providers. Stable providers dispatch normally. Stub providers (`jira`, `trello`) are not offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers short-circuit them before any throwing method runs.
 
 ## See Also
 

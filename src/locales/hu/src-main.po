@@ -97,6 +97,16 @@ msgstr "Az ügynök beavatkozásra vár"
 msgid "Agent went idle"
 msgstr "Az ügynök tétlen lett"
 
+#: src/main/boards/adapters/linear/ipc-handlers.ts
+msgctxt "Linear connect error"
+msgid "An API key has no spaces. Copy it again from Linear."
+msgstr ""
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Another program is using the Linear sign-in ports."
+msgstr ""
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -123,6 +133,11 @@ msgstr "Másolás"
 msgid "Copy Image"
 msgstr "Kép másolása"
 
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Could not open the browser for Linear sign-in."
+msgstr ""
+
 #: src/main/updater.ts
 #, fuzzy
 msgid "Download Kangentic again to keep it updated."
@@ -148,6 +163,17 @@ msgstr "A Kangentic nem tudja olvasni az adatbázisát"
 msgid "Kangentic's window stopped responding"
 msgstr "A Kangentic ablaka nem válaszol"
 
+#: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
+msgctxt "Linear sign-in browser page"
+msgid "Linear sign-in did not finish. Return to Kangentic to try again."
+msgstr "A Linear-bejelentkezés nem fejeződött be. Az újrapróbálkozáshoz térjen vissza a Kangentic alkalmazásba."
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Linear sign-in timed out."
+msgstr ""
+
 #: src/main/updater.ts
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
@@ -164,13 +190,19 @@ msgid "OK"
 msgstr "OK"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Open in default browser"
-msgstr ""
+msgstr "Megnyitás az alapértelmezett böngészőben"
 
 #: src/main/index.ts
 #, fuzzy
 msgid "Paste"
 msgstr "Beillesztés"
+
+#: src/main/boards/adapters/linear/ipc-handlers.ts
+msgctxt "Linear connect error"
+msgid "Paste your API key."
+msgstr ""
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
@@ -197,6 +229,11 @@ msgstr "Az összes kijelölése"
 #, fuzzy
 msgid "Session crashed: {label}"
 msgstr "A munkamenet összeomlott: {label}"
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Sign in with Linear is not available in this build."
+msgstr ""
 
 #: src/main/notifications/custom-sound.ts
 #, fuzzy
@@ -232,6 +269,12 @@ msgstr "Ez általában azt jelenti, hogy egy másik program zárolja a fájlt: v
 #, fuzzy
 msgid "Unknown site"
 msgstr "Ismeretlen webhely"
+
+#: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
+msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "Bezárhatja ezt a lapot, és visszatérhet a Kangentic alkalmazásba."
 
 #: src/main/index.ts
 #, fuzzy
