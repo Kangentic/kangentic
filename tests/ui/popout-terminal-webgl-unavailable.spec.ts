@@ -45,8 +45,11 @@ test('a pop-out page keeps terminals on the DOM renderer with no retry when the 
     // answer settles once the status lands. With the pull missing it never
     // does and the fake addon attaches every time.
     await expect
-      .poll(() => page.evaluate(async () => {
-        const module = await import('/src/renderer/utils/terminal-webgl.ts');
+      .poll(() => page.evaluate(() => {
+        // The pop-out page's own copy of the module: App.tsx is evaluated in every window.
+        const modules = window.__kangenticTestModules;
+        if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+        const module = modules.terminalWebgl;
         let addonsCreated = 0;
         const fakeTerminal = { loadAddon: () => undefined } as unknown as Parameters<typeof module.attachWebglRenderer>[0];
         const key = `popout-webgl-off-${Math.random().toString(36).slice(2, 8)}`;

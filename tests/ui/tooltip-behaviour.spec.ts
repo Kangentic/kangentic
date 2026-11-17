@@ -15,6 +15,7 @@
 import { test, expect, chromium, type Browser, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite, launchPage, createProject, launchWithTransientTerminal, openTransientCommandTerminal } from './helpers';
+import { DEV_SERVER_URL } from './dev-server';
 import { TOOLTIP_DWELL_MS, TOOLTIP_WARM_MS } from '../../src/renderer/utils/tooltip';
 import { getKeybinding } from '../../src/shared/keybindings';
 
@@ -754,6 +755,9 @@ test('the version pill is a button with a pointer cursor while the build has rel
 
 test('the version pill stays a plain span, with no tip, when the build has no release notes', async () => {
   const { browser, page } = await launchPage({
+    // The dev server, where the notes are still a module request this can answer. A bundle
+    // has them inlined already, the UI tier's bundle included (tests/ui/dev-server.ts).
+    url: DEV_SERVER_URL,
     beforeLoad: async (target) => {
       // The notes are inlined at build time (lib/baked-release-notes.ts), so a build without
       // them is one whose module is empty.

@@ -110,7 +110,9 @@ test.describe('Clipboard image compression', () => {
     // proves the actual draw. 2400x1200 fits 2000 on the long edge at scale
     // 0.8333 -> 2000x1000.
     const size = await page.evaluate(async () => {
-      const module = await import('/src/renderer/components/dialogs/image-compress.ts');
+      const modules = window.__kangenticTestModules;
+      if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+      const module = modules.imageCompress;
 
       const canvas = new OffscreenCanvas(2400, 1200);
       const context = canvas.getContext('2d');

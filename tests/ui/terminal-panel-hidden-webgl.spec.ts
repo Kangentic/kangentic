@@ -132,18 +132,20 @@ interface RendererStatus {
 
 /** The renderer status of one terminal, read from the same module instance the app uses. */
 async function readRendererStatus(page: Page, sessionId: string): Promise<RendererStatus | null> {
-  return page.evaluate(async (key) => {
-    const module = await import('/src/renderer/utils/terminal-webgl.ts');
-    const status = module.getTerminalRendererReport()[key];
+  return page.evaluate((key) => {
+    const modules = window.__kangenticTestModules;
+    if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+    const status = modules.terminalWebgl.getTerminalRendererReport()[key];
     return status ? { renderer: status.renderer, suspendedByBudget: status.suspendedByBudget } : null;
   }, sessionId);
 }
 
 /** Squeeze the page's WebGL budget to one slot, through the reservation the Knowledge Graph uses. */
 async function squeezeBudgetToOneSlot(page: Page): Promise<void> {
-  await page.evaluate(async (count) => {
-    const module = await import('/src/renderer/utils/terminal-webgl.ts');
-    for (let index = 0; index < count; index += 1) module.reserveWebglContext(`hidden-panel-spec-${index}`);
+  await page.evaluate((count) => {
+    const modules = window.__kangenticTestModules;
+    if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+    for (let index = 0; index < count; index += 1) modules.terminalWebgl.reserveWebglContext(`hidden-panel-spec-${index}`);
   }, RESERVED_CONTEXTS);
 }
 

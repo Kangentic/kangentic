@@ -30,6 +30,21 @@ const reuseServer = !!explicitPort;
 
 process.env.PLAYWRIGHT_VITE_PORT = String(vitePort);
 
+// The UI tier loads the app one of two ways, and PLAYWRIGHT_VITE_PORT is where, either way.
+// By default that port is the Vite dev server: no build step, and an edit shows on the next run.
+// With KANGENTIC_UI_BUNDLE=1 it is a static server over the bundle scripts/build-ui-bundle.mjs
+// wrote, which is how CI runs the tier: the dev server answers one request per source module, 759
+// of them into a context with no cache, and that boot was most of what a UI test cost.
+//
+// A few specs need the dev server itself (they drive its HMR client, or stall a module by its
+// source path). They read PLAYWRIGHT_VITE_DEV_PORT through tests/ui/dev-server.ts. In bundle mode
+// that is a second server on its own port, and otherwise it is the same one.
+const uiBundle = process.env.KANGENTIC_UI_BUNDLE === '1';
+const inheritedDevServerPort = parseInt(process.env.PLAYWRIGHT_VITE_DEV_PORT || '', 10);
+const devServerPort = uiBundle ? inheritedDevServerPort || findFreePort(vitePort + 1) : vitePort;
+
+process.env.PLAYWRIGHT_VITE_DEV_PORT = String(devServerPort);
+
 export default defineConfig({
   timeout: 60000,
   retries: 0,
@@ -160,21 +175,35 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    // --strictPort: findFreePort only probes, so two worktrees running UI specs at once can
-    // both pick the same port. Without it Vite quietly binds the next port up while
-    // Playwright waits on the probed one, and the run tests the OTHER worktree's renderer.
-    // Strict, the loser exits and the run fails loudly instead of passing on foreign code.
-    command: `npx vite --port ${vitePort} --strictPort`,
-    port: vitePort,
-    reuseExistingServer: reuseServer,
-    timeout: 60000,
-    // Playwright drops a webServer's stdout by default, and Vite writes every line that explains a
-    // page reloading itself to stdout: "page reload", "new dependencies optimized" and "server
-    // restarted". Two release runs read a log without them as proof that nothing reloaded (see
-    // gotoVite in tests/ui/helpers.ts). Piped, they print as [WebServer] lines in every run.
-    stdout: 'pipe',
-  },
+  webServer: [
+    {
+      // --strictPort: findFreePort only probes, so two worktrees running UI specs at once can
+      // both pick the same port. Without it Vite quietly binds the next port up while
+      // Playwright waits on the probed one, and the run tests the OTHER worktree's renderer.
+      // Strict, the loser exits and the run fails loudly instead of passing on foreign code.
+      command: `npx vite --port ${devServerPort} --strictPort`,
+      port: devServerPort,
+      reuseExistingServer: reuseServer,
+      timeout: 60000,
+      // Playwright drops a webServer's stdout by default, and Vite writes every line that explains a
+      // page reloading itself to stdout: "page reload", "new dependencies optimized" and "server
+      // restarted". Two release runs read a log without them as proof that nothing reloaded (see
+      // gotoVite in tests/ui/helpers.ts). Piped, they print as [WebServer] lines in every run.
+      stdout: 'pipe' as const,
+    },
+    // Bundle mode only: the static server the specs load the app from. It exits at once, naming
+    // `npm run build:ui-bundle`, when the bundle is not there. Never reused: a server left over
+    // from another run would be serving another build.
+    ...(uiBundle
+      ? [{
+          command: `node scripts/serve-ui-bundle.mjs --port ${vitePort}`,
+          port: vitePort,
+          reuseExistingServer: false,
+          timeout: 60000,
+          stdout: 'pipe' as const,
+        }]
+      : []),
+  ],
   // On CI: `list` only, so each shard's job log prints a line per test as it runs.
   // The per-shard logs ARE the results - there is no merged-report job (see
   // .github/workflows/ci.yml). Locally: human-readable list + on-demand HTML.

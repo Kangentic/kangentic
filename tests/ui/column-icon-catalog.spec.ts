@@ -158,11 +158,8 @@ async function launchSeededPage(preConfigScript: string = preConfig): Promise<Se
   // A request listener rather than resource timing: the dev server serves hundreds of modules,
   // past the 250 entries the resource timing buffer keeps.
   let requested = false;
-  let registryUrl: string | null = null;
   page.on('request', (request) => {
-    const { pathname } = new URL(request.url());
-    if (pathname.includes('/icon-catalog')) requested = true;
-    if (registryUrl === null && pathname.endsWith('/icon-registry.ts')) registryUrl = request.url();
+    if (isCatalogUrl(new URL(request.url()))) requested = true;
   });
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
@@ -174,16 +171,14 @@ async function launchSeededPage(preConfigScript: string = preConfig): Promise<Se
     page,
     getPageErrors,
     catalogRequested: () => requested,
-    // Imports the registry by the exact URL the app loaded it from, so the page hands back the
-    // same module instance. A different instance would read null forever, which fails the poll
-    // that waits on this instead of passing it.
-    catalogLoaded: async () => {
-      if (registryUrl === null) throw new Error('the page never requested icon-registry');
-      const loaded = await page.evaluate(
-        `import(${JSON.stringify(registryUrl)}).then(function (registry) { return registry.getLoadedIconCatalog() !== null; })`,
-      );
-      return loaded === true;
-    },
+    // Reads the registry through the app's own test handle, which holds the module instance the
+    // app loaded. A different instance would read null forever, which fails the poll that waits
+    // on this instead of passing it.
+    catalogLoaded: () => page.evaluate(() => {
+      const modules = window.__kangenticTestModules;
+      if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+      return modules.iconRegistry.getLoadedIconCatalog() !== null;
+    }),
   };
 }
 

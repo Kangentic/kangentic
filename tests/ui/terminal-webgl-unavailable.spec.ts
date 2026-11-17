@@ -100,9 +100,10 @@ test('a terminal mounts on the DOM renderer with no retry when the status says W
 
     // Polled for the terminal's entry; the renderer is DOM from its first report.
     await expect
-      .poll(() => page.evaluate(async (key) => {
-        const module = await import('/src/renderer/utils/terminal-webgl.ts');
-        const status = module.getTerminalRendererReport()[key];
+      .poll(() => page.evaluate((key) => {
+        const modules = window.__kangenticTestModules;
+        if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+        const status = modules.terminalWebgl.getTerminalRendererReport()[key];
         return status ? { renderer: status.renderer, retryArmed: status.retryArmed } : null;
       }, sessionId as string), { timeout: 10000 })
       .toEqual({ renderer: 'dom', retryArmed: false });

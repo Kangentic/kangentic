@@ -1,11 +1,15 @@
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage } from './helpers';
+import { DEV_SERVER_URL } from './dev-server';
 
 /**
  * gotoVite's boot retry. A page whose load event fired but whose #root stayed empty is a boot that
  * died, and gotoVite reloads it once. The failure it covers was seen once in a full local UI run,
  * so this spec stages it: the first request for the app's root component is aborted, which leaves
  * the entry's module graph unrun and the root empty, the same blank page that run captured.
+ *
+ * It loads from the dev server (DEV_SERVER_URL) on purpose: the failure is a dev-server module
+ * request, and a bundle has no App.tsx request to abort.
  */
 
 const APP_MODULE = '**/src/renderer/App.tsx*';
@@ -29,6 +33,7 @@ test.describe('gotoVite boot retry', () => {
   test('a boot that loads but never mounts the app is reloaded once and comes up', async () => {
     let appModuleRequests: () => number = () => 0;
     const { browser } = await launchPage({
+      url: DEV_SERVER_URL,
       beforeLoad: async (page) => {
         appModuleRequests = await countAppModuleRequests(page, 1);
       },
@@ -43,6 +48,7 @@ test.describe('gotoVite boot retry', () => {
   test('a boot that mounts is not reloaded', async () => {
     let appModuleRequests: () => number = () => 0;
     const { browser } = await launchPage({
+      url: DEV_SERVER_URL,
       beforeLoad: async (page) => {
         appModuleRequests = await countAppModuleRequests(page, 0);
       },
