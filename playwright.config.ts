@@ -80,6 +80,13 @@ export default defineConfig({
       // the per-page headroom at a negligible wall-clock cost (the shards run
       // in parallel). The electron project keeps 8 - its per-file launch overlap
       // is the real win there.
+      //
+      // Measured again on 2026-11-17 with CI on the static bundle: 4 workers ran
+      // the eleven shards' tests in 2,430s summed against 2,655s at 3, about a
+      // tenth less, and one test flaked (stats-lazy-retry.spec.ts, on the dev
+      // server a few specs still use). Not taken: the web demo shards set a PR's
+      // wait at about 300s either way, and a flake is a red shard under
+      // --fail-on-flaky-tests.
       workers: 3,
       // CI-only single retry. It does not let a flake pass: ci.yml runs this
       // project with --fail-on-flaky-tests, so a test that passes only on its

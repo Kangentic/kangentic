@@ -827,9 +827,18 @@ test.describe('Conversation Viewer - history paging', () => {
       const startX = thumbBox!.x + thumbBox!.width / 2;
       await page.mouse.move(startX, thumbBox!.y + thumbBox!.height / 2);
       await page.mouse.down();
-      await page.mouse.move(startX, railBox!.y + railBox!.height * 0.25);
+      // Moved in steps, then nudged until the placeholders show. On a loaded CI runner one move
+      // sent straight after the press reached the page before the drag was listening, the thumb
+      // never left, and no placeholder was drawn for the whole 5 s (it passed on the retry). A
+      // longer wait cannot help a move that has already been lost; another move can.
+      const dragTargetY = railBox!.y + railBox!.height * 0.25;
+      await page.mouse.move(startX, dragTargetY, { steps: 8 });
       const skeleton = page.getByTestId('conversation-skeleton');
-      await expect(skeleton).toBeVisible();
+      await expect(async () => {
+        await page.mouse.move(startX + 1, dragTargetY);
+        await page.mouse.move(startX, dragTargetY);
+        await expect(skeleton).toBeVisible({ timeout: 1000 });
+      }).toPass({ timeout: 10000 });
       const fill = await skeleton.evaluate((element) => {
         const box = element.getBoundingClientRect();
         const last = element.lastElementChild!.getBoundingClientRect();
