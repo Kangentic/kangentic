@@ -66,6 +66,7 @@ const SAMPLE_LINKS: Record<string, string> = {
   microsoft365: 'https://contoso.sharepoint.com/:w:/s/team/abc123',
   loom: 'https://www.loom.com/share/abc123',
   coda: 'https://coda.io/d/My-Doc_dabc123',
+  obsidian: 'https://publish.obsidian.md/team-notes/Launch+plan',
   storybook: 'https://main--abc123.chromatic.com/',
   zeroheight: 'https://zeroheight.com/abc123/v/1',
   github: 'https://github.com/owner/repo/issues/3',

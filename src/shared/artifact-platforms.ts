@@ -188,6 +188,7 @@ export const ARTIFACT_PLATFORMS: readonly ArtifactPlatform[] = [
   },
   { id: 'loom', name: 'Loom', kind: 'document', detection: 'description', patterns: [{ host: 'loom.com', path: /^\/(share|embed)\// }] },
   { id: 'coda', name: 'Coda', kind: 'document', detection: 'description', patterns: [{ host: 'coda.io', path: /^\/d\// }, { host: 'docs.superhuman.com', path: /^\/d\// }] },
+  { id: 'obsidian', name: 'Obsidian', kind: 'document', detection: 'description', patterns: [{ host: 'publish.obsidian.md', path: /^\/[^/]+/ }] },
 
   // ── Design systems ──
   { id: 'storybook', name: 'Storybook', kind: 'design-system', detection: 'messages', patterns: [{ host: '*.chromatic.com' }] },
