@@ -87,7 +87,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 **Adding a source:**
 1. Click **Import** > **Add Source**
 2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. Linear lists your teams instead: click one. A team you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). Linear lists your teams instead: click one. A team you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
 4. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it.
 5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
 
@@ -117,7 +117,9 @@ The dialog opens from a per-project cache of the source's items, so the list pai
 "Syncing..." line at the bottom shows while it fetches only the items changed since the last sync in
 the background. The cache survives an app restart and a project switch. The **Open / Closed / All**
 toggle filters that cache on the spot, without another fetch. If the sync fails, the error banner
-carries a **Retry**; once every item is imported, **Refresh to check for new items** on the empty
+carries a **Retry**, or a **Connect** button when the sign-in itself has stopped working (a token
+revoked mid-session): the dialog checks the sign-in again after a failed sync to choose. Once every
+item is imported, **Refresh to check for new items** on the empty
 state refetches the whole source rather than only the changes.
 See [Board integration](../integrations/boards.md) for the adapter contract behind the incremental
 fetch.
