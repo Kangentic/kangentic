@@ -35,7 +35,7 @@ import { forgetTranscriptPath, persistTranscriptPath } from './session-transcrip
 import { abortInFlightResume, isResumeInFlight, registerResumeController, releaseResumeController } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
 import { resumeTaskOnOpen } from './session-resume-on-open';
-import { pauseTaskSession } from './session-pause';
+import { pauseTaskSession, type PauseTaskSessionOutcome } from './session-pause';
 import { startParkedStop } from '../../stop-script/parked-stop-service';
 import { isSessionInOwnCall } from './own-call-turn-wait';
 import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, StartBlockedReason, TaskResolvePrResult, PRChecks, PrChecksSendResult } from '../../../shared/types';
@@ -858,6 +858,15 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     }
   };
 
+  /**
+   * Mark a fresh launch that never started as failed, so its Resume and its
+   * retry start it with its own prompt: the id minted for it names no
+   * conversation. A resume is left unmarked, since its conversation is still there.
+   */
+  const markFreshLaunchFailed = (sessionRepository: SessionRepository, session: Session, sessionId: string): void => {
+    if (!session.resuming) sessionRepository.markLaunchFailed(sessionId);
+  };
+
   // The agent-absence sweep found a running session whose CLI is gone and is
   // about to retire it through kill(). That kill is intentional by design, so
   // this is the only moment the CLI's own account of its end can be read.
@@ -892,29 +901,32 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // be made under the lock. A resume controller held from before the pause stands
   // in: a Pause, a Resume, a reset or a relocation in that gap aborts it, as it
   // aborts any resume, and a phone's Start is a resume in flight.
-  context.sessionManager.on('agent-never-started', (sessionId: string, session: Session) => {
-    const retire = (): void => context.sessionManager.retireAgentlessSession(sessionId);
-    const projectId = context.sessionManager.getSessionProjectId(sessionId);
-    if (!projectId) {
-      retire();
-      return;
-    }
+  //
+  // A shell that exited on its own before its typed line ran, having printed
+  // nothing, takes the same path from the `exit` listener below. Its row has
+  // already exited, so there is nothing to pause: `parkExitedLaunch` marks it
+  // paused in place instead (Sentry DESKTOP-3X).
+  const recoverFailedLaunch = (launch: {
+    sessionId: string;
+    session: Session;
+    projectId: string;
+    /** Parks the launch as a paused row; anything but 'paused' ends the recovery. */
+    park: () => Promise<PauseTaskSessionOutcome>;
+    /** Runs when the park does not land, or throws. */
+    onNotParked?: () => void;
+    /** The `stage` tag a thrown park reports under. */
+    failureStage: 'launch_failure_pause' | 'launch_failure_park';
+  }): void => {
+    const { sessionId, session, projectId, park, onNotParked, failureStage } = launch;
     const notifyFailure = (): void => {
       recordStartBlocked(sessionId, projectId, 'never-started');
       notifyStartupFailureIfNamed(session, 0, projectId, 'The agent never reported that it started.');
     };
     const retryWindow = new AbortController();
     registerResumeController(session.taskId, retryWindow);
-    void pauseTaskSession(context, session.taskId, {
-      projectId,
-      suspendedBy: 'system',
-      stillEligible: (liveSession) => liveSession.id === sessionId,
-      onAccepted: () => {
-        if (!session.resuming) new SessionRepository(getProjectDb(projectId)).markLaunchFailed(sessionId);
-      },
-    }).then(async (outcome) => {
+    void park().then(async (outcome) => {
       if (outcome !== 'paused') {
-        retire();
+        onNotParked?.();
         return;
       }
       const missOutcome = await markResumeMiss(context, { sessionId, taskId: session.taskId, projectId });
@@ -938,12 +950,51 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       });
     }).catch((error: unknown) => {
       console.warn('[AGENT-LAUNCH] Pause after a failed launch failed:', error);
-      sessionHandlersReporter.report(error, { tags: { stage: 'launch_failure_pause' } });
-      retire();
+      sessionHandlersReporter.report(error, { tags: { stage: failureStage } });
+      onNotParked?.();
     }).finally(() => {
       releaseResumeController(session.taskId, retryWindow);
     });
+  };
+
+  context.sessionManager.on('agent-never-started', (sessionId: string, session: Session) => {
+    const retire = (): void => context.sessionManager.retireAgentlessSession(sessionId);
+    const projectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (!projectId) {
+      retire();
+      return;
+    }
+    const pause = (): Promise<PauseTaskSessionOutcome> => pauseTaskSession(context, session.taskId, {
+      projectId,
+      suspendedBy: 'system',
+      stillEligible: (liveSession) => liveSession.id === sessionId,
+      onAccepted: () => markFreshLaunchFailed(new SessionRepository(getProjectDb(projectId)), session, sessionId),
+    });
+    recoverFailedLaunch({ sessionId, session, projectId, park: pause, onNotParked: retire, failureStage: 'launch_failure_pause' });
   });
+
+  /**
+   * Mark a launch whose shell died before its typed line ran as paused by the
+   * system, under the task lock, as `pauseTaskSession` does for a live one: the
+   * record goes from `exited` to `suspended`, a fresh launch is marked failed so
+   * its Resume and its retry start it with its own prompt, and the row keeps its
+   * id. The reconcile clears a task pointer still at the exited row. Declined
+   * when another start owns the task now. A declined park needs no notice:
+   * whatever declined it (a newer start, a teardown, another writer of the
+   * record) owns what the task shows next.
+   */
+  const parkExitedLaunch = (sessionId: string, session: Session, projectId: string): Promise<PauseTaskSessionOutcome> => (
+    withTaskLock(session.taskId, async (): Promise<PauseTaskSessionOutcome> => {
+      const { liveSession } = reconcileTaskSessionRef(context, projectId, session.taskId);
+      if (liveSession) return 'declined';
+      // A row a teardown removed, or a start replaced, since the exit has no launch to park.
+      if (context.sessionManager.getSession(sessionId)?.status !== 'exited') return 'declined';
+      const sessionRepository = new SessionRepository(getProjectDb(projectId));
+      if (!markRecordSuspended(sessionRepository, sessionId, 'system')) return 'declined';
+      markFreshLaunchFailed(sessionRepository, session, sessionId);
+      return context.sessionManager.parkFailedLaunch(sessionId) ? 'paused' : 'declined';
+    })
+  );
 
   // A queued session reached the front and could not start. Its folder had gone
   // while it waited (#1003 waited 17 minutes for the Merge slot), or its command
@@ -962,9 +1013,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       projectId,
       suspendedBy: 'system',
       stillEligible: (liveSession) => liveSession.id === sessionId,
-      onAccepted: () => {
-        if (!session.resuming) new SessionRepository(getProjectDb(projectId)).markLaunchFailed(sessionId);
-      },
+      onAccepted: () => markFreshLaunchFailed(new SessionRepository(getProjectDb(projectId)), session, sessionId),
     }).then((outcome) => {
       if (outcome !== 'paused') {
         retire();
@@ -1128,6 +1177,23 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
         }
       } catch {
         // DB may be closed during shutdown
+      }
+    }
+
+    // A shell that died before its typed line ran, having printed nothing, left
+    // a task with an exited row and nothing on screen. It takes the
+    // never-started path: parked, one retry, then the notice. After the DB
+    // writes above, so the park finds the record they marked exited.
+    if (intentional !== true && resolvedProjectId && context.sessionManager.shellDiedBeforeLaunch(sessionId)) {
+      const exitedSession = context.sessionManager.getSession(sessionId);
+      if (exitedSession) {
+        recoverFailedLaunch({
+          sessionId,
+          session: exitedSession,
+          projectId: resolvedProjectId,
+          park: () => parkExitedLaunch(sessionId, exitedSession, resolvedProjectId),
+          failureStage: 'launch_failure_park',
+        });
       }
     }
   });

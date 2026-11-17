@@ -17,8 +17,9 @@ import {
   missingNpmShimTarget,
   directLaunchOfBatchShim,
   batchShimGiveUpOf,
+  MAX_SHIM_HOPS,
 } from '../../src/main/agent/shared/npm-shim-target';
-import { npmCmdShim, legacyNpmCmdShim, minimalCmdShim, npmPs1Shim, npmShShim, pnpmCmdShim } from '../fixtures/npm-shim-fixtures';
+import { npmCmdShim, npmDirectCmdShim, legacyNpmCmdShim, minimalCmdShim, npmPs1Shim, npmShShim, pnpmCmdShim } from '../fixtures/npm-shim-fixtures';
 
 const CMD_TARGET = 'node_modules\\@google\\gemini-cli\\bundle\\gemini.js';
 const PS1_TARGET = 'node_modules/@google/gemini-cli/bundle/gemini.js';
@@ -70,10 +71,130 @@ describe('directLaunchOfBatchShim', () => {
     expect(batchShimGiveUpOf(shimPath, unreadable)).toBe('unreadable');
   });
 
-  it('refuses a target that is neither a program nor a Node script', () => {
-    const dependencies = { readFile: () => npmCmdShim('bin\\tool.sh'), fileExists: () => true };
+  // Sentry DESKTOP-3Y gave up with one word for every such target, so the
+  // report could not say which layout its user had. Each shape has its own.
+  it.each([
+    ['a PowerShell script', 'bin\\tool.ps1', 'target_ps1'],
+    ['the extensionless sh script cmd-shim hands to sh', 'node_modules\\.bin\\claude', 'target_extensionless'],
+    ['a shell script', 'bin\\tool.sh', 'target_other'],
+    ['a Python script', 'bin\\tool.py', 'target_other'],
+  ])('refuses %s target and names its shape', (_label, relativeTarget, expected) => {
+    const dependencies = { readFile: () => npmCmdShim(relativeTarget), fileExists: () => true };
     expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
-    expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_not_script');
+    expect(batchShimGiveUpOf(shimPath, dependencies)).toBe(expected);
+  });
+
+  describe('a shim whose target is another shim', () => {
+    // A global bin that calls the package's `node_modules\.bin\<name>.cmd`.
+    const innerShimPath = path.join(directory, 'node_modules', '.bin', 'claude.cmd');
+    const innerTarget = '..\\@anthropic-ai\\claude-code\\cli.js';
+    const scriptPath = path.join(directory, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+    const innerSiblingNode = path.join(directory, 'node_modules', '.bin', 'node.exe');
+
+    function filesOf(files: Record<string, string>): { readFile: (candidate: string) => string; fileExists: (candidate: string) => boolean } {
+      return {
+        readFile: (candidate) => {
+          const content = files[candidate];
+          if (content === undefined) throw new Error('ENOENT');
+          return content;
+        },
+        fileExists: (candidate) => candidate in files || candidate === scriptPath,
+      };
+    }
+
+    it.each([
+      ['npm', npmDirectCmdShim('node_modules\\.bin\\claude.cmd')],
+      ['pnpm', pnpmCmdShim('node_modules\\.bin\\claude.cmd', { nodeScript: false })],
+    ])('starts what the inner shim starts, under an outer %s shim', (_manager, outerShim) => {
+      const dependencies = filesOf({ [shimPath]: outerShim, [innerShimPath]: npmCmdShim(innerTarget) });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toEqual({ program: 'node', script: scriptPath });
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBeNull();
+    });
+
+    it('prefers the node.exe beside the inner shim, which is the one that runs node', () => {
+      const dependencies = filesOf({
+        [shimPath]: npmDirectCmdShim('node_modules\\.bin\\claude.cmd'),
+        [innerShimPath]: npmCmdShim(innerTarget),
+        [innerSiblingNode]: '',
+      });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toEqual({ program: innerSiblingNode, script: scriptPath });
+    });
+
+    it('starts a native program at the end of the chain directly', () => {
+      const exePath = path.join(directory, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+      const dependencies = filesOf({
+        [shimPath]: npmDirectCmdShim('node_modules\\.bin\\claude.cmd'),
+        [innerShimPath]: npmCmdShim('..\\@anthropic-ai\\claude-code\\bin\\claude.exe'),
+        [exePath]: '',
+      });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toEqual({ program: exePath, script: null });
+    });
+
+    it('refuses a Node script when any shim of the chain sets NODE_PATH', () => {
+      const dependencies = filesOf({
+        [shimPath]: pnpmCmdShim('node_modules\\.bin\\claude.cmd', { nodeScript: false, nodePath: 'C:\\Users\\dev\\pnpm\\node_modules' }),
+        [innerShimPath]: npmCmdShim(innerTarget),
+      });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('node_path');
+    });
+
+    it('follows an inner shim that is a .bat file', () => {
+      const innerBatPath = path.join(directory, 'node_modules', '.bin', 'claude.bat');
+      const dependencies = filesOf({
+        [shimPath]: npmDirectCmdShim('node_modules\\.bin\\claude.bat'),
+        [innerBatPath]: npmCmdShim(innerTarget),
+      });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toEqual({ program: 'node', script: scriptPath });
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBeNull();
+    });
+
+    it('starts a native program directly even when an outer shim sets NODE_PATH', () => {
+      const exePath = path.join(directory, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+      const dependencies = filesOf({
+        [shimPath]: pnpmCmdShim('node_modules\\.bin\\claude.cmd', { nodeScript: false, nodePath: 'C:\\Users\\dev\\pnpm\\node_modules' }),
+        [innerShimPath]: npmCmdShim('..\\@anthropic-ai\\claude-code\\bin\\claude.exe'),
+        [exePath]: '',
+      });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toEqual({ program: exePath, script: null });
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBeNull();
+    });
+
+    it('passes on why an inner shim gave up', () => {
+      const dependencies = filesOf({
+        [shimPath]: npmDirectCmdShim('node_modules\\.bin\\claude.cmd'),
+        [innerShimPath]: '@echo hello',
+      });
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('unparsed');
+    });
+
+    it(`gives up on a chain longer than ${MAX_SHIM_HOPS} shims`, () => {
+      const files: Record<string, string> = {};
+      let current = shimPath;
+      for (let hop = 1; hop <= MAX_SHIM_HOPS; hop++) {
+        files[current] = npmDirectCmdShim(`next${hop}.cmd`);
+        current = path.join(directory, `next${hop}.cmd`);
+      }
+      files[current] = npmCmdShim(innerTarget);
+      expect(directLaunchOfBatchShim(shimPath, filesOf(files))).toBeNull();
+      expect(batchShimGiveUpOf(shimPath, filesOf(files))).toBe('target_batch');
+    });
+
+    it('resolves a chain exactly as long as the limit', () => {
+      const files: Record<string, string> = {};
+      let current = shimPath;
+      for (let hop = 1; hop < MAX_SHIM_HOPS; hop++) {
+        files[current] = npmDirectCmdShim(`next${hop}.cmd`);
+        current = path.join(directory, `next${hop}.cmd`);
+      }
+      files[current] = npmCmdShim('node_modules\\@anthropic-ai\\claude-code\\cli.js');
+      expect(directLaunchOfBatchShim(shimPath, filesOf(files))).toEqual({ program: 'node', script: scriptPath });
+    });
+
+    it('gives up on a shim that names itself', () => {
+      const dependencies = filesOf({ [shimPath]: npmDirectCmdShim('gemini.cmd') });
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_batch');
+    });
   });
 
   it('gives up as target_missing when the existence check itself throws', () => {

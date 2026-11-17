@@ -136,6 +136,14 @@ export interface ManagedSession {
   reportsAgentStart?: boolean;
   /** This session's launch failure was reported, whatever its stage. A session reports once. */
   launchFailureNoted?: boolean;
+  /**
+   * The shell exited on its own before its typed line ran, having printed
+   * nothing, so the agent never ran whatever its adapter reports. Set by
+   * `SessionManager.noteLaunchEnded`; the exit listener then parks the row and
+   * gives the launch its one retry (Sentry DESKTOP-3X: PowerShell refused to
+   * start, STATUS_DLL_INIT_FAILED, and the task was left with an exited row).
+   */
+  shellDiedBeforeLaunch?: boolean;
   /** What the launch report read in the output, for the retry to wait on. */
   launchOutputRead?: Promise<LaunchOutputClass>;
   /**

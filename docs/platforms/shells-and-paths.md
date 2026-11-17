@@ -169,10 +169,12 @@ a batch file does not read a line the way a prompt does:
   the `node.exe` beside the shim or `node`, as the shim does, or a binary target directly. A
   pnpm shim sets `NODE_PATH` whenever its install has node paths to add, and pnpm calls a target
   with no shebang directly, so an `.exe` target (Claude Code's npm bin is `bin/claude.exe`) runs
-  as an npm shim's does: only a Node script reads `NODE_PATH`. A shim it cannot read past (one it
-  cannot read or parse, a target that is gone or not a program or Node script, or a Node script
-  whose shim sets `NODE_PATH`) is never run past the budget. An agent's start is refused before
-  its PTY (`launchRefusal`, `AgentBatchShimUnresolvedError`) with the card reason a command too
+  as an npm shim's does: only a Node script reads `NODE_PATH`. A target that is itself a `.cmd` or
+  `.bat` shim is read through in turn, up to `MAX_SHIM_HOPS` shims, and the launch starts what the
+  last one starts, with `node.exe` looked for beside that one (Sentry DESKTOP-3Y). A shim it cannot
+  read past (one it cannot read or parse, a target that is gone or not a program or Node script, a
+  chain past the bound, or a Node script whose chain sets `NODE_PATH`) is never run past the
+  budget. An agent's start is refused before its PTY (`launchRefusal`, `AgentBatchShimUnresolvedError`) with the card reason a command too
   long for its shell gets, and the report names why the shim gave up (`batch_shim`). Sentry
   DESKTOP-3Q and DESKTOP-3R were such starts, which used to type the refusal below and show a
   working agent for 30 to 60 s. A raw command still types `echo The command line is too long.`,

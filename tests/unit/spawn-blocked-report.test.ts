@@ -9,10 +9,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const reportHandledError = vi.hoisted(() => vi.fn());
+const trackEvent = vi.hoisted(() => vi.fn());
 const shuttingDown = vi.hoisted(() => ({ value: false }));
 
 vi.mock('electron', () => ({ app: { getPath: () => '/mock', isPackaged: false } }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
+vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent }));
 vi.mock('../../src/main/shutdown-state', () => ({ isShuttingDown: () => shuttingDown.value }));
 
 import { BranchCheckoutBlockedError, notifySpawnBlocked } from '../../src/main/ipc/helpers/task-git';
@@ -25,6 +27,7 @@ import { reportPreflightFailure, resetLaunchReports } from '../../src/main/pty/a
 import { AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
 import { AgentCommandTooLongError } from '../../src/main/pty/spawn/agent-start-refused';
 import { isUserConfigurationError } from '../../src/shared/user-configuration-error';
+import { isReported } from '../../src/main/analytics/handled-report';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Task } from '../../src/shared/types';
 
@@ -123,6 +126,7 @@ describe('notifySpawnBlocked', () => {
 describe('a refused agent start', () => {
   beforeEach(() => {
     reportHandledError.mockClear();
+    trackEvent.mockClear();
     resetLaunchReports();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
@@ -151,15 +155,28 @@ describe('a refused agent start', () => {
     expect(sent).not.toContain('Users\\dev');
   });
 
-  it('names a prompt too long for the agent by its fixed reason', () => {
-    reportPreflightFailure({ cause: 'agent_start', error: new AgentCommandTooLongError(), agent: 'claude', startPath: 'board' });
+  // Sentry DESKTOP-3Z: a prompt too long for its shell is refused by design and
+  // the card says so. It is no defect, so it sends nothing on any path.
+  it('sends nothing for a prompt too long for its shell, and counts it', () => {
+    const error = new AgentCommandTooLongError();
+    reportPreflightFailure({ cause: 'resume', error, agent: 'opencode', startPath: 'board' });
+
+    expect(reportHandledError).not.toHaveBeenCalled();
+    expect(trackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'opencode', reason: 'resume' });
+    expect(isReported(error)).toBe(true);
+  });
+
+  it('does not count a too-long refusal its caller already counted', () => {
+    reportPreflightFailure({ cause: 'agent_start', error: new AgentCommandTooLongError(), agent: 'claude', startPath: 'board', alreadyCounted: true });
+    expect(trackEvent).not.toHaveBeenCalled();
+  });
+
+  it('spends no key on a too-long refusal, so a real failure after it on the same path still reports', () => {
+    reportPreflightFailure({ cause: 'resume', error: new AgentCommandTooLongError(), agent: 'opencode', startPath: 'board' });
+    reportPreflightFailure({ cause: 'resume', error: new Error('spawn failed'), agent: 'opencode', startPath: 'board' });
 
     expect(reportHandledError).toHaveBeenCalledTimes(1);
-    expect(reportHandledError.mock.calls[0][1]).toMatchObject({
-      cause: 'agent_start',
-      error_type: 'AgentCommandTooLongError',
-      start_refused_reason: 'prompt-too-long',
-    });
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ cause: 'resume', agent: 'opencode', error_type: 'Error' });
   });
 
   it('sends no reason for an error that is not a refusal', () => {

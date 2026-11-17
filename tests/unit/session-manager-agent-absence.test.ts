@@ -115,6 +115,7 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
 import { SessionManager } from '../../src/main/pty/session-manager';
 import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { AGENT_START_CEILING_MS } from '../../src/main/pty/lifecycle/agent-output-tracker';
+import { PTY_HOST_LOST_EXIT_CODE } from '../../src/main/pty/host/pty-host-client';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { AgentParser } from '../../src/shared/types';
 import type { ProcessInfo } from '../../src/main/activity-engine/background-shell/process-tree';
@@ -597,6 +598,137 @@ describe('SessionManager agent-absence wiring', () => {
 
     it('says no for a session that is gone', async () => {
       expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+  });
+
+  // Sentry DESKTOP-3X: PowerShell exited with STATUS_DLL_INIT_FAILED under a
+  // second, before printing anything. The report went, and the task was left
+  // with an exited row and no retry.
+  describe('a shell that died before its typed line ran', () => {
+    const DLL_INIT_FAILED = -1073741502;
+
+    function ended(session: ManagedSession, exit: { exitCode?: number; intentional: boolean }): void {
+      (manager as unknown as {
+        noteLaunchEnded(row: ManagedSession, ending: { exitCode: number; signal: number | null; intentional: boolean }): void;
+      }).noteLaunchEnded(session, { exitCode: exit.exitCode ?? DLL_INIT_FAILED, signal: null, intentional: exit.intentional });
+    }
+
+    /** The fields the PTY exit sets before the exit listener runs (`performSpawn`'s onPtyExit). */
+    function exited(session: ManagedSession, exitCode: number = DLL_INIT_FAILED): void {
+      session.status = 'exited';
+      session.exitCode = exitCode;
+      session.pty = null;
+    }
+
+    beforeEach(() => {
+      reportHandledError.mockClear();
+    });
+
+    it('is marked, still reports shell_exit, and may retry whatever the adapter reports', async () => {
+      const session = seedSession({ reportsAgentStart: false, startPath: 'board' });
+      ended(session, { intentional: false });
+      expect(manager.shellDiedBeforeLaunch('session-1')).toBe(true);
+      expect((reportHandledError.mock.calls[0][1] as Record<string, string>).stage).toBe('shell_exit');
+      exited(session);
+      expect(await manager.mayRetryLaunch('session-1')).toBe(true);
+    });
+
+    it('is marked even when the launch already reported', () => {
+      ended(seedSession({ reportsAgentStart: true, launchFailureNoted: true }), { intentional: false });
+      expect(manager.shellDiedBeforeLaunch('session-1')).toBe(true);
+    });
+
+    it('reports nothing a second time for a launch that already reported', () => {
+      const reportLaunchOf = vi.spyOn(manager as unknown as { reportLaunchOf(): void }, 'reportLaunchOf');
+      ended(seedSession({ reportsAgentStart: true, launchFailureNoted: true }), { intentional: false });
+      expect(reportLaunchOf).not.toHaveBeenCalled();
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('may not retry once agent-run evidence lands after the mark', async () => {
+      const session = seedSession({ reportsAgentStart: false, startPath: 'board' });
+      ended(session, { intentional: false });
+      exited(session);
+      expect(await manager.mayRetryLaunch('session-1')).toBe(true);
+      session.agentStartObservedAt = Date.now();
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it.each([
+      { outputClass: 'login_required' as const },
+      { outputClass: 'line_too_long' as const },
+    ])('may not retry a marked launch whose output was $outputClass', async ({ outputClass }) => {
+      const session = seedSession({
+        reportsAgentStart: false, startPath: 'board', launchFailureNoted: true, launchOutputRead: Promise.resolve(outputClass),
+      });
+      ended(session, { intentional: false });
+      exited(session);
+      expect(manager.shellDiedBeforeLaunch('session-1')).toBe(true);
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it('is not marked for a workflow agent session, which is transient but not a Command Terminal', () => {
+      ended(seedSession({
+        reportsAgentStart: true, transient: true, workflowId: 'workflow-1', taskId: 'workflow-1',
+      }), { intentional: false });
+      expect(manager.shellDiedBeforeLaunch('session-1')).toBe(false);
+    });
+
+    it.each([
+      { label: 'an intentional exit', overrides: {}, exit: { intentional: true } },
+      { label: 'a host loss', overrides: {}, exit: { exitCode: PTY_HOST_LOST_EXIT_CODE, intentional: false } },
+      { label: 'a shell that printed', overrides: { firstOutputAt: Date.now() }, exit: { intentional: false } },
+      { label: 'a typed line that ran', overrides: { firstOutputAt: Date.now(), agentOutputAt: Date.now() }, exit: { intentional: false } },
+      { label: 'an agent that ran', overrides: { agentStartObservedAt: Date.now() }, exit: { intentional: false } },
+      { label: 'a Command Terminal', overrides: { transient: true }, exit: { intentional: false } },
+    ])('is not marked for $label', ({ overrides, exit }) => {
+      ended(seedSession({ reportsAgentStart: true, ...overrides }), exit);
+      expect(manager.shellDiedBeforeLaunch('session-1')).toBe(false);
+    });
+
+    it('is not marked during a quit', () => {
+      shutdown.active = true;
+      ended(seedSession({ reportsAgentStart: true }), { intentional: false });
+      expect(manager.shellDiedBeforeLaunch('session-1')).toBe(false);
+    });
+
+    it('is not marked for a session hidden until adopted', () => {
+      const session = seedSession({ reportsAgentStart: true });
+      (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add('session-1');
+      ended(session, { intentional: false });
+      expect(manager.shellDiedBeforeLaunch('session-1')).toBe(false);
+    });
+
+    it('may not retry a retry', async () => {
+      const session = seedSession({ reportsAgentStart: false, startPath: 'retry' });
+      ended(session, { intentional: false });
+      exited(session);
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it('parks the exited row as paused, under its own id, with no exit code', () => {
+      const session = seedSession({ reportsAgentStart: true });
+      ended(session, { intentional: false });
+      exited(session);
+      const changed = vi.fn();
+      manager.on('session-changed', changed);
+
+      expect(manager.parkFailedLaunch('session-1')).toBe(true);
+      expect(session.status).toBe('suspended');
+      expect(session.exitCode).toBeNull();
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(changed.mock.calls[0][0]).toBe('session-1');
+      expect(changed.mock.calls[0][1]).toMatchObject({ status: 'suspended' });
+    });
+
+    it('parks nothing that is not such a launch\'s exited row', () => {
+      const unmarked = seedSession({ id: 'unmarked', status: 'exited' });
+      const live = seedSession({ id: 'live', shellDiedBeforeLaunch: true });
+      expect(manager.parkFailedLaunch('unmarked')).toBe(false);
+      expect(manager.parkFailedLaunch('live')).toBe(false);
+      expect(manager.parkFailedLaunch('gone')).toBe(false);
+      expect(unmarked.status).toBe('exited');
+      expect(live.status).toBe('running');
     });
   });
 

@@ -221,9 +221,13 @@ blocks its `.ps1` or the sibling is missing. So:
    Both refusals come from `launchRefusal` (`src/main/pty/spawn/typed-launch.ts`). The second is a
    launch past cmd's typed budget, in any shell, whose `.cmd` shim cannot be read past
    (`AgentBatchShimUnresolvedError`, the same card reason), which used to type a named refusal into
-   its terminal and show a working agent until the absence sweep found it (Sentry DESKTOP-3R). It
-   is reported, unlike a prompt too long, because a shim the launcher cannot resolve is the
-   launcher's gap; a queued promotion reports it too, since no caller does.
+   its terminal and show a working agent until the absence sweep found it (Sentry DESKTOP-3R). A
+   shim whose target is itself a `.cmd` or `.bat` shim (a global bin calling the package's
+   `node_modules\.bin\<name>.cmd`) is read through, up to `MAX_SHIM_HOPS` shims, and the launch
+   starts what the last one starts (Sentry DESKTOP-3Y). The shim refusal is reported, unlike a
+   prompt too long, because a shim the launcher cannot resolve is the launcher's gap; a queued
+   promotion reports it too, since no caller does. A prompt too long is never reported, on any path:
+   `reportPreflightFailure` counts it and returns before it spends a key (Sentry DESKTOP-3Z).
 
 Measured on Windows 11 with a mock CLI and a 40,000 character task, before the refusal: PowerShell
 printed "The filename or extension is too long" through a `.cmd` shim and an npm `.ps1` alike, and a

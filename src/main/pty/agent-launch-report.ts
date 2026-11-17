@@ -39,7 +39,7 @@ import type { AgentProcessPresence } from './host/agent-process-presence';
 import { classifyLaunchOutput, type LaunchOutputClass } from './launch-output-class';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { parseWslShellSpec } from './process-tag/task-process-tag';
-import { AgentBatchShimUnresolvedError, AgentStartRefusedError } from './spawn/agent-start-refused';
+import { AgentBatchShimUnresolvedError, AgentCommandTooLongError, AgentStartRefusedError } from './spawn/agent-start-refused';
 import type { ManagedSession } from './session-registry';
 
 // Re-exported for the callers that also read this file's report functions. A
@@ -473,6 +473,12 @@ export interface PreflightFailure {
  * `spawnAgent` failure its caller catches again after the rethrow) is skipped, so
  * one failure is one event.
  *
+ * A prompt too long for its shell (`AgentCommandTooLongError`) is refused by
+ * design and its card says so, so it is counted and never sent, on every path
+ * that reports here. It returns before `claimLaunchReport`, so it spends no key:
+ * a real failure on the same path later in the run still reports (Sentry
+ * DESKTOP-3Z spent the run's one OpenCode resume key on one).
+ *
  * The event carries the error's name, errno and frames under a fixed message,
  * never the error's text (`fixedMessageCopyOf`).
  *
@@ -485,6 +491,11 @@ export function reportPreflightFailure(failure: PreflightFailure): void {
     const cause = preflightCauseOf(failure.cause, error);
     if (isAbortError(error)) return;
     if (isReported(error)) return;
+    if (error instanceof AgentCommandTooLongError) {
+      markReported(error);
+      if (alreadyCounted !== true) trackEvent('spawn_failed', { agent: agentTag(agent), reason: cause });
+      return;
+    }
     const tags = {
       ...preflightTagsOf({ agent, agentCliVersion, startPath }),
       ...errorShapeTags(error),

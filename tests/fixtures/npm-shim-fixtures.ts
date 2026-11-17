@@ -86,6 +86,35 @@ export function pnpmCmdShim(relativeTarget: string, options: { nodeScript: boole
   return lines.join(CMD_SHIM_LINE_ENDING);
 }
 
+/**
+ * npm's `.cmd` shim for a target with no shebang, as `writeShim_` in npm's
+ * `cmd-shim` writes it (checked line for line against `lib/index.js` of
+ * cmd-shim 9.0.2, the copy npm bundles under `bin-links`, and byte for byte
+ * against the file npm's bundled cmd-shim 8.0.0 wrote for a
+ * `node_modules\.bin\claude.cmd` target). With no interpreter to name, `prog`
+ * becomes the quoted target and `args` and `target` are empty, so the last
+ * line is the target called directly, three spaces, then `%*`.
+ *
+ * A `.cmd` or `.bat` target has no shebang, so this is the shim a global bin
+ * gets when its target is itself a batch shim (a `node_modules\.bin\<name>.cmd`).
+ * pnpm takes the same branch (`pnpmCmdShim` with `nodeScript: false`). Either
+ * one, pointed at a second shim, is a chain.
+ */
+export function npmDirectCmdShim(relativeTarget: string): string {
+  return [
+    '@ECHO off',
+    'GOTO start',
+    ':find_dp0',
+    'SET dp0=%~dp0',
+    'EXIT /b',
+    ':start',
+    'SETLOCAL',
+    'CALL :find_dp0',
+    `"%dp0%\\${relativeTarget}"   %*`,
+    '',
+  ].join(CMD_SHIM_LINE_ENDING);
+}
+
 /** The two-line shape every tests/fixtures/mock-*.cmd uses (no separator after `%~dp0`). */
 export function minimalCmdShim(relativeTarget: string): string {
   return ['@echo off', `node "%~dp0${relativeTarget}" %*`, ''].join(CMD_SHIM_LINE_ENDING);
