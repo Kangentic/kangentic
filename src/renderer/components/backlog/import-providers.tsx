@@ -4,11 +4,12 @@ import { msg } from '@lingui/core/runtime-macro';
 import { GitHubIcon } from '../icons/GitHubIcon';
 import { ArtifactPlatformLogo } from '../VendorMark';
 import { AsanaSetupDialog } from '../asana/AsanaSetupDialog';
+import { JiraConnectDialog } from '../jira/JiraConnectDialog';
 import { LinearSetupDialog } from '../linear/LinearSetupDialog';
 import { LinearTeamPicker } from '../linear/LinearTeamPicker';
 import { translateText } from '../../i18n/translate';
 import type { LocalizedText } from '../../../shared/i18n/text';
-import type { ExternalSource, ImportSource } from '../../../shared/types';
+import type { BoardConnectPrefill, ExternalSource, ImportSource } from '../../../shared/types';
 
 /** What a provider's Connect dialog takes. `initialError` shows why it was reopened. */
 export interface ProviderSetupDialogProps {
@@ -16,6 +17,16 @@ export interface ProviderSetupDialogProps {
   /** Called once the credential is checked and saved. */
   onSaved: () => void;
   initialError?: string | null;
+  /** What to fill in again when reopened for a sign-in that stopped working (Jira's site and email). */
+  prefill?: BoardConnectPrefill;
+}
+
+/** A provider's answer to `getStatus`. Only a per-site provider (Jira) fills the optional fields. */
+export interface ProviderAuthStatus {
+  connected: boolean;
+  /** `ambiguous-site`: typed text names no site and several are connected, so a link is needed. */
+  reason?: 'none' | 'ambiguous-site';
+  prefill?: BoardConnectPrefill;
 }
 
 /**
@@ -24,8 +35,15 @@ export interface ProviderSetupDialogProps {
  * and the Import dialog's error banner offers the same dialog as a Connect button.
  */
 export interface ProviderAuth {
-  getStatus: () => Promise<{ connected: boolean }>;
+  /** `target` is the pasted link or a saved source's repository, for a provider with `checksPastedLink`. */
+  getStatus: (target?: string) => Promise<ProviderAuthStatus>;
   SetupDialog: React.ComponentType<ProviderSetupDialogProps>;
+  /**
+   * The sign-in belongs to the site a link names (Jira), so the popover asks
+   * `getStatus` with the pasted link when Connect is clicked, not when the
+   * provider is picked, and continues the add once the dialog saves.
+   */
+  checksPastedLink?: boolean;
 }
 
 /** What a source picker takes: it replaces the URL field for a provider that lists its sources. */
@@ -74,7 +92,7 @@ export interface Provider {
   icon: React.ReactNode;
   available: boolean;
   comingSoon?: boolean;
-  /** Present for a provider that signs in through Kangentic (Asana, Linear). */
+  /** Present for a provider that signs in through Kangentic (Asana, Jira, Linear). */
   auth?: ProviderAuth;
   sourceTypes: SourceTypeOption[];
 }
@@ -139,6 +157,27 @@ export const PROVIDERS: Provider[] = [
         placeholder: 'https://app.asana.com/0/1234567890/list', // i18n-ok: an example URL
         hint: msg({ message: 'Paste any Asana project URL (list, board, or calendar view).', context: 'import source type' }),
         icon: <SquareKanban size={16} />,
+      },
+    ],
+  },
+  {
+    id: 'jira',
+    label: 'Jira', // i18n-ok: a provider's own name
+    icon: <ArtifactPlatformLogo platformId="jira" size={16} />,
+    available: true,
+    auth: {
+      getStatus: (target) => window.electronAPI.backlog.jira.authStatus(target),
+      SetupDialog: JiraConnectDialog,
+      checksPastedLink: true,
+    },
+    sourceTypes: [
+      {
+        value: 'jira',
+        label: msg({ message: 'Issues', context: 'import source type' }),
+        description: msg({ message: 'Import from a Jira board, project, filter or search', context: 'import source type' }),
+        placeholder: 'https://your-site.atlassian.net/jira/software/projects/ENG/boards/12', // i18n-ok: an example URL
+        hint: msg({ message: 'Paste a Jira link, or type JQL.', context: 'import source type' }),
+        icon: <ArtifactPlatformLogo platformId="jira" size={16} />,
       },
     ],
   },

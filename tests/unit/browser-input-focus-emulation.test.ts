@@ -287,6 +287,25 @@ describe('input payloads', () => {
     detachDebugger(guest);
   });
 
+  it('typeText never sends punctuation as the navigation key its char code collides with', async () => {
+    // `.` is char 46, which is VK_DELETE; `-` 45 is VK_INSERT; `(` 40 is
+    // VK_DOWN. Sent as the virtual-key code, Chromium pressed that key instead
+    // of inserting the text, so a typed URL or email lost every dot.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await typeText(guest, '.-(% ');
+
+    const keyDowns = sent.filter((command) => command.params.type === 'keyDown').map((command) => command.params);
+    for (const keyDown of keyDowns.slice(0, 4)) {
+      expect(keyDown).not.toHaveProperty('windowsVirtualKeyCode');
+      expect(keyDown.text).toBe(keyDown.key);
+    }
+    expect(keyDowns[4]).toMatchObject({ key: ' ', code: 'Space', windowsVirtualKeyCode: 32, text: ' ' });
+    detachDebugger(guest);
+  });
+
   it('dispatchKeypress sends a keyDown/keyUp pair with the parsed modifiers', async () => {
     const { guest, sent } = fakeGuest();
     attachDebugger(guest);
@@ -632,6 +651,24 @@ describe('input payloads', () => {
     await dispatchKeypress(guest, 'Ctrl+~');
 
     expect(sent.every((entry) => (entry.params as { code?: string }).code === undefined)).toBe(true);
+    detachDebugger(guest);
+  });
+
+  it('dispatchKeypress sends no windowsVirtualKeyCode for a chord key with no US virtual key', async () => {
+    // `(` is char 40, which is VK_DOWN. A chord that carried the char code as the
+    // virtual key pressed Down instead of the parenthesis key.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    const ok = await dispatchKeypress(guest, 'Ctrl+(');
+
+    expect(ok).toBe(true);
+    expect(sent).toHaveLength(2);
+    expect(sent[0].params).toMatchObject({ type: 'keyDown', key: '(', modifiers: 2 });
+    expect(sent[1].params).toMatchObject({ type: 'keyUp', key: '(', modifiers: 2 });
+    expect(sent[0].params).not.toHaveProperty('windowsVirtualKeyCode');
+    expect(sent[1].params).not.toHaveProperty('windowsVirtualKeyCode');
     detachDebugger(guest);
   });
 
@@ -1076,6 +1113,13 @@ describe('chordKeyIdentity', () => {
     // A shifted symbol is not a physical key, and inventing a code for it
     // ("Key~") would be one no real keyboard sends.
     expect(chordKeyIdentity('~')).not.toHaveProperty('code');
+  });
+
+  it('gives such a character no virtual key, never the navigation key its char code collides with', () => {
+    // `!` is char 33 (VK_PRIOR, PageUp), `(` 40 (VK_DOWN), `%` 37 (VK_LEFT).
+    for (const character of ['!', '(', '%', '#', '$', '&']) {
+      expect(chordKeyIdentity(character)).toEqual({});
+    }
   });
 });
 

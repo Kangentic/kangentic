@@ -106,8 +106,10 @@ export interface BoardAdapter {
   /**
    * Structured check of CLI availability and authentication status. Used by
    * settings UI to show actionable messages ("install gh CLI" vs "run gh auth login").
+   * `repository` is the saved source's repository, for a provider whose sign-ins
+   * are per site (Jira); others ignore it.
    */
-  checkPrerequisites(credentials?: Credentials): Promise<PrerequisiteResult>;
+  checkPrerequisites(repository?: string): Promise<PrerequisiteResult>;
 
   /**
    * Legacy check used by the current import IPC flow. Wraps checkPrerequisites()
@@ -119,6 +121,21 @@ export interface BoardAdapter {
    * the list loads. Providers that check only a CLI or a sign-in ignore it.
    */
   checkCli(repository?: string): Promise<ImportCheckCliResult>;
+
+  /**
+   * True when `ExternalIssue.workItemType` is the item's type (a Jira issue type,
+   * an ADO work item type), so the import stores it as the backlog item's type.
+   * Asana uses the field for its section, which is not a type, and leaves this off.
+   */
+  readonly workItemTypeIsItemType?: boolean;
+
+  /**
+   * Validate a parsed source before it is saved, and return its label. A refusal
+   * thrown here is the line the Add Source popover shows ("No board 12 that this
+   * account can open."), and nothing is saved. Providers without it keep the
+   * best-effort `resolveLabel`.
+   */
+  prepareSource?(repository: string): Promise<{ label: string; repository?: string }>;
 
   /**
    * Fetch a page of issues from the remote source. Receives the original

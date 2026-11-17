@@ -1,0 +1,138 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-17 11:56-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: fr\n"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "API token"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Check the site address."
+msgstr ""
+
+#. The highlighted phrase is a button label in Atlassian's own English interface. Keep it as written.
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Click <0>Create API token</0>, name it \"Kangentic\", and copy it."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Connect Jira"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Couldn't reach {shownSite}: {detail}."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Couldn't reach {shownSite}."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Create a personal access token"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Create an API token"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Create one in your Jira profile"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Email"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Jira rejected this email and token."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Jira rejected this token."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Jira rejected this username and password."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Jira wants a CAPTCHA before password sign-in."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Open {shownSite}"
+msgstr ""
+
+#. The highlighted phrases are labels in Jira's own English interface. Keep them as written.
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Open <0>Personal Access Tokens</0>, click <1>Create token</1>, and copy it."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Open id.atlassian.com"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Open your Atlassian API tokens"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Open your Jira profile"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Password"
+msgstr "Mot de passe"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "Collez-le ici"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Paste your token"
+msgstr "Collez votre jeton"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Personal access token"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Site"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "This site turned off password sign-in."
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Use a personal access token"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Use your password"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+#, fuzzy
+msgid "Username"
+msgstr "Nom d'utilisateur"
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Your Jira password"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Your Jira username"
+msgstr ""
+
+#: src/renderer/components/jira/JiraConnectDialog.tsx
+msgid "Your Jira username and password"
+msgstr ""

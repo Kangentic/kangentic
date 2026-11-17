@@ -7,7 +7,7 @@ import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
 import { PROVIDERS, getSourceLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
-import type { ImportSource } from '../../../shared/types';
+import type { BoardConnectPrefill, ImportSource } from '../../../shared/types';
 import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
 import { reportRendererFailure } from '../../utils/renderer-failure';
 import { describeIpcError } from '../../lib/ipc-error';
@@ -46,9 +46,13 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   // The picked provider's Connect dialog (`provider.auth.SetupDialog`). Opened
   // when the user picks a provider that signs in through Kangentic and is not
   // connected, or when a source picker's list fails on sign-in; the dialog
-  // checks and saves the credential end to end.
+  // checks and saves the credential end to end. A provider whose sign-in belongs
+  // to the site a link names (`checksPastedLink`, Jira) opens it from Connect.
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
   const [setupDialogError, setSetupDialogError] = useState<string | null>(null);
+  const [setupDialogPrefill, setSetupDialogPrefill] = useState<BoardConnectPrefill | undefined>(undefined);
+  // True when Connect opened the dialog for a pasted link: once it saves, the add continues.
+  const connectAfterSignInRef = useRef(false);
   // Bumped after a Connect so a source picker that failed on sign-in loads again.
   const [pickerGeneration, setPickerGeneration] = useState(0);
 
@@ -153,19 +157,24 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     setSelectedProvider(provider);
     setError(null);
 
-    if (provider.auth) {
+    // A sign-in that belongs to a site is checked once the link is pasted (handleConnect).
+    if (provider.auth && !provider.auth.checksPastedLink) {
       try {
         const status = await provider.auth.getStatus();
         if (!status.connected) {
           // Not connected yet: open the provider's Connect dialog. Once it
           // saves a working credential it calls onSaved and we advance.
+          connectAfterSignInRef.current = false;
           setSetupDialogError(null);
+          setSetupDialogPrefill(undefined);
           setSetupDialogOpen(true);
           return;
         }
       } catch (statusError) {
         reportRendererFailure('backlog', 'import-auth-status', statusError);
+        connectAfterSignInRef.current = false;
         setSetupDialogError(null);
+        setSetupDialogPrefill(undefined);
         setSetupDialogOpen(true);
         return;
       }
@@ -177,6 +186,12 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   const handleSetupDialogSaved = () => {
     setSetupDialogOpen(false);
     setSetupDialogError(null);
+    if (connectAfterSignInRef.current) {
+      // Signed in for the pasted link's site: carry on adding that source.
+      connectAfterSignInRef.current = false;
+      void handleConnect();
+      return;
+    }
     if (addPhase === 'url') {
       // Reconnected from a source picker whose list failed: load it again.
       setPickerGeneration((previous) => previous + 1);
@@ -186,17 +201,24 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   };
 
   const handleSetupDialogClosed = () => {
-    // User dismissed the Connect dialog without connecting. Drop the selection
-    // so they're back on the bare provider list instead of a half-completed flow.
     setSetupDialogOpen(false);
     setSetupDialogError(null);
+    if (connectAfterSignInRef.current) {
+      // Opened from a pasted link: stay on the link so the user can try again.
+      connectAfterSignInRef.current = false;
+      return;
+    }
+    // User dismissed the Connect dialog without connecting. Drop the selection
+    // so they're back on the bare provider list instead of a half-completed flow.
     setSelectedProvider(null);
     setSelectedSourceType(null);
     setAddPhase('provider');
   };
 
   const handlePickerAuthFailed = (message: string) => {
+    connectAfterSignInRef.current = false;
     setSetupDialogError(message);
+    setSetupDialogPrefill(undefined);
     setSetupDialogOpen(true);
   };
 
@@ -235,6 +257,23 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     setError(null);
 
     try {
+      // A sign-in that belongs to a site is checked against the site the pasted link names.
+      const auth = selectedProvider?.auth;
+      if (auth?.checksPastedLink) {
+        const status = await auth.getStatus(sourceUrl);
+        if (status.reason === 'ambiguous-site') {
+          setError(t`Paste a search link so the site is known.`);
+          return;
+        }
+        if (!status.connected) {
+          connectAfterSignInRef.current = true;
+          setSetupDialogError(null);
+          setSetupDialogPrefill(status.prefill);
+          setSetupDialogOpen(true);
+          return;
+        }
+      }
+
       // Check CLI availability first
       const cliStatus = await window.electronAPI.backlog.importCheckCli(sourceType.value);
       if (!cliStatus.available || !cliStatus.authenticated) {
@@ -507,6 +546,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
           onClose={handleSetupDialogClosed}
           onSaved={handleSetupDialogSaved}
           initialError={setupDialogError}
+          prefill={setupDialogPrefill}
         />
       )}
     </div>

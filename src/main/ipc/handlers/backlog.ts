@@ -36,7 +36,9 @@ import type {
   Task,
 } from '../../../shared/types';
 import { boardRegistry, ImportSourceStore } from '../../boards';
+import { parseUrlForSource } from '../../boards/shared';
 import { registerAsanaIpcHandlers } from '../../boards/adapters/asana';
+import { registerJiraIpcHandlers } from '../../boards/adapters/jira';
 import { registerLinearIpcHandlers } from '../../boards/adapters/linear';
 import { priorityIndexForName, priorityScaleFrom } from '../../../shared/priority-scale';
 import { RefusalError } from '../../../shared/refusal';
@@ -652,6 +654,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
         priority: priorityIndexForName(issue.priority, priorityScale),
         labels: issue.labels,
         assignee: issue.assignee ?? undefined,
+        itemType: adapter.workItemTypeIsItemType ? issue.itemType || undefined : undefined,
+        dueDate: issue.dueDate || undefined,
         externalId: issue.externalId,
         externalSource: input.source,
         externalUrl: issue.externalUrl,
@@ -690,12 +694,26 @@ export function registerBacklogHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_ADD, async (_, input: { source: ExternalSource; url: string }) => {
     if (!context.currentProjectPath) throw new RefusalError('No project is currently open');
     const store = new ImportSourceStore(context.currentProjectPath);
+    const adapter = boardRegistry.get(input.source);
+
+    // A provider that validates sources (Jira) checks the parsed source against
+    // the remote before anything is saved, so a board the account cannot open is
+    // refused in the popover instead of saved as a source that never loads. Its
+    // refusal reaches the renderer as the popover's error line.
+    if (adapter?.prepareSource) {
+      const { repository } = parseUrlForSource(input.source, input.url);
+      const prepared = await adapter.prepareSource(repository);
+      return store.add(input.source, input.url, {
+        label: prepared.label,
+        repository: prepared.repository ?? repository,
+      });
+    }
+
     const source = store.add(input.source, input.url);
 
     // Let the adapter enrich the label with a human-readable name if it can
     // (e.g. Asana: project GID -> project name). Best-effort; any failure
     // keeps the sync label produced by the URL parser.
-    const adapter = boardRegistry.get(input.source);
     if (adapter?.resolveLabel) {
       try {
         const resolved = await adapter.resolveLabel(source.repository);
@@ -715,10 +733,11 @@ export function registerBacklogHandlers(context: IpcContext): void {
     new ImportSourceStore(context.currentProjectPath).remove(id);
   });
 
-  // Asana board integration owns its own IPC surface under
-  // src/main/boards/adapters/asana/ipc-handlers.ts so the adapter folder is
-  // self-contained. Register it here because Asana auth is part of the
+  // Asana and Jira own their own IPC surfaces under
+  // src/main/boards/adapters/<provider>/ipc-handlers.ts so each adapter folder is
+  // self-contained. Register them here because their sign-in is part of the
   // backlog import flow.
   registerAsanaIpcHandlers();
+  registerJiraIpcHandlers();
   registerLinearIpcHandlers();
 }

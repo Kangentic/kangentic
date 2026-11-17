@@ -701,7 +701,8 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     const link = dialog.locator('[data-testid="backlog-task-external-link"]');
     await expect(link).toBeVisible();
-    await expect(link).toHaveAccessibleName('Open in jira');
+    // The provider's own name from the import list, not the raw source id.
+    await expect(link).toHaveAccessibleName('Open in Jira');
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();
 

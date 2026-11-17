@@ -791,6 +791,11 @@ const api: ElectronAPI = {
     importSourcesList: () => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_LIST),
     importSourcesAdd: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_ADD, input),
     importSourcesRemove: (id) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_REMOVE, id),
+    jira: {
+      authStatus: (target) => ipcRenderer.invoke(IPC.BOARDS_JIRA_AUTH_STATUS, target),
+      detectSite: (siteOrUrl) => ipcRenderer.invoke(IPC.BOARDS_JIRA_DETECT_SITE, siteOrUrl),
+      connect: (input) => ipcRenderer.invoke(IPC.BOARDS_JIRA_CONNECT, input),
+    },
     asana: {
       authStatus: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_AUTH_STATUS),
       setPat: (input) => ipcRenderer.invoke(IPC.BOARDS_ASANA_SET_PAT, input),

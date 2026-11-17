@@ -4,9 +4,6 @@
  * - BACKLOG_IMPORT_SOURCES_ADD with an adapter that validates sources
  *   (`prepareSource`, Jira): a refusal saves nothing, and a resolved label and
  *   repository reach `ImportSourceStore.add`.
- * - BOARDS_AUTH_STATUS: the unknown-source, no-getAuthStatus and target
- *   pass-through answers.
- * - The Asana adapter's own getAuthStatus.
  *
  * Uses the captured-IPC-handler pattern from backlog-import-execute-hydrate.test.ts.
  */
@@ -58,7 +55,6 @@ vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({ withTaskLock: vi.fn()
 
 interface FakeAdapter {
   prepareSource?: ReturnType<typeof vi.fn>;
-  getAuthStatus?: ReturnType<typeof vi.fn>;
   resolveLabel?: ReturnType<typeof vi.fn>;
 }
 
@@ -79,11 +75,10 @@ vi.mock('../../src/main/boards', () => ({
 }));
 vi.mock('../../src/main/boards/adapters/asana', () => ({ registerAsanaIpcHandlers: vi.fn() }));
 vi.mock('../../src/main/boards/adapters/jira', () => ({ registerJiraIpcHandlers: vi.fn() }));
+vi.mock('../../src/main/boards/adapters/linear', () => ({ registerLinearIpcHandlers: vi.fn() }));
 
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
 import { registerSourceUrlParser } from '../../src/main/boards/shared';
-import { AsanaAdapter } from '../../src/main/boards/adapters/asana/adapter';
-import type { AsanaClient } from '../../src/main/boards/adapters/asana/client';
 import { RefusalError } from '../../src/shared/refusal';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -153,54 +148,3 @@ describe('BACKLOG_IMPORT_SOURCES_ADD with a validating adapter', () => {
   });
 });
 
-describe('BOARDS_AUTH_STATUS', () => {
-  it('answers not connected, reason none, for a source with no registered adapter', async () => {
-    registeredAdapter = undefined;
-    expect(await handlerFor(IPC.BOARDS_AUTH_STATUS)(null, 'nope')).toEqual({ connected: false, reason: 'none' });
-  });
-
-  it('answers connected for an adapter that has no getAuthStatus', async () => {
-    registeredAdapter = {};
-    expect(await handlerFor(IPC.BOARDS_AUTH_STATUS)(null, 'trello')).toEqual({ connected: true });
-  });
-
-  it('passes a string target through to getAuthStatus', async () => {
-    const getAuthStatus = vi.fn(async () => ({ connected: true, account: 'a@example.com' }));
-    registeredAdapter = { getAuthStatus };
-
-    const result = await handlerFor(IPC.BOARDS_AUTH_STATUS)(null, 'trello', 'https://site.example');
-
-    expect(getAuthStatus).toHaveBeenCalledWith('https://site.example');
-    expect(result).toEqual({ connected: true, account: 'a@example.com' });
-  });
-
-  it('passes a non-string target to getAuthStatus as undefined', async () => {
-    const getAuthStatus = vi.fn(async () => ({ connected: true }));
-    registeredAdapter = { getAuthStatus };
-
-    await handlerFor(IPC.BOARDS_AUTH_STATUS)(null, 'trello', { site: 'https://site.example' });
-
-    expect(getAuthStatus).toHaveBeenCalledWith(undefined);
-  });
-});
-
-describe('AsanaAdapter.getAuthStatus', () => {
-  function adapterWith(hasCredential: boolean, email: string | null): AsanaAdapter {
-    const client = {
-      hasCredential: vi.fn(async () => hasCredential),
-      getCredentialEmail: vi.fn(async () => email),
-    } as unknown as AsanaClient;
-    return new AsanaAdapter(client);
-  }
-
-  it('is not connected, reason none, with no credential', async () => {
-    expect(await adapterWith(false, null).getAuthStatus()).toEqual({ connected: false, reason: 'none' });
-  });
-
-  it('is connected and names the credential email', async () => {
-    expect(await adapterWith(true, 'dev@example.com').getAuthStatus()).toEqual({
-      connected: true,
-      account: 'dev@example.com',
-    });
-  });
-});

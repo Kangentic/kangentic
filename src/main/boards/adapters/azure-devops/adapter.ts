@@ -37,6 +37,7 @@ export class AzureDevOpsAdapter implements BoardAdapter {
   readonly displayName = 'Azure DevOps';
   readonly icon = 'cloud';
   readonly status: AdapterStatus = 'stable';
+  readonly workItemTypeIsItemType = true;
 
   constructor(private readonly azure: AzureDevOpsImporter = new AzureDevOpsImporter()) {}
 

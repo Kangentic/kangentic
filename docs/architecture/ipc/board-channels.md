@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board IPC channels
-description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana and Linear auth.
+description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana, Jira and Linear auth.
 tags: [ipc, channels, board, tasks]
 sources:
   - resource: src/shared/ipc-channels.ts
@@ -115,12 +115,12 @@ sources:
 ## Backlog Import (7 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `backlog:importCheckCli` | invoke | Check that a source can be read: its CLI and sign-in, or for a folder source (Obsidian) that the folder exists and is inside a vault. An optional saved `repository` lets a folder source report a folder that moved |
+| `backlog:importCheckCli` | invoke | Check that a source can be read: its CLI and sign-in, or for a folder source (Obsidian) that the folder exists and is inside a vault. An optional saved `repository` scopes the check for a per-site provider (Jira) and lets a folder source report a folder that moved; `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect |
 | `backlog:importGetCached` | invoke | Read the persistent remote-item cache for a source (no network), for an instant dialog paint |
 | `backlog:importReconcile` | invoke | Fetch items changed since the cache high-water mark, merge and prune, and return the merged set |
 | `backlog:importExecute` | invoke | Import selected items into the backlog, hydrating deferred per-item detail (e.g. Azure DevOps comments) and downloading attachments |
 | `backlog:importSourcesList` | invoke | List saved import sources for the current project |
-| `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). Providers with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
+| `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). A provider with a `prepareSource` hook (Jira) checks the source against the remote first and refuses it with the popover's error line; others with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
 | `backlog:importSourcesRemove` | invoke | Remove a saved import source |
 
 ## Board Auth - Asana (3 channels)
@@ -129,6 +129,13 @@ sources:
 | `boards:asana:authStatus` | invoke | Report Asana connection state: `{connected, email?}` |
 | `boards:asana:setPat` | invoke | Validate a Personal Access Token via `/users/me` and persist it encrypted; returns `{ok, email?, error?}` |
 | `boards:asana:clearCredential` | invoke | Remove the stored Personal Access Token |
+
+## Board Auth - Jira (3 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `boards:jira:authStatus` | invoke | Whether a sign-in is saved for the site `target` names (a pasted link, typed JQL or a saved repository): `{connected, account?, reason?, site?, prefill?}`. `reason: 'ambiguous-site'` when typed JQL names no site and several are connected; `prefill` holds the site, method and email or username for Connect, never a secret |
+| `boards:jira:detectSite` | invoke | Normalize a site or link to its base URL and ask its anonymous `serverInfo` whether it runs Cloud or Data Center (falling back to the host name); returns `{site, deployment}` |
+| `boards:jira:connect` | invoke | Check an API token, personal access token or password against `/myself` (retrying a scoped Cloud token through Atlassian's gateway) and persist it encrypted per site; returns `{ok: true, site, account}` or `{ok: false, code, site?, detail?}` |
 
 ## Board Auth - Linear (6 channels)
 | Channel | Pattern | Purpose |

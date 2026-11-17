@@ -78,6 +78,7 @@ let adapter: {
   downloadImages: ReturnType<typeof vi.fn>;
   downloadFileAttachments?: ReturnType<typeof vi.fn>;
   hydrateForImport?: ReturnType<typeof vi.fn>;
+  workItemTypeIsItemType?: boolean;
 };
 
 vi.mock('../../src/main/boards', () => ({
@@ -85,6 +86,7 @@ vi.mock('../../src/main/boards', () => ({
   ImportSourceStore: class { list = vi.fn(() => []); add = vi.fn(); remove = vi.fn(); updateLabel = vi.fn(); },
 }));
 vi.mock('../../src/main/boards/adapters/asana', () => ({ registerAsanaIpcHandlers: vi.fn() }));
+vi.mock('../../src/main/boards/adapters/jira', () => ({ registerJiraIpcHandlers: vi.fn() }));
 
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
 import { IPC } from '../../src/shared/ipc-channels';
@@ -254,5 +256,43 @@ describe('importExecute - priority names', () => {
       { label: 'Now', color: '#ef4444' },
     ];
     expect(await importedPriority('Urgent')).toBe(0);
+  });
+});
+
+// Jira's names include two no stock scale carries, and its issue type is a real type.
+describe('importExecute - Jira priority, type and due date', () => {
+  it('matches the provider priority by name against the project scale and carries type and due date', async () => {
+    adapter.workItemTypeIsItemType = true;
+    await executeHandler()(null, {
+      source: 'jira',
+      repository: 'https://acme.atlassian.net::board::12',
+      issues: [makeIssue({ externalId: '10001', priority: 'high', itemType: 'Bug', dueDate: '2026-12-01' })],
+    });
+    expect(backlogRepoMock.create).toHaveBeenCalledWith(
+      expect.objectContaining({ priority: 3, itemType: 'Bug', dueDate: '2026-12-01' }),
+    );
+  });
+
+  it('maps Highest to the top of the scale and an unknown name to None', async () => {
+    await executeHandler()(null, {
+      source: 'jira',
+      repository: 'https://acme.atlassian.net::board::12',
+      issues: [
+        makeIssue({ externalId: '1', priority: 'Highest' }),
+        makeIssue({ externalId: '2', priority: 'Blocker' }),
+      ],
+    });
+    expect(backlogRepoMock.create.mock.calls[0][0]).toEqual(expect.objectContaining({ priority: 4 }));
+    expect(backlogRepoMock.create.mock.calls[1][0]).toEqual(expect.objectContaining({ priority: 0 }));
+  });
+
+  it('does not store the item type for a provider whose type field is not a type (Asana sections)', async () => {
+    adapter.workItemTypeIsItemType = false;
+    await executeHandler()(null, {
+      source: 'asana',
+      repository: '1234567890',
+      issues: [makeIssue({ externalId: '7', itemType: 'In Progress' })],
+    });
+    expect(backlogRepoMock.create.mock.calls[0][0]).toEqual(expect.objectContaining({ itemType: undefined }));
   });
 });

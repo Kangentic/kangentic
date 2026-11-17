@@ -83,6 +83,7 @@ msgctxt "import filter"
 msgid "Assignee"
 msgstr "Assignee"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgctxt "button"
 msgid "Back"
@@ -92,6 +93,7 @@ msgstr "Back"
 msgid "Backlog is empty"
 msgstr "Backlog is empty"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgctxt "button"
@@ -155,6 +157,7 @@ msgstr "Coming soon"
 msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
 msgstr "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
 msgid "Connect"
 msgstr "Connect"
@@ -298,6 +301,10 @@ msgstr "File too large"
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "Filter by ID, title, label, or assignee..."
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+msgid "Hide"
+msgstr "Hide"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Hide imported items"
 msgstr "Hide imported items"
@@ -324,6 +331,11 @@ msgstr "Import failed"
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "Import from a GitHub Project board"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a Jira board, project, filter or search"
+msgstr "Import from a Jira board, project, filter or search"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -474,6 +486,15 @@ msgstr "Open in {sourceName}"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
+msgid "Paste a Jira link, or type JQL."
+msgstr "Paste a Jira link, or type JQL."
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Paste a search link so the site is known."
+msgstr "Paste a search link so the site is known."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
 msgid "Paste any Asana project URL (list, board, or calendar view)."
 msgstr "Paste any Asana project URL (list, board, or calendar view)."
 
@@ -545,6 +566,10 @@ msgstr "Save"
 msgid "Select all"
 msgstr "Select all"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+msgid "Show"
+msgstr "Show"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Show imported items"
 msgstr "Show imported items"
@@ -553,6 +578,10 @@ msgstr "Show imported items"
 msgctxt "import filter"
 msgid "Status"
 msgstr "Status"
+
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+msgid "Stored encrypted in your OS keychain."
+msgstr "Stored encrypted in your OS keychain."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Syncing..."

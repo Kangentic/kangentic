@@ -83,13 +83,13 @@ describe('boardRegistry', () => {
     expect(boardRegistry.getOrThrow('github_projects').status).toBe('stable');
     expect(boardRegistry.getOrThrow('azure_devops').status).toBe('stable');
     expect(boardRegistry.getOrThrow('asana').status).toBe('stable');
+    expect(boardRegistry.getOrThrow('jira').status).toBe('stable');
     expect(boardRegistry.getOrThrow('linear').status).toBe('stable');
     expect(boardRegistry.getOrThrow('obsidian_notes').status).toBe('stable');
     expect(boardRegistry.getOrThrow('obsidian_checklist').status).toBe('stable');
   });
 
-  it('the 2 remaining placeholder providers are status: stub', () => {
-    expect(boardRegistry.getOrThrow('jira').status).toBe('stub');
+  it('the remaining placeholder provider is status: stub', () => {
     expect(boardRegistry.getOrThrow('trello').status).toBe('stub');
   });
 
@@ -98,7 +98,7 @@ describe('boardRegistry', () => {
   });
 
   it('stub adapters return an unauthenticated checkCli result instead of throwing', async () => {
-    for (const id of ['jira', 'trello'] as const) {
+    for (const id of ['trello'] as const) {
       const adapter = boardRegistry.getOrThrow(id);
       const result = await adapter.checkCli();
       expect(result.available).toBe(false);
@@ -127,10 +127,10 @@ describe('boardRegistry', () => {
   });
 
   it('stub adapter fetch() throws not-implemented', async () => {
-    const adapter = boardRegistry.getOrThrow('jira');
+    const adapter = boardRegistry.getOrThrow('trello');
     await expect(
       adapter.fetch(
-        { source: 'jira', repository: 'team', page: 1, perPage: 10 },
+        { source: 'trello', repository: 'board', page: 1, perPage: 10 },
         () => new Set<string>(),
       ),
     ).rejects.toThrow(/not yet implemented/);
@@ -162,9 +162,10 @@ describe('boardRegistry.requireStable()', () => {
     expect(adapter.status).toBe('stable');
   });
 
-  it('throws for jira (stub) with displayName in the message', () => {
-    const jiraAdapter = boardRegistry.getOrThrow('jira');
-    expect(() => boardRegistry.requireStable('jira')).toThrow(jiraAdapter.displayName);
+  it('returns the adapter for jira (runtime-configured, not a stub)', () => {
+    const adapter = boardRegistry.requireStable('jira');
+    expect(adapter.id).toBe('jira');
+    expect(adapter.status).toBe('stable');
   });
 
   it('returns the adapter for linear (runtime-configured, not a stub)', () => {
@@ -183,6 +184,6 @@ describe('boardRegistry.requireStable()', () => {
   });
 
   it('error message for stub adapters mentions not yet implemented', () => {
-    expect(() => boardRegistry.requireStable('jira')).toThrow(/not yet implemented/);
+    expect(() => boardRegistry.requireStable('trello')).toThrow(/not yet implemented/);
   });
 });
