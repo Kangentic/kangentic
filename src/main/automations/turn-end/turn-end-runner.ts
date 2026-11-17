@@ -1190,7 +1190,7 @@ async function runRows(
     holdMoves,
     releaseHeldMoves: input.releaseHeldMoves,
   });
-  reportAutomationFailures(context, summary, current.task, payload.projectId);
+  reportAutomationFailures(context, summary, current.task, payload.projectId, 'turn_end');
   const heldRow = summary.heldMoveRowId ? runnable.find((row) => row.id === summary.heldMoveRowId) : undefined;
   if (heldRow && current.task.workflow_id) {
     const target = resolveMoveTarget(repos.swimlanes.list(), column.id, automationMoveTargetName(heldRow.type, heldRow.config), routeOf(current.task));

@@ -261,6 +261,48 @@ describe('TransitionEngine and a task with its automations disabled', () => {
     });
   });
 
+  // A move that ends the agent (To Do, Done, a parked column) sends an exit row
+  // that needs the agent nothing: the engine forwards `agentEndingReason` to the
+  // runner, which skips that row with the reason and runs the rest.
+  describe('an exit group on a move that ends the agent', () => {
+    const ENDING_REASON = 'Not sent: moving to To Do ends the agent, so it could not act on the message.';
+
+    function writeExitRows(): { messageRowId: string; pingRowId: string } {
+      const written = automations.replaceForColumn(column.id, [
+        { name: 'Exit message', type: 'send_message', trigger: 'exit', enabled: true, config: { message: 'Wrap up', mode: 'immediate' } },
+        { name: 'Exit ping', type: 'notify', trigger: 'exit', enabled: true, config: { title: 'Leaving', body: 'Out of the column' } },
+      ]);
+      return {
+        messageRowId: written.find((row) => row.type === 'send_message')!.id,
+        pingRowId: written.find((row) => row.type === 'notify')!.id,
+      };
+    }
+
+    it('forwards agentEndingReason: the row that needs the agent is skipped with it, the other row runs', async () => {
+      const { messageRowId, pingRowId } = writeExitRows();
+      const task = createTask(false);
+
+      const summary = await engine.executeTransition(
+        task,
+        column,
+        'exit',
+        { ...groupOptions(), agentEndingReason: ENDING_REASON },
+      );
+
+      // Red: dropping the engine's forward leaves the runner on its own "not running" skip.
+      expect(summary.outcomes.map((outcome) => [outcome.automationId, outcome.status])).toEqual([
+        [messageRowId, 'skipped'],
+        [pingRowId, 'succeeded'],
+      ]);
+      expect(summary.outcomes[0].detail).toBe(ENDING_REASON);
+      expect(deliverToAgent).not.toHaveBeenCalled();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      const messageRuns = runs.listForTask(task.id).filter((run) => run.automation_id === messageRowId);
+      expect(messageRuns).toHaveLength(1);
+      expect(messageRuns[0]).toMatchObject({ status: 'skipped', detail: ENDING_REASON, trigger: 'exit' });
+    });
+  });
+
   // A warm move types the column's message into the live session BEFORE it hands
   // the enter group to the engine (the move names that row `alreadyDelivered`),
   // and the user can have thrown the switch in between. That message went out, so
