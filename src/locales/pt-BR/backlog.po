@@ -113,6 +113,12 @@ msgstr "Voltar"
 msgid "Backlog is empty"
 msgstr "O backlog está vazio"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Board"
+msgstr "Quadro"
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -128,19 +134,22 @@ msgid "Change color"
 msgstr "Alterar cor"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Checklist items"
-msgstr ""
+msgstr "Itens de checklist"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import folder dialog"
 msgid "Choose a folder in your Obsidian vault"
-msgstr ""
+msgstr "Escolha uma pasta no seu cofre do Obsidian"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import error banner"
 msgid "Choose folder"
-msgstr ""
+msgstr "Escolher pasta"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -316,14 +325,16 @@ msgid "Drop files here"
 msgstr "Solte os arquivos aqui"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each - [ ] line becomes a task"
-msgstr ""
+msgstr "Cada linha - [ ] vira uma tarefa"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each note becomes a task"
-msgstr ""
+msgstr "Cada nota vira uma tarefa"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
@@ -363,8 +374,9 @@ msgid "Filter by ID, title, label, or assignee..."
 msgstr "Filtrar por ID, título, rótulo ou responsável..."
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
 msgid "Hide"
-msgstr ""
+msgstr "Ocultar"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -388,6 +400,12 @@ msgstr "Importar"
 msgid "Import ({selectedCount})"
 msgstr "Importar ({selectedCount})"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Import cards from a Trello board"
+msgstr "Importar cartões de um quadro do Trello"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Import failed"
@@ -400,9 +418,10 @@ msgid "Import from a GitHub Project board"
 msgstr "Importar de um quadro do GitHub Project"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a Jira board, project, filter or search"
-msgstr ""
+msgstr "Importar de um quadro, projeto, filtro ou pesquisa do Jira"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -560,9 +579,10 @@ msgid "None"
 msgstr "Nenhuma"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Notes"
-msgstr ""
+msgstr "Notas"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -572,8 +592,9 @@ msgstr "Aberto"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgid "Open file"
-msgstr ""
+msgstr "Abrir arquivo"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
@@ -582,13 +603,15 @@ msgid "Open in {sourceName}"
 msgstr "Abrir em {sourceName}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste a Jira link, or type JQL."
-msgstr ""
+msgstr "Cole um link do Jira ou digite JQL."
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Paste a search link so the site is known."
-msgstr ""
+msgstr "Cole um link de pesquisa para identificar o site."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -613,6 +636,12 @@ msgstr "Cole a URL completa do seu GitHub Project"
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
 msgstr "Cole a URL completa do seu repositório do GitHub"
+
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Paste the URL of a Trello board."
+msgstr "Cole a URL de um quadro do Trello."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy

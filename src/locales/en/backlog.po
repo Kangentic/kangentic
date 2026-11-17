@@ -93,6 +93,11 @@ msgstr "Back"
 msgid "Backlog is empty"
 msgstr "Backlog is empty"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Board"
+msgstr "Board"
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -323,6 +328,11 @@ msgstr "Import"
 msgid "Import ({selectedCount})"
 msgstr "Import ({selectedCount})"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import cards from a Trello board"
+msgstr "Import cards from a Trello board"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Import failed"
 msgstr "Import failed"
@@ -512,6 +522,11 @@ msgstr "Paste the full URL to your GitHub Project"
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
 msgstr "Paste the full URL to your GitHub repository"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste the URL of a Trello board."
+msgstr "Paste the URL of a Trello board."
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
