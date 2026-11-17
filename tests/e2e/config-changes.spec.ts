@@ -288,13 +288,22 @@ test.describe('Claude Agent -- Config Changes During Active Sessions', () => {
         await window.electronAPI.sessions.kill(sessionId);
       }, remainingRunning[0]);
 
-      // Poll for kill to be reflected: nothing running and nothing queued.
-      // Replaces a fixed 2s sleep that hid the actual settle time.
+      // Wait for THIS kill to land (the row leaves `running` only when its PTY
+      // exits), then check what the queue made of the freed slot. Step 5 allows
+      // the third session to be queued or already promoted, and the two end
+      // differently. Promoted early, it was one of the sessions killed above and
+      // nothing is left. Still queued, this kill frees the one slot and the
+      // queue starts it, and the mock CLI stays alive for 30 s, so one session
+      // is running when the queue has drained. Asserting zero running failed
+      // that second ending, which CI reached when promotion was not instant.
+      // What holds either way: nothing is stuck in the queue, and the limit of
+      // 1 was never exceeded.
+      await waitForSessionExited(page, remainingRunning[0]);
       await expect
         .poll(
           async () => {
             const counts = await getSessionCounts(page);
-            return counts.running === 0 && counts.queued === 0;
+            return counts.queued === 0 && counts.running <= 1;
           },
           { timeout: 10_000, intervals: [200, 500] },
         )
