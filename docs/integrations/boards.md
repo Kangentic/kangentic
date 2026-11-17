@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira and Linear and notes from an Obsidian vault, the Trello stub, safeStorage async-API behavior for stored credentials, Jira's per-site sign-ins, Linear's API key and OAuth sign-in, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear and Trello and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site sign-ins, Linear's API key and OAuth sign-in, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -13,7 +13,7 @@ sources:
 ---
 # Board integration
 
-Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear), and notes and checklist items from an Obsidian vault, into the backlog, and is being extended to one more provider (Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
+Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear), and notes and checklist items from an Obsidian vault, into the backlog. The Trello adapter is built and waits on its Connect dialog. Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
 This doc covers the adapter system and how to add a new board provider.
 
@@ -40,7 +40,7 @@ src/main/boards/
     jira/             # Cloud and Data Center; per-site sign-ins, dedicated IPC group
     linear/           # API key or OAuth sign-in, GraphQL client, dedicated IPC group
     obsidian/         # a vault on this computer: two source types, added by folder
-    trello/           # stub
+    trello/           # API key + user token, read-only; no Connect dialog yet
   board-registry.ts   # BoardRegistry + boardRegistry singleton
   index.ts
 ```
@@ -89,7 +89,7 @@ A download that carries a sign-in (`downloadFile` in `src/main/boards/shared/dow
 
 ### `Credentials`
 
-Opaque per-adapter credential bag (`Record<string, string>`). Each adapter owns its own stored shape. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Asana one Personal Access Token, Linear either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), and Jira one sign-in per site (`jira/credential-store.ts`: the site's base URL, Cloud or Data Center, the method, an email or username, the secret, and for a scoped Cloud token its `cloudId` and `viaGateway`). Keep adapter-specific shapes inside each adapter folder.
+Opaque per-adapter credential bag (`Record<string, string>`). Each adapter owns its own stored shape. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Asana one Personal Access Token, Linear either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), Jira one sign-in per site (`jira/credential-store.ts`: the site's base URL, Cloud or Data Center, the method, an email or username, the secret, and for a scoped Cloud token its `cloudId` and `viaGateway`), and Trello `{kind, apiKey, token, savedAt}` in `trello-credentials.json` under the config directory. Keep adapter-specific shapes inside each adapter folder.
 
 A `jira-credentials.json` that exists but cannot be read (the OS keychain refused the decrypt, or the file is damaged) is copied aside to `jira-credentials.json.unreadable-<timestamp>` before the next save would write over it, so one failed read cannot sign every other Jira site out. If that copy fails, the save fails and the file stays as it was.
 
@@ -255,9 +255,9 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | Linear | stable | none | Personal API key or OAuth sign-in in the browser, both stored encrypted via `safeStorage`. Teams are picked from a list. Ships its own `boards:linear:*` IPC group. |
 | Obsidian Notes | stable | none | A vault folder on this computer, chosen in the folder dialog. Each note is a task. |
 | Obsidian Checklist items | stable | none | Same folder source. Each task line (`- [ ]`, `- [x]`, `- [/]`, `- [-]`) is a task, with the Tasks plugin's markers and Kanban plugin lanes. |
-| Trello | stub | - | Tracked in #483. |
+| Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. |
 
-The registry enumerates all 9 providers. Stable providers dispatch normally. The stub provider (`trello`) is not offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers short-circuit it before any throwing method runs.
+The registry enumerates all 9 providers, and every one is stable. Stable providers dispatch normally. Trello is stable but not offered yet: `src/renderer/components/backlog/import-providers.tsx` has no row for it until its Connect dialog exists.
 
 ## See Also
 

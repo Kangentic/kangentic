@@ -61,6 +61,7 @@ describe('isExpectedFailure', () => {
       new (await import('../../src/main/pty/spawn/agent-start-refused')).AgentCommandTooLongError(),
       new (await import('../../src/main/retrieval/retrieval-client')).RetrievalUnavailableError('down'),
       new (await import('../../src/main/transcription/engines/transcription-engine')).ModelLoadError('model', new Error('x')),
+      new (await import('../../src/main/boards/adapters/trello/client')).TrelloError('invalid token', 401),
     ];
     for (const error of constructed) {
       expect(EXPECTED_FAILURE_NAMES.has(error.name), error.name).toBe(true);

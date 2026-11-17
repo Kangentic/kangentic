@@ -528,7 +528,7 @@ in one Sentry org, one triage surface.
   one that found the process still running after the force kill), and a guarded synchronous write that could not
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per
   outage: `config`, `config_dirs`, `config_project_override`, `import_source`, `browser_url`, the
-  three `mobile_bridge_*` stores, `asana_credential`, `jira_credential`, `linear_credential`, plus `errno` and `syscall` tags when the
+  three `mobile_bridge_*` stores, `asana_credential`, `jira_credential`, `linear_credential`, `trello_credential`, plus `errno` and `syscall` tags when the
   error carries them; `config_dirs` is the one source that is a directory creation rather than a
   write (`ensureDirs()` at config load), and it also carries `config_dir` (`config`, `projects`, `models`),
   `config_dir_origin` (`env`, `flag`, `appdata`, `home`) and `config_dir_state` (`drive_missing`,
