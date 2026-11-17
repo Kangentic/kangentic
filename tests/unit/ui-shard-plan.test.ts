@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import {
   TIMINGS_FILE,
@@ -81,6 +82,21 @@ describe('weighSpecs', () => {
     const [unknown] = weighSpecs(['tests/ui/new.spec.ts'], timings, () => source);
     // Two tests at the measured average of three seconds a test.
     expect(unknown).toEqual({ file: 'tests/ui/new.spec.ts', seconds: 6, measured: false });
+  });
+
+  it('weighs an unmeasured spec at four seconds a test when the timings hold no test at all', () => {
+    const source = "test('one', async () => {});\n  test('two', async () => {});\n  test('three', async () => {});\n";
+    const [unknown] = weighSpecs(['tests/ui/new.spec.ts'], { files: {} }, () => source);
+    expect(unknown).toEqual({ file: 'tests/ui/new.spec.ts', seconds: 12, measured: false });
+  });
+
+  it('reads no timings, rather than failing, from a checkout without the timings file', () => {
+    const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-shard-plan-'));
+    try {
+      expect(readTimings(emptyRoot)).toEqual({ files: {} });
+    } finally {
+      fs.rmSync(emptyRoot, { recursive: true, force: true });
+    }
   });
 
   it('counts a spec with no test declaration as one test, never as weightless', () => {
@@ -223,6 +239,24 @@ describe('reading a shard log', () => {
     expect(files['tests/ui/second.spec.ts'].tests).toBe(1);
     expect(files['tests/ui/second.spec.ts'].seconds).toBeCloseTo(66);
     expect(Object.keys(files)).toHaveLength(2);
+  });
+
+  it('counts a failed test and each retry of it, and counts a skipped test for nothing', () => {
+    // Line shapes are Playwright's list reporter, as printed by its _updateTestLine: a failed test
+    // ends in " (<duration>)", a retry puts " (retry #N)" before that duration, and a skipped test
+    // has no duration at all.
+    const prefix = 'UI Test (3/11)\tUNKNOWN STEP\t2026-11-17T17:20:00.0000000Z';
+    const log = [
+      `${prefix}   ✘    1 [ui] › tests/ui/flaky.spec.ts:10:3 › group › fails first (2s)`,
+      `${prefix}   ✓    2 [ui] › tests/ui/flaky.spec.ts:10:3 › group › fails first (retry #1) (3s)`,
+      `${prefix}   -    3 [ui] › tests/ui/flaky.spec.ts:30:3 › group › skipped one`,
+      `${prefix}   -    4 [ui] › tests/ui/skipper.spec.ts:5:1 › skipped alone (retry #1)`,
+    ].join('\n');
+    const files = addShardLog(log);
+    // Both runs of the retried test were paid for by the shard, so both are in.
+    expect(files['tests/ui/flaky.spec.ts']).toEqual({ seconds: 5, tests: 2 });
+    // A spec that only skipped has no measured cost, so it stays out and is weighed by its count.
+    expect(files['tests/ui/skipper.spec.ts']).toBeUndefined();
   });
 
   it('writes paths sorted and seconds rounded, so a refresh diffs cleanly', () => {

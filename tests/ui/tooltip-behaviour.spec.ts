@@ -15,7 +15,7 @@
 import { test, expect, chromium, type Browser, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite, launchPage, createProject, launchWithTransientTerminal, openTransientCommandTerminal } from './helpers';
-import { DEV_SERVER_URL, DEV_SERVER_WARM_BUDGET_MS, warmDevServer } from './dev-server';
+import { DEV_SERVER_URL, warmDevServer } from './dev-server';
 import { TOOLTIP_DWELL_MS, TOOLTIP_WARM_MS } from '../../src/renderer/utils/tooltip';
 import { getKeybinding } from '../../src/shared/keybindings';
 
@@ -755,7 +755,6 @@ test('the version pill is a button with a pointer cursor while the build has rel
 test('the version pill stays a plain span, with no tip, when the build has no release notes', async () => {
   // The one test here on the dev server. In bundle mode nothing else has loaded from it, so
   // its cold start is paid here, outside the 15 s default budget (tests/ui/dev-server.ts).
-  test.setTimeout(DEV_SERVER_WARM_BUDGET_MS);
   await warmDevServer();
   const { browser, page } = await launchPage({
     // The dev server, where the notes are still a module request this can answer. A bundle

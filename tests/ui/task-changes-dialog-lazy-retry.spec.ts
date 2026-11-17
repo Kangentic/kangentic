@@ -24,7 +24,7 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, waitForBoard, gotoVite } from './helpers';
-import { DEV_SERVER_URL, DEV_SERVER_WARM_BUDGET_MS, warmDevServer } from './dev-server';
+import { DEV_SERVER_URL, warmDevServer } from './dev-server';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 // The dev server, not the bundle CI serves the rest of the tier: the test fails the lazy chunk by
@@ -103,7 +103,6 @@ let page: Page;
 // In bundle mode nothing else loads from the dev server, so its cold start would land in this
 // spec's own test budget (tests/ui/dev-server.ts).
 test.beforeAll(async () => {
-  test.setTimeout(DEV_SERVER_WARM_BUDGET_MS);
   await warmDevServer();
 });
 

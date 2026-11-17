@@ -1,4 +1,4 @@
-import { chromium } from '@playwright/test';
+import { chromium, test } from '@playwright/test';
 import path from 'node:path';
 
 /**
@@ -24,24 +24,30 @@ import path from 'node:path';
  */
 export const DEV_SERVER_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_DEV_PORT || process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
-/** Bundle mode: the dev server is a second server that only the specs here ever load. */
-const DEV_SERVER_STANDS_ALONE = process.env.KANGENTIC_UI_BUNDLE === '1';
+/**
+ * Bundle mode: the specs load the app from the static bundle, and the dev server is a second
+ * server that only the specs here ever load. A spec that needs to know asks this, never the flag.
+ */
+export const APP_LOADS_FROM_BUNDLE = process.env.KANGENTIC_UI_BUNDLE === '1';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 
-/** How long one cold boot may take. Measured at up to about 15 s on a loaded 4-vCPU CI runner. */
+/** How long one cold boot may take, load and mount together. Measured at up to about 15 s on a loaded 4-vCPU CI runner. */
 const COLD_BOOT_TIMEOUT_MS = 90_000;
 
-/** What a hook or test that calls `warmDevServer` needs as its own budget: `test.setTimeout(DEV_SERVER_WARM_BUDGET_MS)`. */
-export const DEV_SERVER_WARM_BUDGET_MS = 120_000;
+/** The budget `warmDevServer` gives the hook or test that calls it: one cold boot and the browser's own launch. */
+const DEV_SERVER_WARM_BUDGET_MS = 120_000;
+
+/** One warm-up a worker. A later spec on the same worker finds the server already warm. */
+let warmed: Promise<void> | undefined;
 
 /**
  * Boots the app once from the dev server and waits for it to mount, so the test after it meets a
  * server that has already transformed the module graph.
  *
  * Call it before the first boot in a spec that loads from DEV_SERVER_URL, from a `beforeAll` or
- * the test itself, after `test.setTimeout(DEV_SERVER_WARM_BUDGET_MS)`. It does nothing unless the
- * dev server stands alone.
+ * the test itself. It sets that hook's or test's timeout to its own budget, so no caller can leave
+ * a cold start inside the 15 s default. Outside bundle mode it boots nothing.
  *
  * Why: when every UI spec loaded from the dev server, the first boots of a run paid its cold
  * start between them and the rest found it warm. In bundle mode nothing else loads from it, so
@@ -51,15 +57,23 @@ export const DEV_SERVER_WARM_BUDGET_MS = 120_000;
  * too: it counts on a healthy boot mounting inside gotoVite's 5 s grace, which a cold server
  * does not promise.
  */
-export async function warmDevServer(): Promise<void> {
-  if (!DEV_SERVER_STANDS_ALONE) return;
+export function warmDevServer(): Promise<void> {
+  test.setTimeout(DEV_SERVER_WARM_BUDGET_MS);
+  if (!APP_LOADS_FROM_BUNDLE) return Promise.resolve();
+  if (!warmed) warmed = bootOnce();
+  return warmed;
+}
+
+async function bootOnce(): Promise<void> {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
     // The mock, so the app mounts as it does in a spec and not into an error boundary.
     await page.addInitScript({ path: MOCK_SCRIPT });
+    // One deadline for the load and the mount, so the two waits together stay inside the budget.
+    const deadline = Date.now() + COLD_BOOT_TIMEOUT_MS;
     await page.goto(DEV_SERVER_URL, { waitUntil: 'load', timeout: COLD_BOOT_TIMEOUT_MS });
-    await page.waitForSelector('#root > *', { state: 'attached', timeout: COLD_BOOT_TIMEOUT_MS });
+    await page.waitForSelector('#root > *', { state: 'attached', timeout: Math.max(1, deadline - Date.now()) });
   } finally {
     await browser.close();
   }

@@ -72,7 +72,8 @@ export async function toastCountRightNow(page: Page, hasText?: string | RegExp):
 }
 
 /**
- * Poll the Vite dev server until it responds with HTTP 200.
+ * Poll the server the app loads from until it responds with HTTP 200: the Vite dev server, or
+ * the static bundle's server when KANGENTIC_UI_BUNDLE=1 (tests/ui/dev-server.ts).
  * Prevents thundering-herd timeouts when multiple workers launch simultaneously
  * before Vite finishes its initial compilation.
  */
@@ -85,13 +86,13 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
     } catch { /* server not ready */ }
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  throw new Error(`Vite dev server at ${url} not ready after ${timeoutMs}ms`);
+  throw new Error(`The app's server at ${url} was not ready after ${timeoutMs}ms`);
 }
 
 const VITE_GOTO_ATTEMPTS = 3;
 
 /**
- * `page.goto` against the Vite dev server, retrying only a navigation that never reached it, and
+ * `page.goto` against the server the app loads from, retrying only a navigation that never reached it, and
  * adopting one that another navigation to the same url superseded.
  *
  * Seen in a full 3-worker UI run: waitForViteReady's fetch probe got its 200, then Chromium's
@@ -1168,7 +1169,7 @@ export async function computedColor(page: Page, cssColor: string, property: 'col
 
 /**
  * Launch a headless Chromium page with the electronAPI mock injected.
- * The Vite dev server must be running (started by playwright webServer config).
+ * The server the app loads from must be running (playwright.config.ts starts it as a webServer).
  *
  * `beforeLoad` runs after the mock is injected and before the app loads, for a
  * spec that needs its own init script in place before React renders. `url` is
