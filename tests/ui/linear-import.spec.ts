@@ -180,6 +180,79 @@ test.describe('Connect Linear', () => {
   });
 });
 
+async function linearCancelCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __mockLinearCancelSignInCount?: number }).__mockLinearCancelSignInCount ?? 0);
+}
+
+async function startLinearWait(page: Page, projectName: string, preset: LinearPreset): Promise<void> {
+  await seedLinear(page, preset);
+  await createProject(page, projectName);
+  await openLinearProvider(page);
+  await page.locator('[data-testid="linear-setup-sign-in-btn"]').click();
+}
+
+async function linearFlush(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
+test.describe('Linear sign-in cancel', () => {
+  test('Back from the waiting screen sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await startLinearWait(page, 'linear-cancel-back', { signInAvailable: true });
+    await expect(page.locator('[data-testid="linear-setup-waiting"]')).toBeVisible();
+    await page.locator('[data-testid="linear-setup-back-btn"]').click();
+    await expect(page.locator('[data-testid="linear-setup-sign-in-btn"]')).toBeVisible();
+    await expect.poll(() => linearCancelCount(page)).toBe(1);
+    await linearFlush(page);
+    expect(await linearCancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('Cancel during the wait sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await startLinearWait(page, 'linear-cancel-btn', { signInAvailable: true });
+    await expect(page.locator('[data-testid="linear-setup-waiting"]')).toBeVisible();
+    await page.locator('[data-testid="linear-setup-cancel-btn"]').click();
+    await expect(page.locator('[data-testid="linear-setup-dialog"]')).toBeHidden();
+    await expect.poll(() => linearCancelCount(page)).toBe(1);
+    await linearFlush(page);
+    expect(await linearCancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('Escape during the wait sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await startLinearWait(page, 'linear-cancel-escape', { signInAvailable: true });
+    await expect(page.locator('[data-testid="linear-setup-waiting"]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="linear-setup-dialog"]')).toBeHidden();
+    await expect.poll(() => linearCancelCount(page)).toBe(1);
+    await linearFlush(page);
+    expect(await linearCancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('a sign-in that already ended sends no cancel on Back or on close', async () => {
+    const { browser, page } = await launchPage();
+    await startLinearWait(page, 'linear-cancel-resolved', {
+      signInAvailable: true,
+      signInResult: { ok: false, cancelled: false, error: 'Linear sign-in was declined.' },
+    });
+    await expect(page.locator('[data-testid="linear-setup-error"]')).toHaveText('Linear sign-in was declined.');
+    await page.locator('[data-testid="linear-setup-api-key-btn"]').click();
+    await page.locator('[data-testid="linear-setup-back-btn"]').click();
+    await expect(page.locator('[data-testid="linear-setup-sign-in-btn"]')).toBeVisible();
+    await page.locator('[data-testid="linear-setup-cancel-btn"]').click();
+    await expect(page.locator('[data-testid="linear-setup-dialog"]')).toBeHidden();
+    await linearFlush(page);
+    expect(await page.evaluate(() => (window as unknown as { __mockLinearSignInCallCount?: number }).__mockLinearSignInCallCount ?? 0)).toBe(1);
+    expect(await linearCancelCount(page)).toBe(0);
+    await browser.close();
+  });
+});
+
 test.describe('Linear team picker', () => {
   test.beforeEach(async ({ }, testInfo) => {
     testInfo.setTimeout(30000);

@@ -1,3 +1,5 @@
+import { LOOPBACK_HOST } from '../../shared/loopback-sign-in';
+
 /** Linear's GraphQL endpoint. Every API call is a POST here. */
 export const LINEAR_GRAPHQL_URL = 'https://api.linear.app/graphql';
 
@@ -19,7 +21,8 @@ export const LINEAR_OAUTH_CLIENT_ID = '';
  * picks at random would be refused.
  */
 export const LINEAR_OAUTH_REDIRECT_PORTS: readonly number[] = [37421, 37422, 37423];
-export const LINEAR_OAUTH_REDIRECT_HOST = '127.0.0.1';
+/** The host the loopback server binds, so the registered redirect always names it. */
+export const LINEAR_OAUTH_REDIRECT_HOST = LOOPBACK_HOST;
 export const LINEAR_OAUTH_REDIRECT_PATH = '/callback';
 
 /** Kangentic only reads from Linear. */
