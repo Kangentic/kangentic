@@ -715,10 +715,10 @@ test.describe('deleteTask - TaskDetailDialog handleDelete skips success toast on
       // (b) NO "Task deleted" info toast must appear. The line
       // `addToast({ title: 'Task deleted', ... })` in handleDelete comes AFTER
       // the awaited deleteTask() call. With re-throw, that line is never
-      // reached. Give a fixed budget for any latent toast to materialize
-      // before asserting absence.
-      // (intentional fixed wait - cannot poll for non-occurrence)
-      await page.waitForTimeout(1500);
+      // reached. A regression would add the success toast in the same microtask
+      // chain as the error toast (task-slice's catch adds the error toast, then the
+      // rethrow resumes handleDelete), so both are in the store before the error
+      // toast above rendered. No wait is needed.
       expect(await toastCountRightNow(page, 'Task deleted')).toBe(0);
     } finally {
       await browser.close();

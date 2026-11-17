@@ -160,10 +160,9 @@ test.describe('Project Delete Cleanup', () => {
     await page.evaluate(async (id) => {
       await window.electronAPI.projects.delete(id);
     }, projectId);
-    await page.waitForTimeout(500);
-
+    // PROJECT_DELETE awaits cleanupProject before it returns, so the removal has run.
     // .kangentic/ should be gone
-    expect(fs.existsSync(path.join(tmpDir, '.kangentic'))).toBe(false);
+    await expect.poll(() => fs.existsSync(path.join(tmpDir, '.kangentic'))).toBe(false);
 
     // .gitignore should NOT contain .kangentic/ anymore
     if (fs.existsSync(path.join(tmpDir, '.gitignore'))) {
@@ -210,10 +209,9 @@ test.describe('Project Delete Cleanup', () => {
     await page.evaluate(async (id) => {
       await window.electronAPI.projects.delete(id);
     }, projectId);
-    await page.waitForTimeout(500);
-
+    // PROJECT_DELETE awaits cleanupProject before it returns, so the removal has run.
     // .kangentic/ should be gone
-    expect(fs.existsSync(path.join(tmpDir, '.kangentic'))).toBe(false);
+    await expect.poll(() => fs.existsSync(path.join(tmpDir, '.kangentic'))).toBe(false);
 
     // .claude/ should still exist (user's files are in there)
     expect(fs.existsSync(claudeDir)).toBe(true);

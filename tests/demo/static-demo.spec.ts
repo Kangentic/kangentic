@@ -1799,19 +1799,27 @@ function monitorRow(page: Page, sessionId: string): Promise<{ activity: string; 
   }, sessionId);
 }
 
-/** How many DISTINCT output peeks a session's Monitor row shows over the given span. */
-async function countPeekChanges(page: Page, sessionId: string, spanMs: number): Promise<number> {
-  return page.evaluate(({ id, span }) => new Promise<number>((resolve) => {
+/**
+ * How many DISTINCT output peeks a session's Monitor row shows over the given span.
+ *
+ * A caller proving a positive claim ("it changes") passes `stopAtChanges` and gets the count as
+ * soon as it reaches that many, with the span as the ceiling. A caller proving "nothing changes"
+ * omits it and always waits the whole span.
+ */
+async function countPeekChanges(page: Page, sessionId: string, spanMs: number, stopAtChanges?: number): Promise<number> {
+  return page.evaluate(({ id, span, stopAt }) => new Promise<number>((resolve) => {
     let previous: string | null = null;
     let changes = 0;
+    const finish = (): void => { clearInterval(timer); clearTimeout(ceiling); resolve(changes); };
     const timer = setInterval(() => {
       const row = ((window as unknown as DemoMonitorWindow).__mockMonitorRows ?? []).find((candidate) => candidate.sessionId === id);
       const peek = (row?.outputPeek ?? []).join(' | ');
       if (previous !== null && peek !== previous) changes += 1;
       previous = peek;
+      if (stopAt !== null && changes >= stopAt) finish();
     }, 100);
-    setTimeout(() => { clearInterval(timer); resolve(changes); }, span);
-  }), { id: sessionId, span: spanMs });
+    const ceiling = setTimeout(finish, span);
+  }), { id: sessionId, span: spanMs, stopAt: stopAtChanges ?? null });
 }
 
 /** The message trail a session's Monitor card is rendering right now, empty when it draws none. */
@@ -1895,16 +1903,22 @@ function encodeState(state: unknown): string {
   return Buffer.from(JSON.stringify(state)).toString('base64url');
 }
 
-/** Total bytes the mock delivers for one session over the given span, through its own data path. */
-function streamedBytes(page: Page, sessionId: string, spanMs: number): Promise<number> {
-  return page.evaluate(({ id, span }) => new Promise<number>((resolve) => {
+/**
+ * Total bytes the mock delivers for one session over the given span, through its own data path.
+ * A caller proving a positive claim passes `stopAtBytes` and gets the total as soon as it reaches
+ * that many, with the span as the ceiling. A caller proving "nothing streams" omits it.
+ */
+function streamedBytes(page: Page, sessionId: string, spanMs: number, stopAtBytes?: number): Promise<number> {
+  return page.evaluate(({ id, span, stopAt }) => new Promise<number>((resolve) => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     let total = 0;
+    const finish = (): void => { unsubscribe(); clearTimeout(ceiling); resolve(total); };
     const unsubscribe = api.sessions.onData((candidate, data) => {
       if (candidate === id) total += data.length;
+      if (stopAt !== null && total >= stopAt) finish();
     });
-    setTimeout(() => { unsubscribe(); resolve(total); }, span);
-  }), { id: sessionId, span: spanMs });
+    const ceiling = setTimeout(finish, span);
+  }), { id: sessionId, span: spanMs, stopAt: stopAtBytes ?? null });
 }
 
 function recordingRequests(page: Page): () => string[] {
@@ -2785,11 +2799,23 @@ test('a live Monitor changes its output peeks as the recordings play, and a stil
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await gotoScene(page, { view: 'monitor', embed: '1' });
   await SCENE_MARKERS.monitor(page);
-  expect(await countPeekChanges(page, 'sess-cw-api-client', 12_000)).toBeGreaterThan(1);
+  // A positive claim: resolves at the second change, with 12s as the ceiling.
+  expect(await countPeekChanges(page, 'sess-cw-api-client', 12_000, 2)).toBeGreaterThan(1);
 
   await gotoScene(page, { view: 'monitor', embed: '1', still: '1' });
   await SCENE_MARKERS.monitor(page);
-  expect(await countPeekChanges(page, 'sess-cw-api-client', 6_000)).toBe(0);
+  // One window for both stills claims: the row's peek and the card's message trail on the same
+  // session and URL both hold where the seed put them.
+  const [stillPeekChanges, stillTrailChanges] = await Promise.all([
+    countPeekChanges(page, 'sess-cw-api-client', 6_000),
+    countTrailChanges(page, 'sess-cw-api-client', 6_000),
+  ]);
+  await test.step('a still holds its output peek', () => {
+    expect(stillPeekChanges).toBe(0);
+  });
+  await test.step('a still holds the message trail the seed put there', () => {
+    expect(stillTrailChanges).toBe(0);
+  });
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
@@ -2800,7 +2826,7 @@ test('cards show the agent message trail the recordings carry, and it moves on t
   // trails were seeded every card here fell back to its description and the demo silently showed
   // behaviour no install produces.
   //
-  // Three scene loads plus a 60s poll, so the worst case is around 85s. 90s left barely ten
+  // Two scene loads plus a 60s poll, so the worst case is around 75s. 90s left barely ten
   // seconds of margin, and CI's runner boots the bundle slower than this machine does.
   test.setTimeout(120_000);
   const getUnexpectedErrors = collectUnexpectedErrors(page);
@@ -2846,10 +2872,8 @@ test('cards show the agent message trail the recordings carry, and it moves on t
   expect(openingLine.length).toBeGreaterThan(0);
   await expect.poll(() => readTrail(page, 'sess-cw-api-client'), { timeout: 60_000 }).not.toBe(openingLine);
 
-  // A still arms no timer, so it holds the line the seed put there.
-  await gotoScene(page, { view: 'monitor', embed: '1', still: '1' });
-  await SCENE_MARKERS.monitor(page);
-  expect(await countTrailChanges(page, 'sess-cw-api-client', 6_000)).toBe(0);
+  // That a still arms no timer and holds the seeded line is asserted with the still peek in the
+  // live Monitor test above, which loads the same URL and session.
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
@@ -4277,8 +4301,9 @@ test('a display that fits another grid replays the task window on the grid it sh
   await expectFaithfulReplay(page, 'sess-cw-middleware');
   await expectPanesFilled(page, 'the default window at 125 percent');
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');
-  const peekChanges = countPeekChanges(page, 'sess-cw-middleware', 30_000);
-  expect(await streamedBytes(page, 'sess-cw-middleware', 30_000)).toBeGreaterThan(0);
+  // Both claims are positive, so each resolves at its first event; 30s stays the ceiling.
+  const peekChanges = countPeekChanges(page, 'sess-cw-middleware', 30_000, 1);
+  expect(await streamedBytes(page, 'sess-cw-middleware', 30_000, 1)).toBeGreaterThan(0);
   expect(await peekChanges).toBeGreaterThan(0);
   expect((await monitorRow(page, 'sess-cw-middleware'))?.activity).toBe('thinking');
   expect(getUnexpectedErrors()).toEqual([]);
