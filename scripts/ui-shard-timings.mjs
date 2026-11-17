@@ -82,7 +82,9 @@ function main() {
 
   const files = {};
   for (const job of shardJobs) {
-    addShardLog(gh(['run', 'view', '--job', String(job.databaseId), '--log']), files);
+    // The jobs endpoint, not `gh run view --log`: it serves a finished job's log while the run's
+    // last gate job is still queued, and `gh` fills in the owner and repository itself.
+    addShardLog(gh(['api', `repos/{owner}/{repo}/actions/jobs/${job.databaseId}/logs`]), files);
   }
   const specCount = Object.keys(files).length;
   if (specCount === 0) throw new Error(`Run ${runId}'s UI shard logs hold no test result line.`);

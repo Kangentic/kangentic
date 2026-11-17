@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage } from './helpers';
-import { DEV_SERVER_URL } from './dev-server';
+import { DEV_SERVER_URL, DEV_SERVER_WARM_BUDGET_MS, warmDevServer } from './dev-server';
 
 /**
  * gotoVite's boot retry. A page whose load event fired but whose #root stayed empty is a boot that
@@ -24,6 +24,13 @@ async function countAppModuleRequests(page: Page, abortFirst: number): Promise<(
   });
   return () => requests;
 }
+
+// Both tests count on a healthy boot mounting inside gotoVite's 5 s grace, which only a warm dev
+// server promises. In bundle mode nothing else has loaded from it (tests/ui/dev-server.ts).
+test.beforeAll(async () => {
+  test.setTimeout(DEV_SERVER_WARM_BUDGET_MS);
+  await warmDevServer();
+});
 
 test.describe('gotoVite boot retry', () => {
   // The staged dead boot waits out the mount grace before its reload, which the default 15 s

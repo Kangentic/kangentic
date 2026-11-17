@@ -151,7 +151,8 @@ test.describe('Claude Agent -- Browser Send evidence/retry paths', () => {
       // Wait for that, then assert the error region stayed empty.
       const sendButton = ctx.page.locator('[data-testid="browser-send"]');
       await expect(sendButton).toBeEnabled({ timeout: 30000 });
-      await expect(ctx.page.locator('[data-testid="browser-send-error"]')).toHaveCount(0);
+      // Read as text, so a failure prints what the strip said.
+      expect(await ctx.page.locator('[data-testid="browser-send-error"]').allInnerTexts()).toEqual([]);
 
       // Capture file is written before the engine ships the prompt, so its
       // existence proves the IPC path completed even if the engine retried.

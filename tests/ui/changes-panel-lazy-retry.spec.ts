@@ -24,7 +24,7 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
-import { DEV_SERVER_URL } from './dev-server';
+import { DEV_SERVER_URL, DEV_SERVER_WARM_BUDGET_MS, warmDevServer } from './dev-server';
 import type { RendererErrorContext } from '../../src/shared/types';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -111,6 +111,13 @@ const preConfig = `
 
 let browser: Browser;
 let page: Page;
+
+// In bundle mode nothing else loads from the dev server, so its cold start would land in this
+// spec's own test budget (tests/ui/dev-server.ts).
+test.beforeAll(async () => {
+  test.setTimeout(DEV_SERVER_WARM_BUDGET_MS);
+  await warmDevServer();
+});
 
 test.beforeAll(async () => {
   const result = await launchWithState(preConfig);
