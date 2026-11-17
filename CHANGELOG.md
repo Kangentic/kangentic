@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.59.0] - 2026-11-16
+
+### Features
+- Move the canvas to React Flow 13 (a1b6d258)
+- Strict selectors and a coordinate-space warning (#820) (1203d931)
+
+### Fixes
+- Never write a kangentic.json this build cannot fully read (e0c82a72)
+- End a canvas gesture let go over any disabled control (36856ba0)
+- End a canvas gesture let go over a disabled tool (a65c6092)
+- Read a process scan that holds a raw control character (d8582767)
+- Report a Command Terminal shim refusal and settle a re-init's capture wait (fdcccd9c)
+- Refuse an unresolvable .cmd shim before its PTY and report session ids by outcome (9c249a73)
+- Keep spawn openingPrompt main-only and pin session-id capture wiring (3b95d7c4)
+- Report a late load failure and pin the MSVC staging paths (7c722b5a)
+- Ship the MSVC runtime beside onnxruntime and latch a load failure (8c940ed6)
+- Skip WebGL where Chromium reports none (DESKTOP-32) (da6e6a7e)
+- Pull the graphics status into pop-out terminals (969a8821)
+- Keep refusing when a page cannot describe a candidate (4da408b5)
+- Scope :has-text after a combinator and refuse with no candidates (a82f8006)
+- Bound untrusted candidate data and pin strict passthrough (0cb27d17)
+- Make the mock listing override answer as invoke does (2a3bfef0)
+- Keep the conversation pill enabled across a pause (172cac9f)
+- Open a paused task's transcript after a restart (#822) (591c8e0f)
+- Resume a paused column on its own agent (#821) (aa424dbc)
+
+### Other
+- Pin a refused board profile write as an error reply (3f14bc61)
+- Pin the file format gates and the not-saved reply notes (98ae5abb)
+- Say afterPack removes better-sqlite3's build folder, and count six xterm packages (718bd538)
+- Drop a repeated pan case from the gesture spec (57abdef6)
+- Share the gesture spec's in-flight and viewport reads (b5991e44)
+- Pin every tag in the disabled-control gesture rule (8e50d834)
+- Refresh lockfile (cc15abb2)
+- Upgrade the xterm packages to the c9cc4785d build (07bc0636)
+- Upgrade electron to 45.3.3 (e619db83)
+- Upgrade koffi to 3.3.8 (f4466b8d)
+- Upgrade better-sqlite3 to 13.2.0 (e5a0bd5f)
+- Upgrade lucide-react to 1.73.0 (05e5734f)
+- Upgrade the Sentry build plugins to 11.13.0 (6aac6663)
+- Upgrade @sentry/electron to 8.4.0 (fc1f3593)
+- Upgrade @electron/asar to 4.3.2 (224113f0)
+- Upgrade playwright to 1.65.1 (d048e5a6)
+- Upgrade eslint to 10.15.0 and typescript-eslint to 8.73.0 (4e25a80f)
+- Upgrade @vitejs/plugin-react to 6.3.0 (ddca3ed3)
+- Upgrade vite to 8.3.8 (b2add2e5)
+- Upgrade ws to 8.23.0 (e1dda853)
+- Upgrade postcss to 8.5.33 (4eddfcb3)
+- Bring the launch-report docs in line with the shim refusal and session-id reports (db14b0ec)
+- Reuse the abort error on close and import refusals from their module (888a42a9)
+- Pin a timeout blamed past a caller abort and tidy the capture outcome (9dff9040)
+- Note the load-failure exception in the restart and report docs (cd7e756c)
+- Drop the redundant load-failure report set and pin the vswhere timeout (6ec0e438)
+- Share the process.report fixture loader and name the redist install root (9b99770b)
+- Pin the load-failure copy and a real process.report shape (cda9e682)
+- Correct the fallback context types and where the WebGL rules live (81d947ff)
+- Say the skip keys on webglAvailable and the notice is main-window only (59db8dab)
+- Pin the pop-out status pull and the gate's late update (10fac299)
+- Pin parseSelectorCandidates against untrusted page data (bf0c2035)
+- Tighten the conversation opener's comments and the pill spec (ac246cf3)
+- List the resume lookup and the agent override (#821) (040bd1c6)
+- Share the wrong-agent recovery setup and drop a fixture cast (acc71e3c)
+- Pin the main-track rematch and the fresh start of another agent's record (a0f74e29)
+
 ## [v0.58.0] - 2026-11-13
 
 ### Features
