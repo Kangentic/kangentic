@@ -220,15 +220,15 @@ export function deliverAgentMessageInBackground(
  * (`supersedeMessageDeliveries`), and the outcome goes to `onOutcome` the way a
  * keystroke burst's does: `cancelled` for a superseded paste (silent),
  * `failed` with a reason otherwise (a notice).
+ *
+ * `acceptHeld` also takes a turn the agent ended whose session only background
+ * work it left keeps thinking (`SessionManager.isTurnHeldByBackgroundWork`):
+ * its agent sits at its prompt. Only the held-message release at a held turn
+ * end asks for it; every other paste waits for idle.
  */
 export function pasteAgentMessageInBackground(
   context: IpcContext,
-  input: {
-    taskId: string;
-    sessionId: string;
-    message: string;
-    onOutcome: (report: InjectionReport) => void;
-  },
+  input: BackgroundPasteInput,
 ): void {
   // Tracked from now, so a move cancels it even while it waits its turn in
   // the task's paste chain.
@@ -238,14 +238,18 @@ export function pasteAgentMessageInBackground(
     .finally(release);
 }
 
+interface BackgroundPasteInput {
+  taskId: string;
+  sessionId: string;
+  message: string;
+  onOutcome: (report: InjectionReport) => void;
+  /** The turn wait also takes a turn held only by background work its agent left. */
+  acceptHeld?: boolean;
+}
+
 async function runBackgroundPaste(
   context: IpcContext,
-  input: {
-    taskId: string;
-    sessionId: string;
-    message: string;
-    onOutcome: (report: InjectionReport) => void;
-  },
+  input: BackgroundPasteInput,
   signal: AbortSignal,
 ): Promise<void> {
   // Until `submitContent` starts, nothing of the message has reached the agent.
@@ -298,12 +302,15 @@ async function runBackgroundPaste(
     // the loop never spins. An idle agent whose CLI keeps painting its status
     // line never gives that window, so the wait takes its turn as over after
     // the paint give-up (#804): a held message for a resumed session sat out
-    // the whole hour and was lost.
+    // the whole hour and was lost. A held turn counts only while it is the
+    // turn that ended: one a finishing background shell wakes moves the
+    // session's work serial and paints, so the wait goes on to that turn's end.
     for (;;) {
       const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
         signal,
         timeoutMs: Math.max(0, deadline - Date.now()),
         idleWithoutQuietMs: PAINT_GIVE_UP_MS,
+        acceptHeld: input.acceptHeld,
       });
       if (settled === 'aborted') {
         report('cancelled', SUPERSEDED_REASON);

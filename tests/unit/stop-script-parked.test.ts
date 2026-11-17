@@ -59,6 +59,7 @@ const TASK_ID = 'task-aaaa-0001';
 const TARGET = { projectId: PROJECT_ID, projectPath: PROJECT_PATH, taskId: TASK_ID };
 const SERVER = { pid: 501, startKey: 'k-501', label: 'node (vite)' };
 const SIDECAR = { pid: 502, startKey: 'k-502', label: 'python3 (http.server)' };
+const STOPPED_AT = new Date('2026-01-05T09:15:42.000Z');
 
 function entry(overrides: Partial<TaskProbeEntry> = {}): TaskProbeEntry {
   return { taskId: TASK_ID, processes: [SERVER], connected: false, ...overrides };
@@ -80,6 +81,7 @@ function makeDeps(overrides: Partial<ParkedStopDeps> = {}): ParkedStopDeps & { p
     holdMessage: vi.fn(),
     reportFailure: vi.fn(),
     wait: async () => {},
+    now: () => STOPPED_AT,
     ...overrides,
   } as ParkedStopDeps & { probe: ReturnType<typeof vi.fn>; runScript: ReturnType<typeof vi.fn>; holdMessage: ReturnType<typeof vi.fn> };
 }
@@ -197,6 +199,29 @@ describe('stopParkedTask', () => {
     expect(message).not.toContain('python3');
   });
 
+  // A held message can wait a week for the next agent, and an undated note read
+  // as news to one that had restarted the stack itself since.
+  it('dates the message with when the script ended, not when it is read', async () => {
+    const scriptEndedAt = new Date('2026-01-05T09:15:42.000Z');
+    const laterAt = new Date('2026-01-12T14:00:00.000Z');
+    let currentTime = new Date('2026-01-01T00:00:00.000Z');
+    const runScript = vi.fn(async () => {
+      currentTime = scriptEndedAt;
+      return { status: 'ok' as const };
+    });
+    const deps = makeDeps({
+      now: () => currentTime,
+      runScript,
+      wait: async () => {
+        currentTime = laterAt;
+      },
+    });
+
+    expect(await stopParkedTask(deps, TARGET)).toBe('stopped');
+    const message = deps.holdMessage.mock.calls[0][1] as string;
+    expect(message.startsWith('On 2026-01-05 at 09:15 UTC, ')).toBe(true);
+  });
+
   it('holds no message when the script exited clean and stopped nothing', async () => {
     const deps = makeDeps({ probe: vi.fn(async () => entry()) });
     vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
@@ -281,14 +306,18 @@ describe('stopParkedTask', () => {
 });
 
 describe('stoppedProcessesMessage', () => {
-  it('says what stopped and that the agent may start it again', () => {
-    expect(stoppedProcessesMessage(['node (vite)', 'python3 (http.server)'])).toBe(
-      "The project's Stop script stopped what this task left running while it was paused: node (vite), python3 (http.server). Start them again if you need them.",
+  it('says when it stopped, what stopped and that the agent may start it again', () => {
+    expect(stoppedProcessesMessage(['node (vite)', 'python3 (http.server)'], STOPPED_AT)).toBe(
+      "On 2026-01-05 at 09:15 UTC, the project's Stop script stopped what this task left running while it was paused: node (vite), python3 (http.server). Start them again if you need them.",
     );
   });
 
+  it('writes the time in UTC whatever the time zone it is given in', () => {
+    expect(stoppedProcessesMessage(['node (vite)'], new Date('2026-01-04T23:30:00-06:00'))).toContain('On 2026-01-05 at 05:30 UTC, ');
+  });
+
   it('counts past five names', () => {
-    expect(stoppedProcessesMessage(['a', 'b', 'c', 'd', 'e', 'f', 'g'])).toContain('a, b, c, d, e and 2 more.');
+    expect(stoppedProcessesMessage(['a', 'b', 'c', 'd', 'e', 'f', 'g'], STOPPED_AT)).toContain('a, b, c, d, e and 2 more.');
   });
 });
 
@@ -436,6 +465,9 @@ describe('the parked stop against the app', () => {
     // Fake timers for the one-second settle after the script, which is the real
     // `wait` of `createParkedStopDeps`. They end in `afterEach`.
     vi.useFakeTimers();
+    // The real `now` of `createParkedStopDeps` must reach the held text. If this
+    // breaks, the next agent reads a note with the wrong date.
+    vi.setSystemTime(new Date('2026-01-05T09:15:42.000Z'));
     const context = makeContext();
     context.sessionManager.probeTaskProcesses
       .mockResolvedValueOnce([entry()])
@@ -450,6 +482,7 @@ describe('the parked stop against the app', () => {
     const [, held] = mockHoldTaskMessage.mock.calls[0] as [unknown, { projectId: string; taskId: string; message: string }];
     expect(held).toMatchObject({ projectId: PROJECT_ID, taskId: TASK_ID });
     expect(held.message).toContain('node (vite)');
+    expect(held.message.startsWith('On 2026-01-05 at 09:15 UTC, ')).toBe(true);
   });
 
   it('pushes a failed run for the toast, once a minute per project', async () => {

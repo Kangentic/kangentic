@@ -53,6 +53,7 @@ export function createParkedStopDeps(context: IpcContext): ParkedStopDeps {
       reportStopScriptFailure(context, { projectId, taskId, taskTitle, failure });
     },
     wait: (milliseconds) => new Promise((resolve) => { setTimeout(resolve, milliseconds); }),
+    now: () => new Date(),
   };
 }
 
