@@ -7,16 +7,18 @@ interface AsanaSetupDialogProps {
   onClose: () => void;
   /** Called after the PAT is validated and persisted. Dialog closes on success. */
   onSaved: () => void;
+  /** Why the dialog was reopened (Asana refused the saved token), shown until the user types. */
+  initialError?: string | null;
 }
 
 const ASANA_APPS_URL = 'https://app.asana.com/0/my-apps';
 
-export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
+export function AsanaSetupDialog({ onClose, onSaved, initialError }: AsanaSetupDialogProps) {
   const { t } = useLingui();
   const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {

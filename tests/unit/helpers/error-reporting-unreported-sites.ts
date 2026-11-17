@@ -627,7 +627,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/renderer/components/QrImage.tsx': 1,
   'src/renderer/components/asana/AsanaSetupDialog.tsx': 2,
   'src/renderer/components/backlog/ImportDialog.tsx': 4,
-  'src/renderer/components/backlog/ImportPopover.tsx': 4,
+  'src/renderer/components/backlog/ImportPopover.tsx': 3,
   'src/renderer/components/backlog/NewBacklogTaskDialog.tsx': 6,
   'src/renderer/components/board/HostDegradedStrip.tsx': 1,
   'src/renderer/components/browser/BrowserEmptyState.utils.ts': 1,

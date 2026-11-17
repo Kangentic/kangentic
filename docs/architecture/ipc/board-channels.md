@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board IPC channels
-description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana auth.
+description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana and Linear auth.
 tags: [ipc, channels, board, tasks]
 sources:
   - resource: src/shared/ipc-channels.ts
@@ -129,6 +129,16 @@ sources:
 | `boards:asana:authStatus` | invoke | Report Asana connection state: `{connected, email?}` |
 | `boards:asana:setPat` | invoke | Validate a Personal Access Token via `/users/me` and persist it encrypted; returns `{ok, email?, error?}` |
 | `boards:asana:clearCredential` | invoke | Remove the stored Personal Access Token |
+
+## Board Auth - Linear (6 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `boards:linear:authStatus` | invoke | Report Linear connection state: `{connected, kind?, userName?, signInAvailable}` |
+| `boards:linear:setApiKey` | invoke | Validate a personal API key against Linear's `viewer` and persist it encrypted; returns `{ok, error?}` with Linear's own message |
+| `boards:linear:signIn` | invoke | Run the browser OAuth sign-in (PKCE, loopback redirect) and persist the token pair; resolves `{ok, cancelled?, error?}` once Linear hands back |
+| `boards:linear:reopenSignIn` | invoke | Open the pending sign-in's approval page in the browser again |
+| `boards:linear:cancelSignIn` | invoke | Stop waiting for the browser; the pending `signIn` resolves as cancelled |
+| `boards:linear:listTeams` | invoke | List the teams the saved credential can see, each with the team URL a picked team is saved under; `{teams, error?}` |
 
 ## Backlog Attachments (5 channels)
 | Channel | Pattern | Purpose |

@@ -796,6 +796,14 @@ const api: ElectronAPI = {
       setPat: (input) => ipcRenderer.invoke(IPC.BOARDS_ASANA_SET_PAT, input),
       clearCredential: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_CLEAR_CREDENTIAL),
     },
+    linear: {
+      authStatus: () => ipcRenderer.invoke(IPC.BOARDS_LINEAR_AUTH_STATUS),
+      setApiKey: (input) => ipcRenderer.invoke(IPC.BOARDS_LINEAR_SET_API_KEY, input),
+      signIn: () => ipcRenderer.invoke(IPC.BOARDS_LINEAR_SIGN_IN),
+      reopenSignIn: () => ipcRenderer.invoke(IPC.BOARDS_LINEAR_REOPEN_SIGN_IN),
+      cancelSignIn: () => ipcRenderer.invoke(IPC.BOARDS_LINEAR_CANCEL_SIGN_IN),
+      listTeams: () => ipcRenderer.invoke(IPC.BOARDS_LINEAR_LIST_TEAMS),
+    },
   },
 
   // Workflows: every call names the workflow's home project explicitly.

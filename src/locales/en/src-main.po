@@ -79,6 +79,16 @@ msgstr "Agent needs your input"
 msgid "Agent went idle"
 msgstr "Agent went idle"
 
+#: src/main/boards/adapters/linear/ipc-handlers.ts
+msgctxt "Linear connect error"
+msgid "An API key has no spaces. Copy it again from Linear."
+msgstr "An API key has no spaces. Copy it again from Linear."
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Another program is using the Linear sign-in ports."
+msgstr "Another program is using the Linear sign-in ports."
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Available system memory at the time: {availableMb} MB."
 msgstr "Available system memory at the time: {availableMb} MB."
@@ -100,6 +110,11 @@ msgstr "Copy"
 msgid "Copy Image"
 msgstr "Copy Image"
 
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Could not open the browser for Linear sign-in."
+msgstr "Could not open the browser for Linear sign-in."
+
 #: src/main/updater.ts
 msgid "Download Kangentic again to keep it updated."
 msgstr "Download Kangentic again to keep it updated."
@@ -119,6 +134,16 @@ msgstr "Kangentic can't read its database"
 #: src/main/index.ts
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic's window stopped responding"
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear sign-in browser page"
+msgid "Linear sign-in did not finish. Return to Kangentic to try again."
+msgstr "Linear sign-in did not finish. Return to Kangentic to try again."
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Linear sign-in timed out."
+msgstr "Linear sign-in timed out."
 
 #: src/main/updater.ts
 msgid "Move Kangentic to Applications to keep it updated."
@@ -140,6 +165,11 @@ msgstr "Open in default browser"
 msgid "Paste"
 msgstr "Paste"
 
+#: src/main/boards/adapters/linear/ipc-handlers.ts
+msgctxt "Linear connect error"
+msgid "Paste your API key."
+msgstr "Paste your API key."
+
 #: src/main/db/global-db-dialog.ts
 msgid "Quit"
 msgstr "Quit"
@@ -160,6 +190,11 @@ msgstr "Select All"
 #: src/main/notifications/desktop-notifier.ts
 msgid "Session crashed: {label}"
 msgstr "Session crashed: {label}"
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear connect error"
+msgid "Sign in with Linear is not available in this build."
+msgstr "Sign in with Linear is not available in this build."
 
 #: src/main/notifications/custom-sound.ts
 msgid "Sound files"
@@ -188,6 +223,11 @@ msgstr "This usually means another program is holding the file: an antivirus sca
 #: src/main/window-open-policy.ts
 msgid "Unknown site"
 msgstr "Unknown site"
+
+#: src/main/boards/adapters/linear/oauth.ts
+msgctxt "Linear sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "You can close this tab and return to Kangentic."
 
 #: src/main/index.ts
 msgid "Your agents are still running in the background. Restart Kangentic to reconnect to them."

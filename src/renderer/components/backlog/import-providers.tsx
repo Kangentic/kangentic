@@ -2,9 +2,46 @@ import React from 'react';
 import { SquareKanban, CircleDot, Cloud } from 'lucide-react';
 import { msg } from '@lingui/core/runtime-macro';
 import { GitHubIcon } from '../icons/GitHubIcon';
+import { ArtifactPlatformLogo } from '../VendorMark';
+import { AsanaSetupDialog } from '../asana/AsanaSetupDialog';
+import { LinearSetupDialog } from '../linear/LinearSetupDialog';
+import { LinearTeamPicker } from '../linear/LinearTeamPicker';
 import { translateText } from '../../i18n/translate';
 import type { LocalizedText } from '../../../shared/i18n/text';
-import type { ExternalSource } from '../../../shared/types';
+import type { ExternalSource, ImportSource } from '../../../shared/types';
+
+/** What a provider's Connect dialog takes. `initialError` shows why it was reopened. */
+export interface ProviderSetupDialogProps {
+  onClose: () => void;
+  /** Called once the credential is checked and saved. */
+  onSaved: () => void;
+  initialError?: string | null;
+}
+
+/**
+ * A provider that signs in through Kangentic rather than a CLI. The popover asks
+ * `getStatus` before the source step and opens `SetupDialog` when not connected,
+ * and the Import dialog's error banner offers the same dialog as a Connect button.
+ */
+export interface ProviderAuth {
+  getStatus: () => Promise<{ connected: boolean }>;
+  SetupDialog: React.ComponentType<ProviderSetupDialogProps>;
+}
+
+/** What a source picker takes: it replaces the URL field for a provider that lists its sources. */
+export interface SourcePickerProps {
+  existingSources: ImportSource[];
+  /** Add the picked source by its URL, the same path a pasted URL takes. */
+  onPick: (url: string) => void;
+  /** Open a source that is already saved. */
+  onOpenExisting: (source: ImportSource) => void;
+  onBack: () => void;
+  /** The list failed on sign-in (a revoked key, an expired sign-in): reopen Connect with the provider's message. */
+  onAuthFailed: (message: string) => void;
+  /** True while a pick is being added. */
+  busy: boolean;
+  error: string | null;
+}
 
 // Text here is a descriptor (or a provider's own name, which stays a plain string)
 // resolved with `translateText` where it renders, since this table is built at
@@ -17,6 +54,8 @@ export interface SourceTypeOption {
   placeholder: string;
   hint: LocalizedText;
   icon: React.ReactNode;
+  /** Shown in place of the URL field: the provider lists its sources and the user picks one. */
+  picker?: React.ComponentType<SourcePickerProps>;
 }
 
 export interface Provider {
@@ -25,8 +64,8 @@ export interface Provider {
   icon: React.ReactNode;
   available: boolean;
   comingSoon?: boolean;
-  /** When true, the popover shows an auth phase (Connect + paste code) before the URL input. */
-  requiresAuth?: boolean;
+  /** Present for a provider that signs in through Kangentic (Asana, Linear). */
+  auth?: ProviderAuth;
   sourceTypes: SourceTypeOption[];
 }
 
@@ -76,7 +115,10 @@ export const PROVIDERS: Provider[] = [
     label: 'Asana', // i18n-ok: a provider's own name
     icon: <SquareKanban size={18} />,
     available: true,
-    requiresAuth: true,
+    auth: {
+      getStatus: () => window.electronAPI.backlog.asana.authStatus(),
+      SetupDialog: AsanaSetupDialog,
+    },
     sourceTypes: [
       {
         value: 'asana',
@@ -88,7 +130,33 @@ export const PROVIDERS: Provider[] = [
       },
     ],
   },
+  {
+    id: 'linear',
+    label: 'Linear', // i18n-ok: a provider's own name
+    icon: <ArtifactPlatformLogo platformId="linear" size={16} />,
+    available: true,
+    auth: {
+      getStatus: () => window.electronAPI.backlog.linear.authStatus(),
+      SetupDialog: LinearSetupDialog,
+    },
+    sourceTypes: [
+      {
+        value: 'linear',
+        label: msg({ message: 'Team', context: 'import source type' }),
+        description: msg({ message: 'Import issues from a Linear team', context: 'import source type' }),
+        placeholder: 'https://linear.app/acme/team/ENG/all', // i18n-ok: an example URL
+        hint: msg({ message: 'Paste the URL of any page in your Linear team.', context: 'import source type' }),
+        icon: <ArtifactPlatformLogo platformId="linear" size={16} />,
+        picker: LinearTeamPicker,
+      },
+    ],
+  },
 ];
+
+/** The provider whose source types include `source`. */
+export function getProviderForSource(source: ExternalSource): Provider | undefined {
+  return PROVIDERS.find((provider) => provider.sourceTypes.some((sourceType) => sourceType.value === source));
+}
 
 /** The provider and source type as one phrase ("GitHub Issues"), whose word order a language may change. */
 const SOURCE_LABEL_MESSAGE = msg({ message: '{provider} {sourceType}', context: 'import source' });

@@ -242,7 +242,7 @@ indexes it and Cursor gets no copy.
 **Path-scoped rules (load with their subsystem):**
 - `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock`.
 - `hmr-patterns.md` - dev-mode HMR parity patterns A through D.
-- `ui-conventions.md` - shared primitives, font floor, no hover-only controls, the 900x600 floor, brief copy.
+- `ui-conventions.md` - shared primitives, font floor, no hover-only controls, the 900x600 floor, brief copy that does not wrap.
 - `one-tooltip.md` - every tooltip is `Tooltip`; no native `title` anywhere in the renderer, truncated values included; no tip that repeats a visible label, and no "Click to...".
 - `toast-shape.md` - a toast reports only what the user cannot see (no success toast for a result already on screen); every toast is a title over one line; a timed toast has no button (its card may open its subject), a toast with a button is persistent.
 - `popover-escapes-clipping.md` - a menu popover portals to `document.body` with `strategy: 'fixed'`; `z-index` never escapes an overflow clip.

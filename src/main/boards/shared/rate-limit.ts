@@ -1,9 +1,8 @@
 /**
  * Shared throttle + exponential backoff utilities for board adapters.
  *
- * Not currently used by the stable adapters (they rely on the `gh` / `az`
- * CLIs to handle rate limits). Provided here so future HTTP-based adapters
- * (Linear, Jira, Trello, Asana) have a common retry policy.
+ * The CLI-based adapters (`gh`, `az`) leave rate limits to their CLI. The
+ * HTTP-based ones (Asana, Linear) retry through `withBackoff`.
  */
 
 export interface BackoffOptions {
@@ -11,6 +10,11 @@ export interface BackoffOptions {
   initialDelayMs?: number;
   maxDelayMs?: number;
   shouldRetry?: (error: unknown, attempt: number) => boolean;
+  /**
+   * The wait the server asked for before the next attempt (a 429's `Retry-After`),
+   * or undefined to use the exponential delay. Capped at `maxDelayMs`.
+   */
+  retryAfterMs?: (error: unknown) => number | undefined;
 }
 
 /** Sleep for a given number of milliseconds. */
@@ -37,7 +41,8 @@ export async function withBackoff<T>(
       lastError = error;
       attempt += 1;
       if (attempt >= maxAttempts || !shouldRetry(error, attempt)) break;
-      const delay = Math.min(maxDelayMs, initialDelayMs * 2 ** (attempt - 1));
+      const requestedDelay = options.retryAfterMs?.(error);
+      const delay = Math.min(maxDelayMs, requestedDelay ?? initialDelayMs * 2 ** (attempt - 1));
       await sleep(delay);
     }
   }

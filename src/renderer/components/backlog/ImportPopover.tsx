@@ -8,8 +8,8 @@ import { Tooltip } from '../Tooltip';
 import { PROVIDERS, getSourceLabel, getSourceIcon } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
 import type { ImportSource } from '../../../shared/types';
-import { AsanaSetupDialog } from '../asana/AsanaSetupDialog';
 import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
+import { reportRendererFailure } from '../../utils/renderer-failure';
 
 interface ImportPopoverProps {
   onOpenImportDialog: (source: ImportSource) => void;
@@ -42,9 +42,14 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Asana PAT setup dialog. Opened inline when the user picks Asana and is
-  // not yet connected; the dialog handles paste-PAT-and-validate end to end.
+  // The picked provider's Connect dialog (`provider.auth.SetupDialog`). Opened
+  // when the user picks a provider that signs in through Kangentic and is not
+  // connected, or when a source picker's list fails on sign-in; the dialog
+  // checks and saves the credential end to end.
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [setupDialogError, setSetupDialogError] = useState<string | null>(null);
+  // Bumped after a Connect so a source picker that failed on sign-in loads again.
+  const [pickerGeneration, setPickerGeneration] = useState(0);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -86,7 +91,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   useEffect(() => {
     if (!open) return;
     const handleClick = (event: MouseEvent) => {
-      // When the AsanaSetupDialog is open, clicks land inside the dialog
+      // When a provider's Connect dialog is open, clicks land inside the dialog
       // (which renders as a sibling of popoverRef). Don't treat those as
       // outside the popover - the dialog owns its own dismissal behavior.
       if (setupDialogOpen) return;
@@ -106,7 +111,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   useEffect(() => {
     if (!open) return;
     const handleEscape = (event: KeyboardEvent) => {
-      // While the AsanaSetupDialog is open, let it own Escape entirely.
+      // While a provider's Connect dialog is open, let it own Escape entirely.
       // Otherwise the popover would rewind its phase underneath the dialog.
       if (setupDialogOpen) return;
       if (event.key === 'Escape') {
@@ -147,17 +152,19 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     setSelectedProvider(provider);
     setError(null);
 
-    if (provider.requiresAuth && provider.id === 'asana') {
+    if (provider.auth) {
       try {
-        const status = await window.electronAPI.backlog.asana.authStatus();
+        const status = await provider.auth.getStatus();
         if (!status.connected) {
-          // Not connected yet - open the PAT setup dialog. After the user
-          // pastes a valid token the dialog calls onSaved and we advance.
+          // Not connected yet: open the provider's Connect dialog. Once it
+          // saves a working credential it calls onSaved and we advance.
+          setSetupDialogError(null);
           setSetupDialogOpen(true);
           return;
         }
       } catch (statusError) {
-        console.warn('[ImportPopover] Asana authStatus IPC failed; opening setup dialog', statusError);
+        reportRendererFailure('backlog', 'import-auth-status', statusError);
+        setSetupDialogError(null);
         setSetupDialogOpen(true);
         return;
       }
@@ -168,15 +175,28 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
 
   const handleSetupDialogSaved = () => {
     setSetupDialogOpen(false);
+    setSetupDialogError(null);
+    if (addPhase === 'url') {
+      // Reconnected from a source picker whose list failed: load it again.
+      setPickerGeneration((previous) => previous + 1);
+      return;
+    }
     if (selectedProvider) advanceAfterProvider(selectedProvider);
   };
 
   const handleSetupDialogClosed = () => {
-    // User dismissed the PAT dialog without connecting. Drop the selection
+    // User dismissed the Connect dialog without connecting. Drop the selection
     // so they're back on the bare provider list instead of a half-completed flow.
     setSetupDialogOpen(false);
+    setSetupDialogError(null);
     setSelectedProvider(null);
+    setSelectedSourceType(null);
     setAddPhase('provider');
+  };
+
+  const handlePickerAuthFailed = (message: string) => {
+    setSetupDialogError(message);
+    setSetupDialogOpen(true);
   };
 
   const handleSelectSourceType = (sourceType: SourceTypeOption) => {
@@ -184,8 +204,10 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     setAddPhase('url');
   };
 
-  const handleConnect = async () => {
-    if (!newSourceUrl.trim() || !selectedSourceType) return;
+  /** Add the source at `url`: the typed URL, or the one a source picker hands over. */
+  const handleConnect = async (pickedUrl?: string) => {
+    const sourceUrl = (pickedUrl ?? newSourceUrl).trim();
+    if (!sourceUrl || !selectedSourceType || loading) return;
     setLoading(true);
     setError(null);
 
@@ -200,10 +222,10 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
 
       const source = await window.electronAPI.backlog.importSourcesAdd({
         source: selectedSourceType.value,
-        url: newSourceUrl.trim(),
+        url: sourceUrl,
       });
 
-      setSources((previous) => [...previous, source]);
+      setSources((previous) => (previous.some((existing) => existing.id === source.id) ? previous : [...previous, source]));
       resetAddFlow();
       setOpen(false);
       onOpenImportDialog(source);
@@ -212,6 +234,18 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBackFromUrl = () => {
+    setNewSourceUrl('');
+    setError(null);
+    if (selectedProvider?.sourceTypes.length === 1) {
+      setAddPhase('provider');
+      setSelectedProvider(null);
+    } else {
+      setAddPhase('sourceType');
+    }
+    setSelectedSourceType(null);
   };
 
   const handleRemoveSource = async (sourceId: string) => {
@@ -360,8 +394,22 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
             </div>
           )}
 
-          {/* Phase 3: URL input */}
-          {addPhase === 'url' && selectedSourceType && selectedProvider && (
+          {/* Phase 3a: a provider that lists its sources (Linear's teams) */}
+          {addPhase === 'url' && selectedSourceType?.picker && selectedProvider && (
+            <selectedSourceType.picker
+              key={pickerGeneration}
+              existingSources={sources}
+              onPick={(url) => void handleConnect(url)}
+              onOpenExisting={handleSourceClick}
+              onBack={handleBackFromUrl}
+              onAuthFailed={handlePickerAuthFailed}
+              busy={loading}
+              error={error}
+            />
+          )}
+
+          {/* Phase 3b: URL input */}
+          {addPhase === 'url' && selectedSourceType && !selectedSourceType.picker && selectedProvider && (
             <div className="px-3 py-2.5">
               <div className="flex items-center gap-2.5 mb-2">
                 <span className="w-5 flex justify-center text-fg-muted shrink-0">{selectedProvider.icon}</span>
@@ -386,7 +434,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={handleConnect}
+                  onClick={() => void handleConnect()}
                   disabled={loading || !newSourceUrl.trim()}
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
                   data-testid="import-source-connect-btn"
@@ -396,17 +444,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setNewSourceUrl('');
-                    setError(null);
-                    if (selectedProvider.sourceTypes.length === 1) {
-                      setAddPhase('provider');
-                      setSelectedProvider(null);
-                    } else {
-                      setAddPhase('sourceType');
-                    }
-                    setSelectedSourceType(null);
-                  }}
+                  onClick={handleBackFromUrl}
                   className="flex items-center gap-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg border border-edge/50 rounded transition-colors"
                 >
                   <ArrowLeft size={12} />
@@ -432,10 +470,11 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
           )}
       </OverlayPopover>
 
-      {setupDialogOpen && (
-        <AsanaSetupDialog
+      {setupDialogOpen && selectedProvider?.auth && (
+        <selectedProvider.auth.SetupDialog
           onClose={handleSetupDialogClosed}
           onSaved={handleSetupDialogSaved}
+          initialError={setupDialogError}
         />
       )}
     </div>

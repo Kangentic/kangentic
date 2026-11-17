@@ -1115,8 +1115,9 @@ msgid "Open a project first."
 msgstr "請先開啟專案。"
 
 #: src/renderer/utils/link-open.ts
+#, fuzzy
 msgid "Open in default browser"
-msgstr ""
+msgstr "在預設瀏覽器中開啟"
 
 #: src/renderer/utils/link-open.ts
 msgid "Open in Kangentic browser"

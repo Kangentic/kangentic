@@ -5567,7 +5567,12 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
-      importCheckCli: async function (/* source */) {
+      importCheckCli: async function (source) {
+        // Tests seed window.__mockImportCheckCli with a result object (or a map of
+        // source -> result) to show the dialog's error banner.
+        var checkPreset = (typeof window !== 'undefined' && window.__mockImportCheckCli) || null;
+        if (checkPreset && typeof checkPreset.available === 'boolean') return checkPreset;
+        if (checkPreset && checkPreset[source]) return checkPreset[source];
         return { available: true, authenticated: true };
       },
       importGetCached: async function (input) {
@@ -5695,6 +5700,82 @@
           clearCredential: async function () {
             state.connected = false;
             state.email = undefined;
+          },
+        };
+      })(),
+      linear: (function () {
+        // Stateful mock. Tests override via window.__mockLinearPreset, read on every
+        // call: { state: { connected, kind, userName }, signInAvailable, invalidKey,
+        // teams, listTeamsError, listTeamsRejects, signInResult }. With no signInResult, signIn waits
+        // until cancelSignIn, the way the real one waits on the browser.
+        // signInAvailable defaults to false, as in a build with no OAuth client id
+        // (LINEAR_OAUTH_CLIENT_ID), so the web demo offers only what the app does.
+        const state = { connected: false, kind: undefined, userName: undefined };
+        let pendingSignIn = null;
+        function preset() {
+          return (typeof window !== 'undefined' && window.__mockLinearPreset) || {};
+        }
+        const defaultTeams = [
+          { id: 'team-eng', key: 'ENG', name: 'Engineering', url: 'https://linear.app/acme/team/ENG/all' },
+          { id: 'team-des', key: 'DES', name: 'Design', url: 'https://linear.app/acme/team/DES/all' },
+        ];
+        return {
+          authStatus: async function () {
+            const presetValues = preset();
+            if (presetValues.state) Object.assign(state, presetValues.state);
+            return {
+              connected: state.connected,
+              kind: state.kind,
+              userName: state.userName,
+              signInAvailable: presetValues.signInAvailable === true,
+            };
+          },
+          setApiKey: async function (input) {
+            const apiKey = typeof input?.apiKey === 'string' ? input.apiKey.trim() : '';
+            if (apiKey.length === 0) return { ok: false, error: 'Paste your API key.' };
+            if (/\s/.test(apiKey)) return { ok: false, error: 'An API key has no spaces. Copy it again from Linear.' };
+            if (preset().invalidKey && apiKey === preset().invalidKey) {
+              return { ok: false, error: 'Authentication required, not authenticated' };
+            }
+            state.connected = true;
+            state.kind = 'api_key';
+            state.userName = 'Mock User';
+            return { ok: true };
+          },
+          signIn: async function () {
+            if (typeof window !== 'undefined') {
+              window.__mockLinearSignInCallCount = (window.__mockLinearSignInCallCount || 0) + 1;
+            }
+            const result = preset().signInResult;
+            if (result) {
+              if (result.ok) {
+                state.connected = true;
+                state.kind = 'oauth';
+                state.userName = 'Mock User';
+              }
+              return result;
+            }
+            return new Promise(function (resolve) {
+              pendingSignIn = resolve;
+            });
+          },
+          reopenSignIn: async function () {
+            if (typeof window !== 'undefined') {
+              window.__mockLinearReopenCount = (window.__mockLinearReopenCount || 0) + 1;
+            }
+          },
+          cancelSignIn: async function () {
+            if (pendingSignIn) {
+              const resolve = pendingSignIn;
+              pendingSignIn = null;
+              resolve({ ok: false, cancelled: true });
+            }
+          },
+          listTeams: async function () {
+            const presetValues = preset();
+            if (presetValues.listTeamsRejects) throw new Error(presetValues.listTeamsRejects);
+            if (presetValues.listTeamsError) return { teams: [], error: presetValues.listTeamsError };
+            return { teams: presetValues.teams || defaultTeams };
           },
         };
       })(),

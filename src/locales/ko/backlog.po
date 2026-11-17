@@ -176,6 +176,12 @@ msgstr "{detailUnavailableCount, plural, other {항목 #개의 댓글을 사용�
 msgid "Connect"
 msgstr "연결"
 
+#: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
+msgctxt "import error banner"
+msgid "Connect {sourceTypeLabel}"
+msgstr "{sourceTypeLabel} 연결"
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgid "Couldn't delete backlog task"
@@ -372,6 +378,12 @@ msgctxt "import source type"
 msgid "Import from Azure DevOps boards"
 msgstr "Azure DevOps 보드에서 가져오기"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Import issues from a Linear team"
+msgstr "Linear 팀에서 이슈 가져오기"
+
 #: src/renderer/components/backlog/ImportPopover.tsx
 #, fuzzy
 msgid "Import Sources"
@@ -545,6 +557,12 @@ msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
 msgstr "GitHub 리포지토리의 전체 URL을 붙여넣으세요"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Paste the URL of any page in your Linear team."
+msgstr "Linear 팀의 아무 페이지 URL이나 붙여넣으세요."
+
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #, fuzzy
 msgctxt "toolbar button"
@@ -623,6 +641,12 @@ msgstr "동기화 중..."
 #, fuzzy
 msgid "Task title"
 msgstr "작업 제목"
+
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Team"
+msgstr "팀"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx

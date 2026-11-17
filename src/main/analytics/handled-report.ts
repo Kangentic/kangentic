@@ -51,6 +51,7 @@ export const EXPECTED_FAILURE_NAMES: ReadonlySet<string> = new Set([
   'AzUnavailableError',
   'AzTransientError',
   'AsanaError',
+  'LinearError',
   'PRResolverUnavailableError',
   'PRResolverTransientError',
   // The SSH link and remote git
