@@ -10,7 +10,7 @@ import { needsAgentReply } from '../../automations/row-guards';
 import { showAutomationNotification } from '../../automations/shared/show-automation-notification';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
-import { automationMovesTask } from '../../../shared/automation-manifest';
+import { automationMovesTask, isExitAgentRow } from '../../../shared/automation-manifest';
 import type { IpcContext } from '../ipc-context';
 import type { AutomationContext } from '../../automations/shared/automation-adapter';
 import type { AutomationRunAgainResult, ColumnAutomation, Swimlane, Task } from '../../../shared/types';
@@ -42,6 +42,9 @@ const RUN_AGAIN_BUDGET_MS = 5 * 60_000;
  * agent, and a script can touch the worktree), and because a re-run racing a
  * move is exactly the interleaving the lock exists to prevent.
  *
+ * Never an On task exit row that talks to the agent: that message belongs to
+ * the agent the task left with, and is refused (see the check below).
+ *
  * Except a row that moves the task (Move to column, `endsGroup`), which runs
  * outside the lock as it does at a turn end: its move goes through
  * `handleTaskMove`, which takes the lock itself. It moves the task only from
@@ -62,6 +65,21 @@ export async function runAutomationAgain(
   const column = repos.swimlanes.getById(automation.swimlane_id);
   if (!column) {
     return { ok: false, error: `The column "${automation.swimlane_id.slice(0, 8)}" this automation belongs to no longer exists.` };
+  }
+
+  // An On task exit row that talks to the agent is a handoff from the column's
+  // agent as the task leaves. By the time anyone re-runs it the task has left,
+  // and its session is whatever the next column made of it: run here, the old
+  // column's handoff would be typed into the new column's agent mid-work.
+  // Refused outright, not only when the session changed, because nothing
+  // records which session the failed run was for. The failure notice does not
+  // offer it either (`AutomationRunFailure.runAgainOffered`).
+  if (isExitAgentRow(automation.trigger, automation.type)) {
+    return {
+      ok: false,
+      error: `An On task exit message is for the agent the task left ${column.name} with, so it is not sent again. `
+        + `Move the task back to ${column.name} and out again to send it.`,
+    };
   }
 
   // A turn-end row whose Text match, Condition or `{{agentReply}}` reads the

@@ -1238,17 +1238,26 @@ export function App() {
         const automationName = failure.automationName;
         const columnName = failure.columnName;
         const failedSentence = i18n._(msg`"${taskTitle}": "${automationName}" failed on ${columnName}.`);
-        const failureToastId = useToastStore.getState().addToast({
+        const failureToast = {
           title: i18n._(msg`Automation failed`),
           message: `${failedSentence}${detail}`,
-          variant: 'warning',
+          variant: 'warning' as const,
+          onOpen: failureProjectId
+            ? () => { openTaskFromNotification(failureProjectId, failure.taskId); }
+            : undefined,
+        };
+        // A row main will not run again (an On task exit message, which would
+        // reach the next column's agent) gets no button, so the toast is timed.
+        if (failure.runAgainOffered === false) {
+          useToastStore.getState().addToast(failureToast);
+          return;
+        }
+        const failureToastId = useToastStore.getState().addToast({
+          ...failureToast,
           // Stays so Run again is there when the user reaches for it. A card
           // click opens the task and leaves the toast up (ToastItem keeps a card
           // with a button), so the user can look before running it again.
           persistent: true,
-          onOpen: failureProjectId
-            ? () => { openTaskFromNotification(failureProjectId, failure.taskId); }
-            : undefined,
           // Re-runs against the task's CURRENT state, which the result says,
           // because the task may have moved twice since the failure. An
           // interrupted run is offered the same action: it is the one status

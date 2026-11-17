@@ -191,6 +191,22 @@ interface PendingDeferred {
 }
 
 /**
+ * Why a burst held for a starting agent (`scheduleAfterLaunch`) was not sent
+ * when the agent never came up. Shared with the paste paths, which wait the
+ * same way (`agent-message-delivery.ts`).
+ */
+export const AGENT_NOT_STARTED_REASON = 'The agent had not started, so the message was not sent.';
+
+/** Bursts held for a session whose agent is still starting (`scheduleAfterLaunch`). */
+interface LaunchWait {
+  /** The session the wait is on. A burst for another session never joins it. */
+  sessionId: string;
+  controller: AbortController;
+  /** In arrival order; each runs through the existing-session decision once the agent is up. */
+  bursts: QueuedBurst[];
+}
+
+/**
  * `TerminalSubmitScheduler` is the lifecycle wrapper for keystroke delivery.
  * Where `TerminalSubmit.submitKeystrokes` answers "HOW the bytes go out",
  * this class answers "WHEN", and reports what happened.
@@ -206,6 +222,13 @@ interface PendingDeferred {
  *      `'thinking'` activity event. 30s fallback delivers anyway if hooks
  *      never fire; `opts.timeoutMs` (default 120s) caps the total wait.
  *
+ *   4. **Existing session whose agent is still starting** - a session the
+ *      caller did not flag as fresh, but whose agent is not on screen yet
+ *      (`SessionManager.isAgentLaunching`). Held until it is, then decided as
+ *      case 1 or 2. Later bursts for the task queue behind it. Measured: an
+ *      exit row's message typed 1.4 s before the CLI started could never be
+ *      confirmed, and failed its row.
+ *
  * On a verifiable command exhausting its retries, delivery escalates to
  * `opts.escalate` (restart + deliver as the CLI prompt argument), which is
  * guaranteed by the spawn rather than by TUI timing. Escalation happens at
@@ -217,6 +240,7 @@ interface PendingDeferred {
 export class TerminalSubmitScheduler {
   private deferred = new Map<string, PendingDeferred>();
   private active = new Map<string, ActiveBurst>();
+  private launchWaits = new Map<string, LaunchWait>();
 
   constructor(
     private sessionManager: SessionManager,
@@ -258,32 +282,95 @@ export class TerminalSubmitScheduler {
     const isQueued = session.status === 'queued';
     const burst: QueuedBurst = { sessionId, commands: [...commands], opts };
 
-    // Existing session, ready right now.
+    // Existing session. The caller's flag is not the only judge of readiness:
+    // a session it did not just spawn may still be starting (an exit row's
+    // message seconds after the column's spawn), and keys typed now would
+    // reach the shell before the agent reads its input. Ask the session.
     if (!freshlySpawned && !isQueued) {
-      const existing = this.active.get(taskId);
-      if (existing) {
-        existing.queue.push(burst);
-        console.log(
-          `[TerminalSubmitScheduler] Queued burst ${existing.queue.length} for task ${taskId.slice(0, 8)} (burst in flight)`,
-        );
+      const launchWait = this.launchWaits.get(taskId);
+      if (launchWait?.sessionId === sessionId) {
+        launchWait.bursts.push(burst);
         return;
       }
-      if ((opts.mode ?? 'immediate') === 'deferred') {
-        // A deferred wait can be long (a turn, up to the 120s cap), so a second
-        // deferred burst for the same task routinely arrives while the first is
-        // still waiting. Retire the older one explicitly - and report it - so
-        // the two never race for the single `deferred` slot.
-        this.supersedeDeferred(taskId);
-        this.scheduleAfterTurn(taskId, burst);
+      // The task's session changed under a held burst: those keys were for a
+      // session the task no longer uses, and this one is judged on its own.
+      if (launchWait) this.dropLaunchWait(taskId, 'A newer command for this task replaced it before it was sent.');
+      if (this.sessionManager.isAgentLaunching(sessionId)) {
+        this.scheduleAfterLaunch(taskId, burst);
         return;
       }
-      this.startBurst(taskId, burst);
+      this.scheduleReady(taskId, burst);
       return;
     }
 
     // Fresh spawn or queued - wait for CLI to come alive, then start the burst.
     this.cancel(taskId, 'A newer command for this task replaced it before it was sent.');
     this.scheduleDeferred(taskId, burst, isQueued);
+  }
+
+  /**
+   * The existing-session decision for a session whose agent is up: queue
+   * behind a burst in flight, hold a deferred burst for the turn, or start now.
+   */
+  private scheduleReady(taskId: string, burst: QueuedBurst): void {
+    const existing = this.active.get(taskId);
+    if (existing) {
+      existing.queue.push(burst);
+      console.log(
+        `[TerminalSubmitScheduler] Queued burst ${existing.queue.length} for task ${taskId.slice(0, 8)} (burst in flight)`,
+      );
+      return;
+    }
+    if ((burst.opts.mode ?? 'immediate') === 'deferred') {
+      // A deferred wait can be long (a turn, up to the 120s cap), so a second
+      // deferred burst for the same task routinely arrives while the first is
+      // still waiting. Retire the older one explicitly - and report it - so
+      // the two never race for the single `deferred` slot.
+      this.supersedeDeferred(taskId);
+      this.scheduleAfterTurn(taskId, burst);
+      return;
+    }
+    this.startBurst(taskId, burst);
+  }
+
+  /**
+   * Hold bursts for a session whose agent is still starting
+   * (`SessionManager.isAgentLaunching`), then run each through the
+   * existing-session decision in the order it arrived.
+   *
+   * Not `scheduleDeferred`, for two reasons. That path opens by cancelling the
+   * task's other bursts, which is right for a new spawn and wrong here. And
+   * its "alive" edge for a spawn that carries a prompt is the end of the
+   * agent's whole first turn, which an immediate exit message would sit out
+   * past the exit budget. Here the wait ends the moment the agent can read
+   * keys, and the row's own mode then decides as on any live session.
+   */
+  private scheduleAfterLaunch(taskId: string, burst: QueuedBurst): void {
+    const controller = new AbortController();
+    const entry: LaunchWait = { sessionId: burst.sessionId, controller, bursts: [burst] };
+    this.launchWaits.set(taskId, entry);
+    const timeoutMs = burst.opts.timeoutMs ?? 120_000;
+    console.log(
+      `[TerminalSubmitScheduler] Session ${burst.sessionId.slice(0, 8)} for task ${taskId.slice(0, 8)} is still starting, holding the burst`,
+    );
+
+    void this.sessionManager.awaitAgentLaunched(burst.sessionId, timeoutMs, controller.signal).then((launched) => {
+      // Identity, as everywhere in this class: `cancel` may have dropped this
+      // wait and a newer one taken the slot before this callback ran.
+      if (this.launchWaits.get(taskId) !== entry) return;
+      this.launchWaits.delete(taskId);
+      const held = entry.bursts.splice(0);
+      if (!launched) {
+        const session = this.sessionManager.getSession(burst.sessionId);
+        const reason = session?.status === 'running'
+          ? AGENT_NOT_STARTED_REASON
+          : 'The session exited before the command could be sent.';
+        console.warn(`[TerminalSubmitScheduler] Task ${taskId.slice(0, 8)}: ${reason}`);
+        for (const heldBurst of held) this.reportNotSent(taskId, heldBurst, 'failed', reason);
+        return;
+      }
+      for (const heldBurst of held) this.scheduleReady(taskId, heldBurst);
+    });
   }
 
   /**
@@ -296,6 +383,7 @@ export class TerminalSubmitScheduler {
    * outcome. An in-flight burst reports its own, from `runBurst`.
    */
   cancel(taskId: string, reason = 'The task moved on before the command was sent.'): void {
+    this.dropLaunchWait(taskId, reason);
     const pending = this.dropDeferred(taskId);
     if (pending) this.reportCancelled(taskId, pending.burst, reason);
     const burst = this.active.get(taskId);
@@ -304,6 +392,15 @@ export class TerminalSubmitScheduler {
       burst.controller.abort();
       for (const queuedBurst of dropped) this.reportCancelled(taskId, queuedBurst, reason);
     }
+  }
+
+  /** Stop a launch wait and report each burst it held as cancelled. */
+  private dropLaunchWait(taskId: string, reason: string): void {
+    const launchWait = this.launchWaits.get(taskId);
+    if (!launchWait) return;
+    this.launchWaits.delete(taskId);
+    launchWait.controller.abort();
+    for (const heldBurst of launchWait.bursts.splice(0)) this.reportCancelled(taskId, heldBurst, reason);
   }
 
   /** Stop a waiting burst without reporting it, for a caller that reports its own outcome. */
@@ -316,12 +413,17 @@ export class TerminalSubmitScheduler {
   }
 
   private reportCancelled(taskId: string, burst: QueuedBurst, reason: string): void {
+    this.reportNotSent(taskId, burst, 'cancelled', reason);
+  }
+
+  /** Report a burst that ended before any of it was typed. */
+  private reportNotSent(taskId: string, burst: QueuedBurst, outcome: 'cancelled' | 'failed', reason: string): void {
     const commandTexts = burst.commands.map((command) => command.text);
     this.report(burst.opts, {
       taskId,
       sessionId: burst.sessionId,
       commands: commandTexts,
-      outcome: 'cancelled',
+      outcome,
       unconfirmedCommands: commandTexts,
       discardedDraft: null,
       interruptedTurn: false,
@@ -338,11 +440,16 @@ export class TerminalSubmitScheduler {
    * rather than in the middle of them.
    */
   hasPending(taskId: string): boolean {
-    return this.deferred.has(taskId) || this.active.has(taskId);
+    return this.deferred.has(taskId) || this.active.has(taskId) || this.launchWaits.has(taskId);
   }
 
   /** Cancel all pending injections. Called on `killAll`. */
   cancelAll(): void {
+    for (const launchWait of this.launchWaits.values()) {
+      launchWait.bursts.length = 0;
+      launchWait.controller.abort();
+    }
+    this.launchWaits.clear();
     const pending = [...this.deferred.values()];
     this.deferred.clear();
     for (const entry of pending) entry.cleanup();

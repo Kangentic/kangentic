@@ -1511,6 +1511,12 @@ export interface AutomationRunFailure {
   projectId: string;
   status: 'failed' | 'interrupted';
   detail: string | null;
+  /**
+   * False when Run again is not offered: an On task exit row that talks to the
+   * agent, which `runAutomationAgain` refuses because the task has left the
+   * column whose agent it was written for. Absent means offered.
+   */
+  runAgainOffered?: false;
 }
 
 /**

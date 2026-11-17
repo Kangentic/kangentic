@@ -79,6 +79,29 @@ class MockSessionManager extends EventEmitter {
   subscribeDataTap(): () => void {
     return () => undefined;
   }
+
+  /** Sessions whose agent has not launched yet (`isAgentLaunching`). */
+  launching = new Set<string>();
+  launchWaits: Array<{ id: string; timeoutMs: number; resolve: (launched: boolean) => void }> = [];
+
+  isAgentLaunching(id: string): boolean {
+    return this.launching.has(id);
+  }
+
+  awaitAgentLaunched(id: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+    if (!this.launching.has(id)) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      this.launchWaits.push({ id, timeoutMs, resolve });
+      signal?.addEventListener('abort', () => resolve(false), { once: true });
+    });
+  }
+
+  /** The agent launched (true) or the wait gave up (false: a timeout or an exit). */
+  finishLaunch(id: string, launched = true): void {
+    if (launched) this.launching.delete(id);
+    for (const wait of this.launchWaits.filter((entry) => entry.id === id)) wait.resolve(launched);
+    this.launchWaits = this.launchWaits.filter((entry) => entry.id !== id);
+  }
 }
 
 class MockTerminalSubmit {
@@ -213,6 +236,182 @@ describe('TerminalSubmitScheduler', () => {
       await tick();
 
       expect(terminalSubmit.calls[0].opts.interruptingTurn).toBe(true);
+    });
+  });
+
+  // An exit row's message reached a session two seconds after its column
+  // spawned it: the caller did not flag it fresh, so the burst was typed into
+  // the shell 1.4 s before the CLI started, and could never be confirmed.
+  describe('existing session whose agent is still starting', () => {
+    it('holds the burst until the agent has launched, then types it once', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.launching.add('s1');
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('Signed off')]);
+      await tick();
+      // Red: the burst was typed at once, into a shell with no agent.
+      expect(terminalSubmit.calls).toHaveLength(0);
+      expect(scheduler.hasPending('task-1')).toBe(true);
+
+      sessionManager.finishLaunch('s1');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(MockTerminalSubmit.texts(terminalSubmit.calls[0])).toEqual(['Signed off']);
+    });
+
+    it('queues a later burst behind the held one and cancels neither', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.launching.add('s1');
+      const outcomes: InjectionReport[] = [];
+      const onOutcome = (report: InjectionReport): void => { outcomes.push(report); };
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')], { onOutcome });
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], { onOutcome });
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.finishLaunch('s1');
+      await tick();
+      terminalSubmit.finishLatest();
+      await tick();
+      terminalSubmit.finishLatest();
+      await tick();
+
+      expect(terminalSubmit.calls.map((call) => MockTerminalSubmit.texts(call)[0])).toEqual(['/first', '/second']);
+      expect(outcomes.map((report) => report.outcome)).toEqual(['unconfirmed', 'unconfirmed']);
+    });
+
+    it('reports a burst whose agent never launched as failed, with nothing typed', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.launching.add('s1');
+      const onOutcome = vi.fn();
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('Signed off')], { onOutcome, timeoutMs: 5_000 });
+      await tick();
+      expect(sessionManager.launchWaits[0].timeoutMs).toBe(5_000);
+      sessionManager.finishLaunch('s1', false);
+      await tick();
+
+      expect(terminalSubmit.calls).toHaveLength(0);
+      expect(onOutcome).toHaveBeenCalledTimes(1);
+      expect(onOutcome.mock.calls[0][0]).toMatchObject({
+        outcome: 'failed',
+        textReachedAgent: false,
+        reason: 'The agent had not started, so the message was not sent.',
+      });
+      expect(scheduler.hasPending('task-1')).toBe(false);
+    });
+
+    it('reports a burst whose session exited during the wait as failed, with nothing typed', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.launching.add('s1');
+      const onOutcome = vi.fn();
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('Signed off')], { onOutcome });
+      await tick();
+      sessionManager.registry.set('s1', { status: 'exited' });
+      sessionManager.finishLaunch('s1', false);
+      await tick();
+
+      expect(terminalSubmit.calls).toHaveLength(0);
+      expect(onOutcome.mock.calls[0][0]).toMatchObject({ outcome: 'failed', textReachedAgent: false });
+      expect(onOutcome.mock.calls[0][0].reason).toContain('exited');
+    });
+
+    it('cancel reports every held burst as cancelled and types nothing once the agent launches', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.launching.add('s1');
+      const onOutcome = vi.fn();
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')], { onOutcome });
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], { onOutcome });
+      await tick();
+      scheduler.cancel('task-1');
+      await tick();
+
+      expect(onOutcome.mock.calls.map((call) => call[0].outcome)).toEqual(['cancelled', 'cancelled']);
+      expect(scheduler.hasPending('task-1')).toBe(false);
+      sessionManager.finishLaunch('s1');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+    });
+
+    it('cancelAll drops a burst held for a starting agent, so nothing is typed once it launches', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.launching.add('s1');
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/held')]);
+      await tick();
+      expect(scheduler.hasPending('task-1')).toBe(true);
+
+      scheduler.cancelAll();
+      expect(scheduler.hasPending('task-1')).toBe(false);
+      sessionManager.finishLaunch('s1');
+      await tick();
+
+      // Red: a held burst that survived `killAll` typed into the next agent.
+      expect(terminalSubmit.calls).toHaveLength(0);
+      expect(scheduler.hasPending('task-1')).toBe(false);
+    });
+
+    it('a freshly spawned burst for the task cancels the held one, which is never typed', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.registry.set('s2', { status: 'running' });
+      sessionManager.launching.add('s1');
+      const heldOutcome = vi.fn();
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/held')], { onOutcome: heldOutcome });
+      await tick();
+      scheduler.scheduleKeystrokes('task-1', 's2', [plain('/fresh')], { freshlySpawned: true });
+      await tick();
+
+      expect(heldOutcome).toHaveBeenCalledTimes(1);
+      expect(heldOutcome.mock.calls[0][0]).toMatchObject({ outcome: 'cancelled', textReachedAgent: false });
+
+      sessionManager.finishLaunch('s1');
+      await tick();
+      expect(terminalSubmit.calls.filter((call) => call.sessionId === 's1')).toHaveLength(0);
+    });
+
+    it('a burst for a different session of the task drops the held one and is typed at once', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.registry.set('s2', { status: 'running' });
+      sessionManager.launching.add('s1');
+      const heldOutcome = vi.fn();
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/old')], { onOutcome: heldOutcome });
+      await tick();
+      scheduler.scheduleKeystrokes('task-1', 's2', [plain('/new')]);
+      await tick();
+
+      expect(heldOutcome).toHaveBeenCalledTimes(1);
+      expect(heldOutcome.mock.calls[0][0]).toMatchObject({
+        outcome: 'cancelled',
+        sessionId: 's1',
+        reason: 'A newer command for this task replaced it before it was sent.',
+      });
+      // Red: the burst joined the wait on s1 and sat there, or the old one still ran.
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(terminalSubmit.calls[0].sessionId).toBe('s2');
+      expect(MockTerminalSubmit.texts(terminalSubmit.calls[0])).toEqual(['/new']);
+
+      sessionManager.finishLaunch('s1');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+    });
+
+    it('a deferred burst still waits for the turn once the agent has launched', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.launching.add('s1');
+      sessionManager.activity.s1 = 'thinking';
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/later')], { mode: 'deferred' });
+      await tick();
+      sessionManager.finishLaunch('s1');
+      await tick();
+
+      expect(terminalSubmit.calls).toHaveLength(0);
+      expect(scheduler.hasPending('task-1')).toBe(true);
     });
   });
 

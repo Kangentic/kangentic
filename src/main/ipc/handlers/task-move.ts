@@ -55,6 +55,7 @@ import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-e
 import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { loadTaskProfile } from '../helpers/task-profile';
+import { exitAgentEndingReason, moveEndsAgent } from '../helpers/move-ends-agent';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { supersedeMessageDeliveries, supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
 import { refreshStoppedMark } from '../../automations/stopped-mark';
@@ -688,14 +689,26 @@ export async function handleTaskMove(
       // reorder above: the task keeps its column, and with it its message.
       supersedeMessageDeliveries(task.id);
 
+      // Whether this move ends the task's agent, and how. Read by the exit hook
+      // below and by the Priority 1, 2 and 2.5 branches, so the two cannot
+      // disagree about which moves stop the agent.
+      const destinationEndsAgent = moveEndsAgent(toLane);
+
       // === Exit automations ===
       //
       // The SOURCE column's exit rows, here in Phase 1, inside the short lock,
       // after the DB write and the `board:changed` emit above and BEFORE the
       // Priority branches below. The position is load-bearing in both
-      // directions: Priority 1 (To Do) kills the session, so an exit row that
-      // needs the agent has to find it still attached; and the commit point is
-      // already past, so a slow row cannot hold up the card the user dragged.
+      // directions: Priority 1 (To Do) removes the worktree and the session's
+      // files, so a script or webhook row has to run while they are still
+      // there; and the commit point is already past, so a slow row cannot hold
+      // up the card the user dragged.
+      //
+      // A row that talks to the agent is skipped when the destination ends
+      // that agent (`moveEndsAgent`: To Do kills it, Done and a column that
+      // starts no agent suspend it, each right after this group). The message
+      // would land and the agent stop before it could act, and waiting on its
+      // confirmation only held the move: a To Do cleanup sat 13 s on one.
       //
       // An exit row NEVER aborts the move. The rollback at the end of this
       // handler reverts Phase 2 and Phase 3 only, which is why the announce
@@ -730,6 +743,9 @@ export async function handleTaskMove(
             // No `startAgent`: on exit there is nothing to start. A row that
             // needs the agent and finds no session skips with that reason,
             // which the runner records.
+            // Only with a live agent to end. Without one the runner already
+            // skips such a row as "not running", which is the true reason.
+            agentEndingReason: task.session_id ? exitAgentEndingReason(destinationEndsAgent, toLane) : undefined,
             // AWAITED, unlike the enter path's, and the Priority branches
             // below are the reason: each opens with
             // `terminalSubmitScheduler.cancel(task.id)` before it kills,
@@ -761,7 +777,7 @@ export async function handleTaskMove(
             fromColumn: fromLane,
             toColumn: toLane ?? null,
           });
-          reportAutomationFailures(context, exitSummary, task, resolvedProjectId);
+          reportAutomationFailures(context, exitSummary, task, resolvedProjectId, 'exit');
 
         } catch (exitError) {
           // Reaching here means the LIST could not run at all (a repository
@@ -858,7 +874,7 @@ export async function handleTaskMove(
             fromColumn: fromLane ?? null,
             toColumn: toLane,
           });
-          reportAutomationFailures(context, enterSummary, task, resolvedProjectId);
+          reportAutomationFailures(context, enterSummary, task, resolvedProjectId, 'enter');
         } catch (enterError) {
           // The LIST could not run at all. The move is already committed and
           // the session is untouched, so it goes on, as on exit.
@@ -911,7 +927,7 @@ export async function handleTaskMove(
       }
 
       // --- Priority 1: TARGET IS TO DO → full reset (kill session, remove worktree, delete branch) ---
-      if (toLane?.role === 'todo') {
+      if (destinationEndsAgent === 'todo') {
         context.terminalSubmitScheduler.cancel(task.id);
         // Clear any lingering spawn progress label from an in-flight spawn
         // that was aborted by this move. The aborted move's catch block also
@@ -961,7 +977,7 @@ export async function handleTaskMove(
       }
 
       // --- Priority 2: TARGET IS DONE → suspend + archive (resumable on unarchive) ---
-      if (toLane?.role === 'done') {
+      if (destinationEndsAgent === 'done') {
         context.terminalSubmitScheduler.cancel(task.id);
         // A genuine park, not a respawn: retire any label a prior in-flight
         // spawn left behind (the same reasoning as Priority 1's clear above).
@@ -1065,7 +1081,7 @@ export async function handleTaskMove(
 
       // --- Priority 2.5: TARGET HAS auto_spawn=false (and not To Do / Done, which are handled above) ---
       // → Suspend session if one exists, do NOT spawn new agent
-      if (toLane && !toLane.auto_spawn) {
+      if (destinationEndsAgent === 'parked') {
         context.terminalSubmitScheduler.cancel(task.id);
         // A genuine park, not a respawn: same reasoning as Priority 2's clear
         // above. Retires any label an in-flight spawn left behind so the

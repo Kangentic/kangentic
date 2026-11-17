@@ -302,6 +302,8 @@ function makeDeps(args: {
     sessionManager: {
       getSession: vi.fn((id: string) => ({ id, status: 'running' })),
       awaitInputReady: vi.fn(async () => true),
+      isAgentLaunching: vi.fn(() => false),
+      awaitAgentLaunched: vi.fn(async () => true),
     },
     terminalSubmit: { submitContent },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },

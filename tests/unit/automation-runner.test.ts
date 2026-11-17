@@ -601,6 +601,77 @@ describe('a move of a task whose agent is paused', () => {
   });
 });
 
+// An exit row's message on a move to To Do failed and held the move 13 s: the
+// agent was killed right after the group, so nothing it was sent could matter.
+describe('an exit group on a move that ends the agent', () => {
+  const ENDING = 'Not sent: moving to To Do ends the agent, so it could not act on the message.';
+
+  it('skips a row that needs the agent with the caller\'s reason, without running it, and runs the rest', async () => {
+    const { rows, repository } = fakeRuns();
+    const executed: string[] = [];
+    const registry = registryOf(
+      testAdapter('send_message', async () => { executed.push('send_message'); return { detail: 'Delivered' }; }),
+      testAdapter('run_script', async () => { executed.push('run_script'); return { detail: 'Exited 0' }; }),
+    );
+
+    const summary = await runAutomations({
+      automations: [automation({ id: 'a', type: 'send_message' }), automation({ id: 'b', type: 'run_script' })],
+      column: COLUMN,
+      context: context({ trigger: 'exit' }),
+      runs: repository,
+      signal: new AbortController().signal,
+      agentEndingReason: ENDING,
+      registry,
+    });
+
+    expect(executed).toEqual(['run_script']);
+    expect(summary.outcomes.map((outcome) => outcome.status)).toEqual(['skipped', 'succeeded']);
+    // A skip is no failure, so no notice is raised and nothing waits on it.
+    expect(summary.failures).toEqual([]);
+    expect(rows[0].detail).toBe(ENDING);
+  });
+
+  it('carries the failed row\'s type on its failure outcome, which the exit notice reads', async () => {
+    const { repository } = fakeRuns();
+    const registry = registryOf(
+      testAdapter('run_script', async () => { throw new AutomationPermanentError('The script exited 1.'); }),
+    );
+
+    const summary = await runAutomations({
+      automations: [automation({ id: 'b', type: 'run_script', name: 'Cleanup' })],
+      column: COLUMN,
+      context: context({ trigger: 'exit' }),
+      runs: repository,
+      signal: new AbortController().signal,
+      agentEndingReason: ENDING,
+      registry,
+    });
+
+    expect(summary.failures).toHaveLength(1);
+    // Red: an outcome with no `type` leaves the notice unable to tell which kind of row failed.
+    expect(summary.failures[0]).toMatchObject({ type: 'run_script', name: 'Cleanup', status: 'failed' });
+  });
+
+  it('never pays for a Condition on a row it is going to skip', async () => {
+    const { repository } = fakeRuns();
+    const checkConditions = vi.fn(async () => ({ ok: true as const, answers: new Map() }));
+    const registry = registryOf(testAdapter('send_message', async () => ({ detail: 'Delivered' })));
+
+    await runAutomations({
+      automations: [automation({ type: 'send_message', condition: 'The design is signed off.' })],
+      column: COLUMN,
+      context: context({ trigger: 'exit' }),
+      runs: repository,
+      signal: new AbortController().signal,
+      agentEndingReason: ENDING,
+      checkConditions,
+      registry,
+    });
+
+    expect(checkConditions).not.toHaveBeenCalled();
+  });
+});
+
 // The warm live-injection path delivers a column's FIRST message itself,
 // bundled into the same keystroke burst as a `/model` or `/effort` change,
 // because a live session should get one burst rather than two. It then runs the

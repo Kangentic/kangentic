@@ -1655,6 +1655,48 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Whether the session's agent is still starting: its shell runs, but the
+   * agent is not on screen yet (`markAgentReady`), so keys typed now would
+   * reach the shell rather than the agent. The same evidence that lifts the
+   * launch overlay ends it: the agent's first visible text after the shell ran
+   * the launch line, its alternate-screen entry, or its SessionStart hook.
+   *
+   * Bounded by `AGENT_READY_CEILING_MS` from the spawn, the backstop the
+   * overlay itself uses, so an agent that never shows that evidence holds a
+   * message 15 s at most and an old session never reads as starting. A queued
+   * session is not starting here: it has no PTY, and the scheduler waits for
+   * its promotion itself.
+   */
+  isAgentLaunching(sessionId: string): boolean {
+    const session = this.registry.get(sessionId);
+    if (!session || session.status !== 'running' || !session.pty) return false;
+    if (Date.now() - Date.parse(session.startedAt) >= AGENT_READY_CEILING_MS) return false;
+    return !this.firstOutputTracker.hasEmitted(sessionId);
+  }
+
+  /**
+   * Wait until `isAgentLaunching` reads false. Resolves true at once for a
+   * session already started, false when it ends, `signal` fires, or
+   * `timeoutMs` passes first. A queued session is waited through its
+   * promotion. For a caller about to type or paste into a session it did not
+   * start and cannot vouch for (an exit row's message right after the
+   * column's spawn).
+   */
+  async awaitAgentLaunched(sessionId: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const session = this.registry.get(sessionId);
+      if (!session) return false;
+      if (session.status !== 'queued') {
+        if (session.status !== 'running' || !session.pty) return false;
+        if (!this.isAgentLaunching(sessionId)) return true;
+      }
+      if (signal?.aborted || Date.now() >= deadline) return false;
+      await new Promise<void>((resolve) => setTimeout(resolve, ALT_SCREEN_POLL_MS));
+    }
+  }
+
   /** Drop the hidden sessions from a session-keyed map handed to a reader outside. */
   private withoutHidden<Value>(entries: Record<string, Value>): Record<string, Value> {
     if (this.hiddenUntilAdopted.size === 0) return entries;

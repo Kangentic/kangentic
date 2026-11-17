@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { canColumnRun, EXIT_GROUP_BUDGET_MS } from '../../shared/automation-manifest';
 import { englishText } from '../../shared/i18n/english';
 import { matchFinalLine, matchUserMessage, type FinalLineMatch, type UserMessageRead } from '../../shared/final-line-match';
-import type { AutomationRunStatus, ColumnAutomation, Swimlane } from '../../shared/types';
+import type { AutomationRunStatus, AutomationType, ColumnAutomation, Swimlane } from '../../shared/types';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
 import { createChokepointReporter } from '../analytics/handled-report';
@@ -41,6 +41,8 @@ export interface AutomationRunOutcome {
   runId: string;
   automationId: string;
   name: string;
+  /** The row's automation type, so a reader can ask the manifest about it (`automationNeedsAgent`). */
+  type: AutomationType;
   columnName: string;
   status: AutomationRunStatus;
   detail: string | null;
@@ -140,6 +142,15 @@ export interface RunAutomationsOptions {
    * held paused.
    */
   agentPaused?: boolean;
+  /**
+   * Exit only: the move ends the task's agent once this group is done (To Do
+   * kills it, Done and a column that starts no agent suspend it), so a message
+   * typed now could never be acted on. Its rows that need the agent are
+   * skipped with this reason, which the run log stores (English: agents read
+   * it), and every other row runs. Skipped, not failed: the move does not wait
+   * on a delivery that cannot matter, and no failure toast follows.
+   */
+  agentEndingReason?: string;
   /**
    * The adapters to dispatch through. Defaults to the real singleton; a test
    * passes its own so it can drive the runner's guarantees (isolation, budget,
@@ -290,6 +301,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     && registry.get(automation.type) !== undefined
     // A row a paused agent cannot take is skipped before its Condition is asked.
     && !(options.agentPaused && needsAgent(automation))
+    && !(options.agentEndingReason && needsAgent(automation))
     && canColumnRun(automation.type, columnFacts, automation.trigger, rowFactsOf(automation)).ok
     && frequencyLimitReason(automation, runs, context.task.id) === null);
   if (unanswered.length > 0 && options.checkConditions) {
@@ -318,6 +330,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
         runId,
         automationId: automation.id,
         name: automation.name,
+        type: automation.type,
         columnName: column.name,
         status,
         detail,
@@ -370,6 +383,12 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
     if (options.agentPaused && needsAgent(automation)) {
       runs.recordSkipped(started, AGENT_PAUSED_REASON);
       record('skipped', AGENT_PAUSED_REASON);
+      continue;
+    }
+
+    if (options.agentEndingReason && needsAgent(automation)) {
+      runs.recordSkipped(started, options.agentEndingReason);
+      record('skipped', options.agentEndingReason);
       continue;
     }
 

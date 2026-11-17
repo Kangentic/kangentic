@@ -263,6 +263,11 @@ on the user's message (`from: "user"`) is never read here: a re-run has no turn 
 user's messages from, so such a row skips with "Kangentic couldn't read your messages for this turn,
 so the row did not run."
 
+An `exit` row that talks to the agent (`send_message`) is refused with a reason and nothing is
+sent. That message was for the agent the task had when it left the column, and by now the task's
+session belongs to the column it moved to. Nothing records which session the failed run targeted,
+so the refusal is unconditional. An `exit` script, webhook or notify row runs as usual.
+
 It will not start an agent: a `send_message` automation against a task with no live session is
 recorded skipped rather than spawning one. It takes the task lock and is capped at five minutes, so
 a hung row cannot wedge that task's next move.
