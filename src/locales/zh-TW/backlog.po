@@ -93,6 +93,12 @@ msgstr "返回"
 msgid "Backlog is empty"
 msgstr "待辦清單為空"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Board"
+msgstr "看板"
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -106,19 +112,22 @@ msgid "Change color"
 msgstr "變更顏色"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Checklist items"
-msgstr ""
+msgstr "檢查清單項目"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import folder dialog"
 msgid "Choose a folder in your Obsidian vault"
-msgstr ""
+msgstr "選擇 Obsidian 保存庫中的資料夾"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import error banner"
 msgid "Choose folder"
-msgstr ""
+msgstr "選擇資料夾"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Clear filters"
@@ -263,14 +272,16 @@ msgid "Drop files here"
 msgstr "將檔案拖放至此"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each - [ ] line becomes a task"
-msgstr ""
+msgstr "每一行 - [ ] 會成為一個任務"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each note becomes a task"
-msgstr ""
+msgstr "每則筆記會成為一個任務"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 msgctxt "button"
@@ -303,8 +314,9 @@ msgid "Filter by ID, title, label, or assignee..."
 msgstr "依 ID、標題、標籤或負責人篩選..."
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
 msgid "Hide"
-msgstr ""
+msgstr "隱藏"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Hide imported items"
@@ -324,6 +336,12 @@ msgstr "匯入"
 msgid "Import ({selectedCount})"
 msgstr "匯入 ({selectedCount})"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Import cards from a Trello board"
+msgstr "從 Trello 看板匯入卡片"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Import failed"
 msgstr "匯入失敗"
@@ -334,9 +352,10 @@ msgid "Import from a GitHub Project board"
 msgstr "從 GitHub Project 看板匯入"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a Jira board, project, filter or search"
-msgstr ""
+msgstr "從 Jira 看板、專案、篩選器或搜尋匯入"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -467,9 +486,10 @@ msgid "None"
 msgstr "無"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Notes"
-msgstr ""
+msgstr "筆記"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgctxt "import state filter"
@@ -478,8 +498,9 @@ msgstr "開啟"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgid "Open file"
-msgstr ""
+msgstr "開啟檔案"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
@@ -487,13 +508,15 @@ msgid "Open in {sourceName}"
 msgstr "在 {sourceName} 中開啟"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste a Jira link, or type JQL."
-msgstr ""
+msgstr "貼上 Jira 連結，或輸入 JQL。"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Paste a search link so the site is known."
-msgstr ""
+msgstr "請貼上搜尋連結，以便識別網站。"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -514,6 +537,12 @@ msgstr "貼上你 GitHub Project 的完整 URL"
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
 msgstr "貼上你 GitHub 存放庫的完整 URL"
+
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Paste the URL of a Trello board."
+msgstr "貼上 Trello 看板的 URL。"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy

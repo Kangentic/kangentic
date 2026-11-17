@@ -113,6 +113,12 @@ msgstr "Zpět"
 msgid "Backlog is empty"
 msgstr "Backlog je prázdný"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Board"
+msgstr "Nástěnka"
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -128,19 +134,22 @@ msgid "Change color"
 msgstr "Změnit barvu"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Checklist items"
-msgstr ""
+msgstr "Položky kontrolního seznamu"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import folder dialog"
 msgid "Choose a folder in your Obsidian vault"
-msgstr ""
+msgstr "Vyberte složku v trezoru Obsidian"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import error banner"
 msgid "Choose folder"
-msgstr ""
+msgstr "Vybrat složku"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -316,14 +325,16 @@ msgid "Drop files here"
 msgstr "Sem přetáhněte soubory"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each - [ ] line becomes a task"
-msgstr ""
+msgstr "Každý řádek - [ ] se stane úkolem"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each note becomes a task"
-msgstr ""
+msgstr "Každá poznámka se stane úkolem"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
@@ -363,8 +374,9 @@ msgid "Filter by ID, title, label, or assignee..."
 msgstr "Filtrovat podle ID, názvu, štítku nebo řešitele..."
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
 msgid "Hide"
-msgstr ""
+msgstr "Skrýt"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -388,6 +400,12 @@ msgstr "Importovat"
 msgid "Import ({selectedCount})"
 msgstr "Importovat ({selectedCount})"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Import cards from a Trello board"
+msgstr "Import karet z nástěnky Trello"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Import failed"
@@ -400,9 +418,10 @@ msgid "Import from a GitHub Project board"
 msgstr "Import z nástěnky GitHub Project"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a Jira board, project, filter or search"
-msgstr ""
+msgstr "Import z nástěnky, projektu, filtru nebo vyhledávání Jira"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -560,9 +579,10 @@ msgid "None"
 msgstr "Žádná"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Notes"
-msgstr ""
+msgstr "Poznámky"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -572,8 +592,9 @@ msgstr "Otevřené"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgid "Open file"
-msgstr ""
+msgstr "Otevřít soubor"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
@@ -582,13 +603,15 @@ msgid "Open in {sourceName}"
 msgstr "Otevřít v {sourceName}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste a Jira link, or type JQL."
-msgstr ""
+msgstr "Vložte odkaz Jira nebo zadejte JQL."
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Paste a search link so the site is known."
-msgstr ""
+msgstr "Vložte odkaz na vyhledávání, aby byl web známý."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -613,6 +636,12 @@ msgstr "Vložte úplnou adresu URL vašeho projektu GitHub Project"
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
 msgstr "Vložte úplnou adresu URL vašeho úložiště GitHub"
+
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Paste the URL of a Trello board."
+msgstr "Vložte adresu URL nástěnky Trello."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy

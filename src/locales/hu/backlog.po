@@ -113,6 +113,12 @@ msgstr "Vissza"
 msgid "Backlog is empty"
 msgstr "A backlog üres"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Board"
+msgstr "Tábla"
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -128,19 +134,22 @@ msgid "Change color"
 msgstr "Szín módosítása"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Checklist items"
-msgstr ""
+msgstr "Ellenőrzőlista-elemek"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import folder dialog"
 msgid "Choose a folder in your Obsidian vault"
-msgstr ""
+msgstr "Válasszon egy mappát az Obsidian-tárolójában"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import error banner"
 msgid "Choose folder"
-msgstr ""
+msgstr "Mappa kiválasztása"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -316,14 +325,16 @@ msgid "Drop files here"
 msgstr "Húzza ide a fájlokat"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each - [ ] line becomes a task"
-msgstr ""
+msgstr "Minden - [ ] sorból feladat lesz"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Each note becomes a task"
-msgstr ""
+msgstr "Minden jegyzetből feladat lesz"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
@@ -363,8 +374,9 @@ msgid "Filter by ID, title, label, or assignee..."
 msgstr "Szűrés azonosító, cím, címke vagy felelős szerint..."
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
 msgid "Hide"
-msgstr ""
+msgstr "Elrejtés"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -388,6 +400,12 @@ msgstr "Importálás"
 msgid "Import ({selectedCount})"
 msgstr "Importálás ({selectedCount})"
 
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Import cards from a Trello board"
+msgstr "Kártyák importálása Trello táblából"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Import failed"
@@ -400,9 +418,10 @@ msgid "Import from a GitHub Project board"
 msgstr "Importálás GitHub Project táblából"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a Jira board, project, filter or search"
-msgstr ""
+msgstr "Importálás Jira táblából, projektből, szűrőből vagy keresésből"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -560,9 +579,10 @@ msgid "None"
 msgstr "Nincs"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Notes"
-msgstr ""
+msgstr "Jegyzetek"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -572,8 +592,9 @@ msgstr "Nyitott"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgid "Open file"
-msgstr ""
+msgstr "Fájl megnyitása"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
@@ -582,13 +603,15 @@ msgid "Open in {sourceName}"
 msgstr "Megnyitás itt: {sourceName}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste a Jira link, or type JQL."
-msgstr ""
+msgstr "Illesszen be egy Jira hivatkozást, vagy írjon JQL-t."
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Paste a search link so the site is known."
-msgstr ""
+msgstr "Illesszen be egy keresési hivatkozást, hogy az oldal azonosítható legyen."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -613,6 +636,12 @@ msgstr "Illessze be a GitHub Project teljes URL-jét"
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
 msgstr "Illessze be a GitHub-tároló teljes URL-jét"
+
+#: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
+msgctxt "import source type"
+msgid "Paste the URL of a Trello board."
+msgstr "Illessze be egy Trello tábla URL-jét."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
