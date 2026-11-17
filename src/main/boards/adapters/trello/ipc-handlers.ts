@@ -6,6 +6,7 @@ import { RefusalError } from '../../../../shared/refusal';
 import type {
   TrelloAuthStatus,
   TrelloConnectInput,
+  TrelloConnectKind,
   TrelloConnectResult,
   TrelloListBoardsResult,
   TrelloOpenApprovalInput,
@@ -26,23 +27,43 @@ const SIGN_IN_UNAVAILABLE_MESSAGE = msg({
 });
 
 /**
- * Trello's refusal is the user's answer to show (a bad key, a revoked token), so it comes back as
- * a result. Anything else is a defect or a network failure and rethrows, where the IPC wrap
- * reports it.
+ * Anything Trello answered during a Connect (a bad key, a revoked token, an outage) is shown in
+ * the dialog under the field it names, so it comes back as a result. Anything else is a defect or
+ * a network failure and rethrows, where the IPC wrap reports it.
  */
 function isAnswerForUser(error: unknown): error is TrelloError | RefusalError {
   return error instanceof TrelloError || error instanceof RefusalError;
 }
 
+/**
+ * Trello refusing the saved credential (its 401), or no credential saved: the board list's answer
+ * that sends the user to Connect. A 429, a 5xx or a body that is not JSON is not a refusal, so it
+ * rethrows and the picker shows it in place.
+ */
+function isCredentialRefusal(error: unknown): error is TrelloError | RefusalError {
+  return error instanceof RefusalError || (error instanceof TrelloError && error.status === 401);
+}
+
+/** The kind a renderer sent, read defensively: anything but Kangentic's own key is the user's. */
+function connectKindOf(input: { kind?: unknown } | null | undefined): TrelloConnectKind {
+  return input?.kind === 'kangentic-key' ? 'kangentic-key' : 'own-key';
+}
+
+/** Why a key cannot be used, with the field it blames. */
+interface KeyRefusal {
+  field?: 'apiKey';
+  error: string;
+}
+
 /** The key a Connect or an approval uses: Kangentic's own, or the one the user pasted. */
-function resolveApiKey(kind: TrelloConnectInput['kind'], pastedKey: unknown): { apiKey: string } | { refusal: TrelloConnectResult } {
+function resolveApiKey(kind: TrelloConnectKind, pastedKey: unknown): { apiKey: string } | { refusal: KeyRefusal } {
   if (kind === 'kangentic-key') {
-    if (!isTrelloSignInAvailable()) return { refusal: { ok: false, error: translateText(SIGN_IN_UNAVAILABLE_MESSAGE) } };
+    if (!isTrelloSignInAvailable()) return { refusal: { error: translateText(SIGN_IN_UNAVAILABLE_MESSAGE) } };
     return { apiKey: TRELLO_API_KEY };
   }
   const apiKey = typeof pastedKey === 'string' ? pastedKey.trim() : '';
-  if (apiKey.length === 0) return { refusal: { ok: false, field: 'apiKey', error: translateText(EMPTY_KEY_MESSAGE) } };
-  if (/\s/.test(apiKey)) return { refusal: { ok: false, field: 'apiKey', error: translateText(HAS_SPACES_MESSAGE) } };
+  if (apiKey.length === 0) return { refusal: { field: 'apiKey', error: translateText(EMPTY_KEY_MESSAGE) } };
+  if (/\s/.test(apiKey)) return { refusal: { field: 'apiKey', error: translateText(HAS_SPACES_MESSAGE) } };
   return { apiKey };
 }
 
@@ -63,9 +84,9 @@ export function registerTrelloIpcHandlers(): void {
   ipcMain.handle(
     IPC.BOARDS_TRELLO_CONNECT,
     async (_, input: TrelloConnectInput): Promise<TrelloConnectResult> => {
-      const kind = input?.kind === 'kangentic-key' ? 'kangentic-key' : 'own-key';
+      const kind = connectKindOf(input);
       const resolved = resolveApiKey(kind, input?.apiKey);
-      if ('refusal' in resolved) return resolved.refusal;
+      if ('refusal' in resolved) return { ok: false, ...resolved.refusal };
       const token = typeof input?.token === 'string' ? input.token.trim() : '';
       if (token.length === 0) return { ok: false, field: 'token', error: translateText(EMPTY_TOKEN_MESSAGE) };
       if (/\s/.test(token)) return { ok: false, field: 'token', error: translateText(HAS_SPACES_MESSAGE) };
@@ -77,7 +98,8 @@ export function registerTrelloIpcHandlers(): void {
       } catch (error) {
         if (!isAnswerForUser(error)) throw error;
         // Kangentic's own key is not the user's to fix, so a refusal there is about the token.
-        const field = kind === 'kangentic-key' ? 'token' : (error instanceof TrelloError ? error.field : undefined) ?? 'token';
+        const blamedField = error instanceof TrelloError ? error.field : undefined;
+        const field = kind === 'kangentic-key' ? 'token' : blamedField ?? 'token';
         return { ok: false, field, error: error.message };
       }
     },
@@ -86,9 +108,8 @@ export function registerTrelloIpcHandlers(): void {
   ipcMain.handle(
     IPC.BOARDS_TRELLO_OPEN_APPROVAL,
     async (_, input: TrelloOpenApprovalInput): Promise<void> => {
-      const kind = input?.kind === 'kangentic-key' ? 'kangentic-key' : 'own-key';
-      const resolved = resolveApiKey(kind, input?.apiKey);
-      if ('refusal' in resolved) throw new RefusalError(resolved.refusal.error ?? translateText(EMPTY_KEY_MESSAGE));
+      const resolved = resolveApiKey(connectKindOf(input), input?.apiKey);
+      if ('refusal' in resolved) throw new RefusalError(resolved.refusal.error);
       await shell.openExternal(buildAuthorizeUrl(resolved.apiKey));
     },
   );
@@ -97,7 +118,7 @@ export function registerTrelloIpcHandlers(): void {
     try {
       return { boards: await new TrelloClient().listBoards() };
     } catch (error) {
-      if (!isAnswerForUser(error)) throw error;
+      if (!isCredentialRefusal(error)) throw error;
       return { boards: [], error: error.message };
     }
   });

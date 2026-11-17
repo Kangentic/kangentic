@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { ArrowLeft, ChevronRight, ExternalLink, Eye, EyeOff, KeyRound, LoaderCircle } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
+import { FIELD_CONTROL_CLASS } from '../Field';
 import { ArtifactPlatformLogo } from '../VendorMark';
 import { reportRendererFailure } from '../../utils/renderer-failure';
 import type { ProviderSetupDialogProps } from '../backlog/import-providers';
@@ -12,7 +13,8 @@ const TRELLO_APP_ADMIN_URL = 'https://trello.com/apps/admin';
 type View = 'loading' | 'choice' | 'sign-in' | 'own-key';
 type Field = 'apiKey' | 'token';
 
-const INPUT_CLASS = 'w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted px-2.5 py-1.5 outline-none focus:border-edge-input font-mono';
+/** The dialog field fill (ui-conventions.md, Control fill), in a monospace face for pasted keys. */
+const CREDENTIAL_INPUT_CLASS = `${FIELD_CONTROL_CLASS} font-mono`;
 const LINK_BUTTON_CLASS = 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-surface hover:bg-surface-hover border border-edge rounded transition-colors disabled:opacity-50';
 
 function BackButton({ onBack }: { onBack: () => void }) {
@@ -146,7 +148,7 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
           placeholder={t`Paste the token Trello shows`}
           autoComplete="off"
           spellCheck={false}
-          className={`${INPUT_CLASS} pr-9`}
+          className={`${CREDENTIAL_INPUT_CLASS} pr-9`}
           data-testid="trello-setup-token-input"
         />
         <button
@@ -324,7 +326,7 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
                 placeholder={t`Paste your key`}
                 autoComplete="off"
                 spellCheck={false}
-                className={INPUT_CLASS}
+                className={CREDENTIAL_INPUT_CLASS}
                 data-testid="trello-setup-key-input"
               />
               {fieldError('apiKey')}

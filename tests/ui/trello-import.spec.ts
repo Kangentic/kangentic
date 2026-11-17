@@ -19,6 +19,10 @@ interface TrelloPreset {
   invalidToken?: string;
   listBoardsError?: string;
   listBoardsRejects?: string;
+  connectRejects?: string;
+  openApprovalRejects?: string;
+  authStatusRejects?: string;
+  boards?: Array<{ id: string; shortLink: string; name: string; url: string; workspaceName: string | null }>;
 }
 
 async function seedTrello(page: Page, preset: TrelloPreset): Promise<void> {
@@ -150,6 +154,92 @@ test.describe('Connect Trello', () => {
 
     await browser.close();
   });
+
+  test('Back from the own-key steps returns to the two ways in when sign-in is offered', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { signInAvailable: true });
+    await createProject(page, 'trello-own-key-back');
+    await openTrelloProvider(page);
+
+    await page.locator('[data-testid="trello-setup-own-key-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-key-input"]')).toBeVisible();
+    await page.locator('[data-testid="trello-setup-back-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-sign-in-btn"]')).toBeVisible();
+    await expect(page.locator('[data-testid="trello-setup-key-input"]')).toHaveCount(0);
+
+    await browser.close();
+  });
+
+  test('a list refusal opens the two ways in with Trello\'s text above them', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { state: { connected: true, kind: 'own-key' }, signInAvailable: true, listBoardsError: 'invalid token' });
+    await createProject(page, 'trello-initial-error');
+    await openTrelloProvider(page);
+
+    await expect(page.locator('[data-testid="trello-setup-error"]')).toHaveText('invalid token');
+    await expect(page.locator('[data-testid="trello-setup-sign-in-btn"]')).toBeVisible();
+
+    await browser.close();
+  });
+
+  test('a Connect that rejects shows the message under the token', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { signInAvailable: false, connectRejects: 'Keychain unavailable' });
+    await createProject(page, 'trello-connect-rejects');
+    await openTrelloProvider(page);
+
+    await page.locator('[data-testid="trello-setup-key-input"]').fill('key-1');
+    await page.locator('[data-testid="trello-setup-token-input"]').fill('ATTAtoken');
+    await page.locator('[data-testid="trello-setup-save-btn"]').click();
+
+    await expect(page.locator('[data-testid="trello-setup-token-error"]')).toHaveText('Keychain unavailable');
+    await expect(page.locator('[data-testid="trello-setup-dialog"]')).toBeVisible();
+
+    await browser.close();
+  });
+
+  test('an approval page that fails to open shows the message under the API key', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { signInAvailable: false, openApprovalRejects: 'No browser' });
+    await createProject(page, 'trello-approval-rejects');
+    await openTrelloProvider(page);
+
+    await page.locator('[data-testid="trello-setup-key-input"]').fill('key-1');
+    await page.locator('[data-testid="trello-setup-open-approval-btn"]').click();
+
+    await expect(page.locator('[data-testid="trello-setup-key-error"]')).toHaveText('No browser');
+    await expect(page.locator('[data-testid="trello-setup-token-error"]')).toHaveCount(0);
+
+    await browser.close();
+  });
+
+  test('an auth status that rejects falls back to the own-key steps', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { signInAvailable: true, authStatusRejects: 'status failed' });
+    await createProject(page, 'trello-status-rejects');
+    await openTrelloProvider(page);
+
+    await expect(page.locator('[data-testid="trello-setup-key-input"]')).toBeVisible();
+    await expect(page.locator('[data-testid="trello-setup-sign-in-btn"]')).toHaveCount(0);
+
+    await browser.close();
+  });
+
+  test('a key or token with a space is refused under its own field', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { signInAvailable: false });
+    await createProject(page, 'trello-spaces');
+    await openTrelloProvider(page);
+
+    await page.locator('[data-testid="trello-setup-key-input"]').fill('key with space');
+    await page.locator('[data-testid="trello-setup-token-input"]').fill('ATTAtoken');
+    await page.locator('[data-testid="trello-setup-save-btn"]').click();
+
+    await expect(page.locator('[data-testid="trello-setup-key-error"]')).toHaveText('A key or token has no spaces. Copy it again from Trello.');
+    await expect(page.locator('[data-testid="trello-setup-dialog"]')).toBeVisible();
+
+    await browser.close();
+  });
 });
 
 test.describe('Trello board picker', () => {
@@ -179,6 +269,38 @@ test.describe('Trello board picker', () => {
     await expect(page.locator('[data-testid="trello-board-AbC123xy"]')).not.toContainText('Added');
     await page.locator('[data-testid="trello-board-DeF456zw"]').click();
     await expect(page.locator('[data-testid="import-dialog"]')).toBeVisible();
+
+    await browser.close();
+  });
+
+  test('a board that is not saved yet is added by its own URL', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { state: { connected: true, kind: 'own-key' } });
+    await createProject(page, 'trello-picker-pick');
+    await openTrelloProvider(page);
+
+    await page.locator('[data-testid="trello-board-GhI789uv"]').click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __lastImportSourcesAddInput?: { source: string; url: string } }).__lastImportSourcesAddInput ?? null))
+      .toEqual({ source: 'trello', url: 'https://trello.com/b/GhI789uv/launch-checklist' });
+
+    await browser.close();
+  });
+
+  test('a board with no Workspace sits under Other boards', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, {
+      state: { connected: true, kind: 'own-key' },
+      boards: [
+        { id: 'board-a', shortLink: 'AbC123xy', name: 'Sprint board', url: 'https://trello.com/b/AbC123xy/sprint-board', workspaceName: 'Acme Product' },
+        { id: 'board-solo', shortLink: 'ZzZ000aa', name: 'Personal', url: 'https://trello.com/b/ZzZ000aa/personal', workspaceName: null },
+      ],
+    });
+    await createProject(page, 'trello-picker-other');
+    await openTrelloProvider(page);
+
+    const groups = page.locator('[data-testid="trello-workspace-group"]');
+    await expect(groups).toHaveCount(2);
+    await expect(groups.filter({ hasText: 'Other boards' }).locator('[data-testid="trello-board-ZzZ000aa"]')).toBeVisible();
 
     await browser.close();
   });
