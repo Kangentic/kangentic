@@ -88,6 +88,24 @@ test.describe('Jira in Add Source', () => {
     await browser.close();
   });
 
+  test('cancelling Connect from a pasted link stays on the link step with the link kept', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-cancel-connect');
+    await openJiraLinkStep(page);
+    const link = 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12';
+    await pasteAndConnect(page, link);
+
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeVisible();
+    await page.locator('[data-testid="jira-connect-cancel-btn"]').click();
+
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeHidden();
+    // Unlike an account-wide provider (Asana), which drops back to the provider list,
+    // a link the user pasted is theirs to retry, so the step and its text stay.
+    await expect(page.locator('[data-testid="import-source-url-input"]')).toHaveValue(link);
+    await expect(page.locator('[data-testid="import-dialog"]')).toHaveCount(0);
+    await browser.close();
+  });
+
   test('typed JQL with two connected sites asks for a search link', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'jira-two-sites');
