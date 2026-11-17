@@ -131,6 +131,80 @@ describe('withBackoff', () => {
     expect(work).toHaveBeenCalledTimes(3);
   });
 
+  describe('retryAfterMs', () => {
+    /** Run a withBackoff call that fails once then succeeds, recording each sleep's duration. */
+    async function sleptDurations(options: Parameters<typeof withBackoff>[1]): Promise<number[]> {
+      const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      let callCount = 0;
+      const work = vi.fn().mockImplementation(async () => {
+        callCount += 1;
+        if (callCount === 1) throw new Error('rate limited');
+        return 'ok';
+      });
+      const settled = await runWithFakeTimers(withBackoff(work, options));
+      expect(settled.success).toBe(true);
+      const durations = timeoutSpy.mock.calls.map((call) => call[1] as number);
+      timeoutSpy.mockRestore();
+      return durations;
+    }
+
+    it('clamps the server-requested wait to maxDelayMs', async () => {
+      const durations = await sleptDurations({
+        initialDelayMs: 100,
+        maxDelayMs: 500,
+        retryAfterMs: () => 60_000,
+      });
+      expect(durations).toEqual([500]);
+    });
+
+    it('uses the server-requested wait when it is under maxDelayMs', async () => {
+      const durations = await sleptDurations({
+        initialDelayMs: 100,
+        maxDelayMs: 5_000,
+        retryAfterMs: () => 1_234,
+      });
+      expect(durations).toEqual([1_234]);
+    });
+
+    it('falls back to the exponential delay when retryAfterMs returns undefined', async () => {
+      const durations = await sleptDurations({
+        initialDelayMs: 100,
+        maxDelayMs: 5_000,
+        retryAfterMs: () => undefined,
+      });
+      // First retry is attempt 1: initialDelayMs * 2^0.
+      expect(durations).toEqual([100]);
+    });
+
+    it('doubles the fallback delay on each later attempt', async () => {
+      const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const work = vi.fn().mockImplementation(async () => {
+        throw new Error('always');
+      });
+      const settled = await runWithFakeTimers(
+        withBackoff(work, { maxAttempts: 3, initialDelayMs: 100, maxDelayMs: 5_000, retryAfterMs: () => undefined }),
+      );
+      expect(settled.success).toBe(false);
+      expect(timeoutSpy.mock.calls.map((call) => call[1])).toEqual([100, 200]);
+      timeoutSpy.mockRestore();
+    });
+
+    it('consults retryAfterMs with the thrown error', async () => {
+      const thrown = new Error('429');
+      const retryAfterMs = vi.fn().mockReturnValue(10);
+      let callCount = 0;
+      const work = vi.fn().mockImplementation(async () => {
+        callCount += 1;
+        if (callCount === 1) throw thrown;
+        return 'ok';
+      });
+      const settled = await runWithFakeTimers(withBackoff(work, { retryAfterMs }));
+      expect(settled.success).toBe(true);
+      expect(retryAfterMs).toHaveBeenCalledTimes(1);
+      expect(retryAfterMs).toHaveBeenCalledWith(thrown);
+    });
+  });
+
   it('passes the attempt number to shouldRetry', async () => {
     const capturedAttempts: number[] = [];
     const work = vi.fn().mockImplementation(async () => {
