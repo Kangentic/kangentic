@@ -110,6 +110,22 @@ describe('signInWithTrello', () => {
     expect(await result).toMatchObject({ ok: false, cancelled: false });
   });
 
+  it("shows a line for each failure the return page sends, Trello's own message first", async () => {
+    // The pins in kangentic.com functions/oauth/trello/return.ts: Deny carries Trello's
+    // message, and the page's own failures are invalid_request and server_error.
+    const cases = [
+      { outcome: { error: 'access_denied', description: 'Token request rejected' }, line: 'Token request rejected' },
+      { outcome: { error: 'access_denied' }, line: 'Trello sign-in was declined.' },
+      { outcome: { error: 'invalid_request' }, line: "Kangentic's sign-in page failed." },
+      { outcome: { error: 'server_error' }, line: "Kangentic's sign-in page failed." },
+    ];
+    for (const { outcome, line } of cases) {
+      const { state, result } = startSignIn();
+      await get(await serviceRedirect(await state, '/trello/callback', outcome));
+      await expect(result).resolves.toEqual({ ok: false, cancelled: false, error: line });
+    }
+  });
+
   it('refuses a token sealed under the Jira info string', async () => {
     const { state, result } = startSignIn();
     await get(await serviceRedirect(await state, '/trello/callback', {

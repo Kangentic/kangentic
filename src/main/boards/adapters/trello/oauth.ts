@@ -52,12 +52,15 @@ const RETURN_PAGE_FAILED_MESSAGE = msg({
 });
 
 /**
- * The line a failed sign-in shows: the return page's description when it gave one,
- * a declined approval for `access_denied`, and any other code as it came.
+ * The line a failed sign-in shows. The return page (kangentic.com `oauth/trello/return.ts`)
+ * sends `access_denied` with Trello's own message as the description, `invalid_request`
+ * when the fragment held no usable token, and `server_error` when the browser could not
+ * seal it. The description wins when there is one; the last two are the page failing.
  */
 export function describeTrelloSignInError(code: string, description: string | null): string {
   if (description && description.trim().length > 0) return description.trim();
   if (code === 'access_denied') return translateText(DECLINED_MESSAGE);
+  if (code === 'invalid_request' || code === 'server_error') return translateText(RETURN_PAGE_FAILED_MESSAGE);
   return code;
 }
 
