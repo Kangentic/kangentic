@@ -127,7 +127,9 @@ test.describe('Jira in Add Source', () => {
     await createProject(page, 'jira-no-board');
     await setJiraPreset(page, { sites: { 'acme.atlassian.net': { method: 'api-token', email: 'a@example.com', account: 'a@example.com' } } });
     await page.evaluate(() => {
-      (window as unknown as { __mockImportSourcesAddError?: string }).__mockImportSourcesAddError = 'No board 12 that this account can open.';
+      // As main's refusal arrives over IPC, decorated with the channel and error class.
+      (window as unknown as { __mockImportSourcesAddError?: string }).__mockImportSourcesAddError =
+        "Error invoking remote method 'backlog:importSourcesAdd': RefusalError: No board 12 that this account can open.";
     });
     await openJiraLinkStep(page);
     await pasteAndConnect(page, 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12');
