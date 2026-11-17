@@ -3007,6 +3007,10 @@ test.describe('Command Terminal', () => {
     });
 
     test('Escape mid-resize puts the panel back where it started, saves nothing, frees the gate and leaves the panel open', async () => {
+      // Its own browser, an edge drag, an Escape and a 20-frame settle: 3.5 s locally, but
+      // 15.3 s and 16.4 s on a loaded CI run, the first attempt and the retry, ending on the
+      // timeout with no assertion failing. Its neighbour below takes 45 s for the same reason.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openPanelSettled(page);
