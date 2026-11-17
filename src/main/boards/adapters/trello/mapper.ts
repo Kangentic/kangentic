@@ -67,9 +67,8 @@ export interface TrelloListRaw {
 }
 
 /**
- * An imported card. `ExternalIssue` has no field yet for `displayId` (the card number) or
- * `stateOrder` (its list's place on the board). Once `ExternalIssue` gains both, this type is
- * `ExternalIssue` itself.
+ * An imported card, with `ExternalIssue`'s optional `displayId` (the card number) and `stateOrder`
+ * (its list's place on the board) always set, so the adapter can sort and search on them.
  */
 export type TrelloMappedIssue = ExternalIssue & { displayId: string; stateOrder: number };
 

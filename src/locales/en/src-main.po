@@ -51,6 +51,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} workflow"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+msgctxt "Trello connect error"
+msgid "A key or token has no spaces. Copy it again from Trello."
+msgstr "A key or token has no spaces. Copy it again from Trello."
+
 #: src/main/db/global-db-dialog.ts
 msgid "A link in this path points to a folder that does not exist."
 msgstr "A link in this path points to a folder that does not exist."
@@ -165,8 +170,18 @@ msgstr "Open in default browser"
 msgid "Paste"
 msgstr "Paste"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+msgctxt "Trello connect error"
+msgid "Paste the token Trello shows."
+msgstr "Paste the token Trello shows."
+
 #: src/main/boards/adapters/linear/ipc-handlers.ts
 msgctxt "Linear connect error"
+msgid "Paste your API key."
+msgstr "Paste your API key."
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+msgctxt "Trello connect error"
 msgid "Paste your API key."
 msgstr "Paste your API key."
 
@@ -211,6 +226,11 @@ msgstr "The drive for this folder is not available."
 #: src/main/index.ts
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+msgctxt "Trello connect error"
+msgid "This build has no Kangentic Trello key. Use your own API key."
+msgstr "This build has no Kangentic Trello key. Use your own API key."
 
 #: src/main/db/global-db-dialog.ts
 msgid "This path has characters Windows does not allow."

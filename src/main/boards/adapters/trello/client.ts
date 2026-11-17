@@ -9,6 +9,7 @@ import {
   clearTrelloCredential,
   loadTrelloCredential,
   saveTrelloCredential,
+  trelloCredentialVersion,
   type TrelloCredential,
   type TrelloCredentialKind,
 } from './credential-store';
@@ -22,6 +23,7 @@ import {
   type FileAttachmentRef,
 } from '../../shared';
 import { RefusalError } from '../../../../shared/refusal';
+import type { TrelloBoardSummary } from '../../../../shared/types';
 
 /** HTTP request timeout in milliseconds. Matches the downloadFile helper. */
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -55,16 +57,6 @@ interface TrelloBoardRaw {
   url?: string | null;
   idOrganization?: string | null;
   organization?: TrelloOrganizationRaw | null;
-}
-
-/** One board the token can see, as the board picker lists it. */
-export interface TrelloBoardSummary {
-  id: string;
-  shortLink: string;
-  name: string;
-  url: string;
-  /** The board's workspace, or null for a board in no workspace the token can read. */
-  workspaceName: string | null;
 }
 
 /** A board's lists (archived ones included) and every card, archived ones included. */
@@ -103,11 +95,14 @@ async function readBodyText(response: Response): Promise<string> {
 
 export class TrelloClient {
   private credential: TrelloCredential | null;
+  /** The store's version when `credential` was read; a save or clear since then reloads it. */
+  private credentialVersion: number;
   private readonly boardCache = new Map<string, TrelloBoardSnapshot>();
   private readonly boardNameCache = new Map<string, string>();
 
   constructor(credential?: TrelloCredential | null) {
     this.credential = credential ?? null;
+    this.credentialVersion = trelloCredentialVersion();
   }
 
   async hasCredential(): Promise<boolean> {
@@ -144,6 +139,7 @@ export class TrelloClient {
     };
     await saveTrelloCredential(credential);
     this.credential = credential;
+    this.credentialVersion = trelloCredentialVersion();
     this.boardCache.clear();
     this.boardNameCache.clear();
     return credential;
@@ -273,10 +269,16 @@ export class TrelloClient {
     return { ...result, mediaType: mediaTypeFromFilename(filename) };
   }
 
+  /** The credential in memory, reloaded when none is held or the store changed since it was read. */
   private async loadCredentialIfNeeded(): Promise<TrelloCredential | null> {
-    if (!this.credential) {
-      this.credential = await loadTrelloCredential();
+    const storeVersion = trelloCredentialVersion();
+    if (this.credential && this.credentialVersion === storeVersion) return this.credential;
+    if (this.credentialVersion !== storeVersion) {
+      this.boardCache.clear();
+      this.boardNameCache.clear();
     }
+    this.credential = await loadTrelloCredential();
+    this.credentialVersion = storeVersion;
     return this.credential;
   }
 

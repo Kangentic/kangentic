@@ -62,6 +62,12 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} munkafolyamat"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "A key or token has no spaces. Copy it again from Trello."
+msgstr "A kulcs vagy token nem tartalmaz szóközt. Másolja ki újra a Trello oldaláról."
+
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
 msgid "A link in this path points to a folder that does not exist."
@@ -98,14 +104,16 @@ msgid "Agent went idle"
 msgstr "Az ügynök tétlen lett"
 
 #: src/main/boards/adapters/linear/ipc-handlers.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "An API key has no spaces. Copy it again from Linear."
-msgstr ""
+msgstr "Az API-kulcs nem tartalmaz szóközt. Másolja ki újra a Linearből."
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
-msgstr ""
+msgstr "Egy másik program használja a Linear-bejelentkezés portjait."
 
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
@@ -134,9 +142,10 @@ msgid "Copy Image"
 msgstr "Kép másolása"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
-msgstr ""
+msgstr "Nem sikerült megnyitni a böngészőt a Linear-bejelentkezéshez."
 
 #: src/main/updater.ts
 #, fuzzy
@@ -170,9 +179,10 @@ msgid "Linear sign-in did not finish. Return to Kangentic to try again."
 msgstr "A Linear-bejelentkezés nem fejeződött be. Az újrapróbálkozáshoz térjen vissza a Kangentic alkalmazásba."
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Linear sign-in timed out."
-msgstr ""
+msgstr "A Linear-bejelentkezés időtúllépés miatt megszakadt."
 
 #: src/main/updater.ts
 #, fuzzy
@@ -199,10 +209,23 @@ msgstr "Megnyitás az alapértelmezett böngészőben"
 msgid "Paste"
 msgstr "Beillesztés"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Paste the token Trello shows."
+msgstr "Illessze be a Trello által megjelenített tokent."
+
 #: src/main/boards/adapters/linear/ipc-handlers.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Paste your API key."
-msgstr ""
+msgstr "Illessze be az API-kulcsát."
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Paste your API key."
+msgstr "Illessze be az API-kulcsát."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
@@ -231,9 +254,10 @@ msgid "Session crashed: {label}"
 msgstr "A munkamenet összeomlott: {label}"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Sign in with Linear is not available in this build."
-msgstr ""
+msgstr "A Linear-fiókkal való bejelentkezés ebben a buildben nem érhető el."
 
 #: src/main/notifications/custom-sound.ts
 #, fuzzy
@@ -254,6 +278,12 @@ msgstr "A mappát tartalmazó meghajtó nem érhető el."
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "Az ablak összeomlott ({crashReason}), és {minutes, plural, one {# perc} other {# perc}} alatt {attempts, plural, one {# próbálkozás} other {# próbálkozás}} után sem tudott helyreállni."
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "This build has no Kangentic Trello key. Use your own API key."
+msgstr "Ez a build nem tartalmaz Kangentic Trello-kulcsot. Használja a saját API-kulcsát."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

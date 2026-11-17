@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board IPC channels
-description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana, Jira and Linear auth.
+description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana, Jira, Linear and Trello auth.
 tags: [ipc, channels, board, tasks]
 sources:
   - resource: src/shared/ipc-channels.ts
@@ -146,6 +146,15 @@ sources:
 | `boards:linear:reopenSignIn` | invoke | Open the pending sign-in's approval page in the browser again |
 | `boards:linear:cancelSignIn` | invoke | Stop waiting for the browser; the pending `signIn` resolves as cancelled |
 | `boards:linear:listTeams` | invoke | List the teams the saved credential can see, each with the team URL a picked team is saved under; `{teams, error?}` |
+
+## Board Auth - Trello (5 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `boards:trello:authStatus` | invoke | Report Trello connection state: `{connected, kind?, signInAvailable}`; `signInAvailable` is false in a build with no Kangentic Trello key |
+| `boards:trello:connect` | invoke | Check an API key and token against Trello's board list and persist them encrypted; `kind: 'kangentic-key'` uses the key main holds and ignores one the renderer sends. Returns `{ok, field?, error?}` with Trello's own text and the field it blames |
+| `boards:trello:openApproval` | invoke | Open Trello's read-only approval page for Kangentic's key or the user's own, where Trello shows the token to paste |
+| `boards:trello:listBoards` | invoke | List the open boards the saved token can see, each with its Workspace and the board URL a picked board is saved under; `{boards, error?}` |
+| `boards:trello:clearCredential` | invoke | Remove the stored key and token |
 
 ## Backlog Attachments (5 channels)
 | Channel | Pattern | Purpose |

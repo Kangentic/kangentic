@@ -55,6 +55,12 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} 工作流程"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "A key or token has no spaces. Copy it again from Trello."
+msgstr "金鑰或權杖不含空格。請從 Trello 重新複製。"
+
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
 msgid "A link in this path points to a folder that does not exist."
@@ -89,14 +95,16 @@ msgid "Agent went idle"
 msgstr "代理已閒置"
 
 #: src/main/boards/adapters/linear/ipc-handlers.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "An API key has no spaces. Copy it again from Linear."
-msgstr ""
+msgstr "API 金鑰不含空格。請從 Linear 重新複製。"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
-msgstr ""
+msgstr "另一個程式正在使用 Linear 登入連接埠。"
 
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Available system memory at the time: {availableMb} MB."
@@ -120,9 +128,10 @@ msgid "Copy Image"
 msgstr "複製圖片"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
-msgstr ""
+msgstr "無法開啟瀏覽器進行 Linear 登入。"
 
 #: src/main/updater.ts
 #, fuzzy
@@ -153,9 +162,10 @@ msgid "Linear sign-in did not finish. Return to Kangentic to try again."
 msgstr "Linear 登入未完成。請返回 Kangentic 再試一次。"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Linear sign-in timed out."
-msgstr ""
+msgstr "Linear 登入逾時。"
 
 #: src/main/updater.ts
 #, fuzzy
@@ -179,10 +189,23 @@ msgstr "在預設瀏覽器中開啟"
 msgid "Paste"
 msgstr "貼上"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Paste the token Trello shows."
+msgstr "請貼上 Trello 顯示的權杖。"
+
 #: src/main/boards/adapters/linear/ipc-handlers.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Paste your API key."
-msgstr ""
+msgstr "請貼上您的 API 金鑰。"
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Paste your API key."
+msgstr "請貼上您的 API 金鑰。"
 
 #: src/main/db/global-db-dialog.ts
 msgid "Quit"
@@ -206,9 +229,10 @@ msgid "Session crashed: {label}"
 msgstr "工作階段當機：{label}"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Sign in with Linear is not available in this build."
-msgstr ""
+msgstr "此組建不支援使用 Linear 登入。"
 
 #: src/main/notifications/custom-sound.ts
 #, fuzzy
@@ -227,6 +251,12 @@ msgstr "此資料夾所在的磁碟機無法使用。"
 #: src/main/index.ts
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "視窗當機（{crashReason}），在 {minutes, plural, other {# 分鐘}}內嘗試 {attempts, plural, other {# 次}}後仍無法復原。"
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "This build has no Kangentic Trello key. Use your own API key."
+msgstr "此版本沒有 Kangentic Trello 金鑰。請使用您自己的 API 金鑰。"
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

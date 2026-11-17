@@ -13,7 +13,7 @@ sources:
 ---
 # Board integration
 
-Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear), and notes and checklist items from an Obsidian vault, into the backlog. The Trello adapter is built and waits on its Connect dialog. Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
+Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello), and notes and checklist items from an Obsidian vault, into the backlog. Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
 This doc covers the adapter system and how to add a new board provider.
 
@@ -40,7 +40,7 @@ src/main/boards/
     jira/             # Cloud and Data Center; per-site sign-ins, dedicated IPC group
     linear/           # API key or OAuth sign-in, GraphQL client, dedicated IPC group
     obsidian/         # a vault on this computer: two source types, added by folder
-    trello/           # API key + user token, read-only; no Connect dialog yet
+    trello/           # API key + user token, read-only, dedicated IPC group
   board-registry.ts   # BoardRegistry + boardRegistry singleton
   index.ts
 ```
@@ -255,9 +255,32 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | Linear | stable | none | Personal API key or OAuth sign-in in the browser, both stored encrypted via `safeStorage`. Teams are picked from a list. Ships its own `boards:linear:*` IPC group. |
 | Obsidian Notes | stable | none | A vault folder on this computer, chosen in the folder dialog. Each note is a task. |
 | Obsidian Checklist items | stable | none | Same folder source. Each task line (`- [ ]`, `- [x]`, `- [/]`, `- [-]`) is a task, with the Tasks plugin's markers and Kanban plugin lanes. |
-| Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. |
+| Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. Boards are picked from a list under their Workspace. Ships its own `boards:trello:*` IPC group. |
 
-The registry enumerates all 9 providers, and every one is stable. Stable providers dispatch normally. Trello is stable but not offered yet: `src/renderer/components/backlog/import-providers.tsx` has no row for it until its Connect dialog exists.
+The registry enumerates all 9 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
+
+### Trello's Connect dialog
+
+**Connect Trello** offers two ways in. **Use your own API key** walks the user through making a
+Trello app at `trello.com/apps/admin`, pasting its key, and opening Trello's approval page for it
+(`scope=read`, `expiration=never`, no `return_url`), where Trello shows the token to paste. **Sign in
+with Trello** does the same for Kangentic's own key, `TRELLO_API_KEY` in `trello/constants.ts`, and
+shows only when that constant is set. It is empty until the team makes its Trello app, so a build
+without it opens straight on the own-key steps. The key never crosses to the renderer:
+`boards:trello:connect` and `boards:trello:openApproval` take `kind: 'kangentic-key'` and read it in
+main.
+
+Every key Trello issues shares one rate limit across all of its tokens (300 requests per 10
+seconds, 100 per token), so the shipped key is one budget for every install, and the user's own key
+never touches it. The signed-off design returns the token to an https page on a Kangentic token
+service instead of a paste. That service does not exist yet. When it does, the sign-in's waiting
+state replaces the paste and the dialog's two choices stay the same.
+
+Connect checks the key and token through `/members/me/boards` before saving. That call does not
+count against Trello's separate `/members` limit of 100 requests per 15 minutes, and its 401 text
+(`invalid key`, `invalid token`) is shown under the field it blames. The registry's adapter keeps
+one `TrelloClient` for the app's life, so the credential store bumps a version on every save and
+clear, and a client holding an older credential reloads it.
 
 ## See Also
 

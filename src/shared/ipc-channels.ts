@@ -475,6 +475,13 @@ export const IPC = {
   BOARDS_LINEAR_CANCEL_SIGN_IN: 'boards:linear:cancelSignIn',
   BOARDS_LINEAR_LIST_TEAMS: 'boards:linear:listTeams',
 
+  // Board Auth - Trello
+  BOARDS_TRELLO_AUTH_STATUS: 'boards:trello:authStatus',
+  BOARDS_TRELLO_CONNECT: 'boards:trello:connect',
+  BOARDS_TRELLO_OPEN_APPROVAL: 'boards:trello:openApproval',
+  BOARDS_TRELLO_LIST_BOARDS: 'boards:trello:listBoards',
+  BOARDS_TRELLO_CLEAR_CREDENTIAL: 'boards:trello:clearCredential',
+
   // Backlog Attachments
   BACKLOG_ATTACHMENT_LIST: 'backlogAttachment:list',
   BACKLOG_ATTACHMENT_ADD: 'backlogAttachment:add',
