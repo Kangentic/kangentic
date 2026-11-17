@@ -350,8 +350,10 @@ test.describe('Automation failure toast: a row main will not run again', () => {
       await expect(failureToast).toBeVisible();
       await expect(failureToast.getByTestId('toast-body')).toHaveText(FAILURE_BODY);
       await expect(failureToast).toHaveAttribute('data-variant', 'warning');
-      // Red: the toast was persistent with a Run again main refuses.
-      await expect(failureToast.getByTestId('toast-action')).toHaveCount(0);
+      // Red: the toast was persistent with a Run again main refuses. Read at this
+      // instant, not through a retrying matcher: a timed toast can dismiss itself
+      // inside the retry window and pass a toHaveCount(0) with the button never gone.
+      expect(await failureToast.getByTestId('toast-action').count()).toBe(0);
       await expect(failureToast).not.toHaveAttribute('data-persistent', 'true');
 
       await failureToast.getByTestId('toast-body').click();
