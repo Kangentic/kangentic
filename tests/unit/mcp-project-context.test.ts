@@ -52,6 +52,12 @@ const deliverMessageAfterMoveSpy = vi.hoisted(() => vi.fn(() => Promise.resolve(
 vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
   deliverMessageAfterMove: deliverMessageAfterMoveSpy,
 }));
+// Whether the calling session's turn is the owner's: the read itself is pinned
+// in owner-turn.test.ts, so here it is an answer the wiring tests set.
+const turnStartedByOwnerSpy = vi.hoisted(() => vi.fn(() => Promise.resolve(false)));
+vi.mock('../../src/main/automations/turn-end/owner-turn', () => ({
+  turnStartedByOwner: turnStartedByOwnerSpy,
+}));
 
 vi.mock('../../src/main/git/worktree-manager', () => ({
   prepareWorktreeForRemoval: vi.fn(() => Promise.resolve()),
@@ -390,6 +396,8 @@ describe('buildCommandContextForProject - onTaskMove', () => {
       expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
       { moverIsTaskAgent: true, moverSessionId: 'session-own' },
     );
+    // Options with no caller session read no turn and carry no answer.
+    expect(turnStartedByOwnerSpy).not.toHaveBeenCalled();
   });
 
   it('passes no options for a move by anyone else', async () => {
@@ -398,6 +406,53 @@ describe('buildCommandContextForProject - onTaskMove', () => {
     await context!.onTaskMove(MOVE_INPUT);
 
     expect(handleTaskMove).toHaveBeenCalledWith(expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard', undefined);
+    expect(turnStartedByOwnerSpy).not.toHaveBeenCalled();
+  });
+
+  // #1100: an agent's move in a turn the owner started is the owner's for a
+  // row's Frequency. Main decides it from the calling session's turn and
+  // never from anything the agent passed. The read is handed to the move
+  // unawaited, so the move registers at once and awaits it after that.
+  describe('a move in a turn the owner started', () => {
+    /** The read `onTaskMove` handed the move, settled. */
+    async function ownerAnswerHandedToTheMove(): Promise<unknown> {
+      const options = vi.mocked(handleTaskMove).mock.calls[0][5] as { ownerRequested?: Promise<boolean> };
+      expect(options.ownerRequested).toBeInstanceOf(Promise);
+      return options.ownerRequested;
+    }
+
+    it('hands the move the read of the calling session\'s turn, which holds the owner\'s message', async () => {
+      turnStartedByOwnerSpy.mockResolvedValueOnce(true);
+      const ipcContext = makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' }));
+      const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+      await context!.onTaskMove(MOVE_INPUT, { moverIsTaskAgent: true, callerSessionId: 'session-merge' });
+
+      expect(turnStartedByOwnerSpy).toHaveBeenCalledWith(ipcContext.sessionManager, 'session-merge');
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+        { moverIsTaskAgent: true, ownerRequested: expect.any(Promise) },
+      );
+      expect(await ownerAnswerHandedToTheMove()).toBe(true);
+    });
+
+    it('hands the move a false read when the board started the turn', async () => {
+      turnStartedByOwnerSpy.mockResolvedValueOnce(false);
+      const context = buildCommandContextForProject(makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' })), DEFAULT_ID);
+
+      await context!.onTaskMove(MOVE_INPUT, { moverIsTaskAgent: true, callerSessionId: 'session-review' });
+
+      expect(await ownerAnswerHandedToTheMove()).toBe(false);
+    });
+
+    it('calls the move before the read has answered', async () => {
+      turnStartedByOwnerSpy.mockReturnValueOnce(new Promise<boolean>(() => undefined));
+      const context = buildCommandContextForProject(makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' })), DEFAULT_ID);
+
+      await context!.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-slow' });
+
+      expect(handleTaskMove).toHaveBeenCalledTimes(1);
+    });
   });
 
   // A message that follows the move reaches the agent after it lands, so the

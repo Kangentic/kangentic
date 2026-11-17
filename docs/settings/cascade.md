@@ -208,10 +208,11 @@ checked in code at a turn end against the agent's last line, or against the user
 the turn when the row says `from: "user"`, one pattern per line with a leading `!` meaning not,
 needs no Automation agent and makes no call; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
 **Frequency** is the most times it may run on one task, counted across every visit; a row past it
-is skipped. The count starts over when a person moves the task to another column and when the task
-leaves Done, so a task sent back for another pass, or a reopened one, can loop and advance again.
-The board's own moves (an agent's, a Move to column row's, a workflow's) keep the count. Both are
-off on every row unless set, so a board from before them runs as it did.
+is skipped. The count starts over when a person moves the task to another column, when an agent
+moves it in a turn the person started (typed into its session), and when the task leaves Done, so a
+task sent back for another pass, or a reopened one, can loop and advance again. The board's own
+moves (an agent's in a turn the board started, a Move to column row's, a workflow's) keep the count.
+Both are off on every row unless set, so a board from before them runs as it did.
 
 The Code Review loop is two `move_to_column` rows on a review column's On agent turn end: "Back for
 revisions" to Executing with the reviewer's `{{agentReply}}` in its message, behind a Condition and

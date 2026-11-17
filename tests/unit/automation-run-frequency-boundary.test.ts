@@ -15,9 +15,13 @@
  * Testing" had spent its one run on the first pass. A rollback that undoes a
  * failed move into Done is not a return.
  *
- * The board's own moves never start it over (an agent's, an automation's, an
- * auto-move's, a workflow's), so a review loop keeps its round-trip limit and
- * an agent cannot reset its own with `kangentic_move_task`.
+ * The board's own moves never start it over (an automation's, an auto-move's,
+ * a workflow's, and an agent's in a turn the board started), so a review loop
+ * keeps its round-trip limit and an agent cannot reset its own with
+ * `kangentic_move_task`. An agent's move in a turn the owner started is the
+ * owner's (`owner_requested`, #1100): in #1029 the owner answered the Merge
+ * agent, which sent the card back to Executing, and the re-review's "On to
+ * Testing" stopped the card with its one run spent on the first pass.
  *
  * Real better-sqlite3 with the real migrations, and the moves written by the
  * real `TaskRepository`, so the boundary is read from the rows production writes.
@@ -187,7 +191,7 @@ describe('where Frequency starts counting', () => {
 
   describe('a move no person made', () => {
     // Back for revisions keeps its round-trip limit, and an agent's own
-    // `kangentic_move_task` cannot reset it, even when a person asked for it in chat.
+    // `kangentic_move_task` in a turn the board started cannot reset it.
     it.each(['agent', 'automation', 'auto-move', 'workflow', 'rollback'] as const)('keeps the count on a %s move between two columns', (origin) => {
       placeTask(codeReviewLane);
       recordRun('succeeded', EARLIER);
@@ -196,6 +200,72 @@ describe('where Frequency starts counting', () => {
 
       expect(runs.countRuns('row-on-to-testing', TASK_ID)).toBe(1);
       expect(frequencyLimitReason(onToTesting(), runs, TASK_ID)).toBe(SPENT_REASON);
+    });
+  });
+
+  describe('an agent\'s move in a turn the owner started', () => {
+    it('starts over when the owner asked the agent in its session to send the card back (#1029)', () => {
+      placeTask(mergeLane);
+      recordRun('succeeded', EARLIER);
+      expect(frequencyLimitReason(onToTesting(), runs, TASK_ID)).toBe(SPENT_REASON);
+
+      tasks.move({ taskId: TASK_ID, targetSwimlaneId: executingLane.id, targetPosition: 0 }, { origin: 'agent', ownerRequested: true });
+
+      expect(runs.countRuns('row-on-to-testing', TASK_ID)).toBe(0);
+      expect(frequencyLimitReason(onToTesting(), runs, TASK_ID)).toBeNull();
+    });
+
+    it('does not start over on such a row that stayed in its column', () => {
+      placeTask(codeReviewLane);
+      recordRun('succeeded', EARLIER);
+
+      database
+        .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, owner_requested, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run('move-owner-same-column', TASK_ID, codeReviewLane.id, codeReviewLane.id, 'agent', null, 1, '2026-01-02T00:00:00.000Z');
+
+      expect(runs.countRuns('row-on-to-testing', TASK_ID)).toBe(1);
+    });
+
+    it('records the flag only when asked, so a plain agent move reads as the board\'s', () => {
+      placeTask(codeReviewLane);
+      moveTask(executingLane, 'agent');
+      tasks.move({ taskId: TASK_ID, targetSwimlaneId: codeReviewLane.id, targetPosition: 0 }, { origin: 'agent', ownerRequested: true });
+
+      const flags = database
+        .prepare('SELECT owner_requested FROM task_moves WHERE task_id = ? ORDER BY rowid')
+        .all(TASK_ID) as Array<{ owner_requested: number }>;
+      expect(flags.map((row) => row.owner_requested)).toEqual([0, 1]);
+    });
+
+    // The flag means "the agent made it at the owner's request". On any other
+    // origin it would let a board mover reset the round-trip limit, so the
+    // repository writes 0 there whatever the caller passed.
+    it('records no flag on another origin, so the board\'s own move keeps the count', () => {
+      placeTask(codeReviewLane);
+      recordRun('succeeded', EARLIER);
+
+      tasks.move({ taskId: TASK_ID, targetSwimlaneId: executingLane.id, targetPosition: 0 }, { origin: 'automation', ownerRequested: true });
+
+      const flag = database.prepare('SELECT owner_requested FROM task_moves WHERE task_id = ?').get(TASK_ID) as { owner_requested: number };
+      expect(flag.owner_requested).toBe(0);
+      expect(runs.countRuns('row-on-to-testing', TASK_ID)).toBe(1);
+    });
+
+    // A database from before the column: the guarded ALTER adds it once, an
+    // older row reads 0 (the board's move it always counted as), and opening
+    // the project again does not fail on a column that is already there.
+    it('adds the column to an older database once, with 0 on the rows it had', () => {
+      placeTask(codeReviewLane);
+      recordRun('succeeded', EARLIER);
+      database.exec('ALTER TABLE task_moves DROP COLUMN owner_requested');
+      insertMove('move-before-the-column', codeReviewLane, executingLane, 'agent', '2026-01-02T00:00:00.000Z');
+
+      runProjectMigrations(database);
+      expect(() => runProjectMigrations(database)).not.toThrow();
+
+      const flag = database.prepare('SELECT owner_requested FROM task_moves WHERE id = ?').get('move-before-the-column') as { owner_requested: number };
+      expect(flag.owner_requested).toBe(0);
+      expect(runs.countRuns('row-on-to-testing', TASK_ID)).toBe(1);
     });
   });
 

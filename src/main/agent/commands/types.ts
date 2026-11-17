@@ -118,10 +118,13 @@ export interface CommandContext {
    * reach a session that is being suspended or spawned by the move itself.
    * `moverSessionId` names the task's own agent session that asked for the
    * move: a move that ends it lets its turn finish first.
+   * `callerSessionId` names the session that made the call, whatever task it
+   * runs: when its current turn holds a message the owner typed, the move
+   * counts as the owner's for a row's Frequency (`turnStartedByOwner`).
    */
   onTaskMove: (
     input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
-    options?: { message?: string | null; moverIsTaskAgent?: boolean; moverSessionId?: string },
+    options?: { message?: string | null; moverIsTaskAgent?: boolean; moverSessionId?: string; callerSessionId?: string },
   ) => Promise<void>;
   /**
    * The task whose agent made this call (from the MCP request's caller

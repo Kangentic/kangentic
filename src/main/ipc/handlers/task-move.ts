@@ -316,6 +316,23 @@ const MOVE_COMMIT_PUSH_BY_ORIGIN: Record<TaskMoveOrigin, MovePush | null> = {
   workflow: MOVE_PUSH_BY_ORIGIN.workflow,
 };
 
+/**
+ * The owner's-turn read's answer, or false as soon as the move is aborted, so
+ * a newer move never waits on this one's read. Never rejects:
+ * `turnStartedByOwner` reports its own failures and answers false, and a
+ * rejection would only mean the same.
+ */
+function ownerAnswerUnlessAborted(answer: Promise<boolean>, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const onAbort = (): void => resolve(false);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void answer
+      .then(resolve, () => resolve(false))
+      .finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 export async function handleTaskMove(
   context: IpcContext,
   input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
@@ -356,6 +373,12 @@ export async function handleTaskMove(
   // column row's Message, `kangentic_move_task`'s `message`). It usually holds
   // the reply the last column ended on, so a return to the main conversation
   // does not repeat that reply in its recap (`return-recap.ts`).
+  //
+  // `ownerRequested` is the read of whether an `'agent'` move was made in a
+  // turn the owner started (`turnStartedByOwner`). True marks the row, which
+  // starts a Frequency over as a person's move does. Only the MCP move path
+  // passes it, started when the call came in. The move awaits it after it
+  // registers, so a newer move of the task still supersedes this one.
   options?: {
     continuationPrompt?: string;
     onCommitted?: () => void;
@@ -365,6 +388,7 @@ export async function handleTaskMove(
     moverSessionId?: string;
     expectedFromSwimlaneId?: string;
     carriesMessage?: boolean;
+    ownerRequested?: Promise<boolean>;
   },
 ): Promise<void> {
   // A workflow task's lock, asked BEFORE anything below aborts work in flight:
@@ -466,6 +490,20 @@ export async function handleTaskMove(
   let releaseOwnMoveMark: (() => void) | null = null;
   const runMove = async (): Promise<void> => {
   try {
+    // An agent's move waits here, registered and before the lock, for the read
+    // of whether the owner started the turn that made it. Its `task_moves` row
+    // is then whole when the groups it fires count from it. A newer move of the
+    // task aborts this one during the read and goes first, as it would have
+    // had the read taken no time.
+    let ownerRequested = false;
+    if (origin === 'agent' && options?.ownerRequested) {
+      ownerRequested = await ownerAnswerUnlessAborted(options.ownerRequested, signal);
+      if (signal.aborted) {
+        console.log(`[TASK_MOVE] A newer move replaced task ${input.taskId.slice(0, 8)}'s agent move while it read the turn`);
+        return;
+      }
+    }
+
     // === Phase 1 (locked, short) ===
     // All DB mutations and PTY kill/suspend dispatch for priorities 1-3.
     // Returns null when the move is fully handled inside Phase 1 (Priorities
@@ -551,7 +589,11 @@ export async function handleTaskMove(
 
       // Move the task in the database, recording who moved it (the visit
       // boundary turn-end automations count from).
-      tasks.move(input, { origin, reason: options?.moveReason ?? null });
+      tasks.move(input, {
+        origin,
+        reason: options?.moveReason ?? null,
+        ...(ownerRequested ? { ownerRequested: true } : {}),
+      });
 
       // A stop belongs to the visit that just ended, and a session the move
       // keeps gets no turn end to say so.

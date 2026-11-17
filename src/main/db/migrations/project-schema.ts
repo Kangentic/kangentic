@@ -2193,6 +2193,18 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE session_activity_intervals ADD COLUMN reason_kind TEXT DEFAULT NULL');
   }
 
+  // Migration: an agent's move made in a turn the owner started (#1100). The
+  // owner typed into the session and the agent moved the task, so the move
+  // starts a row's Frequency over as a drag would (`countRuns`). Main sets it
+  // from the turn's transcript, never from anything the agent passes. 0 for
+  // every existing row, which is what each of them already counted as.
+  const taskMoveColumns = new Set(
+    (db.pragma('table_info(task_moves)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!taskMoveColumns.has('owner_requested')) {
+    db.exec('ALTER TABLE task_moves ADD COLUMN owner_requested INTEGER NOT NULL DEFAULT 0');
+  }
+
   stripLegacyTextMatchNot(db);
 }
 
