@@ -16,9 +16,10 @@ interface AgentMeta {
   installUrl: string;
   /**
    * Shell command users run to authenticate the CLI, when the adapter
-   * exposes an `authenticated` field on `AgentDetectionInfo`. Renderer
-   * surfaces this as a "Copy" button next to the "Not signed in"
-   * warning. Omit for agents with no in-app auth UX.
+   * exposes an `authenticated` field on `AgentDetectionInfo`. The welcome
+   * screen copies it from a control beside "Not signed in": a button that
+   * shows the command when no agent is ready, otherwise a "Copy login" link.
+   * Omit for agents with no in-app auth UX.
    */
   loginCommand?: string;
 }
