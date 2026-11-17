@@ -410,11 +410,12 @@ jobs:
   # shard prints its own per-test results via the `list` reporter (visible in the
   # shard's job log) - there is NO blob upload or merged-report job, so the run is
   # not gated by a serial merge. Those log lines are also where the timings come
-  # from: `node scripts/ui-shard-timings.mjs <run-id>` rewrites the timings file. Install is the same plain `npm ci` as every other
-  # tier, restored from the one shared node_modules cache (see the inline note on
-  # the cache step). Chromium's system libs already ship on
-  # ubuntu-24.04, so the browser install needs no --with-deps; the binary is
-  # cached. The single required status check is the thin `ui` gate below.
+  # from: `node scripts/ui-shard-timings.mjs <run-id>` rewrites the timings file.
+  # Install is the same plain `npm ci` as every other tier, restored from the one
+  # shared node_modules cache (see the inline note on the cache step). Chromium's
+  # system libs already ship on ubuntu-24.04, so the browser install needs no
+  # --with-deps; the binary is cached. The single required status check is the
+  # thin `ui` gate below.
   playwright-shards:
     name: UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     needs: [tested-tree]
@@ -459,13 +460,6 @@ jobs:
       # required lib is ever missing, Chromium fails to launch - re-add --with-deps.
       - name: Install Playwright Chromium
         run: npx playwright install chromium
-      # --fail-on-flaky-tests: a test that fails and then passes on its CI retry fails the shard.
-      # The project keeps no flaky tests, and before this flag a flake hid inside a green check
-      # until /release scanned the whole run log for it. The retry (retries: 1 in
-      # playwright.config.ts) still runs, so the log says flaky rather than failed and the trace
-      # recorded on that retry is there to de-flake from. The demo and E2E steps pass the same
-      # flag, and so does deploy-demo.yml's smoke. release.yml's poster captures do not, because
-      # their retry is how a slow shot lands. tests/unit/ci-workflow-hygiene.test.ts pins all four.
       # The app the specs load, as a static bundle (dist/ui-bundle). From the Vite dev
       # server every test's boot was one request per source module, 759 of them into
       # a context with no cache, and a three-assertion test took 3.7s. It is the
@@ -482,6 +476,14 @@ jobs:
       # KANGENTIC_UI_BUNDLE=1 has playwright.config.ts serve that bundle where the
       # specs load the app, and start the dev server on a second port for the few
       # specs that need one (tests/ui/dev-server.ts).
+      #
+      # --fail-on-flaky-tests: a test that fails and then passes on its CI retry fails the shard.
+      # The project keeps no flaky tests, and before this flag a flake hid inside a green check
+      # until /release scanned the whole run log for it. The retry (retries: 1 in
+      # playwright.config.ts) still runs, so the log says flaky rather than failed and the trace
+      # recorded on that retry is there to de-flake from. The demo and E2E steps pass the same
+      # flag, and so does deploy-demo.yml's smoke. release.yml's poster captures do not, because
+      # their retry is how a slow shot lands. tests/unit/ci-workflow-hygiene.test.ts pins all four.
       - name: Run UI tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
         env:
           KANGENTIC_UI_BUNDLE: '1'
