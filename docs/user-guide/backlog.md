@@ -71,12 +71,12 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
 - **Azure DevOps:** The `az` CLI must be installed, authenticated (`az login`), and the azure-devops extension installed (`az extension add --name azure-devops`).
 - **Asana:** a Personal Access Token, created at `app.asana.com/0/my-apps`. The first time you pick Asana, a setup dialog asks for it, checks it against Asana, and stores it encrypted on this machine.
-- **Linear:** the first time you pick Linear, **Connect Linear** offers two ways in. **Sign in with
-  Linear** opens Linear's approval page in your browser; approve Kangentic and the dialog closes.
-  **Use a personal API key** takes a key you create in Linear under Settings > Account > Security &
-  Access (Read access is enough). Either way Kangentic checks it against Linear and stores it
-  encrypted on this machine. A browser sign-in renews itself, but after 30 days without an import
-  Linear asks you to sign in again.
+- **Linear:** the first time you pick Linear, **Connect Linear** asks for a personal API key. Create
+  one in Linear under Settings > Account > Security & Access (Read access is enough), paste it, and
+  Kangentic checks it against Linear and stores it encrypted on this machine. A build that carries a
+  Linear OAuth client id also offers **Sign in with Linear** beside the key: it opens Linear's
+  approval page in your browser, and approving Kangentic closes the dialog. A browser sign-in renews
+  itself, but after 30 days without an import Linear asks you to sign in again.
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
