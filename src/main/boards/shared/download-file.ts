@@ -24,6 +24,21 @@ export function mediaTypeFromFilename(filename: string): string {
   return mimeTypes[extension ?? ''] ?? 'application/octet-stream';
 }
 
+/**
+ * Whether a redirect may carry the request's Authorization header: only to the
+ * same scheme and host. Another host would hand the sign-in to another service,
+ * and an https to http hop on the same host would send it in the clear.
+ */
+export function redirectKeepsSignIn(fromUrl: string, toUrl: string): boolean {
+  try {
+    const from = new URL(fromUrl);
+    const to = new URL(toUrl);
+    return from.protocol === to.protocol && from.host === to.host;
+  } catch { // report-ok: a redirect target that does not parse is treated as another origin, so the sign-in is dropped
+    return false;
+  }
+}
+
 /** Download a file from a URL, returning base64 data. Returns null if too large or failed. */
 export async function downloadFile(
   url: string,
@@ -46,19 +61,11 @@ export async function downloadFile(
         }
         const redirectUrl = response.headers.location;
         let redirectOptions = options;
-        if (options?.headers && redirectUrl.startsWith('http')) {
-          try {
-            const originalHost = new URL(url).host;
-            const redirectHost = new URL(redirectUrl).host;
-            if (originalHost !== redirectHost) {
-              const filteredHeaders = Object.fromEntries(
-                Object.entries(options.headers).filter(([key]) => key.toLowerCase() !== 'authorization'),
-              );
-              redirectOptions = { headers: Object.keys(filteredHeaders).length > 0 ? filteredHeaders : undefined };
-            }
-          } catch {
-            /* keep original options on URL parse failure */
-          }
+        if (options?.headers && !redirectKeepsSignIn(url, redirectUrl)) {
+          const filteredHeaders = Object.fromEntries(
+            Object.entries(options.headers).filter(([key]) => key.toLowerCase() !== 'authorization'),
+          );
+          redirectOptions = { headers: Object.keys(filteredHeaders).length > 0 ? filteredHeaders : undefined };
         }
         downloadFile(redirectUrl, filename, redirectOptions, remainingRedirects - 1).then(resolve).catch(() => resolve(null));
         return;
