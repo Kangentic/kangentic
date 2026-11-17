@@ -123,7 +123,7 @@ under `src/` calls it; `tests/unit/boards-auth.test.ts` fails if anything does.
   when no encryption is available). Credentials older builds wrote through the sync API read
   through the async one. `decryptSecret` reports when a blob should be written again: a key
   rotation, or plaintext once genuine encryption exists.
-- The Asana, Jira and Linear stores and the mobile bridge identity all store their secret through
+- The Asana, Jira, Linear and Trello stores and the mobile bridge identity all store their secret through
   `shared/encrypted-secret-file.ts` (`readEncryptedSecretFile`, `writeEncryptedSecretFile`,
   `rewriteEncryptedSecretFile`). The read reports `shouldRewrite`, and each store calls the rewrite
   on load when it is set; the identity also requires `isGenuineEncryptionAvailable()` first, the
@@ -278,7 +278,11 @@ state replaces the paste and the dialog's two choices stay the same.
 
 Connect checks the key and token through `/members/me/boards` before saving. That call does not
 count against Trello's separate `/members` limit of 100 requests per 15 minutes, and its 401 text
-(`invalid key`, `invalid token`) is shown under the field it blames. The registry's adapter keeps
+(`invalid key`, `invalid token`) is shown under the field it blames. A stored token is cleared only
+when Trello says it is dead (`invalid token`, `invalid key`, `expired token`); any other 401, such as
+a board the token cannot read, keeps it. In the board picker, only that kind of refusal reopens
+Connect. A rate limit, an outage or an answer that is not JSON shows in the picker instead, so a
+token that still works is never sent back through Connect. The registry's adapter keeps
 one `TrelloClient` for the app's life, so the credential store bumps a version on every save and
 clear, and a client holding an older credential reloads it.
 
