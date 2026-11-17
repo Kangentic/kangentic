@@ -50,8 +50,10 @@ export interface TurnCompletionOptions {
   /**
    * Also count a turn the agent ended whose session only background work it
    * left keeps thinking (`SessionManager.isTurnHeldByBackgroundWork`): its
-   * agent sits at its prompt. Only a running workflow asks for it, in its
-   * turn-end pass and its recovery nudge; every other caller waits for idle.
+   * agent sits at its prompt. A running workflow asks for it, in its turn-end
+   * pass and its recovery nudge, and so does the paste of held messages a
+   * task's opening resume set aside (`registerHeldMessageFlush`). Every other
+   * caller waits for idle.
    */
   acceptHeld?: boolean;
   /**

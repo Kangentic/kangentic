@@ -656,7 +656,74 @@ describe('the session listeners of registerHeldMessageFlush', () => {
       sessionManager.emit('turn-ended', { sessionId: 'session-next', taskId: TASK_ID, projectId: PROJECT_ID });
 
       expect(mockPaste).toHaveBeenCalledTimes(1);
+      // An idle turn end: the paste waits for idle, as every other flush does.
+      expect(mockPaste.mock.calls[0][1].acceptHeld).toBeFalsy();
       unsubscribe();
+    });
+
+    // An agent running background shells ends every turn held, and the drain can
+    // be hours and many turns away. Waiting for it held a week-old note through a
+    // whole session and pasted it into the user's reply slot.
+    it('pastes at a turn end held by background shells, accepting the held turn', () => {
+      const { context, sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('turn-ended-held', { sessionId: 'session-next', taskId: TASK_ID, projectId: PROJECT_ID });
+
+      expect(mockPaste).toHaveBeenCalledTimes(1);
+      expect(mockPaste).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ sessionId: 'session-next', message: 'first', acceptHeld: true }),
+      );
+      unsubscribe();
+    });
+
+    it('pastes once across a held turn end and the drain that follows it', () => {
+      const { sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('turn-ended-held', { sessionId: 'session-next', taskId: TASK_ID, projectId: PROJECT_ID });
+      sessionManager.emit('turn-ended', { sessionId: 'session-next', taskId: TASK_ID, projectId: PROJECT_ID, heldReported: true });
+
+      expect(mockPaste).toHaveBeenCalledTimes(1);
+      unsubscribe();
+    });
+
+    it('pastes nothing for another session\'s held turn end', () => {
+      const { sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('turn-ended-held', { sessionId: 'session-other', taskId: TASK_ID, projectId: PROJECT_ID });
+
+      expect(mockPaste).not.toHaveBeenCalled();
+      expect(statuses()).toEqual(['held']);
+      unsubscribe();
+    });
+
+    // Only a session whose opening resumed it is owed a paste at a held turn end.
+    // If an ordinary session's held turn end flushed too, a note held for later
+    // would land in the reply slot of a user mid-conversation.
+    it('pastes nothing at a held turn end of a session that was not deferred', () => {
+      const { context, sessionManager } = makeContext({ id: 'session-next', status: 'running', writable: true });
+      const unsubscribe = registerHeldMessageFlush(context);
+      sessionManager.emit('session-changed', 'session-next', sessionChange());
+      vi.advanceTimersByTime(1_000);
+      // The ordinary first-running flush took the row held in beforeEach.
+      expect(mockPaste).toHaveBeenCalledTimes(1);
+      mockPaste.mockClear();
+      // Hold a new row through a context with no live agent, so it stays unclaimed.
+      holdTaskMessage(makeContext().context, { projectId: PROJECT_ID, taskId: TASK_ID, message: 'second' });
+
+      sessionManager.emit('turn-ended-held', { sessionId: 'session-next', taskId: TASK_ID, projectId: PROJECT_ID });
+
+      expect(mockPaste).not.toHaveBeenCalled();
+      unsubscribe();
+    });
+
+    it('stops listening for held turn ends once unsubscribed', () => {
+      const { sessionManager, unsubscribe } = resumedByOpening();
+      unsubscribe();
+
+      sessionManager.emit('turn-ended-held', { sessionId: 'session-next', taskId: TASK_ID, projectId: PROJECT_ID });
+
+      expect(mockPaste).not.toHaveBeenCalled();
     });
 
     // A resumed Claude reloads its context with no hook, the status heartbeat reads

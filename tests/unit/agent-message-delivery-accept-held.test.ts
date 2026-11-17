@@ -1,7 +1,8 @@
 /**
  * `acceptHeld` reaches the paste path's turn wait: `deliverAgentMessageAndWait`
- * hands it to `waitForTurnCompletion`, and `deliverMessageToSession` forwards it
- * into `deliverAgentMessageAndWait`. The turn wait is mocked; only the options
+ * hands it to `waitForTurnCompletion`, `deliverMessageToSession` forwards it
+ * into `deliverAgentMessageAndWait`, and `pasteAgentMessageInBackground` hands
+ * it to its own turn wait. The turn wait is mocked; only the options
  * it receives are asserted.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -19,7 +20,8 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({ SessionRep
 vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({ resolveInjectionVerifier: () => null }));
 vi.mock('../../src/main/held-messages/held-messages', () => ({ holdTaskMessage: vi.fn() }));
 
-import { deliverAgentMessageAndWait } from '../../src/main/automations/turn-end/agent-message-delivery';
+import { deliverAgentMessageAndWait, pasteAgentMessageInBackground } from '../../src/main/automations/turn-end/agent-message-delivery';
+import type { InjectionReport } from '../../src/main/transition-engine/terminal-submit-scheduler';
 import { deliverMessageToSession } from '../../src/main/automations/turn-end/deliver-message';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
@@ -88,6 +90,35 @@ describe('acceptHeld on the paste path', () => {
     });
     expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(1);
     expect(lastTurnWaitOptions().acceptHeld).toBe(true);
+  });
+
+  // The release of held messages at a held turn end (`registerHeldMessageFlush`)
+  // pastes through this path; without the option it would wait for the drain.
+  it.each([
+    ['passes acceptHeld true to the turn wait when asked', { acceptHeld: true }, true],
+    ['leaves acceptHeld unset by default', {}, undefined],
+  ])('pasteAgentMessageInBackground %s', async (_label, options, expected) => {
+    const context = {
+      sessionManager: {
+        getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+        awaitInputReady: vi.fn(async () => true),
+      },
+      terminalSubmit: { submitContent: vi.fn(async () => undefined) },
+      terminalSubmitScheduler: { hasPending: vi.fn(() => false) },
+    } as unknown as IpcContext;
+    const report = await new Promise<InjectionReport>((resolve) => {
+      pasteAgentMessageInBackground(context, {
+        taskId: TASK_ID,
+        sessionId: SESSION_ID,
+        message: MULTI_LINE,
+        onOutcome: resolve,
+        ...options,
+      });
+    });
+
+    expect(report.outcome).toBe('unconfirmed');
+    expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(1);
+    expect(lastTurnWaitOptions().acceptHeld).toBe(expected);
   });
 
   it('deliverMessageToSession leaves acceptHeld unset when not given', async () => {

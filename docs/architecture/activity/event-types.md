@@ -151,8 +151,10 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   once per `workSerial` (`heldTurnEndSerial`), and `SessionManager` emits `'turn-ended-held'`. Its
   `transcriptAnchor` is read, not taken, so the drain's turn end still has it. A hung command never
   drains: a `python -` left on an empty stdin held one finished workflow task nearly nine hours,
-  and its exit line was never read. Only a running workflow's step acts on it (see
-  [Workflow engine](../workflows/workflow-engine.md)). The drain's
+  and its exit line was never read. A running workflow's step acts on it (see
+  [Workflow engine](../workflows/workflow-engine.md)), and so does the held-message release: a
+  plain idle resume's held messages are pasted on it, accepting the held turn (see
+  [Resume on open](../sessions/resume.md#resume-on-open)). The drain's
   `onTurnEnded` still fires, with `heldReported: true` (`TurnEndedPayload.heldReported`), so a
   consumer that acted on the held end does not act again. A Stop at the same serial (a wake that
   reported no new work) reports nothing more. A background job's notification that reaches an

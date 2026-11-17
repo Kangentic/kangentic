@@ -36,8 +36,8 @@ which also brings agents back after a pty host loss (`resumeSuspendedSessions`),
 background commands it started, so its recovery starts over at once (see
 [Workflow engine](../workflows/workflow-engine.md)).
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, or as
-`'turn-ended-held'` when a running workflow task's Stop is held by background work, both separate
-events from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
+`'turn-ended-held'` when the agent's Stop is held by background work (a running workflow task's step
+and a plain idle resume's held messages both act on it), both separate events from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
 
 ## Resume on open
 
@@ -81,7 +81,8 @@ the card keeps its Resume button after a brief "Resuming" label. The engine can 
 the git phase and the CLI checks, so `resumeTaskOnOpen` remembers the record in memory and later
 opens of the card end at the first read. Held messages wait for the agent to end a turn
 (`deferHeldUntilTurnEnd`): the flush that follows any other start would paste them and spend a paid
-turn. The mark clears on `'turn-ended'`, the agent's own Stop, and never on an activity edge: Claude
+turn. The mark clears on the agent's own Stop, `'turn-ended'` or a turn end held by background
+shells (`'turn-ended-held'`, whose paste accepts the held turn), and never on an activity edge: Claude
 reloads its context on a resume with no hook, the status heartbeat reads that as thinking, and a
 watchdog idles it with no turn run. If no turn ends they stay held for the next start, which is also
 where an agent that reports no Stop leaves them. A task in a running workflow is the one way a turn

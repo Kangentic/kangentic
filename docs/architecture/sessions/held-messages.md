@@ -120,9 +120,14 @@ Two places build an opening message, and only they claim held messages (pinned b
   composes them with the prompt the Resume carries, or makes them a plain Resume's whole opening
   message.
 - **A plain idle resume** (opening a task the idle timeout paused, see
-  [Resume on open](resume.md#resume-on-open)) claims none. They wait for the agent's own
-  `'turn-ended'` (`deferHeldUntilTurnEnd`), since a flush would paste them into a turn the user did
-  not start. An activity edge never clears the mark.
+  [Resume on open](resume.md#resume-on-open)) claims none. They wait for the agent's own turn end
+  (`deferHeldUntilTurnEnd`), since a flush would paste them into a turn the user did not start. An
+  activity edge never clears the mark. A turn end held by background shells (`'turn-ended-held'`)
+  clears it as `'turn-ended'` does, and that paste accepts the held turn (`acceptHeld`). The agent's
+  Stop landed and it takes input. The drain can be hours away. Waiting for the drain once held
+  a week-old Stop script note through a whole session and pasted it into the user's reply slot. The
+  turn wait reads the hold again on every check, so a turn a finishing shell wakes moves the work
+  serial and the paste waits for that turn's end.
 
 Every other start, and a message held while a start was already under way, gets them from
 **`registerHeldMessageFlush`**: on a task session's first `running` status (a direct spawn, a

@@ -98,4 +98,27 @@ describe('waitForTurnCompletion acceptHeld', () => {
     await flush();
     await expect(promise).resolves.toBe('completed');
   });
+
+  // A background shell that finishes can wake the agent into a turn of its own.
+  // That turn moves the work serial, so the session is no longer held, and a
+  // held message must wait for that turn's end rather than land inside it.
+  it('does not complete when a woken turn ends the hold inside the quiet window', async () => {
+    let result: string | null = null;
+    const promise = wait({ acceptHeld: true }).then((value) => {
+      result = value;
+      return value;
+    });
+    vi.advanceTimersByTime(600);
+    sessionManager.held = false;
+    sessionManager.emit('output-seen', SESSION_ID);
+    vi.advanceTimersByTime(QUIET_MS * 5);
+    await flush();
+    expect(result).toBeNull();
+
+    // The woken turn ends idle, and the wait completes once the screen is quiet.
+    sessionManager.emit('activity', SESSION_ID, 'idle');
+    vi.advanceTimersByTime(QUIET_MS + 100);
+    await flush();
+    await expect(promise).resolves.toBe('completed');
+  });
 });

@@ -603,6 +603,7 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
       holdMessage: (_target, message) => { held.push(message); },
       reportFailure: () => {},
       wait: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+      now: () => new Date(),
     };
     const target = { projectId: 'proj-1', projectPath: scratch.project, taskId: TASK_ID };
 
@@ -619,7 +620,7 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(await waitUntilDead([serverPid])).toEqual([]);
     expect(fs.realpathSync.native(fs.readFileSync(path.join(scratch.worktree, 'ran-here.txt'), 'utf8'))).toBe(fs.realpathSync.native(scratch.worktree));
     expect(held).toHaveLength(1);
-    expect(held[0]).toContain("The project's Stop script stopped what this task left running");
+    expect(held[0]).toContain("the project's Stop script stopped what this task left running");
     expect(held[0]).toContain('node');
   }, 60_000);
 

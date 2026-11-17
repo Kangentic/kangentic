@@ -41,7 +41,9 @@ import { isExpiredRecapSession } from '../automations/turn-end/recap-turns';
  * start was already under way go out through `flushHeldIfLive`, pasted once
  * the agent's first turn settles. The resume a task's opening makes claims none
  * and waits for the agent to end a turn (`deferHeldUntilTurnEnd`), so opening a
- * task never spends a turn on them.
+ * task never spends a turn on them. A turn end held by background shells counts.
+ * The agent's Stop landed and it sits at its prompt. A drain can be hours and
+ * many turns away.
  *
  * Clearing: a move to Done or To Do (`clearHeldMessages`, in the move's commit
  * block), and a delete, Backlog demote or move to another project, which take
@@ -461,12 +463,21 @@ export function clearHeldMessages(projectId: string, taskId: string): void {
  * recap: the messages wait for the next start, as the column's do. Nor for one
  * a task's opening resumed, until its agent ends a turn (`deferHeldUntilTurnEnd`).
  *
+ * `acceptHeld` lets the paste land on a turn held only by the background work
+ * its agent left (`SessionManager.isTurnHeldByBackgroundWork`). Only the release
+ * at a held turn end passes it; every other flush waits for idle.
+ *
  * A release from this delivery never flushes again, so a paste that keeps
  * failing cannot loop. It never throws: its callers are a hold that already
  * wrote its row and the `finally` blocks of the starts, where a throw would
  * replace the start's own error. What it cannot hand over stays held.
  */
-export function flushHeldIfLive(context: IpcContext, projectId: string, taskId: string): void {
+export function flushHeldIfLive(
+  context: IpcContext,
+  projectId: string,
+  taskId: string,
+  options: { acceptHeld?: boolean } = {},
+): void {
   let taken: HeldClaim | null = null;
   try {
     const session = context.sessionManager.findLiveSessionByTaskId(taskId);
@@ -482,6 +493,7 @@ export function flushHeldIfLive(context: IpcContext, projectId: string, taskId: 
       sessionId: session.id,
       message: claim.text,
       onOutcome: (report) => settleClaimFromReport(claim, report, { flushOnRelease: false }),
+      acceptHeld: options.acceptHeld,
     });
   } catch (error) {
     // A claim the paste never took goes back on hold (a no-op if it settled).
@@ -493,8 +505,10 @@ export function flushHeldIfLive(context: IpcContext, projectId: string, taskId: 
 /**
  * Keep held messages off this session until its agent ends a turn. Opening a
  * task resumes its agent with nothing to do, and `flushHeldIfLive` would spend a
- * paid turn on messages the user never asked to send now. If no turn comes they
- * stay held for the next start. In memory only: a restart loses the mark and
+ * paid turn on messages the user never asked to send now. The mark clears at the
+ * agent's next turn end, `'turn-ended'` or a turn end held by background shells
+ * (`'turn-ended-held'`), and the messages go then. If no turn comes they stay
+ * held for the next start. In memory only: a restart loses the mark and
  * nothing else, since the session is gone with it.
  */
 export function deferHeldUntilTurnEnd(sessionId: string): void {
@@ -563,14 +577,25 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
   const onTurnEnded = ({ sessionId, taskId, projectId }: TurnEndedPayload): void => {
     if (deferredToTurnEnd.delete(sessionId)) flushHeldIfLive(context, projectId, taskId);
   };
+  // A Stop with background shells still running: the turn is over and the agent
+  // sits at its prompt and takes input (`SessionManager.isTurnHeldByBackgroundWork`).
+  // Waiting for the drain held a week-old note through a whole session and
+  // pasted it into the user's reply slot. The paste accepts the held turn, and
+  // only while it is still the turn that ended. The drain's own turn end then
+  // finds no mark.
+  const onTurnEndedHeld = ({ sessionId, taskId, projectId }: TurnEndedPayload): void => {
+    if (deferredToTurnEnd.delete(sessionId)) flushHeldIfLive(context, projectId, taskId, { acceptHeld: true });
+  };
   context.sessionManager.on('agent-ran', onAgentRan);
   context.sessionManager.on('turn-ended', onTurnEnded);
+  context.sessionManager.on('turn-ended-held', onTurnEndedHeld);
   context.sessionManager.on('session-changed', onSessionChanged);
   context.sessionManager.on('session-removed', onSessionGone);
   context.sessionManager.on('exit', onSessionGone);
   return () => {
     context.sessionManager.off('agent-ran', onAgentRan);
     context.sessionManager.off('turn-ended', onTurnEnded);
+    context.sessionManager.off('turn-ended-held', onTurnEndedHeld);
     context.sessionManager.off('session-changed', onSessionChanged);
     context.sessionManager.off('session-removed', onSessionGone);
     context.sessionManager.off('exit', onSessionGone);

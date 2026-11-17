@@ -80,18 +80,27 @@ export interface ParkedStopDeps {
   holdMessage: (target: ParkedStopTarget, message: string) => void;
   reportFailure: (target: ParkedStopTarget, taskTitle: string, failure: StopScriptFailure) => void;
   wait: (milliseconds: number) => Promise<void>;
+  now: () => Date;
 }
 
 /**
  * What the next agent reads. It goes in verbatim, with no heading or sender, as
  * every held message does: an attribution prefix made a receiving agent read one
  * as an injection and refuse it.
+ *
+ * It names when the stop happened. A held message waits for the task's next
+ * agent, which can be a week away, and with no date the note read as news to an
+ * agent that had restarted the stack itself since. The date is fixed in the
+ * text when the script ends, because held text is delivered as written. It is
+ * UTC, from `toISOString`, so the text is the same on every machine.
  */
-export function stoppedProcessesMessage(labels: readonly string[]): string {
+export function stoppedProcessesMessage(labels: readonly string[], stoppedAt: Date): string {
   const named = labels.slice(0, MAX_NAMED_PROCESSES).join(', ');
   const rest = labels.length - MAX_NAMED_PROCESSES;
   const list = rest > 0 ? `${named} and ${rest} more` : named;
-  return `The project's Stop script stopped what this task left running while it was paused: ${list}. Start them again if you need them.`;
+  const isoTimestamp = stoppedAt.toISOString();
+  const when = `${isoTimestamp.slice(0, 10)} at ${isoTimestamp.slice(11, 16)} UTC`;
+  return `On ${when}, the project's Stop script stopped what this task left running while it was paused: ${list}. Start them again if you need them.`;
 }
 
 function sameProcess(left: ProbedProcess, right: ProbedProcess): boolean {
@@ -123,6 +132,7 @@ export async function stopParkedTask(deps: ParkedStopDeps, target: ParkedStopTar
   if (!deps.parkedTask(target)) return 'not-paused';
   if (deps.isShuttingDown()) return 'skipped';
   const outcome = await deps.runScript(target.taskId, script, cwd);
+  const stoppedAt = deps.now();
   if (outcome.status === 'failed') {
     deps.reportFailure(target, parked.title, outcome.failure);
     return 'failed';
@@ -140,6 +150,6 @@ export async function stopParkedTask(deps: ParkedStopDeps, target: ParkedStopTar
     console.warn(`[STOP-SCRIPT] task ${target.taskId.slice(0, 8)}: the script exited clean and stopped nothing it could see`);
     return 'no-effect';
   }
-  deps.holdMessage(target, stoppedProcessesMessage(ended.map((probed) => probed.label)));
+  deps.holdMessage(target, stoppedProcessesMessage(ended.map((probed) => probed.label), stoppedAt));
   return 'stopped';
 }
