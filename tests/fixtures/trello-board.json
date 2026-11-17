@@ -1,0 +1,137 @@
+{
+  "lists": [
+    { "id": "6730a0000000000000000003", "name": "Doing", "closed": false, "pos": 3000 },
+    { "id": "6730a0000000000000000001", "name": "Backlog", "closed": false, "pos": 1000 },
+    { "id": "6730a0000000000000000002", "name": "To Do", "closed": false, "pos": 2000 },
+    { "id": "6730a0000000000000000004", "name": "Done", "closed": false, "pos": 4000 },
+    { "id": "6730a0000000000000000005", "name": "Old ideas", "closed": true, "pos": 500 }
+  ],
+  "cards": [
+    {
+      "id": "6731f2a00000000000000101",
+      "name": "Invite emails land in spam for Outlook users",
+      "desc": "Outlook sends our invite emails to Junk. Add SPF and DKIM records for the sending domain.",
+      "closed": false,
+      "idList": "6730a0000000000000000002",
+      "idShort": 138,
+      "shortUrl": "https://trello.com/c/Xk92LmQa",
+      "labels": [
+        { "id": "6730b0000000000000000001", "name": "bug", "color": "red" },
+        { "id": "6730b0000000000000000002", "name": "", "color": "green" },
+        { "id": "6730b0000000000000000003", "name": "", "color": null },
+        { "id": "6730b0000000000000000004", "name": "email", "color": null }
+      ],
+      "due": "2026-11-28T17:00:00.000Z",
+      "dueComplete": false,
+      "start": "2026-11-18T09:00:00.000Z",
+      "dateLastActivity": "2026-11-16T12:00:00.000Z",
+      "checklists": [
+        {
+          "id": "6730c0000000000000000001",
+          "name": "Done when",
+          "pos": 1,
+          "checkItems": [
+            { "id": "6730d0000000000000000002", "name": "DKIM key published", "state": "incomplete", "pos": 2 },
+            { "id": "6730d0000000000000000001", "name": "SPF record added", "state": "complete", "pos": 1 }
+          ]
+        }
+      ],
+      "members": [
+        { "id": "6730e0000000000000000001", "fullName": "Sam Lee", "username": "sam" },
+        { "id": "6730e0000000000000000002", "fullName": "Dana Ruiz", "username": "dana" }
+      ],
+      "attachments": [
+        {
+          "id": "6730f0000000000000000001",
+          "name": "headers.txt",
+          "url": "https://trello.com/1/cards/6731f2a00000000000000101/attachments/6730f0000000000000000001/download/headers.txt",
+          "bytes": 1200,
+          "isUpload": true
+        },
+        {
+          "id": "6730f0000000000000000002",
+          "name": "PR 412",
+          "url": "https://github.com/acme/web/pull/412",
+          "bytes": null,
+          "isUpload": false
+        }
+      ]
+    },
+    {
+      "id": "6731f2a00000000000000102",
+      "name": "Archived card on an open list",
+      "desc": "",
+      "closed": true,
+      "idList": "6730a0000000000000000003",
+      "idShort": 99,
+      "shortUrl": "https://trello.com/c/Ab12Cd34",
+      "labels": [],
+      "due": null,
+      "dueComplete": false,
+      "start": null,
+      "dateLastActivity": "2026-10-01T00:00:00.000Z",
+      "checklists": [],
+      "members": [],
+      "attachments": []
+    },
+    {
+      "id": "6731f2a00000000000000103",
+      "name": "Card on an archived list",
+      "desc": "",
+      "closed": false,
+      "idList": "6730a0000000000000000005",
+      "idShort": 12,
+      "shortUrl": "https://trello.com/c/Ef56Gh78",
+      "labels": [],
+      "due": null,
+      "dueComplete": false,
+      "start": null,
+      "dateLastActivity": "2026-09-01T00:00:00.000Z",
+      "checklists": [],
+      "members": [],
+      "attachments": []
+    },
+    {
+      "id": "6731f2a00000000000000104",
+      "name": "Shipped on a Done list",
+      "desc": "",
+      "closed": false,
+      "idList": "6730a0000000000000000004",
+      "idShort": 140,
+      "shortUrl": "https://trello.com/c/Ij90Kl12",
+      "labels": [],
+      "due": null,
+      "dueComplete": true,
+      "start": null,
+      "dateLastActivity": "2026-11-10T00:00:00.000Z",
+      "checklists": [],
+      "members": [],
+      "attachments": []
+    },
+    {
+      "id": "6731f2a00000000000000105",
+      "name": "Card with a pasted screenshot",
+      "desc": "The banner overlaps the menu:\n\n![screenshot.png](https://trello.com/1/cards/6731f2a00000000000000105/attachments/6730f0000000000000000003/download/screenshot.png)",
+      "closed": false,
+      "idList": "6730a0000000000000000001",
+      "idShort": 141,
+      "shortUrl": "https://trello.com/c/Mn34Op56",
+      "labels": [],
+      "due": null,
+      "dueComplete": false,
+      "start": null,
+      "dateLastActivity": "2026-11-15T00:00:00.000Z",
+      "checklists": [],
+      "members": [],
+      "attachments": [
+        {
+          "id": "6730f0000000000000000003",
+          "name": "screenshot.png",
+          "url": "https://trello.com/1/cards/6731f2a00000000000000105/attachments/6730f0000000000000000003/download/screenshot.png",
+          "bytes": 48000,
+          "isUpload": true
+        }
+      ]
+    }
+  ]
+}

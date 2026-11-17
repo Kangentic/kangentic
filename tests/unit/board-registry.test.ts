@@ -78,7 +78,7 @@ describe('boardRegistry', () => {
     }
   });
 
-  it('stable providers report status: stable (Asana is stable - its config is runtime, not build-time)', () => {
+  it('stable providers report status: stable (Asana, Jira, Linear and Trello are stable - their config is runtime, not build-time)', () => {
     expect(boardRegistry.getOrThrow('github_issues').status).toBe('stable');
     expect(boardRegistry.getOrThrow('github_projects').status).toBe('stable');
     expect(boardRegistry.getOrThrow('azure_devops').status).toBe('stable');
@@ -87,24 +87,11 @@ describe('boardRegistry', () => {
     expect(boardRegistry.getOrThrow('linear').status).toBe('stable');
     expect(boardRegistry.getOrThrow('obsidian_notes').status).toBe('stable');
     expect(boardRegistry.getOrThrow('obsidian_checklist').status).toBe('stable');
-  });
-
-  it('the remaining placeholder provider is status: stub', () => {
-    expect(boardRegistry.getOrThrow('trello').status).toBe('stub');
+    expect(boardRegistry.getOrThrow('trello').status).toBe('stable');
   });
 
   it('getOrThrow throws for unknown provider id', () => {
     expect(() => boardRegistry.getOrThrow('unknown' as ExternalSource)).toThrow();
-  });
-
-  it('stub adapters return an unauthenticated checkCli result instead of throwing', async () => {
-    for (const id of ['trello'] as const) {
-      const adapter = boardRegistry.getOrThrow(id);
-      const result = await adapter.checkCli();
-      expect(result.available).toBe(false);
-      expect(result.authenticated).toBe(false);
-      expect(result.error).toContain('not yet implemented');
-    }
   });
 
   it('asana reports not-connected via checkCli when no PAT is stored (not a stub)', async () => {
@@ -126,14 +113,12 @@ describe('boardRegistry', () => {
     expect(result.error).toMatch(/not connected to linear/i);
   });
 
-  it('stub adapter fetch() throws not-implemented', async () => {
+  it('trello reports not-connected via checkCli when no token is stored (not a stub)', async () => {
     const adapter = boardRegistry.getOrThrow('trello');
-    await expect(
-      adapter.fetch(
-        { source: 'trello', repository: 'board', page: 1, perPage: 10 },
-        () => new Set<string>(),
-      ),
-    ).rejects.toThrow(/not yet implemented/);
+    const result = await adapter.checkCli();
+    expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.error).toContain('Connect Trello');
   });
 });
 
@@ -174,16 +159,13 @@ describe('boardRegistry.requireStable()', () => {
     expect(adapter.status).toBe('stable');
   });
 
-  it('throws for trello (stub) with displayName in the message', () => {
-    const trelloAdapter = boardRegistry.getOrThrow('trello');
-    expect(() => boardRegistry.requireStable('trello')).toThrow(trelloAdapter.displayName);
+  it('returns the adapter for trello (runtime-configured, not a stub)', () => {
+    const adapter = boardRegistry.requireStable('trello');
+    expect(adapter.id).toBe('trello');
+    expect(adapter.status).toBe('stable');
   });
 
   it('throws for an unknown source id (falls through to getOrThrow)', () => {
     expect(() => boardRegistry.requireStable('unknown' as ExternalSource)).toThrow();
-  });
-
-  it('error message for stub adapters mentions not yet implemented', () => {
-    expect(() => boardRegistry.requireStable('trello')).toThrow(/not yet implemented/);
   });
 });
