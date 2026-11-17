@@ -157,4 +157,58 @@ describe('loadJiraCredentials', () => {
     expect(Object.keys(loaded)).toEqual(['https://good.example.net']);
     expect(loaded['https://good.example.net']).toEqual(valid);
   });
+
+  function oauthCredentialFor(site: string): JiraSiteCredential {
+    return {
+      ...credentialFor(site, 'access-token'),
+      method: 'oauth',
+      email: undefined,
+      refreshToken: 'refresh-token',
+      expiresAt: '2026-11-17T13:00:00.000Z',
+      cloudId: 'cloud-123',
+      viaGateway: true,
+    };
+  }
+
+  it('saves a browser sign-in and loads it back with its refresh token and expiry', async () => {
+    const oauth = oauthCredentialFor('https://one.example.net');
+    await saveJiraCredential(oauth);
+
+    const loaded = await loadJiraCredentials();
+    expect(loaded['https://one.example.net']).toMatchObject({
+      method: 'oauth',
+      refreshToken: 'refresh-token',
+      expiresAt: '2026-11-17T13:00:00.000Z',
+      cloudId: 'cloud-123',
+    });
+  });
+
+  it('drops a browser sign-in missing its refresh token, expiry or site id, keeping a valid sibling', async () => {
+    const valid = oauthCredentialFor('https://good.example.net');
+    const withoutRefreshToken: Partial<JiraSiteCredential> = oauthCredentialFor('https://no-refresh.example.net');
+    delete withoutRefreshToken.refreshToken;
+    const withoutExpiry: Partial<JiraSiteCredential> = oauthCredentialFor('https://no-expiry.example.net');
+    delete withoutExpiry.expiresAt;
+    const withoutCloudId: Partial<JiraSiteCredential> = oauthCredentialFor('https://no-cloud.example.net');
+    delete withoutCloudId.cloudId;
+    const stored = {
+      sites: {
+        'https://good.example.net': valid,
+        'https://no-refresh.example.net': withoutRefreshToken,
+        'https://no-expiry.example.net': withoutExpiry,
+        'https://no-cloud.example.net': withoutCloudId,
+        'https://empty-refresh.example.net': { ...oauthCredentialFor('https://empty-refresh.example.net'), refreshToken: '' },
+        'https://empty-cloud.example.net': { ...oauthCredentialFor('https://empty-cloud.example.net'), cloudId: '' },
+      },
+    };
+    fs.writeFileSync(
+      storeFilePath(),
+      JSON.stringify({ encrypted: await encryptSecret(JSON.stringify(stored)) }),
+    );
+
+    const loaded = await loadJiraCredentials();
+
+    expect(Object.keys(loaded)).toEqual(['https://good.example.net']);
+    expect(loaded['https://good.example.net']).toEqual(valid);
+  });
 });
