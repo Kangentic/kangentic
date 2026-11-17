@@ -20,6 +20,11 @@ sources:
   - resource: demo/vite.config.mts
   - resource: vitest.config.mts
   - resource: playwright.config.ts
+  - resource: scripts/build-ui-bundle.mjs
+  - resource: scripts/serve-ui-bundle.mjs
+  - resource: scripts/test-ui-bundle.mjs
+  - resource: scripts/ui-shard-plan.mjs
+  - resource: tests/ui/dev-server.ts
   - resource: electron-builder.yml
   - resource: package.json
 ---
