@@ -321,8 +321,8 @@ tests on top of that bought another 6%, which is the first audit's finding again
 
 ### What set the time
 
-Measured over 30 green PR runs and 40 pushes to `main`, 2026-11-09 to 11-17, plus two runs
-dispatched on the untouched branch.
+Measured over 30 green PR runs (2026-11-12 to 11-17) and 40 pushes to `main` (from 2026-11-09),
+plus two runs dispatched on the untouched branch.
 
 - **A UI test paid about 3 seconds to boot.** The tier loaded the app from the Vite dev server: 759
   source modules, each its own request, into a browser context with no cache, from one
@@ -363,29 +363,29 @@ Vitest's own estimate for `isolate: false` is 40s a shard, against 912 files tha
 ### Before and after
 
 Before is the range over the 30 PR runs and the two baseline runs. After is the range over the
-runs dispatched on the branch once the bundle was in place.
+five runs dispatched on the branch once the bundle was in place, at 3 workers.
 
 | Measure | Before | After |
 |---|---:|---:|
-| Slowest UI shard, job (s) | 541 to 787 | 348 to 389 |
-| Slowest UI shard, test step (s) | 517 to 754 | 303 to 344 |
-| UI test steps, all eleven shards (s) | 4,320 to 4,838 | 2,575 to 2,742 |
+| Slowest UI shard, job (s) | 541 to 787 | 326 to 389 |
+| Slowest UI shard, test step (s) | 503 to 754 | 287 to 344 |
+| UI test steps, all eleven shards (s) | 4,254 to 5,493 | 2,461 to 2,742 |
 | UI test-seconds a run | 12,355 | 6,841 |
 | Web demo (s) | 441 to 613, one job | 248 to 337 a shard |
-| Unit shard (s), before its 35s gate | 216 to 330 | 165 to 241 |
-| E2E job (s) | 120 to 190 on 5 shards | 143 to 253 on 3 |
-| Lint, typecheck, build (s) | 124 to 173 | 152 to 206 |
-| Job-seconds a run | 6,581 to 7,775 | 5,060 to 5,070 |
+| Unit shard (s), before its 35s gate | 213 to 355 | 165 to 241 |
+| E2E job (s) | 105 to 237 on 5 shards | 137 to 285 on 3 |
+| Lint, typecheck, build (s) | 113 to 188 | 152 to 206 |
+| Job-seconds a run | 6,581 to 7,775 | 4,916 to 5,070 |
 | Concurrent jobs on a PR | 21 | 21 |
 | UI tests | 3,425 | 3,314 |
 
-**A PR's wait went from about 10 minutes to about 6, which is 40% and not the half that was asked
+**A PR's wait went from about 10 minutes to about 6, which is 40% and not the half this pass aimed
 for.** On a quiet account the wait is the slowest job plus a gate of a few seconds. Before, the
-quiet runs took 581 to 661s. After, the slowest job took 348 to 389s. No run after the change was
-quiet, since other tasks on the board were using the same 20 slots, so the after figure is the
-slowest job and not a measured total. The UI tier's own work fell by 45%. What is left is spread:
-the eleven UI test steps average 245s and the slowest runs 303 to 344s, on shards planned to hold
-the same work.
+quietest runs took 581 to 661s, and the 30 PR runs 581 to 1,699s. After, the slowest job took 326
+to 389s. No run after the change was quiet, since other tasks on the board were using the same 20
+slots, so the after figure is the slowest job and not a measured total. The UI tier's own work
+fell by 45%. What is left is spread: the eleven UI test steps average 225 to 250s and the slowest
+runs 287 to 344s, on shards planned to hold the same work.
 
 - **Balancing by time did nothing while the tier was on the dev server.** The rebalanced run's
   slowest shard spent 539s in tests, against 517 to 544 before. Its shards were planned at 1,123
@@ -412,8 +412,8 @@ the same work.
   no error strip, it failed on CI in both runs that had it: the mock agent answered the retried
   Enter with 25 bytes, and since 2026-05-03 the paste engine takes output as proof of a submit
   only past 50. On Linux the send ended in "Paste landed but Enter did not submit" and the test
-  passed anyway. The fixture now replies with a line longer than the floor. The engine did not
-  change.
+  passed anyway. The fixture now replies with a line longer than the floor, and the test passes
+  on CI with the assertion in place. The engine did not change.
 
 The contended numbers are not in the table. Every run here shared the account with other PRs, and
 their totals ran from 700s to 1,735s on queue alone. What a contended PR gains is the 25% fewer
