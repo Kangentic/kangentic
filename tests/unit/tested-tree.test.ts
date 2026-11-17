@@ -278,3 +278,82 @@ describe('the workflows wire the gate', () => {
     }
   });
 });
+
+// A PR restores a node_modules cache saved on its own ref or on main, never one another PR saved,
+// and the jobs that save one are the jobs the gate skips. So the gate's own job fills main's cache
+// when it skips them. Without it every PR after a lockfile change runs npm ci in all 20 jobs,
+// about 107 s on each: on 2026-11-17 five PRs in a row saved their own copy of one key. The steps
+// cannot be run here, so these pin the shapes that make the fill safe.
+describe('the gate fills main\'s node_modules cache when it skips the suite', () => {
+  const ciSource = readWorkflow('ci.yml');
+  const gateStart = ciSource.indexOf('\n  tested-tree:\n');
+  const gateJob = ciSource.slice(gateStart, ciSource.indexOf('\n  checks:\n', gateStart));
+
+  /** One step of the gate job, from its `- name:` line to the next step. */
+  function step(name: string): string {
+    const start = gateJob.indexOf(`      - name: ${name}\n`);
+    expect(start, `the tested-tree job has no step named "${name}"`).toBeGreaterThan(-1);
+    const next = gateJob.indexOf('\n      - name: ', start + 1);
+    return gateJob.slice(start, next === -1 ? undefined : next);
+  }
+
+  /** The cache key a job's steps name, with the workflow's own expression left as written. */
+  function nodeModulesKeys(source: string): string[] {
+    return [...source.matchAll(/^ +key: (.*node-modules.*)$/gm)].map((match) => match[1].trim());
+  }
+
+  it('finds the gate job, up to the job after it', () => {
+    expect(gateStart).toBeGreaterThan(-1);
+    expect(gateJob).toContain('./.github/actions/tested-tree');
+    expect(gateJob).not.toContain('Lint (ESLint)');
+  });
+
+  it('looks the cache up without downloading it, and only when the suite was skipped', () => {
+    const lookup = step("Look for main's node_modules cache");
+    expect(lookup).toContain("if: steps.tree.outputs.tested == 'true'");
+    expect(lookup).toContain('uses: actions/cache/restore@');
+    expect(lookup).toContain('lookup-only: true');
+    expect(lookup).toContain('id: cache-lookup');
+  });
+
+  it('installs only on a miss, under the Node the cache key names', () => {
+    const node = step('Set up Node.js 24 (cache fill)');
+    expect(node).toContain("if: steps.cache-lookup.outcome == 'success' && steps.cache-lookup.outputs.cache-hit != 'true'");
+    expect(node).toContain('node-version: 24');
+    const install = step('Install dependencies (npm ci, cache fill)');
+    expect(install).toContain("if: steps.cache-fill-node.outcome == 'success'");
+    expect(install).toMatch(/^ {8}run: npm ci$/m);
+  });
+
+  it('saves under the key every other job restores', () => {
+    const keys = nodeModulesKeys(ciSource);
+    // The lookup, the save, and one in each job that restores the cache.
+    expect(keys.length).toBeGreaterThanOrEqual(8);
+    expect(new Set(keys).size, `ci.yml names more than one node_modules key: ${[...new Set(keys)].join(' | ')}`).toBe(1);
+    expect(nodeModulesKeys(gateJob)).toHaveLength(2);
+  });
+
+  it('saves only a finished install, never through the cache action\'s own post step', () => {
+    const save = step("Save main's node_modules cache");
+    expect(save).toContain('uses: actions/cache/save@');
+    // `outcome` is the step's real result. `conclusion` reads success for a forgiven failure.
+    expect(save).toContain("if: steps.cache-fill-install.outcome == 'success'");
+    // actions/cache saves in a post step whenever the job succeeds, and a job whose failed
+    // install is forgiven still succeeds: it would save half a tree under the shared key.
+    expect(gateJob).not.toMatch(/uses: actions\/cache@/);
+  });
+
+  it('cannot turn a push that skipped its tests red', () => {
+    for (const name of [
+      "Look for main's node_modules cache",
+      'Set up Node.js 24 (cache fill)',
+      'Install dependencies (npm ci, cache fill)',
+      "Save main's node_modules cache",
+    ]) {
+      expect(step(name), `the "${name}" step can fail the job`).toContain('continue-on-error: true');
+    }
+    // The fill comes after the decision, so it never delays or changes the answer the other jobs read.
+    expect(gateJob.indexOf('id: tree')).toBeLessThan(gateJob.indexOf('id: cache-lookup'));
+    expect(gateJob).toContain('tested: ${{ steps.tree.outputs.tested }}');
+  });
+});

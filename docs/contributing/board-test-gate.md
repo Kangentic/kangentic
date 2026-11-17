@@ -40,8 +40,15 @@ the run's `Tree already tested` job passes it in seconds (`scripts/tested-tree.m
 has no PR behind it, so its push runs everything, and so does any doubt about the tree: a check on the
 head that failed or has not finished. The CLA check is the one the job does not read. It says who
 signed, not whether the tree works, and `cla.yml` runs it again when the PR closes, so it was still
-in progress when the push run looked and 13 of 31 merges tested `main` a second time. What earns a
-check here, and what one costs an unrelated PR, is in `.claude/rules/test-value.md`.
+in progress when the push run looked and 13 of 31 merges tested `main` a second time.
+
+One thing the skipped jobs did still has to happen: saving `main`'s `node_modules` cache. A PR can
+restore a cache saved on its own ref or on `main`, never one another PR saved. So after a lockfile
+change, the job fills that cache itself when it skips the suite, and takes about two minutes for
+that one push. Without it every PR after the change ran `npm ci` in all 20 jobs, about 107 seconds on
+each. The fill cannot fail the run, and it saves only an install that finished.
+
+What earns a check here, and what one costs an unrelated PR, is in `.claude/rules/test-value.md`.
 
 A contributor's PR from a fork goes through the same two columns with three differences, each spelled
 out in the two skills. Main is merged in rather than rebased onto, so the contributor's history

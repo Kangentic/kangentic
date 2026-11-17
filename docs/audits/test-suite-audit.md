@@ -343,6 +343,11 @@ Vitest's own estimate for `isolate: false` is 40s a shard, against 912 files tha
 
 - **The gate stopped reading the CLA check** (`scripts/tested-tree.mjs`). It says who signed, not
   whether the tree works.
+- **The gate's job fills `main`'s `node_modules` cache when it skips the suite.** The reruns it
+  ends were also what saved that cache. A PR restores a cache saved on its own ref or on `main`,
+  never another PR's, so after a lockfile change landed by PR every PR ran `npm ci` in all 20 jobs.
+  On 2026-11-17 five PRs in a row did, this change's own among them: its first run took 497s with
+  107s of `npm ci` in every job, on test steps that matched the table below.
 - **The UI tier runs against a static bundle on CI** (`scripts/build-ui-bundle.mjs`, served when
   `KANGENTIC_UI_BUNDLE=1`). It is the development app, built with `NODE_ENV=development` and a
   development mode, so `window.__zustandStores` and every other test hook is in it and a release

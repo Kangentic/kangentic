@@ -85,7 +85,9 @@ env:
 # run with over ~20s of queue is discarded.
 #
 # node_modules is cached under one shared lockfile-keyed key, so npm ci runs only
-# on a lockfile change. The key also names the Node major (`node24`) and the
+# on a lockfile change, and then once on main: the `tested-tree` job fills main's
+# cache when it skips the suite (see the job). The key also names the Node major
+# (`node24`) and the
 # install's shape (`nocuda`, the ONNXRUNTIME_NODE_INSTALL skip above): a tree
 # installed under another Node and npm, or with other install flags, is not this
 # one, and keeping the old key would restore it and never run npm ci on the new
@@ -122,11 +124,27 @@ jobs:
   # See the note at the top of this file. Skipped on a pull request and a dispatch,
   # which is why every job below names `!cancelled()`: without it a skipped dependency
   # would skip the job too. A failure here also runs the tests rather than stopping them.
+  #
+  # When it skips the suite it fills main's node_modules cache, which nothing else
+  # would. A PR can restore a cache saved on its own ref or on main, never one
+  # another PR saved, and the jobs that save one are the jobs this gate skips. So
+  # after a lockfile change landed by PR, main held no cache for the new key and
+  # every PR ran npm ci in all 20 jobs, about 107s on each job's critical path:
+  # on 2026-11-17 five PRs in a row saved their own copy of one key. The CLA race
+  # used to hide this by rerunning the suite on main after 13 merges in 31. The
+  # steps run only on a miss (`lookup-only` downloads nothing on a hit), only when
+  # the tree was tested, and cannot fail the job: a push that skipped its tests
+  # must stay green for /release, and the worst a failed fill costs is the npm ci
+  # the PRs would have run anyway. The save is its own step, gated on the install's
+  # outcome, and not the cache action's post step: that one runs whenever the job
+  # succeeds, and a job whose failed install is forgiven still succeeds, so it
+  # would save half a tree under the key every PR restores. A push that does run
+  # the suite fills the cache from its own jobs.
   tested-tree:
     name: Tree already tested
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       checks: read
       contents: read
@@ -139,6 +157,34 @@ jobs:
       - name: Check the pushed tree against its PR
         id: tree
         uses: ./.github/actions/tested-tree
+      - name: Look for main's node_modules cache
+        id: cache-lookup
+        if: steps.tree.outputs.tested == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@v6
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
+          lookup-only: true
+      - name: Set up Node.js 24 (cache fill)
+        id: cache-fill-node
+        if: steps.cache-lookup.outcome == 'success' && steps.cache-lookup.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install dependencies (npm ci, cache fill)
+        id: cache-fill-install
+        if: steps.cache-fill-node.outcome == 'success'
+        continue-on-error: true
+        run: npm ci
+      - name: Save main's node_modules cache
+        if: steps.cache-fill-install.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
 
   # lint + typecheck + build, serially, behind ONE checkout/setup/cache. About 150s,
   # nowhere near the critical path. It replaced three separate jobs whose only reason
