@@ -64,6 +64,7 @@ vi.mock('../../src/main/boards/adapters/trello/credential-store', () => ({
 
 const { registerTrelloIpcHandlers } = await import('../../src/main/boards/adapters/trello/ipc-handlers');
 const { TrelloError } = await import('../../src/main/boards/adapters/trello/client');
+const { RefusalError } = await import('../../src/shared/refusal');
 
 function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
   const handler = capturedHandlers.get(channel);
@@ -129,6 +130,17 @@ describe('BOARDS_TRELLO_CONNECT with the user\'s own key', () => {
     expect(saveCredentialSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a refused token', new TrelloError('invalid token', 401, 'token'), 'invalid token'],
+    ['a failure that names no field', new TrelloError('boom', 500), 'boom'],
+    ['a refusal', new RefusalError('x'), 'x'],
+  ])('blames the token field for %s, and saves nothing', async (_label, failure, message) => {
+    validateSpy.mockRejectedValue(failure);
+    const result = await invoke(IPC.BOARDS_TRELLO_CONNECT, { kind: 'own-key', apiKey: 'key-1', token: 'ATTAtoken' });
+    expect(result).toEqual({ ok: false, field: 'token', error: message });
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+  });
+
   it('rethrows a failure that is not Trello\'s answer, so the IPC wrap reports it', async () => {
     validateSpy.mockRejectedValue(new TypeError('fetch failed'));
     await expect(invoke(IPC.BOARDS_TRELLO_CONNECT, { kind: 'own-key', apiKey: 'key-1', token: 'ATTAtoken' }))
@@ -172,6 +184,29 @@ describe('BOARDS_TRELLO_OPEN_APPROVAL', () => {
     expect(new URL(openExternalSpy.mock.calls[0][0]).searchParams.get('key')).toBe('kangentic-shipped-key');
   });
 
+  it('refuses a sign-in when the build has no Kangentic key, and opens nothing', async () => {
+    shippedKey.value = '';
+    await expect(invoke(IPC.BOARDS_TRELLO_OPEN_APPROVAL, { kind: 'kangentic-key' }))
+      .rejects.toThrow('This build has no Kangentic Trello key. Use your own API key.');
+    expect(openExternalSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a key with whitespace inside it, and opens nothing', async () => {
+    await expect(invoke(IPC.BOARDS_TRELLO_OPEN_APPROVAL, { kind: 'own-key', apiKey: 'key 1' }))
+      .rejects.toThrow('A key or token has no spaces.');
+    expect(openExternalSpy).not.toHaveBeenCalled();
+  });
+
+  it('throws a RefusalError, so the report filter treats it as an expected answer', async () => {
+    const failure = await invoke(IPC.BOARDS_TRELLO_OPEN_APPROVAL, { kind: 'own-key', apiKey: '' }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RefusalError);
+  });
+
+  it('uses the shipped key on a sign-in, never the one the renderer sent', async () => {
+    await invoke(IPC.BOARDS_TRELLO_OPEN_APPROVAL, { kind: 'kangentic-key', apiKey: 'renderer-key' });
+    expect(new URL(openExternalSpy.mock.calls[0][0]).searchParams.get('key')).toBe('kangentic-shipped-key');
+  });
+
   it('refuses with no key to approve, and opens nothing', async () => {
     await expect(invoke(IPC.BOARDS_TRELLO_OPEN_APPROVAL, { kind: 'own-key', apiKey: '' })).rejects.toThrow('Paste your API key.');
     expect(openExternalSpy).not.toHaveBeenCalled();
@@ -195,6 +230,19 @@ describe('BOARDS_TRELLO_LIST_BOARDS', () => {
   it('rethrows a failure that is not Trello\'s answer', async () => {
     listBoardsSpy.mockRejectedValue(new TypeError('fetch failed'));
     await expect(invoke(IPC.BOARDS_TRELLO_LIST_BOARDS)).rejects.toThrow('fetch failed');
+  });
+
+  it('answers a not-connected refusal as an answer too', async () => {
+    listBoardsSpy.mockRejectedValue(new RefusalError('x'));
+    expect(await invoke(IPC.BOARDS_TRELLO_LIST_BOARDS)).toEqual({ boards: [], error: 'x' });
+  });
+
+  it.each([
+    ['a 503', 503],
+    ['a 429', 429],
+  ])('rethrows %s instead of sending the user to Connect', async (_label, status) => {
+    listBoardsSpy.mockRejectedValue(new TrelloError('Trello is busy', status));
+    await expect(invoke(IPC.BOARDS_TRELLO_LIST_BOARDS)).rejects.toThrow('Trello is busy');
   });
 });
 

@@ -48,7 +48,7 @@ vi.mock('../../src/main/boards/shared/auth', async (importOriginal) => {
   return { ...actual, decryptSecret: decryptSecretSpy, encryptSecret: encryptSecretSpy };
 });
 
-const { loadTrelloCredential, saveTrelloCredential, clearTrelloCredential } = await import('../../src/main/boards/adapters/trello/credential-store');
+const { loadTrelloCredential, saveTrelloCredential, clearTrelloCredential, trelloCredentialVersion } = await import('../../src/main/boards/adapters/trello/credential-store');
 
 const VALID_CREDENTIAL = {
   kind: 'own-key',
@@ -139,6 +139,31 @@ describe('saveTrelloCredential', () => {
     expect(writtenSource).toBe('trello_credential');
     const { encrypted } = payload as { encrypted: string };
     expect(JSON.parse(encrypted.replace('e-rewritten:', ''))).toEqual(VALID_CREDENTIAL);
+  });
+});
+
+describe('trelloCredentialVersion', () => {
+  it('bumps only after the encrypted write resolves, so a load in flight keeps the old version', async () => {
+    let releaseEncryption: (ciphertext: string) => void = () => {};
+    encryptSecretSpy.mockImplementation(() => new Promise<string>((resolve) => {
+      releaseEncryption = resolve;
+    }));
+    const versionBefore = trelloCredentialVersion();
+
+    const pendingSave = saveTrelloCredential({ ...VALID_CREDENTIAL, kind: 'own-key' });
+    await Promise.resolve();
+    expect(encryptSecretSpy).toHaveBeenCalledTimes(1);
+    expect(trelloCredentialVersion()).toBe(versionBefore);
+
+    releaseEncryption('e-held');
+    await pendingSave;
+    expect(trelloCredentialVersion()).toBeGreaterThan(versionBefore);
+  });
+
+  it('bumps on a clear', () => {
+    const versionBefore = trelloCredentialVersion();
+    clearTrelloCredential();
+    expect(trelloCredentialVersion()).toBeGreaterThan(versionBefore);
   });
 });
 

@@ -140,8 +140,7 @@ export class TrelloClient {
     await saveTrelloCredential(credential);
     this.credential = credential;
     this.credentialVersion = trelloCredentialVersion();
-    this.boardCache.clear();
-    this.boardNameCache.clear();
+    this.resetBoardCaches();
     return credential;
   }
 
@@ -271,21 +270,34 @@ export class TrelloClient {
 
   /** The credential in memory, reloaded when none is held or the store changed since it was read. */
   private async loadCredentialIfNeeded(): Promise<TrelloCredential | null> {
-    const storeVersion = trelloCredentialVersion();
-    if (this.credential && this.credentialVersion === storeVersion) return this.credential;
-    if (this.credentialVersion !== storeVersion) {
-      this.boardCache.clear();
-      this.boardNameCache.clear();
-    }
-    this.credential = await loadTrelloCredential();
-    this.credentialVersion = storeVersion;
-    return this.credential;
+    return (await this.loadCredentialEntry()).credential;
   }
 
-  private async requireCredential(): Promise<TrelloCredential> {
-    const credential = await this.loadCredentialIfNeeded();
+  /**
+   * The credential and the store version it was read under. The version is taken before the file
+   * read awaits, so a save that lands during the read leaves the old token under the old version.
+   */
+  private async loadCredentialEntry(): Promise<{ credential: TrelloCredential | null; version: number }> {
+    const storeVersion = trelloCredentialVersion();
+    if (this.credential && this.credentialVersion === storeVersion) {
+      return { credential: this.credential, version: storeVersion };
+    }
+    if (this.credentialVersion !== storeVersion) this.resetBoardCaches();
+    const credential = await loadTrelloCredential();
+    this.credential = credential;
+    this.credentialVersion = storeVersion;
+    return { credential, version: storeVersion };
+  }
+
+  private async requireCredential(): Promise<{ credential: TrelloCredential; version: number }> {
+    const { credential, version } = await this.loadCredentialEntry();
     if (!credential) throw new RefusalError(TRELLO_NOT_CONNECTED_MESSAGE);
-    return credential;
+    return { credential, version };
+  }
+
+  private resetBoardCaches(): void {
+    this.boardCache.clear();
+    this.boardNameCache.clear();
   }
 
   private async request<T>(pathAndQuery: string): Promise<T> {
@@ -309,17 +321,18 @@ export class TrelloClient {
   }
 
   private async requestOnce<T>(pathAndQuery: string): Promise<T> {
-    const credential = await this.requireCredential();
+    const { credential, version } = await this.requireCredential();
     const response = await this.fetchWithAuth(pathAndQuery, credential.apiKey, credential.token);
     if (response.status === 401) {
       const text = await readBodyText(response);
-      if (isDeadCredentialRefusal(text)) {
+      // A save or clear since this request read its credential means Trello refused a token that
+      // is already gone, and clearing now would delete the one a Connect just saved.
+      if (isDeadCredentialRefusal(text) && trelloCredentialVersion() === version) {
         // The token was revoked, or the user's own key was deleted. Drop the stored credential so
         // the next call says "not connected" instead of looping on a dead token. The memory copy
         // goes first, so a file Windows holds open cannot keep the dead token in use.
         this.credential = null;
-        this.boardCache.clear();
-        this.boardNameCache.clear();
+        this.resetBoardCaches();
         try {
           clearTrelloCredential();
         } catch (error) {

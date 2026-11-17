@@ -5923,7 +5923,9 @@
       trello: (function () {
         // Stateful mock. Tests override via window.__mockTrelloPreset, read on every
         // call: { state: { connected, kind }, signInAvailable, invalidKey, invalidToken,
-        // boards, listBoardsError, listBoardsRejects }. signInAvailable defaults to false,
+        // boards, listBoardsError, listBoardsRejects, connectRejects, openApprovalRejects,
+        // authStatusRejects }. Each *Rejects is a message that makes that method reject (default
+        // off). signInAvailable defaults to false,
         // as in a build with no Kangentic Trello key (TRELLO_API_KEY), so the web demo
         // offers only what the app does. Trello's 401 text is "invalid key" / "invalid token".
         const state = { connected: false, kind: undefined };
@@ -5938,6 +5940,7 @@
         return {
           authStatus: async function () {
             const presetValues = preset();
+            if (presetValues.authStatusRejects) throw new Error(presetValues.authStatusRejects);
             if (presetValues.state) Object.assign(state, presetValues.state);
             return {
               connected: state.connected,
@@ -5946,12 +5949,19 @@
             };
           },
           connect: async function (input) {
+            const presetValues = preset();
+            if (presetValues.connectRejects) throw new Error(presetValues.connectRejects);
             const kind = input && input.kind === 'kangentic-key' ? 'kangentic-key' : 'own-key';
+            // Mirrors the real handler: no Kangentic key in this build refuses that kind.
+            if (kind === 'kangentic-key' && presetValues.signInAvailable !== true) {
+              return { ok: false, error: 'This build has no Kangentic Trello key. Use your own API key.' };
+            }
             const apiKey = typeof input?.apiKey === 'string' ? input.apiKey.trim() : '';
             const token = typeof input?.token === 'string' ? input.token.trim() : '';
             if (kind === 'own-key' && apiKey.length === 0) return { ok: false, field: 'apiKey', error: 'Paste your API key.' };
+            if (kind === 'own-key' && /\s/.test(apiKey)) return { ok: false, field: 'apiKey', error: 'A key or token has no spaces. Copy it again from Trello.' };
             if (token.length === 0) return { ok: false, field: 'token', error: 'Paste the token Trello shows.' };
-            const presetValues = preset();
+            if (/\s/.test(token)) return { ok: false, field: 'token', error: 'A key or token has no spaces. Copy it again from Trello.' };
             if (kind === 'own-key' && presetValues.invalidKey && apiKey === presetValues.invalidKey) {
               return { ok: false, field: 'apiKey', error: 'invalid key' };
             }
@@ -5962,7 +5972,11 @@
             state.kind = kind;
             return { ok: true };
           },
-          openApproval: async function () {
+          openApproval: async function (input) {
+            const presetValues = preset();
+            if (presetValues.openApprovalRejects) throw new Error(presetValues.openApprovalRejects);
+            const approvalKey = typeof input?.apiKey === 'string' ? input.apiKey.trim() : '';
+            if (input && input.kind === 'own-key' && approvalKey.length === 0) throw new Error('Paste your API key.');
             if (typeof window !== 'undefined') {
               window.__mockTrelloApprovalCount = (window.__mockTrelloApprovalCount || 0) + 1;
             }

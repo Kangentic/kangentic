@@ -159,6 +159,11 @@ describe('TrelloClient - Trello refusals', () => {
     expect(credentialFieldFromRefusal('invalid token')).toBe('token');
     expect(credentialFieldFromRefusal('unauthorized permission requested')).toBe('token');
   });
+
+  it('blames the token when the text names both halves, and matches case-insensitively', () => {
+    expect(credentialFieldFromRefusal('invalid key or token')).toBe('token');
+    expect(credentialFieldFromRefusal('Invalid Key')).toBe('apiKey');
+  });
 });
 
 describe('TrelloClient - downloads get credentials only on Trello', () => {
@@ -254,6 +259,26 @@ describe('TrelloClient - saving a credential', () => {
     await client.loadBoard('AbC123xy', false);
     expect(requests).toHaveLength(4);
     expect(requests[2].headers.Authorization).toBe(trelloAuthorizationHeader('newkey123', 'newtoken456'));
+  });
+});
+
+describe('TrelloClient - saving a credential keeps the saved copy', () => {
+  it('adopts the saved credential without reloading the store, and caches boards loaded after it', async () => {
+    saveSpy.mockImplementation(async () => {
+      storeVersion.value += 1;
+    });
+    const requests = stubFetch((url) => (url.includes('/lists?') ? json([{ id: 'l1', name: 'To Do', closed: false, pos: 1 }]) : json([])));
+    const client = new TrelloClient(credential());
+
+    const saved = await client.saveCredential('own-key', 'newkey123', 'newtoken456');
+    expect(await client.getCredential()).toEqual(saved);
+    expect(loadSpy).not.toHaveBeenCalled();
+
+    await client.loadBoard('AbC123xy', false);
+    expect(requests).toHaveLength(2);
+    await client.loadBoard('AbC123xy', false);
+    expect(requests).toHaveLength(2);
+    expect(loadSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -358,6 +383,25 @@ describe('TrelloClient - a dead credential', () => {
     const failure = await client.loadBoard('AbC123xy', false).catch((error: unknown) => error);
     expect((failure as Error).name).toBe('RefusalError');
     expect(requests).toHaveLength(before + 1);
+  });
+
+  it('keeps a credential saved while the request was in flight, since the 401 was for the old token', async () => {
+    stubFetch(() => {
+      // A Connect saved a new token while this request was out.
+      storeVersion.value += 1;
+      return plainText(401, 'invalid token');
+    });
+    const client = new TrelloClient(credential());
+    const failure = await client.listBoards().catch((error: unknown) => error);
+
+    expect((failure as Error).message).toBe('invalid token');
+    expect(clearSpy).not.toHaveBeenCalled();
+  });
+
+  it('clears the credential when the store version did not move during the request', async () => {
+    stubFetch(() => plainText(401, 'invalid token'));
+    await new TrelloClient(credential()).listBoards().catch((error: unknown) => error);
+    expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 
   it('still rejects with Trello\'s text when deleting the stored file fails', async () => {
