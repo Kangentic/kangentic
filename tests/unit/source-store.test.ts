@@ -22,9 +22,9 @@ import os from 'node:os';
 import { ImportSourceStore, registerSourceUrlParser } from '../../src/main/boards/shared/source-store';
 import type { ExternalSource } from '../../src/shared/types';
 
-// 'trello' has no registered adapter parser anywhere in src/ (it is a stub
-// board type - see board-registry.test.ts), so this cannot collide with a
-// real adapter's parser registered by another test file importing it.
+// This file never imports the Trello adapter, and each test file runs in its
+// own module graph, so the stand-in parser below is the only 'trello' parser
+// registered here.
 const TEST_SOURCE: ExternalSource = 'trello';
 
 registerSourceUrlParser(TEST_SOURCE, {
