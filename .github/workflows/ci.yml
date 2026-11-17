@@ -45,13 +45,13 @@ env:
 # the wait as much as a required tier does: it did, at 1,023s, and again at 441 to
 # 613s once the UI tier came down. The tiers are sized to finish together. A slot
 # goes to whichever tier is the pole, and a tier far under it gives one up. On
-# 2026-11-17 that moved two slots off E2E, whose five shards ran 2 to 3 minutes,
-# to the unit tier (216 to 330s a shard plus its gate) and the web demo.
+# 2026-11-17 that moved two slots off E2E, whose five shards ran 2 to 4 minutes,
+# to the unit tier (213 to 355s a shard plus its gate) and the web demo.
 #
 # The UI tier came down by loading the app from a static bundle instead of the
 # Vite dev server (see its job): its tests went from 12,355 seconds a run to
-# 6,841, and a shard's test step from 282 to 754s to 190 to 345s. After that no
-# tier is far ahead: a UI shard's job takes 235 to 390s, a web demo shard 250 to
+# 6,841, and a shard's test step from 265 to 754s to 190 to 345s. After that no
+# tier is far ahead: a UI shard's job takes 225 to 390s, a web demo shard 250 to
 # 340s, and a unit shard with its gate 200 to 275s. So no tier has a slot to
 # give, and the next cut is cheaper tests, a fourth UI worker measured over
 # several runs, or more runners.
@@ -330,7 +330,7 @@ jobs:
   # `--shard`, which cuts by a hash of the file path). The suite is volume-bound
   # (2,317 files, no single long pole), and 60% of a shard's time is the tests
   # themselves: Vitest's own estimate for `isolate: false` is 40s a shard, against
-  # 912 files that use `vi.mock`. Two shards ran 216 to 330s each plus the gate
+  # 912 files that use `vi.mock`. Two shards ran 213 to 355s each plus the gate
   # below, which would have been the pole once the UI tier came down, so the tier
   # took back the third slot it had given up. Each shard emits a `blob`
   # report (uploaded as an artifact) plus the default reporter into its own log;
