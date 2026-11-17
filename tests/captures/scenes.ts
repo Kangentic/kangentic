@@ -1397,10 +1397,13 @@ export const SCENES: Record<string, SceneDefinition> = {
   },
   'welcome-setup': {
     name: 'welcome-setup',
-    reach: 'state',
-    description: 'The welcome screen with the setup list open on a not-installed row and a not-signed-in one, for the Installation and Troubleshooting pages. The default welcome scene reports everything found, so the rows those pages describe never appear there. No click: the screen opens the list itself when anything is missing or signed out, which is exactly the state seeded here.',
-    alt: 'The welcome screen with its setup list open: a prompt to sign in to OpenCode, OpenCode on top marked Not signed in with its login command to copy, git and three agents found with versions, and three more marked Not installed beside an Install link.',
+    reach: 'boot',
+    description: 'The welcome screen with the setup list open on a not-installed row and a not-signed-in one, for the Installation and Troubleshooting pages. The default welcome scene reports everything found, so the rows those pages describe never appear there. Three agents are ready, so the screen reports the setup ready and keeps the list closed; the boot click on Show setup opens it.',
+    alt: 'The welcome screen with its setup list open: git and three agents found with versions, OpenCode after them marked Not signed in with a Copy login link, and three more marked Not installed beside an Install link.',
     install: 'empty',
+    steps: [
+      { click: WELCOME_SETUP_TOGGLE, waitFor: '#welcome-setup-panel' },
+    ],
     // Replaces the dataset's own overrides whole (boot.js assigns a scene's seeds after the seed
     // script has set them), so this map is the entire agent report, not a patch on it.
     //

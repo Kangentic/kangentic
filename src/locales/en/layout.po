@@ -99,6 +99,10 @@ msgstr "Copy \"{loginCommand}\" to clipboard"
 msgid "Copy <0>{loginCommand}</0>"
 msgstr "Copy <0>{loginCommand}</0>"
 
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy login"
+msgstr "Copy login"
+
 #: src/renderer/components/layout/ToastItem.tsx
 msgid "Copy message"
 msgstr "Copy message"

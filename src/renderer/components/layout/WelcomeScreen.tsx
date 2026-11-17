@@ -7,20 +7,18 @@ import { MINIMUM_GIT_VERSION_DISPLAY } from '../../../shared/git-minimum-version
 import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand, RECOMMENDED_AGENT_ORDER } from '../../utils/agent-display-name';
 import { useAddProject } from '../../hooks/useAddProject';
-import { Pill } from '../Pill';
 import { Tooltip } from '../Tooltip';
 import { OverseerMascot } from '../onboarding/OverseerMascot';
-// The full-color mark (rust disc, amber card) rather than the theme-tinted
-// BrandMark the title bar uses. This is the app's identity moment and the
-// first-launch default theme is dark, so the fixed palette is safe here.
-// Rendered as <img> (not inlined) because the asset carries a mask with a
-// fixed id, which would collide if inlined more than once per document.
-import brandLogoUrl from '@kangentic/branding/assets/brandmark-small.svg?url';
+import { deriveWelcomeReadiness } from './welcome-readiness';
 
 const CURATED_NOT_FOUND_LIMIT = 3;
 
+// One accent on this screen: the Open a project fill. Every other link is neutral text, and the
+// underline (not a hue) is what marks it as a link.
+const TEXT_LINK_CLASS = 'text-fg-muted underline underline-offset-2 decoration-fg-faint hover:text-fg cursor-pointer transition-colors';
+
 /** Reusable detection row used for both the Git and agent entries */
-function DetectionRow({ name, testId, found, version, installUrl, loading, authenticated, loginCommand, className }: {
+function DetectionRow({ name, testId, found, version, installUrl, loading, authenticated, loginCommand, signInIsAction = false, className }: {
   name: string;
   testId?: string;
   found: boolean;
@@ -29,6 +27,8 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
   loading: boolean;
   authenticated?: boolean | null;
   loginCommand?: string;
+  /** True when no agent is ready, so signing this one in is the user's next step. */
+  signInIsAction?: boolean;
   /** Extra classes for the row's root, such as a grid span. */
   className?: string;
 }) {
@@ -36,6 +36,11 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unauthenticated = !loading && found && authenticated === false;
+  // A signed-out agent asks for attention only when nothing else can run. Beside a ready agent it is
+  // most likely a tool the user tried and dropped, so it reads like an uninstalled one.
+  const signInRow = unauthenticated && signInIsAction;
+  const quietSignedOut = unauthenticated && !signInIsAction;
+  const ready = !loading && found && !unauthenticated;
 
   useEffect(() => () => {
     if (copyTimeout.current) clearTimeout(copyTimeout.current);
@@ -43,57 +48,63 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
 
   const handleCopy = () => {
     if (!loginCommand) return;
-    navigator.clipboard.writeText(loginCommand).catch(() => { /* leave Copied! state alone; user can retry */ });
+    navigator.clipboard.writeText(loginCommand).catch(() => {
+      // report-ok: a refused clipboard write is a browser permission outcome, and the user can retry
+    });
     setCopied(true);
     if (copyTimeout.current) clearTimeout(copyTimeout.current);
     copyTimeout.current = setTimeout(() => setCopied(false), 2000);
   };
 
-  // Only a state that wants the user's attention earns a colored edge. "Found and
-  // signed in" is the expected case, so it stays neutral - otherwise a fully
-  // configured machine paints a wall of green down the whole panel, and
-  // --kng-active (which means "an agent is working" everywhere else in the app)
-  // stops carrying that meaning.
-  const borderClass = !loading && found && unauthenticated
-    ? 'border-edge border-l-2 border-l-attention'
-    : 'border-edge';
+  // The sign-in button and the quiet link differ only in look: both copy the command, carry it in
+  // their name, and answer to the same test id.
+  const copyLoginProps = {
+    type: 'button' as const,
+    onClick: handleCopy,
+    'aria-label': t`Copy "${loginCommand}" to clipboard`,
+    'data-testid': testId ? `${testId}-copy-login` : undefined,
+  };
 
   return (
-    <div className={`border rounded-lg p-3 ${borderClass}${className ? ` ${className}` : ''}`} data-testid={testId}>
+    <div className={`border border-edge rounded-lg p-3${className ? ` ${className}` : ''}`} data-testid={testId}>
       <div className="flex items-start gap-2">
         <div className="w-4 h-5 flex items-center justify-center shrink-0">
           {loading ? (
             <LoaderCircle size={14} className="animate-spin text-fg-faint" />
-          ) : unauthenticated ? (
+          ) : signInRow ? (
             <CircleExclamationPoint size={14} className="text-attention" />
-          ) : found ? (
-            <CircleCheckBig size={14} className="text-active" />
+          ) : ready ? (
+            // Ready is the normal state, so it takes the name's own color rather than a hue.
+            // --kng-active means "an agent is working" everywhere else in the app.
+            <CircleCheckBig size={14} className="text-fg" />
           ) : (
             <div className="w-3.5 h-3.5 rounded-full border border-fg-faint/30" />
           )}
         </div>
-        <div className="min-w-0">
-          <div className={`text-sm font-medium leading-5 ${!loading && found ? 'text-fg' : 'text-fg-muted'}`}>
+        <div className="min-w-0 flex-1">
+          <div className={`text-sm font-medium leading-5 ${ready || signInRow ? 'text-fg' : 'text-fg-muted'}`}>
             {name}
           </div>
-          <div className="h-4 flex items-center">
+          <div className="h-4 flex items-center min-w-0">
             {loading ? (
               <span className="text-xs text-fg-faint"><Trans>Checking...</Trans></span>
-            ) : unauthenticated ? (
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-attention"><Trans>Not signed in</Trans></span>
+            ) : signInRow ? (
+              <span className="text-xs text-fg-muted"><Trans>Not signed in</Trans></span>
+            ) : quietSignedOut ? (
+              <div className="flex items-center gap-1 min-w-0">
+                {/* Truncates rather than wrapping: a long translation must not push the line
+                    over the agent's name in a one-third card. */}
+                <span className="text-xs text-fg-faint truncate"><Trans>Not signed in</Trans></span>
                 {loginCommand && (
                   <>
-                    <span className="text-xs text-fg-faint">-</span>
-                    <button
-                      className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
-                      onClick={handleCopy}
-                      aria-label={t`Copy "${loginCommand}" to clipboard`}
-                      data-testid={testId ? `${testId}-copy-login` : undefined}
-                    >
-                      {copied ? <Trans>Copied!</Trans> : <Trans>Copy <code className="font-mono">{loginCommand}</code></Trans>}
-                      {!copied && <Copy size={10} />}
-                    </button>
+                    <span className="text-xs text-fg-faint shrink-0">-</span>
+                    <Tooltip label={copied ? '' : loginCommand}>
+                      <button {...copyLoginProps} className={`inline-flex items-center gap-0.5 shrink-0 text-xs ${TEXT_LINK_CLASS}`}>
+                        {/* No icon: in a third of the grid the status and the link only just fit
+                            one line, and the underline already says it is a link. */}
+                        {copied ? <Trans>Copied!</Trans> : <Trans>Copy login</Trans>}
+                      </button>
+                    </Tooltip>
                   </>
                 )}
               </div>
@@ -108,7 +119,8 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
                   <>
                     <span className="text-xs text-fg-faint">-</span>
                     <button
-                      className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
+                      type="button"
+                      className={`inline-flex items-center gap-0.5 text-xs ${TEXT_LINK_CLASS}`}
                       onClick={() => window.electronAPI.shell.openExternal(installUrl)}
                     >
                       <Trans>Install</Trans>
@@ -120,6 +132,17 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
             )}
           </div>
         </div>
+        {signInRow && loginCommand && (
+          // The one action the panel asks for, so it is a real button with the command in full.
+          // Neutral like every other control here: the row's attention icon carries the warning.
+          <button
+            {...copyLoginProps}
+            className="self-center shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-edge bg-surface-raised text-xs text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer transition-colors"
+          >
+            {!copied && <Copy size={12} />}
+            {copied ? <Trans>Copied!</Trans> : <Trans>Copy <code className="font-mono text-fg">{loginCommand}</code></Trans>}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -163,17 +186,8 @@ export function WelcomeScreen() {
   // app in that case: the Agent settings tab (where CLI Paths lives) is project-scoped and
   // hidden with no project open, so there is no way back in. The CTA only waits for
   // detection to finish, never for it to succeed.
-  const detectionResolved = gitInfo !== null && agentListLoaded;
-
-  const foundAgents = agentList.filter((agent) => agent.found);
-  // A signed-out row carries "Not signed in" plus a control to copy the login command, which is
-  // wider than a third of the grid and wrapped over the agent's name there. It is also the one row
-  // the readiness line asks the reader to act on, so it leads the grid at full width.
-  const signedOutAgents = foundAgents.filter((agent) => agent.authenticated === false);
-  const orderedFoundAgents = [...signedOutAgents, ...foundAgents.filter((agent) => agent.authenticated !== false)];
-  const signedOutAgent = signedOutAgents[0];
-  const gitReady = gitInfo?.found ?? false;
-  const readyToRun = detectionResolved && gitReady && foundAgents.length > 0 && !signedOutAgent;
+  const readiness = deriveWelcomeReadiness({ gitInfo, agentList, agentListLoaded });
+  const { detectionResolved, readyToRun, readyAgents, signInIsAction, orderedFoundAgents } = readiness;
   const blocked = detectionResolved && !readyToRun;
   const expanded = manualExpanded ?? blocked;
 
@@ -187,27 +201,39 @@ export function WelcomeScreen() {
   const hiddenNotFoundCount = orderedNotFound.length - visibleNotFound.length;
 
   // Blocked / detecting states are instructions, so they stay plain prose. The
-  // ready state is two scannable FACTS, so each gets its own pill - the eye can
-  // pick "git 2.51.0" and "9 agents" out without reading a sentence.
+  // ready state is two scannable FACTS, set in the foreground color so the eye can
+  // pick "Git 2.51.0" and "9 agents" out without reading a sentence.
   let readinessMessage: string | null = null;
-  if (!detectionResolved) {
-    readinessMessage = t`Checking your setup`;
-  } else if (!gitReady && foundAgents.length === 0) {
-    readinessMessage = t`Install git and one agent CLI to run tasks.`;
-  } else if (!gitReady) {
-    readinessMessage = t`Install git to run tasks.`;
-  } else if (foundAgents.length === 0) {
-    readinessMessage = t`Install one agent CLI to run tasks.`;
-  } else if (signedOutAgent) {
-    const signedOutAgentName = signedOutAgent.displayName;
-    readinessMessage = t`Sign in to ${signedOutAgentName} to run tasks.`;
+  switch (readiness.blockedReason) {
+    case 'detecting':
+      readinessMessage = t`Checking your setup`;
+      break;
+    case 'no-git-no-agent':
+      readinessMessage = t`Install git and one agent CLI to run tasks.`;
+      break;
+    case 'no-git':
+      readinessMessage = t`Install git to run tasks.`;
+      break;
+    case 'no-agent':
+      readinessMessage = t`Install one agent CLI to run tasks.`;
+      break;
+    case 'sign-in': {
+      const signedOutAgentName = readiness.signInAgent?.displayName ?? '';
+      readinessMessage = t`Sign in to ${signedOutAgentName} to run tasks.`;
+      break;
+    }
+    case null:
+      break;
   }
 
-  // The tool's own name and version, not prose.
+  // The tool's own name and version, not prose. The agent fact counts only the agents that
+  // work: a signed-out one is not part of the user's stack.
   const gitFact = gitInfo?.version ? `Git ${gitInfo.version}` : 'Git';
-  const foundAgentCount = foundAgents.length;
+  // The found agents that work. The name is the plural message's placeholder, so it stays as
+  // shipped and the message keeps its translations.
+  const foundAgentCount = readyAgents.length;
   const agentFact = foundAgentCount === 1
-    ? (foundAgents[0].version ? `${foundAgents[0].displayName} ${foundAgents[0].version}` : foundAgents[0].displayName)
+    ? (readyAgents[0].version ? `${readyAgents[0].displayName} ${readyAgents[0].version}` : readyAgents[0].displayName)
     // One agent reads as its name above, so this branch never shows one.
     : plural(foundAgentCount, { one: '# agent', other: '# agents' });
   const gitVersion = gitInfo?.version ?? '';
@@ -226,31 +252,23 @@ export function WelcomeScreen() {
       <div className="text-center w-full max-w-2xl px-4">
         {/* Waves hello on arrival, then settles into an idle blink so the hero
             is never a frozen sprite. The handoff is animationend-driven, so the
-            wave's duration stays owned by the branding package. */}
+            wave's duration stays owned by the branding package. The mascot is the
+            brand on this screen, so the wordmark carries no second mark beside it. */}
         <OverseerMascot scale={7} intro="wave-once" sequence="blink-loop" className="mx-auto mb-6" />
-        {/* The mark is sized to the wordmark's CAP HEIGHT, not its line box.
-            text-4xl is a 36px box but only ~26px of that is capital letters -
-            the rest is descender space for the "g" - so a 36px disc reads as
-            taller than the word. 28px matches the caps with the slight extra a
-            circle needs to look equal beside flat-topped letters, and the same
-            3px nudge as the version pill sits it on the cap band. */}
-        <div className="flex items-center justify-center gap-3 mb-1">
-          <img src={brandLogoUrl} alt="" aria-hidden="true" draggable={false} className="block w-7 h-7 translate-y-[3px]" />
+        <div className="flex items-center justify-center gap-2.5 mb-1">
           {/* i18n-ok: the product name alone */}
           <h1 className="text-4xl font-bold text-fg leading-none">Kangentic</h1>
           {/* Centered on the wordmark's CAP band rather than its line box: with
               `leading-none` the box includes descender space ("g"), so a plain
-              items-center sits the pill visibly high. Nudging by half the
+              items-center sits the version visibly high. Nudging by half the
               descender re-centers it against the letters the eye actually reads. */}
           {appVersion && (
-            <Pill
-              size="xs"
-              shape="square"
-              className="self-center translate-y-[3px] bg-surface-hover text-fg-muted font-medium"
+            <span
+              className="self-center translate-y-[3px] text-xs font-medium text-fg-muted"
               data-testid="welcome-app-version"
             >
               <Trans>v{appVersion}</Trans>
-            </Pill>
+            </span>
           )}
         </div>
         <p className="text-lg text-fg-muted mb-0"><Trans>Kanban for AI coding agents</Trans></p>
@@ -308,25 +326,25 @@ export function WelcomeScreen() {
               ) : blocked ? (
                 <CircleExclamationPoint size={14} className="text-attention shrink-0" />
               ) : (
-                <CircleCheckBig size={14} className="text-active shrink-0" />
+                <CircleCheckBig size={14} className="text-fg shrink-0" />
               )}
-              {/* Ready state renders neutral chips, not green: the check icon
-                  already carries the verdict, and --kng-active means "an agent is
-                  working" on every other surface. Facts get weight, not hue. */}
+              {/* Ready state is plain text with no hue: being set up is the
+                  normal state, and --kng-active means "an agent is working" on
+                  every other surface. The facts get weight, the joining words recede. */}
               {readinessMessage !== null ? (
                 <span className="truncate">{readinessMessage}</span>
               ) : (
                 <span className="flex items-center gap-1.5 min-w-0">
                   {/* One sentence, one message: the flex gap spaces its parts. */}
                   <Trans>
-                    <span className="shrink-0">Found</span>
-                    <Pill size="xs" shape="square" className="bg-surface-hover text-fg font-medium shrink-0">
+                    <span className="shrink-0 text-fg-muted">Found</span>
+                    <span className="shrink-0 text-fg font-medium">
                       {gitFact}
-                    </Pill>
-                    <span className="shrink-0">and</span>
-                    <Pill size="xs" shape="square" className="bg-surface-hover text-fg font-medium min-w-0">
+                    </span>
+                    <span className="shrink-0 text-fg-muted">and</span>
+                    <span className="flex min-w-0 text-fg font-medium">
                       <span className="truncate">{agentFact}</span>
-                    </Pill>
+                    </span>
                   </Trans>
                 </span>
               )}
@@ -380,8 +398,9 @@ export function WelcomeScreen() {
               </div>
 
               {gitInfo?.found && !gitInfo.meetsMinimum && (
-                <p className="text-xs text-warning text-left">
-                  <Trans>Git {gitVersion} is older than the recommended {minimumGitVersion} - worktrees may not work.</Trans>
+                <p className="flex items-center gap-2 text-xs text-fg-muted text-left">
+                  <CircleExclamationPoint size={14} className="text-attention shrink-0" />
+                  <span><Trans>Git {gitVersion} is older than the recommended {minimumGitVersion} - worktrees may not work.</Trans></span>
                 </p>
               )}
 
@@ -395,20 +414,26 @@ export function WelcomeScreen() {
                   </>
                 ) : (
                   <>
-                    {orderedFoundAgents.map((agent) => (
-                      <DetectionRow
-                        key={agent.name}
-                        name={agent.displayName}
-                        testId={`welcome-agent-${agent.name}`}
-                        found
-                        version={agent.version}
-                        installUrl={agentInstallUrl(agent.name)}
-                        loading={refreshing}
-                        authenticated={agent.authenticated}
-                        loginCommand={agentLoginCommand(agent.name)}
-                        className={agent.authenticated === false ? 'col-span-full' : undefined}
-                      />
-                    ))}
+                    {orderedFoundAgents.map((agent) => {
+                      // A sign-in row the user must act on carries the full login command, which
+                      // is wider than a third of the grid, so it leads the grid at full width.
+                      const signInRow = signInIsAction && agent.authenticated === false;
+                      return (
+                        <DetectionRow
+                          key={agent.name}
+                          name={agent.displayName}
+                          testId={`welcome-agent-${agent.name}`}
+                          found
+                          version={agent.version}
+                          installUrl={agentInstallUrl(agent.name)}
+                          loading={refreshing}
+                          authenticated={agent.authenticated}
+                          loginCommand={agentLoginCommand(agent.name)}
+                          signInIsAction={signInIsAction}
+                          className={signInRow ? 'col-span-full' : undefined}
+                        />
+                      );
+                    })}
                     {visibleNotFound.map((agent) => (
                       <DetectionRow
                         key={agent.name}
@@ -428,7 +453,7 @@ export function WelcomeScreen() {
                 <button
                   type="button"
                   onClick={() => setShowAllAgents(true)}
-                  className="text-xs text-accent-fg hover:underline cursor-pointer"
+                  className={`text-xs ${TEXT_LINK_CLASS}`}
                 >
                   {/* Shown only past the curated three, so never for one. */}
                   <Plural value={agentCount} one="Show all # agent" other="Show all # agents" />
@@ -479,7 +504,7 @@ export function WelcomeScreen() {
             <button
               type="button"
               onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.gettingStarted)}
-              className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
+              className={`inline-flex items-center gap-1 ${TEXT_LINK_CLASS}`}
               data-testid="welcome-setup-guide"
             >
               <Trans>Read the setup guide</Trans>
@@ -490,7 +515,7 @@ export function WelcomeScreen() {
             <button
               type="button"
               onClick={() => window.electronAPI.shell.openExternal(DOCS_URLS.mobilePairing)}
-              className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
+              className={`inline-flex items-center gap-1 ${TEXT_LINK_CLASS}`}
               data-testid="welcome-pair-phone"
             >
               <Trans>Pair a phone</Trans>

@@ -121,6 +121,10 @@ msgstr "Kopiuj „{loginCommand}” do schowka"
 msgid "Copy <0>{loginCommand}</0>"
 msgstr "Kopiuj <0>{loginCommand}</0>"
 
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy login"
+msgstr ""
+
 #: src/renderer/components/layout/ToastItem.tsx
 #, fuzzy
 msgid "Copy message"

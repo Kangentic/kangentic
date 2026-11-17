@@ -97,6 +97,22 @@ test.describe('Welcome screen readiness', () => {
     await expect(page.getByText('You can look around now and install an agent later.')).toBeVisible();
   });
 
+  test('a signed-out agent beside a ready one does not block: the panel stays collapsed and counts the ready one', async () => {
+    // The agents that work are the user's stack. A signed-out one beside them is most likely a
+    // tool they dropped, so it must not put a "Sign in" message in front of a working setup.
+    ({ browser, page } = await launchWithOverrides({
+      opencode: { found: true, path: '/usr/bin/opencode', version: '1.14.25', authenticated: false },
+    }));
+
+    const readiness = page.locator('[data-testid="welcome-readiness"]');
+    await expect(readiness).toContainText('Found');
+    // Only Claude Code works, so the fact names it rather than counting two agents.
+    await expect(readiness).toContainText('Claude Code 2.1.72');
+    await expect(page.getByText('Sign in to OpenCode to run tasks.')).toHaveCount(0);
+    await expect(page.locator('[data-testid="welcome-setup-toggle"]')).toHaveText(/Show setup/);
+    await expect(page.getByText('You can look around now and install an agent later.')).toHaveCount(0);
+  });
+
   test('signed out: readiness line names the specific agent and the panel auto-expands', async () => {
     ({ browser, page } = await launchWithOverrides({ claude: { authenticated: false } }));
 
@@ -200,12 +216,12 @@ test.describe('Welcome screen readiness', () => {
     ).toBe('none');
   });
 
-  test('the app version renders as a pill, not near-invisible micro text', async () => {
+  test('the app version renders beside the wordmark', async () => {
     ({ browser, page } = await launchWithOverrides({}));
 
-    const versionPill = page.locator('[data-testid="welcome-app-version"]');
-    await expect(versionPill).toBeVisible();
-    await expect(versionPill).toHaveText('v0.1.0');
+    const version = page.locator('[data-testid="welcome-app-version"]');
+    await expect(version).toBeVisible();
+    await expect(version).toHaveText('v0.1.0');
   });
 
   test('ember theme: the CTA text uses the accent-on token, not hardcoded white', async () => {
