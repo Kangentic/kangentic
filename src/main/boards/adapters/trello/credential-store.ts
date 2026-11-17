@@ -7,12 +7,13 @@ import {
   writeEncryptedSecretFile,
   type EncryptedSecretFile,
 } from '../../shared/encrypted-secret-file';
+import type { TrelloConnectKind } from '../../../../shared/types';
 
 /**
  * How the stored token was made: approved for Kangentic's own API key, or for a key the user
  * generated in a Trello app of their own.
  */
-export type TrelloCredentialKind = 'kangentic-key' | 'own-key';
+export type TrelloCredentialKind = TrelloConnectKind;
 
 /**
  * The Trello API key and user token. Stored globally, not per project, because the token is the
@@ -68,11 +69,24 @@ export async function loadTrelloCredential(): Promise<TrelloCredential | null> {
   return read.value;
 }
 
+/**
+ * Bumped by every save and clear. A client that holds a credential in memory (the registry's
+ * adapter keeps one client for the app's life) compares it to reload after a Connect with a new
+ * token or a Disconnect, instead of reading the file on every request.
+ */
+let credentialVersion = 0;
+
+export function trelloCredentialVersion(): number {
+  return credentialVersion;
+}
+
 export async function saveTrelloCredential(credential: TrelloCredential): Promise<void> {
+  credentialVersion += 1;
   await writeEncryptedSecretFile(credentialFile(), JSON.stringify(credential));
 }
 
 /** Deletes the stored credential. A missing file is already cleared; a locked one throws. */
 export function clearTrelloCredential(): void {
+  credentialVersion += 1;
   fs.rmSync(storePath(), { force: true });
 }

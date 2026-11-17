@@ -16,10 +16,13 @@ const loadSpy = vi.hoisted(() => vi.fn<() => Promise<TrelloCredential | null>>(a
 const saveSpy = vi.hoisted(() => vi.fn<(credential: TrelloCredential) => Promise<void>>(async () => {}));
 const clearSpy = vi.hoisted(() => vi.fn<() => void>());
 
+// The store's version, as the real store bumps it on every save and clear.
+const storeVersion = vi.hoisted(() => ({ value: 0 }));
 vi.mock('../../src/main/boards/adapters/trello/credential-store', () => ({
   loadTrelloCredential: loadSpy,
   saveTrelloCredential: saveSpy,
   clearTrelloCredential: clearSpy,
+  trelloCredentialVersion: () => storeVersion.value,
 }));
 
 vi.mock('../../src/main/boards/shared/download-file', async () => {
@@ -368,6 +371,46 @@ describe('TrelloClient - a dead credential', () => {
     expect(failure).toBeInstanceOf(TrelloError);
     expect((failure as Error).message).toBe('invalid token');
     expect(await client.hasCredential()).toBe(false);
+  });
+});
+
+describe('TrelloClient - a credential changed elsewhere', () => {
+  // The registry's adapter keeps one client for the app's life, while Connect and Disconnect run
+  // on their own clients. Without the store's version, the adapter would go on using a key the
+  // user disconnected, or the old token after a reconnect.
+  it('stops using a credential once the store is cleared, and drops the board it loaded', async () => {
+    loadSpy.mockResolvedValue(credential());
+    const requests = stubFetch(() => json([]));
+    const client = new TrelloClient();
+    await client.loadBoard('AbC123xy', true);
+    expect(await client.hasCredential()).toBe(true);
+
+    storeVersion.value += 1;
+    loadSpy.mockResolvedValue(null);
+
+    expect(await client.hasCredential()).toBe(false);
+    const failure = await client.loadBoard('AbC123xy', false).catch((error: unknown) => error);
+    expect((failure as Error).name).toBe('RefusalError');
+    expect(requests).toHaveLength(2);
+  });
+
+  it('picks up a new token saved by another client', async () => {
+    loadSpy.mockResolvedValue(credential());
+    const client = new TrelloClient();
+    expect((await client.getCredential())?.token).toBe(TOKEN);
+
+    storeVersion.value += 1;
+    loadSpy.mockResolvedValue({ ...credential(), token: 'ATTAnewtoken' });
+
+    expect((await client.getCredential())?.token).toBe('ATTAnewtoken');
+  });
+
+  it('reads the store once while nothing changes', async () => {
+    loadSpy.mockResolvedValue(credential());
+    const client = new TrelloClient();
+    await client.getCredential();
+    await client.getCredential();
+    expect(loadSpy).toHaveBeenCalledTimes(1);
   });
 });
 

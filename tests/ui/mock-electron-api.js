@@ -5920,6 +5920,65 @@
           },
         };
       })(),
+      trello: (function () {
+        // Stateful mock. Tests override via window.__mockTrelloPreset, read on every
+        // call: { state: { connected, kind }, signInAvailable, invalidKey, invalidToken,
+        // boards, listBoardsError, listBoardsRejects }. signInAvailable defaults to false,
+        // as in a build with no Kangentic Trello key (TRELLO_API_KEY), so the web demo
+        // offers only what the app does. Trello's 401 text is "invalid key" / "invalid token".
+        const state = { connected: false, kind: undefined };
+        function preset() {
+          return (typeof window !== 'undefined' && window.__mockTrelloPreset) || {};
+        }
+        const defaultBoards = [
+          { id: 'board-sprint', shortLink: 'AbC123xy', name: 'Sprint board', url: 'https://trello.com/b/AbC123xy/sprint-board', workspaceName: 'Acme Product' },
+          { id: 'board-bugs', shortLink: 'DeF456zw', name: 'Bugs', url: 'https://trello.com/b/DeF456zw/bugs', workspaceName: 'Acme Product' },
+          { id: 'board-launch', shortLink: 'GhI789uv', name: 'Launch checklist', url: 'https://trello.com/b/GhI789uv/launch-checklist', workspaceName: 'Marketing' },
+        ];
+        return {
+          authStatus: async function () {
+            const presetValues = preset();
+            if (presetValues.state) Object.assign(state, presetValues.state);
+            return {
+              connected: state.connected,
+              kind: state.kind,
+              signInAvailable: presetValues.signInAvailable === true,
+            };
+          },
+          connect: async function (input) {
+            const kind = input && input.kind === 'kangentic-key' ? 'kangentic-key' : 'own-key';
+            const apiKey = typeof input?.apiKey === 'string' ? input.apiKey.trim() : '';
+            const token = typeof input?.token === 'string' ? input.token.trim() : '';
+            if (kind === 'own-key' && apiKey.length === 0) return { ok: false, field: 'apiKey', error: 'Paste your API key.' };
+            if (token.length === 0) return { ok: false, field: 'token', error: 'Paste the token Trello shows.' };
+            const presetValues = preset();
+            if (kind === 'own-key' && presetValues.invalidKey && apiKey === presetValues.invalidKey) {
+              return { ok: false, field: 'apiKey', error: 'invalid key' };
+            }
+            if (presetValues.invalidToken && token === presetValues.invalidToken) {
+              return { ok: false, field: 'token', error: 'invalid token' };
+            }
+            state.connected = true;
+            state.kind = kind;
+            return { ok: true };
+          },
+          openApproval: async function () {
+            if (typeof window !== 'undefined') {
+              window.__mockTrelloApprovalCount = (window.__mockTrelloApprovalCount || 0) + 1;
+            }
+          },
+          listBoards: async function () {
+            const presetValues = preset();
+            if (presetValues.listBoardsRejects) throw new Error(presetValues.listBoardsRejects);
+            if (presetValues.listBoardsError) return { boards: [], error: presetValues.listBoardsError };
+            return { boards: presetValues.boards || defaultBoards };
+          },
+          clearCredential: async function () {
+            state.connected = false;
+            state.kind = undefined;
+          },
+        };
+      })(),
     },
 
     // SSH hosts mock (#913). Stateful: an added host persists into listHosts() for the rest

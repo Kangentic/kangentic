@@ -1,0 +1,148 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-11-17 14:21-0500\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: ja\n"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "A key from a Trello app you make"
+msgstr "自分で作成した Trello アプリのキー"
+
+#: src/renderer/components/trello/TrelloBoardPicker.tsx
+#, fuzzy
+msgctxt "import source"
+msgid "Added"
+msgstr "追加済み"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "API key"
+msgstr "API キー"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Approve it and paste the token"
+msgstr "承認してトークンを貼り付け"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic and paste the token"
+msgstr "Kangentic を承認してトークンを貼り付け"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "ブラウザーで Kangentic を承認してください"
+
+#: src/renderer/components/trello/TrelloBoardPicker.tsx
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Back"
+msgstr "戻る"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgctxt "button"
+msgid "Cancel"
+msgstr "キャンセル"
+
+#: src/renderer/components/trello/TrelloBoardPicker.tsx
+#, fuzzy
+msgid "Choose a board"
+msgstr "ボードを選択"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Connect"
+msgstr "接続"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Connect Trello"
+msgstr "Trello に接続"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Couldn't save the token."
+msgstr "トークンを保存できませんでした。"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Hide token"
+msgstr "トークンを非表示"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Make a Trello app and generate a key"
+msgstr "Trello アプリを作成してキーを生成"
+
+#. Generate a new API Key and Trello Auth are labels in Trello's own English interface. Keep them as written.
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Make an app, then use Generate a new API Key on its Trello Auth tab."
+msgstr "アプリを作成し、Trello Auth タブの Generate a new API Key を使用します。"
+
+#: src/renderer/components/trello/TrelloBoardPicker.tsx
+#, fuzzy
+msgid "No open boards are visible to this token."
+msgstr "このトークンで表示できるオープン中のボードはありません。"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Open trello.com/apps/admin"
+msgstr "trello.com/apps/admin を開く"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Open Trello's approval page"
+msgstr "Trello の承認ページを開く"
+
+#: src/renderer/components/trello/TrelloBoardPicker.tsx
+#, fuzzy
+msgid "Other boards"
+msgstr "その他のボード"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Paste the API key"
+msgstr "API キーを貼り付け"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Paste the token Trello shows"
+msgstr "Trello に表示されたトークンを貼り付け"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Paste your key"
+msgstr "キーを貼り付け"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Show token"
+msgstr "トークンを表示"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Sign in with Trello"
+msgstr "Trello でサインイン"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Stored encrypted in your OS keychain."
+msgstr "OS のキーチェーンに暗号化して保存されます。"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Token"
+msgstr "トークン"
+
+#: src/renderer/components/trello/TrelloSetupDialog.tsx
+#, fuzzy
+msgid "Use your own API key"
+msgstr "独自の API キーを使用"

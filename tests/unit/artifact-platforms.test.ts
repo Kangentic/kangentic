@@ -73,6 +73,7 @@ const SAMPLE_LINKS: Record<string, string> = {
   azuredevops: 'https://dev.azure.com/org/project/_workitems/edit/12',
   jira: 'https://acme.atlassian.net/browse/ENG-12',
   linear: 'https://linear.app/acme/issue/ENG-1',
+  trello: 'https://trello.com/c/Xk92LmQa/138-invite-emails',
 };
 
 describe('artifactPlatformOf', () => {
@@ -160,7 +161,7 @@ describe('findArtifactLinks', () => {
   });
 
   it('never returns a tracker link', () => {
-    const text = `${SAMPLE_LINKS.github} ${SAMPLE_LINKS.jira} ${SAMPLE_LINKS.linear}`;
+    const text = `${SAMPLE_LINKS.github} ${SAMPLE_LINKS.jira} ${SAMPLE_LINKS.linear} ${SAMPLE_LINKS.trello}`;
     expect(findArtifactLinks(text, { documents: false })).toEqual([]);
     expect(findArtifactLinks(text, { documents: true })).toEqual([]);
   });

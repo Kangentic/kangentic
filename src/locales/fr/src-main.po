@@ -62,6 +62,12 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "Workflow {workflowTitle}"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "A key or token has no spaces. Copy it again from Trello."
+msgstr "Une clé ou un jeton ne contient pas d'espaces. Copiez-le à nouveau depuis Trello."
+
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
 msgid "A link in this path points to a folder that does not exist."
@@ -98,14 +104,16 @@ msgid "Agent went idle"
 msgstr "Agent devenu inactif"
 
 #: src/main/boards/adapters/linear/ipc-handlers.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "An API key has no spaces. Copy it again from Linear."
-msgstr ""
+msgstr "Une clé API ne contient pas d'espaces. Copiez-la à nouveau depuis Linear."
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Another program is using the Linear sign-in ports."
-msgstr ""
+msgstr "Un autre programme utilise les ports de connexion à Linear."
 
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
@@ -134,9 +142,10 @@ msgid "Copy Image"
 msgstr "Copier l'image"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
-msgstr ""
+msgstr "Impossible d'ouvrir le navigateur pour la connexion à Linear."
 
 #: src/main/updater.ts
 #, fuzzy
@@ -170,9 +179,10 @@ msgid "Linear sign-in did not finish. Return to Kangentic to try again."
 msgstr "La connexion à Linear n'a pas abouti. Revenez à Kangentic pour réessayer."
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Linear sign-in timed out."
-msgstr ""
+msgstr "La connexion à Linear a expiré."
 
 #: src/main/updater.ts
 #, fuzzy
@@ -199,10 +209,23 @@ msgstr "Ouvrir dans le navigateur par défaut"
 msgid "Paste"
 msgstr "Coller"
 
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Paste the token Trello shows."
+msgstr "Collez le jeton affiché par Trello."
+
 #: src/main/boards/adapters/linear/ipc-handlers.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Paste your API key."
-msgstr ""
+msgstr "Collez votre clé API."
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "Paste your API key."
+msgstr "Collez votre clé API."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
@@ -231,9 +254,10 @@ msgid "Session crashed: {label}"
 msgstr "Plantage de la session : {label}"
 
 #: src/main/boards/adapters/linear/oauth.ts
+#, fuzzy
 msgctxt "Linear connect error"
 msgid "Sign in with Linear is not available in this build."
-msgstr ""
+msgstr "La connexion avec Linear n'est pas disponible dans cette version."
 
 #: src/main/notifications/custom-sound.ts
 #, fuzzy
@@ -254,6 +278,12 @@ msgstr "Le lecteur de ce dossier n'est pas disponible."
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "La fenêtre a planté ({crashReason}) et n'a pas pu récupérer après {attempts, plural, one {# tentative} many {# de tentatives} other {# tentatives}} en {minutes, plural, one {# minute} many {# de minutes} other {# minutes}}."
+
+#: src/main/boards/adapters/trello/ipc-handlers.ts
+#, fuzzy
+msgctxt "Trello connect error"
+msgid "This build has no Kangentic Trello key. Use your own API key."
+msgstr "Cette build n'a pas de clé Trello Kangentic. Utilisez votre propre clé API."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

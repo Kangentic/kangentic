@@ -40,6 +40,7 @@ import { parseUrlForSource } from '../../boards/shared';
 import { registerAsanaIpcHandlers } from '../../boards/adapters/asana';
 import { registerJiraIpcHandlers } from '../../boards/adapters/jira';
 import { registerLinearIpcHandlers } from '../../boards/adapters/linear';
+import { registerTrelloIpcHandlers } from '../../boards/adapters/trello';
 import { priorityIndexForName, priorityScaleFrom } from '../../../shared/priority-scale';
 import { RefusalError } from '../../../shared/refusal';
 
@@ -740,4 +741,5 @@ export function registerBacklogHandlers(context: IpcContext): void {
   registerAsanaIpcHandlers();
   registerJiraIpcHandlers();
   registerLinearIpcHandlers();
+  registerTrelloIpcHandlers();
 }

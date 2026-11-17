@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Backlog
-description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira and Linear items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
+description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear and Trello items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
 tags: [backlog, import, labels, priorities]
 sources:
   - resource: src/renderer/components/backlog/
@@ -67,6 +67,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **Asana** - import tasks from an Asana project (its list, board, or calendar view URL)
 - **Jira** - import issues from a Jira Cloud or Data Center board, project, saved filter, or JQL query
 - **Linear** - import issues from a Linear team, picked from a list of your teams
+- **Trello** - import cards from a Trello board, picked from a list of your boards
 - **Obsidian Notes** - import each note in a folder of an Obsidian vault as a task
 - **Obsidian Checklist items** - import each task line in a folder's notes (`- [ ]`, and the done, in-progress and cancelled marks) as a task
 
@@ -81,13 +82,19 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
   Linear OAuth client id also offers **Sign in with Linear** beside the key: it opens Linear's
   approval page in your browser, and approving Kangentic closes the dialog. A browser sign-in renews
   itself, but after 30 days without an import Linear asks you to sign in again.
+- **Trello:** the first time you pick Trello, **Connect Trello** asks for an API key and a token.
+  Make a Trello app at `trello.com/apps/admin`, generate its API key on the app's Trello Auth tab,
+  and paste it. **Open Trello's approval page** then asks Trello for a read-only token that never
+  expires, and Trello shows it for you to paste. Kangentic checks both against Trello and stores
+  them encrypted on this machine. A build that carries Kangentic's own Trello key also offers
+  **Sign in with Trello**, which skips making an app: approve Kangentic and paste the token.
 - **Obsidian:** nothing to install or sign in to. The vault is read from this computer, also for a
   remote project, and Kangentic never writes to it.
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). Linear lists your teams instead: click one. A team you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
+2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, Trello, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). Linear lists your teams instead, and Trello your open boards under their Workspace: click one. One you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
 4. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it.
 5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
 
@@ -97,10 +104,11 @@ the vault, then the folder (`Work: Projects`), and its row's tooltip shows the f
 in no vault is refused with "Not in a vault" and nothing is saved. To import both notes and
 checklist items from one vault, add it twice, once with each type.
 
-If a saved sign-in stops working (a revoked Asana token, Jira token or Linear key, or a Linear
-sign-in that lapsed), the import dialog's error banner carries a **Connect Asana**, **Connect
-Jira** or **Connect Linear** button. It reopens the setup dialog, with a Jira site and email filled
-in again, and once the new credential works the dialog syncs. If an Obsidian source's folder moved, its drive is gone, or it is no longer inside a vault, the banner says
+If a saved sign-in stops working (a revoked Asana token, Jira token, Linear key or Trello token, or
+a Linear sign-in that lapsed), the import dialog's error banner carries a **Connect Asana**,
+**Connect Jira**, **Connect Linear** or **Connect Trello** button. It reopens the setup dialog, with
+a Jira site and email filled in again, and once the new credential works the dialog syncs. If an
+Obsidian source's folder moved, its drive is gone, or it is no longer inside a vault, the banner says
 "Folder not found" or "Not in a vault" and carries **Choose folder**, which saves the new folder in
 the old source's place. Items already imported still read as imported. Choosing the same folder
 again checks it again in place.
@@ -137,6 +145,14 @@ the Status filter use the board's own column names, in board order. A Jira or Az
 also brings its comments, its type and its due date. A Jira priority matches your priority scale by
 name the same way, and Jira's Highest and Lowest, which no stock scale has, take the top level and
 Low.
+
+Trello cards show their card number (`#138`) in the dialog, and the Status filter lists the
+board's lists left to right. Trello cards have no open or closed state, so **Closed** means an
+archived card or a card on an archived list. A card on a list named Done is still **Open**, so
+untick that list in the Status filter to leave it out. A label with a color and no name imports as its color
+(`green`), checklists become task lists in the description, and the card's list, members, start
+and due dates and saved links go into a **Trello** section at the end. Uploaded files come over as
+attachments.
 
 ### What an Obsidian note or item becomes
 

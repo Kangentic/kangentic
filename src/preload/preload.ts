@@ -809,6 +809,13 @@ const api: ElectronAPI = {
       cancelSignIn: () => ipcRenderer.invoke(IPC.BOARDS_LINEAR_CANCEL_SIGN_IN),
       listTeams: () => ipcRenderer.invoke(IPC.BOARDS_LINEAR_LIST_TEAMS),
     },
+    trello: {
+      authStatus: () => ipcRenderer.invoke(IPC.BOARDS_TRELLO_AUTH_STATUS),
+      connect: (input) => ipcRenderer.invoke(IPC.BOARDS_TRELLO_CONNECT, input),
+      openApproval: (input) => ipcRenderer.invoke(IPC.BOARDS_TRELLO_OPEN_APPROVAL, input),
+      listBoards: () => ipcRenderer.invoke(IPC.BOARDS_TRELLO_LIST_BOARDS),
+      clearCredential: () => ipcRenderer.invoke(IPC.BOARDS_TRELLO_CLEAR_CREDENTIAL),
+    },
   },
 
   // Workflows: every call names the workflow's home project explicitly.

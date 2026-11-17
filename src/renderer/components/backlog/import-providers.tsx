@@ -7,6 +7,8 @@ import { AsanaSetupDialog } from '../asana/AsanaSetupDialog';
 import { JiraConnectDialog } from '../jira/JiraConnectDialog';
 import { LinearSetupDialog } from '../linear/LinearSetupDialog';
 import { LinearTeamPicker } from '../linear/LinearTeamPicker';
+import { TrelloSetupDialog } from '../trello/TrelloSetupDialog';
+import { TrelloBoardPicker } from '../trello/TrelloBoardPicker';
 import { translateText } from '../../i18n/translate';
 import type { LocalizedText } from '../../../shared/i18n/text';
 import type { BoardConnectPrefill, ExternalSource, ImportSource } from '../../../shared/types';
@@ -92,7 +94,7 @@ export interface Provider {
   icon: React.ReactNode;
   available: boolean;
   comingSoon?: boolean;
-  /** Present for a provider that signs in through Kangentic (Asana, Jira, Linear). */
+  /** Present for a provider that signs in through Kangentic (Asana, Jira, Linear, Trello). */
   auth?: ProviderAuth;
   sourceTypes: SourceTypeOption[];
 }
@@ -219,6 +221,27 @@ export const PROVIDERS: Provider[] = [
         label: msg({ message: 'Checklist items', context: 'import source type' }),
         description: msg({ message: 'Each - [ ] line becomes a task', context: 'import source type' }),
         folder: { dialogTitle: OBSIDIAN_FOLDER_DIALOG_TITLE },
+      },
+    ],
+  },
+  {
+    id: 'trello',
+    label: 'Trello', // i18n-ok: a provider's own name
+    icon: <ArtifactPlatformLogo platformId="trello" size={15} />,
+    available: true,
+    auth: {
+      getStatus: () => window.electronAPI.backlog.trello.authStatus(),
+      SetupDialog: TrelloSetupDialog,
+    },
+    sourceTypes: [
+      {
+        value: 'trello',
+        label: msg({ message: 'Board', context: 'import source type' }),
+        description: msg({ message: 'Import cards from a Trello board', context: 'import source type' }),
+        placeholder: 'https://trello.com/b/AbC123xy/sprint-board', // i18n-ok: an example URL
+        hint: msg({ message: 'Paste the URL of a Trello board.', context: 'import source type' }),
+        icon: <ArtifactPlatformLogo platformId="trello" size={15} />,
+        picker: TrelloBoardPicker,
       },
     ],
   },

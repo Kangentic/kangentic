@@ -202,6 +202,7 @@ export const ARTIFACT_PLATFORMS: readonly ArtifactPlatform[] = [
   { id: 'azuredevops', name: 'Azure DevOps', kind: 'tracker', detection: 'manual', patterns: [{ host: 'dev.azure.com', path: /\/_(workitems|boards|wiki)\// }] },
   { id: 'jira', name: 'Jira', kind: 'tracker', detection: 'manual', nameFromUrl: jiraName, patterns: [{ host: '*.atlassian.net', path: /^\/browse\/[A-Z][A-Z0-9]*-\d+/ }] },
   { id: 'linear', name: 'Linear', kind: 'tracker', detection: 'manual', patterns: [{ host: 'linear.app', path: /^\/[^/]+\/(issue|project)\// }] },
+  { id: 'trello', name: 'Trello', kind: 'tracker', detection: 'manual', patterns: [{ host: 'trello.com', path: /^\/[bc]\// }] },
 ];
 
 /**

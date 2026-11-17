@@ -6214,6 +6214,57 @@ export type JiraConnectResult =
       detail?: string;
     };
 
+/**
+ * How a Trello token was made: approved for Kangentic's own API key ("Sign in with Trello"),
+ * or for a key from a Trello app the user made.
+ */
+export type TrelloConnectKind = 'kangentic-key' | 'own-key';
+
+export interface TrelloAuthStatus {
+  /** True when a Trello API key and token are saved. */
+  connected: boolean;
+  kind?: TrelloConnectKind;
+  /** False when this build carries no Kangentic API key, so only the user's own key is offered. */
+  signInAvailable: boolean;
+}
+
+export interface TrelloConnectInput {
+  kind: TrelloConnectKind;
+  /** The user's own key. Ignored for `kangentic-key`, whose key never leaves main. */
+  apiKey?: string;
+  token: string;
+}
+
+/** The answer to a Connect: saved, or Trello's own text and the field it blames. */
+export interface TrelloConnectResult {
+  ok: boolean;
+  field?: 'apiKey' | 'token';
+  error?: string;
+}
+
+export interface TrelloOpenApprovalInput {
+  kind: TrelloConnectKind;
+  /** The user's own key, for `own-key`. */
+  apiKey?: string;
+}
+
+export interface TrelloBoardSummary {
+  id: string;
+  /** The id in the board's URL, and the saved source's repository. */
+  shortLink: string;
+  name: string;
+  /** The board URL a picked board is saved with; the Trello URL parser reads the short link from it. */
+  url: string;
+  /** The board's Workspace, or null for one the token cannot read. */
+  workspaceName: string | null;
+}
+
+export interface TrelloListBoardsResult {
+  boards: TrelloBoardSummary[];
+  /** Trello's own text when the list could not load (a revoked token). */
+  error?: string;
+}
+
 export interface ImportCheckCliResult {
   available: boolean;
   authenticated: boolean;
@@ -9938,6 +9989,16 @@ export interface ElectronAPI {
       /** Stop waiting for the browser; the pending `signIn` resolves as cancelled. */
       cancelSignIn: () => Promise<void>;
       listTeams: () => Promise<LinearListTeamsResult>;
+    };
+    trello: {
+      authStatus: () => Promise<TrelloAuthStatus>;
+      /** Check a key and token with Trello, and save them only if Trello accepts them. */
+      connect: (input: TrelloConnectInput) => Promise<TrelloConnectResult>;
+      /** Open Trello's approval page, where Trello shows the token to paste. */
+      openApproval: (input: TrelloOpenApprovalInput) => Promise<void>;
+      listBoards: () => Promise<TrelloListBoardsResult>;
+      /** Forget the saved key and token. */
+      clearCredential: () => Promise<void>;
     };
   };
 

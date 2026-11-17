@@ -111,7 +111,7 @@ src/
         asana/             # Asana adapter (stable)
         jira/              # Jira adapter (stable, Cloud and Data Center)
         linear/            # Linear adapter (stable)
-        trello/            # Trello adapter (read-only import, no Connect dialog yet)
+        trello/            # Trello adapter (stable)
     ipc/
       register-all.ts      # Thin orchestrator, creates IpcContext, re-exports
       ipc-context.ts       # Shared IpcContext interface
