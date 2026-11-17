@@ -60,28 +60,47 @@ issues you could not mark and carry on, never let it block the triage itself.
 Parse the issue id from a pasted URL: `https://kangentic.sentry.io/issues/<ISSUE_ID>/?...`
 (the `project=` query param is the numeric project id, useful for list queries).
 
-Use Sentry's own `sentry` CLI (npm package `sentry`, published by Sentry, pre-1.0). Install it once
-with `npm install -g sentry@0.46.0` (Node 20+). Run `sentry --version`: it must print `0.x`. A
-machine that also has the older upload tool (`sentry-cli`, from scoop or Homebrew) can resolve
-`sentry` to that one and print `sentry-cli 3.x`. Call the new one by its full path in npm's global
-bin directory, or as `npx -y sentry@0.46.0`. Every call prints a one-line notice about
-`.sentryclirc`, which is harmless.
+Use the latest release of Sentry's own `sentry` CLI (npm package `sentry`, published by Sentry,
+pre-1.0, Node 20+). It changes often, so compare `sentry --version` with `npm view sentry version`
+at the start of a session, and when it is behind run `npm install -g sentry@latest`. Two other
+programs can answer to `sentry`. `(Get-Command sentry).Source` in PowerShell, or `command -v sentry`
+elsewhere, says which one runs:
+
+- Inside this repo, `node_modules/.bin/sentry`. `@sentry/esbuild-plugin` and `@sentry/electron`
+  pull the CLI in through `@sentry/bundler-plugins`, so its version follows those plugins, not this
+  skill (0.45.0 and 0.49.0 side by side on 2026-11-17). A shell with `node_modules/.bin` on PATH
+  finds it before the global one.
+- The older upload tool `sentry-cli` (scoop, Homebrew), which prints `sentry-cli 3.x`.
+
+When `sentry` is not the global latest, call the global one by its path. `npm prefix -g` prints the
+folder, which holds `sentry.cmd` on Windows and `bin/sentry` elsewhere. A stale copy can look like a
+permissions problem: 0.46.0 sent the CI token from the environment instead of the stored login and
+got 403 on every read, while 0.49.0 on the same machine read fine. Every call prints a one-line
+notice about `.sentryclirc`, which is harmless.
 
 A project target is `kangentic/desktop` or `kangentic/mobile`. An issue target is
 `kangentic/DESKTOP-1N`: the shortId works for every command here, so no numeric id is needed. One
 command per call:
 
 ```
-sentry issue list kangentic/desktop --query "is:unresolved is:unassigned environment:production" --json --fields shortId,title,level,count,userCount,firstSeen,lastSeen,assignedTo
+sentry api organizations/kangentic/issues/ -f project=4511996066660352 -f "query=is:unresolved is:unassigned environment:production" -f statsPeriod=30d -f limit=100 --json --fields shortId,title,level,count,userCount,firstSeen,lastSeen,assignedTo
 sentry issue view kangentic/DESKTOP-1N
 sentry issue view kangentic/DESKTOP-1N --json --fields event.contexts.native_crash,event.contexts.chromium_stability_report,event.contexts.crashpad,event.contexts.host_memory,event.contexts.utility_process
 sentry api organizations/kangentic/issues/DESKTOP-1N/tags/release/
 sentry api organizations/kangentic/issues/DESKTOP-1N/ -X PUT -f assignedTo=user:<id>
 ```
 
-- **`issue list`** returns 25 rows from the last 30 days by default (`-n 100`, `--cursor next`,
-  `--period`). Run it for both projects. `--query` takes Sentry issue search syntax, and the
-  query above is the triage set. Retention is 30 days, so no `--period` reaches further back.
+- **The triage list** is `sentry api` on the org's issues endpoint, not `sentry issue list`. On
+  0.49.0, `issue list --json --fields` returns one empty object per row, while `issue view`,
+  `auth whoami` and `sentry api` all honor `--fields` (checked 2026-11-17). Bare `issue list --json`
+  is about 4 KB a row, and the readable table cuts titles off. After an upgrade, try
+  `issue list --fields` again, and switch back if it returns filled rows. Run the list once per
+  project; for mobile pass `-f project=4511808149651456`. `--json` wraps the response as
+  `{status, statusText, body}`, with one row per issue in `body`, 100 at most per call
+  (`--cursor next` pages). `query` takes Sentry issue search syntax, and the query above is the
+  triage set. Retention is 30 days, so no `statsPeriod` reaches further back. The readable
+  `sentry issue list kangentic/desktop --query "..." -n 100` still serves for counting rows and
+  events.
 - **`issue view`** without `--json` is the readable form: a header table (status, events, users,
   first and last seen), tags, the user's install id and location, the breadcrumbs, and the stack
   with the innermost frame first, each symbolicated frame followed by about ten lines of its source.
@@ -366,8 +385,8 @@ Reading a native event, in order of what trips people up:
 
 ## Typical requests
 
-**"Any new issues?" (triage scan).** Run the `issue list` line from Retrieval for
-`kangentic/desktop` and again for `kangentic/mobile`, unless the user scoped to one. The query
+**"Any new issues?" (triage scan).** Run the triage list line from Retrieval for the desktop
+project and again for mobile (`-f project=4511808149651456`), unless the user scoped to one. The query
 keeps only unresolved, unassigned production issues, so the result is already most of the report's
 per-issue line: shortId, title, count, userCount (affected installs), first and last seen, and
 `assignedTo`. Add the link (`https://kangentic.sentry.io/issues/<id>/`), and the release breakdown
