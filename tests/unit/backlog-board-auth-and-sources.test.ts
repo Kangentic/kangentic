@@ -77,6 +77,7 @@ vi.mock('../../src/main/boards', () => ({
 vi.mock('../../src/main/boards/adapters/asana', () => ({ registerAsanaIpcHandlers: vi.fn() }));
 vi.mock('../../src/main/boards/adapters/jira', () => ({ registerJiraIpcHandlers: vi.fn() }));
 vi.mock('../../src/main/boards/adapters/linear', () => ({ registerLinearIpcHandlers: vi.fn() }));
+vi.mock('../../src/main/boards/adapters/trello', () => ({ registerTrelloIpcHandlers: vi.fn() }));
 
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
 import { registerSourceUrlParser } from '../../src/main/boards/shared';
@@ -84,8 +85,9 @@ import { RefusalError } from '../../src/shared/refusal';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
-// 'trello' is a stub board type with no real parser, so this cannot collide
-// with an adapter's own registration.
+// Every adapter module is mocked above, so nothing registers a real parser for
+// 'trello' here. This stand-in is the only one, so it cannot collide with an
+// adapter's own registration.
 registerSourceUrlParser('trello', {
   parse: (url) => ({ repository: url.replace(/^https?:\/\//, '') }),
   buildLabel: (repository) => `Trello: ${repository}`,
