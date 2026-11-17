@@ -594,6 +594,16 @@ export function automationNeedsAgent(type: string): boolean {
 }
 
 /**
+ * Is this an On task exit row that talks to the agent? Run again refuses such a
+ * row (`runAutomationAgain`): by then the task has left the column, and its
+ * session is the next column's agent. Its failure notice offers no Run again
+ * (`reportAutomationFailures`). One predicate for both, so they cannot disagree.
+ */
+export function isExitAgentRow(trigger: AutomationTrigger | undefined, type: string): boolean {
+  return trigger === 'exit' && automationNeedsAgent(type);
+}
+
+/**
  * Does a row of this type move the task when it runs (`endsGroup`)? Asked of
  * the manifest, never of the type's name: Run again runs such a row outside the
  * task lock, and a workflow's step check reads its Text match as the column's

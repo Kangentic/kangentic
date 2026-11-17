@@ -1280,7 +1280,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     });
     // The runner recorded every row; this is the other sink, the one that
     // interrupts, and it is rationed per automation per minute.
-    reportAutomationFailures(context, enterSummary, task, options.projectId);
+    reportAutomationFailures(context, enterSummary, task, options.projectId, 'enter');
   } catch (error) {
     if (isAbortError(error)) throw error;
     // The runner isolates each row, so reaching here means the LIST itself
