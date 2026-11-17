@@ -669,15 +669,16 @@ describe('ci.yml Playwright runs fail on a flaky test', () => {
   it('catches the flag dropped from the real UI shard run', () => {
     const regressed = replaceExactly(
       ciSource,
-      `--project=ui --shard=\${{ matrix.shardIndex }}/\${{ matrix.shardTotal }} ${FAIL_ON_FLAKY_FLAG}`,
-      `--project=ui --shard=\${{ matrix.shardIndex }}/\${{ matrix.shardTotal }}`,
+      `--project=ui --test-list="$RUNNER_TEMP/ui-shard-files.txt" ${FAIL_ON_FLAKY_FLAG}`,
+      '--project=ui --test-list="$RUNNER_TEMP/ui-shard-files.txt"',
     );
     const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(regressed, playwrightScripts));
     expect(violations.map((run) => run.command.includes('--project=ui'))).toEqual([true]);
   });
 
   it('catches the flag dropped from the real web demo run', () => {
-    const regressed = replaceExactly(ciSource, `npm run test:demo -- ${FAIL_ON_FLAKY_FLAG}`, 'npm run test:demo');
+    const demoShard = 'npm run test:demo -- --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}';
+    const regressed = replaceExactly(ciSource, `${demoShard} ${FAIL_ON_FLAKY_FLAG}`, demoShard);
     const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(regressed, playwrightScripts));
     expect(violations.map((run) => run.viaScript)).toEqual(['test:demo']);
   });
