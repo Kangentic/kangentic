@@ -24,7 +24,7 @@
       // DOM at that size. demo/boot.js sends the page here unless embed=1 or stage=0.
       var WIDTH = 1600;
       var HEIGHT = 1000;
-      var LIGHT_THEMES = ['light', 'sand', 'mint', 'sky', 'peach'];
+      var LIGHT_THEMES = ['light', 'clay', 'sand', 'mint', 'sky', 'peach'];
       var params = new URLSearchParams(location.search);
       params.set('stage', '0');
       if (LIGHT_THEMES.indexOf(params.get('theme') || 'dark') !== -1) document.documentElement.setAttribute('data-tone', 'light');
@@ -36,7 +36,16 @@
         var top = Math.max(0, (window.innerHeight - HEIGHT * scale) / 2);
         frame.style.transform = 'translate(' + left + 'px, ' + top + 'px) scale(' + scale + ')';
         document.documentElement.setAttribute('data-stage-scale', String(Math.round(scale * 1000) / 1000));
+        tellScale(scale);
       }
+      // The frame's pointer keeps the hero's page size by dividing by the scale it is shown at,
+      // which only the host knows (demo/README.md, the scale message).
+      var shownScale = 1;
+      function tellScale(scale) {
+        shownScale = scale;
+        if (frame.contentWindow) frame.contentWindow.postMessage({ type: 'kangentic-demo-scale', scale: scale }, location.origin);
+      }
+      frame.addEventListener('load', function () { tellScale(shownScale); });
       window.addEventListener('resize', fit);
       fit();
     })();

@@ -21,15 +21,16 @@
  *    pointer and its ancestors. A stylesheet that loads later (the diff editor's) is mirrored when
  *    it arrives.
  *  - Pointer capture, which Firefox refuses a pointer it did not make (`installCaptureShim`).
- *  - The pointer itself. A live frame draws one, the product accent arrow, so a menu opening by
- *    itself reads as a visitor's click. It fades in when a cycle starts and out at rest, where it
- *    leaves the page so nothing stays hovered, and a still never draws it.
+ *  - The pointer itself. A live frame draws one, `@kangentic/branding`'s dot (demo/pointer.ts), so
+ *    a menu opening by itself reads as a visitor's click. It fades in when a cycle starts and out
+ *    at rest, where it leaves the page so nothing stays hovered, and a still never draws it.
  *
  * The renderer knows none of this: nothing here is read by `src/renderer`, and the events are the
  * ones any mouse sends. Loaded on demand (demo/choreography-entry.ts), only by a scene that has a
  * choreography and is either a live frame under loop=1 or a still with a pose.
  */
 import type { ChoreographyStep, ChoreographyTarget } from '../tests/captures/scenes';
+import { createPointer, type DemoPointer } from './pointer';
 
 interface Point { x: number; y: number }
 
@@ -380,21 +381,11 @@ function installHoverMirror(): void {
 
 // ---------------------------------------------------------------- the pointer the frame draws
 
-const CURSOR_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" style="display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.45))">'
-  + '<path d="M4 2 L4 19 L8.5 15 L11.5 21.5 L14 20.4 L11 14 L17 14 Z" fill="var(--color-accent, #c0562f)" stroke="#ffffff" stroke-width="1.4" stroke-linejoin="round"></path></svg>';
-/** The arrow's tip sits at (4, 2) in its 24px box. */
-const CURSOR_TIP: Point = { x: 4, y: 2 };
-
-function createCursor(): { element: HTMLElement; ring: HTMLElement } {
-  const element = document.createElement('div');
-  element.setAttribute('data-demo-cursor', '');
-  element.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none;opacity:0;transition:opacity 300ms ease;will-change:transform';
-  element.innerHTML = CURSOR_SVG;
-  const ring = document.createElement('div');
-  ring.style.cssText = 'position:absolute;left:-13px;top:-15px;width:34px;height:34px;border-radius:50%;box-sizing:border-box;border:2px solid var(--color-accent, #c0562f);opacity:0;pointer-events:none';
-  element.appendChild(ring);
-  document.body.appendChild(element);
-  return { element, ring };
+/** The pointer, `@kangentic/branding`'s dot (demo/pointer.ts), on the page. */
+function createCursor(): DemoPointer {
+  const pointer = createPointer();
+  document.body.appendChild(pointer.element);
+  return pointer;
 }
 
 /**
@@ -466,7 +457,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   let compatibilitySuppressed = false;
   let stopped = false;
   let instant = true;
-  let cursor: { element: HTMLElement; ring: HTMLElement } | null = null;
+  let cursor: DemoPointer | null = null;
   let veil: HTMLElement | null = null;
   /** Between a cut and the frame showing again: the reset plays unpaced and the pointer is not drawn. */
   let cutting = false;
@@ -624,9 +615,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     // A pointerdown the page cancels takes the mouse events with it until the release, as in a browser.
     compatibilitySuppressed = !allowed;
     if (sendMouse('mousedown', target, init) && !compatibilitySuppressed) settleFocus(target);
-    if (cursor && !instant) {
-      cursor.ring.animate([{ transform: 'scale(0.4)', opacity: 0.9 }, { transform: 'scale(1)', opacity: 0 }], { duration: 420, easing: 'ease-out' });
-    }
+    // The core holds pressed until the release, unpaced too; the pop and the ring only play in view.
+    cursor?.press(!instant);
   }
 
   /** `clickCount` is the click's `detail`: a double-click's second release sends 2, then the dblclick a browser follows it with. */
@@ -636,6 +626,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     const captured = captureTarget();
     const target = captured ?? hit;
     buttons = 0;
+    cursor?.release();
     const init = pointerInit(point, { button }, point);
     sendPointer('pointerup', target, init);
     sendMouse('mouseup', target, init);
@@ -852,9 +843,9 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     return 'no line differs';
   }
 
-  /** Draw the pointer's arrow with its tip on a point. */
+  /** Draw the pointer's dot centered on a point. */
   function drawCursorAt(at: Point): void {
-    if (cursor) cursor.element.style.transform = `translate(${at.x - CURSOR_TIP.x}px, ${at.y - CURSOR_TIP.y}px)`;
+    cursor?.drawAt(at);
   }
 
   /** Show the pointer, once it has somewhere to be: a cycle of keys and hotkeys alone never draws one. */
@@ -1019,6 +1010,9 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     watchViewport();
     instant = false;
     cursor = createCursor();
+    // A pose that holds the button (a card carried over a column) was pressed before there was a
+    // pointer to draw it; the hand that holds it shows pressed from the first frame.
+    if (buttons !== 0) cursor.press(false);
     await placeBeside(cycle);
     if (stopped || !cursor) return;
     if (point) drawCursorAt(point);
