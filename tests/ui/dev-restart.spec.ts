@@ -19,9 +19,12 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
+import { DEV_SERVER_URL } from './dev-server';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
-const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
+// The dev server, not the bundle CI serves the rest of the tier: the notice under test is the
+// dev server's own, and dev-restart.ts does nothing without its HMR client.
+const VITE_URL = DEV_SERVER_URL;
 
 const RUN_ID = Math.random().toString(36).slice(2, 8);
 const PROJECT_ID = `proj-dev-restart-${RUN_ID}`;

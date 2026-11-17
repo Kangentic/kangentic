@@ -24,10 +24,13 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
+import { DEV_SERVER_URL } from './dev-server';
 import type { RendererErrorContext } from '../../src/shared/types';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
-const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
+// The dev server, not the bundle CI serves the rest of the tier: the test fails the lazy chunk by
+// its source path (`ChangesPanel.tsx`), and a bundle names that chunk by hash.
+const VITE_URL = DEV_SERVER_URL;
 
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);

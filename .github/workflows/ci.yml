@@ -466,12 +466,25 @@ jobs:
       # recorded on that retry is there to de-flake from. The demo and E2E steps pass the same
       # flag, and so does deploy-demo.yml's smoke. release.yml's poster captures do not, because
       # their retry is how a slow shot lands. tests/unit/ci-workflow-hygiene.test.ts pins all four.
+      # The app the specs load, as a static bundle (dist/ui-bundle). From the Vite dev
+      # server every test's boot was one request per source module, 759 of them into
+      # a context with no cache, and a three-assertion test took 3.7s. It is the
+      # development app, test hooks and all (scripts/build-ui-bundle.mjs), and it
+      # builds in seconds, so each shard builds its own: a shared build job would
+      # put a second job in front of every shard.
+      - name: Build the UI test bundle
+        run: node scripts/build-ui-bundle.mjs
       # The planner exits non-zero on a shard with no spec, and bash's default
       # `-e` stops the step there: Playwright treats a --test-list that matches
       # nothing as a run with nothing to do, and would pass.
       - name: Plan this shard's spec files (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
         run: node scripts/ui-shard-plan.mjs ${{ matrix.shardIndex }}/${{ matrix.shardTotal }} > "$RUNNER_TEMP/ui-shard-files.txt"
+      # KANGENTIC_UI_BUNDLE=1 has playwright.config.ts serve that bundle where the
+      # specs load the app, and start the dev server on a second port for the few
+      # specs that need one (tests/ui/dev-server.ts).
       - name: Run UI tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        env:
+          KANGENTIC_UI_BUNDLE: '1'
         run: npx playwright test --project=ui --test-list="$RUNNER_TEMP/ui-shard-files.txt" --fail-on-flaky-tests
 
   # Thin required gate: this single check ("UI tests (Playwright)") is what branch

@@ -7,6 +7,19 @@
  */
 declare global {
   interface Window {
+    /**
+     * Renderer modules a spec reads or drives directly, as the instances the app itself loaded.
+     * src/renderer/App.tsx sets it in a development build, beside `__zustandStores`. Read a module
+     * from here rather than with `import('/src/renderer/...')` in the page: only the Vite dev
+     * server answers a source path, and CI serves the UI tier a static bundle (tests/ui/dev-server.ts).
+     */
+    __kangenticTestModules?: {
+      managerResizeGate: typeof import('../../src/renderer/window-manager/terminal/manager-resize-gate');
+      terminalWebgl: typeof import('../../src/renderer/utils/terminal-webgl');
+      imageCompress: typeof import('../../src/renderer/components/dialogs/image-compress');
+      projectCache: typeof import('../../src/renderer/stores/project-cache');
+      iconRegistry: typeof import('../../src/renderer/utils/icon-registry');
+    };
     /** Override `window.electronAPI.platform` per-spec. Set in addInitScript. */
     __mockPlatform?: 'win32' | 'darwin' | 'linux';
     /** Override `window.electronAPI.arch` per-spec (default 'x64'). Set in addInitScript. */

@@ -39,10 +39,9 @@ test.describe('image-compress calibration', () => {
     try {
       const results = await page.evaluate(
         async ({ longEdges, qualities, resolutions }) => {
-          const mod = await import(
-            '/src/renderer/components/dialogs/image-compress.ts'
-          );
-          const compressImage = (mod as ImageCompressModule).compressImage;
+          const modules = window.__kangenticTestModules;
+          if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+          const compressImage = (modules.imageCompress as ImageCompressModule).compressImage;
 
           /** Build a noise PNG of the given dimensions. Math.random() per pixel
            *  defeats PNG's run-length compression so the source size approximates

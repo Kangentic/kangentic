@@ -47,7 +47,14 @@ import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { clearDropGapDom } from './utils/board-drop-preview';
 import { setRebindCaptureActive } from './utils/rebind-state';
-import { useWindowStore, commandWindowManager, knowledgeGraphWindowManager } from './window-manager/store/window-store';
+import { useWindowStore, commandWindowManager, knowledgeGraphWindowManager, monitorWindowManager } from './window-manager/store/window-store';
+// Whole modules, for the dev-only test handle at the bottom of this file. Each is already in the
+// app's own import graph, so a production build drops these with the block that reads them.
+import * as managerResizeGateModule from './window-manager/terminal/manager-resize-gate';
+import * as terminalWebglModule from './utils/terminal-webgl';
+import * as imageCompressModule from './components/dialogs/image-compress';
+import * as projectCacheModule from './stores/project-cache';
+import * as iconRegistryModule from './utils/icon-registry';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -1624,6 +1631,7 @@ if (import.meta.env.DEV) {
     monitor: useMonitorStore,
     commandWindow: commandWindowManager.store,
     knowledgeGraphWindows: knowledgeGraphWindowManager.store,
+    monitorWindows: monitorWindowManager.store,
     usageDashboard: useUsageDashboardStore,
     knowledgeGraph: useKnowledgeGraphStore,
     popOut: usePopOutStore,
@@ -1638,5 +1646,16 @@ if (import.meta.env.DEV) {
     // So a UI test can open and clear the board's links overlay in the same
     // task it then reads, to catch the overlay's fade while it runs.
     workflow: useWorkflowStore,
+  };
+  // The modules a UI test reads or drives directly, as the instances the app itself loaded. A
+  // spec used to reach them with `import('/src/renderer/...')` in the page, which only a dev
+  // server can answer: the UI tier's static bundle (scripts/build-ui-bundle.mjs) serves no source
+  // paths. This file is evaluated in every window, pop-outs included, since index.tsx imports it.
+  (window as unknown as Record<string, unknown>).__kangenticTestModules = {
+    managerResizeGate: managerResizeGateModule,
+    terminalWebgl: terminalWebglModule,
+    imageCompress: imageCompressModule,
+    projectCache: projectCacheModule,
+    iconRegistry: iconRegistryModule,
   };
 }

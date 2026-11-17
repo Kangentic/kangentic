@@ -23,11 +23,11 @@
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
+import { resolvePlaywrightCli } from './lib/playwright-cli.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -138,11 +138,9 @@ export function parseShardArgument(argument) {
 
 /** How many tests Playwright lists for the ui project, read from its `Total:` line. */
 function listedTestCount(extraArguments) {
-  const requireFromHere = createRequire(import.meta.url);
-  const playwrightCli = requireFromHere.resolve('@playwright/test/cli');
   const output = execFileSync(
     process.execPath,
-    [playwrightCli, 'test', '--project=ui', '--list', ...extraArguments],
+    [resolvePlaywrightCli(), 'test', '--project=ui', '--list', ...extraArguments],
     { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] },
   );
   const total = /^Total: (\d+) tests? in (\d+) files?$/m.exec(output);

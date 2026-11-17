@@ -294,11 +294,14 @@ test.describe('toasts in a pop-out window', () => {
       await gotoVite(page);
       await page.locator('[data-testid="popout-close"]').waitFor({ state: 'visible', timeout: 15000 });
 
-      // A pop-out mounts no App.tsx, so it has no store handle on window; the
-      // module the surface imported is the same one Vite serves here.
-      await page.evaluate(async () => {
-        const module = await import('/src/renderer/stores/toast-store.ts');
-        module.useToastStore.getState().addToast({ title: 'Couldn\'t reset session', message: 'The task is in Done.', variant: 'error', durationMs: 30_000 });
+      // A pop-out mounts no <App />, but index.tsx imports App.tsx in every window, so the
+      // store handle it sets is here too, and it is the store this surface renders from.
+      await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { toast: { getState: () => { addToast: (toast: Record<string, unknown>) => void } } };
+        }).__zustandStores;
+        if (!stores) throw new Error('window.__zustandStores not exposed');
+        stores.toast.getState().addToast({ title: 'Couldn\'t reset session', message: 'The task is in Done.', variant: 'error', durationMs: 30_000 });
       });
 
       const toast = page.getByTestId('toast');

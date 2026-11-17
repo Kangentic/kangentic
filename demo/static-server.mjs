@@ -1,7 +1,8 @@
 /**
  * A plain static file server for the web build, shared by the `demo` smoke tier and
  * demo/measure.mjs. No framework: the point of the demo is that it boots from ANY static host,
- * so the server that proves it is the smallest one that can serve a directory.
+ * so the server that proves it is the smallest one that can serve a directory. The UI test tier
+ * serves its own bundle through it too (scripts/serve-ui-bundle.mjs).
  *
  * The build's base path is read from the built index.html (the first module script src, e.g.
  * `/demo/assets/index-*.js` or `/kangentic/assets/...`), so the tree is mounted wherever the
@@ -32,6 +33,7 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
   '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
   '.map': 'application/json',
   '.txt': 'text/plain; charset=utf-8',
 };
@@ -43,7 +45,9 @@ export function readBuildBase(distDir) {
     throw new Error(`No web build at ${indexPath}. Run "npm run build:demo" first.`);
   }
   const html = fs.readFileSync(indexPath, 'utf8');
-  const match = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)\/assets\//);
+  // `*`, not `+`: a build made for the root serves `/assets/...`, with nothing before it. The UI
+  // tier's bundle (scripts/build-ui-bundle.mjs) is one, and reads here as the base `/`.
+  const match = html.match(/<script[^>]+type="module"[^>]+src="([^"]*)\/assets\//);
   if (!match) throw new Error(`Could not find the module script in ${indexPath}; is this a Vite build?`);
   return `${match[1]}/`;
 }

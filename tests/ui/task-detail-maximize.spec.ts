@@ -907,10 +907,10 @@ test.describe('Task Detail: the terminal through a drag of the OS window edge', 
    * `isManagerResizeGateOpen` reads too).
    */
   async function watchDrag(target: Page): Promise<void> {
-    await target.evaluate(async () => {
-      const gate = await import('/src/renderer/window-manager/terminal/manager-resize-gate.ts' as string) as {
-        isManagerResizeInProgress: () => boolean;
-      };
+    await target.evaluate(() => {
+      const modules = window.__kangenticTestModules;
+      if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+      const gate = modules.managerResizeGate;
       const holder = window as unknown as { __windowResizes: number[]; __sendsWhileHeld: number; __gate: typeof gate };
       holder.__windowResizes = [];
       holder.__sendsWhileHeld = 0;
@@ -1188,12 +1188,7 @@ test.describe('Task Detail: a resize whose release went unseen', () => {
         frame.dispatchEvent(new PointerEvent('pointermove', { ...init, button: -1, buttons: 1, clientX: x - 40, clientY: y }));
         if (frame.hasPointerCapture(1)) frame.releasePointerCapture(1);
       }, windowId);
-      const gateOpen = () => ownPage.evaluate(async () => {
-        const gate = await import('/src/renderer/window-manager/terminal/manager-resize-gate.ts' as string) as {
-          isManagerResizeInProgress: () => boolean;
-        };
-        return gate.isManagerResizeInProgress();
-      });
+      const gateOpen = () => isManagerResizeGateOpen(ownPage);
       expect(await gateOpen()).toBe(true);
 
       // The pointer moves on with no button held: the drag is over.

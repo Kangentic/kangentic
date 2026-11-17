@@ -800,11 +800,12 @@ export async function readTerminalTrace(page: Page, since: number, events: reado
  * pins a gesture's end reads this.
  */
 export async function isManagerResizeGateOpen(page: Page): Promise<boolean> {
-  return page.evaluate(async () => {
-    const gate = await import('/src/renderer/window-manager/terminal/manager-resize-gate.ts' as string) as {
-      isManagerResizeInProgress: () => boolean;
-    };
-    return gate.isManagerResizeInProgress();
+  return page.evaluate(() => {
+    const modules = (window as unknown as {
+      __kangenticTestModules?: { managerResizeGate: { isManagerResizeInProgress: () => boolean } };
+    }).__kangenticTestModules;
+    if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+    return modules.managerResizeGate.isManagerResizeInProgress();
   });
 }
 
@@ -1170,12 +1171,14 @@ export async function computedColor(page: Page, cssColor: string, property: 'col
  * The Vite dev server must be running (started by playwright webServer config).
  *
  * `beforeLoad` runs after the mock is injected and before the app loads, for a
- * spec that needs its own init script in place before React renders.
+ * spec that needs its own init script in place before React renders. `url` is
+ * where the app loads from: a spec that needs the dev server itself passes
+ * `DEV_SERVER_URL` (tests/ui/dev-server.ts).
  */
 export async function launchPage(
-  options: { beforeLoad?: (page: Page) => Promise<void> } = {},
+  options: { beforeLoad?: (page: Page) => Promise<void>; url?: string } = {},
 ): Promise<{ browser: Browser; page: Page }> {
-  await waitForViteReady();
+  await waitForViteReady(options.url);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
@@ -1187,7 +1190,7 @@ export async function launchPage(
   await page.addInitScript({ path: MOCK_SCRIPT });
   if (options.beforeLoad) await options.beforeLoad(page);
 
-  await gotoVite(page);
+  await gotoVite(page, options.url);
   await page.waitForLoadState('load');
   // Wait for React to render the app shell
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });

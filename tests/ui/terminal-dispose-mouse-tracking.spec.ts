@@ -33,6 +33,7 @@ import {
   fireSessionData,
   gotoVite,
   launchWithTransientTerminal,
+  markSessionFirstOutput,
   openTransientCommandTerminal,
   waitForViteReady,
   writtenToSession,
@@ -189,15 +190,9 @@ test('a terminal in the Monitor pop-out reports the wheel and leaves no document
     await cardTitle.click();
     const terminal = page.locator('#monitor-detail-layer-root .xterm').first();
     await terminal.waitFor({ state: 'attached', timeout: 10000 });
-    // The pop-out mounts no App.tsx, so there is no __zustandStores handle. The
-    // Vite-served page imports the same store module the window renders from.
-    await page.evaluate(async (sessionId) => {
-      const sessionStoreModule = '/src/renderer/stores/session-store.ts';
-      const { useSessionStore } = await import(sessionStoreModule) as {
-        useSessionStore: { getState: () => { markFirstOutput: (id: string) => void } };
-      };
-      useSessionStore.getState().markFirstOutput(sessionId);
-    }, POP_OUT_SESSION_ID);
+    // The pop-out mounts no <App />, but index.tsx imports App.tsx in every window, so its
+    // __zustandStores handle is here too, over the stores this window renders from.
+    await markSessionFirstOutput(page, POP_OUT_SESSION_ID);
     await enableMouseReporting(page, terminal, POP_OUT_SESSION_ID);
 
     const screen = page.locator('#monitor-detail-layer-root .xterm-screen').first();
@@ -221,12 +216,14 @@ test('a terminal in the Monitor pop-out reports the wheel and leaves no document
 
     // Close the detail window while the button is still held, which disposes
     // its xterm.
-    await page.evaluate(async () => {
-      const windowStoreModule = '/src/renderer/window-manager/store/window-store.ts';
-      const { monitorWindowManager } = await import(windowStoreModule) as {
-        monitorWindowManager: { store: { getState: () => { windows: Record<string, unknown>; closeWindow: (id: string) => void } } };
-      };
-      const state = monitorWindowManager.store.getState();
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          monitorWindows: { getState: () => { windows: Record<string, unknown>; closeWindow: (id: string) => void } };
+        };
+      }).__zustandStores;
+      if (!stores) throw new Error('window.__zustandStores not exposed');
+      const state = stores.monitorWindows.getState();
       for (const windowId of Object.keys(state.windows)) state.closeWindow(windowId);
     });
     await expect(page.locator('#monitor-detail-layer-root .xterm')).toHaveCount(0);

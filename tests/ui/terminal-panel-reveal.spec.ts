@@ -322,8 +322,10 @@ async function switchToProject(page: Page, projectId: string): Promise<void> {
 
 /** Whether a project's next switch takes the warm path, and the panel height its snapshot holds. */
 async function readProjectCache(page: Page, projectId: string): Promise<{ warm: boolean; snapshotPanelHeight: number | null }> {
-  return page.evaluate(async (targetId) => {
-    const projectCache = await import('/src/renderer/stores/project-cache.ts');
+  return page.evaluate((targetId) => {
+    const modules = window.__kangenticTestModules;
+    if (!modules) throw new Error('window.__kangenticTestModules not exposed');
+    const projectCache = modules.projectCache;
     return {
       warm: projectCache.isWarmProject(targetId),
       snapshotPanelHeight: projectCache.getProjectSnapshot(targetId)?.config.terminal.panelHeight ?? null,
