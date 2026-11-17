@@ -151,23 +151,6 @@ const preConfig = `
   });
 `;
 
-let browser: Browser;
-let page: Page;
-
-test.beforeAll(async () => {
-  const result = await launchWithState(preConfig);
-  browser = result.browser;
-  page = result.page;
-  await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
-});
-
-test.afterAll(async () => {
-  // Closing a Chromium that has run a terminal can take longer than the project's 15 s hook budget on
-  // a starved runner, and a hook timeout fails whichever test ran last in the worker.
-  test.setTimeout(45000);
-  await browser?.close();
-});
-
 test.describe('Task Detail: the terminal through a maximize', () => {
   /** Open the task's window with its agent on screen, its terminal full of text, the cursor hidden (it blinks) and motion off. */
   async function openStillTerminal(ownPage: Page): Promise<void> {
@@ -1316,6 +1299,28 @@ test.describe('Task Detail: a resize whose release went unseen', () => {
 });
 
 test.describe('Task Detail: maximize / restore', () => {
+  // These six tests share one page. The file runs in parallel mode, and hooks at file level would
+  // boot and close that page once per chunk of parallel tests, most of which never use it. Scoping
+  // the hooks here and running the group in order boots it once.
+  test.describe.configure({ mode: 'default' });
+
+  let browser: Browser;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    const result = await launchWithState(preConfig);
+    browser = result.browser;
+    page = result.page;
+    await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+  });
+
+  test.afterAll(async () => {
+    // Closing a Chromium that has run a terminal can take longer than the project's 15 s hook budget on
+    // a starved runner, and a hook timeout fails whichever test ran last in the worker.
+    test.setTimeout(45000);
+    await browser?.close();
+  });
+
   test('maximize fills the screen and insets the backdrop; restore returns to windowed size', async () => {
     const card = page
       .locator('[data-swimlane-name="Code Review"]')

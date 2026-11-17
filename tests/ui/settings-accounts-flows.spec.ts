@@ -39,68 +39,62 @@ const TWO_ACCOUNTS = [{
 }];
 
 test.describe('Settings > Accounts: order and switches', () => {
-  test('dragging a grip reorders the two accounts and the bridge receives the new order', async () => {
+  // One page for three cases on the same seed. The order matters: the Order control and the
+  // switch end where they began, so the drag, which leaves Manual and a new order, runs last.
+  test('the Order control, the auto-switch switch and a drag write their settings and bridge calls', async () => {
+    test.setTimeout(30_000);
     const { browser, page } = await launchPage({ beforeLoad: seedAccounts(TWO_ACCOUNTS) });
     try {
       await openAccountsTab(page);
-      // Automatic sorts by reset and offers no grip; Manual is the order a drag edits (task #1064).
-      await expect(page.getByTestId('account-row-account-1').getByLabel('Reorder')).toHaveCount(0);
-      await page.getByTestId('accounts-order-mode').getByRole('radio', { name: 'Manual' }).click();
-      const firstGrip = page.getByTestId('account-row-account-1').getByLabel('Reorder');
-      await expect(firstGrip).toBeVisible();
-      const secondRow = page.getByTestId('account-row-account-2');
-      const gripBox = await firstGrip.boundingBox();
-      const targetBox = await secondRow.boundingBox();
-      if (!gripBox || !targetBox) throw new Error('The grip or the second row has no box');
-      const startX = gripBox.x + gripBox.width / 2;
-      const startY = gripBox.y + gripBox.height / 2;
 
-      await page.mouse.move(startX, startY);
-      await page.mouse.down();
-      await page.mouse.move(startX + 4, startY + 12, { steps: 4 });
-      await page.mouse.move(startX, targetBox.y + targetBox.height * 0.7, { steps: 15 });
-      await page.mouse.up();
+      await test.step('the Order control writes agent.accounts.orderMode', async () => {
+        const control = page.getByTestId('accounts-order-mode');
+        await expect(control.getByRole('radio', { name: 'Automatic' })).toBeChecked();
 
-      await expect.poll(async () => (await accountCalls(page, 'reorder')).map((call) => call.args), { timeout: 3000 })
-        .toEqual([['claude', ['account-2', 'account-1']]]);
-      const names = page.getByTestId('settings-card-accounts-claude').getByTestId('account-name');
-      await expect(names).toHaveText(['two@example.com', 'one@example.com']);
-    } finally {
-      await browser.close();
-    }
-  });
+        await control.getByRole('radio', { name: 'Manual' }).click();
+        await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).agent.accounts.orderMode), { timeout: 3000 })
+          .toBe('manual');
+        await expect(control.getByRole('radio', { name: 'Manual' })).toBeChecked();
 
-  test('the Order control writes agent.accounts.orderMode', async () => {
-    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(TWO_ACCOUNTS) });
-    try {
-      await openAccountsTab(page);
-      const control = page.getByTestId('accounts-order-mode');
-      await expect(control.getByRole('radio', { name: 'Automatic' })).toBeChecked();
+        await control.getByRole('radio', { name: 'Automatic' }).click();
+        await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).agent.accounts.orderMode), { timeout: 3000 })
+          .toBe('automatic');
+      });
 
-      await control.getByRole('radio', { name: 'Manual' }).click();
-      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).agent.accounts.orderMode), { timeout: 3000 })
-        .toBe('manual');
-      await expect(control.getByRole('radio', { name: 'Manual' })).toBeChecked();
+      await test.step('the auto-switch switch writes agent.accounts.autoSwitchAtLimit', async () => {
+        const readValue = () => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).agent.accounts.autoSwitchAtLimit);
+        expect(await readValue()).toBe(true);
+        const toggle = page.getByTestId('setting-row-accounts.autoSwitchAtLimit');
+        await toggle.click();
+        await expect.poll(readValue, { timeout: 3000 }).toBe(false);
+        await toggle.click();
+        await expect.poll(readValue, { timeout: 3000 }).toBe(true);
+      });
 
-      await control.getByRole('radio', { name: 'Automatic' }).click();
-      await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).agent.accounts.orderMode), { timeout: 3000 })
-        .toBe('automatic');
-    } finally {
-      await browser.close();
-    }
-  });
+      await test.step('dragging a grip reorders the two accounts and the bridge receives the new order', async () => {
+        // Automatic sorts by reset and offers no grip; Manual is the order a drag edits (task #1064).
+        await expect(page.getByTestId('account-row-account-1').getByLabel('Reorder')).toHaveCount(0);
+        await page.getByTestId('accounts-order-mode').getByRole('radio', { name: 'Manual' }).click();
+        const firstGrip = page.getByTestId('account-row-account-1').getByLabel('Reorder');
+        await expect(firstGrip).toBeVisible();
+        const secondRow = page.getByTestId('account-row-account-2');
+        const gripBox = await firstGrip.boundingBox();
+        const targetBox = await secondRow.boundingBox();
+        if (!gripBox || !targetBox) throw new Error('The grip or the second row has no box');
+        const startX = gripBox.x + gripBox.width / 2;
+        const startY = gripBox.y + gripBox.height / 2;
 
-  test('the auto-switch switch writes agent.accounts.autoSwitchAtLimit', async () => {
-    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(TWO_ACCOUNTS) });
-    try {
-      await openAccountsTab(page);
-      const readValue = () => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).agent.accounts.autoSwitchAtLimit);
-      expect(await readValue()).toBe(true);
-      const toggle = page.getByTestId('setting-row-accounts.autoSwitchAtLimit');
-      await toggle.click();
-      await expect.poll(readValue, { timeout: 3000 }).toBe(false);
-      await toggle.click();
-      await expect.poll(readValue, { timeout: 3000 }).toBe(true);
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        await page.mouse.move(startX + 4, startY + 12, { steps: 4 });
+        await page.mouse.move(startX, targetBox.y + targetBox.height * 0.7, { steps: 15 });
+        await page.mouse.up();
+
+        await expect.poll(async () => (await accountCalls(page, 'reorder')).map((call) => call.args), { timeout: 3000 })
+          .toEqual([['claude', ['account-2', 'account-1']]]);
+        const names = page.getByTestId('settings-card-accounts-claude').getByTestId('account-name');
+        await expect(names).toHaveText(['two@example.com', 'one@example.com']);
+      });
     } finally {
       await browser.close();
     }
@@ -114,29 +108,34 @@ test.describe('Settings > Accounts: key-file Add account failures', () => {
     { reason: 'no-keys', body: /^The file sets none of the keys .+ reads\.$/ },
     { reason: 'duplicate', body: 'That file is already in the list.' },
   ];
-  for (const failure of failures) {
-    test(`a ${failure.reason} answer raises the Couldn't add account toast`, async () => {
-      const cards = [{ agent: 'codex', kind: 'key-file', accounts: [{ id: 'account-k1' }] }];
-      const { browser, page } = await launchPage({
-        beforeLoad: async (target) => {
-          await seedAccounts(cards)(target);
-          await target.addInitScript((reason) => {
+  // One page for the four answers: the mock reads window.__mockAccountKeyFileResult on each
+  // addKeyFile call, so each step sets its reason, adds, and dismisses the toast it raised.
+  test('each failed answer raises the Couldn\'t add account toast', async () => {
+    test.setTimeout(30_000);
+    const cards = [{ agent: 'codex', kind: 'key-file', accounts: [{ id: 'account-k1' }] }];
+    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(cards) });
+    try {
+      await openAccountsTab(page);
+      for (const [index, failure] of failures.entries()) {
+        await test.step(`a ${failure.reason} answer raises the Couldn't add account toast`, async () => {
+          await page.evaluate((reason) => {
             (window as unknown as { __mockAccountKeyFileResult: unknown }).__mockAccountKeyFileResult = { ok: false, reason };
           }, failure.reason);
-        },
-      });
-      try {
-        await openAccountsTab(page);
-        await page.getByTestId('accounts-add-codex').click();
-        const toast = page.getByTestId('toast').filter({ hasText: "Couldn't add account" });
-        await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't add account");
-        await expect(toast.getByTestId('toast-body')).toHaveText(failure.body);
-        expect(await accountCalls(page, 'addKeyFile')).toHaveLength(1);
-      } finally {
-        await browser.close();
+          await page.getByTestId('accounts-add-codex').click();
+          // Earlier answers' toasts are still up (the settings panel is open, so their cards
+          // are inert and cannot be dismissed), so pick this answer's toast by its own body.
+          const toast = page.getByTestId('toast').filter({
+            has: page.getByTestId('toast-body').filter({ hasText: failure.body }),
+          });
+          await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't add account");
+          await expect(toast.getByTestId('toast-body')).toHaveText(failure.body);
+          expect(await accountCalls(page, 'addKeyFile')).toHaveLength(index + 1);
+        });
       }
-    });
-  }
+    } finally {
+      await browser.close();
+    }
+  });
 });
 
 test.describe('Settings > Accounts: cards and rows', () => {

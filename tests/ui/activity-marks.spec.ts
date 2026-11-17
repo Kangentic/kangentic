@@ -302,6 +302,8 @@ test.describe('Activity marks', () => {
       const pauseButton = dialog.locator('button[aria-label="Pause session"]');
       const ring = pauseButton.locator('[data-mark="control-pause-working"]');
       await expect(ring).toBeVisible({ timeout: 10000 });
+      // A thinking session shows only the working ring, never the idle one.
+      await expect(pauseButton.locator('[data-mark="control-pause-idle"]')).toHaveCount(0);
 
       // The control mark is r=10, so 20 * (2*10+2)/24 = 18.33px of drawn ring - a pixel match
       // for the lucide Circle it replaced. No size compensation, and none should come back.

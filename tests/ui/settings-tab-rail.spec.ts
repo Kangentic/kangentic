@@ -86,40 +86,34 @@ test.describe('Settings tab rail', () => {
         expect(geometry.contentWidth).toBeGreaterThan(520);
         expect(geometry.contentWidth).toBeLessThan(548);
         expect(geometry.panelRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
+
+        // English: the search reads the same page after the width checks, which it does not change.
+        if (locale === 'en') {
+          await test.step('a search draws its match counts without moving the rail or the panel', async () => {
+            const before = geometry;
+            await page.getByTestId('settings-search').fill('a');
+            await expect(page.locator('[data-testid^="settings-search-count-"]').first()).toBeVisible();
+            const during = await railGeometry(page);
+            expect(Math.abs(during.railWidth - before.railWidth)).toBeLessThan(1);
+            expect(Math.abs(during.panelLeft - before.panelLeft)).toBeLessThan(1);
+            expect(during.labelLines.filter((label) => label.lines > 1)).toEqual([]);
+          });
+        }
+
+        // Russian, the longest language: the floor is the same page at a smaller window.
+        if (locale === 'ru') {
+          await test.step('fits the window at the 900x600 floor in the longest language', async () => {
+            await page.setViewportSize({ width: 900, height: 600 });
+            await panelSettled(page);
+            const floorGeometry = await railGeometry(page);
+            expect(floorGeometry.panelLeft).toBeGreaterThanOrEqual(-1);
+            expect(floorGeometry.panelRight).toBeLessThanOrEqual(floorGeometry.viewportWidth + 1);
+            expect(floorGeometry.labelLines.filter((label) => label.lines > 1)).toEqual([]);
+          });
+        }
       } finally {
         await browser.close();
       }
     });
   }
-
-  test('a search draws its match counts without moving the rail or the panel', async () => {
-    const { browser, page } = await launchPage();
-    try {
-      await openSettings(page);
-      const before = await railGeometry(page);
-      await page.getByTestId('settings-search').fill('a');
-      await expect(page.locator('[data-testid^="settings-search-count-"]').first()).toBeVisible();
-      const during = await railGeometry(page);
-      expect(Math.abs(during.railWidth - before.railWidth)).toBeLessThan(1);
-      expect(Math.abs(during.panelLeft - before.panelLeft)).toBeLessThan(1);
-      expect(during.labelLines.filter((label) => label.lines > 1)).toEqual([]);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('fits the window at the 900x600 floor in the longest language', async () => {
-    const { browser, page } = await launchPage({ beforeLoad: inLanguage('ru') });
-    try {
-      await openSettings(page);
-      await page.setViewportSize({ width: 900, height: 600 });
-      await panelSettled(page);
-      const geometry = await railGeometry(page);
-      expect(geometry.panelLeft).toBeGreaterThanOrEqual(-1);
-      expect(geometry.panelRight).toBeLessThanOrEqual(geometry.viewportWidth + 1);
-      expect(geometry.labelLines.filter((label) => label.lines > 1)).toEqual([]);
-    } finally {
-      await browser.close();
-    }
-  });
 });

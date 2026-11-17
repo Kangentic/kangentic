@@ -210,24 +210,10 @@ test.describe('ImportDialog - filter and reconcile behaviour', () => {
     testInfo.setTimeout(30000);
   });
 
-  test('typing a search term with no match shows "No items match your filters" with Clear button', async () => {
-    const { browser, page } = await launchPage();
-
-    await seedGitHubSource(page);
-    await seedReconcile(page, [makeIssue({ externalId: 'issue-100', title: 'Some real issue' })]);
-
-    await createProject(page, 'import-empty-state-test');
-    await openImportDialog(page);
-
-    await expect(page.locator('[data-testid="import-issue-issue-100"]')).toBeVisible({ timeout: 5000 });
-
-    await page.locator('[data-testid="import-search"]').fill('xyzzy-no-match');
-
-    await expect(page.locator('[data-testid="import-empty-state-message"]')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('[data-testid="import-clear-filters-btn"]')).toBeVisible();
-
-    await browser.close();
-  });
+  // Trimmed (test-suite audit): 'typing a search term with no match shows "No items match your filters" with Clear button'
+  // is the first half of 'clearFilters clears the client-side filter without triggering a reconcile', below: it fills a
+  // non-matching term and sees import-empty-state-message, then clicks import-clear-filters-btn. Neither test
+  // asserts the literal sentence, only the testid.
 
   // The cache read is an optimization, not a dependency: it runs alongside the CLI
   // check now, so a failure there must not strand the dialog on its spinner. The
@@ -347,33 +333,19 @@ test.describe('ImportDialog - filter and reconcile behaviour', () => {
     await expect(page.locator('[data-testid="filter-option-status-open"]')).toBeVisible();
     await expect(page.locator('[data-testid="filter-option-status-triaged"]')).toBeVisible();
 
-    await browser.close();
-  });
+    await test.step('the Status filter menu stays right-anchored to its trigger (MultiSelectDropdown\'s default align)', async () => {
+      // MultiSelectDropdown defaults `align` to 'right': the Import dialog's filter
+      // cluster sits at the dialog's right edge, so its menus hang left of the trigger
+      // with their RIGHT edges glued together. Same open and same Status click as above.
+      const statusTrigger = page.locator('button', { hasText: 'Status' });
+      const menu = page.locator('[data-testid="filter-menu-status"]');
+      await expect(menu).toBeVisible();
 
-  test('the Status filter menu stays right-anchored to its trigger (MultiSelectDropdown\'s default align)', async () => {
-    // MultiSelectDropdown defaults `align` to 'right': the Import dialog's filter
-    // cluster sits at the dialog's right edge, so its menus hang left of the trigger
-    // with their RIGHT edges glued together.
-    const { browser, page } = await launchPage();
-
-    await seedGitHubSource(page);
-    await seedReconcile(page, [
-      makeIssue({ externalId: 'align-1', title: 'Align check one', state: 'open' }),
-      makeIssue({ externalId: 'align-2', title: 'Align check two', state: 'triaged' }),
-    ]);
-
-    await createProject(page, 'import-status-align-right-test');
-    await openImportDialog(page);
-
-    const statusTrigger = page.locator('button', { hasText: 'Status' });
-    const menu = page.locator('[data-testid="filter-menu-status"]');
-    await statusTrigger.click();
-    await expect(menu).toBeVisible();
-
-    const triggerBox = await statusTrigger.boundingBox();
-    const menuBox = await menu.boundingBox();
-    if (!triggerBox || !menuBox) throw new Error('missing geometry for the alignment check');
-    expect(Math.abs((menuBox.x + menuBox.width) - (triggerBox.x + triggerBox.width))).toBeLessThanOrEqual(2);
+      const triggerBox = await statusTrigger.boundingBox();
+      const menuBox = await menu.boundingBox();
+      if (!triggerBox || !menuBox) throw new Error('missing geometry for the alignment check');
+      expect(Math.abs((menuBox.x + menuBox.width) - (triggerBox.x + triggerBox.width))).toBeLessThanOrEqual(2);
+    });
 
     await browser.close();
   });

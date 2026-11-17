@@ -27,54 +27,66 @@ const trigger = () => page.getByTestId('notify-sound-onAgentIdle');
 const menu = () => page.getByTestId('notify-sound-menu-onAgentIdle');
 const savedNotifications = () => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).notifications);
 
-test('the sound menu escapes the settings clip and lists every choice', async () => {
-  await trigger().click();
-  await expect(menu()).toBeVisible();
+// One boot for four reads that leave the page as they found it. The steps run in
+// order: the first step leaves the menu open, and the Escape step closes it.
+test('the sound menu opens past the clip, closes on Escape and on a click outside, and the switches sit under their headings', async () => {
+  await test.step('the Toast and Desktop switches stay under their column headings', async () => {
+    const heading = (name: string) => page.getByText(name, { exact: true }).first();
+    for (const [name, testId] of [['Toast', 'notify-channel-onAgentIdle-toast'], ['Desktop', 'notify-channel-onAgentIdle-desktop']] as const) {
+      const headingBox = await heading(name).boundingBox();
+      const switchBox = await page.getByTestId(testId).boundingBox();
+      if (!headingBox || !switchBox) throw new Error(`${name} did not lay out`);
+      const headingCenter = headingBox.x + headingBox.width / 2;
+      const switchCenter = switchBox.x + switchBox.width / 2;
+      expect(Math.abs(headingCenter - switchCenter)).toBeLessThan(4);
+    }
+  });
 
-  // boundingBox ignores clipping, so the structure is the real check.
-  const portaled = await menu().evaluate((element) => element.closest('[data-testid="setting-row-notifications.onAgentIdle"]') === null);
-  expect(portaled).toBe(true);
+  await test.step('the sound menu escapes the settings clip and lists every choice', async () => {
+    await trigger().click();
+    await expect(menu()).toBeVisible();
 
-  for (const sound of ['off', 'chime', 'rise', 'fall', 'tick', 'system', 'custom']) {
-    await expect(page.getByTestId(`notify-sound-option-${sound}`)).toBeVisible();
-  }
-  // The OS picks System, so there is nothing of ours to play.
-  await expect(page.getByTestId('notify-sound-play-chime')).toBeVisible();
-  await expect(page.getByTestId('notify-sound-play-system')).toHaveCount(0);
-});
+    // boundingBox ignores clipping, so the structure is the real check.
+    const portaled = await menu().evaluate((element) => element.closest('[data-testid="setting-row-notifications.onAgentIdle"]') === null);
+    expect(portaled).toBe(true);
 
-test('choosing a sound shows it in the row and saves it', async () => {
-  await trigger().click();
-  await page.getByTestId('notify-sound-option-chime').click();
+    for (const sound of ['off', 'chime', 'rise', 'fall', 'tick', 'system', 'custom']) {
+      await expect(page.getByTestId(`notify-sound-option-${sound}`)).toBeVisible();
+    }
+    // The OS picks System, so there is nothing of ours to play.
+    await expect(page.getByTestId('notify-sound-play-chime')).toBeVisible();
+    await expect(page.getByTestId('notify-sound-play-system')).toHaveCount(0);
+  });
 
-  await expect(menu()).toBeHidden();
-  await expect(trigger()).toContainText('Chime');
-  await expect.poll(async () => (await savedNotifications()).sounds.onAgentIdle).toBe('chime');
-});
+  await test.step('Escape closes the menu and leaves the settings panel open', async () => {
+    // The menu is still open from the step above.
+    await expect(menu()).toBeVisible();
 
-test('Escape closes the menu and leaves the settings panel open', async () => {
-  await trigger().click();
-  await expect(menu()).toBeVisible();
+    await page.keyboard.press('Escape');
 
-  await page.keyboard.press('Escape');
+    await expect(menu()).toBeHidden();
+    await expect(trigger()).toBeVisible();
+  });
 
-  await expect(menu()).toBeHidden();
-  await expect(trigger()).toBeVisible();
-});
+  await test.step('a click outside closes the menu, and a Play inside does not', async () => {
+    await trigger().click();
+    await page.getByTestId('notify-sound-play-chime').click();
+    await expect(menu()).toBeVisible();
 
-test('a click outside closes the menu, and a Play inside does not', async () => {
-  await trigger().click();
-  await page.getByTestId('notify-sound-play-chime').click();
-  await expect(menu()).toBeVisible();
-
-  await page.mouse.click(5, 5);
-  await expect(menu()).toBeHidden();
+    await page.mouse.click(5, 5);
+    await expect(menu()).toBeHidden();
+  });
 });
 
 test('a refused file shows why under the row, keeps the earlier choice, and clears on the next pick', async () => {
   // Chime first: the default is Off, which a wrongly saved Custom would also not read as.
   await trigger().click();
   await page.getByTestId('notify-sound-option-chime').click();
+  await test.step('choosing a sound shows it in the row and saves it', async () => {
+    // The saved chime is read again after the refusal below.
+    await expect(menu()).toBeHidden();
+    await expect.poll(async () => (await savedNotifications()).sounds.onAgentIdle).toBe('chime');
+  });
   await expect(trigger()).toContainText('Chime');
 
   await page.evaluate(() => {
@@ -136,6 +148,9 @@ test('with a custom file chosen, opening the menu focuses the Custom row and the
   await trigger().click();
   await page.getByTestId('notify-sound-option-custom').click();
   await expect(trigger()).toContainText('my-gong-sound.wav');
+  await test.step('a chosen file shows its name in the row', async () => {
+    await expect.poll(async () => (await savedNotifications()).customSounds.onAgentIdle).toBe('my-gong-sound.wav');
+  });
 
   await trigger().click();
   const customRow = page.getByTestId('notify-sound-option-custom');
@@ -160,8 +175,9 @@ test('a built-in pick previews once, and Play plays its own sound without choosi
       removeEventListener() {}
     };
   });
+  // The sound's name, read from a dev-server path (chime.wav) or a hashed build asset (chime-Dk3z.wav).
   const startedSounds = () => page.evaluate(() => (window as unknown as { __audioCreated: string[] }).__audioCreated
-    .map((source) => /([a-z]+)\.wav/.exec(source)?.[1] ?? source));
+    .map((source) => /([a-z]+)(?:-[\w-]+)?\.wav/.exec(source)?.[1] ?? source));
 
   await trigger().click();
   await page.getByTestId('notify-sound-option-chime').click();
@@ -194,18 +210,6 @@ test('Mute and App icon badge flip their own settings and leave the event switch
   expect(after.sounds).toEqual(before.sounds);
 });
 
-test('a chosen file shows its name in the row', async () => {
-  await page.evaluate(() => {
-    (window as unknown as { __mockCustomSoundPick: unknown }).__mockCustomSoundPick = { status: 'picked', fileName: 'my-gong-sound.wav' };
-  });
-
-  await trigger().click();
-  await page.getByTestId('notify-sound-option-custom').click();
-
-  await expect(trigger()).toContainText('my-gong-sound.wav');
-  await expect.poll(async () => (await savedNotifications()).customSounds.onAgentIdle).toBe('my-gong-sound.wav');
-});
-
 test('with Toast and Desktop both off, Sound is disabled and keeps its choice', async () => {
   await trigger().click();
   await page.getByTestId('notify-sound-option-rise').click();
@@ -216,16 +220,4 @@ test('with Toast and Desktop both off, Sound is disabled and keeps its choice', 
 
   await expect(trigger()).toBeDisabled();
   await expect(trigger()).toContainText('Rise');
-});
-
-test('the Toast and Desktop switches stay under their column headings', async () => {
-  const heading = (name: string) => page.getByText(name, { exact: true }).first();
-  for (const [name, testId] of [['Toast', 'notify-channel-onAgentIdle-toast'], ['Desktop', 'notify-channel-onAgentIdle-desktop']] as const) {
-    const headingBox = await heading(name).boundingBox();
-    const switchBox = await page.getByTestId(testId).boundingBox();
-    if (!headingBox || !switchBox) throw new Error(`${name} did not lay out`);
-    const headingCenter = headingBox.x + headingBox.width / 2;
-    const switchCenter = switchBox.x + switchBox.width / 2;
-    expect(Math.abs(headingCenter - switchCenter)).toBeLessThan(4);
-  }
 });

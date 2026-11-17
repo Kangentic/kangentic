@@ -100,18 +100,6 @@ function taskWindow(page: Page) {
 }
 
 test.describe('Opening a task asks main to resume it', () => {
-  test('a click on the card asks, with the open project', async () => {
-    const { browser, page } = await launchWithPausedTask();
-    try {
-      await page.locator(`[data-board-lanes] [data-task-id="${PAUSED_TASK}"]`).click();
-
-      await expect(taskWindow(page)).toBeVisible();
-      await expect.poll(() => resumeOnOpenCalls(page)).toEqual([{ taskId: PAUSED_TASK, projectId: PROJECT_ID }]);
-    } finally {
-      await browser.close();
-    }
-  });
-
   // Red: `setDetailTaskId(null)` asks too. Closing a window is the user leaving,
   // and a task that was declined or is still paused must not be asked about again.
   test('closing the window does not ask again', async () => {

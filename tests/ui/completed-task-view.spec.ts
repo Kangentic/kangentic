@@ -409,68 +409,63 @@ test.describe('Completed task view', () => {
     return strip;
   }
 
-  test('at a narrow window the strip keeps every figure and leaves the moments to Elapsed', async () => {
-    // The guard for the overflow test below: it sets up the same narrow strip and
-    // fails loudly if the fixture, the shrink, or the metrics are not what that
-    // test assumes. Under 640px the strip drops Started and Ended and keeps the
-    // span in Elapsed's tooltip.
+  // One launch and one narrowing for the three checks of the narrow window. Each step keeps the title
+  // of the test it came from.
+  test('at a narrow window the strip, the status and the tabs all fit', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
     try {
       const strip = await narrowStrip(page);
-      await expect(strip.locator('[data-testid^="completed-metric-"]')).toHaveCount(7);
-      for (const key of ['elapsed', 'agent-runtime', 'changes', 'pull-request', 'cost']) {
-        await expect(strip.locator(`[data-testid="completed-metric-${key}"]`)).toBeVisible();
-      }
-      await expect(strip.locator('[data-testid="completed-metric-started"]')).toBeHidden();
-      await expect(strip.locator('[data-testid="completed-metric-ended"]')).toBeHidden();
-      await expect(strip.locator('[data-testid="completed-metric-elapsed"]')).toHaveAccessibleDescription(/ to /);
-      await expect(page.locator('[data-testid="completed-status"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
 
-  test('at a narrow window the last metric and the status stay inside the strip', async () => {
-    // At a 900px page the task window scales to about 520px. Seven metrics and
-    // the status need about 720px, so before the strip dropped Started and Ended
-    // at that width, Cost and the status ended past its right edge and
-    // `overflow-hidden` clipped them.
-    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
-    try {
-      const strip = await narrowStrip(page);
-      // A row that cannot wrap and clips (`overflow-hidden`) keeps every metric
-      // on one line at any width, so line position proves nothing. What shows a
-      // metric or the status pushed past the edge is its right edge against the
-      // strip's own, which the clip leaves unchanged. A pixel of tolerance
-      // absorbs sub-pixel rounding between platforms.
-      const overflowOf = (selector: string) => strip.evaluate((stripElement, targetSelector) => {
-        const targets = Array.from(stripElement.querySelectorAll(targetSelector));
-        const lastTarget = targets[targets.length - 1];
-        return lastTarget
-          ? lastTarget.getBoundingClientRect().right - stripElement.getBoundingClientRect().right
-          : Number.NaN;
-      }, selector);
-      await expect.poll(() => overflowOf('[data-testid^="completed-metric-"]')).toBeLessThanOrEqual(1);
-      await expect.poll(() => overflowOf('[data-testid="completed-status"]')).toBeLessThanOrEqual(1);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('at a narrow window all five tabs fit their row', async () => {
-    // The task window scales to about 520px at the 900px floor; the five tab
-    // names never shrink (`flex-shrink-0`), so the last one is what overflows
-    // first. A pixel of tolerance absorbs sub-pixel rounding.
-    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
-    try {
-      await narrowStrip(page);
-      const row = page.locator('[data-testid="completed-task-tabs"]');
-      await expect(row.getByRole('tab')).toHaveCount(5);
-      const overflow = await row.evaluate((rowElement) => {
-        const tabs = Array.from(rowElement.querySelectorAll('[role="tab"]'));
-        return tabs[tabs.length - 1].getBoundingClientRect().right - rowElement.getBoundingClientRect().right;
+      await test.step('at a narrow window the strip keeps every figure and leaves the moments to Elapsed', async () => {
+        // The guard for the overflow step below: it sets up the same narrow strip and
+        // fails loudly if the fixture, the shrink, or the metrics are not what that
+        // step assumes. Under 640px the strip drops Started and Ended and keeps the
+        // span in Elapsed's tooltip.
+        await expect(strip.locator('[data-testid^="completed-metric-"]')).toHaveCount(7);
+        for (const key of ['elapsed', 'agent-runtime', 'changes', 'pull-request', 'cost']) {
+          await expect(strip.locator(`[data-testid="completed-metric-${key}"]`)).toBeVisible();
+        }
+        await expect(strip.locator('[data-testid="completed-metric-started"]')).toBeHidden();
+        await expect(strip.locator('[data-testid="completed-metric-ended"]')).toBeHidden();
+        await expect(strip.locator('[data-testid="completed-metric-elapsed"]')).toHaveAccessibleDescription(/ to /);
+        await expect(page.locator('[data-testid="completed-status"]')).toBeVisible();
       });
-      expect(overflow).toBeLessThanOrEqual(1);
+
+      await test.step('at a narrow window the last metric and the status stay inside the strip', async () => {
+        // At a 900px page the task window scales to about 520px. Seven metrics and
+        // the status need about 720px, so before the strip dropped Started and Ended
+        // at that width, Cost and the status ended past its right edge and
+        // `overflow-hidden` clipped them.
+        //
+        // A row that cannot wrap and clips (`overflow-hidden`) keeps every metric
+        // on one line at any width, so line position proves nothing. What shows a
+        // metric or the status pushed past the edge is its right edge against the
+        // strip's own, which the clip leaves unchanged. A pixel of tolerance
+        // absorbs sub-pixel rounding between platforms.
+        const overflowOf = (selector: string) => strip.evaluate((stripElement, targetSelector) => {
+          const targets = Array.from(stripElement.querySelectorAll(targetSelector));
+          const lastTarget = targets[targets.length - 1];
+          return lastTarget
+            ? lastTarget.getBoundingClientRect().right - stripElement.getBoundingClientRect().right
+            : Number.NaN;
+        }, selector);
+        await expect.poll(() => overflowOf('[data-testid^="completed-metric-"]')).toBeLessThanOrEqual(1);
+        await expect.poll(() => overflowOf('[data-testid="completed-status"]')).toBeLessThanOrEqual(1);
+      });
+
+      await test.step('at a narrow window all five tabs fit their row', async () => {
+        // The task window scales to about 520px at the 900px floor; the five tab
+        // names never shrink (`flex-shrink-0`), so the last one is what overflows
+        // first. A pixel of tolerance absorbs sub-pixel rounding.
+        const row = page.locator('[data-testid="completed-task-tabs"]');
+        await expect(row.getByRole('tab')).toHaveCount(5);
+        const overflow = await row.evaluate((rowElement) => {
+          const tabs = Array.from(rowElement.querySelectorAll('[role="tab"]'));
+          return tabs[tabs.length - 1].getBoundingClientRect().right - rowElement.getBoundingClientRect().right;
+        });
+        expect(overflow).toBeLessThanOrEqual(1);
+      });
     } finally {
       await browser.close();
     }
@@ -733,6 +728,8 @@ test.describe('Completed task view', () => {
       // Executing's 20s pass is not a stay, so it has two cards, and the single-visit columns none.
       await expect(route.locator('[data-testid="route-visit"]')).toHaveCount(2);
       await expect(page.locator('[data-testid="completed-commits"]')).toContainText('f9a8d40');
+      // This report lists every commit it counts (one of one), so the card names no "N of M".
+      await expect(page.locator('[data-testid="completed-commits"]')).not.toContainText(/\d+ of \d+/);
       // Git has none of this task's commits (the mock's default), so the Files
       // card falls back to the index's names: every one of them, in a box that
       // scrolls past about eight rows, with no Show all.
@@ -746,6 +743,8 @@ test.describe('Completed task view', () => {
   test('Commits says how many of the total it lists only when some are left out', async () => {
     const commit = { sha: 'f9a8d40aabbccdd', subject: 'fix(terminal): drop the blank bottom strip', committedAt: '2026-10-13T05:03:00.000Z' };
     const changedFiles = ['src/file-0.ts'];
+    // The case where nothing is left out (one of one) is asserted in the Route test above, on the
+    // same commit and count.
     const truncated = await launchWithState(makePreConfig({
       withSummary: true,
       report: fullReport({ knowledge: { commits: [commit], commitCount: 5, changedFiles, changedFileCount: 1 } }),
@@ -755,18 +754,6 @@ test.describe('Completed task view', () => {
       await expect(truncated.page.locator('[data-testid="completed-commits"]')).toContainText('1 of 5');
     } finally {
       await truncated.browser.close();
-    }
-    const whole = await launchWithState(makePreConfig({
-      withSummary: true,
-      report: fullReport({ knowledge: { commits: [commit], commitCount: 1, changedFiles, changedFileCount: 1 } }),
-    }));
-    try {
-      await openCompletedTask(whole.page);
-      const commits = whole.page.locator('[data-testid="completed-commits"]');
-      await expect(commits).toContainText('f9a8d40');
-      await expect(commits).not.toContainText(/\d+ of \d+/);
-    } finally {
-      await whole.browser.close();
     }
   });
 
@@ -1056,65 +1043,104 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('a run\'s tool pill opens its own per-tool table below it', async () => {
-    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
-    try {
-      await openCompletedTask(page);
-      await openUsageTab(page);
-      // The first run has no per-tool rows on record, so its count is plain text.
-      const rows = page.locator('[data-testid="completed-run-row"]');
-      await expect(rows.nth(0).locator('[data-testid="completed-run-tool-calls"]')).toHaveCount(0);
-      const pill = rows.nth(1).locator('[data-testid="completed-run-tool-calls"]');
-      await pill.click();
-      const popover = page.locator('[data-testid="completed-tool-breakdown-popover"]');
-      await expect(popover).toBeVisible();
-      await expect(popover.locator('tbody tr td:first-child')).toHaveText(['Edit', 'Grep']);
-      const pillBox = await pill.boundingBox();
-      const popoverBox = await popover.boundingBox();
-      expect(pillBox && popoverBox && popoverBox.y >= pillBox.y + pillBox.height - 1).toBe(true);
-      await page.keyboard.press('Escape');
-      await expect(popover).toHaveCount(0);
-      await expect(page.locator('[data-testid="completed-task-view"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a run\'s tool pill shows the rows it was given and fetches nothing', async () => {
+  // One launch and one pill click, with the reads of two tests: where the table opens and how it
+  // closes, and that opening and closing it fetches nothing. Each step keeps the title of the test it
+  // came from.
+  test('a run\'s tool pill opens its own per-tool table below it, shows the rows it was given and fetches nothing', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
     try {
       await recordBridgeCalls(page, ['sessions.getToolBreakdown', 'sessions.getToolResultTokens']);
       await openCompletedTask(page);
       await openUsageTab(page);
       await resetBridgeCalls(page);
-      await page.locator('[data-testid="completed-run-row"]').nth(1).locator('[data-testid="completed-run-tool-calls"]').click();
+      const rows = page.locator('[data-testid="completed-run-row"]');
+      const pill = rows.nth(1).locator('[data-testid="completed-run-tool-calls"]');
       const popover = page.locator('[data-testid="completed-tool-breakdown-popover"]');
-      await expect(popover.locator('tbody tr td:first-child')).toHaveText(['Edit', 'Grep']);
-      // The popover's mount effects have run once its rows show and a frame has passed.
-      await flushRenderer(page);
-      expect(await bridgeCalls(page, 'sessions.getToolBreakdown')).toEqual([]);
-      expect(await bridgeCalls(page, 'sessions.getToolResultTokens')).toEqual([]);
-      // Closing it is a second chance for a fetch that waited for the refresh signal.
+
+      await test.step('a run\'s tool pill opens its own per-tool table below it (before the click)', async () => {
+        // The first run has no per-tool rows on record, so its count is plain text.
+        await expect(rows.nth(0).locator('[data-testid="completed-run-tool-calls"]')).toHaveCount(0);
+      });
+
+      await pill.click();
+
+      await test.step('a run\'s tool pill opens its own per-tool table below it', async () => {
+        await expect(popover).toBeVisible();
+        await expect(popover.locator('tbody tr td:first-child')).toHaveText(['Edit', 'Grep']);
+        const pillBox = await pill.boundingBox();
+        const popoverBox = await popover.boundingBox();
+        expect(pillBox && popoverBox && popoverBox.y >= pillBox.y + pillBox.height - 1).toBe(true);
+      });
+
+      await test.step('a run\'s tool pill shows the rows it was given and fetches nothing', async () => {
+        await expect(popover.locator('tbody tr td:first-child')).toHaveText(['Edit', 'Grep']);
+        // The popover's mount effects have run once its rows show and a frame has passed.
+        await flushRenderer(page);
+        expect(await bridgeCalls(page, 'sessions.getToolBreakdown')).toEqual([]);
+        expect(await bridgeCalls(page, 'sessions.getToolResultTokens')).toEqual([]);
+      });
+
       await page.keyboard.press('Escape');
-      await expect(popover).toHaveCount(0);
-      await flushRenderer(page);
-      expect(await bridgeCalls(page, 'sessions.getToolBreakdown')).toEqual([]);
-      expect(await bridgeCalls(page, 'sessions.getToolResultTokens')).toEqual([]);
+
+      await test.step('a run\'s tool pill opens its own per-tool table below it (after Escape)', async () => {
+        await expect(popover).toHaveCount(0);
+        await expect(page.locator('[data-testid="completed-task-view"]')).toBeVisible();
+      });
+
+      await test.step('a run\'s tool pill fetches nothing when it closes', async () => {
+        // Closing it is a second chance for a fetch that waited for the refresh signal.
+        await flushRenderer(page);
+        expect(await bridgeCalls(page, 'sessions.getToolBreakdown')).toEqual([]);
+        expect(await bridgeCalls(page, 'sessions.getToolResultTokens')).toEqual([]);
+      });
     } finally {
       await browser.close();
     }
   });
 
-  test('Models and tokens reads the ledger, names a subagent, and totals two or more rows', async () => {
+  // One launch for the two read-only Usage tab cards on the full report. Each step keeps the title of
+  // the test it came from.
+  test('the Usage tab reads the Models and tokens ledger and the Background calls card', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
     try {
       await openCompletedTask(page);
       await openUsageTab(page);
-      const models = page.locator('[data-testid="completed-models"]');
-      await expect(models.locator('[data-testid="completed-model-row"]')).toHaveCount(2);
-      await expect(models).toContainText('doc-auditor subagent');
-      await expect(models).toContainText('76.6M');
-      await expect(models.locator('[data-testid="completed-models-total"]')).toContainText('248');
+
+      await test.step('Models and tokens reads the ledger, names a subagent, and totals two or more rows', async () => {
+        const models = page.locator('[data-testid="completed-models"]');
+        await expect(models.locator('[data-testid="completed-model-row"]')).toHaveCount(2);
+        await expect(models).toContainText('doc-auditor subagent');
+        await expect(models).toContainText('76.6M');
+        await expect(models.locator('[data-testid="completed-models-total"]')).toContainText('248');
+      });
+
+      await test.step('Background calls lists every check with its outcome and reason, and shows the report\'s total', async () => {
+        const card = page.locator('[data-testid="completed-background-calls"]');
+        await expect(card.locator('thead')).toContainText('Outcome');
+        const rows = card.locator('[data-testid="completed-background-call-row"]');
+        await expect(rows).toHaveCount(4);
+        await expect(rows.nth(0)).toContainText('Generate title');
+        // A title call has no automation, so its Outcome cell is a dash and carries no pill.
+        await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveCount(0);
+        await expect(rows.nth(1)).toContainText('Apply findings');
+        await expect(rows.nth(1).locator('[data-testid="completed-call-label"]')).toHaveAccessibleDescription('Condition: The final message lists findings.');
+        const outcomes = card.locator('[data-testid="completed-call-outcome"]');
+        await expect(outcomes).toHaveCount(3);
+        await expect(outcomes.nth(0)).toHaveText('Ran');
+        await expect(outcomes.nth(0)).toHaveAttribute('data-outcome', 'ran');
+        await expect(outcomes.nth(0)).toHaveAccessibleDescription('Ran: The reply lists two findings.');
+        await expect(outcomes.nth(1)).toHaveText('Skipped');
+        await expect(outcomes.nth(1)).toHaveAttribute('data-outcome', 'skipped');
+        await expect(outcomes.nth(1)).toHaveAccessibleDescription('Skipped: The reply still lists findings to apply.');
+        await expect(outcomes.nth(2)).toHaveText('Error');
+        await expect(outcomes.nth(2)).toHaveAttribute('data-outcome', 'error');
+        await expect(outcomes.nth(2)).toHaveAccessibleDescription('Error: The Automation agent could not check the condition: timed out');
+        // The report's total, 25,900 tokens: 2.1k + 14.8k + 9k, the shared call once.
+        await expect(card.locator('[data-testid="completed-background-calls-total"]')).toContainText('25.9k');
+        await expect(card.locator('[data-testid="completed-background-calls-toggle"]')).toHaveCount(0);
+      });
     } finally {
       await browser.close();
     }
@@ -1143,39 +1169,6 @@ test.describe('Completed task view', () => {
       const modelsTotal = page.locator('[data-testid="completed-models"] [data-testid="completed-models-total"] td');
       await expect(modelsTotal.nth(1)).toHaveText('999');
       await expect(page.locator('[data-testid="completed-background-calls-total"] td')).toHaveText(['Total', '1m 1s', '$0.50', '77k']);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('Background calls lists every check with its outcome and reason, and shows the report\'s total', async () => {
-    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
-    try {
-      await openCompletedTask(page);
-      await openUsageTab(page);
-      const card = page.locator('[data-testid="completed-background-calls"]');
-      await expect(card.locator('thead')).toContainText('Outcome');
-      const rows = card.locator('[data-testid="completed-background-call-row"]');
-      await expect(rows).toHaveCount(4);
-      await expect(rows.nth(0)).toContainText('Generate title');
-      // A title call has no automation, so its Outcome cell is a dash and carries no pill.
-      await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveCount(0);
-      await expect(rows.nth(1)).toContainText('Apply findings');
-      await expect(rows.nth(1).locator('[data-testid="completed-call-label"]')).toHaveAccessibleDescription('Condition: The final message lists findings.');
-      const outcomes = card.locator('[data-testid="completed-call-outcome"]');
-      await expect(outcomes).toHaveCount(3);
-      await expect(outcomes.nth(0)).toHaveText('Ran');
-      await expect(outcomes.nth(0)).toHaveAttribute('data-outcome', 'ran');
-      await expect(outcomes.nth(0)).toHaveAccessibleDescription('Ran: The reply lists two findings.');
-      await expect(outcomes.nth(1)).toHaveText('Skipped');
-      await expect(outcomes.nth(1)).toHaveAttribute('data-outcome', 'skipped');
-      await expect(outcomes.nth(1)).toHaveAccessibleDescription('Skipped: The reply still lists findings to apply.');
-      await expect(outcomes.nth(2)).toHaveText('Error');
-      await expect(outcomes.nth(2)).toHaveAttribute('data-outcome', 'error');
-      await expect(outcomes.nth(2)).toHaveAccessibleDescription('Error: The Automation agent could not check the condition: timed out');
-      // The report's total, 25,900 tokens: 2.1k + 14.8k + 9k, the shared call once.
-      await expect(card.locator('[data-testid="completed-background-calls-total"]')).toContainText('25.9k');
-      await expect(card.locator('[data-testid="completed-background-calls-toggle"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

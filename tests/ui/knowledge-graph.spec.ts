@@ -387,6 +387,8 @@ test.describe('knowledge graph', () => {
    * test happens to run first.
    */
   test.beforeAll(async () => {
+    // CI serves a static bundle with nothing to compile, so there is nothing to warm.
+    if (process.env.KANGENTIC_UI_BUNDLE === '1') return;
     test.setTimeout(60_000);
     await waitForViteReady(VITE_URL);
     const browser = await chromium.launch({ headless: true });
@@ -404,35 +406,62 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('opens from the title bar and shows reconciled counts in the Index panel', async () => {
+  // One boot for the Index panel on the 20-node map. Each step keeps the title of the test it came
+  // from. The collapsed-by-default reads run first, because the first step opens the panel.
+  test('the Index panel: collapsed by default, then reconciled counts, a searchable deleted transcript, and its flyout side', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openKnowledgeGraph(page);
-      await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
-      const conversations = page.locator('[data-testid="knowledge-graph-index-source-conversations-value"]');
+      const panel = page.locator('[data-testid="knowledge-graph-controls"]');
+      const indexPanel = page.locator('[data-testid="knowledge-graph-index-panel"]');
 
-      // The reconciled total, not the naive memory_index_state read (224).
-      await expect(conversations).toHaveText('638');
-      // The full-width strip that carried its own copy of these counts is gone:
-      // on the map the Index panel is their one home.
-      await expect(page.locator('[data-testid="knowledge-graph-coverage-strip"]')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
+      await test.step('the index section is collapsed by default and opens on demand (collapsed half)', async () => {
+        // One left panel, four cards: Filter, Regions and Display are what you
+        // touch, Index is reference. It used to be a second floating slab pinned to
+        // the bottom of the left edge with a screen-height void between them.
+        await expect(panel).toContainText('Display');
+        await expect(panel).toContainText('Index');
+        // Reference numbers, so the section rests collapsed on the map.
+        await expect(indexPanel).toHaveCount(0);
+      });
 
-  test('presents a deleted transcript as searchable, not as a failure', async () => {
-    // 414 of 638 real documents are in this state. Painting it as an error
-    // would misrepresent the steady state of a mature index.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
-    try {
-      await openKnowledgeGraph(page);
       await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
-      const gone = page.locator('[data-testid="knowledge-graph-index-fact-transcript-gone"]');
-      await expect(gone.locator('[data-testid="knowledge-graph-index-fact-transcript-gone-value"]')).toHaveText('414');
-      await expect(gone.getByRole('button', { name: /^About / })).toHaveAccessibleDescription(/still searchable/);
-      // No failure line is rendered when there are none.
-      await expect(page.locator('[data-testid="knowledge-graph-index-fact-failed"]')).toHaveCount(0);
+
+      await test.step('opens from the title bar and shows reconciled counts in the Index panel', async () => {
+        const conversations = page.locator('[data-testid="knowledge-graph-index-source-conversations-value"]');
+
+        // The reconciled total, not the naive memory_index_state read (224).
+        await expect(conversations).toHaveText('638');
+        // The full-width strip that carried its own copy of these counts is gone:
+        // on the map the Index panel is their one home.
+        await expect(page.locator('[data-testid="knowledge-graph-coverage-strip"]')).toHaveCount(0);
+      });
+
+      await test.step('presents a deleted transcript as searchable, not as a failure', async () => {
+        // 414 of 638 real documents are in this state. Painting it as an error
+        // would misrepresent the steady state of a mature index.
+        const gone = page.locator('[data-testid="knowledge-graph-index-fact-transcript-gone"]');
+        await expect(gone.locator('[data-testid="knowledge-graph-index-fact-transcript-gone-value"]')).toHaveText('414');
+        await expect(gone.getByRole('button', { name: /^About / })).toHaveAccessibleDescription(/still searchable/);
+        // No failure line is rendered when there are none.
+        await expect(page.locator('[data-testid="knowledge-graph-index-fact-failed"]')).toHaveCount(0);
+      });
+
+      await test.step('the index section is collapsed by default and opens on demand (opened half)', async () => {
+        await expect(indexPanel).toContainText('Size on disk');
+        await expect(indexPanel).toContainText('Links');
+
+        // It opens to the SIDE, and that is not cosmetic: Index is the last thing
+        // in a column whose middle is a list of every region the index holds, so
+        // downward there is nothing left and its rows ran off the bottom of the
+        // window. Asserted as geometry because that IS the bug - the rows are in
+        // the DOM either way.
+        const panelBox = (await panel.boundingBox())!;
+        const indexBox = (await indexPanel.boundingBox())!;
+        expect(indexBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 2);
+        expect(indexBox.y + indexBox.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+      });
     } finally {
       await browser.close();
     }
@@ -1946,18 +1975,50 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('names each region by its own label, not by an index', async () => {
-    // A region picker reading "Cluster 0" would make the reader hold a mapping
-    // in their head that the map already draws for them.
+  // One boot for the read-only checks of the Regions and Filter cards on the 20-node map. Each step
+  // keeps the title of the test it came from.
+  test('the Regions and Filter cards: region names, the status and time columns, and no filter field over a short list', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openKnowledgeGraph(page);
-      const rows = page.locator('[data-testid="knowledge-graph-region-row"]');
-      await expect(rows).toHaveCount(2);
-      await expect(rows.nth(0)).toContainText('terminal / pty');
-      await expect(rows.nth(1)).toContainText('database / schema');
-      // Each carries how many conversations it holds, counted from the nodes.
-      await expect(rows.nth(0)).toContainText('10');
+
+      await test.step('names each region by its own label, not by an index', async () => {
+        // A region picker reading "Cluster 0" would make the reader hold a mapping
+        // in their head that the map already draws for them.
+        const rows = page.locator('[data-testid="knowledge-graph-region-row"]');
+        await expect(rows).toHaveCount(2);
+        await expect(rows.nth(0)).toContainText('terminal / pty');
+        await expect(rows.nth(1)).toContainText('database / schema');
+        // Each carries how many conversations it holds, counted from the nodes.
+        await expect(rows.nth(0)).toContainText('10');
+      });
+
+      await test.step('reads Any, Done and Open in three columns under the time row\'s three', async () => {
+        // The board's own words: Done is the Done column, Open is everything still
+        // on the board. There is no third status, since only the move into Done
+        // archives a task. Same count, same width, so the segments stack in columns.
+        const since = page.locator('[data-testid="knowledge-graph-filter-since"]');
+        const outcome = page.locator('[data-testid="knowledge-graph-filter-outcome"]');
+        await expect(since.getByRole('radio')).toHaveText(['Any', '30 days', '90 days']);
+        await expect(outcome.getByRole('radio')).toHaveText(['Any', 'Done', 'Open']);
+        await expect(page.locator('[data-testid="knowledge-graph-filter-outcome-done"]')).toBeEnabled();
+        await expect(page.locator('[data-testid="knowledge-graph-filter-outcome-active"]')).toBeEnabled();
+
+        // The tolerance is for font metrics: a missing segment moves a column by
+        // a third of the row, about 75px, not a few.
+        const columns = await page.evaluate(() => ['since', 'outcome'].map((row) => Array.from(
+          document.querySelectorAll<HTMLElement>(`[data-testid="knowledge-graph-filter-${row}"] [role="radio"]`),
+        ).map((option) => option.getBoundingClientRect().left)));
+        expect(columns[0]).toHaveLength(3);
+        expect(columns[1]).toHaveLength(3);
+        columns[0].forEach((left, index) => expect(Math.abs(left - columns[1][index])).toBeLessThanOrEqual(3));
+      });
+
+      await test.step('does not offer a region filter over a list short enough to read', async () => {
+        await expect(page.locator('[data-testid="knowledge-graph-region-row"]')).toHaveCount(2);
+        await expect(page.locator('[data-testid="knowledge-graph-region-filter"]')).toHaveCount(0);
+      });
     } finally {
       await browser.close();
     }
@@ -2078,52 +2139,43 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('reads Any, Done and Open in three columns under the time row\'s three', async () => {
-    // The board's own words: Done is the Done column, Open is everything still
-    // on the board. There is no third status, since only the move into Done
-    // archives a task. Same count, same width, so the segments stack in columns.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
-    try {
-      await openKnowledgeGraph(page);
-      const since = page.locator('[data-testid="knowledge-graph-filter-since"]');
-      const outcome = page.locator('[data-testid="knowledge-graph-filter-outcome"]');
-      await expect(since.getByRole('radio')).toHaveText(['Any', '30 days', '90 days']);
-      await expect(outcome.getByRole('radio')).toHaveText(['Any', 'Done', 'Open']);
-      await expect(page.locator('[data-testid="knowledge-graph-filter-outcome-done"]')).toBeEnabled();
-      await expect(page.locator('[data-testid="knowledge-graph-filter-outcome-active"]')).toBeEnabled();
-
-      // The tolerance is for font metrics: a missing segment moves a column by
-      // a third of the row, about 75px, not a few.
-      const columns = await page.evaluate(() => ['since', 'outcome'].map((row) => Array.from(
-        document.querySelectorAll<HTMLElement>(`[data-testid="knowledge-graph-filter-${row}"] [role="radio"]`),
-      ).map((option) => option.getBoundingClientRect().left)));
-      expect(columns[0]).toHaveLength(3);
-      expect(columns[1]).toHaveLength(3);
-      columns[0].forEach((left, index) => expect(Math.abs(left - columns[1][index])).toBeLessThanOrEqual(3));
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('regions are all on by default, and toggle independently', async () => {
-    // The regions ARE the map's domains, so comparing two of them or hiding one
-    // noisy area is the natural thing to want. The single-select dropdown this
-    // replaced could only ever answer "just this one".
+  // One boot for the single click on region row 0: the reads before it are both tests' defaults, the
+  // reads after it are both tests' results. Each step keeps the title of the test it came from.
+  test('regions are all on by default, toggle independently, and the count says how many are showing', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
     try {
       await openKnowledgeGraph(page);
       const rows = page.locator('[data-testid="knowledge-graph-region-row"]');
-      await expect(rows).toHaveCount(2);
-      for (const row of await rows.all()) {
-        await expect(row).toHaveAttribute('data-region-on', 'true');
-      }
-      await expect(page.locator('[data-testid="knowledge-graph-regions-toggle"]')).toContainText('Regions');
+      const panel = page.locator('[data-testid="knowledge-graph-controls"]');
+
+      await test.step('regions are all on by default (before the click)', async () => {
+        // The regions ARE the map's domains, so comparing two of them or hiding one
+        // noisy area is the natural thing to want. The single-select dropdown this
+        // replaced could only ever answer "just this one".
+        await expect(rows).toHaveCount(2);
+        for (const row of await rows.all()) {
+          await expect(row).toHaveAttribute('data-region-on', 'true');
+        }
+        await expect(page.locator('[data-testid="knowledge-graph-regions-toggle"]')).toContainText('Regions');
+      });
+
+      await test.step('says how many regions are showing (before the click)', async () => {
+        await expect(panel).toContainText('2 of 2 shown');
+      });
 
       await rows.nth(0).click();
-      await expect(rows.nth(0)).toHaveAttribute('data-region-on', 'false');
-      // Independent: switching one off leaves the other alone, which is the
-      // whole point of the change.
-      await expect(rows.nth(1)).toHaveAttribute('data-region-on', 'true');
+
+      await test.step('regions toggle independently (after the click)', async () => {
+        await expect(rows.nth(0)).toHaveAttribute('data-region-on', 'false');
+        // Independent: switching one off leaves the other alone, which is the
+        // whole point of the change.
+        await expect(rows.nth(1)).toHaveAttribute('data-region-on', 'true');
+      });
+
+      await test.step('says how many regions are showing (after the click)', async () => {
+        await expect(panel).toContainText('1 of 2 shown');
+      });
     } finally {
       await browser.close();
     }
@@ -2150,19 +2202,6 @@ test.describe('knowledge graph', () => {
       for (const row of await rows.all()) {
         await expect(row).toHaveAttribute('data-region-on', 'true');
       }
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('says how many regions are showing', async () => {
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
-    try {
-      await openKnowledgeGraph(page);
-      const panel = page.locator('[data-testid="knowledge-graph-controls"]');
-      await expect(panel).toContainText('2 of 2 shown');
-      await page.locator('[data-testid="knowledge-graph-region-row"]').nth(0).click();
-      await expect(panel).toContainText('1 of 2 shown');
     } finally {
       await browser.close();
     }
@@ -2214,17 +2253,6 @@ test.describe('knowledge graph', () => {
 
       await page.locator('[data-testid="knowledge-graph-region-filter-clear"]').click();
       await expect(rows).toHaveCount(14);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('does not offer a region filter over a list short enough to read', async () => {
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
-    try {
-      await openKnowledgeGraph(page);
-      await expect(page.locator('[data-testid="knowledge-graph-region-row"]')).toHaveCount(2);
-      await expect(page.locator('[data-testid="knowledge-graph-region-filter"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -2395,80 +2423,62 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('names the conversations on the map, not just the regions', async () => {
-    // The gap this closes: scoping the map - by search, by filter, or by
-    // "Explore from here" - left the user looking at anonymous points while the
-    // rail beside it knew every name.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(12) }));
-    try {
-      await openKnowledgeGraph(page);
-      await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
-      // The text is the conversation's own title, not its region's.
-      expect((await visibleNodeTitles(page))[0]).toContain('Conversation');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('never draws two titles on top of each other', async () => {
-    // The property that keeps a busy map readable: nearest to camera wins and
-    // anything that would overlap is dropped, so the worst case is fewer names
-    // rather than an illegible pile of them. Region labels are seeded into the
-    // same collision set, so a title cannot land on one of those either.
+  // One boot for the two layout checks of the 60-node map's labels, which share their poll. Each step
+  // keeps the title of the test it came from.
+  test('the 60-node map\'s labels never overlap and stay inside the canvas', async () => {
+    test.slow();
     const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(60) }));
     try {
       await openKnowledgeGraph(page);
       await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
 
-      const overlaps = await page.evaluate(() => {
-        const visible = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
-          .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
-          .map((element) => element.getBoundingClientRect());
-        let collisions = 0;
-        for (let first = 0; first < visible.length; first += 1) {
-          for (let second = first + 1; second < visible.length; second += 1) {
-            const firstBox = visible[first];
-            const secondBox = visible[second];
-            if (
-              firstBox.left < secondBox.right && firstBox.right > secondBox.left
-              && firstBox.top < secondBox.bottom && firstBox.bottom > secondBox.top
-            ) collisions += 1;
+      await test.step('never draws two titles on top of each other', async () => {
+        // The property that keeps a busy map readable: nearest to camera wins and
+        // anything that would overlap is dropped, so the worst case is fewer names
+        // rather than an illegible pile of them. Region labels are seeded into the
+        // same collision set, so a title cannot land on one of those either.
+        const overlaps = await page.evaluate(() => {
+          const visible = Array.from(document.querySelectorAll('[data-testid="knowledge-graph-node-title"]'))
+            .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
+            .map((element) => element.getBoundingClientRect());
+          let collisions = 0;
+          for (let first = 0; first < visible.length; first += 1) {
+            for (let second = first + 1; second < visible.length; second += 1) {
+              const firstBox = visible[first];
+              const secondBox = visible[second];
+              if (
+                firstBox.left < secondBox.right && firstBox.right > secondBox.left
+                && firstBox.top < secondBox.bottom && firstBox.bottom > secondBox.top
+              ) collisions += 1;
+            }
           }
-        }
-        return collisions;
+          return collisions;
+        });
+        expect(overlaps).toBe(0);
       });
-      expect(overlaps).toBe(0);
-    } finally {
-      await browser.close();
-    }
-  });
 
-  test('draws every label inside the canvas, not off its edge', async () => {
-    // The reported symptom: the labels down the right-hand side were cut in half
-    // by the window edge. The fit frames node POSITIONS, and a title chip is
-    // centred on its node and runs to ~220px, so a node framed flush against the
-    // edge puts half its label past it - the thing you can read is the thing
-    // that has to fit, not the point it names.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(60) }));
-    try {
-      await openKnowledgeGraph(page);
-      await expect.poll(async () => (await visibleNodeTitles(page)).length).toBeGreaterThan(0);
-
-      const escaping = await page.evaluate(() => {
-        const canvas = document.querySelector('[data-testid="knowledge-graph-canvas"]')!.getBoundingClientRect();
-        const selector = '[data-testid="knowledge-graph-node-title"], [data-testid="knowledge-graph-cluster-label"]';
-        return Array.from(document.querySelectorAll(selector))
-          .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
-          .map((element) => element.getBoundingClientRect())
-          // One pixel of slack for sub-pixel rounding, which differs between
-          // Windows and the Linux runner.
-          .filter((box) => box.left < canvas.left - 1
-            || box.right > canvas.right + 1
-            || box.top < canvas.top - 1
-            || box.bottom > canvas.bottom + 1)
-          .length;
+      await test.step('draws every label inside the canvas, not off its edge', async () => {
+        // The reported symptom: the labels down the right-hand side were cut in half
+        // by the window edge. The fit frames node POSITIONS, and a title chip is
+        // centred on its node and runs to ~220px, so a node framed flush against the
+        // edge puts half its label past it - the thing you can read is the thing
+        // that has to fit, not the point it names.
+        const escaping = await page.evaluate(() => {
+          const canvas = document.querySelector('[data-testid="knowledge-graph-canvas"]')!.getBoundingClientRect();
+          const selector = '[data-testid="knowledge-graph-node-title"], [data-testid="knowledge-graph-cluster-label"]';
+          return Array.from(document.querySelectorAll(selector))
+            .filter((element) => Number((element as HTMLElement).style.opacity || '0') > 0)
+            .map((element) => element.getBoundingClientRect())
+            // One pixel of slack for sub-pixel rounding, which differs between
+            // Windows and the Linux runner.
+            .filter((box) => box.left < canvas.left - 1
+              || box.right > canvas.right + 1
+              || box.top < canvas.top - 1
+              || box.bottom > canvas.bottom + 1)
+            .length;
+        });
+        expect(escaping).toBe(0);
       });
-      expect(escaping).toBe(0);
     } finally {
       await browser.close();
     }
@@ -3963,27 +3973,6 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('goes back along a trail of followed neighbours', async () => {
-    const { browser, page } = await launchWithState(conversationFixture());
-    try {
-      await openKnowledgeGraph(page);
-      const index = await selectVisibleNode(page);
-      const title = page.locator('[data-testid="knowledge-graph-detail-title"]');
-
-      // Hop to the node's nearest neighbour, which the fixture makes the next one.
-      await page.locator('[data-testid="knowledge-graph-neighbor"]').first().click();
-      await expect(title).toHaveText(`Conversation ${(index + 1) % 30}`);
-
-      // Back NAMES where it returns to, rather than being a bare arrow.
-      const back = page.locator('[data-testid="knowledge-graph-detail-back"]');
-      await expect(back).toContainText(new RegExp(`Conversation ${index}\\b`));
-      await back.click();
-      await expect(title).toHaveText(`Conversation ${index}`);
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('Back retraces one hop per click along a two-hop trail', async () => {
     // Each hop goes onto the trail once. A hop pushed twice (a state updater
     // that sets other state runs twice under StrictMode, which the dev renderer
@@ -4016,38 +4005,6 @@ test.describe('knowledge graph', () => {
 
       // The trail is spent: with no chat open there is nothing left to go back to.
       await expect(back).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('the index section is collapsed by default and opens on demand', async () => {
-    // One left panel, four cards: Filter, Regions and Display are what you
-    // touch, Index is reference. It used to be a second floating slab pinned to
-    // the bottom of the left edge with a screen-height void between them.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(20) }));
-    try {
-      await openKnowledgeGraph(page);
-      const panel = page.locator('[data-testid="knowledge-graph-controls"]');
-      await expect(panel).toContainText('Display');
-      await expect(panel).toContainText('Index');
-      // Reference numbers, so the section rests collapsed on the map.
-      const indexPanel = page.locator('[data-testid="knowledge-graph-index-panel"]');
-      await expect(indexPanel).toHaveCount(0);
-
-      await page.locator('[data-testid="knowledge-graph-index-toggle"]').click();
-      await expect(indexPanel).toContainText('Size on disk');
-      await expect(indexPanel).toContainText('Links');
-
-      // It opens to the SIDE, and that is not cosmetic: Index is the last thing
-      // in a column whose middle is a list of every region the index holds, so
-      // downward there is nothing left and its rows ran off the bottom of the
-      // window. Asserted as geometry because that IS the bug - the rows are in
-      // the DOM either way.
-      const panelBox = (await panel.boundingBox())!;
-      const indexBox = (await page.locator('[data-testid="knowledge-graph-index-panel"]').boundingBox())!;
-      expect(indexBox.x).toBeGreaterThanOrEqual(panelBox.x + panelBox.width - 2);
-      expect(indexBox.y + indexBox.height).toBeLessThanOrEqual(page.viewportSize()!.height);
     } finally {
       await browser.close();
     }

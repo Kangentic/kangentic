@@ -617,21 +617,8 @@ test('a match split by autowrap is found across the two rows', async () => {
   }
 });
 
-test('the DOM renderer draws the highlights too', async () => {
-  const sessionId = `sess-find-dom-${RUN_ID}`;
-  const { browser, page } = await terminalWithOutput(sessionId, 'plain needle plain\r\nplain needle plain\r\n');
-  try {
-    await page.keyboard.press('ControlOrMeta+f');
-    await page.keyboard.type('needle');
-    await expect(findCount(page)).toHaveText('1 of 2');
-    // A color's cells read back as the match's letters: the other match, then the
-    // active one, each on exactly its own cells, in the default theme's blend.
-    await expect.poll(() => decoratedTextByColor(page), { timeout: 5000 })
-      .toEqual({ 'rgb(84, 72, 30)': 'needle', 'rgb(125, 107, 40)': 'needle' });
-  } finally {
-    await browser.close();
-  }
-});
+// 'the DOM renderer draws the highlights too' is a step of 'a bar closed and opened again searches,
+// highlights and steps as the first did', below: the same output and the same first search.
 
 function taskSetup(suffix: string): string {
   return `
@@ -903,7 +890,12 @@ test('a bar closed and opened again searches, highlights and steps as the first 
     await page.keyboard.press('ControlOrMeta+f');
     await page.keyboard.type('needle');
     await expect(findCount(page)).toHaveText('1 of 2');
-    await expect.poll(() => decoratedTextByColor(page), { timeout: 5000 }).not.toEqual({});
+    await test.step('the DOM renderer draws the highlights too', async () => {
+      // A color's cells read back as the match's letters: the other match, then the
+      // active one, each on exactly its own cells, in the default theme's blend.
+      await expect.poll(() => decoratedTextByColor(page), { timeout: 5000 })
+        .toEqual({ 'rgb(84, 72, 30)': 'needle', 'rgb(125, 107, 40)': 'needle' });
+    });
     await page.keyboard.press('Escape');
     await expect(findBar(page)).toHaveCount(0);
     await expect.poll(() => decoratedTextByColor(page), { timeout: 5000 }).toEqual({});

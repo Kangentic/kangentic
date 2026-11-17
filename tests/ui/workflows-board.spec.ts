@@ -310,57 +310,56 @@ async function dragToColumn(page: Page, id: string, columnName: string): Promise
 }
 
 test.describe('Workflow tasks on the board', () => {
-  test('a workflow card carries the strip with its workflow and step track; an ordinary card does not', async () => {
+  // One boot for the two read-only checks of the board. Each step keeps the title of the test it came from.
+  test('workflow cards on the board: the strip with its track, and what a To Do card waits for', async () => {
+    test.slow();
     const { browser, page } = await launch();
     try {
-      const strip = boardCard(page, 't414').locator('[data-testid="workflow-card-strip"]');
-      await expect(strip).toContainText('Usage budgets');
-      // The workflow's icon, drawn at the board's stroke width.
-      await expect(strip.locator('svg').first()).toHaveAttribute('stroke-width', '2');
-      // The whole journey (sign-off T2): To Do and Planning passed, Executing
-      // current, Code Review, Testing, Merge and Done ahead.
-      await expect(strip.locator('[data-step-state]')).toHaveCount(7);
-      await expect(strip.locator('[data-step-state]').first()).toHaveAttribute('data-step-end', 'todo');
-      await expect(strip.locator('[data-step-state]').last()).toHaveAttribute('data-step-end', 'done');
-      // On the board the lane names the column, so the current step stays a
-      // bar (15 by 6), not the column marker the Workflows canvas draws.
-      const current = strip.locator('[data-step-state="current"]');
-      await expect(current).toHaveAccessibleName('Executing: now');
-      await expect(current).toHaveCSS('width', '15px');
-      await expect(current).toHaveCSS('height', '6px');
-      await expect(strip.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
-      // A stop it has passed is the faint grey, whatever its column's color.
-      const faint = await computedColor(page, 'var(--color-fg-faint)');
-      await expect(strip.locator('[data-step-state="done"]')).toHaveCount(2);
-      for (const passed of await strip.locator('[data-step-state="done"]').all()) await expect(passed).toHaveCSS('background-color', faint);
-      // A stop still ahead carries its column's color, so it is not the grey.
-      for (const ahead of await strip.locator('[data-step-state="ahead"]').all()) {
-        expect(await ahead.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(faint);
-      }
-      // A card in To Do: To Do is where it is, its whole route and Done ahead, and no marker.
-      const toDoTrack = boardCard(page, 't415').locator('[data-testid="workflow-step-track"]');
-      await expect(toDoTrack.locator('[data-step-state="current"]')).toHaveAttribute('data-step-end', 'todo');
-      await expect(toDoTrack.locator('[data-step-state="ahead"]')).toHaveCount(6);
-      await expect(toDoTrack.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
-      // The strip ends at the track (board 8c): no lock, since a locked card's
-      // drag stays in its column, and no links button, since resting on the
-      // card shows its links.
-      await expect(page.locator('[data-testid="workflow-card-lock"]')).toHaveCount(0);
-      await expect(strip.locator('button')).toHaveCount(0);
-      await expect(strip.locator('[data-testid="workflow-card-paused"]')).toHaveCount(0);
-      await expect(boardCard(page, 't500').locator('[data-testid="workflow-card-strip"]')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
+      await test.step('a workflow card carries the strip with its workflow and step track; an ordinary card does not', async () => {
+        const strip = boardCard(page, 't414').locator('[data-testid="workflow-card-strip"]');
+        await expect(strip).toContainText('Usage budgets');
+        // The workflow's icon, drawn at the board's stroke width.
+        await expect(strip.locator('svg').first()).toHaveAttribute('stroke-width', '2');
+        // The whole journey (sign-off T2): To Do and Planning passed, Executing
+        // current, Code Review, Testing, Merge and Done ahead.
+        await expect(strip.locator('[data-step-state]')).toHaveCount(7);
+        await expect(strip.locator('[data-step-state]').first()).toHaveAttribute('data-step-end', 'todo');
+        await expect(strip.locator('[data-step-state]').last()).toHaveAttribute('data-step-end', 'done');
+        // On the board the lane names the column, so the current step stays a
+        // bar (15 by 6), not the column marker the Workflows canvas draws.
+        const current = strip.locator('[data-step-state="current"]');
+        await expect(current).toHaveAccessibleName('Executing: now');
+        await expect(current).toHaveCSS('width', '15px');
+        await expect(current).toHaveCSS('height', '6px');
+        await expect(strip.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
+        // A stop it has passed is the faint grey, whatever its column's color.
+        const faint = await computedColor(page, 'var(--color-fg-faint)');
+        await expect(strip.locator('[data-step-state="done"]')).toHaveCount(2);
+        for (const passed of await strip.locator('[data-step-state="done"]').all()) await expect(passed).toHaveCSS('background-color', faint);
+        // A stop still ahead carries its column's color, so it is not the grey.
+        for (const ahead of await strip.locator('[data-step-state="ahead"]').all()) {
+          expect(await ahead.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(faint);
+        }
+        // A card in To Do: To Do is where it is, its whole route and Done ahead, and no marker.
+        const toDoTrack = boardCard(page, 't415').locator('[data-testid="workflow-step-track"]');
+        await expect(toDoTrack.locator('[data-step-state="current"]')).toHaveAttribute('data-step-end', 'todo');
+        await expect(toDoTrack.locator('[data-step-state="ahead"]')).toHaveCount(6);
+        await expect(toDoTrack.locator('[data-testid="workflow-step-marker"]')).toHaveCount(0);
+        // The strip ends at the track (board 8c): no lock, since a locked card's
+        // drag stays in its column, and no links button, since resting on the
+        // card shows its links.
+        await expect(page.locator('[data-testid="workflow-card-lock"]')).toHaveCount(0);
+        await expect(strip.locator('button')).toHaveCount(0);
+        await expect(strip.locator('[data-testid="workflow-card-paused"]')).toHaveCount(0);
+        await expect(boardCard(page, 't500').locator('[data-testid="workflow-card-strip"]')).toHaveCount(0);
+      });
 
-  test('a To Do card says what it waits for, or that it is queued', async () => {
-    const { browser, page } = await launch();
-    try {
-      await expect(boardCard(page, 't415').locator('[data-testid="workflow-status-bar"]')).toHaveText('Blocked by #413...');
-      await expect(boardCard(page, 't418').locator('[data-testid="workflow-status-bar"]')).toHaveText('Blocked by 4 tasks...');
-      await expect(boardCard(page, 't419').locator('[data-testid="workflow-status-bar"]')).toHaveText('Queued...');
-      await expect(boardCard(page, 't500').locator('[data-testid="workflow-status-bar"]')).toHaveCount(0);
+      await test.step('a To Do card says what it waits for, or that it is queued', async () => {
+        await expect(boardCard(page, 't415').locator('[data-testid="workflow-status-bar"]')).toHaveText('Blocked by #413...');
+        await expect(boardCard(page, 't418').locator('[data-testid="workflow-status-bar"]')).toHaveText('Blocked by 4 tasks...');
+        await expect(boardCard(page, 't419').locator('[data-testid="workflow-status-bar"]')).toHaveText('Queued...');
+        await expect(boardCard(page, 't500').locator('[data-testid="workflow-status-bar"]')).toHaveCount(0);
+      });
     } finally {
       await browser.close();
     }

@@ -452,30 +452,6 @@ function liveWritePayloads(page: Page): Promise<string[]> {
 }
 
 test.describe('dictation into the Browser pane note input', () => {
-  test('a streaming partial lands in the note input, and nothing reaches a PTY', async () => {
-    // The red-green case. Before this change `resolveDictationTarget` could only
-    // ever return a terminal session id, so the transcript went to the task's
-    // shell (or nowhere) while the user watched an empty note field.
-    const page = await launch({ autoSubmit: false });
-    try {
-      await openBrowserPane(page);
-      const noteInput = page.locator('[data-testid="browser-note-input"]');
-      await noteInput.click();
-
-      await pressAndHold(page);
-      expect(await dictationTargetKind(page)).toBe('input');
-
-      await emitPartial(page, PARTIAL_RAW);
-
-      await expect(noteInput).toHaveValue(PARTIAL_SHOWN);
-      expect(await liveWritePayloads(page)).toEqual([]);
-
-      await release(page);
-    } finally {
-      await page.context().close();
-    }
-  });
-
   test('successive partials REPLACE rather than append, and keep surrounding text', async () => {
     // The anchor is captured once, at press time, and every partial rewrites
     // that one span. Appending instead would leave three copies of a revised
@@ -502,7 +478,12 @@ test.describe('dictation into the Browser pane note input', () => {
     }
   });
 
+  // One press cycle on one page, with the reads of three tests: where the chip sits while the note
+  // input is the target, that a streaming partial lands in it and reaches no PTY, and what a release
+  // with auto-submit off does. Each step keeps the title of the test it came from. The page stays
+  // fresh per test, so the dictation store carries nothing in.
   test('release with auto-submit OFF inserts the final transcript and does not send', async () => {
+    test.slow();
     const page = await launch({ autoSubmit: false });
     try {
       await openBrowserPane(page);
@@ -510,6 +491,50 @@ test.describe('dictation into the Browser pane note input', () => {
       await noteInput.click();
 
       await pressAndHold(page);
+
+      await test.step('the chip sits against the NOTE INPUT, inside the Browser pane', async () => {
+        // The chip used to anchor to the focused WINDOW and centre horizontally, and in a split
+        // task-detail window the window's centre IS the split seam, so it straddled the divider.
+        const chip = page.locator('[data-testid="dictation-live-chip"]');
+        await expect(chip).toBeVisible();
+        // The note field is the last row of its pane, so below does not fit and
+        // the chip flips above it.
+        await expect(chip).toHaveAttribute('data-placement', 'above');
+
+        const boxes = await page.evaluate(() => {
+          const read = (selector: string) => {
+            const element = document.querySelector(selector);
+            if (!element) return null;
+            const { left, right, top, bottom } = element.getBoundingClientRect();
+            return { left, right, top, bottom };
+          };
+          return {
+            chip: read('[data-testid="dictation-live-chip"]'),
+            note: read('[data-testid="browser-note-input"]'),
+            pane: read('[data-testid="browser-pane"]'),
+          };
+        });
+        if (!boxes.chip || !boxes.note || !boxes.pane) throw new Error('missing box');
+
+        // Clear of the field, so it never covers what is being dictated.
+        expect(boxes.chip.bottom).toBeLessThanOrEqual(boxes.note.top);
+        // And inside the pane it belongs to, which is the seam bug in one line.
+        expect(boxes.chip.left).toBeGreaterThanOrEqual(boxes.pane.left - 1);
+        expect(boxes.chip.right).toBeLessThanOrEqual(boxes.pane.right + 1);
+      });
+
+      await test.step('a streaming partial lands in the note input, and nothing reaches a PTY', async () => {
+        // The red-green case. Before this change `resolveDictationTarget` could only
+        // ever return a terminal session id, so the transcript went to the task's
+        // shell (or nowhere) while the user watched an empty note field.
+        expect(await dictationTargetKind(page)).toBe('input');
+
+        await emitPartial(page, PARTIAL_RAW);
+
+        await expect(noteInput).toHaveValue(PARTIAL_SHOWN);
+        expect(await liveWritePayloads(page)).toEqual([]);
+      });
+
       await emitPartial(page, PARTIAL_RAW);
       await expect(noteInput).toHaveValue(PARTIAL_SHOWN);
 
@@ -542,6 +567,10 @@ test.describe('dictation into the Browser pane note input', () => {
     // would still read correctly, the send would still happen, and the user's
     // words would silently never reach the agent. Only the payload separates
     // those.
+    //
+    // The chip's reads from "the chip reports an input target as a real target, not as no target"
+    // ride the same press, between the press and the first partial.
+    test.slow();
     const page = await launch({ autoSubmit: true });
     try {
       await openBrowserPane(page);
@@ -549,6 +578,24 @@ test.describe('dictation into the Browser pane note input', () => {
       await noteInput.click();
 
       await pressAndHold(page);
+
+      await test.step('the chip reports an input target as a real target, not as "no target"', async () => {
+        // `noTarget` used to be `!targetSessionId`, and an input target has no
+        // session behind it - so without the kind, dictating into the note input
+        // would have shown "no target" while the words were visibly landing.
+        //
+        // Assert the kind explicitly: a terminal target ALSO reads "Listening",
+        // so without this the copy assertions below would pass even if the note
+        // input had never won the resolve.
+        expect(await dictationTargetKind(page)).toBe('input');
+
+        const chip = page.locator('[data-testid="dictation-live-chip"]');
+        await expect(chip.getByText('Listening', { exact: true })).toBeVisible();
+        await expect(chip.getByText('Release to send', { exact: true })).toBeVisible();
+        await expect(chip.locator('[data-testid="dictation-recording-dot"]'))
+          .toHaveAttribute('data-tone', 'active');
+      });
+
       await emitPartial(page, PARTIAL_RAW);
       await release(page);
 
@@ -601,47 +648,6 @@ test.describe('dictation into the Browser pane note input', () => {
    * split seam - so it straddled the divider whichever side was being dictated
    * into, and covered the Browser pane's own controls.
    */
-  test('the chip sits against the NOTE INPUT, inside the Browser pane', async () => {
-    const page = await launch({ autoSubmit: false });
-    try {
-      await openBrowserPane(page);
-      const noteInput = page.locator('[data-testid="browser-note-input"]');
-      await noteInput.click();
-      await pressAndHold(page);
-
-      const chip = page.locator('[data-testid="dictation-live-chip"]');
-      await expect(chip).toBeVisible();
-      // The note field is the last row of its pane, so below does not fit and
-      // the chip flips above it.
-      await expect(chip).toHaveAttribute('data-placement', 'above');
-
-      const boxes = await page.evaluate(() => {
-        const read = (selector: string) => {
-          const element = document.querySelector(selector);
-          if (!element) return null;
-          const { left, right, top, bottom } = element.getBoundingClientRect();
-          return { left, right, top, bottom };
-        };
-        return {
-          chip: read('[data-testid="dictation-live-chip"]'),
-          note: read('[data-testid="browser-note-input"]'),
-          pane: read('[data-testid="browser-pane"]'),
-        };
-      });
-      if (!boxes.chip || !boxes.note || !boxes.pane) throw new Error('missing box');
-
-      // Clear of the field, so it never covers what is being dictated.
-      expect(boxes.chip.bottom).toBeLessThanOrEqual(boxes.note.top);
-      // And inside the pane it belongs to, which is the seam bug in one line.
-      expect(boxes.chip.left).toBeGreaterThanOrEqual(boxes.pane.left - 1);
-      expect(boxes.chip.right).toBeLessThanOrEqual(boxes.pane.right + 1);
-
-      await release(page);
-    } finally {
-      await page.context().close();
-    }
-  });
-
   test('the chip sits inside the TERMINAL pane, never crossing into the Browser pane', async () => {
     const page = await launch({ autoSubmit: false });
     try {
@@ -1717,32 +1723,6 @@ test.describe('dictation into the Browser pane note input', () => {
       // than a commit, so it is deliberately never pressed: the text must be
       // exactly the transcript, with no trailing break.
       expect(await read()).toBe(FINAL_TRANSCRIPT);
-    } finally {
-      await page.context().close();
-    }
-  });
-
-  test('the chip reports an input target as a real target, not as "no target"', async () => {
-    // `noTarget` used to be `!targetSessionId`, and an input target has no
-    // session behind it - so without the kind, dictating into the note input
-    // would have shown "no target" while the words were visibly landing.
-    const page = await launch({ autoSubmit: true });
-    try {
-      await openBrowserPane(page);
-      await page.locator('[data-testid="browser-note-input"]').click();
-      await pressAndHold(page);
-      // Assert the kind explicitly: a terminal target ALSO reads "Listening",
-      // so without this the copy assertions below would pass even if the note
-      // input had never won the resolve.
-      expect(await dictationTargetKind(page)).toBe('input');
-
-      const chip = page.locator('[data-testid="dictation-live-chip"]');
-      await expect(chip.getByText('Listening', { exact: true })).toBeVisible();
-      await expect(chip.getByText('Release to send', { exact: true })).toBeVisible();
-      await expect(chip.locator('[data-testid="dictation-recording-dot"]'))
-        .toHaveAttribute('data-tone', 'active');
-
-      await release(page);
     } finally {
       await page.context().close();
     }

@@ -41,20 +41,7 @@ async function createGroup(page: Page, name: string): Promise<void> {
   await expect(input).toBeHidden();
 }
 
-test.describe('ProjectSidebar header count badge', () => {
-  test('shows project count badge in header when projects exist', async () => {
-    // The "Projects" header renders a CountBadge next to the label when projects.length > 0.
-    // Scope to the header area to avoid matching group or project-row badges.
-    await expect(page.getByTestId('sidebar-projects-count')).toHaveText('2');
-  });
-});
-
 test.describe('Project Groups', () => {
-  test('can create a project group', async () => {
-    await createGroup(page, 'Work');
-    await expect(page.locator('text=Work').first()).toBeVisible();
-  });
-
   test('right-clicking the list background offers the create actions', async () => {
     // That area used to fall through to Electron's native Copy / Paste menu,
     // which offers nothing a project list can act on.
@@ -119,17 +106,6 @@ test.describe('Project Groups', () => {
     await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
   });
 
-  test('right-clicking a group header does not open the background menu', async () => {
-    await createGroup(page, 'NoBackgroundLeak');
-    const groupHeader = page.locator('[data-testid^="project-group-"]');
-    await groupHeader.click({ button: 'right' });
-
-    // Scoped by an item only GroupContextMenu renders, for the same reason as above.
-    const groupMenu = page.locator('.fixed.bg-surface-raised').filter({ hasText: 'Move up' });
-    await expect(groupMenu).toBeVisible();
-    await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
-  });
-
   test('right-clicking the inline group-name input does not open the background menu', async () => {
     // The input lives inside the list container, so without its own
     // stopPropagation the container's onContextMenu would preventDefault the
@@ -166,6 +142,11 @@ test.describe('Project Groups', () => {
   });
 
   test('collapse hides projects and shows count', async () => {
+    await test.step('shows project count badge in header when projects exist', async () => {
+      // The "Projects" header renders a CountBadge next to the label when projects.length > 0.
+      await expect(page.getByTestId('sidebar-projects-count')).toHaveText('2');
+    });
+
     const sidebar = page.locator('.bg-surface-raised').first();
     await createGroup(page, 'MyGroup');
 
@@ -183,6 +164,12 @@ test.describe('Project Groups', () => {
 
     // Click the group header's text area to collapse (avoid action buttons)
     const groupHeader = page.locator('[data-testid^="project-group-"]');
+
+    await test.step('group count badge is visible when expanded', async () => {
+      // GroupHeader renders CountBadge regardless of collapsed state. The group is expanded
+      // by default, so this reads the expanded state before the collapse below.
+      await expect(groupHeader.locator('[data-testid^="group-count-"]')).toHaveText('2');
+    });
     const groupName = groupHeader.locator('text=MyGroup');
     await groupName.click();
 
@@ -197,27 +184,6 @@ test.describe('Project Groups', () => {
     await groupName.click();
     await expect(sidebar.locator('.truncate.font-medium:text("Alpha")')).toBeVisible();
     await expect(sidebar.locator('.truncate.font-medium:text("Beta")')).toBeVisible();
-  });
-
-  test('group count badge is visible when expanded', async () => {
-    // GroupHeader now renders CountBadge regardless of collapsed state.
-    // This test covers the expanded state (the prior test only covers collapsed).
-    const sidebar = page.locator('.bg-surface-raised').first();
-    await createGroup(page, 'ExpandedBadgeGroup');
-
-    // Move both projects into the group
-    await sidebar.locator('.truncate.font-medium:text("Alpha")').click({ button: 'right' });
-    await page.locator('.fixed.bg-surface-raised').locator('text=ExpandedBadgeGroup').click();
-    await sidebar.locator('.truncate.font-medium:text("Beta")').click({ button: 'right' });
-    await page.locator('.fixed.bg-surface-raised').locator('text=ExpandedBadgeGroup').click();
-
-    // Group is expanded by default - projects are visible
-    await expect(sidebar.locator('.truncate.font-medium:text("Alpha")')).toBeVisible();
-    await expect(sidebar.locator('.truncate.font-medium:text("Beta")')).toBeVisible();
-
-    // Badge must be visible while expanded
-    const groupHeader = page.locator('[data-testid^="project-group-"]');
-    await expect(groupHeader.locator('[data-testid^="group-count-"]')).toHaveText('2');
   });
 
   test('can rename a group via context menu', async () => {
@@ -275,22 +241,6 @@ test.describe('Project Groups', () => {
     await expect(page.locator('text=Alpha').first()).toBeVisible();
   });
 
-  test('context menu moves project to group', async () => {
-    await createGroup(page, 'Dev');
-
-    // Right-click Alpha to open context menu
-    await page.locator('text=Alpha').first().click({ button: 'right' });
-
-    // Click "Dev" in the context menu
-    const contextMenu = page.locator('.fixed.bg-surface-raised');
-    await expect(contextMenu).toBeVisible();
-    await contextMenu.locator('text=Dev').click();
-
-    // Alpha should now be indented (grouped)
-    const alphaItem = page.locator('text=Alpha').first().locator('..');
-    await expect(page.locator('text=Alpha').first()).toBeVisible();
-  });
-
   test('context menu removes project from group', async () => {
     await createGroup(page, 'Team');
 
@@ -310,27 +260,6 @@ test.describe('Project Groups', () => {
 });
 
 test.describe('Sidebar Footer Actions', () => {
-  test('footer caret menu stays inside the sidebar', async () => {
-    const sidebar = page.locator('.bg-surface-raised').first();
-    const sidebarBox = await sidebar.boundingBox();
-    if (!sidebarBox) throw new Error('Sidebar has no layout');
-
-    await page.getByTestId('sidebar-footer-more-button').click();
-    const menu = page.getByTestId('sidebar-footer-menu');
-    await expect(menu).toBeVisible();
-
-    const menuBox = await menu.boundingBox();
-    if (!menuBox) throw new Error('Footer menu has no layout');
-
-    // Before the fix, the default auto alignment left-aligned the menu to the
-    // caret (auto left-aligns any trigger in the viewport's left half, which
-    // the sidebar caret always is), so the menu hung off the sidebar's right
-    // edge and floated over the board. A couple of pixels of tolerance for
-    // cross-platform sub-pixel rounding (cross-platform-parity.md); not an
-    // exact-equality check.
-    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width + 2);
-  });
-
   test('clicking Add project from the footer menu closes it', async () => {
     // Neutralize the add-project flow so it toasts-and-returns instead of
     // opening or creating a project. A real project open re-renders the
@@ -353,9 +282,23 @@ test.describe('Sidebar Footer Actions', () => {
   });
 
   test('Escape closes the footer caret menu', async () => {
+    const sidebar = page.locator('.bg-surface-raised').first();
+    const sidebarBox = await sidebar.boundingBox();
+    if (!sidebarBox) throw new Error('Sidebar has no layout');
+
     await page.getByTestId('sidebar-footer-more-button').click();
     const menu = page.getByTestId('sidebar-footer-menu');
     await expect(menu).toBeVisible();
+
+    await test.step('footer caret menu stays inside the sidebar', async () => {
+      const menuBox = await menu.boundingBox();
+      if (!menuBox) throw new Error('Footer menu has no layout');
+
+      // Before the fix, the default auto alignment left-aligned the menu to the caret, so the
+      // menu hung off the sidebar's right edge and floated over the board. A couple of pixels
+      // of tolerance for cross-platform sub-pixel rounding; not an exact-equality check.
+      expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(sidebarBox.x + sidebarBox.width + 2);
+    });
 
     await page.keyboard.press('Escape');
 
@@ -439,28 +382,23 @@ test.describe('GroupContextMenu - move up/down', () => {
     }, { timeout: 5000 }).toBe(true);
   });
 
-  test('Move up is disabled when group is first', async () => {
-    await createGroup(page, 'OnlyGroup');
-
-    // Right-click the only group - Move up should be disabled
+  test('right-clicking a group header does not open the background menu', async () => {
+    await createGroup(page, 'NoBackgroundLeak');
     const groupHeader = page.locator('[data-testid^="project-group-"]');
     await groupHeader.click({ button: 'right' });
-    const contextMenu = page.locator('.fixed.bg-surface-raised');
 
-    const moveUpButton = contextMenu.locator('button:has-text("Move up")');
-    await expect(moveUpButton).toBeDisabled();
-  });
+    // Scoped by an item only GroupContextMenu renders, for the same reason as above.
+    const groupMenu = page.locator('.fixed.bg-surface-raised').filter({ hasText: 'Move up' });
+    await expect(groupMenu).toBeVisible();
+    await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
 
-  test('Move down is disabled when group is last', async () => {
-    await createGroup(page, 'LoneGroup');
-
-    // Right-click the only group - Move down should be disabled
-    const groupHeader = page.locator('[data-testid^="project-group-"]');
-    await groupHeader.click({ button: 'right' });
-    const contextMenu = page.locator('.fixed.bg-surface-raised');
-
-    const moveDownButton = contextMenu.locator('button:has-text("Move down")');
-    await expect(moveDownButton).toBeDisabled();
+    // Same createGroup and right-click, read only: a lone group is both first and last.
+    await test.step('Move up is disabled when group is first', async () => {
+      await expect(groupMenu.locator('button:has-text("Move up")')).toBeDisabled();
+    });
+    await test.step('Move down is disabled when group is last', async () => {
+      await expect(groupMenu.locator('button:has-text("Move down")')).toBeDisabled();
+    });
   });
 
   test('clicking outside the open group context menu closes it', async () => {

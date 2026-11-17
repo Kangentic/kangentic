@@ -49,44 +49,42 @@ async function accountCalls(page: Page, name: string): Promise<MockCall[]> {
 }
 
 test.describe('Settings > Accounts', () => {
-  test('one account: its login and usage, no switching card, nothing to switch or remove', async () => {
-    const { browser, page } = await launchPage();
-    try {
-      await openAccounts(page);
-      const row = page.getByTestId('account-row-account-claude-1');
-      await expect(row.getByTestId('account-name')).toHaveText('dev@example.com');
-      await expect(row.getByTestId('account-usage-line')).toHaveCount(2);
-      await expect(page.getByTestId('settings-card-accounts-switching')).toHaveCount(0);
-      await expect(row.getByTestId('account-switch-to')).toHaveCount(0);
-      await expect(row.getByTestId('account-menu')).toHaveCount(0);
-      await expect(page.getByTestId('accounts-add-claude')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
+  // One boot on the three-account seed for three reads that change nothing.
   test('three accounts: the first with room is Active, a full one is skipped, a signed-out one says so', async () => {
     const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
     try {
       await openAccounts(page);
-      await expect(page.getByTestId('settings-card-accounts-switching')).toBeVisible();
+      await test.step('three accounts: the first with room is Active, a full one is skipped, a signed-out one says so', async () => {
+        await expect(page.getByTestId('settings-card-accounts-switching')).toBeVisible();
 
-      const full = page.getByTestId('account-row-account-1');
-      const withRoom = page.getByTestId('account-row-account-2');
-      const signedOut = page.getByTestId('account-row-account-3');
-      // At its weekly limit: skipped, and not the active one.
-      await expect(full.locator('[data-skipped]')).toHaveCount(1);
-      await expect(full).not.toContainText('Active');
-      await expect(withRoom).toContainText('Active');
-      await expect(withRoom.locator('[data-skipped]')).toHaveCount(0);
-      await expect(withRoom.getByTestId('account-usage-line')).toHaveCount(2);
-      // The full account reported only its weekly window: its 5h line is still drawn, Not started,
-      // so every row of the agent is one height (task #1064).
-      await expect(full.getByTestId('account-usage-line')).toHaveCount(2);
-      await expect(full.getByTestId('account-usage-not-started')).toHaveText('Not started');
-      await expect(signedOut).toContainText('Not signed in');
-      await expect(signedOut.getByTestId('account-usage-line')).toHaveCount(0);
-      await expect(signedOut.getByTestId('account-switch-to')).toHaveCount(0);
+        const full = page.getByTestId('account-row-account-1');
+        const withRoom = page.getByTestId('account-row-account-2');
+        const signedOut = page.getByTestId('account-row-account-3');
+        // At its weekly limit: skipped, and not the active one.
+        await expect(full.locator('[data-skipped]')).toHaveCount(1);
+        await expect(full).not.toContainText('Active');
+        await expect(withRoom).toContainText('Active');
+        await expect(withRoom.locator('[data-skipped]')).toHaveCount(0);
+        await expect(withRoom.getByTestId('account-usage-line')).toHaveCount(2);
+        // The full account reported only its weekly window: its 5h line is still drawn, Not started,
+        // so every row of the agent is one height (task #1064).
+        await expect(full.getByTestId('account-usage-line')).toHaveCount(2);
+        await expect(full.getByTestId('account-usage-not-started')).toHaveText('Not started');
+        await expect(signedOut).toContainText('Not signed in');
+        await expect(signedOut.getByTestId('account-usage-line')).toHaveCount(0);
+        await expect(signedOut.getByTestId('account-switch-to')).toHaveCount(0);
+      });
+
+      await test.step('the agent own login has no Remove', async () => {
+        // The first seeded account is the agent's own login (`default`), signed in.
+        await expect(page.getByTestId('account-row-account-1').getByTestId('account-menu')).toHaveCount(0);
+      });
+
+      await test.step('the Order row shows its description inline, with no info tip', async () => {
+        const row = page.getByTestId('setting-row-accounts.orderMode');
+        await expect(row).toContainText('Automatic puts the soonest reset first.');
+        await expect(row.getByRole('button', { name: /^About / })).toHaveCount(0);
+      });
     } finally {
       await browser.close();
     }
@@ -119,6 +117,11 @@ test.describe('Settings > Accounts', () => {
     const { browser, page } = await launchPage({ beforeLoad: seedAccounts(cards) });
     try {
       await openAccounts(page);
+      // A read on the same seed, taken before the click below changes the list.
+      await test.step('the switching card names the agents it applies to', async () => {
+        await expect(page.getByTestId('settings-card-accounts-switching'))
+          .toContainText('Applies to agents that report usage: Claude Code.');
+      });
       await page.getByTestId('account-row-account-2').getByTestId('account-switch-to').click();
       await expect.poll(async () => (await accountCalls(page, 'switchTo')).length, { timeout: 3000 }).toBe(1);
       const names = page.getByTestId('settings-card-accounts-claude').getByTestId('account-name');
@@ -205,17 +208,6 @@ test.describe('Settings > Accounts', () => {
       await page.getByTestId('account-remove-confirm-confirm').click();
       await expect(page.getByTestId('account-row-account-2')).toHaveCount(0);
       await expect(page.getByTestId('account-row-account-1')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('the agent own login has no Remove', async () => {
-    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
-    try {
-      await openAccounts(page);
-      // The first seeded account is the agent's own login (`default`), signed in.
-      await expect(page.getByTestId('account-row-account-1').getByTestId('account-menu')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -309,34 +301,34 @@ test.describe('Settings > Accounts', () => {
     }
   });
 
-  test('closing the dialog mid sign-in cancels it', async () => {
+  // One boot on the default seed: the reads of the one-account tab come first, then the dialog
+  // case, which opens a sign-in and so runs last.
+  test('one account shows its login and usage with nothing to switch or remove, and closing the dialog mid sign-in cancels it', async () => {
     const { browser, page } = await launchPage();
     try {
       await openAccounts(page);
-      await page.getByTestId('accounts-add-claude').click();
-      await expect(page.getByTestId('account-login-dialog')).toBeVisible();
-      await page.getByTestId('account-login-close').click();
-      await expect(page.getByTestId('account-login-dialog')).toHaveCount(0);
-      await expect.poll(async () => (await accountCalls(page, 'cancelLogin')).length, { timeout: 3000 }).toBe(1);
+      await test.step('one account: its login and usage, no switching card, nothing to switch or remove', async () => {
+        const row = page.getByTestId('account-row-account-claude-1');
+        await expect(row.getByTestId('account-name')).toHaveText('dev@example.com');
+        await expect(row.getByTestId('account-usage-line')).toHaveCount(2);
+        await expect(page.getByTestId('settings-card-accounts-switching')).toHaveCount(0);
+        await expect(row.getByTestId('account-switch-to')).toHaveCount(0);
+        await expect(row.getByTestId('account-menu')).toHaveCount(0);
+        await expect(page.getByTestId('accounts-add-claude')).toBeVisible();
+      });
+      await test.step('closing the dialog mid sign-in cancels it', async () => {
+        await page.getByTestId('accounts-add-claude').click();
+        await expect(page.getByTestId('account-login-dialog')).toBeVisible();
+        await page.getByTestId('account-login-close').click();
+        await expect(page.getByTestId('account-login-dialog')).toHaveCount(0);
+        await expect.poll(async () => (await accountCalls(page, 'cancelLogin')).length, { timeout: 3000 }).toBe(1);
+      });
     } finally {
       await browser.close();
     }
   });
 
-  test('the switching card names the agents it applies to, and is absent when only a no-usage agent has two accounts', async () => {
-    const twoClaudeAccounts = [{ agent: 'claude', accounts: [
-      { id: 'account-1', email: 'one@example.com', plan: 'Max', lastUsage: [sevenDay(20, 3 * DAY)] },
-      { id: 'account-2', email: 'two@example.com', plan: 'Max', lastUsage: [sevenDay(30, 2 * DAY)] },
-    ] }];
-    const first = await launchPage({ beforeLoad: seedAccounts(twoClaudeAccounts) });
-    try {
-      await openAccounts(first.page);
-      await expect(first.page.getByTestId('settings-card-accounts-switching'))
-        .toContainText('Applies to agents that report usage: Claude Code.');
-    } finally {
-      await first.browser.close();
-    }
-
+  test('the switching card is absent when only a no-usage agent has two accounts', async () => {
     const keyFileOnly = [
       { agent: 'claude', accounts: [{ id: 'account-1', email: 'one@example.com', plan: 'Max' }] },
       { agent: 'droid', kind: 'key-file', reportsUsage: false, accounts: [
@@ -368,18 +360,6 @@ test.describe('Settings > Accounts', () => {
       await trigger.hover();
       // A tip would only repeat the label (one-tooltip.md), so there is none to wait for.
       await expect(trigger).toHaveAccessibleDescription('');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('the Order row shows its description inline, with no info tip', async () => {
-    const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
-    try {
-      await openAccounts(page);
-      const row = page.getByTestId('setting-row-accounts.orderMode');
-      await expect(row).toContainText('Automatic puts the soonest reset first.');
-      await expect(row.getByRole('button', { name: /^About / })).toHaveCount(0);
     } finally {
       await browser.close();
     }

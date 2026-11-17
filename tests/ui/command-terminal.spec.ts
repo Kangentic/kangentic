@@ -944,44 +944,6 @@ test.describe('Command Terminal', () => {
       await sharedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     });
 
-    test.describe('Terminal Panel Filtering', () => {
-      test('transient sessions are excluded from the terminal panel tabs', async () => {
-        // The regular task session tab should be visible
-        const taskTab = sharedPage.locator('button:has-text("regular-task")');
-        await expect(taskTab).toBeVisible();
-
-        // The transient session should NOT appear as a tab
-        const transientTab = sharedPage.locator('button:has-text("ephemeral-uuid")');
-        await expect(transientTab).not.toBeVisible();
-      });
-    });
-
-    test.describe('Hotkey', () => {
-      test('Ctrl+Shift+P opens the command bar overlay', async () => {
-        // Command bar should not be visible initially
-        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible();
-
-        // Press Ctrl+Shift+P
-        await sharedPage.keyboard.press('Control+Shift+P');
-
-        // Command bar should appear. The title carries the window's durable slot
-        // number so two terminals are tellable apart, hence "Command Terminal 1"
-        // rather than the bare name for the first slot.
-        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
-        await expect(sharedPage.getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
-      });
-
-      test('Ctrl+Shift+P toggles the command bar closed', async () => {
-        // Open
-        await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
-
-        // Close
-        await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
-      });
-    });
-
     test.describe('Background Session Indicator', () => {
       // Phase 2: the pulsing dot (`transient-session-indicator`) was removed.
       // Activity is now shown as the COLOR of the terminal icon (`quick-session-icon`),
@@ -996,6 +958,16 @@ test.describe('Command Terminal', () => {
       // whether the bar is open or closed. This is the key semantic change from Phase 1.
 
       test('icon shows idle activity while transient session is alive (bar closed)', async () => {
+        await test.step('transient sessions are excluded from the terminal panel tabs', async () => {
+          // The regular task session tab should be visible
+          const taskTab = sharedPage.locator('button:has-text("regular-task")');
+          await expect(taskTab).toBeVisible();
+
+          // The transient session should NOT appear as a tab
+          const transientTab = sharedPage.locator('button:has-text("ephemeral-uuid")');
+          await expect(transientTab).not.toBeVisible();
+        });
+
         // The icon should be visible (project is open)
         const icon = sharedPage.getByTestId('quick-session-icon');
         await expect(icon).toBeVisible();
@@ -1009,9 +981,21 @@ test.describe('Command Terminal', () => {
         // tones land on terminal-idle and only the color differs - pin that here.
         await expect(icon).toHaveAttribute('data-mark', 'terminal-idle');
 
-        // Open overlay and close it - session stays alive
-        await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
+        // Open overlay and close it - session stays alive. This covers the hotkey toggle
+        // both ways ('Ctrl+Shift+P toggles the command bar closed').
+        await test.step('Ctrl+Shift+P opens the command bar overlay', async () => {
+          // Command bar should not be visible initially
+          await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible();
+
+          // Press Ctrl+Shift+P
+          await sharedPage.keyboard.press('Control+Shift+P');
+
+          // Command bar should appear. The title carries the window's durable slot
+          // number so two terminals are tellable apart, hence "Command Terminal 1"
+          // rather than the bare name for the first slot.
+          await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
+          await expect(sharedPage.getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
+        });
         await sharedPage.keyboard.press('Control+Shift+P');
         await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
 
@@ -1354,33 +1338,8 @@ test.describe('Command Terminal', () => {
     // Trimmed (test-suite audit): 'New terminal spawns a second terminal' (count 1 -> 2
     // from the rail's Add terminal) is the first half of the next test.
 
-    test('two terminals carry distinct, slot-numbered titles', async () => {
-      // The defect this fixes: two tiled Command Terminals had byte-identical
-      // title bars, and every other fact in that header (agent, model, branch,
-      // cwd) is identical across a project's terminals by construction, so the
-      // slot number is the only thing that can tell them apart.
-      const { browser, page } = await launchWithState(multiTerminalPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await expect(page.getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
-
-        await page.getByTestId('command-terminal-new').click();
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
-
-        // Assert the SET, not each index: window order is the engine's business,
-        // and pinning it here would make this test fail on an unrelated tiling
-        // change while still not proving the titles differ.
-        const titles = await page.getByTestId('command-bar-label').allTextContents();
-        expect(titles).toHaveLength(2);
-        expect(new Set(titles).size).toBe(2);
-        expect([...titles].sort()).toEqual(['Command Terminal 1', 'Command Terminal 2']);
-      } finally {
-        await browser.close();
-      }
-    });
+    // Trimmed (test-suite audit): 'two terminals carry distinct, slot-numbered titles' is
+    // the first half of the next test, which also reads each slot's title.
 
     test('a window titles itself from its own terminal\'s name once main pushes one', async () => {
       // Main derives a terminal's name from its first prompt and stamps it on the
@@ -1405,6 +1364,15 @@ test.describe('Command Terminal', () => {
           .getByTestId('command-bar-label');
         await expect(firstWindowTitle).toHaveText('Command Terminal 1');
         await expect(secondWindowTitle).toHaveText('Command Terminal 2');
+
+        // 'two terminals carry distinct, slot-numbered titles': two tiled Command Terminals
+        // once had byte-identical title bars, and the slot number is the only fact that
+        // tells them apart. Assert the SET, not each index: window order is the engine's
+        // business, and pinning it would fail on an unrelated tiling change.
+        const titles = await page.getByTestId('command-bar-label').allTextContents();
+        expect(titles).toHaveLength(2);
+        expect(new Set(titles).size).toBe(2);
+        expect([...titles].sort()).toEqual(['Command Terminal 1', 'Command Terminal 2']);
 
         const firstEntry = (await transientEntriesFor(page, MULTI_PROJECT_ID)).find((entry) => entry.slot === 'slot-1')!;
         await fireTerminalLabel(page, {
@@ -1769,52 +1737,6 @@ test.describe('Command Terminal', () => {
       await reconcilePage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     });
 
-    test('two terminals in project A collapse to one fresh terminal in project B', async () => {
-      const page = reconcilePage;
-
-      // Two terminals in Project A (2 windows, 2 tracked A sessions).
-      await page.keyboard.press('Control+Shift+P');
-      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-      await page.getByTestId('command-terminal-new').click();
-      await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
-      await expect
-        .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
-        .toBe(2);
-
-      // Hide the layer, then switch to Project B (wait for the switch to settle).
-      // Two windows are mounted until the hide lands, so a visibility check on the
-      // bare locator would be a strict-mode violation; the count is the question.
-      await page.keyboard.press('Control+Shift+P');
-      await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
-      await page.locator('[role="button"]:has-text("Project Beta")').click();
-      await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
-
-      // Open in Project B: reconcile trims the 2 carried windows to 1, which
-      // spawns exactly one fresh PTY for B.
-      await page.keyboard.press('Control+Shift+P');
-      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-      await expect
-        .poll(() => spawnCountFor(page, PROJECT_B_ID), { timeout: 5000, intervals: [100, 200, 500] })
-        .toBe(1);
-      await expect
-        .poll(async () => (await transientEntriesFor(page, PROJECT_B_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
-        .toBe(1);
-
-      // A's two sessions were never touched: both still tracked and running.
-      const aEntries = await transientEntriesFor(page, PROJECT_A_ID);
-      expect(aEntries).toHaveLength(2);
-      const aSessionIds = aEntries.map((entry) => entry.sessionId).sort();
-      const stillRunning = await runningSessionIds(page, aSessionIds);
-      expect(stillRunning.sort()).toEqual(aSessionIds);
-
-      // Exactly one window, on a slot with a live B session; B never got a 2nd spawn.
-      const anchors = await commandWindowAnchors(page);
-      expect(anchors).toHaveLength(1);
-      const bSlots = (await transientEntriesFor(page, PROJECT_B_ID)).map((entry) => entry.slot);
-      expect(bSlots).toContain(anchors[0]);
-      expect(await spawnCountFor(page, PROJECT_B_ID)).toBe(1);
-    });
-
     test('the panel\'s place is global per terminal count: project B with two terminals opens at the two-terminal place set in project A', async () => {
       const page = reconcilePage;
       const panelBox = async () => {
@@ -1858,6 +1780,7 @@ test.describe('Command Terminal', () => {
     });
 
     test('returning to a project reopens a window per live session and reattaches without spawning', async () => {
+      test.setTimeout(30000);
       const page = reconcilePage;
 
       // Two terminals in Project A; capture their session ids.
@@ -1879,6 +1802,32 @@ test.describe('Command Terminal', () => {
       await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
       await page.keyboard.press('Control+Shift+P');
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+
+      await test.step('two terminals in project A collapse to one fresh terminal in project B', async () => {
+        // Open in Project B: reconcile trims the 2 carried windows to 1, which
+        // spawns exactly one fresh PTY for B.
+        await expect
+          .poll(() => spawnCountFor(page, PROJECT_B_ID), { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(1);
+        await expect
+          .poll(async () => (await transientEntriesFor(page, PROJECT_B_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(1);
+
+        // A's two sessions were never touched: both still tracked and running.
+        const aEntries = await transientEntriesFor(page, PROJECT_A_ID);
+        expect(aEntries).toHaveLength(2);
+        const aSessionIds = aEntries.map((entry) => entry.sessionId).sort();
+        const stillRunning = await runningSessionIds(page, aSessionIds);
+        expect(stillRunning.sort()).toEqual(aSessionIds);
+
+        // Exactly one window, on a slot with a live B session; B never got a 2nd spawn.
+        const anchors = await commandWindowAnchors(page);
+        expect(anchors).toHaveLength(1);
+        const bSlots = (await transientEntriesFor(page, PROJECT_B_ID)).map((entry) => entry.slot);
+        expect(bSlots).toContain(anchors[0]);
+        expect(await spawnCountFor(page, PROJECT_B_ID)).toBe(1);
+      });
+
       await page.keyboard.press('Control+Shift+P');
       await expect(page.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
 
@@ -2215,7 +2164,14 @@ test.describe('Command Terminal', () => {
         await page.keyboard.press('Control+Shift+P');
         const commandWindow = page.getByTestId('command-terminal-window');
         await expect(commandWindow).toHaveCount(1, { timeout: 5000 });
-        await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toBeVisible();
+        await test.step('a terminal a restart just resumed shows the overlay, not its shell', async () => {
+          await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toBeVisible();
+        });
+        await test.step('a terminal a restart resumed names the resume under its launch overlay', async () => {
+          // Not "Starting Command Terminal...": this attach resumes a conversation.
+          await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toContainText('Resuming conversation');
+          expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+        });
       } finally {
         await browser.close();
       }
@@ -2498,22 +2454,9 @@ test.describe('Command Terminal', () => {
     // The launch overlay over a terminal a restart just resumed.
     // -------------------------------------------------------------------------
 
-    test('a terminal a restart resumed names the resume under its launch overlay', async () => {
-      const { browser, page } = await launchWithState(restartRestorePreConfig({
-        sessions: [{ id: 'resumed-1', slot: 'slot-1', status: 'running', resuming: true }],
-      }));
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        await page.keyboard.press('Control+Shift+P');
-        const commandWindow = page.getByTestId('command-terminal-window');
-        await expect(commandWindow).toHaveCount(1, { timeout: 5000 });
-        // Not "Starting Command Terminal...": this attach resumes a conversation.
-        await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toContainText('Resuming conversation');
-        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
-      } finally {
-        await browser.close();
-      }
-    });
+    // 'a terminal a restart resumed names the resume under its launch overlay' is the second
+    // step of 'a terminal a restart just resumed shows the overlay, not its shell', above:
+    // the same launch, read only.
 
     test('a resumed terminal whose agent is already on screen shows no overlay, and stays ready', async () => {
       // The one test in this group that lifts the overlay, so it draws a live terminal pane.
@@ -2697,7 +2640,8 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('a terminal has no window controls of its own, and its focus border shows only beside another', async () => {
+    test('a terminal has no window controls, a panel never moved opens centered, and its text sits 8px in', async () => {
+      test.setTimeout(30000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -2705,67 +2649,48 @@ test.describe('Command Terminal', () => {
         const firstTerminal = page.getByTestId('command-terminal-window');
         await expect(firstTerminal).toHaveCount(1, { timeout: 5000 });
 
-        // The panel moves, resizes and maximizes; a terminal does none of these.
-        await expect(page.locator('[data-testid^="window-resize-"]')).toHaveCount(0);
-        await expect(firstTerminal.getByRole('button', { name: /pop out|maximize|restore/i })).toHaveCount(0);
+        await test.step('a panel never moved opens centered, its lone terminal as large as one before the panel', async () => {
+          expect(await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanelByShape ?? {})).toEqual({});
 
-        // A lone terminal is plainly the one taking keys, so it draws no focus border.
-        const framesWithFocusBorder = page.locator('[data-testid^="window-frame-"][class*="focus-within:border-accent"]');
-        await expect(framesWithFocusBorder).toHaveCount(0);
+          const area = await page.getByTestId('command-terminal-panel-area').boundingBox();
+          const panel = await page.getByTestId('command-terminal-panel').boundingBox();
+          if (!area || !panel) throw new Error('no panel');
+          // The release opened a Command Terminal at 58% by 70% of this area.
+          await expect.poll(async () => {
+            const pane = (await layoutBoxes(page)).panes['slot-1'];
+            if (!pane) return 'no pane';
+            const off = Math.max(Math.abs(pane.width - area.width * 0.58), Math.abs(pane.height - area.height * 0.7));
+            return off <= 2 ? 'released size' : `${pane.width} x ${pane.height}`;
+          }, { timeout: 3000 }).toBe('released size');
+          expectNear(panel.x - area.x, area.x + area.width - (panel.x + panel.width), 'left and right margins');
+          expectNear(panel.y - area.y, area.y + area.height - (panel.y + panel.height), 'top and bottom margins');
+        });
 
-        await page.getByTestId('command-terminal-new').click();
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
-        await expect(framesWithFocusBorder).toHaveCount(2);
+        await test.step('a terminal has no window controls of its own, and its focus border shows only beside another', async () => {
+          // The panel moves, resizes and maximizes; a terminal does none of these.
+          await expect(page.locator('[data-testid^="window-resize-"]')).toHaveCount(0);
+          await expect(firstTerminal.getByRole('button', { name: /pop out|maximize|restore/i })).toHaveCount(0);
 
-        // The cue is the still border alone: the focused frame's border differs from
-        // its neighbor's, and no pulsing line is drawn along its top.
-        const frames = page.locator('[data-testid^="window-frame-"]');
-        await frames.first().locator('.xterm-helper-textarea').focus();
-        await expect.poll(async () => frames.evaluateAll((elements) => {
-          const colors = elements.map((element) => getComputedStyle(element).borderTopColor);
-          return colors.length === 2 && colors[0] !== colors[1];
-        })).toBe(true);
-        await expect(page.locator('[data-testid^="window-frame-"] > [class*="animate-pulse"]')).toHaveCount(0);
-      } finally {
-        await browser.close();
-      }
-    });
+          // A lone terminal is plainly the one taking keys, so it draws no focus border.
+          const framesWithFocusBorder = page.locator('[data-testid^="window-frame-"][class*="focus-within:border-accent"]');
+          await expect(framesWithFocusBorder).toHaveCount(0);
 
-    test('a panel never moved opens centered, its lone terminal as large as one before the panel', async () => {
-      const { browser, page } = await launchWithState(multiTerminalPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        expect(await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanelByShape ?? {})).toEqual({});
+          await page.getByTestId('command-terminal-new').click();
+          await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+          await expect(framesWithFocusBorder).toHaveCount(2);
 
-        const area = await page.getByTestId('command-terminal-panel-area').boundingBox();
-        const panel = await page.getByTestId('command-terminal-panel').boundingBox();
-        if (!area || !panel) throw new Error('no panel');
-        // The release opened a Command Terminal at 58% by 70% of this area.
-        await expect.poll(async () => {
-          const pane = (await layoutBoxes(page)).panes['slot-1'];
-          if (!pane) return 'no pane';
-          const off = Math.max(Math.abs(pane.width - area.width * 0.58), Math.abs(pane.height - area.height * 0.7));
-          return off <= 2 ? 'released size' : `${pane.width} x ${pane.height}`;
-        }, { timeout: 3000 }).toBe('released size');
-        expectNear(panel.x - area.x, area.x + area.width - (panel.x + panel.width), 'left and right margins');
-        expectNear(panel.y - area.y, area.y + area.height - (panel.y + panel.height), 'top and bottom margins');
-      } finally {
-        await browser.close();
-      }
-    });
+          // The cue is the still border alone: the focused frame's border differs from
+          // its neighbor's, and no pulsing line is drawn along its top.
+          const frames = page.locator('[data-testid^="window-frame-"]');
+          await frames.first().locator('.xterm-helper-textarea').focus();
+          await expect.poll(async () => frames.evaluateAll((elements) => {
+            const colors = elements.map((element) => getComputedStyle(element).borderTopColor);
+            return colors.length === 2 && colors[0] !== colors[1];
+          })).toBe(true);
+          await expect(page.locator('[data-testid^="window-frame-"] > [class*="animate-pulse"]')).toHaveCount(0);
+        });
 
-    test('a terminal\'s text sits 8px in from its pane\'s left, top and bottom, the scrollbar gutter on its right', async () => {
-      const { browser, page } = await launchWithState(multiTerminalPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('command-terminal-new').click();
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
-
-        await expect.poll(() => page.evaluate(() => {
+        await test.step('a terminal\'s text sits 8px in from its pane\'s left, top and bottom, the scrollbar gutter on its right', () => expect.poll(() => page.evaluate(() => {
           const panes = [...document.querySelectorAll('[data-testid="command-bar-terminal-pane"]')];
           if (panes.length !== 2) return 'not mounted';
           const problems: string[] = [];
@@ -2791,7 +2716,7 @@ test.describe('Command Terminal', () => {
             if (right < gutter - 0.5 || right > gutter + 20) problems.push(`right ${right} (gutter ${gutter})`);
           }
           return problems.length ? problems.join('; ') : 'inset';
-        }), { timeout: 5000 }).toBe('inset');
+        }), { timeout: 5000 }).toBe('inset'));
       } finally {
         await browser.close();
       }
@@ -5361,6 +5286,7 @@ test.describe('Command Terminal', () => {
     // once the last terminal stopped'.
 
     test('the window shows its project\'s running terminal once the sessions have synced, and starts no second one', async () => {
+      test.setTimeout(30000);
       const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: true }));
       try {
         await expect(page.getByTestId('command-terminal-detached')).toBeVisible({ timeout: 15000 });
@@ -5377,6 +5303,16 @@ test.describe('Command Terminal', () => {
           const calls = (window.electronAPI.sessions as unknown as { __setFocusedCalls: string[][] }).__setFocusedCalls;
           return calls.at(-1) ?? null;
         }), { timeout: 5000 }).toEqual([LIVE_TERMINAL_ID]);
+
+        // The click comes last: it starts a second terminal.
+        await test.step('the window\'s rail holds Add terminal, as the panel\'s does', async () => {
+          const newTerminal = page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new');
+          await expect(newTerminal).toBeVisible();
+          await expect(page.getByTestId('command-terminal-new')).toHaveCount(1);
+
+          await newTerminal.click();
+          await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        });
       } finally {
         await browser.close();
       }
@@ -5403,21 +5339,6 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 10000 });
         await expect.poll(async () => (await transientPairingFor(page, DETACHED_PROJECT_ID))['slot-1'], { timeout: 5000 }).toBe('restored-detached');
         expect(await spawnCount(page)).toBe(0);
-      } finally {
-        await browser.close();
-      }
-    });
-
-    test('the window\'s rail holds Add terminal, as the panel\'s does', async () => {
-      const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: true }));
-      try {
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 15000 });
-        const newTerminal = page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new');
-        await expect(newTerminal).toBeVisible();
-        await expect(page.getByTestId('command-terminal-new')).toHaveCount(1);
-
-        await newTerminal.click();
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
       } finally {
         await browser.close();
       }
@@ -5637,6 +5558,12 @@ test.describe('Command Terminal', () => {
       // (which the mock returns as noop and never fires).
       const TRANSIENT_ID = 'transient-overlay-test-1';
       const preConfigWithDeterministicSpawn = twoProjectPreConfig() + `
+        // Ensure Project Alpha's default_agent is "claude" (the agentFallback step below reads it).
+        window.__mockPreConfigure(function (state) {
+          var project = state.projects.find(function (p) { return p.id === '${PROJECT_A_ID}'; });
+          if (project) project.default_agent = 'claude';
+        });
+
         window.electronAPI.sessions.spawnTransient = async function (input) {
           var session = {
             id: '${TRANSIENT_ID}',
@@ -5688,85 +5615,24 @@ test.describe('Command Terminal', () => {
         // After usage lands the ContextBar should show the model name, not the spinner.
         await expect(overlayContextBar).toContainText('Claude Opus', { timeout: 3000 });
         await expect(overlayContextBar).not.toContainText('Starting agent...');
-      } finally {
-        await browser.close();
-      }
-    });
 
-    test('ContextBar version pill shows project agent name via agentFallback', async () => {
-      // The key regression this tests: transient sessions have no task row in the
-      // board store. Before the agentFallback fix, the version pill showed "Agent"
-      // because agentDisplayName(null) was called. After the fix it shows the
-      // project's default_agent display name ("Claude Code" for agent="claude").
-      //
-      // The board store lookup:
-      //   tasks.find(t => t.session_id === sessionId)?.agent
-      // returns undefined for transient sessions (no task row in the board store).
-      // The nullish coalesce (undefined ?? agentFallback) uses agentFallback = "claude".
-      // agentDisplayName("claude") = "Claude Code".
-      const TRANSIENT_ID = 'transient-overlay-test-2';
-      const preConfigForFallback = twoProjectPreConfig() + `
-        // Ensure Project Alpha's default_agent is "claude".
-        window.__mockPreConfigure(function (state) {
-          var project = state.projects.find(function (p) { return p.id === '${PROJECT_A_ID}'; });
-          if (project) project.default_agent = 'claude';
+        await test.step('ContextBar version pill shows project agent name via agentFallback', async () => {
+          // The key regression: transient sessions have no task row in the board store.
+          // Before the agentFallback fix, the version pill showed "Agent" because
+          // agentDisplayName(null) was called. The pill shows
+          // agentDisplayName(taskAgent ?? agentFallback): taskAgent is undefined (no board task
+          // has session_id === TRANSIENT_ID), agentFallback is the project's "claude", and
+          // agentDisplayName("claude") is "Claude Code".
+          await expect(overlayContextBar).toContainText('Claude Code', { timeout: 3000 });
+          await expect(overlayContextBar).not.toContainText('Starting agent...');
         });
-
-        window.electronAPI.sessions.spawnTransient = async function (input) {
-          var session = {
-            id: '${TRANSIENT_ID}',
-            taskId: '${TRANSIENT_ID}',
-            projectId: input.projectId,
-            pid: null,
-            status: 'running',
-            shell: '/bin/bash',
-            cwd: '/mock/project',
-            startedAt: new Date().toISOString(),
-            exitCode: null,
-            resuming: false,
-            transient: true,
-          };
-          return { session: session, branch: 'main' };
-        };
-      `;
-
-      const { browser, page } = await launchWithState(preConfigForFallback);
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
-
-        const overlayContextBar = page.getByTestId('command-terminal-window').locator('[data-testid="usage-bar"]');
-        await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
-
-        // Push usage so the version pill renders (it only shows when resolvedModelName is set).
-        await page.evaluate((sessionId) => {
-          const stores = (window as unknown as { __zustandStores?: { session?: { getState: () => { updateUsage: (id: string, data: object) => void } } } }).__zustandStores;
-          stores?.session?.getState().updateUsage(sessionId, {
-            model: { id: 'claude-opus', displayName: 'Claude Opus' },
-            contextWindow: {
-              usedPercentage: 5,
-              usedTokens: 200,
-              cacheTokens: 0,
-              totalInputTokens: 150,
-              totalOutputTokens: 50,
-              contextWindowSize: 200000,
-            },
-            cost: { totalCostUsd: 0.001, totalDurationMs: 500 },
-          });
-        }, TRANSIENT_ID);
-
-        // The version pill shows agentDisplayName(taskAgent ?? agentFallback).
-        // taskAgent: board store has no task with session_id === TRANSIENT_ID -> undefined.
-        // agentFallback: projectAgent from useProjectStore = "claude".
-        // agentDisplayName("claude") = "Claude Code".
-        await expect(overlayContextBar).toContainText('Claude Code', { timeout: 3000 });
-        await expect(overlayContextBar).not.toContainText('Starting agent...');
       } finally {
         await browser.close();
       }
     });
+
+    // 'ContextBar version pill shows project agent name via agentFallback' is the second step of
+    // the test above: the seed differs only in the session id, and both only read after one open.
 
     // Trimmed (test-suite audit): the null-agent fallback to "Agent" is agentDisplayName(null)
     // in tests/unit/copilot-adapter.test.ts; the test above proves the pill reads agentFallback.
@@ -6060,7 +5926,11 @@ test.describe('Command Terminal', () => {
     async function openOverlayAndMarkSessionReady(page: Page): Promise<void> {
       await page.keyboard.press('Control+Shift+P');
       await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+      await markSessionReady(page);
+    }
 
+    /** The second half of openOverlayAndMarkSessionReady, for a test that reads the not-yet-ready state first. */
+    async function markSessionReady(page: Page): Promise<void> {
       // markFirstOutput flips sessionFirstOutput[id] -> true, which sets
       // hasSessionStarted=true -> terminalReady=true via a useEffect.
       // This mirrors the pattern used by write-batcher-integration.spec.ts and
@@ -6090,7 +5960,26 @@ test.describe('Command Terminal', () => {
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-        await openOverlayAndMarkSessionReady(page);
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+
+        await test.step('no active session shows plain CircleStop (no activity mark at all)', async () => {
+          // The session has not started (terminalReady=false, so sessionRunning=false), so
+          // StopButtonIcon renders the rest-state <CircleStop>. The ring only appears for a
+          // live session: markFirstOutput has NOT been called yet.
+          const restStopButton = page.getByTestId('command-bar-terminate-button');
+
+          // Plain rest-state icon must be present
+          await expect(restStopButton.locator('.lucide-circle-stop')).toBeVisible({ timeout: 3000 });
+
+          // No activity mark of either state.
+          // Intentional fixed wait: we cannot poll for non-occurrence.
+          // 800ms is enough for any pending microtask queue to flush.
+          await page.waitForTimeout(800);
+          await expect(restStopButton.locator('[data-mark^="control-stop-"]')).toHaveCount(0);
+        });
+
+        await markSessionReady(page);
 
         // Push 'thinking' activity into the store for the known session id.
         await page.evaluate((sessionId) => {
@@ -6162,41 +6051,8 @@ test.describe('Command Terminal', () => {
     // 'idle' is requiresUserInteraction('permission') in tests/unit/activity-state.test.ts;
     // the idle test above proves the ring is drawn from that classifier.
 
-    test('no active session shows plain CircleStop (no activity mark at all)', async () => {
-      // When the session has not yet started (terminalReady=false, so sessionRunning=false),
-      // or activity is undefined, StopButtonIcon renders the rest-state <CircleStop>.
-      // This test opens the overlay WITHOUT calling markFirstOutput, so terminalReady
-      // stays false and the ring must not render.
-      //
-      // Intent: confirm the ring only appears for a live session. If the rest-state
-      // icon were absent, every close-up would look like the ring was working even
-      // when there is nothing to show.
-      const { browser, page } = await launchWithState(
-        ringBasePreConfig() + deterministicSpawn
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
-
-        // Do NOT call markFirstOutput -> terminalReady stays false -> sessionRunning=false
-        // -> isThinking=false, isIdle=false -> StopButtonIcon returns <CircleStop>
-
-        const stopButton = page.getByTestId('command-bar-terminate-button');
-
-        // Plain rest-state icon must be present
-        await expect(stopButton.locator('.lucide-circle-stop')).toBeVisible({ timeout: 3000 });
-
-        // No activity mark of either state.
-        // Intentional fixed wait: we cannot poll for non-occurrence.
-        // 800ms is enough for any pending microtask queue to flush.
-        await page.waitForTimeout(800);
-        await expect(stopButton.locator('[data-mark^="control-stop-"]')).toHaveCount(0);
-      } finally {
-        await browser.close();
-      }
-    });
+    // 'no active session shows plain CircleStop' is the first step of 'thinking activity shows the
+    // rotating active stop ring': it is a prefix of the same open, so its reads run before markFirstOutput.
 
     test('Stop still fires when the icon changes ELEMENT TYPE mid-press', async () => {
       // The harder half of the same bug class, and the one IconSlot exists for.
@@ -6566,6 +6422,7 @@ test.describe('Command Terminal', () => {
     });
 
     test('panel session leaves focused set when switching to Backlog with no dialog', async () => {
+      test.setTimeout(30000);
       // Reverse regression: switching from Board to Backlog must remove the panel
       // session from the focused set (no terminal is visible on Backlog without
       // the command bar open). The session manager should stop forwarding PTY
@@ -6611,37 +6468,34 @@ test.describe('Command Terminal', () => {
         return allCalls[allCalls.length - 1] ?? [];
       });
       expect(lastCall).not.toContain(TASK_SESSION_ID);
-    });
 
-    test('panel session re-enters focused set when switching back to Board view', async () => {
-      // Board -> Backlog -> Board round-trip: the panel session must be restored
-      // to the focused set when the user returns to the Board view.
+      await test.step('panel session re-enters focused set when switching back to Board view', async () => {
+        // Board -> Backlog -> Board round-trip: the panel session must be restored
+        // to the focused set when the user returns to the Board view. The Backlog half is
+        // the flow above, so the log is cleared at its end.
 
-      // Switch to Backlog.
-      await focusedPage.locator('[data-testid="view-toggle-backlog"]').click();
-      await focusedPage.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
+        // Clear the log at the midpoint.
+        await focusedPage.evaluate(() => {
+          window.electronAPI.sessions.__setFocusedCalls.length = 0;
+        });
 
-      // Clear the log at the midpoint.
-      await focusedPage.evaluate(() => {
-        window.electronAPI.sessions.__setFocusedCalls.length = 0;
+        // Switch back to Board.
+        await focusedPage.locator('[data-testid="view-toggle-board"]').click();
+        await focusedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 5000 });
+
+        // Panel session must be back in the focused set.
+        await expect.poll(
+          async () => {
+            const allCalls = await focusedPage.evaluate(
+              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+            );
+            return allCalls.some(
+              (callArgs) => callArgs.includes(TASK_SESSION_ID),
+            );
+          },
+          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+        ).toBe(true);
       });
-
-      // Switch back to Board.
-      await focusedPage.locator('[data-testid="view-toggle-board"]').click();
-      await focusedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 5000 });
-
-      // Panel session must be back in the focused set.
-      await expect.poll(
-        async () => {
-          const allCalls = await focusedPage.evaluate(
-            (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
-          );
-          return allCalls.some(
-            (callArgs) => callArgs.includes(TASK_SESSION_ID),
-          );
-        },
-        { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
-      ).toBe(true);
     });
   });
 
@@ -6951,7 +6805,16 @@ test.describe('Command Terminal', () => {
     }
 
     test('typing after a branch switch reaches the NEW session, not the killed one', async () => {
+      // One branch switch carries three cases, each a step: the respawn is seeded with the
+      // pre-switch grid, typing reaches the new session, and the dev-only tripwire stays quiet.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(branchSwitchPreConfig());
+      // The tripwire step reads this: useTerminal's dev-only isSessionSwapWithoutRemount
+      // console.errors if a host's sessionId changes to a different LIVE session without a remount.
+      const consoleErrors: string[] = [];
+      page.on('console', (message) => {
+        if (message.type() === 'error') consoleErrors.push(message.text());
+      });
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
@@ -6962,12 +6825,43 @@ test.describe('Command Terminal', () => {
         const pane = page.getByTestId('command-bar-terminal-pane');
         await expect(pane).toBeAttached({ timeout: 8000 });
         await expect(pane).toHaveAttribute('data-session-id', 'branch-switch-session-1');
+        await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first())
+          .toBeAttached({ timeout: 8000 });
 
         // Switch branch via the header chip.
         await page.getByTestId('branch-picker-chip').click();
         const developButton = page.locator('button:has-text("develop")');
         await developButton.waitFor({ state: 'visible' });
+
+        // Snapshot the pre-switch pane's live grid via the resize call its
+        // mount-time fit() already sent, immediately before triggering the
+        // switch. This is the SAME grid handleBranchChange reads via
+        // gridGetterRef right before the kill, so equating the two proves the
+        // respawn was seeded from the pane's ACTUAL live grid - not merely
+        // "some positive number" (a regression hardcoding {cols: 80, rows: 24}
+        // in handleBranchChange would pass the old >0 assertions unchanged,
+        // but fails this equality unless it coincidentally matched).
+        await expect.poll(
+          async () => (await lastResizeCallFor(page, 'branch-switch-session-1')) !== undefined,
+          { timeout: 8000, intervals: [50, 100, 200, 500] },
+        ).toBe(true);
+        const preSwitchGrid = await lastResizeCallFor(page, 'branch-switch-session-1');
+
         await developButton.click();
+
+        await test.step('branch respawn seeds the new PTY with the pre-switch grid', async () => {
+          await expect.poll(async () => (await branchSwitchSpawnCalls(page)).length, { timeout: 8000 }).toBe(2);
+
+          const calls = await branchSwitchSpawnCalls(page);
+          const respawnCall = calls[1];
+          expect(respawnCall.branch).toBe('develop');
+          // Grid was read from the still-mounted pane before the kill (see
+          // handleBranchChange), so it must equal the pre-switch pane's actual
+          // live grid, not merely be some positive number.
+          expect(preSwitchGrid).toBeDefined();
+          expect(respawnCall.cols).toBe(preSwitchGrid!.cols);
+          expect(respawnCall.rows).toBe(preSwitchGrid!.rows);
+        });
 
         // The store's transientSessions entry must carry the NEW session id
         // before the pane can be expected to have remounted.
@@ -7003,6 +6897,21 @@ test.describe('Command Terminal', () => {
           const last = calls[calls.length - 1];
           return last?.sessionId;
         }, { timeout: 8000, intervals: [50, 100, 200, 500] }).toBe('branch-switch-session-2');
+
+        await test.step('a branch switch never fires the dev-only session-swap-without-remount tripwire', async () => {
+          // UI specs run against the real Vite dev server, so import.meta.env.DEV is true
+          // here and the tripwire is live the same way it is in `npm start` dogfooding. This is
+          // the wiring the pure-predicate unit test (terminal-session-swap-contract.test.ts)
+          // cannot reach: it exercises real refs across real re-renders.
+          //
+          // Negative assertion, so a fixed budget rather than a poll: give the
+          // tripwire's effect (and any deferred console output) time to have
+          // fired by now if it was going to.
+          await page.waitForTimeout(500);
+
+          const tripwireErrors = consoleErrors.filter((text) => text.includes('[useTerminal] sessionId changed'));
+          expect(tripwireErrors).toEqual([]);
+        });
       } finally {
         await browser.close();
       }
@@ -7049,101 +6958,9 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('branch respawn seeds the new PTY with the pre-switch grid', async () => {
-      const { browser, page } = await launchWithState(branchSwitchPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
-        await markFirstOutput(page, 'branch-switch-session-1');
-        await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first())
-          .toBeAttached({ timeout: 8000 });
-
-        await page.getByTestId('branch-picker-chip').click();
-        const developButton = page.locator('button:has-text("develop")');
-        await developButton.waitFor({ state: 'visible' });
-
-        // Snapshot the pre-switch pane's live grid via the resize call its
-        // mount-time fit() already sent, immediately before triggering the
-        // switch. This is the SAME grid handleBranchChange reads via
-        // gridGetterRef right before the kill, so equating the two proves the
-        // respawn was seeded from the pane's ACTUAL live grid - not merely
-        // "some positive number" (a regression hardcoding {cols: 80, rows: 24}
-        // in handleBranchChange would pass the old >0 assertions unchanged,
-        // but fails this equality unless it coincidentally matched).
-        await expect.poll(
-          async () => (await lastResizeCallFor(page, 'branch-switch-session-1')) !== undefined,
-          { timeout: 8000, intervals: [50, 100, 200, 500] },
-        ).toBe(true);
-        const preSwitchGrid = await lastResizeCallFor(page, 'branch-switch-session-1');
-
-        await developButton.click();
-
-        await expect.poll(async () => (await branchSwitchSpawnCalls(page)).length, { timeout: 8000 }).toBe(2);
-
-        const calls = await branchSwitchSpawnCalls(page);
-        const respawnCall = calls[1];
-        expect(respawnCall.branch).toBe('develop');
-        // Grid was read from the still-mounted pane before the kill (see
-        // handleBranchChange), so it must equal the pre-switch pane's actual
-        // live grid, not merely be some positive number.
-        expect(preSwitchGrid).toBeDefined();
-        expect(respawnCall.cols).toBe(preSwitchGrid!.cols);
-        expect(respawnCall.rows).toBe(preSwitchGrid!.rows);
-      } finally {
-        await browser.close();
-      }
-    });
-
-    test('a branch switch never fires the dev-only session-swap-without-remount tripwire', async () => {
-      // useTerminal's dev-only tripwire (isSessionSwapWithoutRemount,
-      // useTerminal.ts) console.errors if a host's sessionId changes to a
-      // different LIVE session without remounting. UI specs run against the
-      // real Vite dev server, so import.meta.env.DEV is true here - the
-      // tripwire is live in this test the same way it is in `npm start`
-      // dogfooding. This is the wiring the pure-predicate unit test
-      // (terminal-session-swap-contract.test.ts) cannot reach: it exercises
-      // real refs across real re-renders, not a copy of the effect's logic.
-      const { browser, page } = await launchWithState(branchSwitchPreConfig());
-      const consoleErrors: string[] = [];
-      page.on('console', (message) => {
-        if (message.type() === 'error') consoleErrors.push(message.text());
-      });
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
-        await markFirstOutput(page, 'branch-switch-session-1');
-        await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first())
-          .toBeAttached({ timeout: 8000 });
-
-        await page.getByTestId('branch-picker-chip').click();
-        const developButton = page.locator('button:has-text("develop")');
-        await developButton.waitFor({ state: 'visible' });
-        await developButton.click();
-
-        await expect.poll(async () => {
-          const entries = await transientEntriesFor(page, BRANCH_SWITCH_PROJECT_ID);
-          return entries[0]?.sessionId;
-        }, { timeout: 8000, intervals: [50, 100, 200, 500] }).toBe('branch-switch-session-2');
-
-        await markFirstOutput(page, 'branch-switch-session-2');
-        await expect(page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first())
-          .toBeAttached({ timeout: 8000 });
-
-        // Negative assertion, so a fixed budget rather than a poll: give the
-        // tripwire's effect (and any deferred console output) time to have
-        // fired by now if it was going to.
-        await page.waitForTimeout(500);
-
-        const tripwireErrors = consoleErrors.filter((text) => text.includes('[useTerminal] sessionId changed'));
-        expect(tripwireErrors).toEqual([]);
-      } finally {
-        await browser.close();
-      }
-    });
+    // 'branch respawn seeds the new PTY with the pre-switch grid' and 'a branch switch never fires the
+    // dev-only session-swap-without-remount tripwire' are steps of 'typing after a branch switch reaches
+    // the NEW session, not the killed one': one switch, three sets of reads.
 
     test('the pill keeps the pre-switch branch while the respawn is pending, not the project default', async () => {
       // CommandTerminalWindow reads the branch from the transientSessions map
