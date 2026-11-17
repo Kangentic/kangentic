@@ -22,19 +22,34 @@ const MARKDOWN_EMBED = /!\[[^\]\n]*\]\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+"[^"\n]*")?\s
 
 export interface VaultIndex {
   files: Set<string>;
-  /** Lower-case file name to every vault path with that name. */
+  /** Folded vault path (see `foldPath`) to the path as it is on disk, the first one when two fold alike. */
+  byPath: Map<string, string>;
+  /** Folded file name to every vault path with that name. */
   byName: Map<string, string[]>;
+  /** File sizes looked up during one read, so a file embedded from many lines is checked once. */
+  sizes: Map<string, Promise<number | null>>;
+}
+
+/**
+ * Obsidian matches a link to a file without regard to case, and a link's text
+ * and the name on disk can differ in Unicode form (a vault copied from macOS).
+ */
+function foldPath(vaultPath: string): string {
+  return vaultPath.normalize('NFC').toLowerCase();
 }
 
 export function buildVaultIndex(files: string[]): VaultIndex {
+  const byPath = new Map<string, string>();
   const byName = new Map<string, string[]>();
   for (const file of files) {
-    const name = (file.split('/').pop() ?? file).toLowerCase();
+    const folded = foldPath(file);
+    if (!byPath.has(folded)) byPath.set(folded, file);
+    const name = folded.split('/').pop() ?? folded;
     const list = byName.get(name);
     if (list) list.push(file);
     else byName.set(name, [file]);
   }
-  return { files: new Set(files), byName };
+  return { files: new Set(files), byPath, byName, sizes: new Map() };
 }
 
 /** The embed targets written in a piece of text, in order, without `|size` or `#heading`. */
@@ -68,27 +83,45 @@ export function resolveEmbed(target: string, noteVaultPath: string, index: Vault
   const extension = path.posix.extname(normalizedTarget).toLowerCase();
   if (extension === '' || extension === '.md') return { kind: 'note' };
 
+  const file = resolveFile(normalizedTarget, noteVaultPath, index);
+  if (file) return { kind: 'file', vaultPath: file };
+  // `![[Plan v1.2]]` names the note `Plan v1.2.md`: a dot in a note's name is not an extension.
+  return resolveFile(`${normalizedTarget}.md`, noteVaultPath, index) ? { kind: 'note' } : { kind: 'missing' };
+}
+
+/** The vault path a link target names, or null. A path that climbs out of the vault matches nothing. */
+function resolveFile(target: string, noteVaultPath: string, index: VaultIndex): string | null {
   const noteFolder = path.posix.dirname(noteVaultPath);
-  const besideNote = noteFolder === '.' ? normalizedTarget : `${noteFolder}/${normalizedTarget}`;
+  const besideNote = noteFolder === '.' ? target : `${noteFolder}/${target}`;
 
-  if (normalizedTarget.startsWith('./') || normalizedTarget.startsWith('../')) {
-    const candidate = path.posix.normalize(besideNote);
-    return index.files.has(candidate) ? { kind: 'file', vaultPath: candidate } : { kind: 'missing' };
-  }
-  if (normalizedTarget.includes('/')) {
-    const fromRoot = path.posix.normalize(normalizedTarget.replace(/^\/+/, ''));
-    if (index.files.has(fromRoot)) return { kind: 'file', vaultPath: fromRoot };
-    const fromNote = path.posix.normalize(besideNote);
-    return index.files.has(fromNote) ? { kind: 'file', vaultPath: fromNote } : { kind: 'missing' };
+  if (target.startsWith('./') || target.startsWith('../')) return lookupPath(path.posix.normalize(besideNote), index);
+  if (target.includes('/')) {
+    return lookupPath(path.posix.normalize(target.replace(/^\/+/, '')), index)
+      ?? lookupPath(path.posix.normalize(besideNote), index);
   }
 
-  const candidates = index.byName.get(normalizedTarget.toLowerCase()) ?? [];
-  if (candidates.length === 0) return { kind: 'missing' };
+  const candidates = index.byName.get(foldPath(target)) ?? [];
+  if (candidates.length === 0) return null;
   const sameFolder = candidates.find((candidate) => path.posix.dirname(candidate) === noteFolder);
-  if (sameFolder) return { kind: 'file', vaultPath: sameFolder };
-  const shortest = [...candidates].sort((left, right) =>
-    left.split('/').length - right.split('/').length || left.length - right.length || left.localeCompare(right));
-  return { kind: 'file', vaultPath: shortest[0] };
+  if (sameFolder) return sameFolder;
+  let shortest = candidates[0];
+  for (const candidate of candidates) {
+    if (closerToTop(candidate, shortest)) shortest = candidate;
+  }
+  return shortest;
+}
+
+function lookupPath(vaultPath: string, index: VaultIndex): string | null {
+  if (index.files.has(vaultPath)) return vaultPath;
+  return index.byPath.get(foldPath(vaultPath)) ?? null;
+}
+
+/** Fewer folders first, then the shorter path, then by name, so the pick does not depend on walk order. */
+function closerToTop(candidate: string, current: string): boolean {
+  const depthDifference = candidate.split('/').length - current.split('/').length;
+  if (depthDifference !== 0) return depthDifference < 0;
+  if (candidate.length !== current.length) return candidate.length < current.length;
+  return candidate.localeCompare(current) < 0;
 }
 
 export interface EmbeddedFile {
@@ -121,7 +154,12 @@ export async function collectEmbeddedFiles(
     }
     if (seen.has(resolution.vaultPath)) continue;
     seen.add(resolution.vaultPath);
-    const sizeBytes = await fileSize(fromVaultPath(vaultRoot, resolution.vaultPath));
+    let size = index.sizes.get(resolution.vaultPath);
+    if (!size) {
+      size = fileSize(fromVaultPath(vaultRoot, resolution.vaultPath));
+      index.sizes.set(resolution.vaultPath, size);
+    }
+    const sizeBytes = await size;
     if (sizeBytes === null || sizeBytes > MAX_ATTACHMENT_SIZE) {
       skippedCount += 1;
       continue;

@@ -18,26 +18,38 @@ export interface VaultRead {
  * text is what the Import dialog shows in place of the list.
  */
 export function folderProblem(folder: string): string | null {
-  if (!isDirectory(folder)) return `Folder not found: ${folder}`;
-  if (!findVaultRoot(folder)) return `Not in a vault: ${folder}`;
+  if (!isDirectory(folder)) return missingFolderMessage(folder);
+  if (!findVaultRoot(folder)) return noVaultMessage(folder);
   return null;
+}
+
+const YIELD_EVERY_NOTES = 200;
+
+function missingFolderMessage(folder: string): string {
+  return `Folder not found: ${folder}`;
+}
+
+function noVaultMessage(folder: string): string {
+  return `Not in a vault: ${folder}`;
 }
 
 /** Read every item of one kind inside `folder`. Throws the folder's problem as a refusal. */
 export async function readVaultItems(folder: string, kind: VaultItemKind): Promise<VaultRead> {
-  const problem = folderProblem(folder);
-  if (problem) throw new RefusalError(problem);
-  const vaultRoot = findVaultRoot(folder) as string;
+  if (!isDirectory(folder)) throw new RefusalError(missingFolderMessage(folder));
+  const vaultRoot = findVaultRoot(folder);
+  if (!vaultRoot) throw new RefusalError(noVaultMessage(folder));
   const snapshot = await readVaultSnapshot(vaultRoot, folder);
   const index = buildVaultIndex(snapshot.files);
   const items: VaultItem[] = [];
-  for (const note of snapshot.notes) {
+  for (const [noteIndex, note] of snapshot.notes.entries()) {
     if (kind === 'notes') {
       const item = await mapNote(note, index, vaultRoot);
       if (item) items.push(item);
     } else {
       items.push(...await mapChecklistItems(note, index, vaultRoot));
     }
+    // Mapping a note with no embeds never waits on the disk, so let the main process breathe.
+    if ((noteIndex + 1) % YIELD_EVERY_NOTES === 0) await new Promise<void>((resolve) => setImmediate(resolve));
   }
   return { vaultRoot, items };
 }

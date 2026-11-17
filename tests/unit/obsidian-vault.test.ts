@@ -8,8 +8,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { splitNote, propertyList, propertyText } from '../../src/main/boards/adapters/obsidian/frontmatter';
-import { findVaultRoot } from '../../src/main/boards/adapters/obsidian/vault';
+import { splitNote, propertyList, propertyText, isKanbanBoard } from '../../src/main/boards/adapters/obsidian/frontmatter';
+import { findVaultRoot, MAX_NOTE_BYTES } from '../../src/main/boards/adapters/obsidian/vault';
 import { folderProblem, readVaultItems } from '../../src/main/boards/adapters/obsidian/vault-reader';
 import { buildVaultIndex, resolveEmbed } from '../../src/main/boards/adapters/obsidian/embeds';
 import { taskTitle, taskPriorityName } from '../../src/main/boards/adapters/obsidian/checklist-mapper';
@@ -304,5 +304,150 @@ describe('embedded files', () => {
     const plan = items.find((item) => item.externalId === 'Projects/Plan.md');
     expect(plan?.embeddedFiles.map((file) => file.vaultPath)).toEqual(['Assets/hero-mockup.png', 'Projects/Launch brief.pdf']);
     expect(plan?.skippedEmbedCount).toBe(2);
+  });
+
+  it('never resolves a path that climbs out of the vault', () => {
+    const index = buildVaultIndex(['x.png', 'Projects/Plan.md']);
+    expect(resolveEmbed('../../x.png', 'Projects/Plan.md', index)).toEqual({ kind: 'missing' });
+  });
+
+  it('reads a dot in a note name as part of the name, not an extension', async () => {
+    const index = buildVaultIndex(['Plan v1.2.md']);
+    expect(resolveEmbed('Plan v1.2', 'Other.md', index)).toEqual({ kind: 'note' });
+    write('Plan v1.2.md', 'plan');
+    write('Other.md', '![[Plan v1.2]]');
+    const { items } = await readVaultItems(vault, 'notes');
+    expect(items.find((item) => item.externalId === 'Other.md')?.skippedEmbedCount).toBe(0);
+  });
+
+  it('resolves a file whose name holds dots', () => {
+    const index = buildVaultIndex(['Assets/photo.2024.png']);
+    expect(resolveEmbed('photo.2024.png', 'Plan.md', index)).toEqual({ kind: 'file', vaultPath: 'Assets/photo.2024.png' });
+  });
+
+  it('resolves a path-form target without regard to case', () => {
+    const index = buildVaultIndex(['Assets/Hero.png']);
+    expect(resolveEmbed('assets/hero.png', 'Projects/Plan.md', index)).toEqual({ kind: 'file', vaultPath: 'Assets/Hero.png' });
+  });
+
+  it('matches a target in one Unicode form against a file name in the other', () => {
+    const index = buildVaultIndex(['café.png']);
+    expect(resolveEmbed('café.png', 'Plan.md', index)).toEqual({ kind: 'file', vaultPath: 'café.png' });
+  });
+});
+
+describe('what a source reads', () => {
+  it('leaves out a sibling folder that only shares the scope name as a prefix', async () => {
+    write('Projects/One.md', 'one');
+    write('Projects Archive/Old.md', 'old');
+    const scoped = await readVaultItems(path.join(vault, 'Projects'), 'notes');
+    expect(scoped.items.map((item) => item.externalId)).toEqual(['Projects/One.md']);
+  });
+
+  it('leaves out a note over the size cap and still reads a normal one', async () => {
+    write('Notes/small.md', 'small');
+    const big = path.join(vault, 'Notes', 'big.md');
+    fs.writeFileSync(big, Buffer.alloc(MAX_NOTE_BYTES + 1, 'a'));
+    const { items } = await readVaultItems(vault, 'notes');
+    expect(items.map((item) => item.externalId)).toEqual(['Notes/small.md']);
+  });
+});
+
+describe('note properties with a BOM and Windows line endings', () => {
+  const text = '﻿---\r\ntitle: Ship it\r\nstatus: done\r\n---\r\nBody line\r\n';
+
+  it('parses the properties and the body', () => {
+    const { properties, body } = splitNote(text);
+    expect(propertyText(properties, 'title')).toBe('Ship it');
+    expect(propertyText(properties, 'status')).toBe('done');
+    expect(body).toBe('Body line\r\n');
+  });
+
+  it('maps such a note, and skips a Kanban board written that way', async () => {
+    write('Notes/a.md', text);
+    write('Notes/board.md', '﻿---\r\nkanban-plugin: board\r\n---\r\n## Lane\r\n- [ ] card\r\n');
+    expect(isKanbanBoard(splitNote('﻿---\r\nkanban-plugin: board\r\n---\r\n').properties)).toBe(true);
+    const { items } = await readVaultItems(vault, 'notes');
+    expect(items.map((item) => [item.externalId, item.title, item.closed])).toEqual([['Notes/a.md', 'Ship it', true]]);
+  });
+
+  it.each(['done', 'complete', 'closed', 'cancelled', 'canceled'])('closes a note whose status is %s', async (status) => {
+    write('Notes/a.md', `---\nstatus: ${status}\n---\n`);
+    const { items } = await readVaultItems(vault, 'notes');
+    expect(items[0]).toMatchObject({ state: status, closed: true });
+  });
+});
+
+describe('checklist lines', () => {
+  async function readTasks(text: string) {
+    write('Notes/List.md', text);
+    return (await readVaultItems(vault, 'checklist')).items;
+  }
+
+  it('keeps a digit-only #123 in the title and makes no label of it', async () => {
+    const [item] = await readTasks('- [ ] Fix login #123');
+    expect(item.title).toBe('Fix login #123');
+    expect(item.labels).toEqual([]);
+  });
+
+  it('keeps a tag-looking word inside inline code and labels only the real tag', async () => {
+    const [item] = await readTasks('- [ ] Rename `#private` field #backend');
+    expect(item.title).toBe('Rename `#private` field');
+    expect(item.labels).toEqual(['backend']);
+  });
+
+  it('reads every list marker as a task', async () => {
+    const items = await readTasks('* [ ] star\n+ [ ] plus\n1. [ ] numbered\n- [ ] dash');
+    expect(items.map((item) => item.title)).toEqual(['star', 'plus', 'numbered', 'dash']);
+  });
+
+  it('skips a line with nothing left once its tags are cut', async () => {
+    const items = await readTasks('- [ ] #tag\n- [ ] real');
+    expect(items.map((item) => item.title)).toEqual(['real']);
+  });
+
+  it('keeps reading past a *** line in a note that is not a Kanban board', async () => {
+    const items = await readTasks('- [ ] before\n\n***\n\n- [ ] after');
+    expect(items.map((item) => item.title)).toEqual(['before', 'after']);
+  });
+
+  it('leaves the cards of a lane with no Complete marker open, even after a Complete lane', async () => {
+    const items = await readTasks([
+      '---',
+      'kanban-plugin: board',
+      '---',
+      '## Done',
+      '**Complete**',
+      '- [ ] finished',
+      '## Later',
+      '- [ ] pending',
+    ].join('\n'));
+    expect(items.map((item) => [item.title, item.state, item.closed])).toEqual([
+      ['finished', 'Done', true],
+      ['pending', 'Later', false],
+    ]);
+  });
+
+  it('ignores a ``` line inside a ~~~ block, and reads the task after the block closes', async () => {
+    const items = await readTasks(['~~~', '```', '- [ ] not a task', '~~~', '- [ ] real task'].join('\n'));
+    expect(items.map((item) => item.title)).toEqual(['real task']);
+  });
+
+  it('keeps a four-backtick block open across a three-backtick line', async () => {
+    const items = await readTasks(['````', '```', '- [ ] not a task', '````', '- [ ] real task'].join('\n'));
+    expect(items.map((item) => item.title)).toEqual(['real task']);
+  });
+});
+
+describe('the folder a source is added by, edge cases', () => {
+  it('refuses a note file as the folder', () => {
+    const file = write('Projects/Plan.md', 'x');
+    expect(() => parseObsidianFolder(file)).toThrow('Not in a vault');
+  });
+
+  it('labels a folder in no vault by its own name', () => {
+    const outside = path.join(sandbox, 'Recipes');
+    fs.mkdirSync(outside);
+    expect(buildObsidianLabel(outside)).toBe('Recipes');
   });
 });

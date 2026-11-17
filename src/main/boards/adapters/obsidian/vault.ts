@@ -13,6 +13,8 @@ import path from 'node:path';
 
 const VAULT_MARKER = '.obsidian';
 const YIELD_EVERY_FILES = 200;
+/** A note larger than this is an export or a log, not a piece of work, and is left out unread. */
+export const MAX_NOTE_BYTES = 5 * 1024 * 1024;
 
 /** The nearest folder at or above `folder` that holds `.obsidian`, or null. */
 export function findVaultRoot(folder: string): string | null {
@@ -34,7 +36,7 @@ export function isDirectory(target: string): boolean {
 }
 
 /** A vault-relative path with `/` separators. */
-export function toVaultPath(vaultRoot: string, absolutePath: string): string {
+function toVaultPath(vaultRoot: string, absolutePath: string): string {
   return path.relative(vaultRoot, absolutePath).split(path.sep).join('/');
 }
 
@@ -46,7 +48,7 @@ export function fromVaultPath(vaultRoot: string, vaultPath: string): string {
  * The folder the Templates core plugin reads from, vault-relative, or null.
  * Notes there are templates, not work, so a source skips them.
  */
-export async function readTemplatesFolder(vaultRoot: string): Promise<string | null> {
+async function readTemplatesFolder(vaultRoot: string): Promise<string | null> {
   try {
     const raw = await fs.promises.readFile(path.join(vaultRoot, VAULT_MARKER, 'templates.json'), 'utf-8');
     const folder = (JSON.parse(raw) as { folder?: unknown }).folder;
@@ -77,7 +79,8 @@ export interface VaultSnapshot {
 
 /**
  * Walk the whole vault once. Every file is listed, since an embed can point
- * anywhere in it, and the `.md` files inside `scopeFolder` are read. Folders
+ * anywhere in it, and the `.md` files inside `scopeFolder` up to
+ * `MAX_NOTE_BYTES` are read. Folders
  * whose name starts with a dot (`.obsidian`, `.trash`, `.git`) are skipped,
  * and so is the templates folder. Symbolic links are not followed, so a link
  * back up the tree cannot loop. The walk yields to the event loop every few
@@ -96,8 +99,7 @@ export async function readVaultSnapshot(vaultRoot: string, scopeFolder: string):
     templatesFolder !== null && (vaultPath === templatesFolder || vaultPath.startsWith(`${templatesFolder}/`));
 
   const pending: string[] = [vaultRoot];
-  while (pending.length > 0) {
-    const directory = pending.pop() as string;
+  for (let directory = pending.pop(); directory !== undefined; directory = pending.pop()) {
     let entries: fs.Dirent[];
     try {
       entries = await fs.promises.readdir(directory, { withFileTypes: true });
@@ -128,10 +130,9 @@ export async function readVaultSnapshot(vaultRoot: string, scopeFolder: string):
 
 async function readNote(vaultPath: string, absolutePath: string): Promise<VaultNote | null> {
   try {
-    const [text, stats] = await Promise.all([
-      fs.promises.readFile(absolutePath, 'utf-8'),
-      fs.promises.stat(absolutePath),
-    ]);
+    const stats = await fs.promises.stat(absolutePath);
+    if (stats.size > MAX_NOTE_BYTES) return null;
+    const text = await fs.promises.readFile(absolutePath, 'utf-8');
     const created = stats.birthtimeMs > 0 ? stats.birthtime : stats.mtime;
     return {
       vaultPath,

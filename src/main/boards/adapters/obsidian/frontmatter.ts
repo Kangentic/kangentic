@@ -46,6 +46,11 @@ export function propertyText(properties: NoteProperty[], key: string): string | 
   return text && text.trim() !== '' ? text.trim() : undefined;
 }
 
+/** A Kanban plugin board file: its checklist lines are cards, and the file itself is not one piece of work. */
+export function isKanbanBoard(properties: NoteProperty[]): boolean {
+  return propertyValue(properties, 'kanban-plugin') !== undefined;
+}
+
 /** A property as a list: a scalar becomes one entry, split on commas. */
 export function propertyList(properties: NoteProperty[], key: string): string[] {
   const value = propertyValue(properties, key);
