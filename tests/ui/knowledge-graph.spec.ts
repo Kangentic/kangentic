@@ -18,6 +18,7 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { settleFrames, waitForViteReady, gotoVite } from './helpers';
+import { APP_LOADS_FROM_BUNDLE } from './dev-server';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -388,7 +389,7 @@ test.describe('knowledge graph', () => {
    */
   test.beforeAll(async () => {
     // CI serves a static bundle with nothing to compile, so there is nothing to warm.
-    if (process.env.KANGENTIC_UI_BUNDLE === '1') return;
+    if (APP_LOADS_FROM_BUNDLE) return;
     test.setTimeout(60_000);
     await waitForViteReady(VITE_URL);
     const browser = await chromium.launch({ headless: true });
