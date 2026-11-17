@@ -122,6 +122,7 @@ function buildMockContext() {
       getSession: vi.fn(() => ({ id: 'pty-1', taskId: 'task-1' })),
       getSessionTaskId: vi.fn(() => null as string | null),
       getSessionProjectId: vi.fn(() => 'proj-test' as string | undefined),
+      shellDiedBeforeLaunch: vi.fn(() => false),
       getSessionAgentName: vi.fn(() => undefined),
       getUsageCache: vi.fn(() => ({})),
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
