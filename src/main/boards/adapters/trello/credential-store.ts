@@ -81,8 +81,10 @@ export function trelloCredentialVersion(): number {
 }
 
 export async function saveTrelloCredential(credential: TrelloCredential): Promise<void> {
-  credentialVersion += 1;
   await writeEncryptedSecretFile(credentialFile(), JSON.stringify(credential));
+  // After the write, so a client that loads while it is in flight reads the old file under the
+  // old version and loads again, rather than keeping the old token under the new version.
+  credentialVersion += 1;
 }
 
 /** Deletes the stored credential. A missing file is already cleared; a locked one throws. */
