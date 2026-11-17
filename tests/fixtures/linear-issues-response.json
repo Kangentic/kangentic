@@ -1,0 +1,106 @@
+{
+  "data": {
+    "issues": {
+      "nodes": [
+        {
+          "id": "6b1f2c3a-0d4e-4f5a-8b6c-7d8e9f0a1b2c",
+          "identifier": "ENG-101",
+          "title": "Retry failed webhook deliveries",
+          "description": "Deliveries that return a 5xx should be retried with backoff.\n\n![diagram](https://uploads.linear.app/acme/diagram.png)",
+          "url": "https://linear.app/acme/issue/ENG-101/retry-failed-webhook-deliveries",
+          "priority": 2,
+          "priorityLabel": "High",
+          "estimate": 3,
+          "dueDate": "2026-12-01",
+          "createdAt": "2026-10-20T09:15:00.000Z",
+          "updatedAt": "2026-11-10T14:30:00.000Z",
+          "state": {
+            "id": "a1111111-2222-4333-8444-555555555555",
+            "name": "In Progress",
+            "type": "started",
+            "position": 2
+          },
+          "assignee": {
+            "name": "Dana Park",
+            "displayName": "dana"
+          },
+          "labels": {
+            "nodes": [
+              { "name": "Bug" },
+              { "name": "Backend" }
+            ]
+          },
+          "cycle": {
+            "number": 12,
+            "name": "Sprint 12"
+          },
+          "project": {
+            "name": "Webhooks"
+          }
+        },
+        {
+          "id": "7c2a3d4b-1e5f-4a6b-9c7d-8e9fa0b1c2d3",
+          "identifier": "ENG-102",
+          "title": "Look into slow board load",
+          "description": null,
+          "url": "https://linear.app/acme/issue/ENG-102/look-into-slow-board-load",
+          "priority": 0,
+          "priorityLabel": "No priority",
+          "estimate": null,
+          "dueDate": null,
+          "createdAt": "2026-11-01T08:00:00.000Z",
+          "updatedAt": "2026-11-01T08:00:00.000Z",
+          "state": {
+            "id": "b2222222-3333-4444-8555-666666666666",
+            "name": "Backlog",
+            "type": "backlog",
+            "position": 0
+          },
+          "assignee": null,
+          "labels": {
+            "nodes": []
+          },
+          "cycle": null,
+          "project": null
+        },
+        {
+          "id": "8d3b4e5c-2f6a-4b7c-8d8e-9fa0b1c2d3e4",
+          "identifier": "ENG-103",
+          "title": "Fix typo in onboarding email",
+          "description": "The welcome email says \"recieve\".",
+          "url": "https://linear.app/acme/issue/ENG-103/fix-typo-in-onboarding-email",
+          "priority": 4,
+          "priorityLabel": "Low",
+          "estimate": 1,
+          "dueDate": null,
+          "createdAt": "2026-10-05T11:45:00.000Z",
+          "updatedAt": "2026-10-06T16:20:00.000Z",
+          "state": {
+            "id": "c3333333-4444-4555-8666-777777777777",
+            "name": "Done",
+            "type": "completed",
+            "position": 0
+          },
+          "assignee": {
+            "name": "Sam Rivera",
+            "displayName": "sam"
+          },
+          "labels": {
+            "nodes": [
+              { "name": "Copy" }
+            ]
+          },
+          "cycle": {
+            "number": 11,
+            "name": null
+          },
+          "project": null
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "8d3b4e5c-2f6a-4b7c-8d8e-9fa0b1c2d3e4"
+      }
+    }
+  }
+}
