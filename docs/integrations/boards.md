@@ -251,8 +251,12 @@ kangentic.com repo) and serves Trello's return page, and both hand the token bac
   The return page reads the token from the fragment, which never reaches a server, seals
   `{ "token" }`, and redirects to `/trello/callback`. `trello/oauth.ts` checks the token with Trello
   before the handler saves it as `kind: 'kangentic-key'`. `buildTrelloReturnUrl` is the one place
-  the state rides, so moving it from the query to the path is a change there alone. The user's own
-  key stays paste-only: its allowed origins are not kangentic.com.
+  the state rides, so moving it from the query to the path is a change there alone. The page sends
+  `access_denied` with Trello's own message as the description (shown as it is), `invalid_request`
+  for a fragment with no usable token and `server_error` when the browser could not seal it (both
+  shown as "Kangentic's sign-in page failed."). A user signed out of Trello who clicks Deny never
+  comes back to the page, so the waiting screen's Back and Cancel and the five-minute timeout are
+  the way out. The user's own key stays paste-only: its allowed origins are not kangentic.com.
 - **Owner steps.** The live flow needs the Atlassian 3LO app registered with the scopes above, the
   `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET` Pages secrets on kangentic.com (until then
   the callback answers `error=server_error`), and the client id committed in `jira/constants.ts`;
