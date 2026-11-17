@@ -1,0 +1,132 @@
+/**
+ * Unit tests for src/main/boards/adapters/jira/credential-store.ts.
+ *
+ * Runs against a real temp config directory (PATHS.configDir is mocked to it) and a
+ * fake safeStorage, so the read-modify-write cycle and the on-disk file are real and
+ * no keychain is touched.
+ *
+ * - Two overlapping saves for different sites both land. Each save reads the whole
+ *   file, changes one site and writes it back, so without the save chain the second
+ *   write drops the first site.
+ * - One malformed site entry is dropped without signing the valid ones out.
+ * - The file on disk holds no plaintext secret.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const pathsState = vi.hoisted(() => ({ configDir: '' }));
+
+vi.mock('electron', async () => {
+  const { createFakeSafeStorage } = await import('./helpers/fake-safe-storage');
+  return {
+    app: {
+      isReady: () => true,
+      whenReady: () => Promise.resolve(),
+    },
+    safeStorage: createFakeSafeStorage(),
+  };
+});
+
+vi.mock('../../src/main/config/paths', () => ({
+  PATHS: {
+    get configDir() {
+      return pathsState.configDir;
+    },
+  },
+}));
+
+import {
+  loadJiraCredentials,
+  saveJiraCredential,
+  type JiraSiteCredential,
+} from '../../src/main/boards/adapters/jira/credential-store';
+import { encryptSecret } from '../../src/main/boards/shared/auth';
+
+function credentialFor(site: string, secret: string): JiraSiteCredential {
+  return {
+    site,
+    deployment: 'cloud',
+    method: 'api-token',
+    email: 'dev@example.com',
+    secret,
+    account: 'dev@example.com',
+    savedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function storeFilePath(): string {
+  return path.join(pathsState.configDir, 'jira-credentials.json');
+}
+
+beforeEach(() => {
+  pathsState.configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jira-credential-store-'));
+});
+
+afterEach(() => {
+  fs.rmSync(pathsState.configDir, { recursive: true, force: true });
+});
+
+describe('saveJiraCredential', () => {
+  it('keeps both sites when two saves for different sites overlap', async () => {
+    const first = credentialFor('https://one.example.net', 'secret-one');
+    const second = credentialFor('https://two.example.net', 'secret-two');
+
+    // Neither is awaited before the other starts.
+    await Promise.all([saveJiraCredential(first), saveJiraCredential(second)]);
+
+    const loaded = await loadJiraCredentials();
+    expect(Object.keys(loaded).sort()).toEqual(['https://one.example.net', 'https://two.example.net']);
+    expect(loaded['https://one.example.net'].secret).toBe('secret-one');
+    expect(loaded['https://two.example.net'].secret).toBe('secret-two');
+  });
+
+  it('replaces the saved sign-in when the same site is saved again', async () => {
+    await saveJiraCredential(credentialFor('https://one.example.net', 'old-secret'));
+    await saveJiraCredential(credentialFor('https://one.example.net', 'new-secret'));
+
+    const loaded = await loadJiraCredentials();
+    expect(Object.keys(loaded)).toEqual(['https://one.example.net']);
+    expect(loaded['https://one.example.net'].secret).toBe('new-secret');
+  });
+
+  it('never writes the plaintext secret to disk', async () => {
+    await saveJiraCredential(credentialFor('https://one.example.net', 'plaintext-marker-secret'));
+
+    const onDisk = fs.readFileSync(storeFilePath(), 'utf8');
+    expect(onDisk).not.toContain('plaintext-marker-secret');
+    expect(onDisk).not.toContain('one.example.net');
+    expect(JSON.parse(onDisk)).toHaveProperty('encrypted');
+  });
+});
+
+describe('loadJiraCredentials', () => {
+  it('is empty when nothing is saved', async () => {
+    expect(await loadJiraCredentials()).toEqual({});
+  });
+
+  it('drops a malformed site entry without dropping the valid one', async () => {
+    const valid = credentialFor('https://good.example.net', 'good-secret');
+    const stored = {
+      sites: {
+        'https://good.example.net': valid,
+        'https://no-secret.example.net': { ...credentialFor('https://no-secret.example.net', ''), secret: '' },
+        'https://bad-deployment.example.net': {
+          ...credentialFor('https://bad-deployment.example.net', 'x'),
+          deployment: 'server',
+        },
+        'https://not-an-object.example.net': 'nope',
+      },
+    };
+    fs.writeFileSync(
+      storeFilePath(),
+      JSON.stringify({ encrypted: await encryptSecret(JSON.stringify(stored)) }),
+    );
+
+    const loaded = await loadJiraCredentials();
+
+    expect(Object.keys(loaded)).toEqual(['https://good.example.net']);
+    expect(loaded['https://good.example.net']).toEqual(valid);
+  });
+});

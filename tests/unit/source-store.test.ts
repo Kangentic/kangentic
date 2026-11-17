@@ -92,3 +92,38 @@ describe('ImportSourceStore against a real project directory', () => {
     expect(store.list()).toHaveLength(1);
   });
 });
+
+describe('ImportSourceStore.add with a prepared source', () => {
+  const url = 'https://trello.com/b/typed-query';
+
+  it('stores the prepared label and the completed repository, not the parsed ones', () => {
+    const added = store.add(TEST_SOURCE, url, { label: 'Sprint board', repository: 'site.example|project = X' });
+
+    expect(added.label).toBe('Sprint board');
+    expect(added.repository).toBe('site.example|project = X');
+    expect(store.list()[0]).toMatchObject({ label: 'Sprint board', repository: 'site.example|project = X', url });
+  });
+
+  it('returns the existing source for the same completed repository, without a duplicate', () => {
+    const prepared = { label: 'Sprint board', repository: 'site.example|project = X' };
+    const first = store.add(TEST_SOURCE, url, prepared);
+    // A different typed URL that completes to the same repository is the same source.
+    const second = store.add(TEST_SOURCE, 'https://trello.com/b/other-spelling', { label: 'Renamed', repository: prepared.repository });
+
+    expect(second).toEqual(first);
+    expect(store.list()).toHaveLength(1);
+  });
+
+  it('dedupes on the completed repository, not on what the URL parser reads', () => {
+    store.add(TEST_SOURCE, url, { label: 'A', repository: 'site.example|one' });
+    store.add(TEST_SOURCE, url, { label: 'B', repository: 'site.example|two' });
+
+    expect(store.list().map((source) => source.repository)).toEqual(['site.example|one', 'site.example|two']);
+  });
+
+  it('falls back to the URL parser label when the prepared label is blank', () => {
+    const added = store.add(TEST_SOURCE, url, { label: '   ', repository: 'site.example|project = X' });
+
+    expect(added.label).toBe('Trello: site.example|project = X');
+  });
+});
