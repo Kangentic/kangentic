@@ -6612,6 +6612,13 @@ export interface TaskMoveProvenance {
   origin: TaskMoveRecordOrigin;
   /** A short why, when the mover knows one ("Back for revisions", "Step done"). */
   reason?: string | null;
+  /**
+   * An agent's move made in a turn the owner started: the turn holds a
+   * message the owner typed, not one Kangentic typed (`turnStartedByOwner`).
+   * Main sets it from the transcript, never from anything the agent passes,
+   * and it starts a row's Frequency over as a person's move does (`countRuns`).
+   */
+  ownerRequested?: boolean;
 }
 
 /**
@@ -7067,7 +7074,10 @@ export interface TaskLink {
   created_at: string;
 }
 
-/** One `task_moves` row: a task entering a column. */
+/**
+ * One `task_moves` row: a task entering a column. Leaves out
+ * `owner_requested` on purpose: only `countRuns` reads it, in SQL.
+ */
 export interface TaskMoveRecord {
   id: string;
   task_id: string;

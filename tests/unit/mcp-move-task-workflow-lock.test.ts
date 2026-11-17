@@ -207,7 +207,7 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
       expect(response.success).toBe(true);
       expect(onTaskMove).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
-        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID, callerSessionId: OWN_SESSION_ID },
       );
       expect(response.message).toContain('If Code Review starts a session of its own, yours ends when this turn does.');
     });
@@ -227,13 +227,37 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
 
       const response = handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
 
-      expect(onTaskMove).toHaveBeenCalledWith(expect.anything(), { moverIsTaskAgent: true });
+      // The caller still names its session, for the owner's-turn read, but not as the mover.
+      expect(onTaskMove).toHaveBeenCalledWith(expect.anything(), { moverIsTaskAgent: true, callerSessionId: 'session-some-other' });
       expect(response.message).not.toContain('this turn does');
     });
 
     it('names no mover session for another task\'s agent', () => {
       const task = ownTask();
       context.callerTaskId = ordinaryTask().id;
+
+      handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
+
+      // Only the caller's session, for the owner's-turn read: no mover session.
+      expect(onTaskMove).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.id }), { callerSessionId: OWN_SESSION_ID });
+    });
+
+    // A caller with a session and no task, such as a Command Terminal, still
+    // names its session: the read, not this handler, decides it is no owner's.
+    it('names the session of a caller with no task', () => {
+      const task = ownTask();
+      context.callerTaskId = null;
+      context.callerSessionId = 'session-terminal';
+
+      handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
+
+      expect(onTaskMove).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.id }), { callerSessionId: 'session-terminal' });
+    });
+
+    it('passes no options for a caller with neither a task nor a session', () => {
+      const task = ownTask();
+      context.callerTaskId = null;
+      context.callerSessionId = null;
 
       handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
 
@@ -448,7 +472,7 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
       expect(response.success).toBe(true);
       expect(onTaskMove).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Executing'] }),
-        { moverIsTaskAgent: true },
+        { moverIsTaskAgent: true, callerSessionId: OWN_SESSION_ID },
       );
     });
 
@@ -460,7 +484,7 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
       expect(response.success).toBe(true);
       expect(onTaskMove).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
-        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID, callerSessionId: OWN_SESSION_ID },
       );
     });
 
@@ -518,7 +542,7 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
       expect(response.success).toBe(true);
       expect(onTaskMove).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
-        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID, callerSessionId: OWN_SESSION_ID },
       );
     });
 
@@ -529,7 +553,10 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
       const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
 
       expect(response.success).toBe(true);
-      expect(onTaskMove).toHaveBeenCalledWith(expect.objectContaining({ targetSwimlaneId: laneIds['Code Review'] }));
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ targetSwimlaneId: laneIds['Code Review'] }),
+        { callerSessionId: OWN_SESSION_ID },
+      );
     });
   });
 

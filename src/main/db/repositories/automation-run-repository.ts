@@ -30,9 +30,9 @@ import { MOVED_BY_A_PERSON } from '../../../shared/task-move-origin';
  * It is also what the turn-end run rule counts: a row has "run this visit" when
  * a run that was not a skip exists for it after the task entered the column,
  * and its Frequency counts those runs across every visit since a person last
- * moved the task, or it last left Done. A skipped run (a Condition that
- * answered no, an agent that was not running) is never counted, so it is
- * checked again at the next turn end.
+ * moved the task (or an agent did in a turn the owner started), or it last
+ * left Done. A skipped run (a Condition that answered no, an agent that was
+ * not running) is never counted, so it is checked again at the next turn end.
  */
 
 interface AutomationRunRow {
@@ -129,11 +129,12 @@ const EXECUTED_STATUSES_SQL = "status IN ('running', 'succeeded', 'failed', 'int
 
 /**
  * The origins of a person's move (`MOVED_BY_A_PERSON`). One of those, to
- * another column, starts a row's Frequency over (`countRuns`). The board's own
- * movers never do, so a review loop keeps its round-trip limit and an agent
- * cannot reset its own with `kangentic_move_task`. A restore from the
- * Completed list is a person's too, but it always leaves Done, which starts
- * the count over by itself.
+ * another column, starts a row's Frequency over (`countRuns`), and so does an
+ * agent's move made in a turn the owner started (`task_moves.owner_requested`).
+ * The board's own movers never do, so a review loop keeps its round-trip limit
+ * and an agent cannot reset its own with `kangentic_move_task` in a turn the
+ * board started. A restore from the Completed list is a person's too, but it
+ * always leaves Done, which starts the count over by itself.
  */
 const PERSON_MOVE_ORIGINS_SQL = Object.entries(MOVED_BY_A_PERSON)
   .filter(([, byPerson]) => byPerson)
@@ -705,12 +706,16 @@ export class AutomationRunRepository {
    * since the newer of two moves: the last a person made to another column
    * (`MOVED_BY_A_PERSON`), and the last out of Done, by anyone. A person who
    * sends a card back for another pass means it to go through those columns
-   * again, so its earlier runs no longer spend the limit. A task taken back out
-   * of Done goes through the board again as if for the first time. A rollback
-   * out of Done is not a return: it undoes a move into Done that failed, and
-   * the task never finished. When that failed move was a person's drag, its
-   * own row already started the count over. A row born into a column (no
-   * `from`) and a reorder inside one are not moves.
+   * again, so its earlier runs no longer spend the limit. An agent's move in a
+   * turn the owner started is the person's too: the owner asked for it in the
+   * session (`owner_requested`, #1100). One in a turn the board started is not,
+   * so a Code Review agent that sends itself back after `/code-review` keeps
+   * its round-trip limit. A task taken back out of Done goes through the board
+   * again as if for the first time. A rollback out of Done is not a return: it
+   * undoes a move into Done that failed, and the task never finished. When
+   * that failed move was a person's drag, its own row already started the
+   * count over. A row born into a column (no `from`) and a reorder inside one
+   * are not moves.
    *
    * The move is written before the groups it fires run, so a person's move
    * starts the count of the column it leaves (exit rows) and the column it
@@ -730,7 +735,10 @@ export class AutomationRunRepository {
             WHERE moves.task_id = ?
               AND (
                 (moves.origin != 'rollback' AND moves.from_swimlane_id IN (SELECT id FROM swimlanes WHERE role = 'done'))
-                OR (moves.origin IN (${PERSON_MOVE_ORIGINS_SQL}) AND moves.from_swimlane_id != moves.to_swimlane_id)
+                OR (
+                  (moves.origin IN (${PERSON_MOVE_ORIGINS_SQL}) OR moves.owner_requested = 1)
+                  AND moves.from_swimlane_id != moves.to_swimlane_id
+                )
               )
           ), '')
       `)

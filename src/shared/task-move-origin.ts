@@ -10,6 +10,11 @@ import type { TaskMoveRecordOrigin } from './types';
  * anything compiles. Every reader of "a move by hand" asks this one table: the
  * workflow lock (`workflowMoveRefusal`, `checkWorkflowMove`) and where a row's
  * Frequency starts counting (`AutomationRunRepository.countRuns`).
+ *
+ * `agent` stays false here. An agent's move made in a turn the owner started
+ * keeps its `agent` origin and carries `owner_requested` on its row instead,
+ * which only the Frequency boundary reads: the agent made the move, and the
+ * workflow lock judges the mover, not who asked.
  */
 export const MOVED_BY_A_PERSON: Record<TaskMoveRecordOrigin, boolean> = {
   renderer: true,

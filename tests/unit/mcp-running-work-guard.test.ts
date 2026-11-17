@@ -281,7 +281,10 @@ describe('the running-work guard', () => {
       const response = await handleMoveTask({ taskId: task.id, column: 'To Do' }, context);
 
       expect(response.success).toBe(true);
-      expect(onTaskMove).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['To Do'] }));
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['To Do'] }),
+        { callerSessionId: 'session-of-the-calling-agent' },
+      );
     });
 
     it('leaves the caller\'s own task alone, and stays synchronous for it', () => {

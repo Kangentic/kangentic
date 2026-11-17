@@ -392,9 +392,10 @@ Frequency) when it has a row here with status `running`, `succeeded`, `failed` o
 `skipped` row, including a Condition that answered no or a Text match that missed, is not a run, so
 the next trigger checks it again. Frequency counts only the runs since the newer of two `task_moves`
 rows: the newest whose origin is `renderer` or `mobile` (a person) and whose `from_swimlane_id`
-differs from its `to_swimlane_id`, and the newest whose `from_swimlane_id` is a `done` column and
-whose origin is not `rollback`. A task a person sends back, or a reopened task, starts its limits
-over. Moves by `agent`, `automation`, `auto-move` and `workflow` keep them. The project-open prune
+differs from its `to_swimlane_id` (or an `agent` row with `owner_requested` set), and the newest
+whose `from_swimlane_id` is a `done` column and whose origin is not `rollback`. A task a person
+sends back, or a reopened task, starts its limits over. Moves by `automation`, `auto-move` and
+`workflow`, and by `agent` in a turn the board started, keep them. The project-open prune
 keeps every counted run of an automation that has a Frequency limit, on a task that is not
 archived, so pruning can never reset a limit.
 
@@ -627,13 +628,19 @@ from ("has this row run since the task came into the column?"), and a workflow t
 | origin | TEXT | NOT NULL | |
 | reason | TEXT | | NULL |
 | at | TEXT | NOT NULL | |
+| owner_requested | INTEGER | NOT NULL | 0 |
 
 Written by `TaskRepository` inside the same transaction as the move (`move`, `unarchive`, and a
 create into a column), so no move lands without its record, including the ones that bypass
 `handleTaskMove` (the Phase 3 rollback, unarchive, create). A reorder within a column writes
 nothing. `origin` is who moved it: `renderer`, `agent`, `mobile`, `auto-move`, `automation`,
 `workflow`, `rollback`, `unarchive` or `create`. `reason` is the Move to column row's name, or a
-workflow's step. `from_swimlane_id` is NULL for a task born into the column.
+workflow's step. `from_swimlane_id` is NULL for a task born into the column. `owner_requested` is 1
+on an `agent` move made in a turn the owner started (`TaskMoveProvenance.ownerRequested`, set by
+the MCP move path from the calling session's transcript), which starts a row's Frequency over as a
+person's move does. `recordMove` writes 0 for every other origin, whatever the caller passed. Only
+`countRuns` reads it, so `TaskMoveRecord` leaves it out. It comes last because an `ALTER TABLE`
+added it.
 
 There is no foreign key to `swimlanes`: deleting a column must not delete a task's history.
 

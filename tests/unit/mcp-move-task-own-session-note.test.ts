@@ -120,7 +120,7 @@ describe('handleMoveTask: the note a task\'s own agent gets about its own sessio
       // and not a caller that was never recognised as the task's own session.
       expect(onTaskMove).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['To Do'] }),
-        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID, callerSessionId: OWN_SESSION_ID },
       );
       expect(response.message).toBe(`Moving "${task.title}" (#${task.display_id}) to To Do.`);
       expect(response.message).not.toContain('this turn does');
@@ -137,7 +137,7 @@ describe('handleMoveTask: the note a task\'s own agent gets about its own sessio
       expect(response.success).toBe(true);
       expect(onTaskMove).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Executing'] }),
-        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID, callerSessionId: OWN_SESSION_ID },
       );
       expect(response.message).toContain(SESSION_ENDS_SENTENCE);
       // The hedged sentence is what a column that DOES start an agent gets.

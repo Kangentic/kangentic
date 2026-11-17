@@ -124,12 +124,13 @@ A new Condition starts on Agent evaluation, or on Agent's message at a turn end 
 agent is set up. **Frequency** caps how many times a row runs on one task, across every visit, which is
 what keeps a review loop from bouncing a task forever. The count starts over each time you move the
 task to another column, by a drag, from your phone, or by restoring it from the Completed list, so
-a task you send back for another pass runs the board's automations again. A move the board makes
-keeps the count: a Move to column row, a workflow step, or an agent's own move. That includes a
-move you ask an agent to make in chat, since the agent makes it. Taking a task out of Done starts
-the count over whoever moves it. On task enter and On task exit rows count the same way, so a move
-you make into or out of their column always runs them, and their Frequency limits only the moves
-the board makes. Both start off.
+a task you send back for another pass runs the board's automations again. So does a move you ask
+an agent to make: when you type into a task's session and its agent moves the task in that turn,
+the move is yours. A move the board makes keeps the count: a Move to column row, a workflow step,
+or an agent's move in a turn the board started, such as a review agent sending its own task back
+after the column's `/code-review`. Taking a task out of Done starts the count over whoever moves
+it. On task enter and On task exit rows count the same way, so a move you make into or out of their
+column always runs them, and their Frequency limits only the moves the board makes. Both start off.
 
 **A card the board stopped.** The card's amber envelope turns into a pennant when its agent has
 finished and nothing will move it until you act. That is one of two things, in a column with On agent

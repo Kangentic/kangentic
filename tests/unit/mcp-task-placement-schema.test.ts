@@ -141,6 +141,19 @@ describe('kangentic_move_task caller', () => {
     expect(params).not.toHaveProperty('callerSessionId');
   });
 
+  // #1100: a move counts as the owner's for a row's Frequency only when main
+  // reads the owner's message in the calling session's turn. An agent that
+  // passes a claim of its own must reach neither the params nor the context.
+  it('drops an owner claim the agent passes', () => {
+    const server = makeServerWithTaskTools({ taskId: 'task-caller', sessionId: 'session-caller' });
+
+    server.getHandler('kangentic_move_task')({ taskId: '42', column: 'Executing', ownerRequested: true });
+
+    const [, params, context] = mockCallHandler.mock.calls[0] as unknown as [string, Record<string, unknown>, Record<string, unknown>];
+    expect(params).not.toHaveProperty('ownerRequested');
+    expect(context).not.toHaveProperty('ownerRequested');
+  });
+
   it('carries null for a caller with no session', () => {
     const server = makeServerWithTaskTools();
 

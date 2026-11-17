@@ -789,8 +789,19 @@ export class TaskRepository {
   /** One `task_moves` row. Called inside the transaction that made the move. */
   private recordMove(taskId: string, fromSwimlaneId: string | null, toSwimlaneId: string, provenance: TaskMoveProvenance): void {
     this.db.prepare(
-      'INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(uuidv4(), taskId, fromSwimlaneId, toSwimlaneId, provenance.origin, provenance.reason ?? null, new Date().toISOString());
+      'INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, owner_requested, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      uuidv4(),
+      taskId,
+      fromSwimlaneId,
+      toSwimlaneId,
+      provenance.origin,
+      provenance.reason ?? null,
+      // Only an agent's move carries it: every other origin is either a
+      // person's already or the board's own, which never starts a count over.
+      provenance.origin === 'agent' && provenance.ownerRequested === true ? 1 : 0,
+      new Date().toISOString(),
+    );
   }
 
   /**

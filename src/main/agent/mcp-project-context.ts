@@ -13,6 +13,7 @@ import { closeTaskWindows } from '../ipc/helpers/task-windows';
 import { readTaskRunningWork } from '../ipc/helpers/task-running-work';
 import { resolveEffectiveBaseBranch } from '../ipc/helpers/task-git';
 import { deliverMessageAfterMove } from '../automations/turn-end/deliver-message';
+import { turnStartedByOwner } from '../automations/turn-end/owner-turn';
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { readTaskReport } from '../ipc/helpers/task-report';
 import { readTaskChanges } from '../ipc/handlers/git-diff';
@@ -275,10 +276,18 @@ export function buildCommandContextForProject(
     // purely to recover a title for the toast.
     onTaskMove: async (input, options) => {
       const message = options?.message?.trim();
+      // Whether the owner started the calling session's turn, decided from
+      // its transcript, never from anything the agent passed. Started now and
+      // awaited by the move once it has registered (`handleTaskMove`), so a
+      // newer move of the task still supersedes this one during the read.
+      const ownerRequested = options?.callerSessionId
+        ? turnStartedByOwner(ipcContext.sessionManager, options.callerSessionId)
+        : undefined;
       const moveOptions = {
         ...(options?.moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
         ...(options?.moverSessionId ? { moverSessionId: options.moverSessionId } : {}),
         ...(message ? { carriesMessage: true } : {}),
+        ...(ownerRequested ? { ownerRequested } : {}),
       };
       await handleTaskMove(
         ipcContext, input, 'agent', projectId, projectPath,

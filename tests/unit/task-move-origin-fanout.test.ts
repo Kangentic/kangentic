@@ -659,6 +659,75 @@ describe('a move that expects the task in a column it has left changes nothing',
   });
 });
 
+describe('an agent move the owner asked for reaches the move record', () => {
+  // #1100. The MCP move path reads the calling session's turn and passes
+  // `ownerRequested`; this is the hop that writes it onto the `task_moves`
+  // row a row's Frequency counts from (`countRuns`). Only an `'agent'` move
+  // carries it: no other origin is an agent acting at the owner's request.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function movedProvenance(origin: TaskMoveOrigin, options?: { ownerRequested?: Promise<boolean> }): Promise<unknown> {
+    const context = makeContext(makeTask());
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+      origin,
+      undefined,
+      undefined,
+      options,
+    );
+    const repos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { move: ReturnType<typeof vi.fn> } };
+    expect(repos.tasks.move).toHaveBeenCalledTimes(1);
+    return repos.tasks.move.mock.calls[0][1];
+  }
+
+  it('writes it on an agent move whose turn the owner started', async () => {
+    expect(await movedProvenance('agent', { ownerRequested: Promise.resolve(true) })).toEqual({ origin: 'agent', reason: null, ownerRequested: true });
+  });
+
+  it('leaves it off an agent move in a turn the board started', async () => {
+    expect(await movedProvenance('agent', { ownerRequested: Promise.resolve(false) })).toEqual({ origin: 'agent', reason: null });
+    expect(await movedProvenance('agent')).toEqual({ origin: 'agent', reason: null });
+  });
+
+  it('never writes it for another origin, whatever the caller passed', async () => {
+    expect(await movedProvenance('automation', { ownerRequested: Promise.resolve(true) })).toEqual({ origin: 'automation', reason: null });
+  });
+
+  // The read runs while the move waits, registered. A move of the same task
+  // made during the read supersedes the agent's, which never commits: the
+  // later move is the one that holds, as it was before the read existed.
+  // Red-green: await the read before `registerMoveController` (or in
+  // `onTaskMove`) and the agent's older move aborts the drag and lands last.
+  it('lets a move made during the read supersede the agent\'s move', async () => {
+    const context = makeContext(makeTask());
+    let answerRead: (answer: boolean) => void = () => undefined;
+    const pendingRead = new Promise<boolean>((resolve) => { answerRead = resolve; });
+
+    const agentMove = handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+      'agent',
+      undefined,
+      undefined,
+      { ownerRequested: pendingRead },
+    );
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: QUIET_TARGET_LANE_ID, targetPosition: 0 },
+      'renderer',
+    );
+    answerRead(true);
+    await agentMove;
+
+    const repos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { move: ReturnType<typeof vi.fn> } };
+    expect(repos.tasks.move).toHaveBeenCalledTimes(1);
+    expect(repos.tasks.move.mock.calls[0][1]).toEqual({ origin: 'renderer', reason: null });
+  });
+});
+
 describe('a committed move announces even when the move later fails', () => {
   beforeEach(() => {
     vi.clearAllMocks();
