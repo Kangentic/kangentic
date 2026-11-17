@@ -906,8 +906,10 @@ export async function recordLayoutChange(
   await page.waitForTimeout(250);
   const actedAt = Date.now() / 1000;
   await action();
-  await expect.poll(async () => (await readTimes()).held, { timeout: 5000 }).not.toBeNull();
-  await expect.poll(async () => (await readTimes()).drawn, { timeout: 5000 }).not.toBeNull();
+  // A starved page holds the landing open until it has drawn the frames the change travels in, or
+  // `LAYOUT_LANDING_STARVED_CAP_MS` (5 s), and the hold starts inside it, so 5 s is no room.
+  await expect.poll(async () => (await readTimes()).held, { timeout: 10000 }).not.toBeNull();
+  await expect.poll(async () => (await readTimes()).drawn, { timeout: 10000 }).not.toBeNull();
   // The page drawing is not the screencast delivering it: a starved compositor delivered its
   // frames 280 ms apart on CI and stopped short of the one that shows the change, so the
   // recording held only the picture from before (8 frames, none changed). Keep recording until
