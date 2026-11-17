@@ -494,6 +494,10 @@ msgstr "Open file"
 msgid "Open in {sourceName}"
 msgstr "Open in {sourceName}"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+msgid "Open the page again"
+msgstr "Open the page again"
+
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
 msgid "Paste a Jira link, or type JQL."

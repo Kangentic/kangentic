@@ -130,12 +130,15 @@ sources:
 | `boards:asana:setPat` | invoke | Validate a Personal Access Token via `/users/me` and persist it encrypted; returns `{ok, email?, error?}` |
 | `boards:asana:clearCredential` | invoke | Remove the stored Personal Access Token |
 
-## Board Auth - Jira (3 channels)
+## Board Auth - Jira (6 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `boards:jira:authStatus` | invoke | Whether a sign-in is saved for the site `target` names (a pasted link, typed JQL or a saved repository): `{connected, account?, reason?, site?, prefill?}`. `reason: 'ambiguous-site'` when typed JQL names no site and several are connected; `prefill` holds the site, method and email or username for Connect, never a secret |
+| `boards:jira:authStatus` | invoke | Whether a sign-in is saved for the site `target` names (a pasted link, typed JQL or a saved repository): `{connected, account?, reason?, site?, prefill?, signInAvailable}`. `reason: 'ambiguous-site'` when typed JQL names no site and several are connected; `prefill` holds the site, method and email or username for Connect, never a secret; `signInAvailable` is false in a build with no Atlassian OAuth client id |
 | `boards:jira:detectSite` | invoke | Normalize a site or link to its base URL and ask its anonymous `serverInfo` whether it runs Cloud or Data Center (falling back to the host name); returns `{site, deployment}` |
-| `boards:jira:connect` | invoke | Check an API token, personal access token or password against `/myself` (retrying a scoped Cloud token through Atlassian's gateway) and persist it encrypted per site; returns `{ok: true, site, account}` or `{ok: false, code, site?, detail?}` |
+| `boards:jira:connect` | invoke | Check an API token, personal access token or password against `/myself` (retrying a scoped Cloud token through Atlassian's gateway) and persist it encrypted per site; returns `{ok: true, site, account}` or `{ok: false, code, site?, detail?}`. `method: 'oauth'` is refused here (`code: 'invalid'`): a browser sign-in goes through `boards:jira:signIn` |
+| `boards:jira:signIn` | invoke | Sign in with Atlassian for `{site}`: open the consent page, wait for kangentic.com to hand the sealed tokens to the loopback listener, check the grant can open the site, and persist it encrypted for that site; resolves `{ok: true, site, account}`, `{ok: false, cancelled: true}` or `{ok: false, cancelled: false, error}` |
+| `boards:jira:reopenSignIn` | invoke | Open the pending sign-in's consent page in the browser again |
+| `boards:jira:cancelSignIn` | invoke | Stop waiting for the browser; the pending `signIn` resolves as cancelled |
 
 ## Board Auth - Linear (6 channels)
 | Channel | Pattern | Purpose |
@@ -147,12 +150,15 @@ sources:
 | `boards:linear:cancelSignIn` | invoke | Stop waiting for the browser; the pending `signIn` resolves as cancelled |
 | `boards:linear:listTeams` | invoke | List the teams the saved credential can see, each with the team URL a picked team is saved under; `{teams, error?}` |
 
-## Board Auth - Trello (5 channels)
+## Board Auth - Trello (8 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `boards:trello:authStatus` | invoke | Report Trello connection state: `{connected, kind?, signInAvailable}`; `signInAvailable` is false in a build with no Kangentic Trello key |
-| `boards:trello:connect` | invoke | Check an API key and token against Trello's board list and persist them encrypted; `kind: 'kangentic-key'` uses the key main holds and ignores one the renderer sends. Returns `{ok, field?, error?}` with Trello's own text and the field it blames |
-| `boards:trello:openApproval` | invoke | Open Trello's read-only approval page for Kangentic's key or the user's own, where Trello shows the token to paste |
+| `boards:trello:connect` | invoke | Check an API key and token against Trello's board list and persist them encrypted. The Connect dialog sends only `kind: 'own-key'`, since Kangentic's key signs in through `signIn`; `kind: 'kangentic-key'` uses the key main holds and ignores one the renderer sends. Returns `{ok, field?, error?}` with Trello's own text and the field it blames |
+| `boards:trello:openApproval` | invoke | Open Trello's read-only approval page, where Trello shows the token to paste. The Connect dialog opens it for the user's own key; `kind: 'kangentic-key'` opens it for Kangentic's |
+| `boards:trello:signIn` | invoke | Sign in with Trello on Kangentic's key: open the approval page, wait for kangentic.com's return page to hand the sealed token to the loopback listener, check it with Trello, and persist it; resolves `{ok: true}`, `{ok: false, cancelled: true}` or `{ok: false, cancelled: false, error}` |
+| `boards:trello:reopenSignIn` | invoke | Open the pending sign-in's approval page in the browser again |
+| `boards:trello:cancelSignIn` | invoke | Stop waiting for the browser; the pending `signIn` resolves as cancelled |
 | `boards:trello:listBoards` | invoke | List the open boards the saved token can see, each with its Workspace and the board URL a picked board is saved under; `{boards, error?}` |
 | `boards:trello:clearCredential` | invoke | Remove the stored key and token |
 

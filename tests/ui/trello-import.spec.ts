@@ -2,7 +2,8 @@
  * UI spec: importing from Trello, through the headless mock bridge.
  *
  * Covers what only the browser shows: the Connect Trello dialog's two ways in (Kangentic's key,
- * where Trello shows the token to paste, and the user's own key), Trello's refusal text under the
+ * which waits on the browser with nothing to paste, and the user's own key, which pastes), the
+ * waiting screen and a declined sign-in back on the choices, Trello's refusal text under the
  * field it blames, the board picker grouped by Workspace with Added, Trello rows in the Import
  * dialog (the #138 card number and the Status menu in list order), and the error banner's Connect
  * Trello button. The Connect dialog's choices and steps are drawn on the signed-off canvas, board 2.
@@ -23,6 +24,7 @@ interface TrelloPreset {
   openApprovalRejects?: string;
   authStatusRejects?: string;
   boards?: Array<{ id: string; shortLink: string; name: string; url: string; workspaceName: string | null }>;
+  signInResult?: { ok: true } | { ok: false; cancelled: boolean; error?: string };
 }
 
 async function seedTrello(page: Page, preset: TrelloPreset): Promise<void> {
@@ -103,7 +105,7 @@ test.describe('Connect Trello', () => {
     await browser.close();
   });
 
-  test('with a Kangentic key it opens on the two ways in, and sign-in asks only for the token', async () => {
+  test('with a Kangentic key, sign-in waits on the browser with nothing to paste', async () => {
     const { browser, page } = await launchPage();
     await seedTrello(page, { signInAvailable: true });
     await createProject(page, 'trello-sign-in');
@@ -113,14 +115,39 @@ test.describe('Connect Trello', () => {
     await expect(page.locator('[data-testid="trello-setup-own-key-btn"]')).toBeVisible();
 
     await page.locator('[data-testid="trello-setup-sign-in-btn"]').click();
-    await expect(page.locator('[data-testid="trello-setup-key-input"]')).toHaveCount(0);
-    await page.locator('[data-testid="trello-setup-open-approval-btn"]').click();
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __mockTrelloApprovalCount?: number }).__mockTrelloApprovalCount ?? 0)).toBe(1);
+    await expect(page.locator('[data-testid="trello-setup-waiting"]')).toContainText('Waiting for Trello in your browser');
+    await expect(page.locator('[data-testid="trello-setup-token-input"]')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __mockTrelloSignInCallCount?: number }).__mockTrelloSignInCallCount ?? 0)).toBe(1);
 
-    await page.locator('[data-testid="trello-setup-token-input"]').fill('ATTAvalidtoken');
-    await page.locator('[data-testid="trello-setup-save-btn"]').click();
+    await page.locator('[data-testid="trello-setup-reopen-btn"]').click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __mockTrelloReopenCount?: number }).__mockTrelloReopenCount ?? 0)).toBe(1);
+
+    await browser.close();
+  });
+
+  test('a sign-in Trello hands back closes the dialog on the board picker', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { signInAvailable: true, signInResult: { ok: true } });
+    await createProject(page, 'trello-sign-in-done');
+    await openTrelloProvider(page);
+
+    await page.locator('[data-testid="trello-setup-sign-in-btn"]').click();
     await expect(page.locator('[data-testid="trello-setup-dialog"]')).toBeHidden();
     await expect(page.locator('[data-testid="trello-board-picker"]')).toBeVisible();
+
+    await browser.close();
+  });
+
+  test('a declined sign-in goes back to the two ways in with the reason', async () => {
+    const { browser, page } = await launchPage();
+    await seedTrello(page, { signInAvailable: true, signInResult: { ok: false, cancelled: false, error: 'Trello sign-in was declined.' } });
+    await createProject(page, 'trello-sign-in-declined');
+    await openTrelloProvider(page);
+
+    await page.locator('[data-testid="trello-setup-sign-in-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-error"]')).toHaveText('Trello sign-in was declined.');
+    await expect(page.locator('[data-testid="trello-setup-sign-in-btn"]')).toBeVisible();
+    await expect(page.locator('[data-testid="trello-setup-own-key-btn"]')).toBeVisible();
 
     await browser.close();
   });
@@ -142,15 +169,18 @@ test.describe('Connect Trello', () => {
     await browser.close();
   });
 
-  test('Back from the sign-in step returns to the two ways in', async () => {
+  test('Back from the waiting screen stops the sign-in and returns to the two ways in', async () => {
     const { browser, page } = await launchPage();
     await seedTrello(page, { signInAvailable: true });
     await createProject(page, 'trello-back');
     await openTrelloProvider(page);
 
     await page.locator('[data-testid="trello-setup-sign-in-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-waiting"]')).toBeVisible();
     await page.locator('[data-testid="trello-setup-back-btn"]').click();
     await expect(page.locator('[data-testid="trello-setup-own-key-btn"]')).toBeVisible();
+    // A cancel is silent: no error line on the choices.
+    await expect(page.locator('[data-testid="trello-setup-error"]')).toHaveCount(0);
 
     await browser.close();
   });
@@ -238,6 +268,79 @@ test.describe('Connect Trello', () => {
     await expect(page.locator('[data-testid="trello-setup-key-error"]')).toHaveText('A key or token has no spaces. Copy it again from Trello.');
     await expect(page.locator('[data-testid="trello-setup-dialog"]')).toBeVisible();
 
+    await browser.close();
+  });
+});
+
+async function trelloCancelCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __mockTrelloCancelSignInCount?: number }).__mockTrelloCancelSignInCount ?? 0);
+}
+
+async function startTrelloWait(page: Page, projectName: string, preset: TrelloPreset): Promise<void> {
+  await seedTrello(page, preset);
+  await createProject(page, projectName);
+  await openTrelloProvider(page);
+  await page.locator('[data-testid="trello-setup-sign-in-btn"]').click();
+}
+
+async function trelloFlush(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
+test.describe('Trello sign-in cancel', () => {
+  test('Back from the waiting screen sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await startTrelloWait(page, 'trello-cancel-back', { signInAvailable: true });
+    await expect(page.locator('[data-testid="trello-setup-waiting"]')).toBeVisible();
+    await page.locator('[data-testid="trello-setup-back-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-own-key-btn"]')).toBeVisible();
+    await expect.poll(() => trelloCancelCount(page)).toBe(1);
+    await trelloFlush(page);
+    expect(await trelloCancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('Cancel during the wait sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await startTrelloWait(page, 'trello-cancel-btn', { signInAvailable: true });
+    await expect(page.locator('[data-testid="trello-setup-waiting"]')).toBeVisible();
+    await page.locator('[data-testid="trello-setup-cancel-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-dialog"]')).toBeHidden();
+    await expect.poll(() => trelloCancelCount(page)).toBe(1);
+    await trelloFlush(page);
+    expect(await trelloCancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('Escape during the wait sends exactly one cancel', async () => {
+    const { browser, page } = await launchPage();
+    await startTrelloWait(page, 'trello-cancel-escape', { signInAvailable: true });
+    await expect(page.locator('[data-testid="trello-setup-waiting"]')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="trello-setup-dialog"]')).toBeHidden();
+    await expect.poll(() => trelloCancelCount(page)).toBe(1);
+    await trelloFlush(page);
+    expect(await trelloCancelCount(page)).toBe(1);
+    await browser.close();
+  });
+
+  test('a sign-in that already ended sends no cancel on Back or on close', async () => {
+    const { browser, page } = await launchPage();
+    await startTrelloWait(page, 'trello-cancel-resolved', {
+      signInAvailable: true,
+      signInResult: { ok: false, cancelled: false, error: 'Trello sign-in was declined.' },
+    });
+    await expect(page.locator('[data-testid="trello-setup-error"]')).toHaveText('Trello sign-in was declined.');
+    await page.locator('[data-testid="trello-setup-own-key-btn"]').click();
+    await page.locator('[data-testid="trello-setup-back-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-sign-in-btn"]')).toBeVisible();
+    await page.locator('[data-testid="trello-setup-cancel-btn"]').click();
+    await expect(page.locator('[data-testid="trello-setup-dialog"]')).toBeHidden();
+    await trelloFlush(page);
+    expect(await page.evaluate(() => (window as unknown as { __mockTrelloSignInCallCount?: number }).__mockTrelloSignInCallCount ?? 0)).toBe(1);
+    expect(await trelloCancelCount(page)).toBe(0);
     await browser.close();
   });
 });

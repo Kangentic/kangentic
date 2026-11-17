@@ -89,11 +89,6 @@ msgstr "開啟 Linear 的安全性設定"
 
 #: src/renderer/components/linear/LinearSetupDialog.tsx
 #, fuzzy
-msgid "Open the page again"
-msgstr "重新開啟頁面"
-
-#: src/renderer/components/linear/LinearSetupDialog.tsx
-#, fuzzy
 msgid "Paste a key from Linear's settings"
 msgstr "貼上 Linear 設定中的金鑰"
 

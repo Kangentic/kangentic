@@ -1,15 +1,18 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { IPC } from '../../../../shared/ipc-channels';
 import type {
   JiraAuthStatus,
   JiraConnectInput,
   JiraConnectResult,
   JiraDetectSiteResult,
+  JiraSignInInput,
+  JiraSignInResult,
 } from '../../../../shared/types';
 import { RefusalError } from '../../../../shared/refusal';
 import { JiraAdapter } from './adapter';
 import { JiraClient, JiraHttpError, fetchCloudId, type JiraMyself } from './client';
 import { saveJiraCredential, type JiraSiteCredential } from './credential-store';
+import { cancelJiraSignIn, reopenJiraSignIn, signInWithAtlassian } from './oauth';
 import { detectDeployment, normalizeSiteBase, siteLabel } from './site';
 
 /**
@@ -30,6 +33,36 @@ export function registerJiraIpcHandlers(): void {
 
   ipcMain.handle(IPC.BOARDS_JIRA_CONNECT, async (_, input: JiraConnectInput): Promise<JiraConnectResult> =>
     connectJiraSite(input));
+
+  ipcMain.handle(IPC.BOARDS_JIRA_SIGN_IN, async (_, input: JiraSignInInput): Promise<JiraSignInResult> =>
+    signInJiraSite(input, (url) => shell.openExternal(url)));
+
+  ipcMain.handle(IPC.BOARDS_JIRA_REOPEN_SIGN_IN, async (): Promise<void> => {
+    await reopenJiraSignIn();
+  });
+
+  ipcMain.handle(IPC.BOARDS_JIRA_CANCEL_SIGN_IN, async (): Promise<void> => {
+    cancelJiraSignIn();
+  });
+}
+
+/**
+ * Sign in with Atlassian for the site the dialog names, and save the sign-in
+ * for that site once it proves it can open it. Exported for tests.
+ */
+export async function signInJiraSite(
+  input: JiraSignInInput,
+  openExternal: (url: string) => Promise<void>,
+  dependencies: {
+    signIn?: typeof signInWithAtlassian;
+    save?: (credential: JiraSiteCredential) => Promise<void>;
+  } = {},
+): Promise<JiraSignInResult> {
+  const site = normalizeSiteBase(typeof input?.site === 'string' ? input.site : '');
+  const result = await (dependencies.signIn ?? signInWithAtlassian)({ site, openExternal });
+  if (!result.ok) return result;
+  await (dependencies.save ?? saveJiraCredential)(result.value);
+  return { ok: true, site: siteLabel(site), account: result.value.account };
 }
 
 /** The errno a failed fetch carries (`ENOTFOUND`, `ECONNREFUSED`), when it has one. */

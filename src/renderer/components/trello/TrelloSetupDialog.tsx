@@ -6,11 +6,12 @@ import { FIELD_CONTROL_CLASS } from '../Field';
 import { ArtifactPlatformLogo } from '../VendorMark';
 import { reportRendererFailure } from '../../utils/renderer-failure';
 import type { ProviderSetupDialogProps } from '../backlog/import-providers';
-import type { TrelloConnectKind } from '../../../shared/types';
+import { ConnectWaiting } from '../backlog/connect/ConnectParts';
+import { useBrowserSignIn } from '../backlog/connect/useBrowserSignIn';
 
 const TRELLO_APP_ADMIN_URL = 'https://trello.com/apps/admin';
 
-type View = 'loading' | 'choice' | 'sign-in' | 'own-key';
+type View = 'loading' | 'choice' | 'waiting' | 'own-key';
 type Field = 'apiKey' | 'token';
 
 /** The dialog field fill (ui-conventions.md, Control fill), in a monospace face for pasted keys. */
@@ -41,11 +42,12 @@ function StepBadge({ step }: { step: number }) {
 
 /**
  * Connect Trello: two ways in, chosen on the first screen. "Sign in with Trello" opens Trello's
- * approval page for Kangentic's own API key, and Trello shows the token to paste back. "Use your
- * own API key" walks through making a Trello app, pasting its key, and approving it for a token.
+ * approval page for Kangentic's own API key and waits: kangentic.com's return page hands the token
+ * back, with nothing to paste. "Use your own API key" walks through making a Trello app, pasting
+ * its key, and approving it for a token to paste, since that key's allowed origins are not ours.
  * A build with no Kangentic key offers only the user's own, so the dialog opens on its steps.
  * Connect checks the key and token with Trello before saving, and shows Trello's own text under
- * the field it refused.
+ * the field it refused. A declined or failed sign-in goes back to the two choices with the reason.
  */
 export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSetupDialogProps) {
   const { t } = useLingui();
@@ -58,6 +60,15 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
   const [error, setError] = useState<string | null>(initialError ?? null);
   const [errorField, setErrorField] = useState<Field>('token');
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const browserSignIn = useBrowserSignIn('trello');
+  // A Connect still running when the user cancels must not carry the add on once it lands.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,25 +86,43 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
   }, []);
 
   useEffect(() => {
-    if (view === 'sign-in' || view === 'own-key') firstInputRef.current?.focus();
+    if (view === 'own-key') firstInputRef.current?.focus();
   }, [view]);
 
-  const kind: TrelloConnectKind = view === 'sign-in' ? 'kangentic-key' : 'own-key';
-  const canConnect = token.trim().length > 0 && (kind === 'kangentic-key' || apiKey.trim().length > 0) && !submitting;
+  const canConnect = token.trim().length > 0 && apiKey.trim().length > 0 && !submitting;
 
   const showView = (next: View) => {
     setError(null);
     setView(next);
   };
 
+  const handleClose = () => {
+    browserSignIn.cancel();
+    onClose();
+  };
+
+  const handleSignIn = async () => {
+    setError(null);
+    setView('waiting');
+    const outcome = await browserSignIn.run(() => window.electronAPI.backlog.trello.signIn());
+    if (outcome.kind === 'saved') {
+      onSaved();
+      return;
+    }
+    if (outcome.kind === 'stale') return;
+    setView('choice');
+    if (outcome.kind === 'failed') setError(outcome.error ?? t`Trello sign-in did not finish.`);
+  };
+
+  // Pasting is for the user's own key only. Kangentic's key signs in through the browser.
   const handleConnect = async () => {
     if (!canConnect) return;
     setSubmitting(true);
     setError(null);
     try {
       const result = await window.electronAPI.backlog.trello.connect({
-        kind,
-        apiKey: kind === 'own-key' ? apiKey.trim() : undefined,
+        kind: 'own-key',
+        apiKey: apiKey.trim(),
         token: token.trim(),
       });
       if (!result.ok) {
@@ -101,7 +130,7 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
         setError(result.error ?? t`Couldn't save the token.`);
         return;
       }
-      onSaved();
+      if (mountedRef.current) onSaved();
     } catch (connectError: unknown) {
       reportRendererFailure('trello', 'connect', connectError);
       setErrorField('token');
@@ -113,11 +142,11 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
 
   const openApproval = () => {
     window.electronAPI.backlog.trello.openApproval({
-      kind,
-      apiKey: kind === 'own-key' ? apiKey.trim() : undefined,
+      kind: 'own-key',
+      apiKey: apiKey.trim(),
     }).catch((openError: unknown) => {
       reportRendererFailure('trello', 'open-approval', openError);
-      setErrorField(kind === 'own-key' ? 'apiKey' : 'token');
+      setErrorField('apiKey');
       setError(openError instanceof Error ? openError.message : String(openError));
     });
   };
@@ -139,7 +168,6 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
       </label>
       <div className="relative">
         <input
-          ref={view === 'sign-in' ? firstInputRef : undefined}
           id="trello-setup-token"
           type={showToken ? 'text' : 'password'}
           value={token}
@@ -182,7 +210,7 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
   const cancelButton = (
     <button
       type="button"
-      onClick={onClose}
+      onClick={handleClose}
       className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg border border-edge/50 rounded transition-colors"
       data-testid="trello-setup-cancel-btn"
     >
@@ -190,10 +218,17 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
     </button>
   );
 
-  const backTarget: View | null = view === 'sign-in' || (view === 'own-key' && signInAvailable) ? 'choice' : null;
+  const backTarget: View | null = view === 'own-key' && signInAvailable ? 'choice' : null;
 
   let footer: ReactNode;
-  if (view === 'sign-in' || view === 'own-key') {
+  if (view === 'waiting') {
+    footer = (
+      <div className="flex items-center justify-between gap-2">
+        <BackButton onBack={() => { browserSignIn.cancel(); showView('choice'); }} />
+        {cancelButton}
+      </div>
+    );
+  } else if (view === 'own-key') {
     footer = (
       <div className="flex items-center justify-between gap-2">
         <div>{backTarget ? <BackButton onBack={() => showView(backTarget)} /> : null}</div>
@@ -218,12 +253,12 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
 
   return (
     <BaseDialog
-      onClose={onClose}
+      onClose={handleClose}
       title={t`Connect Trello`}
       icon={<span className="text-accent flex"><ArtifactPlatformLogo platformId="trello" size={16} /></span>}
       testId="trello-setup-dialog"
-      className={view === 'own-key' || view === 'sign-in' ? 'w-[480px]' : 'w-[400px]'}
-      save={view === 'own-key' || view === 'sign-in' ? { onSave: () => void handleConnect(), disabled: !canConnect } : undefined}
+      className={view === 'own-key' ? 'w-[480px]' : 'w-[400px]'}
+      save={view === 'own-key' ? { onSave: () => void handleConnect(), disabled: !canConnect } : undefined}
       footer={footer}
     >
       {view === 'loading' && (
@@ -237,7 +272,7 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
           {error && <p className="text-xs text-danger" data-testid="trello-setup-error">{error}</p>}
           <button
             type="button"
-            onClick={() => showView('sign-in')}
+            onClick={() => void handleSignIn()}
             className="flex items-center gap-3 w-full p-3 text-left bg-surface border border-edge rounded-md hover:bg-surface-hover/40 transition-colors"
             data-testid="trello-setup-sign-in-btn"
           >
@@ -268,19 +303,12 @@ export function TrelloSetupDialog({ onClose, onSaved, initialError }: ProviderSe
         </div>
       )}
 
-      {view === 'sign-in' && (
-        <div className="flex flex-col gap-5 text-sm">
-          <section className="flex flex-col gap-2">
-            <h4 className="flex items-center gap-2 text-sm font-semibold text-fg">
-              <StepBadge step={1} />
-              <Trans>Approve Kangentic and paste the token</Trans>
-            </h4>
-            <div className="ml-7 flex flex-col gap-2">
-              {approvalButton(false)}
-              {tokenField}
-            </div>
-          </section>
-        </div>
+      {view === 'waiting' && (
+        <ConnectWaiting
+          message={<Trans>Waiting for Trello in your browser</Trans>}
+          onReopen={browserSignIn.reopen}
+          testIdPrefix="trello-setup"
+        />
       )}
 
       {view === 'own-key' && (

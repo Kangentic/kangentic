@@ -12,14 +12,16 @@ import {
   ConnectOpenLink,
   ConnectStepText,
   ConnectSteps,
+  ConnectWaiting,
   type ConnectStep,
 } from '../backlog/connect/ConnectParts';
+import { useBrowserSignIn } from '../backlog/connect/useBrowserSignIn';
 import type { ProviderSetupDialogProps } from '../backlog/import-providers';
 import { reportRendererFailure } from '../../utils/renderer-failure';
 import type { JiraConnectErrorCode, JiraConnectResult, JiraDeployment, JiraDetectSiteResult } from '../../../shared/types';
 
 type TokenMethod = 'api-token' | 'pat' | 'password';
-type Phase = 'detecting' | 'choices' | 'steps';
+type Phase = 'detecting' | 'choices' | 'steps' | 'waiting';
 
 const ATLASSIAN_API_TOKENS_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';
 const SITE_PLACEHOLDER = 'your-site.atlassian.net'; // i18n-ok: an example host
@@ -31,11 +33,23 @@ function readableSite(site: string): string {
   return site.trim().replace(/^https:\/\//i, '').replace(/\/+$/, '');
 }
 
+/** Whether this build offers Sign in with Atlassian. A failed ask reads as no, leaving the token steps. */
+function loadSignInAvailable(): Promise<boolean> {
+  return window.electronAPI.backlog.jira.authStatus()
+    .then((status) => status.signInAvailable)
+    .catch((error: unknown) => {
+      reportRendererFailure('jira-connect', 'auth-status', error);
+      return false;
+    });
+}
+
 /**
  * Connect Jira. Opens on the site a link named, asks the site whether it runs
- * Cloud or Data Center, and shows that deployment's ways in: Data Center offers
- * a personal access token or a password as two equal choices; Cloud has one way
- * in, the API token steps, so Back is hidden there.
+ * Cloud or Data Center, and shows that deployment's ways in. Cloud offers Sign in
+ * with Atlassian and the API token as two equal choices, or the token steps alone
+ * in a build with no Atlassian client id. Data Center offers a personal access
+ * token or a password. A dialog reopened for a sign-in that stopped working goes
+ * back the way the user signed in: the browser sign-in again, or that method's steps.
  */
 export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: ProviderSetupDialogProps) {
   const { t } = useLingui();
@@ -52,25 +66,65 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
   const [secret, setSecret] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<Extract<JiraConnectResult, { ok: false }> | null>(null);
+  // Why the last browser sign-in failed, Atlassian's own text when it gave one. Shown on the choices.
+  const [signInError, setSignInError] = useState<string | null>(null);
   const detectedSiteRef = useRef<string | null>(null);
+  const [signInAvailable, setSignInAvailable] = useState(false);
+  // Asked once, on the first detection, and shared by every later one. A detection
+  // waits on it, so a reopen that goes straight back to the browser sign-in knows
+  // whether this build offers one.
+  const signInAvailableRef = useRef<Promise<boolean> | null>(null);
+  const browserSignIn = useBrowserSignIn('jira');
   // A Connect still running when the user cancels must not carry the add on once it lands.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
+  const signIn = async (signInSite: string) => {
+    setFailure(null);
+    setReopenReason(null);
+    setSignInError(null);
+    setPhase('waiting');
+    const outcome = await browserSignIn.run(() => window.electronAPI.backlog.jira.signIn({ site: signInSite }));
+    if (outcome.kind === 'saved') {
+      onSaved();
+      return;
+    }
+    if (outcome.kind === 'stale') return;
+    setPhase('choices');
+    if (outcome.kind === 'failed') setSignInError(outcome.error ?? t`Atlassian sign-in did not finish.`);
+  };
+
+  const handleClose = () => {
+    browserSignIn.cancel();
+    onClose();
+  };
+
   // Ask the site which Jira it runs, then show that deployment's ways in. A dialog
-  // reopened for a rejected token (prefill carries a method) opens the method last used.
-  const applyDetection = (typed: string, detected: JiraDetectSiteResult, openedOnSite: boolean) => {
+  // reopened for a rejected sign-in (prefill carries a method) goes back the way it was made.
+  const applyDetection = (typed: string, detected: JiraDetectSiteResult, openedOnSite: boolean, canSignIn: boolean) => {
     if (detectedSiteRef.current !== typed) return;
     setSiteBase(detected.site);
     setDeployment(detected.deployment);
+    setSignInAvailable(canSignIn);
     const rememberedMethod = prefill?.method;
     if (detected.deployment === 'cloud') {
-      // Cloud has one way in: the API token steps.
-      setMethod('api-token');
-      setPhase('steps');
+      if (canSignIn && rememberedMethod === 'oauth' && openedOnSite) {
+        // Reconnect: the browser sign-in again, straight away.
+        void signIn(detected.site);
+      } else if (canSignIn && openedOnSite && rememberedMethod !== 'api-token') {
+        // Two equal ways in: the browser sign-in or an API token.
+        setPhase('choices');
+      } else {
+        // The API token steps: the only way in, the way a reopen last signed in,
+        // or the steps the user is already on while editing the Site field.
+        setMethod('api-token');
+        setPhase('steps');
+      }
     } else if (rememberedMethod === 'pat' || rememberedMethod === 'password') {
       // A reopen goes back to the Data Center method last used.
       setMethod(rememberedMethod);
@@ -91,8 +145,9 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
     const typed = siteText.trim();
     if (!typed || detectedSiteRef.current === typed) return;
     detectedSiteRef.current = typed;
-    window.electronAPI.backlog.jira.detectSite(typed)
-      .then((detected) => applyDetection(typed, detected, openedOnSite))
+    signInAvailableRef.current ??= loadSignInAvailable();
+    Promise.all([window.electronAPI.backlog.jira.detectSite(typed), signInAvailableRef.current])
+      .then(([detected, canSignIn]) => applyDetection(typed, detected, openedOnSite, canSignIn))
       .catch((error: unknown) => {
         reportRendererFailure('jira-connect', 'detect-site', error);
         // A failure for site text the user has since changed says nothing about the new text.
@@ -268,13 +323,64 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
 
   const steps = stepsFor(method);
   const isDataCenter = deployment === 'datacenter';
-  const backToChoices = isDataCenter ? () => { setPhase('choices'); setFailure(null); setSecret(''); } : undefined;
+  const isCloudWithSignIn = deployment === 'cloud' && signInAvailable;
+  const backToChoices = isDataCenter || isCloudWithSignIn
+    ? () => { setPhase('choices'); setFailure(null); setSecret(''); setReopenReason(null); }
+    : undefined;
+  const backFromWaiting = () => { browserSignIn.cancel(); setPhase('choices'); };
+  const choicesError = signInError ?? reopenReason;
 
   const body = (() => {
     if (phase === 'detecting') {
       return (
         <div className="flex justify-center py-6" data-testid="jira-connect-detecting">
           <LoaderCircle size={20} className="animate-spin text-fg-faint" />
+        </div>
+      );
+    }
+    if (phase === 'waiting') {
+      return (
+        <ConnectWaiting
+          message={<Trans>Waiting for Atlassian in your browser</Trans>}
+          onReopen={browserSignIn.reopen}
+          testIdPrefix="jira-connect"
+        />
+      );
+    }
+    if (phase === 'choices' && isCloudWithSignIn) {
+      return (
+        <div className="flex flex-col gap-2.5">
+          <ConnectChoices
+            onChoose={(choice) => {
+              if (choice === 'oauth') {
+                void signIn(siteBase ?? site);
+                return;
+              }
+              setMethod('api-token');
+              setPhase('steps');
+              setFailure(null);
+              setSignInError(null);
+              setReopenReason(null);
+            }}
+            choices={[
+              {
+                id: 'oauth',
+                icon: <ArtifactPlatformLogo platformId="jira" size={16} />,
+                label: t`Sign in with Atlassian`,
+                sublabel: t`Approve Kangentic in your browser`,
+                accent: true,
+                testId: 'jira-connect-choice-sign-in',
+              },
+              {
+                id: 'api-token',
+                icon: <KeyRound size={16} />,
+                label: t`Use an API token`,
+                sublabel: t`Paste a token from your Atlassian account`,
+                testId: 'jira-connect-choice-api-token',
+              },
+            ]}
+          />
+          <ConnectError message={choicesError} testId="jira-connect-error" />
         </div>
       );
     }
@@ -324,7 +430,7 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
 
   return (
     <BaseDialog
-      onClose={onClose}
+      onClose={handleClose}
       title={t`Connect Jira`}
       icon={<span className="flex text-accent"><ArtifactPlatformLogo platformId="jira" size={18} /></span>}
       testId="jira-connect-dialog"
@@ -332,8 +438,8 @@ export function JiraConnectDialog({ prefill, initialError, onClose, onSaved }: P
       save={phase === 'steps' ? { onSave: () => void connect(), disabled: !canConnect || submitting } : undefined}
       footer={
         <ConnectFooter
-          onBack={phase === 'steps' ? backToChoices : undefined}
-          onCancel={onClose}
+          onBack={phase === 'steps' ? backToChoices : phase === 'waiting' ? backFromWaiting : undefined}
+          onCancel={handleClose}
           onConnect={phase === 'steps' ? () => void connect() : undefined}
           connectDisabled={!canConnect}
           submitting={submitting}

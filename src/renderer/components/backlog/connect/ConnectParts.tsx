@@ -163,6 +163,28 @@ export function ConnectFootnote() {
   );
 }
 
+/**
+ * A browser sign-in waiting on the provider's approval page: a spinner, the
+ * provider's own line, and a link that opens the page again for a tab the user
+ * closed. The dialog's footer carries Back and Cancel.
+ */
+export function ConnectWaiting({ message, onReopen, testIdPrefix }: { message: React.ReactNode; onReopen: () => void; testIdPrefix: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2.5 py-2 text-sm" data-testid={`${testIdPrefix}-waiting`}>
+      <LoaderCircle size={24} className="animate-spin text-fg-faint" />
+      <span className="text-fg">{message}</span>
+      <button
+        type="button"
+        onClick={onReopen}
+        className="text-xs text-accent-fg hover:underline"
+        data-testid={`${testIdPrefix}-reopen-btn`}
+      >
+        <Trans>Open the page again</Trans>
+      </button>
+    </div>
+  );
+}
+
 /** The one red line a failed connect shows, selectable so it can be searched. */
 export function ConnectError({ message, testId }: { message: string | null; testId: string }) {
   if (!message) return null;

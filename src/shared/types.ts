@@ -6109,6 +6109,8 @@ export interface JiraAuthStatus {
   site?: string;
   /** What Connect can fill in again after a rejected token: never a secret. */
   prefill?: BoardConnectPrefill;
+  /** False when this build carries no Atlassian OAuth client id, so Cloud offers only the API token. */
+  signInAvailable: boolean;
 }
 
 /**
@@ -6172,10 +6174,26 @@ export interface LinearListTeamsResult {
 export type JiraDeployment = 'cloud' | 'datacenter';
 
 /**
- * How Kangentic signs in to a Jira site: an Atlassian API token with an email
- * (Cloud), or a personal access token or a username and password (Data Center).
+ * How Kangentic signs in to a Jira site: an Atlassian API token with an email or
+ * Sign in with Atlassian (`oauth`) on Cloud, or a personal access token or a
+ * username and password on Data Center.
  */
-export type JiraConnectMethod = 'api-token' | 'pat' | 'password';
+export type JiraConnectMethod = 'api-token' | 'pat' | 'password' | 'oauth';
+
+export interface JiraSignInInput {
+  /** The site the sign-in must be able to open: a host, or any URL on it. */
+  site: string;
+}
+
+/**
+ * The answer to Sign in with Atlassian: saved for the site, cancelled (the user
+ * left the waiting screen), or the reason it failed, Atlassian's own text when it
+ * gave one.
+ */
+export type JiraSignInResult =
+  | { ok: true; site: string; account: string }
+  | { ok: false; cancelled: true }
+  | { ok: false; cancelled: false; error: string };
 
 export interface JiraDetectSiteResult {
   /** The site's base URL, normalized (`https://acme.atlassian.net`, a Data Center base with its context path). */
@@ -6228,6 +6246,10 @@ export interface TrelloAuthStatus {
   signInAvailable: boolean;
 }
 
+/**
+ * A pasted Trello token to check and save. The Connect dialog sends only `own-key`, since
+ * Kangentic's key signs in through the browser (`signIn`) with nothing to paste.
+ */
 export interface TrelloConnectInput {
   kind: TrelloConnectKind;
   /** The user's own key. Ignored for `kangentic-key`, whose key never leaves main. */
@@ -6241,6 +6263,15 @@ export interface TrelloConnectResult {
   field?: 'apiKey' | 'token';
   error?: string;
 }
+
+/**
+ * The answer to Sign in with Trello on Kangentic's key: saved, cancelled (the user
+ * left the waiting screen), or why it failed.
+ */
+export type TrelloSignInResult =
+  | { ok: true }
+  | { ok: false; cancelled: true }
+  | { ok: false; cancelled: false; error: string };
 
 export interface TrelloOpenApprovalInput {
   kind: TrelloConnectKind;
@@ -9983,6 +10014,12 @@ export interface ElectronAPI {
       detectSite: (siteOrUrl: string) => Promise<JiraDetectSiteResult>;
       /** Check a credential against the site and save it when Jira accepts it. */
       connect: (input: JiraConnectInput) => Promise<JiraConnectResult>;
+      /** Open Atlassian's approval page in the browser and resolve when kangentic.com hands back. */
+      signIn: (input: JiraSignInInput) => Promise<JiraSignInResult>;
+      /** Open the pending sign-in's page again. */
+      reopenSignIn: () => Promise<void>;
+      /** Stop waiting for the browser; the pending `signIn` resolves as cancelled. */
+      cancelSignIn: () => Promise<void>;
     };
     asana: {
       authStatus: () => Promise<AsanaAuthStatus>;
@@ -10004,8 +10041,17 @@ export interface ElectronAPI {
       authStatus: () => Promise<TrelloAuthStatus>;
       /** Check a key and token with Trello, and save them only if Trello accepts them. */
       connect: (input: TrelloConnectInput) => Promise<TrelloConnectResult>;
-      /** Open Trello's approval page, where Trello shows the token to paste. */
+      /** Open Trello's approval page for the user's own key, where Trello shows the token to paste. */
       openApproval: (input: TrelloOpenApprovalInput) => Promise<void>;
+      /**
+       * Sign in with Trello on Kangentic's key: open the approval page and resolve when
+       * kangentic.com's return page hands the token back. Saved only if Trello accepts it.
+       */
+      signIn: () => Promise<TrelloSignInResult>;
+      /** Open the pending sign-in's page again. */
+      reopenSignIn: () => Promise<void>;
+      /** Stop waiting for the browser; the pending `signIn` resolves as cancelled. */
+      cancelSignIn: () => Promise<void>;
       listBoards: () => Promise<TrelloListBoardsResult>;
       /** Forget the saved key and token. */
       clearCredential: () => Promise<void>;

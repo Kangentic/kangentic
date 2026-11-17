@@ -53,6 +53,8 @@ export const EXPECTED_FAILURE_NAMES: ReadonlySet<string> = new Set([
   'AsanaError',
   'LinearError',
   'TrelloError',
+  // Atlassian, kangentic.com or the network did not answer a Jira sign-in renewal
+  'JiraRefreshUnavailableError',
   'PRResolverUnavailableError',
   'PRResolverTransientError',
   // The SSH link and remote git

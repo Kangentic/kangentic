@@ -89,11 +89,6 @@ msgstr "Ouvrir les paramètres de sécurité de Linear"
 
 #: src/renderer/components/linear/LinearSetupDialog.tsx
 #, fuzzy
-msgid "Open the page again"
-msgstr "Rouvrir la page"
-
-#: src/renderer/components/linear/LinearSetupDialog.tsx
-#, fuzzy
 msgid "Paste a key from Linear's settings"
 msgstr "Collez une clé depuis les paramètres de Linear"
 

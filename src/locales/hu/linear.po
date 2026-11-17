@@ -89,11 +89,6 @@ msgstr "A Linear biztonsági beállításainak megnyitása"
 
 #: src/renderer/components/linear/LinearSetupDialog.tsx
 #, fuzzy
-msgid "Open the page again"
-msgstr "Oldal újbóli megnyitása"
-
-#: src/renderer/components/linear/LinearSetupDialog.tsx
-#, fuzzy
 msgid "Paste a key from Linear's settings"
 msgstr "Illesszen be egy kulcsot a Linear beállításaiból"
 

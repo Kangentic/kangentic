@@ -602,6 +602,11 @@ msgstr "ファイルを開く"
 msgid "Open in {sourceName}"
 msgstr "{sourceName} で開く"
 
+#: src/renderer/components/backlog/connect/ConnectParts.tsx
+#, fuzzy
+msgid "Open the page again"
+msgstr "ページをもう一度開く"
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"

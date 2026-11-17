@@ -1,5 +1,6 @@
 import { withBackoff } from '../../shared';
 import type { JiraSiteCredential } from './credential-store';
+import { JiraRefreshRejectedError, freshJiraCredential } from './oauth-tokens';
 import type { JiraIssueRaw } from './mapper';
 
 /** HTTP request timeout in milliseconds. Matches the downloadFile helper. */
@@ -103,6 +104,11 @@ export class JiraClient {
   constructor(
     private credential: JiraSiteCredential,
     private readonly fetchImpl: typeof fetch = fetch,
+    /**
+     * False for a probe of a sign-in not saved yet. Its tokens are minutes old, and a
+     * renewal would read the store, which still holds the site's previous grant.
+     */
+    private readonly renews: boolean = true,
   ) {}
 
   get site(): string {
@@ -121,8 +127,47 @@ export class JiraClient {
     return this.credential.site;
   }
 
+  /**
+   * True for an API token with scopes, which only works through the gateway and may
+   * lack the board scopes. A browser sign-in also uses the gateway, but its consent
+   * asked for the board scopes, so a 401 there means the sign-in itself was refused.
+   */
+  get isScopedApiToken(): boolean {
+    return this.credential.method === 'api-token' && this.credential.viaGateway === true;
+  }
+
   private get platformVersion(): '2' | '3' {
     return this.isCloud ? '3' : '2';
+  }
+
+  /** The Authorization header for this sign-in, renewed first when it is a browser sign-in near expiry. */
+  async freshAuthorizationHeader(): Promise<string> {
+    await this.renewSignIn(false);
+    return this.authorizationHeader();
+  }
+
+  /**
+   * Renew a browser sign-in's access token: when it is near expiry, or always
+   * when `force` says Jira just refused it. A refusal from Atlassian becomes a 401,
+   * which every caller already reads as "Jira rejected the saved token". A refresh
+   * that got no answer (`JiraRefreshUnavailableError`) passes through, so the
+   * sign-in is kept and the caller offers Retry. Token methods are untouched.
+   */
+  /** A browser sign-in this client may renew. A probe of an unsaved one never does. */
+  private get canRenew(): boolean {
+    return this.credential.method === 'oauth' && this.renews;
+  }
+
+  private async renewSignIn(force: boolean): Promise<void> {
+    if (!this.canRenew) return;
+    try {
+      this.credential = await freshJiraCredential(this.credential, { force }, { fetchImpl: this.fetchImpl });
+    } catch (error) {
+      if (error instanceof JiraRefreshRejectedError) {
+        throw new JiraHttpError('Atlassian refused the saved sign-in', 401, '', null);
+      }
+      throw error;
+    }
   }
 
   /** The Authorization header for this sign-in. */
@@ -249,6 +294,24 @@ export class JiraClient {
   }
 
   private async getOnce<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
+    await this.renewSignIn(false);
+    const sentSecret = this.credential.secret;
+    try {
+      return await this.request<T>(path, query);
+    } catch (error) {
+      // A browser sign-in's access token can die before its stated expiry (a
+      // revoked grant, a clock off by minutes), so renew once and try again. When
+      // another request on this client renewed while this one was out, its token
+      // is already new, and a second renewal would only rotate the pair again.
+      if (this.canRenew && error instanceof JiraHttpError && error.status === 401) {
+        if (this.credential.secret === sentSecret) await this.renewSignIn(true);
+        return this.request<T>(path, query);
+      }
+      throw error;
+    }
+  }
+
+  private async request<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
     const url = new URL(`${this.apiBase}${path}`);
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value !== undefined && value !== '') url.searchParams.set(key, String(value));

@@ -89,11 +89,6 @@ msgstr "Otevřít nastavení zabezpečení Linearu"
 
 #: src/renderer/components/linear/LinearSetupDialog.tsx
 #, fuzzy
-msgid "Open the page again"
-msgstr "Otevřít stránku znovu"
-
-#: src/renderer/components/linear/LinearSetupDialog.tsx
-#, fuzzy
 msgid "Paste a key from Linear's settings"
 msgstr "Vložte klíč z nastavení Linearu"
 

@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear and Trello and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site sign-ins, Linear's API key and OAuth sign-in, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear and Trello and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -89,7 +89,7 @@ A download that carries a sign-in (`downloadFile` in `src/main/boards/shared/dow
 
 ### `Credentials`
 
-Opaque per-adapter credential bag (`Record<string, string>`). Each adapter owns its own stored shape. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Asana one Personal Access Token, Linear either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), Jira one sign-in per site (`jira/credential-store.ts`: the site's base URL, Cloud or Data Center, the method, an email or username, the secret, and for a scoped Cloud token its `cloudId` and `viaGateway`), and Trello `{kind, apiKey, token, savedAt}` in `trello-credentials.json` under the config directory. Keep adapter-specific shapes inside each adapter folder.
+Opaque per-adapter credential bag (`Record<string, string>`). Each adapter owns its own stored shape. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Asana one Personal Access Token, Linear either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), Jira one sign-in per site (`jira/credential-store.ts`: the site's base URL, Cloud or Data Center, the method, an email or username, the secret, for a scoped Cloud token or a browser sign-in its `cloudId` and `viaGateway`, and for a browser sign-in its `refreshToken` and `expiresAt`), and Trello `{kind, apiKey, token, savedAt}` in `trello-credentials.json` under the config directory. Keep adapter-specific shapes inside each adapter folder.
 
 A `jira-credentials.json` that exists but cannot be read (the OS keychain refused the decrypt, or the file is damaged) is copied aside to `jira-credentials.json.unreadable-<timestamp>` before the next save would write over it, so one failed read cannot sign every other Jira site out. If that copy fails, the save fails and the file stays as it was.
 
@@ -157,7 +157,7 @@ Backlog Import group (7 channels): `backlog:importCheckCli`, `backlog:importGetC
 
 A provider that signs in through Kangentic declares `Provider.auth` in `import-providers.tsx`: a `getStatus` that asks its own `boards:<provider>:authStatus` channel, and the `SetupDialog` that connects it. The Add Source popover asks `getStatus` when an account-wide provider is picked (Asana, Linear). Jira's sign-ins are per site, so it sets `checksPastedLink`: the popover asks with the pasted link when Connect is clicked, shows "Paste a search link so the site is known." for typed JQL with several sites connected, and continues the add once the dialog saves. The Import dialog's error banner offers the same dialog as a Connect button, prefilled with Jira's site and email.
 
-Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle, Jira a `boards:jira:*` group (3 channels: `authStatus`, which takes the pasted link because sign-ins are per site; `detectSite`, which normalizes a site and asks its anonymous `serverInfo` whether it runs Cloud or Data Center; and `connect`, which checks a credential against `/myself` and saves it, returning an error code the renderer turns into its line), and Linear its `boards:linear:*` group. Handlers live in each adapter's `ipc-handlers.ts` and are registered from the backlog handler. Keeping the surface adapter-local means provider specifics never leak into the generic backlog handler.
+Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle, Jira a `boards:jira:*` group (6 channels: `authStatus`, which takes the pasted link because sign-ins are per site and says whether this build offers Sign in with Atlassian; `detectSite`, which normalizes a site and asks its anonymous `serverInfo` whether it runs Cloud or Data Center; `connect`, which checks a credential against `/myself` and saves it, returning an error code the renderer turns into its line; and `signIn`, `reopenSignIn` and `cancelSignIn` for the browser sign-in), Linear its `boards:linear:*` group, and Trello a `boards:trello:*` group (8 channels: `authStatus`, `connect`, `openApproval`, `signIn`, `reopenSignIn`, `cancelSignIn`, `listBoards`, `clearCredential`). Handlers live in each adapter's `ipc-handlers.ts` and are registered from the backlog handler. Keeping the surface adapter-local means provider specifics never leak into the generic backlog handler.
 
 Linear ships a `boards:linear:*` group (6 channels: `authStatus`, `setApiKey`, `signIn`, `reopenSignIn`, `cancelSignIn`, `listTeams`), registered by `registerLinearIpcHandlers()` the same way. The renderer reaches either group only through its provider's `auth` entry in `import-providers.tsx` (`getStatus` plus a `SetupDialog`), so the popover and the Import dialog's **Connect** button never branch on a provider name.
 
@@ -168,11 +168,11 @@ team picker saves `https://linear.app/<workspace>/team/<KEY>/all`, which the URL
 a team whose key is renamed in Linear stops matching its saved source.
 
 - **Two ways in.** A personal API key is sent as `Authorization: <key>` with no `Bearer`. The browser
-  sign-in is OAuth 2.0 with PKCE (S256, no client secret, `read` scope): `oauth.ts` binds a loopback
-  server on the first free registered port (`LINEAR_OAUTH_REDIRECT_PORTS`, `http://127.0.0.1:<port>/callback`,
-  matched exactly by Linear), opens the authorize page in the system browser, refuses a callback whose
-  `state` does not match, and gives up after five minutes. An empty `LINEAR_OAUTH_CLIENT_ID` hides the
-  sign-in choice.
+  sign-in is OAuth 2.0 with PKCE (S256, no client secret, `read` scope): `oauth.ts` runs the shared
+  loopback listener (`shared/loopback-sign-in.ts`) on the first free registered port
+  (`LINEAR_OAUTH_REDIRECT_PORTS`, `http://127.0.0.1:<port>/callback`, matched exactly by Linear),
+  opens the authorize page in the system browser, refuses a callback whose `state` does not match,
+  and gives up after five minutes. An empty `LINEAR_OAUTH_CLIENT_ID` hides the sign-in choice.
 - **Tokens.** Access tokens last 24 hours and refresh tokens 30 days, and Linear rotates the refresh
   token on every refresh. The client renews five minutes before expiry and after a 401, one refresh at
   a time across every client, and saves the new pair at once. A caller holding a refresh token another
@@ -196,6 +196,69 @@ a team whose key is renamed in Linear stops matching its saved source.
   cached issue carries its `stateOrder` from the fetch that last saw it, so reordering a team's states
   in Linear reorders the Status filter only after a full sync (the all-imported state's Refresh) or as
   issues change.
+
+## Browser sign-ins through kangentic.com
+
+Jira's Sign in with Atlassian and Trello's Sign in with Trello cannot return to the desktop
+directly. Atlassian's OAuth 2.0 (3LO) has no PKCE for a public client, so the code exchange and
+every refresh need a client secret, and Trello only returns a token to an origin listed on the key.
+Both go through kangentic.com, which holds the Atlassian secret (`functions/oauth/jira/` in the
+kangentic.com repo) and serves Trello's return page, and both hand the token back the same way.
+
+- **The listener.** `shared/loopback-sign-in.ts` is the one loopback server for Linear, Jira and
+  Trello. It binds the literal `127.0.0.1`, on a registered port (Linear) or any free port of at
+  least 1024 (Jira, Trello), keeps one pending sign-in per provider, and waits for the callback path,
+  a cancel or the five-minute timeout. A request it does not recognize, or whose target the URL
+  parser refuses (`//`), gets a 400 and the wait goes on. A cancel that lands while the port is
+  still binding ends the attempt before the browser opens. The work after the callback (`finish`) runs while the sign-in is still pending, so a cancel
+  that lands during it still wins and nothing is saved.
+- **The handoff.** `shared/sealed-token.ts` makes a P-256 key pair and a 32-byte nonce per attempt.
+  The `state` the provider carries to kangentic.com is base64url JSON with exactly `port`, `pub` and
+  `nonce`, under 1024 characters; the service refuses any other shape with a plain 400. The service
+  redirects to `http://127.0.0.1:<port>/<provider>/callback` with `payload` (the token sealed to that
+  key: ECDH, HKDF-SHA256 salted with the nonce's bytes, AES-256-GCM, `ephemeralPub || iv ||
+  ciphertext`) or `error`, and the nonce. The listener checks the nonce first, on an error too, so a
+  forged `error=access_denied` cannot end the attempt. No token crosses a URL in the clear. The info
+  strings are `kangentic-jira-oauth-v1` and `kangentic-trello-oauth-v1`, so one provider's payload
+  never opens as the other's.
+- **Jira.** `jira/oauth.ts` opens `auth.atlassian.com/authorize` with `audience=api.atlassian.com`,
+  the client id, `read:jira-work read:jira-user offline_access` and the Jira Software board read
+  scopes, `redirect_uri=https://kangentic.com/oauth/jira/callback` and `prompt=consent`. The payload
+  is Atlassian's token answer as sent, read loosely; one with no refresh token fails, since it would
+  die within the hour. The site maps to a cloud id from
+  `api.atlassian.com/oauth/token/accessible-resources`: the site's own `_edge/tenant_info` id, then
+  its host. A site the grant does not cover shows "This sign-in can't open <site>." Every call goes
+  through `api.atlassian.com/ex/jira/{cloudId}`. An `error` shows Atlassian's `error_description`
+  when there is one (the service cuts it to 300 characters), otherwise a line for the code
+  (`access_denied`, `temporarily_unavailable`, `server_error`) or the code itself.
+- **Jira tokens.** `jira/oauth-tokens.ts` renews five minutes before expiry and once after a 401, by
+  `POST https://kangentic.com/oauth/jira/refresh` with `{ "refresh_token" }`. Atlassian rotates the
+  refresh token, so the new pair is saved before the new access token is used, one refresh runs per
+  site across every client, and a client holding a spent pair takes the saved one. Each site holds
+  its own grant from its own sign-in, so one site's rotation never spends another's. A 4xx (other
+  than 408 and 429) is a refusal: the client throws a 401, the Import dialog shows "Jira rejected
+  the saved token." with the **Connect Jira** button, and the credential is kept so that button
+  knows to start the browser sign-in again. A refresh token unused for 90 days lapses this way. A 5xx, a 408, a 429 or
+  no answer (`JiraRefreshUnavailableError`, an expected failure) keeps the sign-in and offers Retry.
+  So kangentic.com sees Atlassian's token answer before it seals it, and every refresh token on its
+  way to Atlassian; `docs/user-guide/backlog.md` tells the user so. A refresh that lands after a
+  Reconnect saved a new sign-in for the site saves nothing, and a rotated pair whose save failed is
+  kept in memory for the next refresh, since Atlassian already spent the token the store holds.
+  An empty `JIRA_OAUTH_CLIENT_ID` (`jira/constants.ts`) hides the choice, and Cloud opens straight on
+  the API token steps.
+- **Trello.** With Kangentic's key, `buildAuthorizeUrl` adds
+  `return_url=https://kangentic.com/oauth/trello/return?state=...` and `callback_method=fragment`.
+  The return page reads the token from the fragment, which never reaches a server, seals
+  `{ "token" }`, and redirects to `/trello/callback`. `trello/oauth.ts` checks the token with Trello
+  before the handler saves it as `kind: 'kangentic-key'`. `buildTrelloReturnUrl` is the one place
+  the state rides, so moving it from the query to the path is a change there alone. The user's own
+  key stays paste-only: its allowed origins are not kangentic.com.
+- **Owner steps.** The live flow needs the Atlassian 3LO app registered with the scopes above, the
+  `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET` Pages secrets on kangentic.com (until then
+  the callback answers `error=server_error`), and the client id committed in `jira/constants.ts`;
+  and for Trello, the app with `https://kangentic.com` as an allowed origin, `TRELLO_API_KEY` filled,
+  and the return page (kangentic.com #143) deployed. Before the page is live, a Trello sign-in times
+  out and goes back to the choices.
 
 ## Obsidian
 
@@ -251,11 +314,11 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | GitHub Projects | stable | `gh` | Projects v2 via `gh project item-list`. Requires `project` scope. |
 | Azure DevOps | stable | `az` | Work items via `az boards`. Requires `azure-devops` extension. |
 | Asana | stable | none | Personal Access Token. User creates the token at `app.asana.com/0/my-apps`, pastes it into the setup dialog; the token is validated against `/users/me` and stored encrypted via `safeStorage`. Ships its own `boards:asana:*` IPC group. |
-| Jira | stable | none | Cloud and Data Center. A source is a board, a project, a saved filter or a JQL query (`repository` is `<site base>::<kind>::<value>`). Cloud signs in with an Atlassian API token and email (Basic), always over `https` (a typed `http://` on a Cloud host is upgraded before the first request), retried through `api.atlassian.com/ex/jira/{cloudId}` for a scoped token; Data Center with a personal access token (Bearer) or a username and password. Sign-ins are per site, so its `boards:jira:authStatus` takes the pasted link and the popover checks it when Connect is clicked (`ProviderAuth.checksPastedLink`). Descriptions and comments come from `renderedFields` HTML, so one path reads Cloud's ADF and Data Center's wiki markup. A board source shows its column names, in board order, from `/rest/agile/1.0/board/{id}/configuration`. Ships its own `boards:jira:*` IPC group. The Cloud browser sign-in (OAuth through a Kangentic token service) is not built yet. |
+| Jira | stable | none | Cloud and Data Center. A source is a board, a project, a saved filter or a JQL query (`repository` is `<site base>::<kind>::<value>`). Cloud signs in with an Atlassian API token and email (Basic), always over `https` (a typed `http://` on a Cloud host is upgraded before the first request), retried through `api.atlassian.com/ex/jira/{cloudId}` for a scoped token; Data Center with a personal access token (Bearer) or a username and password. Sign-ins are per site, so its `boards:jira:authStatus` takes the pasted link and the popover checks it when Connect is clicked (`ProviderAuth.checksPastedLink`). Descriptions and comments come from `renderedFields` HTML, so one path reads Cloud's ADF and Data Center's wiki markup. A board source shows its column names, in board order, from `/rest/agile/1.0/board/{id}/configuration`. Ships its own `boards:jira:*` IPC group. Cloud also offers Sign in with Atlassian (Bearer, through the gateway), see [Browser sign-ins through kangentic.com](#browser-sign-ins-through-kangenticcom). |
 | Linear | stable | none | Personal API key or OAuth sign-in in the browser, both stored encrypted via `safeStorage`. Teams are picked from a list. Ships its own `boards:linear:*` IPC group. |
 | Obsidian Notes | stable | none | A vault folder on this computer, chosen in the folder dialog. Each note is a task. |
 | Obsidian Checklist items | stable | none | Same folder source. Each task line (`- [ ]`, `- [x]`, `- [/]`, `- [-]`) is a task, with the Tasks plugin's markers and Kanban plugin lanes. |
-| Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. Boards are picked from a list under their Workspace. Ships its own `boards:trello:*` IPC group. |
+| Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Kangentic's own key also signs in through the browser, with nothing to paste (see Trello's Connect dialog). Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. Boards are picked from a list under their Workspace. Ships its own `boards:trello:*` IPC group. |
 
 The registry enumerates all 9 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
 
@@ -264,17 +327,17 @@ The registry enumerates all 9 providers, and every one is stable. Stable provide
 **Connect Trello** offers two ways in. **Use your own API key** walks the user through making a
 Trello app at `trello.com/apps/admin`, pasting its key, and opening Trello's approval page for it
 (`scope=read`, `expiration=never`, no `return_url`), where Trello shows the token to paste. **Sign in
-with Trello** does the same for Kangentic's own key, `TRELLO_API_KEY` in `trello/constants.ts`, and
-shows only when that constant is set. It is empty until the team makes its Trello app, so a build
-without it opens straight on the own-key steps. The key never crosses to the renderer:
-`boards:trello:connect` and `boards:trello:openApproval` take `kind: 'kangentic-key'` and read it in
-main.
+with Trello** opens the approval page for Kangentic's own key, `TRELLO_API_KEY` in
+`trello/constants.ts`, and waits while kangentic.com's return page hands the token back (see
+[Browser sign-ins through kangentic.com](#browser-sign-ins-through-kangenticcom)); there is nothing
+to paste. A declined approval, a page that fails or a timeout goes back to the two choices with the
+reason. The choice shows only when that constant is set. It is empty until the team makes its Trello
+app, so a build without it opens straight on the own-key steps. The key never crosses to the
+renderer: `boards:trello:signIn` reads it in main.
 
 Every key Trello issues shares one rate limit across all of its tokens (300 requests per 10
 seconds, 100 per token), so the shipped key is one budget for every install, and the user's own key
-never touches it. The signed-off design returns the token to an https page on a Kangentic token
-service instead of a paste. That service does not exist yet. When it does, the sign-in's waiting
-state replaces the paste and the dialog's two choices stay the same.
+never touches it.
 
 Connect checks the key and token through `/members/me/boards` before saving. That call does not
 count against Trello's separate `/members` limit of 100 requests per 15 minutes, and its 401 text
