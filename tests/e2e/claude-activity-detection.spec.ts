@@ -387,22 +387,20 @@ test.describe('Claude Agent -- Task Card Spinner', () => {
       type: 'idle',
     }) + '\n');
 
-    await page.waitForTimeout(500);
-
     // Scroll to Planning to see the card
     await page.evaluate(() => {
       const el = document.querySelector('[data-swimlane-name="Planning"]');
       if (el) el.scrollIntoView({ inline: 'nearest', behavior: 'instant' });
     });
-    await page.waitForTimeout(300);
 
-    // Verify activity state transitioned to idle via IPC (the authoritative
-    // source). The UI spinner visibility is covered by the previous test's
-    // transition-to-thinking assertion.
-    const activity = await page.evaluate(async () => {
-      return window.electronAPI.sessions.getActivity();
-    });
-    const states = Object.values(activity) as string[];
-    expect(states).toContain('idle');
+    // Poll the activity state until it transitions to idle via IPC (the
+    // authoritative source). The UI spinner visibility is covered by the
+    // previous test's transition-to-thinking assertion.
+    await expect.poll(async () => {
+      const activity = await page.evaluate(async () => {
+        return window.electronAPI.sessions.getActivity();
+      });
+      return Object.values(activity as Record<string, string>);
+    }, { timeout: 5000 }).toContain('idle');
   });
 });

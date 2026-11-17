@@ -153,12 +153,9 @@ test.describe('Image Attachments', () => {
       textarea.dispatchEvent(pasteEvent);
     });
 
-    // Wait for the thumbnail to appear
-    await page.waitForTimeout(500);
     const thumbnails = page.locator('[data-testid="attachment-thumbnails"]');
     await expect(thumbnails).toBeVisible();
-    const images = thumbnails.locator('img');
-    expect(await images.count()).toBeGreaterThanOrEqual(1);
+    await expect(thumbnails.locator('img').first()).toBeVisible();
 
     // Form is dirty (image attached) - Cancel shows "Discard unsaved changes?" confirm.
     // Dismiss via Discard so the dialog fully closes before the next test opens it.
@@ -192,7 +189,6 @@ test.describe('Image Attachments', () => {
       textarea.dispatchEvent(pasteEvent);
     });
 
-    await page.waitForTimeout(500);
     const thumbnails = page.locator('[data-testid="attachment-thumbnails"]');
     await expect(thumbnails).toBeVisible();
 
@@ -290,12 +286,12 @@ test.describe('Image Attachments', () => {
       textarea.dispatchEvent(pasteEvent);
     });
 
-    await page.waitForTimeout(500);
+    // The pasted chip must exist before Create, or the task is created without it.
+    await expect(page.locator('[data-testid="attachment-chip"]')).toHaveCount(1);
 
     // Submit the form (type="submit" distinguishes from dev-only TestHarness buttons)
     const createButton = page.locator('button[type="submit"]:has-text("Create")');
     await createButton.click();
-    await page.waitForTimeout(300);
 
     // Verify the task was created
     const taskCard = page.locator('[data-testid="swimlane"]').locator('text=Task with image').first();

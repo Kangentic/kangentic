@@ -169,6 +169,21 @@ async function getStoreAgentSessionId(page: Page, sessionId: string): Promise<st
 }
 
 /**
+ * Count the fork toasts the toast store holds right now. The push handler decides the
+ * toast synchronously (`enqueueSessionUpdate` runs its thunk at once, and `addToast`
+ * is inside it), so by the time `fireStatusPush` returns the store already holds any
+ * toast the push raised. Reading the store, not the DOM, also needs no render cycle.
+ */
+async function getForkToastCount(page: Page): Promise<number> {
+  return page.evaluate((title) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { toast: { getState: () => { toasts: Array<{ title: string }> } } };
+    }).__zustandStores;
+    return stores?.toast.getState().toasts.filter((toast) => toast.title === title).length ?? 0;
+  }, FORK_TOAST_TEXT);
+}
+
+/**
  * Fire a SESSION_STATUS push for an arbitrary session (unlike `fireStatusPush`
  * above, which is hardcoded to the module-level SESSION_ID/TASK_ID/PROJECT_ID).
  * Used by the project-gate and transient-gate describe blocks below, each of
@@ -233,10 +248,9 @@ test.describe('Conversation-fork toast (agentSessionId flip on a running session
     // A repeat push with the SAME (already-reconciled) id must not re-toast:
     // after the first upsert the store already holds agent-b.
     await fireStatusPush(page, `agent-b-${RUN_ID}`);
-    // Intentional fixed wait: cannot poll for non-occurrence. 800ms is above
-    // the React render cycle and below the toast auto-dismiss window.
-    await page.waitForTimeout(800);
-    expect(await page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT }).count()).toBe(1);
+    // The push handler has run by the time fireStatusPush returns (see getForkToastCount),
+    // so a second toast would already be in the store.
+    expect(await getForkToastCount(page)).toBe(1);
 
     // The card names no task, so a click on it is how the user finds which one.
     await forkToast.getByTestId('toast-body').click();
@@ -264,9 +278,12 @@ test.describe('First id capture stays quiet (null -> id)', () => {
   test('does not toast when a session captures its first agent id', async () => {
     await fireStatusPush(page, `agent-first-${RUN_ID}`);
 
-    // Intentional fixed wait: cannot poll for non-occurrence (see above).
-    await page.waitForTimeout(800);
-    expect(await page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT }).count()).toBe(0);
+    // Confirm the push reached the onStatus handler (upsertSession ran), so "no toast"
+    // is not a push that never landed. The toast decision is synchronous in that handler.
+    await expect
+      .poll(() => getStoreAgentSessionId(page, SESSION_ID), { timeout: 5000 })
+      .toBe(`agent-first-${RUN_ID}`);
+    expect(await getForkToastCount(page)).toBe(0);
   });
 });
 
@@ -404,10 +421,9 @@ test.describe('Fork on a background (non-current) project stays quiet (project g
       .poll(() => getStoreAgentSessionId(page, BACKGROUND_SESSION_ID), { timeout: 5000 })
       .toBe(FORKED_AGENT_SESSION_ID);
 
-    // Intentional fixed wait: cannot poll for non-occurrence. 800ms is above
-    // the React render cycle and below the toast auto-dismiss window.
-    await page.waitForTimeout(800);
-    expect(await page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT }).count()).toBe(0);
+    // The toast decision is synchronous in the push handler, which the poll above
+    // proved has run (see getForkToastCount).
+    expect(await getForkToastCount(page)).toBe(0);
   });
 });
 
@@ -507,10 +523,9 @@ test.describe('Transient session (Command Terminal) fork stays quiet (transient 
       .poll(() => getStoreAgentSessionId(page, TRANSIENT_SESSION_ID), { timeout: 5000 })
       .toBe(FORKED_AGENT_SESSION_ID);
 
-    // Intentional fixed wait: cannot poll for non-occurrence. 800ms is above
-    // the React render cycle and below the toast auto-dismiss window.
-    await page.waitForTimeout(800);
-    expect(await page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT }).count()).toBe(0);
+    // The toast decision is synchronous in the push handler, which the poll above
+    // proved has run (see getForkToastCount).
+    expect(await getForkToastCount(page)).toBe(0);
   });
 });
 
@@ -636,9 +651,8 @@ test.describe('Fork on a non-running session stays quiet (status gate)', () => {
       .poll(() => getStoreAgentSessionId(page, STATUS_SESSION_ID), { timeout: 5000 })
       .toBe(FORKED_AGENT_SESSION_ID);
 
-    // Intentional fixed wait: cannot poll for non-occurrence. 800ms is above
-    // the React render cycle and below the toast auto-dismiss window.
-    await page.waitForTimeout(800);
-    expect(await page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT }).count()).toBe(0);
+    // The toast decision is synchronous in the push handler, which the poll above
+    // proved has run (see getForkToastCount).
+    expect(await getForkToastCount(page)).toBe(0);
   });
 });

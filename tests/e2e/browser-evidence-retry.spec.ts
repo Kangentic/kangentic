@@ -145,12 +145,13 @@ test.describe('Claude Agent -- Browser Send evidence/retry paths', () => {
 
       await ctx.page.locator('[data-testid="browser-send"]').click();
 
-      // No error toast or inline error should ever appear. Wait long enough
-      // for the engine's retry window (~5s) plus margin, then assert the
-      // error region stays empty.
-      await ctx.page.waitForTimeout(7000);
+      // No inline error should appear. handleSend calls setSending(true)
+      // synchronously, so the button is disabled for the whole engine cycle
+      // (retry window ~5s plus margin) and enabled again once it finishes.
+      // Wait for that, then assert the error region stayed empty.
       const sendButton = ctx.page.locator('[data-testid="browser-send"]');
-      await expect(sendButton).toBeEnabled({ timeout: 10000 });
+      await expect(sendButton).toBeEnabled({ timeout: 30000 });
+      await expect(ctx.page.locator('[data-testid="browser-send-error"]')).toHaveCount(0);
 
       // Capture file is written before the engine ships the prompt, so its
       // existence proves the IPC path completed even if the engine retried.

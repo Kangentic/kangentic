@@ -188,6 +188,26 @@ async function warmBothProjectsAndResetCounter(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Wait until the IPC call counters show the cold-path fan-out ran. `allOf` channels must
+ * each have been called; `anyOf` channels together must total more than zero.
+ */
+async function waitForColdLoadCalls(
+  page: Page,
+  options: { anyOf?: string[]; allOf?: string[] },
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const counts = await page.evaluate(() =>
+        (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+      );
+      const allCalled = (options.allOf ?? []).every((channel) => (counts[channel] ?? 0) > 0);
+      const anyTotal = (options.anyOf ?? []).reduce((total, channel) => total + (counts[channel] ?? 0), 0);
+      return allCalled && (options.anyOf ? anyTotal > 0 : true);
+    }, { timeout: 3000 })
+    .toBe(true);
+}
+
 // ---------------------------------------------------------------------------
 // Test: background-project agent push invalidates the warm cache for that project
 // ---------------------------------------------------------------------------
@@ -211,10 +231,10 @@ test.describe('useAgentDrivenInvalidation - background project push invalidates 
       await page.locator('[role="button"]:has-text("Inv Beta")').click();
       await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
 
-      // Allow the cold-path async fan-out to complete (loadBoard + loadBacklog + loadConfig).
+      // Wait for the cold-path async fan-out (loadBoard + loadBacklog + loadConfig).
       // The assertions use > 0 to prove the cold path ran; the exact count is an
       // implementation detail of loadBoard's IPC fan-out.
-      await page.waitForTimeout(500);
+      await waitForColdLoadCalls(page, { anyOf: ['tasks.list', 'swimlanes.list'] });
 
       const counts = await page.evaluate(() =>
         (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
@@ -242,7 +262,7 @@ test.describe('useAgentDrivenInvalidation - background project push invalidates 
       await page.locator('[role="button"]:has-text("Inv Beta")').click();
       await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
 
-      await page.waitForTimeout(500);
+      await waitForColdLoadCalls(page, { anyOf: ['tasks.list', 'swimlanes.list'] });
 
       const counts = await page.evaluate(() =>
         (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
@@ -268,7 +288,7 @@ test.describe('useAgentDrivenInvalidation - background project push invalidates 
       await page.locator('[role="button"]:has-text("Inv Beta")').click();
       await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
 
-      await page.waitForTimeout(500);
+      await waitForColdLoadCalls(page, { anyOf: ['tasks.list', 'swimlanes.list'] });
 
       const counts = await page.evaluate(() =>
         (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
@@ -294,7 +314,7 @@ test.describe('useAgentDrivenInvalidation - background project push invalidates 
       await page.locator('[role="button"]:has-text("Inv Beta")').click();
       await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
 
-      await page.waitForTimeout(500);
+      await waitForColdLoadCalls(page, { anyOf: ['tasks.list', 'swimlanes.list'] });
 
       const counts = await page.evaluate(() =>
         (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
@@ -320,7 +340,7 @@ test.describe('useAgentDrivenInvalidation - background project push invalidates 
       await page.locator('[role="button"]:has-text("Inv Beta")').click();
       await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
 
-      await page.waitForTimeout(500);
+      await waitForColdLoadCalls(page, { anyOf: ['tasks.list', 'swimlanes.list', 'backlog.list'] });
 
       const counts = await page.evaluate(() =>
         (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
@@ -352,8 +372,8 @@ test.describe('useAgentDrivenInvalidation - background project push invalidates 
       await page.locator('[role="button"]:has-text("Inv Beta")').click();
       await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
 
-      // Allow cold-path fan-out to complete.
-      await page.waitForTimeout(500);
+      // Wait for the cold-path fan-out.
+      await waitForColdLoadCalls(page, { anyOf: ['tasks.list', 'swimlanes.list'] });
 
       const counts = await page.evaluate(() =>
         (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
@@ -385,12 +405,11 @@ test.describe('useAgentDrivenInvalidation - current project push does not dirty 
           .__mockFireTaskCreatedByAgent('new-task-alpha', 'New Alpha Task', 'To Do', currentProjectId);
       }, PROJECT_A_ID);
 
-      // Wait for the debounced loadBoard to fire AND complete (250ms debounce + 300ms buffer).
-      // This ensures tasks.list from the board reload is captured BEFORE we reset the
-      // counter. Without this wait, the debounced call may fire after the reset and
-      // falsely count against the warm-switch assertion.
-      // (intentional fixed wait - debounce duration is deterministic at 250ms)
-      await page.waitForTimeout(600);
+      // Wait for the debounced loadBoard to fire AND complete (tasks.list + backlog.list).
+      // This ensures the board reload is captured BEFORE we reset the counter. Without
+      // this wait, the debounced call may fire after the reset and falsely count
+      // against the warm-switch assertion.
+      await waitForColdLoadCalls(page, { allOf: ['tasks.list', 'backlog.list'] });
 
       // At this point the debounced board reload has completed. Reset the counter
       // so the only IPC traffic we measure is from the upcoming Beta->Alpha switch.
