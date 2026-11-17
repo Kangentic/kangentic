@@ -81,13 +81,13 @@ export default defineConfig({
       // in parallel). The electron project keeps 8 - its per-file launch overlap
       // is the real win there.
       //
-      // Measured again on 2026-11-17 with CI on the static bundle: 4 workers ran
-      // the eleven shards' tests in 2,430s summed against 2,655s at 3, about 20s
-      // a shard. Not taken on one run. The history above is that 4 held until
-      // load tipped it, a flake is a red shard under --fail-on-flaky-tests, and
-      // one run cannot show the next one. The flake in that run
-      // (stats-lazy-retry.spec.ts) was the cold dev server, which 3 workers hit
-      // as well (tests/ui/dev-server.ts), so it says nothing either way.
+      // Measured again on 2026-11-17 with CI on the static bundle, three runs at
+      // 4 workers against two at 3 on the same shard plan. The eleven test steps
+      // summed to 2,300, 2,309 and 2,639s at 4 and to 2,461 and 2,701s at 3: 6%
+      // on the means, inside the spread between two runs of one count. One of
+      // the three runs at 4 had a flaky test, a layout read one frame early
+      // (edit-automation-guards.spec.ts, since fixed), and none of five runs at
+      // 3 did. A flake is a red shard under --fail-on-flaky-tests, so 3 stays.
       workers: 3,
       // CI-only single retry. It does not let a flake pass: ci.yml runs this
       // project with --fail-on-flaky-tests, so a test that passes only on its
