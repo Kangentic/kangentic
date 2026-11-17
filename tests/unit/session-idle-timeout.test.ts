@@ -62,6 +62,14 @@ vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({})),
 }));
 
+// The handled-error sink behind sessionHandlersReporter, watched for the tags a
+// thrown launch-failure park reports under.
+const reportHandledError = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/error-reporting', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/analytics/error-reporting')>()),
+  reportHandledError,
+}));
+
 // SessionRepository mock: getLatestForTask is driven by mockGetLatestForTask
 // which is set per-test in beforeEach. All other methods are stubs.
 const mockGetLatestForTask = vi.fn(() => null as SessionRecord | null);
@@ -240,6 +248,9 @@ function createMockContext() {
       isResuming: vi.fn(() => false),
       // Whether the launch gets its one retry. No, unless a test says so.
       mayRetryLaunch: vi.fn((_sessionId?: string) => false),
+      // A shell that died before its typed line ran. No, unless a test says so.
+      shellDiedBeforeLaunch: vi.fn((_sessionId?: string) => false),
+      parkFailedLaunch: vi.fn((_sessionId?: string) => true),
       // What the report found in the launch's output. Nothing, unless a test says so.
       launchOutputClass: vi.fn(async (_sessionId?: string) => undefined as string | undefined),
       noteAgentExitedAtStart: vi.fn(),
@@ -816,6 +827,179 @@ describe('agent-never-started listener', () => {
 
     await vi.waitFor(() => expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-never', 'never-started'));
     expect(mockSetStartBlockedReason).toHaveBeenCalledWith('sess-never', 'never-started');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A shell that died before its typed line ran takes the never-started path
+// (Sentry DESKTOP-3X: PowerShell refused to start, and the task was left with
+// an exited row, no retry and no notice)
+// ---------------------------------------------------------------------------
+
+describe('exit listener - a shell that died before its typed line ran', () => {
+  const DLL_INIT_FAILED = -1073741502;
+  const DIED_SESSION = {
+    id: 'sess-died',
+    taskId: 'task-died',
+    transient: false,
+    status: 'exited',
+    projectId: 'proj-1',
+    resuming: false,
+  } as Session;
+
+  function register(options: { diedBeforeLaunch?: boolean; rowStatus?: Session['status']; liveSessionId?: string; resuming?: boolean } = {}): ReturnType<typeof createMockContext> {
+    vi.clearAllMocks();
+    capturedSessionEventHandlers.clear();
+    vi.mocked(markRecordSuspended).mockReturnValue(true);
+    mockGetProjectRepos.mockReturnValue({
+      tasks: {
+        getById: vi.fn(() => ({ id: 'task-died', session_id: 'sess-died', swimlane_id: 'lane-doing' })),
+        update: vi.fn(),
+      },
+      swimlanes: { getById: vi.fn(() => null) },
+    });
+    const context = createMockContext();
+    context.sessionManager.getSessionProjectId.mockReturnValue('proj-1');
+    context.sessionManager.shellDiedBeforeLaunch.mockReturnValue(options.diedBeforeLaunch ?? true);
+    context.sessionManager.getSession.mockImplementation((sessionId?: string) => {
+      if (sessionId === 'sess-died') return { ...DIED_SESSION, resuming: options.resuming ?? false, status: options.rowStatus ?? 'exited' } as Session;
+      if (options.liveSessionId && sessionId === options.liveSessionId) return { ...DIED_SESSION, id: options.liveSessionId, status: 'running' } as Session;
+      return null;
+    });
+    if (options.liveSessionId) {
+      const liveSessionId = options.liveSessionId;
+      context.sessionManager.findLiveSessionByTaskId.mockReturnValue({ ...DIED_SESSION, id: liveSessionId, status: 'running' } as never);
+    }
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-died', title: 'Shell died' });
+    registerSessionHandlers(context as never);
+    return context;
+  }
+
+  async function fireExit(intentional?: boolean, exitCode: number = DLL_INIT_FAILED): Promise<void> {
+    capturedSessionEventHandlers.get('exit')?.('sess-died', exitCode, intentional);
+    await withTaskLock('task-died', async () => {});
+  }
+
+  afterEach(() => {
+    vi.mocked(markRecordSuspended).mockReset();
+  });
+
+  it('parks the row as the system\'s pause, marks the launch failed, and retries once', async () => {
+    const context = register();
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    mockResumeTaskSession.mockResolvedValue(null);
+
+    await fireExit();
+
+    await vi.waitFor(() => expect(mockResumeTaskSession).toHaveBeenCalledTimes(1));
+    expect(mockResumeTaskSession).toHaveBeenCalledWith(context, 'task-died', { projectId: 'proj-1', startPath: 'retry', onFailed: expect.any(Function) });
+    expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'sess-died', 'system');
+    expect(mockMarkLaunchFailed).toHaveBeenCalledWith('sess-died');
+    expect(context.sessionManager.parkFailedLaunch).toHaveBeenCalledWith('sess-died');
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('raises the notice and puts the reason on the row when the retry fails too', async () => {
+    const context = register();
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    mockResumeTaskSession.mockImplementation(async (_context: unknown, _taskId: string, options: { onFailed?: () => void }) => {
+      options.onFailed?.();
+      return null;
+    });
+
+    await fireExit();
+
+    await vi.waitFor(() => expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-died', 'never-started'));
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    expect(mockResumeTaskSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes straight to the notice when no retry is allowed (a retry that died the same way)', async () => {
+    const context = register();
+    context.sessionManager.mayRetryLaunch.mockReturnValue(false);
+
+    await fireExit();
+
+    await vi.waitFor(() => expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-died', 'never-started'));
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: 'an intentional exit', intentional: true, exitCode: 1, diedBeforeLaunch: true },
+    { label: 'a shell that did not die before its typed line', intentional: false, exitCode: 1, diedBeforeLaunch: false },
+  ])('does nothing for $label', async ({ intentional, exitCode, diedBeforeLaunch }) => {
+    const context = register({ diedBeforeLaunch });
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+
+    await fireExit(intentional, exitCode);
+    await drainUntil(() => false, 20);
+
+    expect(context.sessionManager.parkFailedLaunch).not.toHaveBeenCalled();
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
+  });
+
+  it('leaves the task alone when another start owns it by the time the lock is free', async () => {
+    const context = register({ liveSessionId: 'sess-newer' });
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+
+    await fireExit();
+    await drainUntil(() => false, 20);
+
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(context.sessionManager.parkFailedLaunch).not.toHaveBeenCalled();
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('leaves a row that is no longer the exited launch\'s', async () => {
+    const context = register({ rowStatus: 'suspended' });
+
+    await fireExit();
+    await drainUntil(() => false, 20);
+
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(context.sessionManager.parkFailedLaunch).not.toHaveBeenCalled();
+  });
+
+  it('parks a died resume without marking its launch failed, since its conversation is still there', async () => {
+    const context = register({ resuming: true });
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    mockResumeTaskSession.mockResolvedValue(null);
+
+    await fireExit();
+
+    await vi.waitFor(() => expect(context.sessionManager.parkFailedLaunch).toHaveBeenCalledWith('sess-died'));
+    expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'sess-died', 'system');
+    expect(mockMarkLaunchFailed).not.toHaveBeenCalled();
+  });
+
+  it('parks nothing and retries nothing when the record was no longer the exited launch\'s to suspend', async () => {
+    const context = register();
+    vi.mocked(markRecordSuspended).mockReturnValue(false);
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    mockResumeTaskSession.mockResolvedValue(null);
+
+    await fireExit();
+    await vi.waitFor(() => expect(markRecordSuspended).toHaveBeenCalledTimes(1));
+    await drainUntil(() => false, 20);
+
+    expect(context.sessionManager.parkFailedLaunch).not.toHaveBeenCalled();
+    expect(mockMarkLaunchFailed).not.toHaveBeenCalled();
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
+  });
+
+  it('reports a park that throws under the launch_failure_park stage', async () => {
+    const context = register();
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    vi.mocked(markRecordSuspended).mockImplementation(() => { throw new TypeError('park defect'); });
+
+    await fireExit();
+
+    await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ stage: 'launch_failure_park' });
+    expect(context.sessionManager.parkFailedLaunch).not.toHaveBeenCalled();
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
   });
 });
 

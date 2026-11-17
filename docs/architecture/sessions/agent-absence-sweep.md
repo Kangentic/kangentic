@@ -489,6 +489,19 @@ session, no live session, a throw, no project) therefore has the listener call
 one report. A Command Terminal still ends, and a workflow's own agent keeps the exited row its pane
 restarts from. A session hidden until adopted retires too, since no listener may learn of it.
 
+**A shell that dies before its typed line ran takes the same path.** The sweep never sees it,
+because its PTY exits: PowerShell refused to start with STATUS_DLL_INIT_FAILED under a second,
+having printed nothing (Sentry DESKTOP-3X), and the task was left with an exited row. When a task's
+shell exits on its own with no output and no sign its typed line ran, `noteLaunchEnded` marks the
+session `shellDiedBeforeLaunch` and still reports `shell_exit`. The `exit` listener in
+`handlers/sessions.ts` then parks the row under the task lock instead of pausing it, since there is
+no PTY left to suspend. The record goes from `exited` to `suspended` with `system`, a fresh launch
+is marked failed, and `SessionManager.parkFailedLaunch` turns the row `suspended` under its own id.
+From there it is the never-started path: one retry, then the notice and `startBlockedReason`. The
+shell's own exit proves the agent never ran, so `mayRetryLaunch` allows that retry whatever the
+adapter reports. An intentional exit, a host loss, a quit and a session hidden until adopted are
+not parked.
+
 **A failed launch gets one retry.** Once the pause lands and the task lock is free, the listener asks
 `mayRetryLaunch`, and with no evidence the agent ran and no cause identified as the user's it calls
 `resumeTaskSession` with `startPath: 'retry'` on a fresh PTY. A second launch cannot sign anyone in,

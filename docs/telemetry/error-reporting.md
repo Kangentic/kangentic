@@ -505,7 +505,7 @@ in one Sentry org, one triage surface.
   with the same redacted stderr tail), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
   `crashCount` - see the GPU health bullet below), a failed agent launch (`source: agent_launch`,
-  see "Every failed launch has one report" below), a task leftover reap or a
+  see "Every failed launch that is reported has one report" below), a task leftover reap or a
   leftover-list Stop that
   failed (`source: task_reap`, with `stage` (`reap` or `stop`) and `code` (`reader_load`,
   `empty_scan`, `process_list`, `window_list`, `connection_list`, `reap_error`, `host_timeout`,
@@ -581,7 +581,7 @@ in one Sentry org, one triage surface.
   The stderr tail is one worker's text and cannot say which crash wrote it, so a
   crash with a watchdog line also carries it on its own `crashes` entry, read at report time:
   `request_timeout method=transcript.trailRead watchdog="[retrieval-worker] event loop held 5 s in transcript:parse-codex"`.
-- **Every failed launch has one report.** A user whose terminal never starts leaves, and most of
+- **Every failed launch that is reported has one report.** A user whose terminal never starts leaves, and most of
   these failures throw nothing, so `src/main/pty/agent-launch-report.ts` is the one way a launch
   failure reaches Sentry. Each report has a `stage`, and each stage its own error name:
 
@@ -621,13 +621,18 @@ in one Sentry org, one triage surface.
   `never_started` adds `judge` (`sweep`, `timer`). A preflight report
   adds `error_type` and `errno` when the error has them, and `start_refused_reason` for a start
   refused before it had a PTY (`AgentStartRefusedError`): `worktree-missing` or `folder-missing`
-  for a gone folder, `prompt-too-long` for a command its shell cannot run. The folder's path is
-  redacted, so this tag is what tells a gone worktree from a gone project folder (Sentry DESKTOP-2P
-  could not). In any shell, a launch past cmd's typed budget whose `.cmd` shim cannot be read past
+  for a gone folder. The folder's path is redacted, so this tag is what tells a gone worktree from
+  a gone project folder (Sentry DESKTOP-2P could not). A command too long for its shell
+  (`AgentCommandTooLongError`) is refused by design and its card says `prompt-too-long`, so
+  `reportPreflightFailure` counts it as `spawn_failed` and sends nothing, on every path, and spends
+  no key (Sentry DESKTOP-3Z spent the run's one OpenCode resume key on one). In any shell, a launch
+  past cmd's typed budget whose `.cmd` shim cannot be read past
   (`AgentBatchShimUnresolvedError`) is refused the same way, with the same card reason, and goes
   under the cause `batch_shim_unresolved` whichever path started it, with `batch_shim` naming why
-  the shim gave up (`unreadable`, `unparsed`, `target_missing`, `target_not_script`, `node_path`).
-  Sentry DESKTOP-3R saw only the typed refusal, 30 to 60 s later, and could not say which shim. A
+  the shim gave up (`unreadable`, `unparsed`, `target_missing`, `target_batch` for a chain of
+  shims past `MAX_SHIM_HOPS`, `target_ps1`, `target_extensionless`, `target_other`, `node_path`).
+  Sentry DESKTOP-3R saw only the typed refusal, 30 to 60 s later, and could not say which shim, and
+  DESKTOP-3Y's one `target_not_script` covered every target that was not a program or a script. A
   Post-Worktree Script failure (`WorktreeSetupScriptError`) adds how the script ended, from
   `spawnWithAbort`'s fields: `script_exit` (its exit code), `script_signal` (a `SIG` name, for a
   script something else killed) and `timed_out` (`yes`, `no`). Sentry DESKTOP-3D had none and could

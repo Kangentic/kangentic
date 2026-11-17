@@ -1730,14 +1730,36 @@ export class SessionManager extends EventEmitter {
    * neither of which a second launch can fix. A cause nobody identified retries,
    * since it may be ours. Asked after the pause, since a late hook can land while
    * the session goes down, and it waits for the output read the report posted. A
-   * retry is never retried.
+   * retry is never retried. A shell that died before its typed line ran proves
+   * the agent never started whatever its adapter reports.
    */
   async mayRetryLaunch(sessionId: string): Promise<boolean> {
     const session = this.registry.get(sessionId);
     if (!session || session.startPath === 'retry') return false;
     const outputClass = await session.launchOutputRead;
     if (outputClass && isLaunchRetryPointless(outputClass)) return false;
-    return !isShuttingDown() && launchNeverStarted(session);
+    if (isShuttingDown()) return false;
+    return launchNeverStarted(session) || (session.shellDiedBeforeLaunch === true && !hasAgentRunEvidence(session));
+  }
+
+  /** True for a task's session whose shell exited on its own before its typed line ran (`noteLaunchEnded`). */
+  shellDiedBeforeLaunch(sessionId: string): boolean {
+    return this.registry.get(sessionId)?.shellDiedBeforeLaunch === true;
+  }
+
+  /**
+   * Park a launch whose shell died before its typed line ran as a paused row,
+   * in place and under its own id, so it reads as a pause leaves one: the
+   * task's Resume, and the row `mayRetryLaunch` and `markStartBlocked` read.
+   * Only the exited row that launch left; anything else is declined.
+   */
+  parkFailedLaunch(sessionId: string): boolean {
+    const session = this.registry.get(sessionId);
+    if (!session || session.status !== 'exited' || session.shellDiedBeforeLaunch !== true) return false;
+    session.status = 'suspended';
+    session.exitCode = null;
+    this.emit('session-changed', sessionId, toSession(session));
+    return true;
   }
 
   /** What the report found in this launch's output. Undefined when it read nothing. */
@@ -1848,18 +1870,29 @@ export class SessionManager extends EventEmitter {
    * something. A host loss has its own report, a hidden agent was never the
    * task's, and a report from a quit would never land (`recordAbandonedLaunches`
    * covers the quit).
+   *
+   * A task's shell that died on its own before its typed line ran, having
+   * printed nothing, is marked `shellDiedBeforeLaunch`, whether or not a report
+   * already went: the exit listener parks the row and gives the launch its one
+   * retry, as the sweep's never-started path does (Sentry DESKTOP-3X).
    */
   private noteLaunchEnded(
     session: ManagedSession,
     exit: { exitCode: number; signal: number | null; intentional: boolean },
   ): void {
     if (session.agentParser) logLaunchStep(session, 'exited');
-    if (session.launchFailureNoted === true || !session.agentParser) return;
+    if (!session.agentParser) return;
     if (isShuttingDown() || exit.exitCode === PTY_HOST_LOST_EXIT_CODE) return;
     if (this.isHiddenUntilAdopted(session.id) || hasAgentRunEvidence(session)) return;
+    const typedLineNeverRan = typeof session.agentOutputAt !== 'number';
+    // Only a task's session: a Command Terminal and a workflow agent are both
+    // transient, and neither has a task to park or retry.
+    if (!exit.intentional && typedLineNeverRan && typeof session.firstOutputAt !== 'number' && !session.transient) {
+      session.shellDiedBeforeLaunch = true;
+    }
+    if (session.launchFailureNoted === true) return;
     const exitTags = { exit_code: String(exit.exitCode), exit_signal: exit.signal === null ? 'none' : String(exit.signal) };
     if (!exit.intentional) {
-      const typedLineNeverRan = typeof session.agentOutputAt !== 'number';
       if (session.reportsAgentStart === true || typedLineNeverRan) {
         this.reportLaunchOf(session, 'shell_exit', { extraTags: exitTags });
       }

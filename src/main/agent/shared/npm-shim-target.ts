@@ -151,12 +151,34 @@ export type BatchShimGiveUp =
   | 'unparsed'
   /** The target the shim names is not on disk. */
   | 'target_missing'
-  /** The target is neither a program nor a Node script. */
-  | 'target_not_script'
-  /** A Node script whose shim sets `NODE_PATH`, which the script may read. */
+  /** A chain of `.cmd` or `.bat` shims longer than `MAX_SHIM_HOPS`, or one that loops. */
+  | 'target_batch'
+  /** The target is a `.ps1` script. */
+  | 'target_ps1'
+  /** The target has no extension, such as the sh script cmd-shim hands to `sh`. */
+  | 'target_extensionless'
+  /** The target is some other file that is neither a program nor a Node script. */
+  | 'target_other'
+  /** A Node script whose shim, or a shim before it in the chain, sets `NODE_PATH`, which the script may read. */
   | 'node_path';
 
 type BatchShimOutcome = { launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp };
+
+/**
+ * The most shims one launch reads through: the shim on the command line and
+ * the shims it calls in turn. A global bin that calls the package's own
+ * `node_modules\.bin\<name>.cmd` is two. The bound also ends a shim that names
+ * itself, or two that name each other.
+ */
+export const MAX_SHIM_HOPS = 3;
+
+/** Why a target that is neither a program, a Node script nor a batch shim cannot be started, by its shape. */
+function unsupportedTargetOf(target: string): BatchShimGiveUp {
+  const extension = path.extname(target).toLowerCase();
+  if (extension === '') return 'target_extensionless';
+  if (extension === '.ps1') return 'target_ps1';
+  return 'target_other';
+}
 
 /**
  * What a `.cmd` shim runs, so a launch too long for one can start it directly,
@@ -171,10 +193,30 @@ type BatchShimOutcome = { launch: BatchShimLaunch } | { gaveUp: BatchShimGiveUp 
  * add) gives up only for a Node script, which may resolve modules through it. A
  * native `.exe` target (Claude Code's npm bin is `bin/claude.exe`) never reads
  * it, and pnpm calls such a target directly, so it starts as an npm shim's does.
+ *
+ * A target that is itself a `.cmd` or `.bat` shim is read in turn, up to
+ * `MAX_SHIM_HOPS` shims, and the launch is what the last one starts. A batch
+ * target has no shebang, so npm's and pnpm's shims both call it directly with
+ * nothing in front of it. The innermost shim is the one that runs node, so its
+ * folder is where `node.exe` is looked for. `NODE_PATH` set by any shim of the
+ * chain reaches the script, since each shim inherits the one before it.
  */
 function batchShimLaunchOutcome(
   shimPath: string,
   dependencies: NpmShimTargetDependencies = {},
+): BatchShimOutcome {
+  return shimChainOutcome(shimPath, dependencies, { hop: 1, nodePathSet: false });
+}
+
+/**
+ * One step of `batchShimLaunchOutcome`'s walk down a chain of shims. `hop` is
+ * this shim's place in the chain, the outermost being 1, and `nodePathSet` says
+ * a shim before it set `NODE_PATH`.
+ */
+function shimChainOutcome(
+  shimPath: string,
+  dependencies: NpmShimTargetDependencies,
+  chain: { hop: number; nodePathSet: boolean },
 ): BatchShimOutcome {
   const fileExists = dependencies.fileExists ?? fs.existsSync;
   const readFile = dependencies.readFile ?? readShimFromDisk;
@@ -185,13 +227,18 @@ function batchShimLaunchOutcome(
     // report-ok: an unreadable shim is the answer, named by the outcome.
     return { gaveUp: 'unreadable' };
   }
+  const setsNodePath = chain.nodePathSet || content.toUpperCase().includes('NODE_PATH');
   try {
     const target = npmShimTargetPath(shimPath, { readFile: () => content });
     if (target === null) return { gaveUp: 'unparsed' };
     if (!fileExists(target)) return { gaveUp: 'target_missing' };
     if (/\.exe$/i.test(target)) return { launch: { program: target, script: null } };
-    if (!/\.[cm]?js$/i.test(target)) return { gaveUp: 'target_not_script' };
-    if (content.toUpperCase().includes('NODE_PATH')) return { gaveUp: 'node_path' };
+    if (isWindowsBatchShim(target)) {
+      if (chain.hop >= MAX_SHIM_HOPS) return { gaveUp: 'target_batch' };
+      return shimChainOutcome(target, dependencies, { hop: chain.hop + 1, nodePathSet: setsNodePath });
+    }
+    if (!/\.[cm]?js$/i.test(target)) return { gaveUp: unsupportedTargetOf(target) };
+    if (setsNodePath) return { gaveUp: 'node_path' };
     const siblingNode = path.join(path.dirname(shimPath), 'node.exe');
     return { launch: { program: fileExists(siblingNode) ? siblingNode : 'node', script: target } };
   } catch {
