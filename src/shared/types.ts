@@ -6178,7 +6178,7 @@ export type JiraDeployment = 'cloud' | 'datacenter';
 export type JiraConnectMethod = 'api-token' | 'pat' | 'password';
 
 export interface JiraDetectSiteResult {
-  /** The site's host, normalized (`acme.atlassian.net`, `jira.example.com:8443`). */
+  /** The site's base URL, normalized (`https://acme.atlassian.net`, a Data Center base with its context path). */
   site: string;
   deployment: JiraDeployment;
 }
@@ -6196,10 +6196,10 @@ export interface JiraConnectInput {
 }
 
 /**
- * Why a Connect failed. The renderer owns the line each code shows (the Jira
- * Connect dialog's error line): `rejected` a 401, `unreachable` no answer, `captcha` a Data Center
- * site that wants a CAPTCHA before password sign-in, `password-off` a site that
- * refuses password sign-in on API calls, `invalid` a field the user left empty.
+ * Why a Connect failed. The renderer owns the line each code shows. `rejected`
+ * is a 401, `unreachable` no usable answer, `captcha` a Data Center site that
+ * wants a CAPTCHA before password sign-in, `password-off` a site that refuses
+ * password sign-in on API calls, and `invalid` a field the user left empty.
  */
 export type JiraConnectErrorCode = 'rejected' | 'unreachable' | 'captcha' | 'password-off' | 'invalid';
 

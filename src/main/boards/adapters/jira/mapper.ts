@@ -1,5 +1,6 @@
 import type { ExternalIssue, FileAttachmentRef } from '../../../../shared/types';
 import { convertHtmlToMarkdown } from '../../shared';
+import type { JiraBoardConfigurationRaw } from './client';
 
 /**
  * A Jira issue as search and the agile API return it, with the fields
@@ -30,7 +31,7 @@ export interface JiraBoardColumn {
   statusIds: string[];
 }
 
-export interface JiraMapContext {
+interface JiraMapContext {
   /** The site's base URL, for issue links and making relative URLs absolute. */
   site: string;
   /** Set for a board source: rows show the board's column names, in board order. */
@@ -132,9 +133,7 @@ function mapOne(raw: JiraIssueRaw, context: JiraMapContext): ExternalIssue {
 }
 
 /** Board columns from the board configuration, dropping any with no name. */
-export function mapBoardColumns(
-  configuration: { columnConfig?: { columns?: Array<{ name?: string; statuses?: Array<{ id?: string }> }> } },
-): JiraBoardColumn[] {
+export function mapBoardColumns(configuration: JiraBoardConfigurationRaw): JiraBoardColumn[] {
   return (configuration.columnConfig?.columns ?? [])
     .filter((column) => typeof column.name === 'string' && column.name.length > 0)
     .map((column) => ({

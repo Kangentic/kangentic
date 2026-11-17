@@ -101,6 +101,34 @@ describe('saveJiraCredential', () => {
   });
 });
 
+describe('saveJiraCredential over an unreadable file', () => {
+  function unreadableCopies(): string[] {
+    return fs.readdirSync(pathsState.configDir).filter((name) => name.startsWith('jira-credentials.json.unreadable-'));
+  }
+
+  it.each([
+    ['text that is not the encrypted shape', 'this is not json at all'],
+    ['an encrypted value that fails to decrypt', JSON.stringify({ encrypted: 'not-a-real-ciphertext' })],
+  ])('copies %s aside with its original bytes, then writes the new site', async (_label, original) => {
+    fs.writeFileSync(storeFilePath(), original);
+
+    await saveJiraCredential(credentialFor('https://one.example.net', 'new-secret'));
+
+    const copies = unreadableCopies();
+    expect(copies).toHaveLength(1);
+    expect(fs.readFileSync(path.join(pathsState.configDir, copies[0]), 'utf8')).toBe(original);
+    const loaded = await loadJiraCredentials();
+    expect(Object.keys(loaded)).toEqual(['https://one.example.net']);
+    expect(loaded['https://one.example.net'].secret).toBe('new-secret');
+  });
+
+  it('makes no copy when the file is readable or absent', async () => {
+    await saveJiraCredential(credentialFor('https://one.example.net', 'first'));
+    await saveJiraCredential(credentialFor('https://two.example.net', 'second'));
+    expect(unreadableCopies()).toEqual([]);
+  });
+});
+
 describe('loadJiraCredentials', () => {
   it('is empty when nothing is saved', async () => {
     expect(await loadJiraCredentials()).toEqual({});

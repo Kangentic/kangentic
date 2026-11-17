@@ -1,9 +1,7 @@
 import which from 'which';
 import { execFileAsync } from '../../../utility-process/off-main-exec';
 import type { ExternalIssue } from '../../../../shared/types';
-import { extractInlineImageUrls } from '../../shared';
-import { convertHtmlToMarkdown } from '../../shared/html-to-markdown';
-import { formatCommentsSection as formatSharedCommentsSection } from '../../shared/comments-section';
+import { convertHtmlToMarkdown, extractInlineImageUrls, formatCommentsSection } from '../../shared';
 import { AZURE_CLOSED_STATES, buildWiqlQuery, buildWorkItemIdsWiql } from './wiql';
 import { RefusalError } from '../../../../shared/refusal';
 
@@ -995,7 +993,7 @@ export class AzureDevOpsImporter {
     const commentsMap = await this.fetchCommentsForItems(organization, project, workItemIds);
     const sections = new Map<number, string>();
     for (const [workItemId, comments] of commentsMap) {
-      if (comments.length > 0) sections.set(workItemId, formatCommentsSection(comments));
+      if (comments.length > 0) sections.set(workItemId, formatWorkItemComments(comments));
     }
     return sections;
   }
@@ -1058,7 +1056,7 @@ export class AzureDevOpsImporter {
       // Append work item comments to the body
       const comments = commentsMap?.get(item.id);
       if (comments && comments.length > 0) {
-        const commentSection = formatCommentsSection(comments);
+        const commentSection = formatWorkItemComments(comments);
         body = body ? `${body}\n\n${commentSection}` : commentSection;
       }
 
@@ -1118,8 +1116,8 @@ function resolveAssignee(value: string | { displayName: string; uniqueName: stri
 }
 
 /** Format work item comments as the shared markdown Comments section. */
-function formatCommentsSection(comments: AzureDevOpsComment[]): string {
-  return formatSharedCommentsSection(comments.map((comment) => ({
+function formatWorkItemComments(comments: AzureDevOpsComment[]): string {
+  return formatCommentsSection(comments.map((comment) => ({
     author: comment.createdBy?.displayName ?? null,
     createdAt: comment.createdDate,
     html: comment.text,

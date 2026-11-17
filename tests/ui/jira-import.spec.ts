@@ -343,3 +343,119 @@ test.describe('Jira Connect dialog site edits', () => {
     await browser.close();
   });
 });
+
+const DATA_CENTER_LINK = 'https://jira.example.com/secure/RapidBoard.jspa?rapidView=12';
+
+const CONNECT_FAILURE_LINES: Array<{
+  name: string;
+  method: 'pat' | 'password';
+  result: Record<string, unknown>;
+  line: string;
+}> = [
+  { name: 'captcha', method: 'password', result: { ok: false, code: 'captcha' }, line: 'Jira wants a CAPTCHA before password sign-in.' },
+  { name: 'password-off', method: 'password', result: { ok: false, code: 'password-off' }, line: 'This site turned off password sign-in.' },
+  { name: 'invalid', method: 'pat', result: { ok: false, code: 'invalid' }, line: 'Check the site address.' },
+  { name: 'unreachable with detail', method: 'pat', result: { ok: false, code: 'unreachable', site: 'jira.example.com', detail: 'timed out' }, line: "Couldn't reach jira.example.com: timed out." },
+  { name: 'unreachable without detail', method: 'pat', result: { ok: false, code: 'unreachable', site: 'jira.example.com' }, line: "Couldn't reach jira.example.com." },
+  { name: 'rejected pat', method: 'pat', result: { ok: false, code: 'rejected' }, line: 'Jira rejected this token.' },
+  { name: 'rejected password', method: 'password', result: { ok: false, code: 'rejected' }, line: 'Jira rejected this username and password.' },
+];
+
+test.describe('Jira Connect dialog failure lines', () => {
+  for (const failure of CONNECT_FAILURE_LINES) {
+    test(`${failure.name} shows its line and keeps the dialog open`, async () => {
+      const { browser, page } = await launchPage();
+      await createProject(page, 'jira-failure-line');
+      await setJiraPreset(page, { connectResult: failure.result });
+      await openJiraLinkStep(page);
+      await pasteAndConnect(page, DATA_CENTER_LINK);
+
+      await page.locator(`[data-testid="jira-connect-choice-${failure.method === 'pat' ? 'pat' : 'password'}"]`).click();
+      if (failure.method === 'password') {
+        await page.locator('[data-testid="jira-connect-username-input"]').fill('dpark');
+      }
+      await page.locator('[data-testid="jira-connect-secret-input"]').fill('some-secret');
+      await page.locator('[data-testid="jira-connect-connect-btn"]').click();
+
+      await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveText(failure.line);
+      await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeVisible();
+      await browser.close();
+    });
+  }
+});
+
+test.describe('Jira Connect dialog reopen and cancel', () => {
+  test('a reopen for a rejected Data Center token lands on the token steps, not the two choices', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-reopen-pat');
+    await page.evaluate(() => {
+      const host = window as unknown as Record<string, unknown>;
+      host.__mockImportSourcesPreset = [{
+        id: 'jira-dc-src',
+        source: 'jira',
+        label: 'ENG board',
+        repository: 'https://jira.example.com::board::12',
+        url: 'https://jira.example.com/secure/RapidBoard.jspa?rapidView=12',
+        createdAt: new Date().toISOString(),
+      }];
+      host.__mockImportCached = { issues: [] };
+      host.__mockImportReconcile = { issues: [] };
+      host.__mockJiraPreset = { sites: { 'jira.example.com': { method: 'pat', account: 'dpark' } } };
+      host.__mockImportCheckCli = (source: string) => (source === 'jira'
+        ? { available: true, authenticated: false, error: 'Jira rejected the saved token.' }
+        : null);
+    });
+    await openJiraSource(page);
+    await page.locator('[data-testid="import-connect-provider-btn"]').click();
+
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-open-profile-btn"]')).toContainText('jira.example.com');
+    await expect(page.locator('[data-testid="jira-connect-choice-pat"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="jira-connect-choice-password"]')).toHaveCount(0);
+    await browser.close();
+  });
+
+  test('a Connect still in flight when the user cancels does not carry the add on once it lands', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-cancel-in-flight');
+    await page.evaluate(() => {
+      const host = window as unknown as Record<string, unknown>;
+      host.__releaseConnects = [];
+      // Every Connect hangs until the test releases it (the mock then answers ok).
+      host.__mockJiraConnectHook = () => new Promise<void>((resolve) => {
+        (host.__releaseConnects as Array<() => void>).push(resolve);
+      });
+    });
+    await openJiraLinkStep(page);
+    const link = 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12';
+    await pasteAndConnect(page, link);
+
+    const fillAndConnect = async () => {
+      await page.locator('[data-testid="jira-connect-email-input"]').fill('dana@acme.example');
+      await page.locator('[data-testid="jira-connect-secret-input"]').fill('cloud-token');
+      await page.locator('[data-testid="jira-connect-connect-btn"]').click();
+    };
+    const heldConnects = () => page.evaluate(() => (window as unknown as { __releaseConnects: unknown[] }).__releaseConnects.length);
+    await fillAndConnect();
+    await expect.poll(heldConnects).toBe(1);
+
+    await page.locator('[data-testid="jira-connect-cancel-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeHidden();
+    // Cancel already ends the add's wait for the sign-in, so a late result alone has nothing to
+    // resume. Starting a second Connect from the same link re-arms that wait, and the first
+    // Connect landing then must not resume it: only the guard on the dialog that was closed stops that.
+    await page.locator('[data-testid="import-source-connect-btn"]').click();
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeVisible();
+    await fillAndConnect();
+    await expect.poll(heldConnects).toBe(2);
+
+    await page.evaluate(() => (window as unknown as { __releaseConnects: Array<() => void> }).__releaseConnects[0]());
+    await flushRender(page);
+
+    await expect(page.locator('[data-testid="import-dialog"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toBeVisible();
+    const added = await page.evaluate(() => (window as unknown as { __lastImportSourcesAddInput?: unknown }).__lastImportSourcesAddInput);
+    expect(added).toBeUndefined();
+    await browser.close();
+  });
+});

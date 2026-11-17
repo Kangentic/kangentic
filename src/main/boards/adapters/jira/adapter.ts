@@ -12,6 +12,7 @@ import {
   type DownloadedAttachment,
   type FileAttachmentRef,
   type PrerequisiteResult,
+  DOWNLOAD_CONCURRENCY,
   downloadFile,
   extractInlineImageUrls,
   formatCommentsSection,
@@ -37,7 +38,7 @@ import {
 registerSourceUrlParser('jira', { parse: parseJiraInput, buildLabel: buildJiraLabel });
 
 /** The line every surface shows when Jira refuses the saved sign-in. */
-export const JIRA_REJECTED_SAVED_TOKEN = 'Jira rejected the saved token.';
+const JIRA_REJECTED_SAVED_TOKEN ='Jira rejected the saved token.';
 
 /** How many issues' comments are fetched at once at import time. */
 const COMMENT_CONCURRENCY = 4;
@@ -95,12 +96,9 @@ export class JiraAdapter implements BoardAdapter {
       return sites.length > 0 ? { connected: true } : { connected: false, reason: 'none' };
     }
 
-    let ref: JiraSourceRef;
-    try {
-      ref = decodeJiraRepository(isJiraRepository(target) ? target : parseJiraInput(target).repository);
-    } catch { // report-ok: text that is no Jira source has no site to sign in to; the add reports the parse error itself
-      return { connected: sites.length > 0 };
-    }
+    // Text that names no Jira source throws the parse refusal, which the popover
+    // shows as its error line rather than opening Connect for a site there is none of.
+    const ref = decodeJiraRepository(isJiraRepository(target) ? target : parseJiraInput(target).repository);
 
     if (ref.site.length === 0) {
       // Typed JQL names no site: it runs on the one connected site.
@@ -141,7 +139,7 @@ export class JiraAdapter implements BoardAdapter {
     try {
       await new JiraClient(credential, this.deps.fetchImpl).myself();
       return { cliOk: true, authOk: true };
-    } catch (error) { // report-ok: a refused or unreachable check is an answer the Import dialog shows, not a defect
+    } catch (error) { // report-ok: a 401 is the answer the Import dialog shows; any other failure is left to the fetch that follows, which reports it
       if (error instanceof JiraHttpError && error.status === 401) {
         return { cliOk: true, authOk: false, message: JIRA_REJECTED_SAVED_TOKEN };
       }
@@ -251,7 +249,8 @@ export class JiraAdapter implements BoardAdapter {
 
   private hasNextPage(page: JiraPage): boolean {
     if (page.nextPageToken !== undefined || page.isLast !== undefined) {
-      return page.isLast === false && typeof page.nextPageToken === 'string';
+      // Cloud's cursor is the signal: a token means more unless the page says it is the last.
+      return page.isLast !== true && typeof page.nextPageToken === 'string' && page.nextPageToken.length > 0;
     }
     // An empty page ends the run even when the total says more: the next page
     // would start at the same offset and come back empty again.
@@ -383,7 +382,9 @@ export class JiraAdapter implements BoardAdapter {
     do {
       const page = await client.search(jql, { maxResults: ID_PAGE_SIZE, nextPageToken, fields: 'id' });
       ids.push(...page.issues.map((issue) => issue.id));
-      nextPageToken = page.isLast === false ? page.nextPageToken : undefined;
+      // A page with no `isLast` still pages on by its token; stopping early would
+      // leave ids out, and the reconcile would prune those issues as deleted.
+      nextPageToken = page.isLast === true ? undefined : page.nextPageToken || undefined;
       if (nextPageToken !== undefined) {
         // A cursor handed back twice would page forever; throwing skips this prune.
         if (seenTokens.has(nextPageToken)) throw new Error('Jira returned the same search cursor twice');
@@ -439,33 +440,23 @@ export class JiraAdapter implements BoardAdapter {
     const refs = extractInlineImageUrls(markdownBody);
     if (refs.length === 0) return { attachments: [], skippedCount: 0 };
     const clients = await this.allClients();
-    const attachments: DownloadedAttachment[] = [];
-    let skippedCount = 0;
-    for (const ref of refs) {
+    return downloadInBatches(refs, (ref) => {
       const owner = clients.find((client) => client.ownsUrl(ref.url));
-      const downloaded = await this.downloadWithAuth(ref.url, ref.filename, owner);
-      if (downloaded) attachments.push(downloaded);
-      else skippedCount++;
-    }
-    return { attachments, skippedCount };
+      return this.downloadWithAuth(ref.url, ref.filename, owner);
+    });
   }
 
   async downloadFileAttachments(
     attachments: FileAttachmentRef[],
   ): Promise<{ attachments: DownloadedAttachment[]; skippedCount: number }> {
     const clients = await this.allClients();
-    const results: DownloadedAttachment[] = [];
-    let skippedCount = 0;
-    for (const attachment of attachments) {
+    return downloadInBatches(attachments, (attachment) => {
       const owner = clients.find((client) => client.ownsUrl(attachment.url));
       const url = owner && attachment.externalRef
         ? owner.attachmentDownloadUrl(attachment.externalRef, attachment.url)
         : attachment.url;
-      const downloaded = await this.downloadWithAuth(url, attachment.filename, owner);
-      if (downloaded) results.push(downloaded);
-      else skippedCount++;
-    }
-    return { attachments: results, skippedCount };
+      return this.downloadWithAuth(url, attachment.filename, owner);
+    });
   }
 
   private async allClients(): Promise<JiraClient[]> {
@@ -484,6 +475,26 @@ export class JiraAdapter implements BoardAdapter {
     if (!result) return null;
     return { ...result, mediaType: mediaTypeFromFilename(filename) };
   }
+}
+
+/**
+ * Download each item, `DOWNLOAD_CONCURRENCY` at a time as the other adapters do,
+ * keeping the input order. A download that comes back null is counted as skipped.
+ */
+async function downloadInBatches<Item>(
+  items: Item[],
+  download: (item: Item) => Promise<DownloadedAttachment | null>,
+): Promise<{ attachments: DownloadedAttachment[]; skippedCount: number }> {
+  const attachments: DownloadedAttachment[] = [];
+  let skippedCount = 0;
+  for (let batchStart = 0; batchStart < items.length; batchStart += DOWNLOAD_CONCURRENCY) {
+    const batch = items.slice(batchStart, batchStart + DOWNLOAD_CONCURRENCY);
+    for (const downloaded of await Promise.all(batch.map(download))) {
+      if (downloaded) attachments.push(downloaded);
+      else skippedCount++;
+    }
+  }
+  return { attachments, skippedCount };
 }
 
 /** The page map one query keeps in a cache, made on first use. */

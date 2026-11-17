@@ -10,9 +10,18 @@ import { RefusalError } from '../../../../shared/refusal';
 const JIRA_ROOT_SEGMENTS = ['/browse/', '/secure/', '/issues/', '/projects/', '/plugins/', '/rest/', '/login.jsp'];
 
 /** True for a host Atlassian serves Jira Cloud from. */
-export function isCloudHost(host: string): boolean {
+function isCloudHost(host: string): boolean {
   const lower = host.toLowerCase();
   return lower.endsWith('.atlassian.net') || lower.endsWith('.jira.com');
+}
+
+/**
+ * Scheme, host and port. A Cloud site is always `https://`: a typed `http://`
+ * would send the first request's token in the clear before Atlassian redirects.
+ */
+function siteOrigin(url: URL): string {
+  const protocol = isCloudHost(url.hostname) ? 'https:' : url.protocol;
+  return `${protocol}//${url.host.toLowerCase()}`;
 }
 
 /**
@@ -20,7 +29,7 @@ export function isCloudHost(host: string): boolean {
  * Center context path. Lowercased host, no trailing slash.
  */
 export function siteBaseFromUrl(url: URL): string {
-  const origin = `${url.protocol}//${url.host.toLowerCase()}`;
+  const origin = siteOrigin(url);
   if (isCloudHost(url.hostname)) return origin;
   const contextEnd = jiraRootIndex(url.pathname);
   const context = contextEnd > 0 ? url.pathname.slice(0, contextEnd).replace(/\/+$/, '') : '';
@@ -39,7 +48,8 @@ function jiraRootIndex(path: string): number {
 
 /**
  * Normalize what the user typed in the Site field, or any link, to the site's
- * base URL. A bare host gets `https://`; a typed `http://` is kept. A host with
+ * base URL. A bare host gets `https://`; a typed `http://` is kept, except on a
+ * Cloud host. A host with
  * no dot is allowed, because a Data Center site on a company network is often
  * one (`http://jira:8080`).
  */
@@ -54,7 +64,7 @@ export function normalizeSiteBase(input: string): string {
     throw new RefusalError(`Not a Jira site: ${trimmed}`);
   }
   if (url.hostname.length === 0) throw new RefusalError(`Not a Jira site: ${trimmed}`);
-  const origin = `${url.protocol}//${url.host.toLowerCase()}`;
+  const origin = siteOrigin(url);
   // A bare host, or Cloud, which has no context path.
   if (url.pathname === '/' || url.pathname === '' || isCloudHost(url.hostname)) return origin;
   // A pasted link: its context path is whatever comes before Jira's own segments.

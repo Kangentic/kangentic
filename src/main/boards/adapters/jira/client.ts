@@ -1,31 +1,36 @@
-import { sleep, withBackoff } from '../../shared';
+import { withBackoff } from '../../shared';
 import type { JiraSiteCredential } from './credential-store';
 import type { JiraIssueRaw } from './mapper';
 
 /** HTTP request timeout in milliseconds. Matches the downloadFile helper. */
 const REQUEST_TIMEOUT_MS = 30_000;
-/** The longest a 429's Retry-After is honored before the backoff takes over. */
+/** The longest wait a 429's Retry-After can ask for before the next attempt. */
 const MAX_RETRY_AFTER_MS = 10_000;
 /** Atlassian's API gateway, which scoped tokens must call through. */
-export const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex/jira';
+const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex/jira';
 
 /**
  * Fields every search asks for. Cloud's `/search/jql` returns only the id unless
  * asked, and `renderedFields` carries the description as HTML on Cloud and Data
  * Center alike.
  */
-export const ISSUE_FIELDS = [
+const ISSUE_FIELDS = [
   'summary', 'status', 'issuetype', 'priority', 'labels', 'assignee',
   'duedate', 'created', 'updated', 'attachment', 'description',
 ].join(',');
 
-/** A non-2xx answer from Jira. `loginReason` is Data Center's `X-Seraph-LoginReason`. */
+/**
+ * A non-2xx answer from Jira, or a 2xx whose body is not JSON (a sign-in page a
+ * proxy served). `loginReason` is Data Center's `X-Seraph-LoginReason`, and
+ * `retryAfterMs` a 429's Retry-After.
+ */
 export class JiraHttpError extends Error {
   constructor(
     message: string,
     public readonly status: number,
     public readonly body: string,
     public readonly loginReason: string | null,
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'JiraHttpError';
@@ -52,7 +57,7 @@ export interface JiraMyself {
   timeZone?: string;
 }
 
-export interface JiraBoardRaw {
+interface JiraBoardRaw {
   id: number;
   name?: string;
   type?: string;
@@ -233,11 +238,13 @@ export class JiraClient {
     return contentUrl;
   }
 
-  /** GET a path relative to the API base, retrying 429 and 5xx. */
+  /** GET a path relative to the API base, retrying 429 (after its Retry-After) and 5xx. */
   async get<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
     return withBackoff(() => this.getOnce<T>(path, query), {
       maxAttempts: 3,
+      maxDelayMs: MAX_RETRY_AFTER_MS,
       shouldRetry: (error) => error instanceof JiraHttpError && (error.status === 429 || error.status >= 500),
+      retryAfterMs: (error) => (error instanceof JiraHttpError ? error.retryAfterMs : undefined),
     });
   }
 
@@ -253,20 +260,29 @@ export class JiraClient {
     });
     if (!response.ok) {
       const body = await response.text().catch(() => ''); // report-ok: an unreadable error body leaves only the status to report
-      if (response.status === 429) {
-        const retryAfterSeconds = Number(response.headers.get('retry-after'));
-        if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-          await sleep(Math.min(retryAfterSeconds * 1000, MAX_RETRY_AFTER_MS));
-        }
-      }
+      const retryAfterSeconds = Number(response.headers.get('retry-after'));
       throw new JiraHttpError(
         `Jira GET ${path} failed (${response.status})`,
         response.status,
         body.slice(0, 2000),
         response.headers.get('x-seraph-loginreason'),
+        response.status === 429 && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? retryAfterSeconds * 1000
+          : undefined,
       );
     }
-    return (await response.json()) as T;
+    const text = await response.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // A sign-in page a proxy or SSO served in place of Jira's answer.
+      throw new JiraHttpError(
+        `Jira GET ${path} answered with a page that is not JSON (${response.status})`,
+        response.status,
+        text.slice(0, 2000),
+        response.headers.get('x-seraph-loginreason'),
+      );
+    }
   }
 }
 

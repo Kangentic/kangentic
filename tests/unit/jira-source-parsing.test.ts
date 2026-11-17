@@ -56,6 +56,16 @@ describe('parseJiraInput', () => {
       .toEqual({ site: '', kind: 'jql', value: 'project = ENG AND sprint in openSprints()' });
   });
 
+  it('reads a scheme-less intranet host with a port as a link, not as JQL', () => {
+    expect(parsed('jira:8080/browse/ENG-1')).toEqual({ site: 'https://jira:8080', kind: 'project', value: 'ENG' });
+    expect(parsed('localhost:8080/secure/RapidBoard.jspa?rapidView=3'))
+      .toEqual({ site: 'https://localhost:8080', kind: 'board', value: '3' });
+  });
+
+  it('still reads a JQL clause with a function call as JQL', () => {
+    expect(parsed('assignee = currentUser()')).toEqual({ site: '', kind: 'jql', value: 'assignee = currentUser()' });
+  });
+
   it('refuses a link that names no board, project, filter or search', () => {
     expect(() => parseJiraInput('https://acme.atlassian.net/jira/your-work')).toThrow(/doesn't name a Jira/);
   });
@@ -84,6 +94,11 @@ describe('site normalization', () => {
     expect(normalizeSiteBase('jira:8080')).toBe('https://jira:8080');
     expect(parsed('http://jira:8080/secure/RapidBoard.jspa?rapidView=3'))
       .toEqual({ site: 'http://jira:8080', kind: 'board', value: '3' });
+  });
+
+  it('upgrades a typed http:// Cloud host to https, and keeps http for a Data Center host', () => {
+    expect(normalizeSiteBase('http://acme.atlassian.net')).toBe('https://acme.atlassian.net');
+    expect(normalizeSiteBase('http://jira.example.com:8080')).toBe('http://jira.example.com:8080');
   });
 
   it('refuses text that is not a site', () => {
