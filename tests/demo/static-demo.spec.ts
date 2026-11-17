@@ -7,14 +7,20 @@
  * card with nothing stamped when the scene cannot boot.
  *
  * The build is served by demo/static-server.mjs on an ephemeral port, started once per worker
- * in beforeAll. It is deliberately NOT a playwright.config.ts `webServer` entry: that block starts
- * for every project filter, and a dist/demo entry there would break the ui tier whenever the demo
- * build is absent. Absent here, startDemoServer throws an error naming `npm run build:demo` and
- * every test in the file fails with that message.
+ * by a worker fixture. It is deliberately NOT a playwright.config.ts `webServer` entry: that block
+ * starts for every project filter, and a dist/demo entry there would break the ui tier whenever
+ * the demo build is absent. Absent here, startDemoServer throws an error naming
+ * `npm run build:demo` and every test in the file fails with that message.
+ *
+ * A fixture, not a file-level beforeAll, because of how Playwright shards. Tests under a beforeAll
+ * are cut into as many groups as there are shards and each group goes to one shard whole, so this
+ * file split at its count midpoint whatever PWTEST_SHARD_WEIGHTS said: 410 test-seconds in one
+ * CI shard and 812 in the other. With no hook at the top of the file each test is its own group,
+ * and the weights in ci.yml's demo job can put the cut where the seconds halve.
  *
  * Every test owns its own page (the built-in fixture), so nothing leaks between cases.
  */
-import { test, expect, chromium, type Browser, type Frame, type Page, type Locator } from '@playwright/test';
+import { test as base, expect, chromium, type Browser, type Frame, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
 import { transformSync } from 'esbuild';
@@ -86,20 +92,24 @@ interface DemoBootGlobal {
 
 let server: DemoServer;
 
+// One static server per worker, started before the worker's first test and closed with the
+// worker. `auto` runs it for every test without each one naming it, and it sets the module's
+// `server`, which is per worker process, so demoUrl below reads it as it always has.
+const test = base.extend<object, { demoServer: DemoServer }>({
+  // eslint-disable-next-line no-empty-pattern -- Playwright reads a fixture's dependencies from this destructuring.
+  demoServer: [async ({}, use: (started: DemoServer) => Promise<void>) => {
+    server = await startDemoServer({ distDir: DIST_DIR, port: 0 });
+    await use(server);
+    await server.close();
+  }, { scope: 'worker', auto: true }],
+});
+
 // The site frame's size, which every terminal recording was made for (demo/README.md,
 // geometry): the window geometry in the scenes and the state blobs below is fractional, so this
 // is what gives a default-rect window its recorded 154 by 37 grid (a fitted floating window takes
 // its recording's grid at any display scale), and it is wide enough for the Changes panel's file
 // tree and split diff to lay out side by side.
 test.use({ viewport: { width: 1600, height: 1000 } });
-
-test.beforeAll(async () => {
-  server = await startDemoServer({ distDir: DIST_DIR, port: 0 });
-});
-
-test.afterAll(async () => {
-  if (server) await server.close();
-});
 
 function demoUrl(params: Record<string, string>): string {
   const url = new URL(server.url);

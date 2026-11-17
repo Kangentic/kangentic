@@ -137,7 +137,7 @@ describe('the concurrency budget', () => {
 
   it('counts what a pull request runs (proves the collector still matches)', () => {
     const ids = parseJobs(ciSource).map((job) => job.id);
-    expect(ids).toEqual(expect.arrayContaining(['checks', 'demo', 'unit-shards', 'playwright-shards', 'e2e-shards', 'tested-tree']));
+    expect(ids).toEqual(expect.arrayContaining(['checks', 'demo-shards', 'unit-shards', 'playwright-shards', 'e2e-shards', 'tested-tree']));
     expect(countPullRequestJobs(ciSource)).toBeGreaterThan(10);
   });
 
@@ -150,8 +150,19 @@ describe('the concurrency budget', () => {
   });
 
   it('catches a shard added with nothing given up', () => {
-    const regressed = replaceExactly(ciSource, 'shardIndex: [1, 2, 3, 4, 5]\n', 'shardIndex: [1, 2, 3, 4, 5, 6]\n');
+    // The UI matrix is the only one of this length, so the needle names one job.
+    const uiShards = 'shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]\n';
+    const regressed = replaceExactly(ciSource, uiShards, 'shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]\n');
+    expect(countPullRequestJobs(regressed)).toBe(countPullRequestJobs(ciSource) + 1);
     expect(countPullRequestJobs(regressed) + 1).toBeGreaterThan(PR_JOB_CEILING);
+  });
+
+  it('counts both web demo shards, and not the gate that waits for them', () => {
+    const jobs = parseJobs(ciSource);
+    const demoShards = jobs.find((job) => job.id === 'demo-shards');
+    const demoGate = jobs.find((job) => job.id === 'demo');
+    expect(demoShards && legsOf(demoShards)).toBe(2);
+    expect(demoGate && needsOf(demoGate)).toContain('demo-shards');
   });
 
   it('counts an always-on job, as the demo job was', () => {
