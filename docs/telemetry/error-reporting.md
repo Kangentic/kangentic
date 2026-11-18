@@ -973,10 +973,11 @@ in one Sentry org, one triage surface.
   command does run, pkexec returns that program's own value, and `dpkg` exits 1 or 2 while `rpm`
   exits 1. A genuine install failure therefore never wears either code.
 
-  One gap is deliberate. `sudo` exits 1 for an authentication failure and `gksudo` / `kdesudo`
-  exit 1 when cancelled, which is indistinguishable from a command that ran and failed, so those
-  declines still report. `LinuxUpdater.determineSudoCommand` picks `pkexec` on any current GNOME
-  or KDE desktop, which is the case that ships. Because the pattern hand-matches a third-party
+  Exit 1 is not matched. `gksudo` / `kdesudo` exit 1 when cancelled, which is indistinguishable
+  from a command that ran and failed, so those declines still report.
+  `LinuxUpdater.determineSudoCommand` picks `pkexec` on a stock GNOME or KDE desktop, which is the
+  case this was written for. A bare `sudo` exit 1 has its own gate, the sudo fallback entry below.
+  Because the pattern hand-matches a third-party
   template, `tests/unit/updater-error-classifier.test.ts` reads the installed
   `electron-updater` and fails if that template is reworded or a fifth sudo front-end appears.
 - **A read-only volume is counted, not reported, and the user hears about it.**
@@ -1021,7 +1022,7 @@ in one Sentry org, one triage surface.
   shared once-per-run latch, and the toast tells the user to download Kangentic again. It skips
   the toast on `our-team`, because a fresh download would fetch the same release.
 - **A `.deb` install with no package manager is counted, not reported, and the user hears about
-  it.** `isPackageManagerMissingError` (`src/main/updater.ts`), the branch below the read-only one.
+  it.** `isPackageManagerMissingError` (`src/main/updater.ts`), the branch below the signature one.
   `electron-updater` picks its updater from the `package-type` marker in `resourcesPath`, so a
   `.deb` unpacked outside dpkg runs `DebUpdater` on a host that may have neither `dpkg` nor `apt`.
   `DebUpdater.doInstall` then refuses before any elevation with a bare `new Error` and no `code`,
@@ -1031,12 +1032,32 @@ in one Sentry org, one triage surface.
   `isElevationDeniedError`, because no prompt was shown and nothing was declined.
 
   It pushes `updater:blocked` through `notifyUpdateBlocked`, the once-per-run latch it shares with
-  the two macOS cases, so two clicks give one toast. The toast body is the error text word for
+  the two macOS cases and the sudo fallback below, so two clicks give one toast. The toast body is the error text word for
   word, with no advice. The fix depends on how the package got there, and the event cannot say
   which tool unpacked it. Because the pattern hand-matches a third-party string,
   `tests/unit/updater-error-classifier.test.ts` runs it over the messages in the installed
   `DebUpdater.js` and fails if none or more than one matches. `RpmUpdater` has no equivalent
   check, so this is the only message to match.
+- **A sudo fallback that cannot prompt is counted, not reported, and the user hears about it.**
+  `isSudoFallbackFailure` (`src/main/updater.ts`), the branch below the package manager one,
+  matches `Command sudo exited with code 1`. The command name is the elevator `electron-updater`
+  picked, and `sudo` is its fallback when none of `gksudo`, `kdesudo`, `pkexec` or `beesu` is on
+  PATH. A GUI-launched app has no terminal for sudo to ask on, so sudo exits 1 at once, for
+  `dpkg -i` and again for the `apt-get install -f -y` repair. No prompt is shown, the app does not
+  quit, and every click repeats it. DESKTOP-44 filed this from an Ubuntu 26.04 host without
+  pkexec. `RpmUpdater` elevates the same way, so the gate covers `.rpm` too.
+
+  sudo also exits 1 when the package manager under a passwordless sudo fails, which is a real
+  defect, so the message alone does not decide it. The branch runs `sudo -n true` through
+  `execFileAsync`, in the pty host. Both failures of one click wait on the same probe, and the next
+  failure after it settles runs a fresh one. Any non-zero exit means sudo needed a password: classic sudo
+  exits 1, and sudo-rs parses `-n` the same way with an undocumented code. Then the branch logs,
+  pushes `updater:blocked` ("No graphical password prompt, such as pkexec, is installed.") through
+  the shared once-per-run latch, and drops the report. An exit 0 means sudo could have run the
+  install, so the failure reports as structural. A killed or timed-out probe, or a spawn error,
+  also reports. If the toast or the reporting tail throws, that is our defect, so the branch
+  reports it straight to `reportHandledError`. sudo's stderr is never read: classic sudo
+  translates it, and the breadcrumbs had it filtered.
 - **An EAGAIN install failure is counted, not reported.** `isResourceUnavailableError`
   (`src/main/updater.ts`), the branch below. DESKTOP-1B is the POSIX `EAGAIN` reaching us through
   macOS's `NSError` rendering rather than through Node, which is the only reason

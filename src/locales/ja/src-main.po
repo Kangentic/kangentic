@@ -258,6 +258,11 @@ msgstr "Linear へのサインインがタイムアウトしました。"
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Kangentic を最新の状態に保つには、アプリケーションフォルダーに移動してください。"
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "No graphical password prompt, such as pkexec, is installed."
+msgstr "pkexec などのグラフィカルなパスワード入力画面がインストールされていません。"
+
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "No local port was free for GitLab sign-in."
