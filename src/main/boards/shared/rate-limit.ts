@@ -17,6 +17,16 @@ export interface BackoffOptions {
   retryAfterMs?: (error: unknown) => number | undefined;
 }
 
+/** A `Retry-After` header in milliseconds: delta seconds or an HTTP date. Undefined for none or an unreadable one. */
+export function retryAfterMsFrom(header: string | null, now: number = Date.now()): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(header);
+  if (Number.isFinite(date)) return Math.max(0, date - now);
+  return undefined;
+}
+
 /** Sleep for a given number of milliseconds. */
 export function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));

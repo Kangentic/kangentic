@@ -24,6 +24,7 @@ import {
   downloadFile,
   extractInlineImageUrls,
   mediaTypeFromFilename,
+  retryAfterMsFrom,
   withBackoff,
   type DownloadedAttachment,
 } from '../../shared';
@@ -135,13 +136,6 @@ function authorizationHeaderFor(credential: { kind: 'api_key'; apiKey: string } 
   return credential.kind === 'api_key' ? credential.apiKey : `Bearer ${credential.accessToken}`;
 }
 
-function retryAfterMsOf(response: Response): number | undefined {
-  const header = response.headers.get('retry-after');
-  if (!header) return undefined;
-  const seconds = Number(header);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : undefined;
-}
-
 /**
  * POST one GraphQL request with the given Authorization header and return its
  * `data`. Throws `LinearError` carrying Linear's own message for a non-2xx
@@ -168,7 +162,7 @@ async function postGraphQL<T>(authorization: string, query: string, variables: R
       ? firstError.message
       : `Linear request failed (${response.status})`;
     const code = typeof firstError?.extensions?.code === 'string' ? firstError.extensions.code : undefined;
-    throw new LinearError(message, response.status, code, retryAfterMsOf(response));
+    throw new LinearError(message, response.status, code, retryAfterMsFrom(response.headers.get('retry-after')));
   }
   if (body.data === undefined) {
     throw new LinearError(`Linear request returned no data (${response.status})`, response.status);

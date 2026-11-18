@@ -9,6 +9,7 @@ import type {
   JiraSignInResult,
 } from '../../../../shared/types';
 import { RefusalError } from '../../../../shared/refusal';
+import { networkCode } from '../../shared/network-error';
 import { JiraAdapter } from './adapter';
 import { JiraClient, JiraHttpError, fetchCloudId, type JiraMyself } from './client';
 import { saveJiraCredential, type JiraSiteCredential } from './credential-store';
@@ -63,15 +64,6 @@ export async function signInJiraSite(
   if (!result.ok) return result;
   await (dependencies.save ?? saveJiraCredential)(result.value);
   return { ok: true, site: siteLabel(site), account: result.value.account };
-}
-
-/** The errno a failed fetch carries (`ENOTFOUND`, `ECONNREFUSED`), when it has one. */
-function networkCode(error: unknown): string | undefined {
-  const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
-  const code = (cause as { code?: unknown } | undefined)?.code;
-  if (typeof code === 'string') return code;
-  if (error instanceof Error && error.name === 'TimeoutError') return 'ETIMEDOUT';
-  return undefined;
 }
 
 /**
