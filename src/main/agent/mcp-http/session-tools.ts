@@ -306,7 +306,7 @@ export function registerSessionTools(
       annotations: MUTATING_ANNOTATIONS,
     },
     async ({ account }) => withProject(resolver, undefined, (ctx) =>
-      callHandler('switch_account', { account }, { ...ctx, callerTaskId, callerKind: 'agent' }, 'Could not switch accounts')),
+      callHandler('switch_account', { account }, { ...ctx, callerTaskId }, 'Could not switch accounts')),
   );
 
   // --- kangentic_query_db ---

@@ -130,6 +130,22 @@ describe('AccountUsageRefresher.refreshAll', () => {
     expect(reads).toEqual(['identity:one', 'usage:one', 'usage:key']);
   });
 
+  // Registration reads no database, so the login file watch starts from the first pass that does.
+  // Starting it at registration broke every registerAllIpc test, whose database is a stub.
+  it('calls onStartup once, before any read, on the startup pass only', async () => {
+    const accounts = [account('one', 'multi', null), account('two', 'multi', null)];
+    const others = vi.fn();
+    const passes = rig(accounts, { onStartup: others });
+    await passes.refresher.refreshAll('scheduled');
+    await passes.refresher.refreshAll('requested');
+    expect(others).not.toHaveBeenCalled();
+
+    const readsAtStartup: string[][] = [];
+    const startup = rig(accounts, { onStartup: () => { readsAtStartup.push([...startup.reads]); } });
+    await startup.refresher.refreshAll('startup');
+    expect(readsAtStartup).toEqual([[]]);
+  });
+
   it('checks the home of each ok account and reads the sign-in of each other one on a scheduled pass, never both', async () => {
     const failureReporter = { report: vi.fn() };
     const parked = { ...account('parked', 'multi', null), status: 'signed-out' as const };
