@@ -161,6 +161,8 @@ Signing only activates when the corresponding env vars are present. Local dev bu
 
 The signing endpoint (`https://eus.codesigning.azure.net/`), the Trusted Signing account name and the certificate profile name are not secrets. `release.yml` sets them as literals in the build step's env (`AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`).
 
+`build/windowsSign.js` gives `Invoke-TrustedSigning` Microsoft's timestamp server (`http://timestamp.acs.microsoft.com`). The timestamp is what keeps a signature good: a Trusted Signing certificate lasts about three days, and Windows judges a signature with no timestamp against today's date, so it stops verifying the day its certificate ends. The module adds a timestamp only when it is given a server. The installers through 0.59.0 were signed without one, so each of those signatures has lapsed and Windows treats those downloads as it treats an unsigned file. `tests/unit/windows-sign.test.ts` holds the argument in the command, and `signing-credentials.yml` signs a file through the hook every night and fails when the signature carries no timestamp.
+
 The Team ID is also committed, in `src/shared/apple-team-id.json`. It is public, since every signed copy prints it in `codesign -dv`. The app reads it to tell its own signature from a re-signed one (see [macOS signature mismatch](#macos-signature-mismatch)). `build/verify-signed-team-id.js`, run from `afterSign`, fails a macOS leg when `APPLE_TEAM_ID` or the signed app's `TeamIdentifier` differs from the file. If the signing team ever changes, update the file in the same change. A build without `APPLE_TEAM_ID` logs that it skipped the check.
 
 The launcher publishes to npm via Trusted Publishing (OIDC), so no npm token secret is
