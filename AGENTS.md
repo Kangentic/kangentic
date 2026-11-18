@@ -263,6 +263,7 @@ indexes it and Cursor gets no copy.
 - `protocol-release-parity.md` - every `protocol-v*` tag needs a `CHANGELOG.md` entry; never hand-tag a protocol release.
 - `skill-authoring.md` - when to fork a skill and how to route agents.
 - `board-config-parity.md` - team-shared swimlane fields round-trip to `kangentic.json`.
+- `board-adapter-coverage.md` - a new board integration gets its docs row, and a browser sign-in its daily check row, owner steps and a pasted key beside it.
 - `external-scripts-parity.md` - unbundled bridge/plugin scripts register in `EXTERNAL_SCRIPTS` and are copied by both `build.js` and `dev.js`.
 - `activity-state-classification.md` - bucket `ActivityState` idle-vs-active only via `src/shared/activity-state.ts`.
 - `activity-marks.md` - marks come from `@kangentic/branding` via `ActivityMark`; composited motion only; `IconSlot` for element-type swaps.

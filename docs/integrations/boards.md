@@ -466,7 +466,10 @@ vault, and the vault is read on this computer even for a remote project.
 4. **URL parser** (optional). If the provider has user-pasted URLs, call `registerSourceUrlParser('<provider>', { parse, buildLabel })` at module load time so the import-source store knows how to handle them.
 5. **No IPC changes.** Dispatch goes through the registry in `src/main/ipc/handlers/backlog.ts`: `boardRegistry.requireStable(source)` for the reconcile and the import, `boardRegistry.get(source)` for the check and for adding a source. Adding a provider does not touch this file.
 
-The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if a new provider is added to the union but not registered, or if any adapter is missing a required field.
+6. **Docs row.** Add the provider to the [Adapter Status](#adapter-status) table, saying how it signs in.
+7. **A browser sign-in brings its coverage.** If the provider signs in through the browser, give it a name in `LoopbackProvider`, a row in `scripts/check-integrations.mjs`, a row in [Owner steps for the browser sign-ins](#owner-steps-for-the-browser-sign-ins) and a row in the [Daily sign-in check](#daily-sign-in-check) table, and keep a pasted token or key beside it. `.claude/rules/board-adapter-coverage.md` has each step and why.
+
+The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if a new provider is added to the union but not registered, or if any adapter is missing a required field. `tests/unit/board-adapter-coverage.test.ts` fails when an adapter has no row in the status table, or when a browser sign-in has no row in the daily check, the owner steps or the check's table.
 
 ## Adapter Status
 
