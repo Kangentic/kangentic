@@ -27,9 +27,25 @@ let latestRecordFields: { launch_failed_at?: string; prompt?: string | null; age
 /** Records older than the paused one, newest first. */
 let olderRecords: Array<{ id: string; agent_session_id: string | null; prompt: string | null }> = [];
 
+/**
+ * Set when the engine stand-in is to do what the real engine does once its
+ * check proves, from the session row alone, that the conversation never ran:
+ * ask the Resume for its opening, with the prompt the lineage owes
+ * (`SpawnOverrides.owedPromptOpening`). The real engine's side of that is
+ * pinned in transition-engine.test.ts.
+ */
+let engineProvesNeverRan: { owedPrompt: string | null } | null = null;
+/** What the Resume answered the engine with, when it was asked. */
+let owedOpeningAnswer: string | undefined;
+
 const engine = {
-  resumeSuspendedSession: vi.fn(async (): Promise<SpawnOutcome> => {
+  resumeSuspendedSession: vi.fn(async (...callArguments: unknown[]): Promise<SpawnOutcome> => {
     storedTask = { ...storedTask, session_id: 'sess-resumed', agent: 'codex' };
+    if (engineProvesNeverRan) {
+      const overrides = callArguments[7] as { owedPromptOpening?: (owedPrompt: string | null) => string | undefined };
+      if (!overrides.owedPromptOpening) throw new Error('the Resume passed the engine no owedPromptOpening');
+      owedOpeningAnswer = overrides.owedPromptOpening(engineProvesNeverRan.owedPrompt);
+    }
     return outcome;
   }),
 };
@@ -136,6 +152,97 @@ describe('resumeTaskSession: what the resume could not carry, and held messages'
     outcome = { startOver: null, recapOnly: false, unsentPrompt: null };
     latestRecordFields = {};
     olderRecords = [];
+    engineProvesNeverRan = null;
+    owedOpeningAnswer = undefined;
+  });
+
+  describe('a conversation the engine proves never ran, from the session row alone (Sentry DESKTOP-2M)', () => {
+    // No launch failed on this record, so it carries no mark and the Resume
+    // composes nothing owed up front. The engine's check decides before the
+    // launch and asks the Resume for its opening. Before the fix nothing was
+    // asked, and the engine opened on the task template instead of the prompt
+    // the failed launch's heal used to replay.
+    const NEVER_STARTED: SpawnOutcome = { startOver: 'never-started', recapOnly: false, unsentPrompt: null };
+
+    it('answers the engine with the prompt the lineage owes, and marks nothing up front', async () => {
+      engineProvesNeverRan = { owedPrompt: 'Fix the login redirect' };
+      outcome = NEVER_STARTED;
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(owedOpeningAnswer).toBe('Fix the login redirect');
+      // An unmarked record still asks the engine for a plain resume: the engine decides.
+      const call = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
+      expect(call[2]).toBeUndefined();
+      expect(call[3]).toBeUndefined();
+    });
+
+    it('adds what is held after the owed prompt, once, and tells the delivery it rode the opening', async () => {
+      engineProvesNeverRan = { owedPrompt: 'Fix the login redirect' };
+      outcome = NEVER_STARTED;
+      const claim = fakeHeldClaim();
+      mockClaimHeldMessages.mockReturnValue(claim);
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(owedOpeningAnswer).toBe(`Fix the login redirect\n\n${HELD_TEXT}`);
+      expect(mockDeliverOpeningRemainder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        held: claim,
+        heldInPrompt: true,
+        heldAfterTurn: false,
+        unsentPrompt: null,
+      }));
+    });
+
+    it('opens with the held text once when the owed prompt already holds it', async () => {
+      const owedPrompt = `Fix the login redirect\n\n${HELD_TEXT}`;
+      engineProvesNeverRan = { owedPrompt };
+      outcome = NEVER_STARTED;
+      mockClaimHeldMessages.mockReturnValue(fakeHeldClaim());
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(owedOpeningAnswer).toBe(owedPrompt);
+    });
+
+    it('sends what is held after the turn of an owed slash command, by the opening the agent got', async () => {
+      // The opening composed up front had no lead, so the held text was its
+      // whole prompt (`heldInPrompt`). The agent opened on the owed command
+      // instead, which takes no text after it: read from the first opening, the
+      // delivery would count the held messages as sent and they would be lost.
+      engineProvesNeverRan = { owedPrompt: '/code-review' };
+      outcome = NEVER_STARTED;
+      const claim = fakeHeldClaim();
+      mockClaimHeldMessages.mockReturnValue(claim);
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(resumedWith()).toBe(HELD_TEXT);
+      expect(owedOpeningAnswer).toBe('/code-review');
+      expect(mockDeliverOpeningRemainder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        held: claim,
+        heldInPrompt: false,
+        heldAfterTurn: true,
+      }));
+    });
+
+    it('lets a command the person chose win over the owed prompt, as for a marked launch', async () => {
+      engineProvesNeverRan = { owedPrompt: 'Fix the login redirect' };
+      outcome = NEVER_STARTED;
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, resumePrompt: '/plan' });
+
+      expect(owedOpeningAnswer).toBe('/plan');
+    });
+
+    it('answers with nothing when the lineage owes nothing and nothing is held', async () => {
+      engineProvesNeverRan = { owedPrompt: null };
+      outcome = NEVER_STARTED;
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(owedOpeningAnswer).toBeUndefined();
+    });
   });
 
   it('replays the fresh launch\'s prompt for a resume marked as finding no conversation', async () => {

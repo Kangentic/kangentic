@@ -1039,6 +1039,8 @@ export class SessionManager extends EventEmitter {
           });
         }
       },
+      onSessionStartTranscriptPath: (sessionId, agentSessionId, transcriptPath) =>
+        this.noteSessionStartTranscriptPath(sessionId, agentSessionId, transcriptPath),
       // The session's own place and the transcript its agent reported, for the
       // adapter's check that a background session's hook is the conversation
       // moving rather than a copy starting beside it.
@@ -5147,6 +5149,53 @@ export class SessionManager extends EventEmitter {
    */
   getReportedTranscriptPath(sessionId: string): string | null {
     return this.telemetry.getReportedTranscriptPath(sessionId);
+  }
+
+  /**
+   * The transcript path the session's agent has reported by either of its two
+   * reports: the status line's (`getReportedTranscriptPath`), else the
+   * SessionStart hook's while the session is still on the conversation that
+   * hook named. For a session record written after its agent started, an early
+   * agent adopted once its worktree's setup script ends: its hook fired while
+   * it was hidden, with no record to write to.
+   */
+  getAgentReportedTranscriptPath(sessionId: string): string | null {
+    const fromStatusLine = this.telemetry.getReportedTranscriptPath(sessionId);
+    if (fromStatusLine) return fromStatusLine;
+    const session = this.registry.get(sessionId);
+    const fromHook = session?.sessionStartTranscript;
+    return fromHook && fromHook.agentSessionId === session.agentSessionId ? fromHook.transcriptPath : null;
+  }
+
+  /**
+   * A SessionStart hook named its conversation's transcript file. Kept on the
+   * row and announced (`'transcript-path'`) when it speaks for this session's
+   * own conversation, so the session record holds a path the agent reported
+   * even when its status line reports none before the session ends. Records
+   * of never-turned sessions reached a restart that way, and the resume check
+   * then had nothing to prove the conversation gone from (Sentry DESKTOP-2M;
+   * see `persistHookTranscriptPath`).
+   *
+   * Announced on every such hook, not once: the record's write only fills an
+   * empty path, so a repeat costs one statement that changes nothing.
+   *
+   * Passed over:
+   *  - a hook that names another conversation. Every process started with the
+   *    session's `--settings` fires it, and Claude Code's background daemon
+   *    runs an empty spare beside the conversation it moved.
+   *  - a Command Terminal and a workflow's own agent, which have no record.
+   *  - a session on a host (#913). Its hook payload is the host's word, and a
+   *    path from it would be opened on this computer. The resume check answers
+   *    `unknown` for a host whatever a row holds.
+   */
+  private noteSessionStartTranscriptPath(sessionId: string, agentSessionId: string, transcriptPath: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session || session.transient || session.hostId) return;
+    if (session.agentSessionId !== agentSessionId) return;
+    // A CLI in a WSL distro reports its Linux path, as its status line does (`usageOnHost`).
+    const pathOnThisMachine = hostPathForTarget(transcriptPath, placeFromStored(session.cliTarget ?? null));
+    session.sessionStartTranscript = { agentSessionId, transcriptPath: pathOnThisMachine };
+    this.emit('transcript-path', sessionId, pathOnThisMachine);
   }
 
   /**

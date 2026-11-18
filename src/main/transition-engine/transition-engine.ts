@@ -61,7 +61,7 @@ import { agentCwdFor } from './agent-cwd';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { promptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
-import { assessResumeConversationWithEvidence, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
+import { assessResumeConversationWithEvidence, owedPromptOf, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
 import { commandLineLength } from '../agent/shared/prompt-budget';
 import { markRecapSession } from '../automations/turn-end/recap-turns';
 import {
@@ -162,6 +162,22 @@ export interface SpawnOverrides {
    * column's mode.
    */
   keepSessionMode?: boolean;
+  /**
+   * The Resume button only (`resumeTaskSession`'s own engine call). When the
+   * conversation check proves from the session row alone that the conversation
+   * never ran (`ResumeConversationAssessment.promptOwed`), the fresh start
+   * opens on what this returns for the prompt the lineage still owes
+   * (`owedPromptOf`, null when it owes none), with no task template. That is
+   * where the failed launch's heal ended before the check could decide without
+   * the dead launch, and where a `launch_failed_at` record's Resume ends today.
+   *
+   * Called at most once, and only when its result becomes that start's prompt,
+   * so the caller reads "it was called" as "this is what the agent opened on".
+   * Returning nothing starts the agent with no prompt.
+   *
+   * Never set by a move: a move into a column keeps that column's prompt.
+   */
+  owedPromptOpening?: (owedPrompt: string | null) => string | undefined;
 }
 
 /** What an agent spawn takes: the same list on the wrapper that holds its host file pull and on the spawn. */
@@ -972,6 +988,8 @@ export class TransitionEngine {
     // prove resumes as before.
     let startOver: SpawnOutcome['startOver'] = null;
     let recapOnly = false;
+    // The fresh start opens on the prompt the lineage owed (`owedPromptOpening`).
+    let owedPromptReplayed = false;
     let expiredNotice: ConversationExpiredNotice | null = null;
     // What the check read, for a launch report if this resume fails anyway.
     let resumeEvidence: ResumeEvidenceSummary | null = null;
@@ -981,7 +999,7 @@ export class TransitionEngine {
         retiringRecordId: intent.retireRecordId,
         resumedAgentSessionId,
       });
-      const { verdict, evidence } = await assessResumeConversationWithEvidence({
+      const { verdict, evidence, promptOwed } = await assessResumeConversationWithEvidence({
         adapter,
         agentSessionId: resumedAgentSessionId,
         records: lineage,
@@ -1012,6 +1030,16 @@ export class TransitionEngine {
         // interpolated prompt, a null agentSessionId, and the same poisoned
         // record still retired.
         intent = resolveSpawnIntent({ ...spawnIntentOptions, forceFresh: true });
+        // The Resume button, on a conversation the row alone proves never ran:
+        // it opens on the prompt the lineage owes instead, as startup recovery
+        // does and as the failed launch's heal did. The lineage is this
+        // check's own, the one the verdict was decided on. A move passes no
+        // `owedPromptOpening` and keeps the column's prompt above.
+        const owedPromptOpening = promptOwed ? spawnOverrides?.owedPromptOpening : undefined;
+        if (owedPromptOpening) {
+          owedPromptReplayed = true;
+          intent = { ...intent, prompt: owedPromptOpening(owedPromptOf(lineage)) };
+        }
       } else if (verdict === 'expired') {
         startOver = 'expired';
         // The task's main session starts from the recap alone: a conversation
@@ -1063,8 +1091,10 @@ export class TransitionEngine {
     const canResume = intent.mode === 'resume';
     // A fresh spawn takes the template over `resumePrompt` (resolveSpawnIntent),
     // so a resume that started over, or a forced-fresh spawn, left the carried
-    // message out. A recap-only start withholds it on purpose instead.
-    const templateTookSlot = !canResume && !recapOnly
+    // message out. A recap-only start withholds it on purpose instead. A start
+    // that replays the owed prompt has no template in its slot: its caller built
+    // the whole opening, the carried message included, so nothing is left out.
+    const templateTookSlot = !canResume && !recapOnly && !owedPromptReplayed
       && Boolean(resumePrompt?.trim()) && Boolean(spawnIntentOptions.promptTemplate);
     // What every launch this spawn resolves shares; an adoption's and the
     // fresh one's differ only in their ids, prompt and resume.
@@ -1362,6 +1392,12 @@ export class TransitionEngine {
       cli_target: serializeCliTarget(record.cliTarget),
       start_head_sha: record.startHeadSha,
       account_id: record.accountId ?? null,
+      // What the agent has already said about its transcript. A session this
+      // spawn just started has said nothing yet, and its reports are written as
+      // they arrive. An adopted early agent started while it was hidden, so its
+      // SessionStart hook fired with no record to write to, and that hook does
+      // not fire again.
+      transcript_path: this.sessionManager.getAgentReportedTranscriptPath?.(record.sessionId) ?? null,
     });
     // The prompt is Kangentic's own text, whether it rides the command line or
     // is typed in later (#1078). A resume's first turn is anchored, so without

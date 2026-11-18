@@ -311,6 +311,42 @@ describe('adopting an early agent', () => {
     expect(handle.isSettled()).toBe(true);
   });
 
+  // The agent's SessionStart hook fired while it was hidden, with no record to
+  // write its transcript path to, and no listener heard it. The record this
+  // adoption commits is the first place it can land, and a session that never
+  // takes a turn may get no status line to report it again (Sentry DESKTOP-2M).
+  it('commits the record with the transcript path the agent reported while it was hidden', async () => {
+    const reportedPath = '/home/dev/.claude/projects/-some-project/agent-1.jsonl';
+    const sessionManager = {
+      ...makeSessionManager(),
+      getAgentReportedTranscriptPath: vi.fn((): string | null => reportedPath),
+    };
+    const sessionRepo = makeSessionRepo();
+    const { engine } = makeEngine(sessionManager, sessionRepo);
+    const handle = await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' }) as EarlyAgentHandle;
+
+    await engine.resumeSuspendedSession(
+      makeTask({ worktree_path: WORKTREE }) as never, null, false, undefined, undefined, 'claude', undefined, { earlyAgent: handle },
+    );
+
+    expect(sessionManager.getAgentReportedTranscriptPath).toHaveBeenCalledWith(handle.sessionId);
+    expect(sessionRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ id: handle.sessionId, transcript_path: reportedPath }));
+  });
+
+  it('commits the record with no path when the agent has reported none yet', async () => {
+    const sessionManager = { ...makeSessionManager(), getAgentReportedTranscriptPath: vi.fn((): string | null => null) };
+    const sessionRepo = makeSessionRepo();
+    const { engine } = makeEngine(sessionManager, sessionRepo);
+    const handle = await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' }) as EarlyAgentHandle;
+
+    await engine.resumeSuspendedSession(
+      makeTask({ worktree_path: WORKTREE }) as never, null, false, undefined, undefined, 'claude', undefined, { earlyAgent: handle },
+    );
+
+    // Null, never undefined: the repository reads null as "inherit the conversation's last reported path".
+    expect(sessionRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ id: handle.sessionId, transcript_path: null }));
+  });
+
   it('discards the early agent and launches fresh when the launch changed (another model)', async () => {
     const sessionManager = makeSessionManager();
     const { engine } = makeEngine(sessionManager, makeSessionRepo());

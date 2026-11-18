@@ -1660,6 +1660,151 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
       expect(capturedOptions?.prompt).toBe('/code-review');
     });
   });
+
+  describe('a conversation the session row alone proves never ran (Sentry DESKTOP-2M)', () => {
+    // A quit deleted the session folder, so the agent's own report is gone and
+    // only the transcript path the row kept is left. The check answers
+    // `never-started` with `promptOwed`. The Resume button then opens on the
+    // prompt the lineage still owes, which is where the failed launch's heal
+    // ended before the check could decide without the dead launch. A move does
+    // not: it keeps the prompt its column resolves.
+    const FIRST_LAUNCH_ID = 'never-ran-first-launch';
+    const OWED_PROMPT = 'Fix the login redirect';
+    type AdapterWithProof = { proveConversationGone?: (...args: unknown[]) => Promise<boolean> };
+    let capturedOptions: { resume?: boolean; prompt?: string } | undefined;
+
+    /** The paused resume and the fresh launch before it, neither with a turn. `firstLaunchPrompt` is what that launch carried. */
+    function neverRanLineageRepo(firstLaunchPrompt: string | null) {
+      const sessionRepo = makeSessionRepo();
+      const paused = {
+        id: RECORD_ID,
+        agent_session_id: AGENT_SESSION_ID,
+        session_type: 'claude_agent',
+        status: 'suspended',
+        cwd: projectPath,
+        transcript_path: path.join(projectPath, 'history', `${AGENT_SESSION_ID}.jsonl`),
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cost_usd: 0,
+        prompt: null,
+      };
+      const firstLaunch = { ...paused, id: FIRST_LAUNCH_ID, status: 'exited', prompt: firstLaunchPrompt };
+      sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue(paused as never);
+      sessionRepo.listForTaskNewestFirst.mockReturnValue([paused, firstLaunch] as never);
+      return sessionRepo;
+    }
+
+    beforeEach(() => {
+      capturedOptions = undefined;
+      mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; prompt?: string }) => {
+        capturedOptions = options;
+        return `claude ${options.prompt ?? ''}`;
+      });
+      // The adapter's proof that the conversation is on no disk it could be on.
+      (mockAdapter as AdapterWithProof).proveConversationGone = vi.fn(async () => true);
+    });
+
+    afterEach(() => {
+      delete (mockAdapter as AdapterWithProof).proveConversationGone;
+    });
+
+    it('opens on the prompt the lineage owes when the Resume button asks, with no template and nothing left to type', async () => {
+      const owedPromptOpening = vi.fn((owedPrompt: string | null) => owedPrompt ?? undefined);
+      const sessionRepo = neverRanLineageRepo(OWED_PROMPT);
+      const { engine } = makeEngine({ sessionRepo, projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, undefined, undefined, 'claude', undefined, { owedPromptOpening },
+      );
+
+      // Red before the fix: the engine re-resolved the task template here.
+      expect(owedPromptOpening).toHaveBeenCalledTimes(1);
+      expect(owedPromptOpening).toHaveBeenCalledWith(OWED_PROMPT);
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, unsentPrompt: null });
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toBe(OWED_PROMPT);
+      // The new record owes the same prompt, should this launch fail too.
+      expect((sessionRepo.insertedRecords[0] as { prompt?: string | null }).prompt).toBe(OWED_PROMPT);
+    });
+
+    it('opens on what the caller composed and hands nothing back, when the Resume carried a message of its own', async () => {
+      // The caller's opening already holds the carried message. Handed back as
+      // unsent too, it would be typed a second time.
+      const owedPromptOpening = vi.fn(() => '/plan');
+      const { engine } = makeEngine({ sessionRepo: neverRanLineageRepo(OWED_PROMPT), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, '/plan', undefined, 'claude', undefined, { owedPromptOpening },
+      );
+
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, unsentPrompt: null });
+      expect(capturedOptions?.prompt).toBe('/plan');
+    });
+
+    it('starts with no prompt, not the task template, when the lineage owes none', async () => {
+      // A launch that carried nothing (a recovery move out of Done) is owed
+      // nothing. The template would spend a turn that launch never asked for.
+      const owedPromptOpening = vi.fn((owedPrompt: string | null) => owedPrompt ?? undefined);
+      const { engine } = makeEngine({ sessionRepo: neverRanLineageRepo(null), projectPath });
+
+      await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, undefined, undefined, 'claude', undefined, { owedPromptOpening },
+      );
+
+      expect(owedPromptOpening).toHaveBeenCalledWith(null);
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toBeUndefined();
+    });
+
+    it('keeps the task template for a move, which asks for no owed prompt', async () => {
+      const { engine } = makeEngine({ sessionRepo: neverRanLineageRepo(OWED_PROMPT), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, '/code-review', undefined, 'claude',
+      );
+
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, unsentPrompt: '/code-review' });
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toContain('Fix login flow');
+      expect(capturedOptions?.prompt).not.toContain(OWED_PROMPT);
+    });
+
+    it('never asks when the agent\'s own report decided it: the session folder is still there', async () => {
+      // Not the row-proof case, so not `promptOwed`: the agent booted and
+      // reported, and this start keeps the template as it always has.
+      await writeEmptyStatusFile(RECORD_ID);
+      const owedPromptOpening = vi.fn((owedPrompt: string | null) => owedPrompt ?? undefined);
+      const { engine } = makeEngine({ sessionRepo: neverRanLineageRepo(OWED_PROMPT), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, undefined, undefined, 'claude', undefined, { owedPromptOpening },
+      );
+
+      expect(outcome.startOver).toBe('never-started');
+      expect(owedPromptOpening).not.toHaveBeenCalled();
+      expect(capturedOptions?.prompt).toContain('Fix login flow');
+    });
+
+    it('never asks when the conversation resumes: the adapter could not prove it gone', async () => {
+      (mockAdapter as AdapterWithProof).proveConversationGone = vi.fn(async () => false);
+      const owedPromptOpening = vi.fn((owedPrompt: string | null) => owedPrompt ?? undefined);
+      const { engine } = makeEngine({ sessionRepo: neverRanLineageRepo(OWED_PROMPT), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, undefined, undefined, 'claude', undefined, { owedPromptOpening },
+      );
+
+      expect(outcome.startOver).toBeNull();
+      expect(owedPromptOpening).not.toHaveBeenCalled();
+      expect(capturedOptions?.resume).toBe(true);
+    });
+  });
 });
 
 describe('TransitionEngine - a resume prompt that does not ride the command line (unsentPrompt)', () => {

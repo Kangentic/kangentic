@@ -223,6 +223,15 @@ export interface ManagedSession {
    *  capture pipeline for adapters that emit it over the PTY or via hooks
    *  (OpenCode, Codex, Gemini, Droid). Null until captured. */
   agentSessionId?: string | null;
+  /**
+   * The transcript path the agent's SessionStart hook named, with the
+   * conversation it named it for (`SessionStartReport.transcriptPath`). The
+   * status line reports the same path, but only once it runs, which a session
+   * that never takes a turn may not live to see. Read through
+   * `SessionManager.getAgentReportedTranscriptPath`, and only while
+   * `agentSessionId` is still that conversation.
+   */
+  sessionStartTranscript?: { agentSessionId: string; transcriptPath: string } | null;
   /** Steps to write to the PTY to ask the agent to exit before force-killing. */
   exitSequence: ExitSequenceStep[];
   /** Closing the console is the agent's graceful exit on this platform

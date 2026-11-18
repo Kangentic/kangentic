@@ -213,7 +213,8 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   `stream-parser.ts`. `agent about` is only the seed until that bar paints.
 - A hook's `transcript_path` is not recorded as the session's reported history path. The reported
   path lives on the session's usage, which only a status line or stream output fills, and neither
-  sees a hook payload, so recording it needs a change in the shared telemetry. The locator's derived
+  sees a hook payload. The shared telemetry does pass on a SessionStart hook's path, for an adapter
+  whose `statusFile.parseSessionStart` reports one, and Cursor declares none. The locator's derived
   `agent-transcripts` path does not need it.
 - No token counts, cost or rate limits. The February 2026 changelog says stream-json carries
   per-turn input, output and cache totals, but the output-format page names no field, so nothing is

@@ -121,6 +121,14 @@ interface SessionTelemetryCallbacks {
    */
   onAgentSessionId?(sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean; inferred?: boolean }): void;
   /**
+   * A SessionStart hook named the transcript file of the conversation
+   * `agentSessionId` (`SessionStartReport.transcriptPath`). Every hook that
+   * carries one is passed on, a sibling process's included, so the listener
+   * decides whether it speaks for the session. Optional: only the production
+   * wiring keeps it.
+   */
+  onSessionStartTranscriptPath?(sessionId: string, agentSessionId: string, transcriptPath: string): void;
+  /**
    * A SessionStart named the CLI's own background session: did the session's
    * conversation `fromAgentSessionId` move there, rather than a copy start
    * beside it (`statusFile.confirmsBackgroundMove`, which this answers with the
@@ -892,6 +900,9 @@ export class SessionTelemetry {
    * status write of that id arrived first and was held, it is applied now
    * rather than at the next ~10 s refresh. Runs on every batch: unlike
    * `captureHookSessionIds`, it is not a one-shot capture.
+   *
+   * A hook that names its transcript file is passed on first, a fresh launch's
+   * included: that launch is the one whose status line may never run.
    */
   noteSessionStartHooks(sessionId: string, rawLines: string[]): void {
     const runtime = this.sessionParsers.get(sessionId)?.runtime;
@@ -899,6 +910,9 @@ export class SessionTelemetry {
     if (!statusFile?.parseSessionStart) return;
     for (const line of rawLines) {
       const sessionStart = sessionStartOfLine(statusFile, line);
+      if (sessionStart?.transcriptPath) {
+        this.callbacks.onSessionStartTranscriptPath?.(sessionId, sessionStart.agentSessionId, sessionStart.transcriptPath);
+      }
       if (!sessionStart?.movesConversation) continue;
       const currentId = this.lastReportedAgentSessionIds.get(sessionId);
       // An agent with no status channel to carry the move: the hook itself

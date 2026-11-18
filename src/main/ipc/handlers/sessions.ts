@@ -31,7 +31,7 @@ import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessi
 import { isShuttingDown } from '../../shutdown-state';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { persistPtyGrid } from './session-grid-persistence';
-import { forgetTranscriptPath, persistTranscriptPath } from './session-transcript-path';
+import { forgetTranscriptPath, persistHookTranscriptPath, persistTranscriptPath } from './session-transcript-path';
 import { abortInFlightResume, isResumeInFlight, registerResumeController, releaseResumeController } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
 import { resumeTaskOnOpen } from './session-resume-on-open';
@@ -480,6 +480,12 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       bufferedUsage.set(sessionId, { data, projectId });
       scheduleBackgroundFlush();
     }
+  });
+
+  // The SessionStart hook's report of the same path, for a session whose status
+  // line never ran. Main only: nothing in a window reads it.
+  context.sessionManager.on('transcript-path', (sessionId: string, transcriptPath: string) => {
+    persistHookTranscriptPath(context, sessionId, transcriptPath);
   });
 
   // A reason-only refresh rides the SAME channel a real transition does: the

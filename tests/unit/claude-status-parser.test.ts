@@ -424,20 +424,43 @@ describe('ClaudeStatusParser', () => {
   // -------------------------------------------------------------------------
   describe('parseSessionStart', () => {
     const SESSION_ID = '58bd8a86-0d47-4861-8449-63202d8e6a43';
+    // The file the helper's payload names for that id, written out here.
+    const TRANSCRIPT_PATH = `C:\\Users\\dev\\.claude\\projects\\C--Users-dev-projects-app--kangentic-worktrees-79\\${SESSION_ID}.jsonl`;
 
     it('reads a fresh launch (startup) as not moving the conversation', () => {
       expect(ClaudeStatusParser.parseSessionStart(claudeSessionStartContext(SESSION_ID, 'startup')))
-        .toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false });
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false, transcriptPath: TRANSCRIPT_PATH });
     });
 
     it.each(['clear', 'resume', 'compact'] as const)('reads %s as moving the conversation to its id, in the terminal', (source) => {
       expect(ClaudeStatusParser.parseSessionStart(claudeSessionStartContext(SESSION_ID, source)))
-        .toEqual({ agentSessionId: SESSION_ID, movesConversation: true, inBackgroundSession: false });
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: true, inBackgroundSession: false, transcriptPath: TRANSCRIPT_PATH });
     });
 
     it('reads fork as the conversation moving into a background session (/bg)', () => {
       expect(ClaudeStatusParser.parseSessionStart(claudeSessionStartContext(SESSION_ID, 'fork')))
-        .toEqual({ agentSessionId: SESSION_ID, movesConversation: true, inBackgroundSession: true });
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: true, inBackgroundSession: true, transcriptPath: TRANSCRIPT_PATH });
+    });
+
+    // The session row keeps this path when the status line never reported one,
+    // and the resume check later reads "this file is missing" from it. Anything
+    // short of a whole string would read as a missing file that never existed.
+    it.each([
+      ['an empty string', ''],
+      ['a number', 42],
+      ['null', null],
+    ])('names no transcript when the payload carries %s for it', (_label, transcriptPath) => {
+      const report = ClaudeStatusParser.parseSessionStart(JSON.stringify({ session_id: SESSION_ID, transcript_path: transcriptPath, source: 'startup' }));
+      expect(report).toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false });
+      expect(report).not.toHaveProperty('transcriptPath');
+    });
+
+    it('names no transcript from a payload the bridge cut short, though the whole path survived the cut', () => {
+      const full = claudeSessionStartContext(SESSION_ID, 'startup');
+      const cut = full.slice(0, full.indexOf('"startup"') + '"startup"'.length + 3);
+      expect(cut).toContain(JSON.stringify(TRANSCRIPT_PATH));
+      expect(() => JSON.parse(cut)).toThrow();
+      expect(ClaudeStatusParser.parseSessionStart(cut)).not.toHaveProperty('transcriptPath');
     });
 
     it('reads a payload with no source, or an empty one, as a launch', () => {

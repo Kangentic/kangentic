@@ -27,10 +27,23 @@ const RESUME_SESSION_ID = '206fcc54-ddb8-497b-9d57-a0f6defcced9';
 const STARTUP_SESSION_ID = '9dfc0083-eb3a-4c38-bb6c-c4d991525d2b';
 const FORK_SESSION_ID = '58bd8a86-0d47-4861-8449-63202d8e6a43';
 
+// The folder every fixture line's `transcript_path` sits in, a generic placeholder.
+const PROJECTS_FOLDER = 'C:\\Users\\dev\\.claude\\projects\\C--Users-dev-projects-app--kangentic-worktrees-79';
+
 // Written out here, never derived from the parser under test.
-const RESUME_REPORT: SessionStartReport = { agentSessionId: RESUME_SESSION_ID, movesConversation: true, inBackgroundSession: false };
-const STARTUP_REPORT: SessionStartReport = { agentSessionId: STARTUP_SESSION_ID, movesConversation: false, inBackgroundSession: false };
-const FORK_REPORT: SessionStartReport = { agentSessionId: FORK_SESSION_ID, movesConversation: true, inBackgroundSession: true };
+const RESUME_REPORT: SessionStartReport = {
+  agentSessionId: RESUME_SESSION_ID, movesConversation: true, inBackgroundSession: false,
+  transcriptPath: `${PROJECTS_FOLDER}\\${RESUME_SESSION_ID}.jsonl`,
+};
+const STARTUP_REPORT: SessionStartReport = {
+  agentSessionId: STARTUP_SESSION_ID, movesConversation: false, inBackgroundSession: false,
+  transcriptPath: `${PROJECTS_FOLDER}\\${STARTUP_SESSION_ID}.jsonl`,
+};
+const FORK_TRANSCRIPT_PATH = `${PROJECTS_FOLDER}\\${FORK_SESSION_ID}.jsonl`;
+const FORK_REPORT: SessionStartReport = {
+  agentSessionId: FORK_SESSION_ID, movesConversation: true, inBackgroundSession: true,
+  transcriptPath: FORK_TRANSCRIPT_PATH,
+};
 
 /** The hook payload a line carries, as the JSON string event-bridge.js stored in `hookContext`. */
 function hookContextOf(line: string): string {
@@ -113,7 +126,14 @@ describe('ClaudeStatusParser.parseSessionStart over the real hookContext', () =>
     const capped = cappedLikeEventBridge(FORK_CONTEXT);
     expect(capped).toHaveLength(BRIDGE_HOOK_CONTEXT_CAP);
     expect(() => JSON.parse(capped)).toThrow();
-    expect(ClaudeStatusParser.parseSessionStart(capped)).toEqual(FORK_REPORT);
+    // The id and the source, and no transcript path: a cut payload names none,
+    // even when the path itself came through whole, as it does here.
+    expect(capped).toContain(JSON.stringify(FORK_TRANSCRIPT_PATH));
+    expect(ClaudeStatusParser.parseSessionStart(capped)).toEqual({
+      agentSessionId: FORK_SESSION_ID,
+      movesConversation: true,
+      inBackgroundSession: true,
+    });
   });
 
   it('confirms nothing from a real payload cut before its source', () => {

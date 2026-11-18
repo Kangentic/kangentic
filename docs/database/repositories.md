@@ -196,7 +196,9 @@ Operates on a per-project DB.
 
 | Method | Description |
 |--------|-------------|
-| `insert(record)` | Insert a new session record. Caller provides the `id` (PTY session ID = DB primary key, enabling unified session identity across the in-memory PTY layer and the database). `cli_target`, `start_head_sha` and `account_id` are optional and default to NULL. |
+| `insert(record)` | Insert a new session record. Caller provides the `id` (PTY session ID = DB primary key, enabling unified session identity across the in-memory PTY layer and the database). `cli_target`, `start_head_sha` and `account_id` are optional and default to NULL. `transcript_path` is optional too: the path the session's agent had already reported, which comes first, ahead of the path inherited from the same conversation's newest row. |
+| `setTranscriptPath(id, transcriptPath)` | Write the transcript path the agent's status line reported, replacing any the row holds. Returns whether a row was written (a Command Terminal has none). |
+| `fillTranscriptPath(id, transcriptPath)` | Write the transcript path the agent's SessionStart hook named, only on a row whose path is NULL. For the session its status line never reached. Returns whether a row was written. See the [`sessions` table](session-tables.md#sessions-table). |
 | `updateMetrics(id, metrics)` | Save the metric columns from a session's telemetry. A null cost, token count, model, duration or occupancy (`used_percentage`) keeps the value the record holds (an agent taken back from an SSH host keeps its record and has no usage until it reports); the tool count, tool breakdown and compaction count are written as given |
 | `updateStatus(id, status, extra?)` | Update session status with optional `exit_code`, `suspended_at`, `exited_at`, `suspended_by` |
 | `getResumable()` | Get suspended agent sessions that can be resumed (any `session_type` except `run_script`) |

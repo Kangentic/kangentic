@@ -3,7 +3,7 @@
  * transcript-path writer (`session-transcript-path.ts`) to the session manager.
  * `session-transcript-path.test.ts` calls `persistTranscriptPath` and
  * `forgetTranscriptPath` directly, so it cannot see WHERE the listeners call
- * them. Two placements matter and a refactor can move either without failing it:
+ * them. Three placements matter and a refactor can move any without failing it:
  *
  * 1. The `usage` listener persists the path BEFORE its `mainWindow.isDestroyed()`
  *    early return. The session record needs the path whether or not a window is
@@ -14,6 +14,10 @@
  *    writer skips a path it already wrote, so without the forget a session id
  *    that comes back reporting the same path (a record that was recreated, or
  *    removed and written again) is never written a second time.
+ * 3. A `transcript-path` listener fills the record with the SessionStart hook's
+ *    report (`persistHookTranscriptPath`), through `fillTranscriptPath` and
+ *    never the status line's overwrite. Dropped, a session whose status line
+ *    never ran keeps no path, and its resume finds no conversation.
  *
  * `session-transcript-path` is left real and its repository write is observed
  * through the mocked `SessionRepository.setTranscriptPath`, which answers
@@ -29,7 +33,8 @@
  * Red-green: move `persistTranscriptPath(context, sessionId, data)` below the
  * `isDestroyed()` return in the `usage` listener and the first test fails;
  * delete `forgetTranscriptPath(sessionId)` from the `session-removed` listener
- * and the second fails.
+ * and the second fails; delete the `transcript-path` subscription and the third
+ * fails.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -37,9 +42,10 @@ import type { Session } from '../../src/shared/types';
 
 const capturedSessionEventHandlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 
-const { mockBroadcast, setTranscriptPathMock } = vi.hoisted(() => ({
+const { mockBroadcast, setTranscriptPathMock, fillTranscriptPathMock } = vi.hoisted(() => ({
   mockBroadcast: vi.fn(),
   setTranscriptPathMock: vi.fn(() => true),
+  fillTranscriptPathMock: vi.fn(() => true),
 }));
 
 vi.mock('electron', () => ({
@@ -73,6 +79,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
     updateGitStats = vi.fn();
     findByAnyId = vi.fn(() => null);
     setTranscriptPath = (...args: unknown[]) => (setTranscriptPathMock as (...callArgs: unknown[]) => boolean)(...args);
+    fillTranscriptPath = (...args: unknown[]) => (fillTranscriptPathMock as (...callArgs: unknown[]) => boolean)(...args);
   },
 }));
 
@@ -215,6 +222,12 @@ function fireUsage(sessionId: string, data: unknown): void {
   for (const handler of handlers) handler(sessionId, data);
 }
 
+function fireTranscriptPath(sessionId: string, transcriptPath: string): void {
+  const handlers = capturedSessionEventHandlers.get('transcript-path');
+  if (!handlers || handlers.length === 0) throw new Error('transcript-path handler was not registered');
+  for (const handler of handlers) handler(sessionId, transcriptPath);
+}
+
 function fireSessionRemoved(sessionId: string, session: Session): void {
   const handlers = capturedSessionEventHandlers.get('session-removed');
   if (!handlers || handlers.length === 0) throw new Error('session-removed handler was not registered');
@@ -227,6 +240,7 @@ describe('sessions.ts transcript-path wiring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setTranscriptPathMock.mockReturnValue(true);
+    fillTranscriptPathMock.mockReturnValue(true);
     capturedSessionEventHandlers.clear();
     // The writer remembers each path it wrote in module state that outlives a test.
     forgetTranscriptPath('sess-1');
@@ -254,6 +268,31 @@ describe('sessions.ts transcript-path wiring', () => {
     });
 
     it('writes the reported path while the main window is alive too', () => {
+      fireUsage('sess-1', { transcriptPath: TRANSCRIPT_PATH });
+
+      expect(setTranscriptPathMock).toHaveBeenCalledTimes(1);
+      expect(setTranscriptPathMock).toHaveBeenCalledWith('sess-1', TRANSCRIPT_PATH);
+    });
+  });
+
+  // The SessionStart hook's report of the same path, which the session manager
+  // announces on its own event. Without this listener a session whose status
+  // line never ran leaves its record with no path (Sentry DESKTOP-2M).
+  describe('the transcript-path listener', () => {
+    it('fills the record with the path the SessionStart hook named, window or no window', () => {
+      context.mainWindow.isDestroyed.mockReturnValue(true);
+
+      fireTranscriptPath('sess-1', TRANSCRIPT_PATH);
+
+      expect(fillTranscriptPathMock).toHaveBeenCalledTimes(1);
+      expect(fillTranscriptPathMock).toHaveBeenCalledWith('sess-1', TRANSCRIPT_PATH);
+      // The hook only fills: it never goes through the status line's overwrite.
+      expect(setTranscriptPathMock).not.toHaveBeenCalled();
+      expect(mockBroadcast).not.toHaveBeenCalled();
+    });
+
+    it('leaves the status line free to write its own report afterwards', () => {
+      fireTranscriptPath('sess-1', TRANSCRIPT_PATH);
       fireUsage('sess-1', { transcriptPath: TRANSCRIPT_PATH });
 
       expect(setTranscriptPathMock).toHaveBeenCalledTimes(1);

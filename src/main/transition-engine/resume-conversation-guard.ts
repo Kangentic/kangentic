@@ -114,15 +114,18 @@ export function resolveResumeLineage(params: {
  *    the session folder (`detachAndDelete`), so a restored never-turned
  *    session has no report left, and it used to resume into "No conversation
  *    found". It stays clear of #255 for the same two reasons. The row's path
- *    is one the agent reported (`persistTranscriptPath` copies it from the
- *    status line). The proof is the adapter's, not a file check: Claude's
- *    needs the reported path and the reader's path to fail with ENOENT and no
- *    project folder to hold `<id>.jsonl`, so a moved project still resumes.
+ *    is one the agent reported: `persistTranscriptPath` copies it from the
+ *    status line, and `persistHookTranscriptPath` from the SessionStart hook
+ *    for a session that line never reached. The proof is the adapter's, not a
+ *    file check: Claude's needs the reported path and the reader's path to
+ *    fail with ENOENT and no project folder to hold `<id>.jsonl`, so a moved
+ *    project still resumes.
  *  - Absence of evidence is never evidence. A missing session folder with no
  *    path on any row, a malformed report, an adapter with no status pipeline,
  *    or no reported path all give `unknown`. Mocked E2E resumes hit that
- *    structurally (mock-claude writes no status file, so no row keeps a path),
- *    which is what broke the ten session-resume specs the first time around.
+ *    structurally, which is what broke the ten session-resume specs the first
+ *    time around: mock-claude writes no status file, and the path its opt-in
+ *    hook run names is not an `<id>.jsonl`, which Claude's proof refuses.
  *
  * A wrong `expired` costs a new conversation in place of the resume and
  * deletes nothing: the caller retires and keeps the old record.
@@ -155,9 +158,14 @@ export interface ResumeConversationAssessment {
    * evidence (`lineageHadTurns`). A `launch_failed_at` record owes its prompt
    * too. Callers read that mark on the record, which also covers a
    * place-mismatch `never-started` that returns before this check reads it.
-   * Only startup recovery (`prepareAgentSpawn`) reads this field. A board start,
-   * the Resume button included, re-resolves the task template on any
-   * `never-started`.
+   *
+   * Two callers read this field. Startup recovery (`prepareAgentSpawn`) replays
+   * the prompt itself. The Resume button (`resumeTaskSession`) passes
+   * `SpawnOverrides.owedPromptOpening`, which the engine calls with the owed
+   * prompt when this is set. A move into a column reads neither: it re-resolves
+   * its column's prompt on any `never-started`. A Resume of a `launch_failed_at`
+   * record replays the owed prompt too, which `resumeTaskSession` reads off the
+   * record before the engine is asked.
    */
   promptOwed?: true;
 }
