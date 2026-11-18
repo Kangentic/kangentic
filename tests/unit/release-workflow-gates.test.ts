@@ -209,8 +209,9 @@ describe('release.yml job graph', () => {
   // build/afterSign.js only LOGS a skip when the notarization credentials are missing, so an unset
   // secret ships an app Gatekeeper refuses while every job is green. A new macOS leg in a new
   // release-<platform> environment is exactly when a secret scoped to one environment goes missing.
-  // build/windowsSign.js does the same on Windows: with AZURE_TENANT_ID unset it signs nothing, and
-  // the installer ships with no signature.
+  // The Windows leg signs in to Azure through GitHub's OIDC federation, with no client secret. Its
+  // sign-in step still needs the tenant and the app's id, and an unset one fails that leg after the
+  // tag and the draft exist, so the preflight checks both.
   it('gates the draft on the signing preflight, which checks the Apple and Azure secrets, can fail and carries no approval gate', () => {
     const draft = jobs.find((job) => job.name === 'create-draft-release');
     expect(draft?.needs).toContain('preflight-signing');
@@ -227,7 +228,6 @@ describe('release.yml job graph', () => {
       'APPLE_CERTIFICATE_PASSWORD',
       'AZURE_TENANT_ID',
       'AZURE_CLIENT_ID',
-      'AZURE_CLIENT_SECRET',
     ];
     for (const secret of checkedSecrets) {
       expect(preflight?.body).toContain(`${secret}: \${{ secrets.${secret} }}`);
@@ -238,8 +238,9 @@ describe('release.yml job graph', () => {
     const releaseBody = jobs.find((job) => job.name === 'release')?.body ?? '';
     const appleSecretsUsed = new Set([...releaseBody.matchAll(/secrets\.(APPLE_[A-Z_]+)/g)].map((match) => match[1]));
     const azureSecretsUsed = new Set([...releaseBody.matchAll(/secrets\.(AZURE_[A-Z_]+)/g)].map((match) => match[1]));
-    // Three today. A matcher that stopped finding them would make the loop below pass on nothing.
-    expect([...azureSecretsUsed].sort()).toEqual(['AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_TENANT_ID']);
+    // Two today, and no client secret: the sign-in is federated, so there is nothing to expire. A
+    // matcher that stopped finding them would make the loop below pass on nothing.
+    expect([...azureSecretsUsed].sort()).toEqual(['AZURE_CLIENT_ID', 'AZURE_TENANT_ID']);
     expect(appleSecretsUsed.size).toBeGreaterThan(0);
     for (const secret of [...appleSecretsUsed, ...azureSecretsUsed]) {
       expect(preflight?.body, `the release legs use ${secret}, which preflight-signing does not check`).toContain(`secrets.${secret}`);

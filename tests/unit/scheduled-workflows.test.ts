@@ -34,6 +34,13 @@ const SCHEDULED_WITHOUT_RELEASE_READ: Record<string, string> = {
 
 const AZURE_SIGNING_LITERALS = ['AZURE_SIGNING_ENDPOINT', 'AZURE_SIGNING_ACCOUNT', 'AZURE_CERT_PROFILE'];
 
+/**
+ * The environment the release's Windows leg runs in. Azure accepts GitHub's OIDC token through a
+ * federated credential whose subject names it, so it is also the only environment the nightly may
+ * use: a job in any other signs in with a credential the release does not.
+ */
+const RELEASE_WINDOWS_ENVIRONMENT = 'release-windows';
+
 function replaceExactly(source: string, needle: string, replacement: string): string {
   if (!source.includes(needle)) {
     throw new Error(`The mutation needle ${JSON.stringify(needle)} is not in the source, so this red case would prove nothing.`);
@@ -88,8 +95,33 @@ function signingNightlyProblems(source: string): string[] {
   const body = withoutCommentLines(source);
   if (/uses: actions\/upload-artifact@/.test(body)) problems.push('it uploads an artifact');
   if (/uses: actions\/cache(\/save|\/restore)?@/.test(body)) problems.push('it writes or reads a cache');
-  if (/^ {4}environment:/m.test(body)) problems.push('a job waits on an environment approval');
+  for (const environment of environmentsUsed(source)) {
+    if (environment !== RELEASE_WINDOWS_ENVIRONMENT) problems.push(`a job runs in ${environment}, which is not the environment the release signs in from`);
+  }
   return problems;
+}
+
+/** Every environment a job of the workflow names. */
+function environmentsUsed(source: string): string[] {
+  return [...withoutCommentLines(source).matchAll(/^ {4}environment: (\S+)$/gm)].map((match) => match[1]);
+}
+
+/**
+ * How a workflow signs in to Azure: the action and its version, whether it names the app and the
+ * tenant from the two secrets, whether a job may ask GitHub for an OIDC token, and whether it
+ * takes the code signing token while the sign-in is fresh. Two workflows that sign in the same
+ * way read the same here.
+ */
+function azureSignIn(source: string): Record<string, string | boolean> {
+  const body = withoutCommentLines(source);
+  return {
+    action: /uses: (azure\/login@\S+)/.exec(body)?.[1] ?? 'none',
+    namesTheApp: body.includes('client-id: ${{ secrets.AZURE_CLIENT_ID }}'),
+    namesTheTenant: body.includes('tenant-id: ${{ secrets.AZURE_TENANT_ID }}'),
+    mayAskForAnOidcToken: /^ {6}id-token: write$/m.test(body),
+    takesTheSigningTokenEarly: body.includes('az account get-access-token --resource https://codesigning.azure.net'),
+    readsAClientSecret: secretsRead(source).has('AZURE_CLIENT_SECRET'),
+  };
 }
 
 /** Scheduled workflows the release skill neither reads nor is excused from, sorted. */
@@ -114,7 +146,7 @@ describe('the signing credentials nightly', () => {
   it('reads every secret release.yml reads', () => {
     // The matcher must see the secrets at all, or the comparison below passes on two empty sets.
     const released = secretsRead(releaseSource);
-    for (const name of ['AZURE_CLIENT_SECRET', 'APPLE_CERTIFICATE_BASE64', 'APPLE_APP_SPECIFIC_PASSWORD', 'KANGENTIC_SENTRY_TOKEN']) {
+    for (const name of ['AZURE_CLIENT_ID', 'APPLE_CERTIFICATE_BASE64', 'APPLE_APP_SPECIFIC_PASSWORD', 'KANGENTIC_SENTRY_TOKEN']) {
       expect(released.has(name), `release.yml should read secrets.${name}`).toBe(true);
     }
     expect(
@@ -124,8 +156,8 @@ describe('the signing credentials nightly', () => {
   });
 
   it('goes red when the nightly stops reading one', () => {
-    const withoutAzureSecret = replaceExactly(nightlySource, '${{ secrets.AZURE_CLIENT_SECRET }}', "''");
-    expect(releaseSecretsNotChecked(releaseSource, withoutAzureSecret, UNCHECKED_RELEASE_SECRETS)).toEqual(['AZURE_CLIENT_SECRET']);
+    const withoutAzureSecret = replaceExactly(nightlySource, '${{ secrets.AZURE_TENANT_ID }}', "''");
+    expect(releaseSecretsNotChecked(releaseSource, withoutAzureSecret, UNCHECKED_RELEASE_SECRETS)).toEqual(['AZURE_TENANT_ID']);
     const withNewReleaseSecret = `${releaseSource}\n          NEW_CHANNEL_KEY: \${{ secrets.NEW_CHANNEL_KEY }}\n`;
     expect(releaseSecretsNotChecked(withNewReleaseSecret, nightlySource, UNCHECKED_RELEASE_SECRETS)).toEqual(['NEW_CHANNEL_KEY']);
   });
@@ -150,6 +182,37 @@ describe('the signing credentials nightly', () => {
     expect(withoutCommentLines(nightlySource)).toContain("require('./build/windowsSign.js').default(");
   });
 
+  // Azure takes GitHub's OIDC token through a federated credential whose subject is the
+  // release-windows environment. A nightly that signed in any other way (another environment, a
+  // client secret, an older action) would stay green while the release's own sign-in was broken.
+  it('signs in to Azure the way the release\'s Windows leg does, with no client secret', () => {
+    const release = azureSignIn(releaseSource);
+    expect(release).toEqual({
+      action: 'azure/login@v3',
+      namesTheApp: true,
+      namesTheTenant: true,
+      mayAskForAnOidcToken: true,
+      takesTheSigningTokenEarly: true,
+      readsAClientSecret: false,
+    });
+    expect(azureSignIn(nightlySource)).toEqual(release);
+    // The release's Windows leg is in release-windows by its matrix, and the nightly names it.
+    expect(withoutCommentLines(releaseSource)).toContain('    environment: release-${{ matrix.platform }}\n');
+    expect(withoutCommentLines(releaseSource)).toMatch(/^ {12}platform: windows$/m);
+    expect(environmentsUsed(nightlySource)).toEqual([RELEASE_WINDOWS_ENVIRONMENT]);
+  });
+
+  it('goes red when the two sign-ins drift apart', () => {
+    const olderAction = replaceExactly(nightlySource, 'uses: azure/login@v3', 'uses: azure/login@v2');
+    expect(azureSignIn(olderAction)).not.toEqual(azureSignIn(releaseSource));
+    const noEarlyToken = replaceExactly(nightlySource, 'az account get-access-token --resource https://codesigning.azure.net', 'az account show');
+    expect(azureSignIn(noEarlyToken)).not.toEqual(azureSignIn(releaseSource));
+    const withSecret = `${nightlySource}          AZURE_CLIENT_SECRET: \${{ secrets.AZURE_CLIENT_SECRET }}\n`;
+    expect(azureSignIn(withSecret).readsAClientSecret).toBe(true);
+    const outsideTheEnvironment = replaceExactly(nightlySource, `    environment: ${RELEASE_WINDOWS_ENVIRONMENT}\n`, '');
+    expect(environmentsUsed(outsideTheEnvironment)).toEqual([]);
+  });
+
   it('runs only on a schedule or by hand, and keeps nothing', () => {
     expect(signingNightlyProblems(nightlySource)).toEqual([]);
   });
@@ -162,7 +225,7 @@ describe('the signing credentials nightly', () => {
     const uploading = `${nightlySource}      - uses: actions/upload-artifact@v7\n`;
     expect(signingNightlyProblems(uploading)).toEqual(['it uploads an artifact']);
     const gated = replaceExactly(nightlySource, '    runs-on: macos-latest\n', '    runs-on: macos-latest\n    environment: release-macos-arm64\n');
-    expect(signingNightlyProblems(gated)).toEqual(['a job waits on an environment approval']);
+    expect(signingNightlyProblems(gated)).toEqual(['a job runs in release-macos-arm64, which is not the environment the release signs in from']);
     const unscheduled = replaceExactly(nightlySource, '  schedule:\n', '  not_a_schedule:\n');
     expect(signingNightlyProblems(unscheduled)).toEqual(['it has no schedule']);
   });
