@@ -209,7 +209,9 @@ describe('release.yml job graph', () => {
   // build/afterSign.js only LOGS a skip when the notarization credentials are missing, so an unset
   // secret ships an app Gatekeeper refuses while every job is green. A new macOS leg in a new
   // release-<platform> environment is exactly when a secret scoped to one environment goes missing.
-  it('gates the draft on the Apple signing preflight, which can fail and carries no approval gate', () => {
+  // build/windowsSign.js does the same on Windows: with AZURE_TENANT_ID unset it signs nothing, and
+  // the installer ships with no signature.
+  it('gates the draft on the signing preflight, which checks the Apple and Azure secrets, can fail and carries no approval gate', () => {
     const draft = jobs.find((job) => job.name === 'create-draft-release');
     expect(draft?.needs).toContain('preflight-signing');
     const preflight = jobs.find((job) => job.name === 'preflight-signing');
@@ -217,18 +219,33 @@ describe('release.yml job graph', () => {
     expect(preflight?.body).toContain('exit 1');
     expect(preflight?.body).toContain('::error::');
     expect(preflight?.body).not.toMatch(/^ {4}environment:/m);
-    for (const secret of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_CERTIFICATE_BASE64', 'APPLE_CERTIFICATE_PASSWORD']) {
+    const checkedSecrets = [
+      'APPLE_ID',
+      'APPLE_APP_SPECIFIC_PASSWORD',
+      'APPLE_TEAM_ID',
+      'APPLE_CERTIFICATE_BASE64',
+      'APPLE_CERTIFICATE_PASSWORD',
+      'AZURE_TENANT_ID',
+      'AZURE_CLIENT_ID',
+      'AZURE_CLIENT_SECRET',
+    ];
+    for (const secret of checkedSecrets) {
       expect(preflight?.body).toContain(`${secret}: \${{ secrets.${secret} }}`);
-      // ...and the loop that checks them names it too, or the env line is decoration.
+      // ...and a loop that checks them names it too, or the env line is decoration.
       expect(preflight?.body).toMatch(new RegExp(`for name in [A-Z0-9_ ]*\\b${secret}\\b`));
     }
-    // Every secret a mac leg signs or notarizes with is one the preflight checks.
-    const appleSecretsUsed = new Set(
-      [...(jobs.find((job) => job.name === 'release')?.body ?? '').matchAll(/secrets\.(APPLE_[A-Z_]+)/g)].map((match) => match[1]),
-    );
-    for (const secret of appleSecretsUsed) {
-      expect(preflight?.body, `the release legs use ${secret}, which preflight-signing does not check`).toContain(secret);
+    // Every secret a leg signs or notarizes with is one the preflight checks.
+    const releaseBody = jobs.find((job) => job.name === 'release')?.body ?? '';
+    const appleSecretsUsed = new Set([...releaseBody.matchAll(/secrets\.(APPLE_[A-Z_]+)/g)].map((match) => match[1]));
+    const azureSecretsUsed = new Set([...releaseBody.matchAll(/secrets\.(AZURE_[A-Z_]+)/g)].map((match) => match[1]));
+    // Three today. A matcher that stopped finding them would make the loop below pass on nothing.
+    expect([...azureSecretsUsed].sort()).toEqual(['AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_TENANT_ID']);
+    expect(appleSecretsUsed.size).toBeGreaterThan(0);
+    for (const secret of [...appleSecretsUsed, ...azureSecretsUsed]) {
+      expect(preflight?.body, `the release legs use ${secret}, which preflight-signing does not check`).toContain(`secrets.${secret}`);
     }
+    // Both lists are reported before the exit, so one run names everything missing.
+    expect(preflight?.body).toMatch(/missing_apple[\s\S]*missing_azure[\s\S]*exit 1/);
   });
 
   it('authorizes the release build\'s symbol upload explicitly, not through the runner\'s ambient CI', () => {

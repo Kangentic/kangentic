@@ -84,8 +84,9 @@ Any step in the release path that exists to guarantee something must fail when i
   the arch over every published release OLDER than the build, so it can be true once and never
   again; it is pinned as text and executed through jq against a first release, its re-run, and a
   later baseline missing its arm64 package, which must fail. `preflight-signing` must be able to
-  fail, carry no `environment:`, check every Apple secret the legs use, and be named in
-  `create-draft-release`'s `needs:` and `if:`: `build/afterSign.js` only logs a notarization skip.
+  fail, carry no `environment:`, check every Apple and Azure secret the legs use, and be named in
+  `create-draft-release`'s `needs:` and `if:`: `build/afterSign.js` only logs a notarization skip,
+  and `build/windowsSign.js` only logs that it signed nothing.
   `publish-release` must rebuild `latest-mac.yml` from the binaries on the release (never from
   workflow artifacts, which do not reliably carry across run attempts) before the
   minimumSystemVersion patch and the verify, and `scripts/verify-release-assets.js` fails a
