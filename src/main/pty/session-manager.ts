@@ -4765,7 +4765,8 @@ export class SessionManager extends EventEmitter {
    * `suspendedBy` is who paused it, the value its record carries
    * (`pauseTaskSession` passes it). It rides the row to the renderer so the card
    * can say "Paused while idle". A caller that names nobody (a Done move, a
-   * settings restart) leaves a plain "Paused".
+   * settings restart) leaves a plain "Paused", unless the row was already
+   * suspended, which keeps who paused it first.
    */
   async suspend(sessionId: string, options: { suspendedBy?: SuspendedBy } = {}): Promise<void> {
     // A promotion still waiting on the host would otherwise come back running.
@@ -4804,10 +4805,15 @@ export class SessionManager extends EventEmitter {
     this.telemetry.clearSessionTracking(sessionId);
     this.forgetTranscriptAnchors(sessionId);
 
+    // A second suspend that names nobody (a relocate queued behind an idle
+    // pause, whose record write is skipped) keeps who paused the row first.
+    const alreadySuspended = session.status === 'suspended';
     // Mark suspended BEFORE killing so the async onExit handler preserves it
     session.status = 'suspended';
     // Before the emit below, so the first paused paint already has it.
-    session.suspendedBy = options.suspendedBy ?? null;
+    if (options.suspendedBy !== undefined || !alreadySuspended) {
+      session.suspendedBy = options.suspendedBy ?? null;
+    }
 
     // ...and TELL the renderer now, not after the shutdown below. That await is
     // up to 1500ms for a natural exit plus another 1500ms for kill propagation,

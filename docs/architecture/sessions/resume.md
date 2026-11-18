@@ -58,9 +58,10 @@ reach it either: a level check ("focused and paused") would resume, idle and pau
 night. So a window already open when the pause lands keeps its Resume button until the user clicks
 it or the task's card.
 
-**What main requires.** The renderer gets `suspended_by` only for the card's words
-(`Session.suspendedBy`: "Paused while idle" on the card, and a line under the window's Resume
-button). It still asks on every open and main decides, since the rest of what decides is main's. One read (`isPlainIdleResume`) runs unlocked first, where most opens end with no log line,
+**What main requires.** The renderer reads `suspended_by` (`Session.suspendedBy`) only to word
+the pause: "Paused while idle" on the card, and a line under the window's Resume button. It
+still asks on every open, because the other conditions below live only in main. One read
+(`isPlainIdleResume`) runs unlocked first, where most opens end with no log line,
 and again under the task lock in both of `resumeTaskSession`'s locked phases, through its
 `plainResume` option:
 

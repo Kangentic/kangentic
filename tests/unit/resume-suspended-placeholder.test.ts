@@ -288,6 +288,43 @@ describe('resumeSuspendedSessions: a suspended record in a non-auto-spawn column
     expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({ suspendedBy: 'user' }));
   });
 
+  // Red-green: drop the `record.status === 'suspended'` guard in
+  // placeholderSuspendedBy and the stale 'auto' / 'user' is carried instead of 'system'.
+  it.each(['auto', 'user'] as const)('registers an orphaned or exited record carrying a stale %s as the system\'s pause', async (staleSuspendedBy) => {
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    latestForTaskByTypeAndIsolation.mockReturnValue(makeRecord());
+    prepareAgentSpawnMock.mockResolvedValue({ ok: false, reason: 'cli-not-found' });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      for (const [gather, record] of [
+        [sessionRepoGetOrphaned, makeRecord({ id: 'record-orphan', status: 'orphaned', suspended_by: staleSuspendedBy })],
+        [sessionRepoGetInterruptedExited, makeRecord({ id: 'record-exited', status: 'exited', exit_code: 1, suspended_by: staleSuspendedBy })],
+      ] as const) {
+        sessionRepoGetOrphaned.mockReturnValue([]);
+        sessionRepoGetInterruptedExited.mockReturnValue([]);
+        gather.mockReturnValue([record]);
+        const sessionManager = makeSessionManager();
+
+        await runResume(sessionManager);
+
+        expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({ suspendedBy: 'system' }));
+      }
+    } finally {
+      vi.mocked(console.warn).mockRestore();
+      prepareAgentSpawnMock.mockReset();
+      latestForTaskByTypeAndIsolation.mockReturnValue(null);
+    }
+  });
+
+  it('registers a suspended record paused by auto as auto', async () => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: 'auto' })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({ suspendedBy: 'auto' }));
+  });
+
   it('registers nothing in To Do', async () => {
     // To Do hides Resume by design, and a To Do card relies on having no session
     // so that clicking it opens the edit form (TaskCard's initialEdit).

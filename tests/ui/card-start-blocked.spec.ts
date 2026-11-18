@@ -34,6 +34,10 @@ const ROWS = [
   { taskId: 'task-prompt', status: 'suspended', reason: 'prompt-too-long', exitCode: null, pausedBy: null },
   { taskId: 'task-paused', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'user' },
   { taskId: 'task-idle', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'auto' },
+  { taskId: 'task-resume-hang', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'user' },
+  { taskId: 'task-resume-fail', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'user' },
+  { taskId: 'task-system', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'system' },
+  { taskId: 'task-lowmem', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'low_memory' },
 ];
 
 const preConfig = (cardDensity: string) => `
@@ -147,6 +151,43 @@ test.describe('A start that never reached an agent', () => {
         await expect(held.getByTestId('task-detail-pause-note')).toHaveText('Stays paused until resumed.');
         const idle = await openTaskWindow(page, 'task-idle');
         await expect(idle.getByTestId('task-detail-pause-note')).toHaveText('Paused while idle.');
+      });
+
+      // The note goes while the Resume is in flight and after it failed. Red-green:
+      // drop `!toggling` / `!resumeFailed` from the note's guard and each step fails.
+      await test.step('no pause note while the Resume is in flight', async () => {
+        const hanging = await openTaskWindow(page, 'task-resume-hang');
+        await expect(hanging.getByTestId('task-detail-pause-note')).toHaveText('Stays paused until resumed.');
+        await page.evaluate(() => {
+          (window as unknown as { electronAPI: { sessions: { resume: () => Promise<never> } } })
+            .electronAPI.sessions.resume = () => new Promise<never>(() => {});
+        });
+        await hanging.locator('button:has-text("Resume session")').click();
+        await expect(hanging.locator('button:has-text("Resuming agent...")')).toBeVisible();
+        await expect(hanging.getByTestId('task-detail-pause-note')).toHaveCount(0);
+      });
+
+      await test.step('no pause note after a Resume that failed', async () => {
+        const failing = await openTaskWindow(page, 'task-resume-fail');
+        await expect(failing.getByTestId('task-detail-pause-note')).toHaveText('Stays paused until resumed.');
+        await page.evaluate(() => {
+          (window as unknown as { electronAPI: { sessions: { resume: () => Promise<never> } } })
+            .electronAPI.sessions.resume = () => Promise.reject(new Error('mock resume failed'));
+        });
+        await failing.locator('button:has-text("Resume session")').click();
+        await expect(failing.locator('button:has-text("Reset session")')).toBeVisible();
+        await expect(failing.getByTestId('task-detail-pause-note')).toHaveCount(0);
+      });
+
+      // Red-green: drop the 'low_memory' clause and it has no note; drop the
+      // `suspendedBy` guard's else-branch shape (note for any value) and 'system' gets one.
+      await test.step('a low-memory pause is held like the user\'s, and a system pause says nothing', async () => {
+        await expect(footerOf(page, 'task-lowmem')).toHaveText('Paused');
+        await expect(footerOf(page, 'task-system')).toHaveText('Paused');
+        const lowMemory = await openTaskWindow(page, 'task-lowmem');
+        await expect(lowMemory.getByTestId('task-detail-pause-note')).toHaveText('Stays paused until resumed.');
+        const system = await openTaskWindow(page, 'task-system');
+        await expect(system.getByTestId('task-detail-pause-note')).toHaveCount(0);
       });
 
       await test.step('a blocked start keeps its own words, even when the idle timeout paused it', async () => {
