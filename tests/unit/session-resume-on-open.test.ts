@@ -167,6 +167,8 @@ describe('resumeTaskOnOpen', () => {
 
     expect(engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(spawnOverrides()).toMatchObject({ startPath: 'open', resumeOnly: true, forceFresh: false });
+    // An open sends nothing, so it offers the engine no opening to start fresh on.
+    expect(spawnOverrides()).not.toHaveProperty('owedPromptOpening');
     expect(resumePrompt()).toBeUndefined();
   });
 

@@ -216,21 +216,32 @@ export class ClaudeStatusParser {
    * The background daemon in Claude Code 2.1.316 runs a spare session with the
    * task's own `--settings`. Its hook says `startup`, and the conversation it
    * moved says `fork` (measured on a live task, 2026-10-31).
+   *
+   * The `transcript_path` is reported only from a payload read whole. A cut
+   * payload names no path: the cut can fall inside the path itself, and a
+   * partial path would later read as a file that is missing.
    */
   static parseSessionStart(hookContext: string): SessionStartReport | null {
     let sessionId: unknown;
     let source: unknown;
+    let transcriptPath: unknown;
     try {
       const payload: unknown = JSON.parse(hookContext);
       if (!isPlainObject(payload)) return null;
       sessionId = payload.session_id;
       source = payload.source;
+      transcriptPath = payload.transcript_path;
     } catch {
       sessionId = HOOK_SESSION_ID_RE.exec(hookContext)?.[1];
       source = HOOK_SOURCE_RE.exec(hookContext)?.[1];
     }
     if (typeof sessionId !== 'string' || sessionId.length === 0) return null;
     const movesConversation = typeof source === 'string' && source.length > 0 && source !== LAUNCH_SOURCE;
-    return { agentSessionId: sessionId, movesConversation, inBackgroundSession: source === BACKGROUND_SOURCE };
+    return {
+      agentSessionId: sessionId,
+      movesConversation,
+      inBackgroundSession: source === BACKGROUND_SOURCE,
+      ...(typeof transcriptPath === 'string' && transcriptPath.length > 0 ? { transcriptPath } : {}),
+    };
   }
 }

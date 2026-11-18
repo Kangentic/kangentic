@@ -12,6 +12,8 @@ sources:
   - resource: src/main/agent/shared/project-folders.ts
   - resource: src/main/ipc/helpers/pending-conversation-expired.ts
   - resource: src/main/ipc/handlers/session-resume.ts
+  - resource: src/main/ipc/handlers/session-transcript-path.ts
+    title: the two writers of the row's transcript path
   - resource: src/main/ipc/handlers/session-resume-on-open.ts
   - resource: src/shared/session-resume-eligibility.ts
   - resource: src/main/ipc/handlers/session-reconcile.ts
@@ -189,13 +191,34 @@ sharing the reconciled `agent_session_id`, newest first), from three agent-writt
 
 | Source | Transcript path | Turns |
 |---|---|---|
-| the session row | `sessions.transcript_path`, written from the status line when it changes, and inherited at insert from the same conversation's newest row | token or cost totals above zero prove turns; zero proves nothing |
+| the session row | `sessions.transcript_path`, written from the status line when it changes, filled from the SessionStart hook when the row has none, and inherited at insert from the same conversation's newest row | token or cost totals above zero prove turns; zero proves nothing |
 | `status.json` | the status line's `transcript_path`, when its `session_id` is the resumed id (another process with the same `--settings`, such as a background daemon's spare, can write it last) | tokens or cost |
 | `events.jsonl` | `transcript_path` inside the SessionStart hook payload | any event beyond `session_start` / `session_end` |
 
 The row exists because a quit or a removal deletes the session folder (`detachAndDelete`), which
 left most old conversations with no evidence at all. The SessionStart hook exists because the
 status line only runs once the TUI is up, so a CLI killed in its first second leaves no status.
+
+The row takes its path from both reports. The status line was its only source, and nothing makes
+that line run before a session ends. Rows of sessions that never took a turn reached a restart with
+no path, and after the quit nothing the agent reported was left (Sentry DESKTOP-2M and DESKTOP-2J,
+the `resume_transcript=not_reported` events, 3 of 6 tagged, on Claude Code 2.1.322 to 2.1.326).
+Why the status line wrote nothing on those installs is not established: measured on Claude Code
+2.1.327 on Windows, with the `refreshInterval` Kangentic sets, it ran 46 ms after the SessionStart
+hook of a session nobody opened. The hook fires at session start and names the same file, so the
+session manager announces it (`'transcript-path'`) and `persistHookTranscriptPath`
+(`handlers/session-transcript-path.ts`) fills the row:
+
+- It only fills an empty path (`SessionRepository.fillTranscriptPath`). The status line stays the
+  authority and overwrites. A resumed row starts with the path that line last reported, which can
+  sit outside the folder the new cwd maps to, and the hook never replaces it.
+- A hook that names another conversation is ignored. Every process started with the session's
+  `--settings` fires SessionStart, and Claude Code's background daemon runs an empty spare.
+- A Command Terminal and a workflow's own agent have no row. A session on an SSH host keeps none
+  either: its hook payload is the host's word, and the check answers `unknown` for a host anyway.
+- An early agent's hook fires while it is hidden, before its record exists. That record takes the
+  path at insert: `commitSessionRecord` asks `SessionManager.getAgentReportedTranscriptPath`.
+- Only an adapter whose `parseSessionStart` reports a `transcriptPath` takes part, which is Claude.
 
 - **`never-started`** needs no turns anywhere in the lineage and one of three things:
   - The agent's own report (status or hook) says nothing happened, and the path it names fails
@@ -206,20 +229,33 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
 
   The third is the restart case (Sentry DESKTOP-2M). A quit deletes the session folder, so every
   never-turned session that startup recovery restored used to resume into "No conversation found".
-  The row's path is still the agent's own, copied from its status line, and the proof is the
-  adapter's, so a moved project still resumes. A row with no path proves nothing and still
-  resumes, and the post-failure heal is its only way out.
+  The row's path is still the agent's own, copied from its status line or its SessionStart hook,
+  and the proof is the adapter's, so a moved project still resumes. A row with no path proves
+  nothing and still resumes, and the post-failure heal is its only way out. That is now a session
+  whose agent reported neither way: a CLI that died before its SessionStart hook, a hook payload
+  the event bridge cut short, or an agent whose adapter reports no hook path.
 
-  At startup the third case ends where `markResumeMiss` and its retry used to end, without the
-  dead launch. The verdict carries `promptOwed`, so startup recovery replays the lineage's prompt
-  (`owedPromptOf`), as it does for a marked launch. Both rest on the same rows-only turn evidence.
-  A board start, the Resume button included, re-resolves the task template instead, as for any
-  `never-started`.
+  The third case ends where `markResumeMiss` and its retry used to end, without the dead launch.
+  The verdict carries `promptOwed`, and two starts read it. Both rest on the same rows-only turn
+  evidence as a marked launch:
 
-  The spawn is re-resolved `forceFresh` exactly as before: the task's own prompt, no recap, no
-  notice. A column message the resume carried goes out after the spawn, as on any fresh spawn,
-  since the task template took its place in the prompt. The spawn hands that message back in
-  `SpawnOutcome.unsentPrompt` for the caller to type in.
+  - Startup recovery replays the lineage's prompt (`owedPromptOf`) itself.
+  - The Resume button passes the engine `SpawnOverrides.owedPromptOpening`. The engine calls it
+    with the owed prompt only when its own check set `promptOwed`, and opens on what it returns,
+    with no task template. `resumeTaskSession` composes that opening as it does for a
+    `launch_failed_at` record: a command the person chose leads, else the owed prompt, then any
+    held messages. A lineage that owes nothing (a launch that carried no prompt, such as a
+    recovery move out of Done) starts with no prompt.
+
+  A move into a column passes no such callback and re-resolves its column's prompt, as for any
+  `never-started`. So does a Resume after the task entered its column while paused, which goes
+  through `spawnAgent`, and a `never-started` the agent's own report decided.
+
+  Either way the spawn is re-resolved `forceFresh`, with no recap and no notice. Where the
+  template takes the prompt, a column message the resume carried goes out after the spawn, as on
+  any fresh spawn, and the spawn hands it back in `SpawnOutcome.unsentPrompt` for the caller to
+  type in. A start that opens on the owed prompt hands nothing back: its caller built the whole
+  opening, the carried message included.
 - **`expired`** needs turns and the adapter's proof that the file is gone
   (`AgentAdapter.proveConversationGone`). Claude's (`adapters/claude/conversation-gone.ts`) wants an
   absolute reported path named `<id>.jsonl`; that path and the one every reader would open both

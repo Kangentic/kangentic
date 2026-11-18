@@ -1090,7 +1090,15 @@ describe('SESSION_RESUME split-lock dedup', () => {
     expect(resumeSuspendedSession).toHaveBeenCalledTimes(1);
     // Argument 8 of engine.resumeSuspendedSession is the spawn overrides.
     const spawnOverrides = (resumeSuspendedSession.mock.calls[0] as unknown[])[7];
-    expect(spawnOverrides).toEqual({ agent: 'codex', isolatedSwimlaneId: 'lane-review', forceFresh: false, keepSessionMode: true });
+    // `owedPromptOpening` is the Resume button's alone: the engine asks it for
+    // the opening when it proves the paused conversation never ran.
+    expect(spawnOverrides).toEqual({
+      agent: 'codex',
+      isolatedSwimlaneId: 'lane-review',
+      forceFresh: false,
+      keepSessionMode: true,
+      owedPromptOpening: expect.any(Function),
+    });
   });
 });
 

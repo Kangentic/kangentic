@@ -36,7 +36,8 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides, spawnAgent } from '../helpers';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
-import { claimHeldMessages, composeOpeningMessage, deferHeldUntilTurnEnd, deliverOpeningRemainder } from '../../held-messages/held-messages';
+import { claimHeldMessages, composeOpeningMessage, deferHeldUntilTurnEnd, deliverOpeningRemainder, type OpeningMessage } from '../../held-messages/held-messages';
+import type { SpawnOverrides } from '../../transition-engine/transition-engine';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
@@ -406,15 +407,35 @@ export function resumeTaskSession(
                 // A launch stopped before its agent ran put its messages back on hold,
                 // and the prompt it owes still holds them, so they are not added again.
                 // A message held since makes the texts differ, and both go out.
-                const lead = options.resumePrompt ?? owedPrompt ?? undefined;
-                const opening = composeOpeningMessage(lead, held && lead?.includes(held.text) ? undefined : held?.text);
+                const openingLedBy = (lead: string | undefined): OpeningMessage =>
+                  composeOpeningMessage(lead, held && lead?.includes(held.text) ? undefined : held?.text);
+                const opening = openingLedBy(options.resumePrompt ?? owedPrompt ?? undefined);
+                // A conversation that never ran has no mark until a launch fails on
+                // it. The engine's check can prove it from the session row alone,
+                // before any launch, and then asks for the opening here with the
+                // prompt its lineage owes: the same message a marked launch gets
+                // above, a command the person chose still first. A lineage that
+                // owes nothing opens with no prompt, as a marked one does, never
+                // with the task template: its first launch sent none. Filled once
+                // the engine has asked, which it does only when it starts on it.
+                const owedReplay: { opening: OpeningMessage | null } = { opening: null };
+                const engineOverrides: SpawnOverrides = options.plainResume ? overrides : {
+                  ...overrides,
+                  owedPromptOpening: (owedByLineage) => {
+                    const owedOpening = openingLedBy(options.resumePrompt ?? owedByLineage ?? undefined);
+                    owedReplay.opening = owedOpening;
+                    return owedOpening.prompt;
+                  },
+                };
                 let heldHandedOff = false;
                 try {
-                  const outcome = await engine.resumeSuspendedSession(current, currentLane?.permission_mode, failedLaunch?.launch_failed_at ? true : undefined, opening.prompt, signal, undefined, undefined, overrides);
+                  const outcome = await engine.resumeSuspendedSession(current, currentLane?.permission_mode, failedLaunch?.launch_failed_at ? true : undefined, opening.prompt, signal, undefined, undefined, engineOverrides);
                   if (outcome?.declined) {
                     options.plainResume?.onDeclined();
                     return null;
                   }
+                  // What the agent opened on: the owed opening when the engine asked for it.
+                  const sentOpening = owedReplay.opening ?? opening;
                   const resumedSessionId = tasks.getById(taskId)?.session_id;
                   if (resumedSessionId && options.plainResume) deferHeldUntilTurnEnd(resumedSessionId);
                   // A recap-only start withholds them, as it withholds a column's message.
@@ -426,8 +447,8 @@ export function resumeTaskSession(
                       sessionId: resumedSessionId,
                       unsentPrompt: textLeftToType(outcome),
                       held,
-                      heldInPrompt: held !== null && !opening.heldAfterTurn,
-                      heldAfterTurn: opening.heldAfterTurn,
+                      heldInPrompt: held !== null && !sentOpening.heldAfterTurn,
+                      heldAfterTurn: sentOpening.heldAfterTurn,
                       verifier: resolveInjectionVerifier(tasks.getById(taskId)?.agent ?? null, sessionRepo, taskId),
                     });
                     heldHandedOff = true;

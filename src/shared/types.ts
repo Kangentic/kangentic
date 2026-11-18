@@ -7645,6 +7645,13 @@ export interface SessionStartReport {
   movesConversation: boolean;
   /** The hook's session is the agent CLI's own background session, which the task's PTY does not own. */
   inBackgroundSession: boolean;
+  /**
+   * The transcript file the hook names for that conversation, when the payload
+   * carries one and was read whole. The session row keeps it when the status
+   * line never reported one (`persistHookTranscriptPath`), so the resume check
+   * still has a path the agent reported after a quit deletes the session folder.
+   */
+  transcriptPath?: string;
 }
 
 /**

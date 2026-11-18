@@ -10,13 +10,17 @@ import { writeTransaction } from '../transaction';
  * Excludes metric columns (set via updateMetrics), the applied model/effort
  * (set via updateAppliedSettings, mirroring how metrics are maintained), and
  * the PTY grid (set via updatePtyGrid from the session manager's grid events),
- * and the reported transcript path (set via setTranscriptPath from usage updates,
- * and inherited by insert() for a resumed conversation).
+ * and the reported transcript path (set via setTranscriptPath from the status
+ * line's usage updates, filled via fillTranscriptPath from the SessionStart
+ * hook, and inherited by insert() for a resumed conversation).
  * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
+ * `transcript_path` is optional: the path the session's agent had already
+ * reported when its record is written, which only a record written after the
+ * agent started can have (an adopted early agent).
  */
 type SessionInsertInput = Omit<SessionRecord,
   'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'
-> & { cli_target?: string | null; start_head_sha?: string | null };
+> & { cli_target?: string | null; start_head_sha?: string | null; transcript_path?: string | null };
 
 export interface SessionMetricsInput {
   totalCostUsd: number | null;
@@ -175,6 +179,9 @@ export class SessionRepository {
         'SELECT transcript_path FROM sessions WHERE agent_session_id = ? AND transcript_path IS NOT NULL ORDER BY started_at DESC LIMIT 1',
       ).get(record.agent_session_id) as { transcript_path: string } | undefined)?.transcript_path ?? null
       : null;
+    // What this session's own agent already reported comes first: it is this
+    // run's word, where the inherited path is an earlier run's.
+    const transcriptPath = record.transcript_path ?? inheritedTranscriptPath;
     this.db.prepare(`
       INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target, transcript_path, start_head_sha, account_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -195,7 +202,7 @@ export class SessionRepository {
       record.exited_at,
       record.suspended_by,
       record.cli_target ?? null,
-      inheritedTranscriptPath,
+      transcriptPath,
       record.start_head_sha ?? null,
       record.account_id ?? null,
     );
@@ -224,7 +231,7 @@ export class SessionRepository {
       last_pty_cols: null,
       last_pty_rows: null,
       result_tokens_read_at: null,
-      transcript_path: inheritedTranscriptPath,
+      transcript_path: transcriptPath,
     };
   }
 
@@ -288,6 +295,19 @@ export class SessionRepository {
    */
   setTranscriptPath(id: string, transcriptPath: string): boolean {
     return this.db.prepare('UPDATE sessions SET transcript_path = ? WHERE id = ?').run(transcriptPath, id).changes > 0;
+  }
+
+  /**
+   * Record the transcript path the agent's SessionStart hook named, on a row
+   * that has none. It never replaces a path: the status line's is the
+   * authority (`setTranscriptPath`), and a resumed row starts with the path
+   * that line last reported, which can sit outside the folder the new cwd maps
+   * to. This is for the row the status line never reached. Returns whether a
+   * row was written.
+   */
+  fillTranscriptPath(id: string, transcriptPath: string): boolean {
+    return this.db.prepare('UPDATE sessions SET transcript_path = ? WHERE id = ? AND transcript_path IS NULL')
+      .run(transcriptPath, id).changes > 0;
   }
 
   /** Get suspended agent sessions that can be resumed */

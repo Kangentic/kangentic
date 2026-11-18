@@ -557,7 +557,10 @@ Startup recovery usually reaches that verdict before the launch now. A quit dele
 folder, so a restored never-turned session has no agent report left, only the path its row kept. When
 that path fails with ENOENT and the adapter proves the conversation gone, the check answers
 `never-started` with `promptOwed`, and the prompt is replayed with no dead launch first (Sentry
-DESKTOP-2M, [Resume](resume.md)). A row with no path still goes through the launch and this heal.
+DESKTOP-2M, [Resume](resume.md)). The Resume button reaches the same end through the engine. A row
+with no path still goes through the launch and this heal. The row keeps the path from the status
+line or, for a session that line never reached, from the SessionStart hook, so that is now a
+session whose agent reported neither.
 
 Three things keep this safe:
 
