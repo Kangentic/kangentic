@@ -167,9 +167,27 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   `widget x display scale` down to fit. `ScreenshotCaptureOptions.surface` is required and
   nullable: a guest caller passes `guestCaptureSurface(webContents, entry)`, and only a surface
   Chromium can grow (a lane's own window, Kangentic's window under the dev bridge) passes `null`.
+  The bound is only as current as its inputs. The pane's size is the renderer's report, which
+  trails the pane and stops arriving while the host window draws no frame, and the display scale
+  is looked up from the window's bounds (Sentry DESKTOP-48). So with no viewport override
+  `planCapture` caps the recorded bound with the page's own `innerWidth x devicePixelRatio`,
+  which tracks the pane's real pixel count there to within 2 px (measured at display scales 1 to
+  2). That count can read past the surface, 937.5 rows for 936 at scale 1.25, so the cap takes a
+  CSS pixel and a device pixel off it. Do not use the page's count as the bound unadjusted. Under
+  an override the page's viewport is the emulated one, and a recorded pane larger than the real
+  one can still come back tiled.
   `captureScreenshotWithBudget` also refuses, rather than returns, an image larger than the pane,
-  which is the backstop if Chromium's sizing ever changes under the planner. Do not "restore
-  resolution" by raising the emulated scale factor: that is exactly what shipped the tiling.
+  but only from a request that carried a size: a clip, a full page, or a viewport override it
+  could not rule out. A full page with no clip counts, because Chromium builds a clip of the
+  whole page for it (`CaptureFullPageScreenshot`). A viewport request with none of the three asks
+  Chromium for no size and cannot tile, so its image is returned and the recorded pane size was
+  the thing that was wrong. All three have to be known: no clip, not beyond the viewport, and an
+  attached CDP session that records no override. With no session attached the override cannot be
+  ruled out, so that request is refused too. Key the return on the plan's own `clip === null`
+  and `captureBeyondViewport`, and on the CDP session's own record of an override, never on the
+  planner's inputs, which are missing when the page cannot describe itself. The refusal is the
+  backstop if Chromium's sizing ever changes under the planner. Do not "restore resolution" by
+  raising the emulated scale factor: that is exactly what shipped the tiling.
 - **`eval` is gated off by default.** `kangentic_browser_eval` uses the `eval` capability, which the
   driver blocks unless `AppConfig.browserAutomation.allowEval` is on. Do not ship an ungated
   arbitrary-JS path.
@@ -262,9 +280,14 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
 - **Test (pane-bounded capture):** `tests/unit/browser-capture-bounds.test.ts` holds its own
   statement of Chromium's `requested_image_size` rule, checks it reproduces the shipped bug, and
   asserts no planned capture exceeds its pane across display scales 1 to 2, four pane sizes, and
-  every zoom, ratio and target shape. `tests/unit/devtools-screenshot-budget.test.ts` pins the
-  refusal of an oversized image. The required `surface` field makes a new call site decide at
-  typecheck.
+  every zoom, ratio and target shape. It also asserts a recorded pane larger than the real one is
+  capped by the page's own pixels, and left alone under an override.
+  `tests/unit/devtools-screenshot-budget.test.ts` pins both directions of the refusal: a clip-free
+  viewport capture with no override is returned past a stale bound, and a clipped one, a full
+  page with no clip, one under an override, and one whose override cannot be read are refused.
+  `tests/unit/error-reporting-mcp-browser-behavior.test.ts` runs a refused capture through the
+  driver and pins the tags its report carries. The required `surface` field makes a new call site
+  decide at typecheck.
 - **Test (visible in the UI):** `tests/ui/browser-offscreen-surface.spec.ts` drives the real board
   and task detail: the card globe and the pill's alive dot light for an offscreen surface and go
   dark when it closes, only the holding task lights, the set is read on mount as well as pushed,

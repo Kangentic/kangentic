@@ -218,11 +218,22 @@ function paneWidgetSize(webContents: WebContents, entry: BrowserPaneEntry): View
  * The widget is the renderer's report, in the host document's CSS pixels,
  * times the host's own zoom to make it DIP. `displayScale` is the scale factor
  * of the display the host window is on, which is what Chromium multiplies the
- * widget by. Before the pane's first report this falls back to the host
- * window, which overestimates. The refusal in `screenshot.ts` does NOT cover
- * that window: it checks the image against this same bound, so a request that
- * fits the host window but not the real pane can still come back tiled. It
- * lasts until the renderer's first `widgetSize` report.
+ * widget by.
+ *
+ * None of that is read from Chromium when the capture is taken, so the bound
+ * can be wrong in either direction. Before the pane's first report it falls
+ * back to the host window, which overestimates, and `widgetSource` says so.
+ * After it, the report still trails the pane. It rides a `ResizeObserver`
+ * behind a debounce, and a host window that draws no frame delivers none.
+ *
+ *   - Too small, and a plain viewport shot comes back larger than the bound.
+ *     `screenshot.ts` returns it, since a viewport request with no clip and
+ *     no override cannot tile (Sentry DESKTOP-48).
+ *   - Too large, and a clip sized from it asks for more than the pane holds.
+ *     With no override the planner caps the bound at the page's own pixel
+ *     count (`capture-bounds.ts`). Under an override nothing corrects it. The
+ *     refusal in `screenshot.ts` checks the image against this same bound, so
+ *     that capture can still come back tiled.
  */
 export function guestCaptureSurface(webContents: WebContents, entry: BrowserPaneEntry): GuestCaptureSurface | null {
   if (entry.kind === 'lane') return null;
@@ -231,6 +242,7 @@ export function guestCaptureSurface(webContents: WebContents, entry: BrowserPane
   const hostZoom = webContents.hostWebContents?.getZoomFactor() || 1;
   return {
     widget: { width: widget.width * hostZoom, height: widget.height * hostZoom },
+    widgetSource: entry.widgetSize ? 'reported' : 'fallback',
     displayScale: displayScaleFor(webContents),
   };
 }

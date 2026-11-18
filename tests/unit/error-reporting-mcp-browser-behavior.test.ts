@@ -9,8 +9,9 @@
  * asserts what reached `reportHandledError` and with which tags. It replaces the
  * source-text pins in error-reporting-chokepoints.test.ts for `runHandler`, both
  * request stages of the HTTP server, the three server builders' `withToolReporting`
- * wrap, and the browser driver's three reports. A screenshot that times out runs the
- * real capture path, so its extra tags are checked where the report is sent.
+ * wrap, and the browser driver's three reports. A screenshot that times out, and one
+ * refused as larger than its pane, run the real capture path, so their extra tags are
+ * checked where the report is sent.
  *
  * A TypeError is the defect. A RefusalError is the expected failure that must send
  * nothing, so a case with it proves the filter is in the path rather than bypassed.
@@ -112,10 +113,12 @@ vi.mock('../../src/main/browser/cdp/cdp', async (importOriginal) => ({
   waitForDialogInterception: vi.fn(async () => {}),
   dismissedBeforeunloadSince: vi.fn(() => false),
   getDialogResponse: vi.fn(),
+  // The session's record of a viewport override, which a test sets to say one is active.
+  getDeviceMetrics: vi.fn(() => null),
 }));
 
 import { BrowserWindow, webContents } from 'electron';
-import { attachDebugger, isDebuggerAttached, SCREENSHOT_TIMEOUT_MS } from '../../src/main/browser/cdp/cdp';
+import { attachDebugger, getDeviceMetrics, isDebuggerAttached, SCREENSHOT_TIMEOUT_MS } from '../../src/main/browser/cdp/cdp';
 import { captureScreenshotWithBudget } from '../../src/main/browser/cdp/screenshot';
 import { noteWake, resetWakeClockForTests } from '../../src/main/browser/wake-clock';
 import { RefusalError } from '../../src/shared/refusal';
@@ -507,6 +510,183 @@ describe('withGuest reports a driver failure', () => {
       for (const captureTag of ['surface', 'host_window', 'hold', 'since_wake']) {
         expect(tags).not.toHaveProperty(captureTag);
       }
+    });
+  });
+
+  describe('a capture refused as larger than its pane says what its request looked like (DESKTOP-48)', () => {
+    const PANE = { widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1 } as const;
+    /** Larger than the pane on both axes. */
+    const PAST_THE_PANE = { width: 1600, height: 1001 };
+    /** A page 1280 wide and 3000 tall, which a full-page capture of this pane has to clip. */
+    const TALL_PAGE = { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, contentWidth: 1280, contentHeight: 3000 };
+    const OVERRIDE = { width: 740, height: 463, deviceScaleFactor: 0 };
+
+    /** The first 24 bytes of a PNG, which is all the size decoder reads. */
+    function pngOfSize(size: { width: number; height: number }): string {
+      const header = Buffer.alloc(24);
+      header.writeUInt32BE(0x89504e47, 0);
+      header.writeUInt32BE(size.width, 16);
+      header.writeUInt32BE(size.height, 20);
+      return header.toString('base64');
+    }
+
+    /**
+     * A guest whose capture answers with an image past the pane. With a `page`
+     * it describes itself, so the capture is planned. Without one every other
+     * command answers with nothing useful and the capture goes out unplanned.
+     */
+    function oversizedGuest(page: object | null) {
+      const sendCommand = (method: string): Promise<unknown> => {
+        if (method === 'Page.captureScreenshot') return Promise.resolve({ data: pngOfSize(PAST_THE_PANE) });
+        if (method === 'Runtime.evaluate' && page) return Promise.resolve({ result: { value: page } });
+        return Promise.resolve({ result: {} });
+      };
+      return {
+        id: 7,
+        isDestroyed: () => false,
+        capturePage: async () => ({}),
+        getZoomFactor: () => 1,
+        debugger: { sendCommand },
+      };
+    }
+
+    function capture(captureOptions: Partial<Parameters<typeof captureScreenshotWithBudget>[1]> = {}): Promise<DriverResult<unknown>> {
+      return withGuest({ ...options, capability: 'observe' }, (guest) =>
+        captureScreenshotWithBudget(guest, { format: 'png', surface: PANE, ...captureOptions }),
+      );
+    }
+
+    beforeEach(() => {
+      vi.mocked(getDeviceMetrics).mockReset();
+      vi.mocked(getDeviceMetrics).mockReturnValue(null);
+      vi.mocked(isDebuggerAttached).mockReturnValue(true);
+    });
+
+    it('tags a clipped full page on a showing pane whose size the renderer reported', async () => {
+      vi.mocked(webContents.fromId).mockReturnValue(oversizedGuest(TALL_PAGE) as never);
+
+      const result = await capture({ fullPage: true });
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'driver-error' } });
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportedTags()).toMatchObject({
+        source: 'browser_driver',
+        capability: 'observe',
+        kind: 'driver-error',
+        error_name: 'CaptureExceedsSurface',
+        surface: 'pane',
+        target: 'full_page',
+        clipped: 'yes',
+        emulated: 'no',
+        widget_size: 'reported',
+      });
+    });
+
+    it('tags a clip-free viewport under a viewport override', async () => {
+      vi.mocked(webContents.fromId).mockReturnValue(oversizedGuest(null) as never);
+      vi.mocked(getDeviceMetrics).mockReturnValue(OVERRIDE);
+
+      await capture();
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportedTags()).toMatchObject({
+        error_name: 'CaptureExceedsSurface',
+        target: 'viewport',
+        clipped: 'no',
+        emulated: 'yes',
+      });
+    });
+
+    it('tags a capture whose override could not be read, with no session attached to say', async () => {
+      vi.mocked(webContents.fromId).mockReturnValue(oversizedGuest(null) as never);
+      vi.mocked(isDebuggerAttached).mockReturnValue(false);
+
+      await capture();
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportedTags()).toMatchObject({ target: 'viewport', clipped: 'no', emulated: 'unknown' });
+    });
+
+    it('tags a parked pane bounded by the host window, before its first size report', async () => {
+      browserPaneRegistry.detachAll();
+      browserPaneRegistry.register({
+        handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, visibility: 'parked',
+      });
+      vi.mocked(webContents.fromId).mockReturnValue(oversizedGuest(TALL_PAGE) as never);
+
+      await capture({ fullPage: true, surface: { ...PANE, widgetSource: 'fallback' } });
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportedTags()).toMatchObject({ surface: 'parked', widget_size: 'fallback' });
+    });
+
+    it('sends nothing for a capture nothing sized, and returns the image', async () => {
+      // No clip and no override: Chromium returned the surface as it is, so the
+      // recorded pane size was behind and the image is good.
+      vi.mocked(webContents.fromId).mockReturnValue(oversizedGuest(null) as never);
+
+      const result = await capture();
+
+      expect(result).toMatchObject({ ok: true, data: PAST_THE_PANE });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('adds none of these tags to any other driver error', async () => {
+      await withGuest(options, async () => {
+        throw new TypeError('body defect');
+      });
+
+      const tags = reportedTags();
+      for (const refusalTag of ['surface', 'target', 'clipped', 'emulated', 'widget_size']) {
+        expect(tags).not.toHaveProperty(refusalTag);
+      }
+    });
+
+    // The error's name is in the reported set, so it still reports. What the
+    // guard decides is whether its fields may become tags. Each field is held
+    // to its own values, so a string outside its enum (page or user text) can
+    // never ride into a tag.
+    const WELL_FORMED = { target: 'viewport', clipped: false, emulation: 'off', widgetSource: 'reported' };
+    const WRONG_SHAPES: { label: string; fields: Record<string, unknown> }[] = [
+      { label: 'no emulation', fields: { ...WELL_FORMED, emulation: undefined } },
+      { label: 'clipped as a string', fields: { ...WELL_FORMED, clipped: 'no' } },
+      { label: 'target as a number', fields: { ...WELL_FORMED, target: 3 } },
+      { label: 'a target outside its enum', fields: { ...WELL_FORMED, target: 'https://example.test/checkout' } },
+      { label: 'a widgetSource outside its enum', fields: { ...WELL_FORMED, widgetSource: 'user text' } },
+      { label: 'an emulation outside its enum', fields: { ...WELL_FORMED, emulation: 'selector: #pay' } },
+      { label: 'an inherited property name as a field value', fields: { ...WELL_FORMED, emulation: 'toString' } },
+    ];
+
+    it.each(WRONG_SHAPES)('adds none of the refusal tags to a CaptureExceedsSurface with $label', async ({ fields }) => {
+      const wrongShaped = Object.assign(new Error('refused'), { name: 'CaptureExceedsSurface' }, fields);
+
+      await withGuest(options, async () => {
+        throw wrongShaped;
+      });
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      const tags = reportedTags();
+      expect(tags).toMatchObject({ source: 'browser_driver', error_name: 'CaptureExceedsSurface' });
+      for (const refusalTag of ['surface', 'target', 'clipped', 'emulated', 'widget_size']) {
+        expect(tags).not.toHaveProperty(refusalTag);
+      }
+      expect(JSON.stringify(tags)).not.toContain('example.test');
+      expect(JSON.stringify(tags)).not.toContain('user text');
+    });
+
+    it('does tag a well-formed CaptureExceedsSurface built the same way, so the cases above fail for their fields', async () => {
+      const wellFormed = Object.assign(new Error('refused'), { name: 'CaptureExceedsSurface' }, WELL_FORMED);
+
+      await withGuest(options, async () => {
+        throw wellFormed;
+      });
+
+      expect(reportedTags()).toMatchObject({
+        target: 'viewport',
+        clipped: 'no',
+        emulated: 'no',
+        widget_size: 'reported',
+      });
     });
   });
 

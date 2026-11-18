@@ -24,6 +24,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   planCapture,
+  plannedPixelBound,
   surfacePixelBound,
   type CaptureClip,
   type CaptureTarget,
@@ -99,7 +100,7 @@ function pageState(setup: Setup): PageCaptureState {
 }
 
 function surfaceOf(setup: Setup): GuestCaptureSurface {
-  return { widget: setup.widget, displayScale: setup.displayScale };
+  return { widget: setup.widget, widgetSource: 'reported', displayScale: setup.displayScale };
 }
 
 /**
@@ -383,7 +384,163 @@ describe('surfacePixelBound floors a fractional widget size', () => {
     // 740.6 * 1.25 = 925.75 (floor 925, round 926); 500.5 * 1.25 = 625.625
     // (floor 625, round 626). Both axes round up, so a round-based bound would
     // hand Chromium a size the pane cannot actually hold on either axis.
-    const bound = surfacePixelBound({ widget: { width: 740.6, height: 500.5 }, displayScale: 1.25 });
+    const bound = surfacePixelBound({ widget: { width: 740.6, height: 500.5 }, widgetSource: 'reported', displayScale: 1.25 });
     expect(bound).toEqual({ width: 925, height: 625 });
+  });
+});
+
+describe('a recorded pane larger than the real one is capped by the page', () => {
+  // The recorded size is the renderer's report, and it trails the pane: after
+  // a pane shrinks, and before its first report, when the host window stands
+  // in. A clip sized from that record asks for more than the pane holds, and
+  // the tiled image fits the stale bound, so nothing refuses it. With no
+  // override the page's own viewport times its ratio is the pane's real pixel
+  // count, and the planner takes the smaller of the two.
+  const REAL_PANE: Size = { width: 740, height: 749 };
+  const RECORDED_PANE: Size = { width: 1400, height: 900 };
+
+  function recordedSurface(setup: Setup): GuestCaptureSurface {
+    return { widget: RECORDED_PANE, widgetSource: 'reported', displayScale: setup.displayScale };
+  }
+
+  // The targets a pane this size cannot hold whole. A small element fits
+  // either bound, so it could not fail for the reason this block exists.
+  const OVERFLOWING = TARGETS.filter(({ label }) => ['full page', 'tall element', 'wide element'].includes(label));
+
+  it('covers the three targets that overflow, so a filter typo cannot pass it vacuously', () => {
+    expect(OVERFLOWING.map(({ label }) => label)).toEqual(['full page', 'tall element', 'wide element']);
+  });
+
+  for (const { label: targetLabel, target } of OVERFLOWING) {
+    it(`${targetLabel}: stays inside the real pane at every display scale, zoomed or not`, () => {
+      const failures: string[] = [];
+      for (const displayScale of DISPLAY_SCALES) {
+        for (const zoom of [1, 0.8]) {
+          const setup = plain(REAL_PANE, displayScale, { zoom });
+          const plan = planCapture(pageState(setup), target, recordedSurface(setup));
+          const request = chromiumRequest(setup, plan.clip);
+          if (!fitsSurface(request, setup)) {
+            const bound = surfacePixelBound(surfaceOf(setup));
+            failures.push(`@${displayScale} zoom ${zoom}: asked ${request!.width}x${request!.height}, pane holds ${bound.width}x${bound.height}`);
+          }
+        }
+      }
+      expect(failures).toEqual([]);
+    });
+  }
+
+  it('lands a pixel or two inside the real pane, never past it', () => {
+    // The page's count is close, not exact, so the capped bound gives up a CSS
+    // pixel and a device pixel rather than risk a strip past the surface.
+    const setup = plain(REAL_PANE, 1);
+    const plan = planCapture(pageState(setup), { kind: 'element', box: TALL }, recordedSurface(setup));
+    expect(plan.pixelsPerCssPixel).toBeLessThanOrEqual(749 / 1992);
+    expect(plan.pixelsPerCssPixel).toBeGreaterThanOrEqual(746 / 1992);
+    expect(plan.limitedByPane).toBe(true);
+  });
+
+  it('stays inside the surface where the page counts more rows than it has', () => {
+    // Measured on Electron 45 at display scale 1.25: a 740x749 pane's guest
+    // reported innerHeight 750 at devicePixelRatio 1.25, which is 937.5 rows,
+    // while a clip-free capture of it came back 936 rows tall. A bound taken
+    // straight from the page there asks for one row the surface does not have.
+    const measuredSurface: Size = { width: 925, height: 936 };
+    const state: PageCaptureState = {
+      zoom: 1,
+      devicePixelRatio: 1.25,
+      viewport: { width: 740, height: 750 },
+      scroll: { x: 0, y: 0 },
+      content: { width: 3893, height: 3000 },
+      emulated: false,
+    };
+    const setup = plain(REAL_PANE, 1.25);
+    for (const { label, target } of OVERFLOWING) {
+      const plan = planCapture(state, target, recordedSurface(setup));
+      const request = chromiumRequest(setup, plan.clip);
+      expect(request!.width, label).toBeLessThanOrEqual(measuredSurface.width);
+      expect(request!.height, label).toBeLessThanOrEqual(measuredSurface.height);
+    }
+  });
+
+  it('uses a recorded bound that agrees with the page exactly as recorded', () => {
+    // 749 x 1.5 is 1123.5: the recorded bound floors it, and the page's own
+    // count lands within a pixel. Inside the tolerance nothing is lowered.
+    const setup = plain(REAL_PANE, 1.5, { zoom: 0.8 });
+    const plan = planCapture(pageState(setup), { kind: 'element', box: TALL }, surfaceOf(setup));
+    expect(plan.pixelsPerCssPixel).toBeCloseTo(surfacePixelBound(surfaceOf(setup)).height / 1992, 6);
+  });
+
+  it('never raises a recorded bound that is smaller than the page says', () => {
+    // The other direction is not the planner's to fix: a smaller bound costs
+    // resolution and cannot tile.
+    const setup = plain({ width: 1400, height: 900 }, 1);
+    const small: GuestCaptureSurface = { widget: REAL_PANE, widgetSource: 'reported', displayScale: 1 };
+    const plan = planCapture(pageState(setup), { kind: 'element', box: TALL }, small);
+    expect(plan.pixelsPerCssPixel).toBeCloseTo(749 / 1992, 6);
+  });
+
+  describe('plannedPixelBound lowers each axis on its own evidence', () => {
+    // Ratio 1, no override: the page's 740x749 viewport is the pane's pixel
+    // count. A stale axis drops a CSS pixel and a device pixel below the page's
+    // count (740 -> 738, 749 -> 747). An axis that agrees keeps its record.
+    const state = pageState(plain(REAL_PANE, 1));
+    const surfaceWithRecord = (width: number, height: number): GuestCaptureSurface =>
+      ({ widget: { width, height }, widgetSource: 'reported', displayScale: 1 });
+
+    it('lowers only the width when only the width is stale, and keeps the height as recorded', () => {
+      expect(plannedPixelBound(surfaceWithRecord(1400, 749), state)).toEqual({ width: 738, height: 749 });
+    });
+
+    it('lowers only the height when only the height is stale, and keeps the width as recorded', () => {
+      expect(plannedPixelBound(surfaceWithRecord(740, 1400), state)).toEqual({ width: 740, height: 747 });
+    });
+
+    it('lowers both when both are stale, each from its own axis of the page', () => {
+      expect(plannedPixelBound(surfaceWithRecord(1400, 900), state)).toEqual({ width: 738, height: 747 });
+    });
+  });
+
+  describe('plannedPixelBound ignores a page axis that says nothing', () => {
+    const surface: GuestCaptureSurface = { widget: { width: 1400, height: 900 }, widgetSource: 'reported', displayScale: 1 };
+    const healthy = pageState(plain(REAL_PANE, 1));
+
+    // A collapsed guest really reports innerWidth 0. Believing it would plan a
+    // one-pixel capture, so the recorded bound stands on that axis.
+    it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])('keeps the recorded width when the page viewport width is %s', (width) => {
+      const bound = plannedPixelBound(surface, { ...healthy, viewport: { width, height: 749 } });
+      expect(bound.width).toBe(1400);
+      // The other axis is still the page's: 749 -> 747.
+      expect(bound.height).toBe(747);
+    });
+
+    it.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])('keeps the recorded height when the page viewport height is %s', (height) => {
+      const bound = plannedPixelBound(surface, { ...healthy, viewport: { width: 740, height } });
+      expect(bound.height).toBe(900);
+      expect(bound.width).toBe(738);
+    });
+  });
+
+  describe('plannedPixelBound stands by a record at the edge of the margin', () => {
+    // Documented rule: a record stands while it is no more than a CSS pixel
+    // plus the 2 px tolerance past the page's count. At ratio 1 and a 740 px
+    // axis that is 743. One beyond (744) is lowered to 738.
+    const state = pageState(plain(REAL_PANE, 1));
+
+    it('keeps a record of 743 on a 740 px page axis', () => {
+      expect(plannedPixelBound({ widget: { width: 743, height: 749 }, widgetSource: 'reported', displayScale: 1 }, state).width).toBe(743);
+    });
+
+    it('lowers a record of 744 on a 740 px page axis to 738', () => {
+      expect(plannedPixelBound({ widget: { width: 744, height: 749 }, widgetSource: 'reported', displayScale: 1 }, state).width).toBe(738);
+    });
+  });
+
+  it('leaves the recorded bound alone under an override, where the viewport is the emulated one', () => {
+    // The case the cap does not reach. A fitted 1600x1000 layout reports a
+    // 1600-wide viewport whatever the pane is, so the page says nothing about
+    // the pane and the recorded bound is all there is.
+    const setup = docked(REAL_PANE, 1, { width: 1600, height: 1000 });
+    const plan = planCapture(pageState(setup), { kind: 'fullPage' }, recordedSurface(setup));
+    expect(plan.pixelsPerCssPixel).toBeCloseTo(RECORDED_PANE.height / setup.content.height, 6);
   });
 });
