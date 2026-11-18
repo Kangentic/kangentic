@@ -4,12 +4,13 @@
 
 **New concept:** `releases/scheduled-checks.md`, the workflows that run on a schedule to catch what
 breaks with no commit: the signing credentials nightly (`.github/workflows/signing-credentials.yml`),
-the agent CLI nightly (`.github/workflows/agent-clis.yml`), what `/release` reads, and what is
-deliberately not checked.
+the agent CLI nightly (`.github/workflows/agent-clis.yml`), the daily distribution check
+(`scripts/check-distribution.mjs`, the second job of `.github/workflows/integrations.yml`), what
+`/release` reads, and what is deliberately not checked.
 
 **Changed:** `integrations/boards.md` gains "Owner steps for the browser sign-ins", the one list of
 what Jira, Trello, Linear and GitLab each need registered, and the decision that Asana gets no
-browser sign-in. `releases/deployment.md` lists the eight signing secrets `preflight-signing` now
+browser sign-in. Its "Daily sign-in check" gains the GitLab client row. `releases/deployment.md` lists the eight signing secrets `preflight-signing` now
 requires and the two new workflows.
 
 ## 2026-11-05

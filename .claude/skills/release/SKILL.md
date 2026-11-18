@@ -160,15 +160,20 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    exists. `gh workflow run package-smoke.yml --ref main` gets a fresh answer, but it reports under
    `--event workflow_dispatch`, so read that run instead.
 
-   Then check the daily sign-in check, which a pull request runs only when it changes a sign-in
-   value: `gh run list --repo Kangentic/kangentic --workflow=integrations.yml --event schedule
+   Then check the daily sign-in and distribution checks, which a pull request runs only when it
+   changes a value one of them reads: `gh run list --repo Kangentic/kangentic --workflow=integrations.yml --event schedule
    --limit 1 --json conclusion,createdAt`. Require `conclusion: success` and a `createdAt` within
-   the last 48 hours. On a `failure`, stop and read that run's summary. A `fail` row names the
-   Trello key, the Atlassian or Linear client, or the kangentic.com page that stopped answering.
-   That sign-in is broken in every installed version, so tell the owner which one before any tag.
-   On an older run or an empty list, stop too, because the schedule itself may have stopped
-   running. `gh workflow run integrations.yml --ref main` gets a fresh answer, under `--event
-   workflow_dispatch`. Each probe is in `docs/integrations/boards.md`, "Daily sign-in check".
+   the last 48 hours. On a `failure`, stop and read that run's summary, which has a table per job.
+   In the sign-in table, a `fail` row names the Trello key, the Atlassian, Linear or GitLab client,
+   or the kangentic.com page that stopped answering. That sign-in is broken in every installed
+   version, so tell the owner which one before any tag. In the distribution table, a `fail` row in
+   the `release` or `npm` area means the published release or its npm launcher is broken for
+   updates or installs, which this release may repair or may repeat, and a row in the `site` or
+   `domain` area is not about the release. Tell the owner which rows are red, and go on only on
+   the owner's word. On an older run or an empty list, stop too, because the schedule itself may
+   have stopped running. `gh workflow run integrations.yml --ref main` gets a fresh answer, under
+   `--event workflow_dispatch`. The sign-in probes are in `docs/integrations/boards.md`, "Daily
+   sign-in check", and the distribution probes in `docs/releases/scheduled-checks.md`.
 
    Then check the credentials the release signs with: `gh run list --repo Kangentic/kangentic
    --workflow=signing-credentials.yml --event schedule --limit 1 --json headSha,conclusion,createdAt`.

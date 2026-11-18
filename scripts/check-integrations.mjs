@@ -1,9 +1,9 @@
 /**
- * Checks that the browser sign-ins Kangentic ships still work: Trello, Jira and
- * Linear. .github/workflows/integrations.yml runs it every day and on a pull
- * request that changes a value it reads, and `npm run check:integrations` runs
- * it by hand. It holds no secret and needs no install. Every probe is a request
- * a stranger could make, and none of them signs anyone in.
+ * Checks that the browser sign-ins Kangentic ships still work: Trello, Jira,
+ * Linear and GitLab. .github/workflows/integrations.yml runs it every day and on
+ * a pull request that changes a value it reads, and `npm run check:integrations`
+ * runs it by hand. It holds no secret and needs no install. Every probe is a
+ * request a stranger could make, and none of them signs anyone in.
  *
  * It checks the values this checkout ships, read from the source text of the
  * files in SOURCE_FILES. It cannot import them. It runs before any install, and
@@ -13,14 +13,14 @@
  *
  * A sign-in whose id is empty is not shipped yet. Its checks report as pending
  * and do not fail the run, so the summary doubles as the list of owner steps
- * left. Set TRELLO_API_KEY, JIRA_OAUTH_CLIENT_ID or LINEAR_OAUTH_CLIENT_ID in
- * the environment to check a value before it is committed, and DOCS_BASE_URL to
- * point the page checks at another origin, such as a preview deployment. An
- * empty variable counts as unset, so it can never turn a shipped id's checks
- * into pending ones.
+ * left. Set TRELLO_API_KEY, JIRA_OAUTH_CLIENT_ID, LINEAR_OAUTH_CLIENT_ID or
+ * GITLAB_COM_OAUTH_CLIENT_ID in the environment to check a value before it is
+ * committed, and DOCS_BASE_URL to point the page checks at another origin, such
+ * as a preview deployment. An empty variable counts as unset, so it can never
+ * turn a shipped id's checks into pending ones.
  *
  * The probes. Each answer was seen against the live service on 2026-11-17,
- * except the two marked "not yet seen" below. The answers a stranger can get
+ * except the three marked "not yet seen" below. The answers a stranger can get
  * today are recorded in tests/fixtures/sign-in-check-live-answers.json.
  * - Trello key: with a key and no token, Trello's API answers 400 "invalid
  *   token" for a live key and 401 "invalid key" for one it does not know.
@@ -42,6 +42,10 @@
  *   known client should get as far as `invalid_grant`, not yet seen. The check
  *   never uses the refresh grant, which answers `invalid_grant` for a made-up
  *   client too.
+ * - GitLab client: a made-up code exchanged at gitlab.com for the shipped client
+ *   id, with the form `exchangeGitLabAuthorizationCode` sends. gitlab.com
+ *   answers 401 `invalid_client` for a client it does not know, which was seen.
+ *   A known client should get as far as `invalid_grant`, not yet seen.
  *
  * Any answer not named above fails its check, and so does no answer at all.
  *
@@ -54,6 +58,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
+import {
+  annotationLines,
+  exitCodeFor,
+  markdownCell,
+  messageOf,
+  result,
+  sendRequest,
+  singleLine,
+  snippet,
+  summaryTable,
+  tableLines,
+} from './lib/check-report.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT_NAME = 'scripts/check-integrations.mjs';
@@ -63,31 +79,32 @@ const LOOPBACK_FILE = 'src/main/boards/shared/loopback-sign-in.ts';
 const TRELLO_FILE = 'src/main/boards/adapters/trello/constants.ts';
 const JIRA_FILE = 'src/main/boards/adapters/jira/constants.ts';
 const LINEAR_FILE = 'src/main/boards/adapters/linear/constants.ts';
+const GITLAB_FILE = 'src/main/boards/adapters/gitlab/constants.ts';
 
-/** Every file a value is read from. The workflow's path filter names the same five. */
-const SOURCE_FILES = [DOCS_LINKS_FILE, LOOPBACK_FILE, TRELLO_FILE, JIRA_FILE, LINEAR_FILE];
+/** Every file a value is read from. The workflow's path filter names each of them. */
+const SOURCE_FILES = [DOCS_LINKS_FILE, LOOPBACK_FILE, TRELLO_FILE, JIRA_FILE, LINEAR_FILE, GITLAB_FILE];
 
 /** Trello's approval page. The desktop spells it out inside `buildAuthorizeUrl`. */
 const TRELLO_AUTHORIZE_URL = 'https://trello.com/1/authorize';
+/** gitlab.com's token route, under `GITLAB_COM_BASE`. The desktop spells it out inside `postTokenForm`. */
+const GITLAB_TOKEN_PATH = '/oauth/token';
 
-const TIMEOUT_MS = 15_000;
 const PROBE = 'kangentic-integration-check';
 /** A loopback port for the state. Nothing listens on it, and nothing here follows a redirect. */
 const STATE_PORT = 43123;
 /** The desktop's nonce length (`NONCE_BYTES` in sealed-token.ts). */
 const STATE_NONCE_BYTES = 32;
-const SNIPPET_LIMIT = 120;
 
-/** @typedef {'ok' | 'pending' | 'fail'} Status */
-/** @typedef {{ area: string, check: string, status: Status, detail: string }} Result */
+/** @typedef {import('./lib/check-report.mjs').Result} Result */
+/** @typedef {import('./lib/check-report.mjs').SendRequest} SendRequest */
 /** @typedef {{ value: string, source: string }} ShippedId */
-/** @typedef {(url: string, init?: RequestInit) => Promise<Response>} SendRequest */
 /**
  * @typedef {object} ShippedValues
  * @property {string} site The docs site's origin, with no trailing slash.
  * @property {ShippedId} trelloKey
  * @property {ShippedId} jiraClientId
  * @property {ShippedId} linearClientId
+ * @property {ShippedId} gitlabClientId
  * @property {string} trelloApiBase
  * @property {string} trelloReturnUrl
  * @property {string} jiraCallbackUrl
@@ -96,40 +113,9 @@ const SNIPPET_LIMIT = 120;
  * @property {string} loopbackHost
  * @property {string} linearTokenUrl
  * @property {string} linearRedirectUri
+ * @property {string} gitlabTokenUrl
+ * @property {string} gitlabRedirectUri
  */
-
-// ---------------------------------------------------------------------------
-// Text that came from somewhere else
-// ---------------------------------------------------------------------------
-
-/** Flattens text to one line. Every control character and line break becomes a space. */
-function singleLine(text) {
-  return String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-}
-
-/**
- * A piece of a remote answer, safe to print. The runner reads `::command::`
- * lines from this script's output, so nothing a service sent may start a line.
- */
-function snippet(text) {
-  return singleLine(text).slice(0, SNIPPET_LIMIT);
-}
-
-/**
- * Why a request got no answer. Node's fetch throws "fetch failed" and keeps the
- * reason on `cause`. When both address families refuse the connection, that
- * cause is an AggregateError with an empty message and the reason in `code`.
- */
-function messageOf(problem) {
-  if (!(problem instanceof Error)) return snippet(problem);
-  const cause = problem.cause;
-  return snippet(cause?.message || cause?.code || problem.message);
-}
-
-/** @returns {Result} */
-function result(area, check, status, detail) {
-  return { area, check, status, detail: singleLine(detail) };
-}
 
 // ---------------------------------------------------------------------------
 // The values this checkout ships
@@ -195,6 +181,7 @@ function readShippedValues(repoRoot = REPO_ROOT, env = process.env) {
   const trello = readSource(repoRoot, TRELLO_FILE);
   const jira = readSource(repoRoot, JIRA_FILE);
   const linear = readSource(repoRoot, LINEAR_FILE);
+  const gitlab = readSource(repoRoot, GITLAB_FILE);
 
   // The constant is read even when the environment overrides it, so a moved one never hides behind an override.
   const overridable = (source, file, name) => {
@@ -226,6 +213,11 @@ function readShippedValues(repoRoot = REPO_ROOT, env = process.env) {
     linearTokenUrl: stringConstant(linear, LINEAR_FILE, 'LINEAR_OAUTH_TOKEN_URL'),
     // The first registered port, as `redirectUriFor` in linear/oauth.ts builds it.
     linearRedirectUri: `http://${loopbackHost}:${redirectPorts[0]}${redirectPath}`,
+    gitlabClientId: overridable(gitlab, GITLAB_FILE, 'GITLAB_COM_OAUTH_CLIENT_ID'),
+    gitlabTokenUrl: stringConstant(gitlab, GITLAB_FILE, 'GITLAB_COM_BASE') + GITLAB_TOKEN_PATH,
+    // GitLab ignores a loopback redirect's port, and the desktop sends whichever port is free, in
+    // the shape `signInWithGitLab` in gitlab/oauth.ts builds. The state's port stands in for it here.
+    gitlabRedirectUri: `http://${stringConstant(gitlab, GITLAB_FILE, 'GITLAB_OAUTH_REDIRECT_HOST')}:${STATE_PORT}${stringConstant(gitlab, GITLAB_FILE, 'GITLAB_OAUTH_REDIRECT_PATH')}`,
   };
 }
 
@@ -457,6 +449,39 @@ async function checkLinear(values, send) {
 }
 
 /**
+ * @param {ShippedValues} values
+ * @param {SendRequest} send
+ * @returns {Promise<Result[]>}
+ */
+async function checkGitLab(values, send) {
+  const area = 'gitlab';
+  const check = 'oauth client';
+  const client = values.gitlabClientId;
+  if (!client.value) {
+    return [result(area, check, 'pending', `GITLAB_COM_OAUTH_CLIENT_ID is empty in ${client.source}, so Sign in with GitLab is not shipped`)];
+  }
+  try {
+    const answer = await send(values.gitlabTokenUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: PROBE,
+        redirect_uri: values.gitlabRedirectUri,
+        client_id: client.value,
+        code_verifier: `${PROBE}-${'0'.repeat(24)}`,
+      }),
+    });
+    const code = await errorCodeOf(answer);
+    if (code === 'invalid_grant') return [result(area, check, 'ok', `gitlab.com knows the client from ${client.source}`)];
+    if (code === 'invalid_client') return [result(area, check, 'fail', `gitlab.com no longer knows the client from ${client.source}`)];
+    return [unexpectedAnswer(area, check, answer, code)];
+  } catch (problem) {
+    return [result(area, check, 'fail', `no answer from gitlab.com: ${messageOf(problem)}`)];
+  }
+}
+
+/**
  * Every check at once. The order of the list is the order of the table.
  *
  * @param {ShippedValues} values
@@ -470,66 +495,18 @@ async function runChecks(values, send) {
     checkJiraCallback(values, send),
     checkJiraService(values, send),
     checkLinear(values, send),
+    checkGitLab(values, send),
   ]);
   return groups.flat();
 }
 
 // ---------------------------------------------------------------------------
-// Output
+// Output. The table, the annotations and the request are in ./lib/check-report.mjs.
 // ---------------------------------------------------------------------------
-
-/** @param {Result[]} results */
-function tableLines(results) {
-  return results.map(({ area, check, status, detail }) => `${status.padEnd(8)}${area.padEnd(8)}${check.padEnd(16)}${detail}`);
-}
-
-function escapeCommandData(text) {
-  return text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-}
-
-function escapeCommandProperty(text) {
-  return escapeCommandData(text).replace(/:/g, '%3A').replace(/,/g, '%2C');
-}
-
-/** One `::error` per failure and one `::notice` per pending check, for the run's annotations. */
-function annotationLines(results) {
-  return results
-    .filter(({ status }) => status !== 'ok')
-    .map(({ area, check, status, detail }) =>
-      `::${status === 'fail' ? 'error' : 'notice'} title=${escapeCommandProperty(`${area} ${check}`)}::${escapeCommandData(detail)}`);
-}
-
-function markdownCell(text) {
-  return text.replace(/[\\|<>[\]`*_]/g, '\\$&');
-}
 
 /** The step summary: one table row per check. */
 function summaryMarkdown(results, site) {
-  const rows = results.map(({ area, check, status, detail }) => `| ${status} | ${area} | ${check} | ${markdownCell(detail)} |`);
-  return ['## Sign-in check', '', `Site: ${markdownCell(site)}`, '', '| Status | Area | Check | Detail |', '| --- | --- | --- | --- |', ...rows, ''].join('\n');
-}
-
-function exitCodeFor(results) {
-  return results.some(({ status }) => status === 'fail') ? 1 : 0;
-}
-
-/**
- * One retry on a network failure, so a single dropped connection does not
- * email anyone. An HTTP answer, even a 5xx, is never retried, because it is the
- * answer.
- *
- * @param {string} url
- * @param {RequestInit} [init]
- * @returns {Promise<Response>}
- */
-async function sendRequest(url, init = {}) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await fetch(url, { ...init, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS) });
-    } catch (problem) {
-      if (attempt === 2) throw problem;
-    }
-  }
+  return ['## Sign-in check', '', `Site: ${markdownCell(site)}`, '', ...summaryTable(results), ''].join('\n');
 }
 
 /**
@@ -575,6 +552,7 @@ export const __testing = {
   checkJiraCallback,
   checkJiraService,
   checkLinear,
+  checkGitLab,
   runChecks,
   tableLines,
   annotationLines,

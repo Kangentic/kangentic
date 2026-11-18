@@ -1,5 +1,5 @@
 {
-  "about": "Answers scripts/check-integrations.mjs got from the live services on the date below (UTC), recorded by sending the check's own requests with no credentials. The Trello and Linear requests used a made-up key and client id. The Jira redirect's port and nonce are replaced with {port} and {nonce}. The return page's data-pub and data-nonce belong to a throwaway probe key. The bad-state page's body is left out because it repeats the good page's style and script.",
+  "about": "Answers scripts/check-integrations.mjs got from the live services on the date below (UTC), recorded by sending the check's own requests with no credentials. The Trello, Linear and GitLab requests used a made-up key and client id. The Jira redirect's port and nonce are replaced with {port} and {nonce}. The return page's data-pub and data-nonce belong to a throwaway probe key. The bad-state page's body is left out because it repeats the good page's style and script.",
   "capturedOn": "2026-11-18",
   "site": "https://kangentic.com",
   "returnPage": {
@@ -59,5 +59,12 @@
       "content-type": "application/json; charset=utf-8"
     },
     "body": "{\"error\":\"invalid_client\",\"error_description\":\"Invalid client: client is invalid\"}"
+  },
+  "gitlabUnknownClient": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body": "{\"error\":\"invalid_client\",\"error_description\":\"Client authentication failed due to unknown client, no client authentication included, or unsupported authentication method.\"}"
   }
 }

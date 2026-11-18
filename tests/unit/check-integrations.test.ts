@@ -1,6 +1,6 @@
 /**
- * scripts/check-integrations.mjs, the daily check that the shipped Trello, Jira
- * and Linear sign-ins still work (.github/workflows/integrations.yml). The
+ * scripts/check-integrations.mjs, the daily check that the shipped Trello, Jira,
+ * Linear and GitLab sign-ins still work (.github/workflows/integrations.yml). The
  * script runs before any install, so it reads the desktop's constants as source
  * text, and nothing but this file holds what it reads equal to what the app
  * sends.
@@ -16,9 +16,9 @@
  * The recorded block replays what the live services answered, from
  * tests/fixtures/sign-in-check-live-answers.json. The hand-built answers in the
  * tables follow the shapes the script's header lists. Atlassian's invalid_grant,
- * its refusal codes, Linear's invalid_grant and the answers that need a live
- * Trello key have not been recorded, so those rows are the documented shape and
- * not a recording. No test here sends a request.
+ * its refusal codes, Linear's and GitLab's invalid_grant and the answers that
+ * need a live Trello key have not been recorded, so those rows are the
+ * documented shape and not a recording. No test here sends a request.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { __testing } from '../../scripts/check-integrations.mjs';
+import { __testing as distribution } from '../../scripts/check-distribution.mjs';
 import { DOCS_BASE_URL } from '../../src/shared/docs-links';
 import {
   TRELLO_API_BASE,
@@ -48,6 +49,13 @@ import {
   LINEAR_OAUTH_TOKEN_URL,
 } from '../../src/main/boards/adapters/linear/constants';
 import { redirectUriFor } from '../../src/main/boards/adapters/linear/oauth';
+import {
+  GITLAB_COM_BASE,
+  GITLAB_COM_OAUTH_CLIENT_ID,
+  GITLAB_OAUTH_REDIRECT_HOST,
+  GITLAB_OAUTH_REDIRECT_PATH,
+} from '../../src/main/boards/adapters/gitlab/constants';
+import { exchangeGitLabAuthorizationCode } from '../../src/main/boards/adapters/gitlab/oauth-tokens';
 import { LOOPBACK_HOST } from '../../src/main/boards/shared/loopback-sign-in';
 import { createSealedSignInKeys, decodeBase64Url } from '../../src/main/boards/shared/sealed-token';
 
@@ -63,6 +71,7 @@ const {
   checkJiraCallback,
   checkJiraService,
   checkLinear,
+  checkGitLab,
   runChecks,
   tableLines,
   annotationLines,
@@ -198,6 +207,9 @@ describe('the shipped values it reads', () => {
       loopbackHost: shipped.loopbackHost,
       linearTokenUrl: shipped.linearTokenUrl,
       linearRedirectUri: shipped.linearRedirectUri,
+      gitlabClientId: shipped.gitlabClientId.value,
+      gitlabTokenUrl: shipped.gitlabTokenUrl,
+      gitlabRedirectUri: shipped.gitlabRedirectUri,
     }).toEqual({
       site: DOCS_BASE_URL,
       trelloKey: TRELLO_API_KEY,
@@ -211,6 +223,9 @@ describe('the shipped values it reads', () => {
       loopbackHost: LOOPBACK_HOST,
       linearTokenUrl: LINEAR_OAUTH_TOKEN_URL,
       linearRedirectUri: redirectUriFor(LINEAR_OAUTH_REDIRECT_PORTS[0]),
+      gitlabClientId: GITLAB_COM_OAUTH_CLIENT_ID,
+      gitlabTokenUrl: `${GITLAB_COM_BASE}/oauth/token`,
+      gitlabRedirectUri: `http://${GITLAB_OAUTH_REDIRECT_HOST}:${STATE_PORT}${GITLAB_OAUTH_REDIRECT_PATH}`,
     });
   });
 
@@ -306,6 +321,31 @@ describe('what it sends is what the desktop sends', () => {
       grant_type: 'authorization_code',
       client_id: SET.value,
       redirect_uri: redirectUriFor(LINEAR_OAUTH_REDIRECT_PORTS[0]),
+    });
+  });
+
+  it("exchanges a made-up code with gitlab.com in the desktop's own form", async () => {
+    // What the desktop sends, taken from its own exchange against a fetch that refuses the code.
+    const desktopFetch = vi.fn<typeof fetch>(async () => errorAnswer(400, 'invalid_grant'));
+    await exchangeGitLabAuthorizationCode(
+      { code: 'a-code', codeVerifier: 'a-verifier', redirectUri: shipped.gitlabRedirectUri },
+      desktopFetch,
+    ).catch(() => undefined);
+    const [desktopUrl, desktopInit] = desktopFetch.mock.calls[0];
+
+    const send = vi.fn<SendRequest>(async () => errorAnswer(400, 'invalid_grant'));
+    await checkGitLab({ ...shipped, gitlabClientId: SET }, send);
+    const [url, init] = send.mock.calls[0];
+
+    const fieldsOf = (body: unknown) => Object.fromEntries(new URLSearchParams(String(body)));
+    expect(url).toBe(String(desktopUrl));
+    expect(init?.method).toBe(desktopInit?.method);
+    expect(init?.headers).toEqual(desktopInit?.headers);
+    expect(Object.keys(fieldsOf(init?.body)).sort()).toEqual(Object.keys(fieldsOf(desktopInit?.body)).sort());
+    expect(fieldsOf(init?.body)).toMatchObject({
+      grant_type: 'authorization_code',
+      client_id: SET.value,
+      redirect_uri: shipped.gitlabRedirectUri,
     });
   });
 });
@@ -562,25 +602,72 @@ describe('the Linear client', () => {
   });
 });
 
+describe('the GitLab client', () => {
+  // Only invalid_client was recorded. The invalid_grant and invalid_request rows are the documented shape.
+  it.each([
+    { name: 'a client gitlab.com knows', status: 400, error: 'invalid_grant', expected: 'ok' },
+    { name: 'a client gitlab.com does not know', status: 401, error: 'invalid_client', expected: 'fail' },
+    { name: 'an answer nobody has seen', status: 400, error: 'invalid_request', expected: 'fail' },
+  ])('reports $expected for $name', async ({ status, error, expected }) => {
+    const results = await checkGitLab({ ...shipped, gitlabClientId: SET }, async () => errorAnswer(status, error));
+    expect(statusesOf(results)).toEqual([expected]);
+  });
+
+  it('fails an answer that is not JSON, such as a challenge page', async () => {
+    const results = await checkGitLab({ ...shipped, gitlabClientId: SET }, async () => answer(403, '<html>Just a moment...</html>'));
+    expect(statusesOf(results)).toEqual(['fail']);
+    expect(results[0].detail).toContain('unexpected answer 403');
+  });
+
+  it('sends a non-empty code and a verifier long enough for PKCE', async () => {
+    const send = vi.fn<SendRequest>(async () => errorAnswer(400, 'invalid_grant'));
+    await checkGitLab({ ...shipped, gitlabClientId: SET }, send);
+    const fields = Object.fromEntries(new URLSearchParams(String(send.mock.calls[0][1]?.body)));
+    expect(fields.code.length).toBeGreaterThan(0);
+    expect(fields.code_verifier.length).toBeGreaterThanOrEqual(43);
+  });
+
+  it('is pending, and asks gitlab.com nothing, while no client id ships', async () => {
+    const send = vi.fn<SendRequest>();
+    expect(statusesOf(await checkGitLab({ ...shipped, gitlabClientId: NOT_SHIPPED }, send))).toEqual(['pending']);
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
 describe('the run', () => {
-  const CHECKS = ['trello api key', 'trello allowed origin', 'trello return page', 'jira callback', 'jira token service', 'linear oauth client'];
+  const CHECKS = [
+    'trello api key',
+    'trello allowed origin',
+    'trello return page',
+    'jira callback',
+    'jira token service',
+    'linear oauth client',
+    'gitlab oauth client',
+  ];
   const namesOf = (results: Array<{ area: string; check: string }>) => results.map(({ area, check }) => `${area} ${check}`);
 
   /** kangentic.com as it answers before any owner step, with no Atlassian secrets set. */
   const siteBeforeOwnerSteps = kangenticSite(() => errorAnswer(500, 'server_error'));
 
   it('passes while no sign-in is shipped, with each one listed as pending', async () => {
-    const nothingShipped = { ...shipped, trelloKey: NOT_SHIPPED, jiraClientId: NOT_SHIPPED, linearClientId: NOT_SHIPPED };
+    const nothingShipped = {
+      ...shipped,
+      trelloKey: NOT_SHIPPED,
+      jiraClientId: NOT_SHIPPED,
+      linearClientId: NOT_SHIPPED,
+      gitlabClientId: NOT_SHIPPED,
+    };
     const results = await runChecks(nothingShipped, siteBeforeOwnerSteps);
     expect(namesOf(results)).toEqual(CHECKS);
-    expect(statusesOf(results)).toEqual(['pending', 'pending', 'ok', 'ok', 'pending', 'pending']);
+    expect(statusesOf(results)).toEqual(['pending', 'pending', 'ok', 'ok', 'pending', 'pending', 'pending']);
     expect(exitCodeFor(results)).toBe(0);
   });
 
   it('fails every check, and the run, when nothing answers', async () => {
-    const results = await runChecks({ ...shipped, trelloKey: SET, jiraClientId: SET, linearClientId: SET }, serviceDown);
+    const everythingShipped = { ...shipped, trelloKey: SET, jiraClientId: SET, linearClientId: SET, gitlabClientId: SET };
+    const results = await runChecks(everythingShipped, serviceDown);
     expect(namesOf(results)).toEqual(CHECKS);
-    expect(statusesOf(results)).toEqual(['fail', 'fail', 'fail', 'fail', 'fail', 'fail']);
+    expect(statusesOf(results)).toEqual(['fail', 'fail', 'fail', 'fail', 'fail', 'fail', 'fail']);
     expect(exitCodeFor(results)).toBe(1);
   });
 
@@ -676,10 +763,13 @@ describe('sendRequest', () => {
 });
 
 describe('main', () => {
-  /** The three ids forced empty, so the run keeps passing after real ids ship. */
+  /** The four ids forced empty, so the run keeps passing after real ids ship. */
   function checkoutWithNothingShipped(): string {
     return checkoutWith((_file, text) =>
-      text.replace(/^(export const (?:TRELLO_API_KEY|JIRA_OAUTH_CLIENT_ID|LINEAR_OAUTH_CLIENT_ID)(?:: [^=\n]+)? = )'[^']*';$/gm, "$1'';"));
+      text.replace(
+        /^(export const (?:TRELLO_API_KEY|JIRA_OAUTH_CLIENT_ID|LINEAR_OAUTH_CLIENT_ID|GITLAB_COM_OAUTH_CLIENT_ID)(?:: [^=\n]+)? = )'[^']*';$/gm,
+        "$1'';",
+      ));
   }
 
   const siteAnswering = kangenticSite(() => errorAnswer(403, 'invalid_grant'));
@@ -691,6 +781,7 @@ describe('main', () => {
     ['ok', 'jira', 'callback'],
     ['ok', 'jira', 'token service'],
     ['pending', 'linear', 'oauth client'],
+    ['pending', 'gitlab', 'oauth client'],
   ].map(([status, area, check]) => `${status.padEnd(8)}${area.padEnd(8)}${check.padEnd(16)}`);
 
   function printedLines(): string[] {
@@ -745,7 +836,7 @@ describe('main', () => {
 
   it('runs when the file is run, and its return becomes the exit status', () => {
     const root = tempDirectory();
-    for (const file of ['scripts/check-integrations.mjs', 'scripts/lib/is-entrypoint.mjs']) {
+    for (const file of ['scripts/check-integrations.mjs', 'scripts/lib/is-entrypoint.mjs', 'scripts/lib/check-report.mjs']) {
       fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
       fs.copyFileSync(path.join(REPO_ROOT, file), path.join(root, file));
     }
@@ -776,8 +867,22 @@ describe('the workflow that runs it', () => {
     return entries;
   }
 
-  it('re-runs on a pull request that changes anything the check reads', () => {
-    expect(pullRequestPaths().sort()).toEqual([...SOURCE_FILES, 'scripts/check-integrations.mjs', '.github/workflows/integrations.yml'].sort());
+  it('re-runs on a pull request that changes anything either check reads', () => {
+    // The workflow runs this script and scripts/check-distribution.mjs, one job each.
+    const everything = new Set([
+      ...SOURCE_FILES,
+      ...distribution.SOURCE_FILES,
+      'scripts/check-integrations.mjs',
+      'scripts/check-distribution.mjs',
+      'scripts/lib/check-report.mjs',
+      '.github/workflows/integrations.yml',
+    ]);
+    expect(pullRequestPaths().sort()).toEqual([...everything].sort());
+  });
+
+  it('runs each script in a job of its own, so one failing does not hide the other', () => {
+    expect(source).toMatch(/^ {2}sign-ins:\n[\s\S]*?run: node scripts\/check-integrations\.mjs$/m);
+    expect(source).toMatch(/^ {2}distribution:\n[\s\S]*?run: node scripts\/check-distribution\.mjs$/m);
   });
 
   it('runs daily and on demand, and holds no secret', () => {
@@ -802,6 +907,7 @@ interface RecordedAnswers {
   trelloUnknownKey: RecordedAnswer;
   trelloApprovalUnknownKey: RecordedAnswer;
   linearUnknownClient: RecordedAnswer;
+  gitlabUnknownClient: RecordedAnswer;
 }
 
 describe('the answers the live services gave', () => {
@@ -849,5 +955,11 @@ describe('the answers the live services gave', () => {
     const results = await checkLinear({ ...shipped, linearClientId: SET }, async () => replay(recorded.linearUnknownClient));
     expect(statusesOf(results)).toEqual(['fail']);
     expect(results[0].detail).toContain('no longer knows the client');
+  });
+
+  it('fails a client gitlab.com does not know', async () => {
+    const results = await checkGitLab({ ...shipped, gitlabClientId: SET }, async () => replay(recorded.gitlabUnknownClient));
+    expect(statusesOf(results)).toEqual(['fail']);
+    expect(results[0].detail).toContain('gitlab.com no longer knows the client');
   });
 });
