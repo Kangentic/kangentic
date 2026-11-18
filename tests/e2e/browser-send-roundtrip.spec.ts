@@ -91,6 +91,37 @@ function countCapturePngs(tmpDir: string): number {
 }
 
 /**
+ * How many page captures the pane has saved for a task's annotation draft
+ * (`<project>/.kangentic/browser-annotations/<taskId>/capture-<id>.png`).
+ *
+ * Each item that joins an annotation makes the pane capture the page once and
+ * save it here, so an annotation that later scrolls away still goes with a
+ * picture of it. The write is atomic (a `.tmp` file, then a rename), so a name
+ * matching the pattern is a finished capture. These are not the Send
+ * screenshots `countCapturePngs` counts, which live under `sessions/`.
+ */
+function countDraftCaptures(tmpDir: string, taskId: string): number {
+  const draftFolder = path.join(tmpDir, '.kangentic', 'browser-annotations', taskId);
+  if (!fs.existsSync(draftFolder)) return 0;
+  return fs.readdirSync(draftFolder).filter((file) => /^capture-[0-9a-f]{16}\.png$/.test(file)).length;
+}
+
+/**
+ * Where a Send that has been clicked stands, as one word a failed assertion
+ * can print. A bare "0 capture PNGs" cannot tell a Send that threw (the pane
+ * shows its inline error) from one still waiting on the guest (the button stays
+ * disabled with its spinner) from a click that did nothing at all.
+ */
+async function readSendOutcome(page: Page, tmpDir: string): Promise<string> {
+  if (countCapturePngs(tmpDir) >= 1) return 'sent';
+  const sendError = page.locator('[data-testid="browser-send-error"]');
+  if ((await sendError.count()) > 0) return `error: ${await sendError.first().innerText()}`;
+  const sendButton = page.locator('[data-testid="browser-send"]');
+  if ((await sendButton.count()) > 0 && (await sendButton.first().isDisabled())) return 'still sending';
+  return 'nothing sent';
+}
+
+/**
  * Waits for the pasted envelope to be echoed by THIS task's agent session, and
  * on a timeout says why. A bare "Timed out waiting for scrollback" cannot tell
  * a Send that never reached main from a paste the PTY did not echo from a Send
@@ -233,15 +264,36 @@ test.describe('Claude Agent -- Browser Send round-trip', () => {
     const note = page.locator('[data-testid="annotation-note-1"]');
     await expect(note).toBeVisible({ timeout: 5000 });
     await note.fill('kangentic-annotation-note');
-    await page.locator('[data-testid="browser-send"]').click();
 
-    // Send reached main once it wrote its screenshot. Waiting on that first
-    // makes a Send that never left the pane fail here, by name, instead of as
-    // a bare scrollback timeout.
+    // The stroke is committed once its row says it holds one drawing. Send
+    // reads the session as it stands, so this is the state the click sends.
+    await expect(page.locator('[data-testid="annotation-items-1"]')).toBeVisible({ timeout: 5000 });
+
+    // Adding the stroke makes the pane capture the page for the annotation
+    // (a second capturePage on the same guest, then a save). That capture runs
+    // on its own timeline, so a Send clicked straight after `fill` would run
+    // its own capturePage and guest scripts on top of it. Wait for it to land,
+    // so the click starts a Send with nothing else in flight on the guest.
     await expect.poll(
-      () => countCapturePngs(tmpDir),
-      { timeout: 15000, intervals: [200, 500, 1000] },
+      () => countDraftCaptures(tmpDir, taskId),
+      {
+        message: "the drawn annotation's own page capture never reached the draft folder",
+        timeout: 15000,
+        intervals: [200, 500, 1000],
+      },
     ).toBeGreaterThanOrEqual(1);
+
+    const sendButton = page.locator('[data-testid="browser-send"]');
+    await expect(sendButton).toBeEnabled();
+    await sendButton.click();
+
+    // Send reached main once it wrote its screenshot. The poll reads where the
+    // Send stands rather than a bare count, so a Send that threw, one still
+    // waiting on the guest and a click that did nothing each fail by name.
+    await expect.poll(
+      () => readSendOutcome(page, tmpDir),
+      { timeout: 15000, intervals: [200, 500, 1000] },
+    ).toBe('sent');
 
     const scrollback = await waitForEnvelope(page, tmpDir, taskId, '<annotations');
     expect(scrollback).toContain('<annotation n="1">');
