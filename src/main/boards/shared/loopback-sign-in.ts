@@ -13,7 +13,7 @@ import { LOWEST_SERVICE_PORT } from './sealed-token';
 export const LOOPBACK_HOST = '127.0.0.1';
 
 /** One pending sign-in per provider: a Jira sign-in never cancels a Linear one. */
-export type LoopbackProvider = 'linear' | 'jira' | 'trello';
+export type LoopbackProvider = 'linear' | 'jira' | 'trello' | 'gitlab';
 
 /**
  * What one request to the callback path means.

@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board IPC channels
-description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana, Jira, Linear and Trello auth.
+description: Every project, project group, task, attachment, backlog, backlog import, workflow, swimlane, automation and board-config IPC channel with its pattern and purpose, including the quiet board-reload pushes (task:movedByAutomation, task:prLinkChanged), spawn-blocked events and Asana, Jira, Linear, Trello and GitLab auth.
 tags: [ipc, channels, board, tasks]
 sources:
   - resource: src/shared/ipc-channels.ts
@@ -120,7 +120,7 @@ sources:
 | `backlog:importReconcile` | invoke | Fetch items changed since the cache high-water mark, merge and prune, and return the merged set |
 | `backlog:importExecute` | invoke | Import selected items into the backlog, hydrating deferred per-item detail (e.g. Azure DevOps comments) and downloading attachments |
 | `backlog:importSourcesList` | invoke | List saved import sources for the current project |
-| `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). A provider with a `prepareSource` hook (Jira) checks the source against the remote first and refuses it with the popover's error line; others with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
+| `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). A provider with a `prepareSource` hook (Jira, GitLab) checks the source against the remote first and refuses it with the popover's error line; others with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
 | `backlog:importSourcesRemove` | invoke | Remove a saved import source |
 
 ## Board Auth - Asana (3 channels)
@@ -161,6 +161,16 @@ sources:
 | `boards:trello:cancelSignIn` | invoke | Stop waiting for the browser; the pending `signIn` resolves as cancelled |
 | `boards:trello:listBoards` | invoke | List the open boards the saved token can see, each with its Workspace and the board URL a picked board is saved under; `{boards, error?}` |
 | `boards:trello:clearCredential` | invoke | Remove the stored key and token |
+
+## Board Auth - GitLab (6 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `boards:gitlab:authStatus` | invoke | Whether a sign-in is saved for the server `target` names (a pasted link or a saved repository): `{connected, account?, reason?, site?, prefill?}`. A server with no saved sign-in is first asked whether it runs GitLab; one that is not GitLab rejects with "<host> is not a GitLab instance.", the popover's error line |
+| `boards:gitlab:detectServer` | invoke | Normalize a server address (prefix kept) and ask its `/api/v4/version` whether it runs GitLab; returns `{ok: true, site, isGitLabCom, signInAvailable}` or `{ok: false, code, site?, detail?}` |
+| `boards:gitlab:connectToken` | invoke | Check a personal access token against `/api/v4/user` and persist it encrypted per server; returns `{ok: true, site, account}` or `{ok: false, code, message?, site?, detail?}`, with GitLab's own text in `message` |
+| `boards:gitlab:signIn` | invoke | Run the gitlab.com browser OAuth sign-in (PKCE, loopback redirect on a free port) and persist the token pair; resolves with the same result shape, `code: 'cancelled'` for a cancel |
+| `boards:gitlab:reopenSignIn` | invoke | Open the pending sign-in's approval page in the browser again |
+| `boards:gitlab:cancelSignIn` | invoke | Stop waiting for the browser; the pending `signIn` resolves as cancelled |
 
 ## Backlog Attachments (5 channels)
 | Channel | Pattern | Purpose |

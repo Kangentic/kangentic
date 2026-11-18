@@ -91,6 +91,7 @@ describe('ipc-recorder', () => {
     expect(__INTERNAL.SAFE_CHANNELS.has('config:set')).toBe(false);
     expect(__INTERNAL.SAFE_CHANNELS.has('attachment:add')).toBe(false);
     expect(__INTERNAL.SAFE_CHANNELS.has('boards:asana:setPat')).toBe(false);
+    expect(__INTERNAL.SAFE_CHANNELS.has('boards:gitlab:connectToken')).toBe(false);
   });
 
   it('does not write to disk when enabled() is false', async () => {

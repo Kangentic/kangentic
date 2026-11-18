@@ -17,6 +17,10 @@ msgstr "« {fileName} » dépasse la limite de 10 Mo."
 msgid "{duplicateCount} already in the backlog"
 msgstr "Déjà dans le backlog : {duplicateCount}"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "{failedServer} is not a GitLab instance."
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{importedCount} imported"
@@ -59,6 +63,11 @@ msgstr "{loadedCount, plural, one {{shownCount} sur # élément} many {{shownCou
 msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
 msgstr "{skippedAttachmentCount, plural, one {# pièce jointe ignorée} many {# de pièces jointes ignorées} other {# pièces jointes ignorées}}"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source"
+msgid "{sourceLabel} on {host}"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{summary}."
@@ -94,6 +103,11 @@ msgstr "Tous"
 #, fuzzy
 msgid "All items have been imported"
 msgstr "Tous les éléments ont été importés"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "Approuvez Kangentic dans votre navigateur"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -132,6 +146,10 @@ msgstr "Annuler"
 #, fuzzy
 msgid "Change color"
 msgstr "Changer la couleur"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Check the server address."
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -209,10 +227,23 @@ msgctxt "import error banner"
 msgid "Connect {sourceTypeLabel}"
 msgstr "Connecter {sourceTypeLabel}"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Connect GitLab"
+msgstr ""
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgid "Couldn't delete backlog task"
 msgstr "Impossible de supprimer la tâche du backlog"
+
+#. placeholder {0}: result.detail
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}: {0}."
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}."
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
@@ -229,6 +260,10 @@ msgstr "Impossible d'enregistrer la tâche du backlog"
 msgctxt "button"
 msgid "Create"
 msgstr "Créer"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Create a personal access token"
+msgstr ""
 
 #: src/renderer/components/backlog/BacklogView.tsx
 #, fuzzy
@@ -373,6 +408,19 @@ msgstr "Fichier trop volumineux"
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "Filtrer par ID, titre, étiquette ou responsable..."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab rejected this token."
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab sign-in did not finish."
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Group"
+msgstr ""
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
 msgid "Hide"
@@ -416,6 +464,11 @@ msgstr "Échec de l'importation"
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "Importer depuis un tableau GitHub Project"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a GitLab project, group or board"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -590,6 +643,10 @@ msgctxt "import state filter"
 msgid "Open"
 msgstr "Ouverts"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open access tokens on {shownServer}"
+msgstr ""
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
 #, fuzzy
@@ -603,9 +660,19 @@ msgid "Open in {sourceName}"
 msgstr "Ouvrir dans {sourceName}"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 #, fuzzy
 msgid "Open the page again"
 msgstr "Rouvrir la page"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open your GitLab access tokens"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste a GitLab project, group or board link."
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -618,6 +685,10 @@ msgstr "Collez un lien Jira ou saisissez une requête JQL."
 msgid "Paste a search link so the site is known."
 msgstr "Collez un lien de recherche pour identifier le site."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Paste a token from your GitLab settings"
+msgstr ""
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"
@@ -629,6 +700,11 @@ msgstr "Collez l'URL d'un projet Asana (vue liste, tableau ou calendrier)."
 msgctxt "import source type"
 msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
 msgstr "Collez l'URL d'un projet Azure DevOps (tableaux, sprints, backlogs, etc.)"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "Collez-le ici"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -653,6 +729,15 @@ msgstr "Collez l'URL d'un tableau Trello."
 msgctxt "import source type"
 msgid "Paste the URL of any page in your Linear team."
 msgstr "Collez l'URL de n'importe quelle page de votre équipe Linear."
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Paste your token"
+msgstr "Collez votre jeton"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Personal access token"
+msgstr ""
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #, fuzzy
@@ -712,6 +797,10 @@ msgstr "Enregistrer"
 msgid "Select all"
 msgstr "Tout sélectionner"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Server"
+msgstr ""
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
 msgid "Show"
@@ -721,6 +810,10 @@ msgstr "Afficher"
 #, fuzzy
 msgid "Show imported items"
 msgstr "Afficher les éléments importés"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Sign in with GitLab"
+msgstr ""
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -748,6 +841,11 @@ msgstr "Titre de la tâche"
 msgctxt "import source type"
 msgid "Team"
 msgstr "Équipe"
+
+#. read_api is GitLab's own name for the scope. Keep it as written.
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "The name and <0>read_api</0> scope are filled in. Create it, then copy it."
+msgstr ""
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
@@ -788,6 +886,14 @@ msgstr "Type"
 msgctxt "priority"
 msgid "Urgent"
 msgstr "Urgente"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Use a personal access token"
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Waiting for GitLab in your browser"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy

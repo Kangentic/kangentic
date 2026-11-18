@@ -74,6 +74,7 @@ const SAMPLE_LINKS: Record<string, string> = {
   jira: 'https://acme.atlassian.net/browse/ENG-12',
   linear: 'https://linear.app/acme/issue/ENG-1',
   trello: 'https://trello.com/c/Xk92LmQa/138-invite-emails',
+  gitlab: 'https://gitlab.com/acme/web/-/work_items/214',
 };
 
 describe('artifactPlatformOf', () => {
@@ -161,7 +162,7 @@ describe('findArtifactLinks', () => {
   });
 
   it('never returns a tracker link', () => {
-    const text = `${SAMPLE_LINKS.github} ${SAMPLE_LINKS.jira} ${SAMPLE_LINKS.linear} ${SAMPLE_LINKS.trello}`;
+    const text = `${SAMPLE_LINKS.github} ${SAMPLE_LINKS.jira} ${SAMPLE_LINKS.linear} ${SAMPLE_LINKS.trello} ${SAMPLE_LINKS.gitlab}`;
     expect(findArtifactLinks(text, { documents: false })).toEqual([]);
     expect(findArtifactLinks(text, { documents: true })).toEqual([]);
   });

@@ -822,6 +822,14 @@ const api: ElectronAPI = {
       listBoards: () => ipcRenderer.invoke(IPC.BOARDS_TRELLO_LIST_BOARDS),
       clearCredential: () => ipcRenderer.invoke(IPC.BOARDS_TRELLO_CLEAR_CREDENTIAL),
     },
+    gitlab: {
+      authStatus: (target) => ipcRenderer.invoke(IPC.BOARDS_GITLAB_AUTH_STATUS, target),
+      detectServer: (siteOrUrl) => ipcRenderer.invoke(IPC.BOARDS_GITLAB_DETECT_SERVER, siteOrUrl),
+      connectToken: (input) => ipcRenderer.invoke(IPC.BOARDS_GITLAB_CONNECT_TOKEN, input),
+      signIn: (site) => ipcRenderer.invoke(IPC.BOARDS_GITLAB_SIGN_IN, site),
+      reopenSignIn: () => ipcRenderer.invoke(IPC.BOARDS_GITLAB_REOPEN_SIGN_IN),
+      cancelSignIn: () => ipcRenderer.invoke(IPC.BOARDS_GITLAB_CANCEL_SIGN_IN),
+    },
   },
 
   // Workflows: every call names the workflow's home project explicitly.

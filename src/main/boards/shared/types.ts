@@ -6,6 +6,7 @@ import type {
   ImportExecuteInput,
   ImportFetchInput,
   ImportFetchResult,
+  ImportSource,
   Task,
 } from '../../../shared/types';
 
@@ -18,6 +19,15 @@ export interface DownloadedAttachment {
   mediaType: string;
   sizeBytes: number;
   sourceUrl: string;
+}
+
+/** What `BoardAdapter.prepareSource` resolved for a source before it is saved. */
+export interface PreparedSource {
+  label: string;
+  /** The repository completed or canonicalized (typed JQL gains its site). Absent keeps the parsed one. */
+  repository?: string;
+  scopeKind?: ImportSource['scopeKind'];
+  host?: string;
 }
 
 /** Opaque per-adapter credential bag. Each adapter owns its shape. */
@@ -133,9 +143,10 @@ export interface BoardAdapter {
    * Validate a parsed source before it is saved, and return its label. A refusal
    * thrown here is the line the Add Source popover shows ("No board 12 that this
    * account can open."), and nothing is saved. Providers without it keep the
-   * best-effort `resolveLabel`.
+   * best-effort `resolveLabel`. `scopeKind` and `host` describe the source for
+   * its saved row's subtitle (a GitLab group on a self-managed server).
    */
-  prepareSource?(repository: string): Promise<{ label: string; repository?: string }>;
+  prepareSource?(repository: string): Promise<PreparedSource>;
 
   /**
    * Fetch a page of issues from the remote source. Receives the original

@@ -177,6 +177,11 @@ msgctxt "Jira connect error"
 msgid "Could not open the browser for Atlassian sign-in."
 msgstr "Nepodařilo se otevřít prohlížeč pro přihlášení k Atlassianu."
 
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "Could not open the browser for GitLab sign-in."
+msgstr ""
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -198,6 +203,16 @@ msgstr "Pro zajištění aktualizací stáhněte Kangentic znovu."
 #, fuzzy
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
 msgstr "Volná systémová paměť (commit) v daném okamžiku: {remainingMb} MB."
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab sign-in browser page"
+msgid "GitLab sign-in did not finish. Return to Kangentic to try again."
+msgstr ""
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "GitLab sign-in timed out."
+msgstr ""
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
@@ -242,6 +257,11 @@ msgstr "Časový limit přihlášení k Linearu vypršel."
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Pro zajištění aktualizací přesuňte Kangentic do složky Aplikace."
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "No local port was free for GitLab sign-in."
+msgstr ""
 
 #: src/main/boards/adapters/jira/oauth.ts
 #, fuzzy
@@ -325,6 +345,11 @@ msgctxt "Jira connect error"
 msgid "Sign in with Atlassian is not available in this build."
 msgstr "Přihlášení přes Atlassian není v tomto sestavení k dispozici."
 
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "Sign in with GitLab is not available in this build."
+msgstr ""
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -395,6 +420,11 @@ msgstr "Přihlášení k Trello bylo odmítnuto."
 #, fuzzy
 msgid "Unknown site"
 msgstr "Neznámý web"
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr ""
 
 #: src/main/boards/adapters/jira/oauth.ts
 #, fuzzy

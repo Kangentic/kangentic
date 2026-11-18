@@ -15,6 +15,10 @@ msgstr "\"{fileName}\" is over the 10 MB limit."
 msgid "{duplicateCount} already in the backlog"
 msgstr "{duplicateCount} already in the backlog"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "{failedServer} is not a GitLab instance."
+msgstr "{failedServer} is not a GitLab instance."
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "{importedCount} imported"
 msgstr "{importedCount} imported"
@@ -49,6 +53,11 @@ msgstr "{shownCount} of {loadedCount, plural, one {# item} other {# items}}"
 msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
 msgstr "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source"
+msgid "{sourceLabel} on {host}"
+msgstr "{sourceLabel} on {host}"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "{summary}."
 msgstr "{summary}."
@@ -77,6 +86,10 @@ msgstr "All"
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "All items have been imported"
 msgstr "All items have been imported"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Approve Kangentic in your browser"
+msgstr "Approve Kangentic in your browser"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgctxt "import filter"
@@ -109,6 +122,10 @@ msgstr "Cancel"
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 msgid "Change color"
 msgstr "Change color"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Check the server address."
+msgstr "Check the server address."
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -172,9 +189,22 @@ msgctxt "import error banner"
 msgid "Connect {sourceTypeLabel}"
 msgstr "Connect {sourceTypeLabel}"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Connect GitLab"
+msgstr "Connect GitLab"
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't delete backlog task"
 msgstr "Couldn't delete backlog task"
+
+#. placeholder {0}: result.detail
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}: {0}."
+msgstr "Couldn't reach {failedServer}: {0}."
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}."
+msgstr "Couldn't reach {failedServer}."
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't remove attachment"
@@ -188,6 +218,10 @@ msgstr "Couldn't save backlog task"
 msgctxt "button"
 msgid "Create"
 msgstr "Create"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Create a personal access token"
+msgstr "Create a personal access token"
 
 #: src/renderer/components/backlog/BacklogView.tsx
 msgid "Create or import items to stage work before promoting to the board"
@@ -306,6 +340,19 @@ msgstr "File too large"
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "Filter by ID, title, label, or assignee..."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab rejected this token."
+msgstr "GitLab rejected this token."
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab sign-in did not finish."
+msgstr "GitLab sign-in did not finish."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Group"
+msgstr "Group"
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 msgid "Hide"
 msgstr "Hide"
@@ -341,6 +388,11 @@ msgstr "Import failed"
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "Import from a GitHub Project board"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a GitLab project, group or board"
+msgstr "Import from a GitLab project, group or board"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -484,6 +536,10 @@ msgctxt "import state filter"
 msgid "Open"
 msgstr "Open"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open access tokens on {shownServer}"
+msgstr "Open access tokens on {shownServer}"
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
 msgid "Open file"
@@ -495,8 +551,18 @@ msgid "Open in {sourceName}"
 msgstr "Open in {sourceName}"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 msgid "Open the page again"
 msgstr "Open the page again"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open your GitLab access tokens"
+msgstr "Open your GitLab access tokens"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste a GitLab project, group or board link."
+msgstr "Paste a GitLab project, group or board link."
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -507,6 +573,10 @@ msgstr "Paste a Jira link, or type JQL."
 msgid "Paste a search link so the site is known."
 msgstr "Paste a search link so the site is known."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Paste a token from your GitLab settings"
+msgstr "Paste a token from your GitLab settings"
+
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
 msgid "Paste any Asana project URL (list, board, or calendar view)."
@@ -516,6 +586,10 @@ msgstr "Paste any Asana project URL (list, board, or calendar view)."
 msgctxt "import source type"
 msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
 msgstr "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Paste it here"
+msgstr "Paste it here"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -536,6 +610,14 @@ msgstr "Paste the URL of a Trello board."
 msgctxt "import source type"
 msgid "Paste the URL of any page in your Linear team."
 msgstr "Paste the URL of any page in your Linear team."
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Paste your token"
+msgstr "Paste your token"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Personal access token"
+msgstr "Personal access token"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 msgctxt "toolbar button"
@@ -585,6 +667,10 @@ msgstr "Save"
 msgid "Select all"
 msgstr "Select all"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Server"
+msgstr "Server"
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 msgid "Show"
 msgstr "Show"
@@ -592,6 +678,10 @@ msgstr "Show"
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Show imported items"
 msgstr "Show imported items"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Sign in with GitLab"
+msgstr "Sign in with GitLab"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgctxt "import filter"
@@ -614,6 +704,11 @@ msgstr "Task title"
 msgctxt "import source type"
 msgid "Team"
 msgstr "Team"
+
+#. read_api is GitLab's own name for the scope. Keep it as written.
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "The name and <0>read_api</0> scope are filled in. Create it, then copy it."
+msgstr "The name and <0>read_api</0> scope are filled in. Create it, then copy it."
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
@@ -647,6 +742,14 @@ msgstr "Type"
 msgctxt "priority"
 msgid "Urgent"
 msgstr "Urgent"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Use a personal access token"
+msgstr "Use a personal access token"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Waiting for GitLab in your browser"
+msgstr "Waiting for GitLab in your browser"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"

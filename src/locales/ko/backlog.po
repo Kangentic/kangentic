@@ -17,6 +17,10 @@ msgstr "\"{fileName}\" 파일이 10MB 제한을 초과합니다."
 msgid "{duplicateCount} already in the backlog"
 msgstr "{duplicateCount}개는 이미 백로그에 있음"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "{failedServer} is not a GitLab instance."
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{importedCount} imported"
@@ -59,6 +63,11 @@ msgstr "{loadedCount, plural, other {항목 #개 중 {shownCount}개}}"
 msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
 msgstr "{skippedAttachmentCount, plural, other {첨부 파일 #개 건너뜀}}"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source"
+msgid "{sourceLabel} on {host}"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{summary}."
@@ -94,6 +103,11 @@ msgstr "모두"
 #, fuzzy
 msgid "All items have been imported"
 msgstr "모든 항목을 가져왔습니다"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "브라우저에서 Kangentic 승인"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -132,6 +146,10 @@ msgstr "취소"
 #, fuzzy
 msgid "Change color"
 msgstr "색상 변경"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Check the server address."
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -209,10 +227,23 @@ msgctxt "import error banner"
 msgid "Connect {sourceTypeLabel}"
 msgstr "{sourceTypeLabel} 연결"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Connect GitLab"
+msgstr ""
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgid "Couldn't delete backlog task"
 msgstr "백로그 작업을 삭제할 수 없음"
+
+#. placeholder {0}: result.detail
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}: {0}."
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}."
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
@@ -229,6 +260,10 @@ msgstr "백로그 작업을 저장할 수 없음"
 msgctxt "button"
 msgid "Create"
 msgstr "만들기"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Create a personal access token"
+msgstr ""
 
 #: src/renderer/components/backlog/BacklogView.tsx
 #, fuzzy
@@ -373,6 +408,19 @@ msgstr "파일이 너무 큼"
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "ID, 제목, 레이블 또는 담당자로 필터링..."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab rejected this token."
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab sign-in did not finish."
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Group"
+msgstr ""
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
 msgid "Hide"
@@ -416,6 +464,11 @@ msgstr "가져오기 실패"
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "GitHub Project 보드에서 가져오기"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a GitLab project, group or board"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -590,6 +643,10 @@ msgctxt "import state filter"
 msgid "Open"
 msgstr "열림"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open access tokens on {shownServer}"
+msgstr ""
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
 #, fuzzy
@@ -603,9 +660,19 @@ msgid "Open in {sourceName}"
 msgstr "{sourceName}에서 열기"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 #, fuzzy
 msgid "Open the page again"
 msgstr "페이지 다시 열기"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open your GitLab access tokens"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste a GitLab project, group or board link."
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -618,6 +685,10 @@ msgstr "Jira 링크를 붙여넣거나 JQL을 입력하세요."
 msgid "Paste a search link so the site is known."
 msgstr "사이트를 식별할 수 있도록 검색 링크를 붙여 넣으세요."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Paste a token from your GitLab settings"
+msgstr ""
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"
@@ -629,6 +700,11 @@ msgstr "Asana 프로젝트 URL을 붙여넣으세요(목록, 보드 또는 캘�
 msgctxt "import source type"
 msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
 msgstr "Azure DevOps 프로젝트 URL을 붙여넣으세요(보드, 스프린트, 백로그 등)."
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "여기에 붙여넣기"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -653,6 +729,15 @@ msgstr "Trello 보드의 URL을 붙여넣으세요."
 msgctxt "import source type"
 msgid "Paste the URL of any page in your Linear team."
 msgstr "Linear 팀의 아무 페이지 URL이나 붙여넣으세요."
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Paste your token"
+msgstr "토큰 붙여넣기"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Personal access token"
+msgstr ""
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #, fuzzy
@@ -712,6 +797,10 @@ msgstr "저장"
 msgid "Select all"
 msgstr "모두 선택"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Server"
+msgstr ""
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
 msgid "Show"
@@ -721,6 +810,10 @@ msgstr "표시"
 #, fuzzy
 msgid "Show imported items"
 msgstr "가져온 항목 표시"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Sign in with GitLab"
+msgstr ""
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -748,6 +841,11 @@ msgstr "작업 제목"
 msgctxt "import source type"
 msgid "Team"
 msgstr "팀"
+
+#. read_api is GitLab's own name for the scope. Keep it as written.
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "The name and <0>read_api</0> scope are filled in. Create it, then copy it."
+msgstr ""
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
@@ -788,6 +886,14 @@ msgstr "유형"
 msgctxt "priority"
 msgid "Urgent"
 msgstr "긴급"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Use a personal access token"
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Waiting for GitLab in your browser"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy

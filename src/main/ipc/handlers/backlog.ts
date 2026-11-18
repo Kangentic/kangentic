@@ -41,6 +41,7 @@ import { registerAsanaIpcHandlers } from '../../boards/adapters/asana';
 import { registerJiraIpcHandlers } from '../../boards/adapters/jira';
 import { registerLinearIpcHandlers } from '../../boards/adapters/linear';
 import { registerTrelloIpcHandlers } from '../../boards/adapters/trello';
+import { registerGitLabIpcHandlers } from '../../boards/adapters/gitlab';
 import { priorityIndexForName, priorityScaleFrom } from '../../../shared/priority-scale';
 import { RefusalError } from '../../../shared/refusal';
 
@@ -707,6 +708,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
       return store.add(input.source, input.url, {
         label: prepared.label,
         repository: prepared.repository ?? repository,
+        scopeKind: prepared.scopeKind,
+        host: prepared.host,
       });
     }
 
@@ -742,4 +745,5 @@ export function registerBacklogHandlers(context: IpcContext): void {
   registerJiraIpcHandlers();
   registerLinearIpcHandlers();
   registerTrelloIpcHandlers();
+  registerGitLabIpcHandlers();
 }

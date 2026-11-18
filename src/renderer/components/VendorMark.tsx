@@ -6,7 +6,7 @@ import { ARTIFACT_PLATFORM_MARKS } from './artifact-platform-marks';
 /**
  * A vendor's own mark: an agent's on its card in Settings > Accounts (task #1057), a tool's
  * beside an artifact that lives there (task #1056), and a board provider's in Import Tasks
- * and its Connect dialog (Linear, task #1028; Jira, task #1029).
+ * and its Connect dialog (Linear, task #1028; Jira, task #1029; GitLab, task #1093).
  *
  * `.claude/rules/ui-conventions.md` exempts this file from "use lucide, no inline SVGs": a
  * vendor's mark is not something a lucide glyph can draw, and a list of logins or of links is

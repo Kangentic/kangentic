@@ -116,6 +116,29 @@ describe('call sites on an unwritable config directory', () => {
     expect(notifications).toHaveLength(1);
   });
 
+  it('saveGitLabCredential does not throw and notifies the "gitlab_credential" source once', async () => {
+    const { setSyncWriteFailureNotifier, __resetForTest } = await import(
+      '../../src/main/config/write-failure-notice'
+    );
+    __resetForTest();
+    const notifications: string[] = [];
+    setSyncWriteFailureNotifier((message) => notifications.push(message));
+
+    const { saveGitLabCredential } = await import('../../src/main/boards/adapters/gitlab/credential-store');
+
+    await expect(
+      saveGitLabCredential({
+        site: 'https://gitlab.com',
+        method: 'token',
+        secret: 'token-value',
+        account: 'dev',
+        savedAt: new Date().toISOString(),
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(notifications).toHaveLength(1);
+  });
+
   it('loadOrCreateBridgeIdentity does not throw generating a fresh identity and notifies the "mobile_bridge_identity" source once', async () => {
     const { setSyncWriteFailureNotifier, __resetForTest } = await import(
       '../../src/main/config/write-failure-notice'

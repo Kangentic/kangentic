@@ -6070,6 +6070,86 @@
           },
         };
       })(),
+      gitlab: (function () {
+        // Stateful mock. Tests override via window.__mockGitLabPreset, read on every
+        // call: { servers: { 'gitlab.com': { account } }, notGitLab: [hosts],
+        // unreachable: [hosts], rejectToken, rejectMessage, signInAvailable,
+        // signInResult }. A host is GitLab unless listed. signInAvailable defaults to
+        // false, as in a build with no OAuth client id (GITLAB_COM_OAUTH_CLIENT_ID),
+        // so the web demo offers only what the app does. With no signInResult,
+        // signIn waits until cancelSignIn, the way the real one waits on the browser.
+        const connected = {};
+        let pendingSignIn = null;
+        function preset() {
+          return (typeof window !== 'undefined' && window.__mockGitLabPreset) || {};
+        }
+        // The host (and any path prefix the preset names as a server) a server field, link or saved repository names.
+        function hostOf(text) {
+          var value = typeof text === 'string' ? text.trim() : '';
+          if (value.indexOf('|') >= 0) value = value.slice(0, value.indexOf('|'));
+          return value.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
+        }
+        function servers() {
+          return Object.assign({}, preset().servers || {}, connected);
+        }
+        function isListed(list, host) {
+          return Array.isArray(list) && list.indexOf(host) >= 0;
+        }
+        return {
+          authStatus: async function (target) {
+            var saved = servers();
+            if (!target || !String(target).trim()) {
+              return Object.keys(saved).length > 0 ? { connected: true } : { connected: false, reason: 'none' };
+            }
+            var host = hostOf(target);
+            if (isListed(preset().notGitLab, host)) throw new Error(host + ' is not a GitLab instance.');
+            if (isListed(preset().unreachable, host)) throw new Error("Couldn't reach " + host + '.');
+            if (saved[host]) {
+              return { connected: true, site: 'https://' + host, account: saved[host].account, prefill: { site: host } };
+            }
+            return { connected: false, reason: 'none', site: 'https://' + host, prefill: { site: host } };
+          },
+          detectServer: async function (siteOrUrl) {
+            var host = hostOf(siteOrUrl);
+            if (!host) return { ok: false, code: 'invalid' };
+            if (isListed(preset().notGitLab, host)) return { ok: false, code: 'not-gitlab', site: host };
+            if (isListed(preset().unreachable, host)) return { ok: false, code: 'unreachable', site: host, detail: 'ENOTFOUND' };
+            var isGitLabCom = host === 'gitlab.com';
+            return { ok: true, site: 'https://' + host, isGitLabCom: isGitLabCom, signInAvailable: isGitLabCom && preset().signInAvailable === true };
+          },
+          connectToken: async function (input) {
+            if (typeof window !== 'undefined') window.__lastGitLabConnectInput = input;
+            var token = input && typeof input.token === 'string' ? input.token.trim() : '';
+            var host = hostOf(input && input.site);
+            if (!host || !token) return { ok: false, code: 'invalid' };
+            if (isListed(preset().notGitLab, host)) return { ok: false, code: 'not-gitlab', site: host };
+            if (preset().rejectToken && token === preset().rejectToken) {
+              return { ok: false, code: 'rejected', site: host, message: preset().rejectMessage || '401 Unauthorized' };
+            }
+            connected[host] = { account: 'mock-user' };
+            return { ok: true, site: host, account: 'mock-user' };
+          },
+          signIn: async function (site) {
+            var presetValues = preset();
+            if (presetValues.signInResult) {
+              if (presetValues.signInResult.ok) connected[hostOf(site)] = { account: presetValues.signInResult.account || 'mock-user' };
+              return presetValues.signInResult;
+            }
+            return new Promise(function (resolve) {
+              pendingSignIn = resolve;
+            });
+          },
+          reopenSignIn: async function () {
+            if (typeof window !== 'undefined') window.__mockGitLabReopenCount = (window.__mockGitLabReopenCount || 0) + 1;
+          },
+          cancelSignIn: async function () {
+            if (pendingSignIn) {
+              pendingSignIn({ ok: false, code: 'cancelled' });
+              pendingSignIn = null;
+            }
+          },
+        };
+      })(),
     },
 
     // SSH hosts mock (#913). Stateful: an added host persists into listHosts() for the rest

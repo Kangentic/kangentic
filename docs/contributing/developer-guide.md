@@ -107,7 +107,7 @@ src/
       worktree-manager.ts  # Worktree creation, sparse-checkout, cleanup
     boards/                # Board integration adapter subsystem
       board-registry.ts    # BoardRegistry + boardRegistry singleton
-      shared/              # BoardAdapter interface, auth, mapping, download, source-store
+      shared/              # BoardAdapter interface, auth, mapping, download, source-store, rate-limit, credential stores, loopback sign-in (see integrations/boards.md)
       adapters/
         github-common/     # Shared `gh` CLI client for both GitHub adapters
         github-issues/     # GitHub Issues adapter (stable)
@@ -117,6 +117,7 @@ src/
         jira/              # Jira adapter (stable, Cloud and Data Center)
         linear/            # Linear adapter (stable)
         trello/            # Trello adapter (stable)
+        gitlab/            # GitLab adapter (stable)
     ipc/
       register-all.ts      # Thin orchestrator, creates IpcContext, re-exports
       ipc-context.ts       # Shared IpcContext interface

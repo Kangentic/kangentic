@@ -30,7 +30,7 @@ Drag a task card into an active column to spawn an agent. Drag it to Done to com
 
 ### Backlog & Import
 
-Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, and Trello with their titles, descriptions, labels, and images. Azure DevOps, Asana, Jira and Trello also bring file attachments, and Azure DevOps and Jira bring comments. Imports are one-way, and re-importing skips items already imported. Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [Backlog](backlog.md#backlog) for details.
+Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, and GitLab with their titles, descriptions, labels, and images. Azure DevOps, Asana, Jira and Trello also bring file attachments, and Azure DevOps and Jira bring comments. Imports are one-way, and re-importing skips items already imported. Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [Backlog](backlog.md#backlog) for details.
 
 ### Board Filtering
 
@@ -99,7 +99,7 @@ Twelve built-in themes, picked from a swatch grid that shows each one in its own
 ## How It Works
 
 1. **Create a board** with columns representing your workflow stages (To Do, In Progress, Review, Done, or any custom stages).
-2. **Add task cards** describing units of work - features, bugs, refactors. Create them directly on the board, stage them in the backlog, or import them from GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, or Trello.
+2. **Add task cards** describing units of work - features, bugs, refactors. Create them directly on the board, stage them in the backlog, or import them from GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, or GitLab.
 3. **Drag a card** into an active column. Kangentic spawns the column's agent CLI, passes it the task description as a prompt, and begins streaming terminal output.
 4. **Monitor progress** via the embedded terminal, activity indicators, and board-level status at a glance. Filter by priority or label to focus on what matters.
 5. **Drag the card forward** through your workflow. Each transition can trigger additional actions - commands, scripts, webhooks.

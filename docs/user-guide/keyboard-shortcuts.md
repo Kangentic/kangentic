@@ -34,7 +34,7 @@ General:
 - **Mod+Shift+F** - Open Quick Find (cross-project search palette)
 - **Mod+F** - Find on board (focuses board search; opens Quick Find when not on the board). While a terminal has focus it opens that terminal's find bar instead (see Terminal)
 - **Mod+N** - New Task on the board
-- **Mod+S** - Save the open form the same way its Save, Create or Done button does: New Task, New Backlog Task, the task edit form, the Column Manager and the dialogs it opens, Rename workflow, the workflow agent prompt, Connect Asana, Connect Jira's token and password steps, and Connect Linear's API key step. With one dialog over another, the one on top takes the key. Does nothing while that button is disabled. In the task edit form, a To Do task's window closes and a task with a running session goes back to its terminal
+- **Mod+S** - Save the open form the same way its Save, Create or Done button does: New Task, New Backlog Task, the task edit form, the Column Manager and the dialogs it opens, Rename workflow, the workflow agent prompt, Connect Asana, Connect Jira's token and password steps, Connect Linear's API key step, and Connect GitLab's token step. With one dialog over another, the one on top takes the key. Does nothing while that button is disabled. In the task edit form, a To Do task's window closes and a task with a running session goes back to its terminal
 - **Escape** - Close any open dialog or the search palette. A task edit form with unsaved changes asks to save first
 
 Task detail (whichever panel is open):

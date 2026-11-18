@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear and Trello and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -13,7 +13,7 @@ sources:
 ---
 # Board integration
 
-Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello), and notes and checklist items from an Obsidian vault, into the backlog. Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
+Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello, GitLab), and notes and checklist items from an Obsidian vault, into the backlog. Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
 This doc covers the adapter system and how to add a new board provider.
 
@@ -27,10 +27,14 @@ src/main/boards/
     encrypted-secret-file.ts
     mapping.ts
     download-file.ts
-    rate-limit.ts
+    rate-limit.ts        # withBackoff (maxAttempts, shouldRetry, retryAfterMs), retryAfterMsFrom, sleep
+    network-error.ts     # networkCode: a failed fetch's cause code, for the probe and Connect refusals
+    site-credential-store.ts  # per-site encrypted credential file: Jira, GitLab
     source-store.ts
     html-to-markdown.ts  # rich-text HTML to Markdown (ADO descriptions, Jira's rendered HTML)
     comments-section.ts  # the "## Comments" section ADO and Jira fold in at import
+    loopback-sign-in.ts  # the one loopback server for a browser sign-in: Linear, Jira, Trello, GitLab
+    pkce.ts              # createPkcePair: the PKCE verifier and S256 challenge Linear and GitLab use
   adapters/
     github-common/    # shared `gh` CLI client (not a BoardAdapter)
     github-issues/
@@ -39,11 +43,16 @@ src/main/boards/
     asana/            # Personal Access Token auth, dedicated IPC group
     jira/             # Cloud and Data Center; per-site sign-ins, dedicated IPC group
     linear/           # API key or OAuth sign-in, GraphQL client, dedicated IPC group
+    gitlab/           # gitlab.com and self-managed; per-server sign-ins, REST client, dedicated IPC group
     obsidian/         # a vault on this computer: two source types, added by folder
     trello/           # API key + user token, read-only, dedicated IPC group
   board-registry.ts   # BoardRegistry + boardRegistry singleton
   index.ts
 ```
+
+`shared/index.ts` is the barrel most adapters import from. `withBackoff` retries what the adapter's
+`shouldRetry` allows (GitLab: a 429 or 5xx). An adapter that passes `retryAfterMs` waits out the
+server's `Retry-After`, capped at `maxDelayMs`, and otherwise the delay doubles from 500 ms.
 
 The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI agent, central registry, no provider-specific branching in shared handlers). See [Agent adapter interface](agents/adapter-interface.md) for the analogous agent system.
 
@@ -59,8 +68,8 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `status` | yes | `'stable'` for working providers, `'stub'` for placeholder folders. IPC handlers short-circuit stubs before dispatch. |
 | `checkPrerequisites(repository?)` | yes | Structured check of CLI availability + auth state. Returns `{ cliOk, authOk, message? }`. `repository` scopes the check for a provider whose sign-ins are per site (Jira); others ignore it. |
 | `checkCli(repository?)` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. The Import dialog passes the saved source's `repository` (`importCheckCli(source, repository)`), so a provider whose sign-ins are per site (Jira) checks the right one, and one whose source can disappear on its own says so before the list loads (Obsidian answers "Folder not found" here). An `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect. Providers that check only a CLI ignore the repository. |
-| `prepareSource(repository)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. Implemented by Jira; other providers keep `resolveLabel`. |
-| `workItemTypeIsItemType` | optional | True when `ExternalIssue.workItemType` is the item's type, so the import stores it as the backlog item's type. Set by Azure DevOps and Jira; Asana uses the field for its section and leaves it off. |
+| `prepareSource(repository)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site, a GitLab link its server's real base and canonical path). It may also return `scopeKind` (`project` or `group`) and `host`, which the saved source keeps for its subtitle ("GitLab Group on git.example.com"). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. Implemented by Jira and GitLab; other providers keep `resolveLabel`. |
+| `workItemTypeIsItemType` | optional | True when `ExternalIssue.workItemType` is the item's type, so the import stores it as the backlog item's type. Set by Azure DevOps, Jira and GitLab; Asana uses the field for its section and leaves it off. |
 | `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. |
 | `hydrateForImport(repository, issues)` | optional | Fetch deferred per-item detail for the SELECTED import set and fold it into each body, called at import time only. Lets a provider keep the list fetch cheap. Implemented by Azure DevOps to fetch work item comments (one `az rest` per item) for just the items being imported instead of every listed one, and by Jira to fetch each issue's comments, four issues at a time. |
 | `listExternalIds(input)` | optional | Cheap, id-only listing of every current remote item, used by the reconcile to prune cache rows the remote no longer has. Implemented by Azure DevOps as an ids-only WIQL, by Jira as an ids-only search or board listing, and by Obsidian as a vault walk that shares the fetch's read (see Obsidian below). Providers without a cheap listing omit it; their deletions clear on a full reconcile, which the reconcile escalates to on its own once their cache goes a day without one. An empty result must mean the remote genuinely has no items, so an adapter that cannot answer THROWS rather than returning `[]`: the reconcile prunes against whatever this resolves to, and an empty list claims the remote is empty. |
@@ -72,7 +81,7 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
 | `pushUpdates(tasks, credentials)` | optional | Future: write task updates back to the remote. |
 
-Not every adapter honours `input.since`. Jira adds `updated >= "yyyy/MM/dd HH:mm"` to the source's JQL (before any `ORDER BY`), formatted in the signed-in user's Jira time zone from `/myself` and rewound five minutes, because JQL compares to the minute and Cloud's search is eventually consistent. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause, Linear to an inclusive `updatedAt: { gte }` issue filter, and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana, GitHub Projects and Obsidian ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
+Not every adapter honours `input.since`. Jira adds `updated >= "yyyy/MM/dd HH:mm"` to the source's JQL (before any `ORDER BY`), formatted in the signed-in user's Jira time zone from `/myself` and rewound five minutes, because JQL compares to the minute and Cloud's search is eventually consistent. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause, Linear to an inclusive `updatedAt: { gte }` issue filter, GitLab to the issues API's `updated_after`, and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana, GitHub Projects and Obsidian ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
 
 ### `FileAttachmentRef`
 
@@ -89,9 +98,9 @@ A download that carries a sign-in (`downloadFile` in `src/main/boards/shared/dow
 
 ### `Credentials`
 
-Opaque per-adapter credential bag (`Record<string, string>`). Each adapter owns its own stored shape. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Asana one Personal Access Token, Linear either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), Jira one sign-in per site (`jira/credential-store.ts`: the site's base URL, Cloud or Data Center, the method, an email or username, the secret, for a scoped Cloud token or a browser sign-in its `cloudId` and `viaGateway`, and for a browser sign-in its `refreshToken` and `expiresAt`), and Trello `{kind, apiKey, token, savedAt}` in `trello-credentials.json` under the config directory. Keep adapter-specific shapes inside each adapter folder.
+Opaque per-adapter credential bag (`Record<string, string>`). Each adapter owns its own stored shape. There is no shared discriminated union - GitHub stores `gh` CLI session pointers, Asana one Personal Access Token, Linear either an API key or an OAuth token pair (its own `kind`-tagged union in `linear/credential-store.ts`), Jira one sign-in per site (`jira/credential-store.ts`: the site's base URL, Cloud or Data Center, the method, an email or username, the secret, for a scoped Cloud token or a browser sign-in its `cloudId` and `viaGateway`, and for a browser sign-in its `refreshToken` and `expiresAt`), Trello `{kind, apiKey, token, savedAt}` in `trello-credentials.json` under the config directory, and GitLab one sign-in per server (`gitlab/credential-store.ts`: the server's base URL with any path prefix, `token` or `oauth`, the secret, and for a browser sign-in its refresh token and expiry). Jira and GitLab both keep their per-site file through `shared/site-credential-store.ts`, which serializes saves and copies an unreadable file aside before a save overwrites it. Keep adapter-specific shapes inside each adapter folder.
 
-A `jira-credentials.json` that exists but cannot be read (the OS keychain refused the decrypt, or the file is damaged) is copied aside to `jira-credentials.json.unreadable-<timestamp>` before the next save would write over it, so one failed read cannot sign every other Jira site out. If that copy fails, the save fails and the file stays as it was.
+A `jira-credentials.json` (or `gitlab-credentials.json`) that exists but cannot be read (the OS keychain refused the decrypt, or the file is damaged) is copied aside to `jira-credentials.json.unreadable-<timestamp>` before the next save would write over it, so one failed read cannot sign every other Jira site out. If that copy fails, the save fails and the file stays as it was.
 
 ### `safeStorage` semantics
 
@@ -123,7 +132,7 @@ under `src/` calls it; `tests/unit/boards-auth.test.ts` fails if anything does.
   when no encryption is available). Credentials older builds wrote through the sync API read
   through the async one. `decryptSecret` reports when a blob should be written again: a key
   rotation, or plaintext once genuine encryption exists.
-- The Asana, Jira, Linear and Trello stores and the mobile bridge identity all store their secret through
+- The Asana, Jira, Linear, Trello and GitLab stores and the mobile bridge identity all store their secret through
   `shared/encrypted-secret-file.ts` (`readEncryptedSecretFile`, `writeEncryptedSecretFile`,
   `rewriteEncryptedSecretFile`). The read reports `shouldRewrite`, and each store calls the rewrite
   on load when it is set; the identity also requires `isGenuineEncryptionAvailable()` first, the
@@ -146,7 +155,7 @@ class BoardRegistry {
 
 export const boardRegistry = new BoardRegistry();
 boardRegistry.register(new GitHubIssuesAdapter());
-// ... 6 more
+// ... 9 more
 ```
 
 The registry is a singleton populated at module import time. Adapters self-register their URL parsers via `registerSourceUrlParser()` so user-pasted URLs route to the right provider. Status check (`adapter.status === 'stub'`) is the single gate that prevents stub providers from reaching their throwing method bodies.
@@ -155,11 +164,11 @@ The registry is a singleton populated at module import time. Adapters self-regis
 
 Backlog Import group (7 channels): `backlog:importCheckCli`, `backlog:importGetCached`, `backlog:importReconcile`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. The fetch/import channels dispatch through `boardRegistry.requireStable(source)` in `src/main/ipc/handlers/backlog.ts`. `importGetCached` reads the per-project `remote_item_cache` table with no network; `importReconcile` fetches only items changed since the cache high-water mark, merges them, and auto-prunes items the remote no longer has.
 
-A provider that signs in through Kangentic declares `Provider.auth` in `import-providers.tsx`: a `getStatus` that asks its own `boards:<provider>:authStatus` channel, and the `SetupDialog` that connects it. The Add Source popover asks `getStatus` when an account-wide provider is picked (Asana, Linear). Jira's sign-ins are per site, so it sets `checksPastedLink`: the popover asks with the pasted link when Connect is clicked, shows "Paste a search link so the site is known." for typed JQL with several sites connected, and continues the add once the dialog saves. The Import dialog's error banner offers the same dialog as a Connect button, prefilled with Jira's site and email.
+A provider that signs in through Kangentic declares `Provider.auth` in `import-providers.tsx`: a `getStatus` that asks its own `boards:<provider>:authStatus` channel, and the `SetupDialog` that connects it. The Add Source popover asks `getStatus` when an account-wide provider is picked (Asana, Linear). Jira's sign-ins are per site and GitLab's per server, so both set `checksPastedLink`: the popover asks with the pasted link when Connect is clicked, shows the refusal `getStatus` throws as its error line (Jira's "Paste a search link so the site is known." for typed JQL with several sites connected, GitLab's "<host> is not a GitLab instance."), and continues the add once the dialog saves. The Import dialog's error banner offers the same dialog as a Connect button, prefilled with Jira's site and email.
 
 Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle, Jira a `boards:jira:*` group (6 channels: `authStatus`, which takes the pasted link because sign-ins are per site and says whether this build offers Sign in with Atlassian; `detectSite`, which normalizes a site and asks its anonymous `serverInfo` whether it runs Cloud or Data Center; `connect`, which checks a credential against `/myself` and saves it, returning an error code the renderer turns into its line; and `signIn`, `reopenSignIn` and `cancelSignIn` for the browser sign-in), Linear its `boards:linear:*` group, and Trello a `boards:trello:*` group (8 channels: `authStatus`, `connect`, `openApproval`, `signIn`, `reopenSignIn`, `cancelSignIn`, `listBoards`, `clearCredential`). Handlers live in each adapter's `ipc-handlers.ts` and are registered from the backlog handler. Keeping the surface adapter-local means provider specifics never leak into the generic backlog handler.
 
-Linear ships a `boards:linear:*` group (6 channels: `authStatus`, `setApiKey`, `signIn`, `reopenSignIn`, `cancelSignIn`, `listTeams`), registered by `registerLinearIpcHandlers()` the same way. The renderer reaches either group only through its provider's `auth` entry in `import-providers.tsx` (`getStatus` plus a `SetupDialog`), so the popover and the Import dialog's **Connect** button never branch on a provider name.
+Linear ships a `boards:linear:*` group (6 channels: `authStatus`, `setApiKey`, `signIn`, `reopenSignIn`, `cancelSignIn`, `listTeams`), registered by `registerLinearIpcHandlers()` the same way, and GitLab a `boards:gitlab:*` group (6 channels: `authStatus`, which takes the pasted link; `detectServer`; `connectToken`; `signIn`, `reopenSignIn` and `cancelSignIn`), registered by `registerGitLabIpcHandlers()`. The renderer reaches either group only through its provider's `auth` entry in `import-providers.tsx` (`getStatus` plus a `SetupDialog`), so the popover and the Import dialog's **Connect** button never branch on a provider name.
 
 ## Linear
 
@@ -205,9 +214,9 @@ every refresh need a client secret, and Trello only returns a token to an origin
 Both go through kangentic.com, which holds the Atlassian secret (`functions/oauth/jira/` in the
 kangentic.com repo) and serves Trello's return page, and both hand the token back the same way.
 
-- **The listener.** `shared/loopback-sign-in.ts` is the one loopback server for Linear, Jira and
-  Trello. It binds the literal `127.0.0.1`, on a registered port (Linear) or any free port of at
-  least 1024 (Jira, Trello), keeps one pending sign-in per provider, and waits for the callback path,
+- **The listener.** `shared/loopback-sign-in.ts` is the one loopback server for Linear, Jira,
+  Trello and GitLab. It binds the literal `127.0.0.1`, on a registered port (Linear) or any free port
+  of at least 1024 (Jira, Trello, GitLab), keeps one pending sign-in per provider, and waits for the callback path,
   a cancel or the five-minute timeout. A request it does not recognize, or whose target the URL
   parser refuses (`//`), gets a 400 and the wait goes on. A cancel that lands while the port is
   still binding ends the attempt before the browser opens. The work after the callback (`finish`) runs while the sign-in is still pending, so a cancel
@@ -263,6 +272,58 @@ kangentic.com repo) and serves Trello's return page, and both hand the token bac
   and for Trello, the app with `https://kangentic.com` as an allowed origin, `TRELLO_API_KEY` filled,
   and the return page (kangentic.com #143) deployed. Before the page is live, a Trello sign-in times
   out and goes back to the choices.
+
+## GitLab
+
+`src/main/boards/adapters/gitlab/`. gitlab.com and self-managed servers. A source is a project or a
+group, pasted as any GitLab link (a project, `/groups/<path>`, an issue list, one issue or work item,
+or `/-/boards/<id>`). The repository is `<server base>|<full path>`, plus `|board=<id>` for a board
+link. Import is read-only; nothing is written back.
+
+- **Which server.** The URL parser reads the link lexically. `getAuthStatus` (behind
+  `boards:gitlab:authStatus`) asks a server Kangentic holds no sign-in for whether it runs GitLab:
+  `instance.ts` sends an unauthenticated `GET /api/v4/version`, which GitLab answers with 401 and
+  `{"message":"401 Unauthorized"}` (or 200 with a `version`), and GitHub and the rest answer 404. A
+  server that is not GitLab is refused with "<host> is not a GitLab instance." in the popover. An
+  instance served under a path prefix is found by trying each prefix from the left. gitlab.com is
+  never asked.
+- **Two ways in on gitlab.com, one elsewhere.** A personal access token (`read_api`) works on every
+  server; Connect's step 1 opens `<base>/-/user_settings/personal_access_tokens?name=Kangentic&scopes=read_api`.
+  The browser sign-in is gitlab.com only, since a self-managed server would need an OAuth app its own
+  admin registers: OAuth with PKCE (`read_api`), handed back to `http://127.0.0.1:<free port>/callback`
+  through `shared/loopback-sign-in.ts`. Doorkeeper, GitLab's OAuth server, drops the port of a
+  loopback IP redirect on both sides before comparing (RFC 8252 section 7.3), but not of `localhost`.
+  This is read from Doorkeeper's `uri_checker.rb`; nobody has tried it on gitlab.com yet, because the
+  OAuth app is not registered.
+  An empty `GITLAB_COM_OAUTH_CLIENT_ID` hides it. Access tokens last 2 hours; `fresh-credential.ts`
+  renews one five minutes before expiry, once for overlapping callers, and saves the new pair before
+  using it, because GitLab revokes the old refresh token. Every personal access token expires (365
+  days at most), so a token user reaches the Import dialog's Connect banner when it does.
+- **Sign-in header.** Both a token and a sign-in go as `Authorization: Bearer`, not `PRIVATE-TOKEN`:
+  `fetch` and the shared download drop `Authorization` on a redirect to another host, and would carry
+  a custom header along.
+- **Errors.** GitLab's own text is shown as sent: `401 Unauthorized` for a wrong or revoked token, the
+  `invalid_token` description for an expired one, the `insufficient_scope` description for a token
+  without `read_api`. A 429 waits out its `Retry-After`; a 429 or 5xx is tried three times.
+- **Status.** A source's board is the one a board link named, else GitLab's default (first by name,
+  then id). A closed issue is Closed; an open one sits on the leftmost label list it carries, else
+  Open. `stateOrder` puts Open first, the lists by `position`, Closed last. Assignee, milestone and
+  iteration lists carry no label and are skipped.
+- **Mapping.** `externalId` is `<host>:<global issue id>`, so projects and servers never collide.
+  `displayId` is `#<iid>` for a project source and GitLab's `references.relative` (`web#214`) for a
+  group source. `workItemType` is Issue, Task, Incident or Test case. Priority is left empty. A
+  project-relative `/uploads/<secret>/<file>` link becomes a full link on its project, GitLab's
+  `{width=...}` image marks are dropped, and milestone, iteration, weight, due date and assignees go
+  into a `## GitLab` section, leaving out lines with no value.
+- **Images.** The plain upload link refuses a token, so an upload on a server Kangentic holds a sign-in
+  for downloads through `GET /api/v4/projects/<id>/uploads/<secret>/<file>` (GitLab 17.4 and later)
+  with that server's sign-in only. On an older server the download fails, the link stays in the
+  description, and it counts as skipped.
+- **Group sources.** `GET /groups/:id/issues` covers subgroups and leaves out projects GitLab has
+  archived (`non_archived` defaults to true), the same set GitLab's own group issue list shows.
+- **Pruning.** No `listExternalIds`; deletions clear on a full reconcile.
+- **Merge requests.** `client.ts` keeps `request` and `paginate` generic so a later merge request
+  connector can share it. Nothing here reads merge requests.
 
 ## Obsidian
 
@@ -320,11 +381,12 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | Asana | stable | none | Personal Access Token. User creates the token at `app.asana.com/0/my-apps`, pastes it into the setup dialog; the token is validated against `/users/me` and stored encrypted via `safeStorage`. Ships its own `boards:asana:*` IPC group. |
 | Jira | stable | none | Cloud and Data Center. A source is a board, a project, a saved filter or a JQL query (`repository` is `<site base>::<kind>::<value>`). Cloud signs in with an Atlassian API token and email (Basic), always over `https` (a typed `http://` on a Cloud host is upgraded before the first request), retried through `api.atlassian.com/ex/jira/{cloudId}` for a scoped token; Data Center with a personal access token (Bearer) or a username and password. Sign-ins are per site, so its `boards:jira:authStatus` takes the pasted link and the popover checks it when Connect is clicked (`ProviderAuth.checksPastedLink`). Descriptions and comments come from `renderedFields` HTML, so one path reads Cloud's ADF and Data Center's wiki markup. A board source shows its column names, in board order, from `/rest/agile/1.0/board/{id}/configuration`. Ships its own `boards:jira:*` IPC group. Cloud also offers Sign in with Atlassian (Bearer, through the gateway), see [Browser sign-ins through kangentic.com](#browser-sign-ins-through-kangenticcom). |
 | Linear | stable | none | Personal API key or OAuth sign-in in the browser, both stored encrypted via `safeStorage`. Teams are picked from a list. Ships its own `boards:linear:*` IPC group. |
+| GitLab | stable | none | gitlab.com and self-managed. A personal access token on any server, or a browser sign-in on gitlab.com, stored encrypted per server via `safeStorage`. A source is a project or a group from a pasted link. Ships its own `boards:gitlab:*` IPC group. |
 | Obsidian Notes | stable | none | A vault folder on this computer, chosen in the folder dialog. Each note is a task. |
 | Obsidian Checklist items | stable | none | Same folder source. Each task line (`- [ ]`, `- [x]`, `- [/]`, `- [-]`) is a task, with the Tasks plugin's markers and Kanban plugin lanes. |
 | Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Kangentic's own key also signs in through the browser, with nothing to paste (see Trello's Connect dialog). Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. Boards are picked from a list under their Workspace. Ships its own `boards:trello:*` IPC group. |
 
-The registry enumerates all 9 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
+The registry enumerates all 10 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
 
 ### Trello's Connect dialog
 

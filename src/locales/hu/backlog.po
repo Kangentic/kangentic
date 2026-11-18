@@ -17,6 +17,10 @@ msgstr "„{fileName}” mérete meghaladja a 10 MB-os korlátot."
 msgid "{duplicateCount} already in the backlog"
 msgstr "{duplicateCount} már szerepel a backlogban"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "{failedServer} is not a GitLab instance."
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{importedCount} imported"
@@ -59,6 +63,11 @@ msgstr "{loadedCount, plural, one {{shownCount} / # elem} other {{shownCount} / 
 msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
 msgstr "{skippedAttachmentCount, plural, one {# melléklet kihagyva} other {# melléklet kihagyva}}"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source"
+msgid "{sourceLabel} on {host}"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{summary}."
@@ -94,6 +103,11 @@ msgstr "Összes"
 #, fuzzy
 msgid "All items have been imported"
 msgstr "Minden elem importálva lett"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Approve Kangentic in your browser"
+msgstr "Hagyja jóvá a Kangentic hozzáférését a böngészőben"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -132,6 +146,10 @@ msgstr "Mégse"
 #, fuzzy
 msgid "Change color"
 msgstr "Szín módosítása"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Check the server address."
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -209,10 +227,23 @@ msgctxt "import error banner"
 msgid "Connect {sourceTypeLabel}"
 msgstr "{sourceTypeLabel} csatlakoztatása"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Connect GitLab"
+msgstr ""
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgid "Couldn't delete backlog task"
 msgstr "Nem sikerült törölni a backlog-feladatot"
+
+#. placeholder {0}: result.detail
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}: {0}."
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Couldn't reach {failedServer}."
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
@@ -229,6 +260,10 @@ msgstr "Nem sikerült menteni a backlog-feladatot"
 msgctxt "button"
 msgid "Create"
 msgstr "Létrehozás"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Create a personal access token"
+msgstr ""
 
 #: src/renderer/components/backlog/BacklogView.tsx
 #, fuzzy
@@ -373,6 +408,19 @@ msgstr "Túl nagy fájl"
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "Szűrés azonosító, cím, címke vagy felelős szerint..."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab rejected this token."
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "GitLab sign-in did not finish."
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Group"
+msgstr ""
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
 msgid "Hide"
@@ -416,6 +464,11 @@ msgstr "Az importálás sikertelen"
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "Importálás GitHub Project táblából"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a GitLab project, group or board"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -590,6 +643,10 @@ msgctxt "import state filter"
 msgid "Open"
 msgstr "Nyitott"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open access tokens on {shownServer}"
+msgstr ""
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
 #, fuzzy
@@ -603,9 +660,19 @@ msgid "Open in {sourceName}"
 msgstr "Megnyitás itt: {sourceName}"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 #, fuzzy
 msgid "Open the page again"
 msgstr "Oldal újbóli megnyitása"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Open your GitLab access tokens"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste a GitLab project, group or board link."
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -618,6 +685,10 @@ msgstr "Illesszen be egy Jira hivatkozást, vagy írjon JQL-t."
 msgid "Paste a search link so the site is known."
 msgstr "Illesszen be egy keresési hivatkozást, hogy az oldal azonosítható legyen."
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Paste a token from your GitLab settings"
+msgstr ""
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"
@@ -629,6 +700,11 @@ msgstr "Illessze be bármely Asana projekt URL-jét (lista, tábla vagy naptár 
 msgctxt "import source type"
 msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
 msgstr "Illessze be bármely Azure DevOps projekt URL-jét (táblák, sprintek, backlogok stb.)"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Paste it here"
+msgstr "Illessze be ide"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -653,6 +729,15 @@ msgstr "Illessze be egy Trello tábla URL-jét."
 msgctxt "import source type"
 msgid "Paste the URL of any page in your Linear team."
 msgstr "Illessze be a Linear csapata bármely oldalának URL-jét."
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
+msgid "Paste your token"
+msgstr "Illessze be a tokent"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Personal access token"
+msgstr ""
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #, fuzzy
@@ -712,6 +797,10 @@ msgstr "Mentés"
 msgid "Select all"
 msgstr "Összes kijelölése"
 
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Server"
+msgstr ""
+
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
 msgid "Show"
@@ -721,6 +810,10 @@ msgstr "Megjelenítés"
 #, fuzzy
 msgid "Show imported items"
 msgstr "Importált elemek megjelenítése"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Sign in with GitLab"
+msgstr ""
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -748,6 +841,11 @@ msgstr "Feladat címe"
 msgctxt "import source type"
 msgid "Team"
 msgstr "Csapat"
+
+#. read_api is GitLab's own name for the scope. Keep it as written.
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "The name and <0>read_api</0> scope are filled in. Create it, then copy it."
+msgstr ""
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
@@ -788,6 +886,14 @@ msgstr "Típus"
 msgctxt "priority"
 msgid "Urgent"
 msgstr "Sürgős"
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Use a personal access token"
+msgstr ""
+
+#: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+msgid "Waiting for GitLab in your browser"
+msgstr ""
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy

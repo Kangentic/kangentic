@@ -7,6 +7,7 @@ import {
   runLoopbackSignIn,
   type LoopbackSignInResult,
 } from '../../shared/loopback-sign-in';
+import { createPkcePair, type PkcePair } from '../../shared/pkce';
 import {
   LINEAR_OAUTH_AUTHORIZE_URL,
   LINEAR_OAUTH_CLIENT_ID,
@@ -23,17 +24,7 @@ export function isLinearSignInAvailable(): boolean {
   return LINEAR_OAUTH_CLIENT_ID.length > 0;
 }
 
-export interface PkcePair {
-  verifier: string;
-  challenge: string;
-}
-
-/** A PKCE verifier (43 base64url characters from 32 random bytes) and its S256 challenge. */
-export function createPkcePair(): PkcePair {
-  const verifier = crypto.randomBytes(32).toString('base64url');
-  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-  return { verifier, challenge };
-}
+export { createPkcePair, type PkcePair };
 
 export function redirectUriFor(port: number): string {
   return `http://${LINEAR_OAUTH_REDIRECT_HOST}:${port}${LINEAR_OAUTH_REDIRECT_PATH}`;
