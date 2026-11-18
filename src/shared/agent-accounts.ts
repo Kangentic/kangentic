@@ -108,7 +108,7 @@ export interface AgentAccountOverride {
   source: 'environment';
 }
 
-/** What starts a sign-in: a new account of `agent`, or the signed-out account `accountId` again. */
+/** What starts a sign-in: a new account of `agent`, or the signed-out or `replaced` account `accountId` again. */
 export type AgentAccountLoginRequest = { agent: string } | { accountId: string };
 
 export type AgentAccountLoginStart =

@@ -684,7 +684,7 @@ in one Sentry org, one triage surface.
   (`same`, `moved`, `unknown`) is whether the spawn runs in the cwd the conversation last ran in.
   `resume_account` (`same`, `changed`, `none`, from `resumeAccountMatch` in
   `src/main/accounts/account-service.ts`) is whether the spawn runs on the account the
-  conversation was written on. An override or a signed-out conversation account puts a resume on
+  conversation was written on. An override, or a signed-out or `replaced` conversation account, puts a resume on
   another account, whose config folder holds no such conversation. `changed` says the accounts
   differ, not that the difference lost the conversation. `none` is an agent with no accounts.
   None of them carries a path or an account id. The stat runs after the cwd migration, so
