@@ -129,9 +129,11 @@ Two agents have no transcript reader. For those, `registerArtifactDetection` sca
 | Confluence | description | `<site>.atlassian.net/wiki/` |
 | Microsoft 365 | description | `*.sharepoint.com/:w:/` (and x, p, b, f), `1drv.ms` |
 | Loom | description | `loom.com/share/` and `/embed/` |
+| YouTube | description | `youtube.com/watch` and `/playlist`, `/shorts/`, `/live/` and `/embed/<id>`, the same on `m.youtube.com`, `youtu.be/<id>` |
 | Coda | description | `coda.io/d/`, `docs.superhuman.com/d/` |
 | Obsidian | description | `publish.obsidian.md/<site>/` |
-| GitHub | manual | `github.com/<owner>/<repo>/issues/<n>`, `github.com/(orgs or users)/<name>/projects/<n>` |
+| Substack | description | `<publication>.substack.com/p/<slug>`, `open.substack.com/pub/<publication>/p/<slug>` |
+| GitHub | manual | `github.com/<owner>/<repo>/` then `issues/<n>`, `pull/<n>`, `discussions/<n>`, `blob/`, `tree/`, `wiki`, `releases/tag/<tag>` or `releases/latest`; `github.com/(orgs or users)/<name>/projects/<n>`, `gist.github.com/<user>/<id>`, `*.github.io`. A bare repository root is left out |
 | Azure DevOps | manual | `dev.azure.com/.../_workitems/`, `/_boards/`, `/_wiki/` |
 | Jira | manual | `<site>.atlassian.net/browse/<KEY-1>` |
 | Linear | manual | `linear.app/<team>/issue/` and `/project/` |
@@ -148,7 +150,7 @@ where a tool's logo and name would be.
 ### Logos
 
 `src/renderer/components/artifact-platform-marks.ts` holds one mark per platform, drawn by
-`ArtifactPlatformLogo` (`VendorMark.tsx`) in `currentColor`. 30 platforms have one, from Simple
+`ArtifactPlatformLogo` (`VendorMark.tsx`) in `currentColor`. 35 platforms have one, from Simple
 Icons and lobehub/lobe-icons. Zeplin, Canva, UXPin, Axure, ProtoPie, Balsamiq, Uizard, Stitch,
 Bolt, Whimsical, zeroheight and Azure DevOps have none in either set and draw the link icon.
 
@@ -161,8 +163,9 @@ no sample link in the test or no mention in this doc.
 ## Names
 
 An artifact shows the first of these that exists (`artifactDisplayName`): the name a person or an
-agent gave it, the publish's title, a name read from the link (Figma's file name, a Notion or
-Whimsical slug, a GitHub issue as `owner/repo #12`, a Jira key), then the link cut down to host and
+agent gave it, the publish's title, a name read from the link (Figma's file name, a Notion,
+Whimsical or Substack slug, a GitHub issue, pull request or discussion as `owner/repo #12`, a Jira
+key), then the link cut down to host and
 path. Two links that share a name, such as two frames of one Figma file, are told apart in a list:
 the second adds its `node-id`, or its place (`listArtifacts`).
 
@@ -216,7 +219,9 @@ the default browser, and the tip shows one row.
 
 ## The unrecognised-domain report
 
-When a person or an agent adds a link on a site that is not in the table, Kangentic reports that
-site's domain to Sentry, once per install, so the table grows from what is used. Only the domain
+When a person or an agent adds a link that no row in the table matches, Kangentic reports that
+link's domain to Sentry, once per install, so the table grows from what is used. A page on a listed
+site that no pattern covers reports too, such as a YouTube channel or a bare GitHub repository
+root, and goes as that site's domain. Only the domain
 and who added it are sent, never a private host, and nothing with error reporting off. The details
 are in [Error reporting](../telemetry/error-reporting.md).

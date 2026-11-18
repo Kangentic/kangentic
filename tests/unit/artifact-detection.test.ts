@@ -78,6 +78,24 @@ describe('unrecognisedArtifactDomain', () => {
     expect(unrecognisedArtifactDomain(FIGMA)).toBeNull();
   });
 
+  // Video, newsletter and code links an agent or an imported issue carries all the time.
+  it.each([
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://youtu.be/dQw4w9WgXcQ',
+    'https://acme.substack.com/p/launch-week-recap',
+    'https://open.substack.com/pub/acme/p/launch-week-recap',
+    'https://github.com/owner/repo/pull/3',
+    'https://github.com/owner/repo/blob/main/README.md',
+    'https://gist.github.com/octocat/6cad326836d38bd3a7ae',
+    'https://acme.github.io/docs/',
+  ])('is null for the recognised link %s', (link) => {
+    expect(unrecognisedArtifactDomain(link)).toBeNull();
+  });
+
+  it('still reports a bare GitHub repository root', () => {
+    expect(unrecognisedArtifactDomain('https://github.com/owner/repo')).toBe('github.com');
+  });
+
   it.each(['http://localhost:3000/design', 'https://build-server/x', 'http://10.0.0.5/x', 'https://wiki.internal/page'])(
     'is null for the private host in %s',
     (link) => {
