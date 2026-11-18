@@ -494,6 +494,7 @@ describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing bra
       projectId: 'proj-1',
       cwd: STALE_WORKTREE_PATH,
       startBlockedReason: 'worktree-missing',
+      suspendedBy: 'system',
     });
   });
 

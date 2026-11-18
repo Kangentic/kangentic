@@ -55,7 +55,8 @@ describe('pauseTaskSession options', () => {
     expect(outcome).toBe('paused');
     expect(mocks.abortInFlightResume).toHaveBeenCalledWith('task-1');
     expect(mocks.applySuspendDbWrites).toHaveBeenCalledWith(context, 'proj-1', 'task-1', 'user');
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-live');
+    // The registry row carries what the record says, for the card's words.
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-live', { suspendedBy: 'user' });
   });
 
   it('records Kangentic\'s own pause as auto', async () => {
@@ -64,7 +65,7 @@ describe('pauseTaskSession options', () => {
     await pauseTaskSession(context as never, 'task-1', { suspendedBy: 'auto', stillEligible: () => true });
 
     expect(mocks.applySuspendDbWrites).toHaveBeenCalledWith(context, 'proj-1', 'task-1', 'auto');
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-live');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-live', { suspendedBy: 'auto' });
   });
 
   it('hands the re-check the live session it found under the lock', async () => {

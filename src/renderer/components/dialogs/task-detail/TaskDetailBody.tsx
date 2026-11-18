@@ -19,7 +19,7 @@ import { AttachmentChipStrip } from '../AttachmentChipStrip';
 import { isImageMediaType } from '../attachment-utils';
 import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
-import type { Task, SessionDisplayState, SwimlaneRole } from '../../../../shared/types';
+import type { Task, SessionDisplayState, StartBlockedReason, SuspendedBy, SwimlaneRole } from '../../../../shared/types';
 import { useSessionStore } from '../../../stores/session-store';
 import { useAgentDriveVeil } from '../../../hooks/useAgentDriveVeil';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
@@ -61,6 +61,10 @@ interface TaskDetailBodyProps {
   sessionId: string | null;
   displayKind: SessionDisplayState['kind'];
   isSuspended: boolean;
+  /** Who paused the task, for the line under the Resume button. */
+  suspendedBy?: SuspendedBy | null;
+  /** A paused row whose start never reached an agent, which takes no such line. */
+  startBlockedReason?: StartBlockedReason | null;
   toggling: boolean;
   pendingAction: null | 'pausing' | 'resuming';
   pendingCommandLabel: string | null;
@@ -108,6 +112,8 @@ export function TaskDetailBody({
   sessionId,
   displayKind,
   isSuspended,
+  suspendedBy = null,
+  startBlockedReason = null,
   toggling,
   pendingAction,
   pendingCommandLabel,
@@ -614,6 +620,18 @@ export function TaskDetailBody({
       : pendingAction === 'pausing'
         ? t`Pausing agent...`
         : t`Resuming agent...`;
+    // Who paused it, at rest. A held pause says it waits for Resume, since
+    // opening never lifts one. An idle pause says only what happened: this
+    // screen shows one that opening did not resume (its window was already
+    // open, a restart restored it, or the resume was skipped), so it must not
+    // promise a resume. A failed resume and a blocked start keep their own words.
+    const pauseNote = toggling || resumeFailed || startBlockedReason
+      ? null
+      : suspendedBy === 'user'
+        ? t`Stays paused until resumed.`
+        : suspendedBy === 'auto'
+          ? t`Paused while idle.`
+          : null;
     return (
       <>
         <div className="flex-1 min-h-0 flex">
@@ -627,6 +645,11 @@ export function TaskDetailBody({
                 {toggleIcon}
                 {toggleLabel}
               </button>
+              {pauseNote && (
+                <p className="text-xs text-fg-muted text-center max-w-sm" data-testid="task-detail-pause-note">
+                  {pauseNote}
+                </p>
+              )}
               {resumeFailed && onResetSession && (
                 <div className="flex flex-col items-center gap-2 mt-1">
                   <p className="text-xs text-fg-muted text-center max-w-sm">

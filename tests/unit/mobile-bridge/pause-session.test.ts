@@ -123,7 +123,7 @@ describe('handlePauseSession', () => {
     expect(shutdownFinished).toBe(false);
     expect(mockReconcileTaskSessionRef).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID);
     expect(mockApplySuspendDbWrites).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'user');
-    expect(suspend).toHaveBeenCalledWith('sess-live');
+    expect(suspend).toHaveBeenCalledWith('sess-live', { suspendedBy: 'user' });
     expect(mockApplySuspendDbWrites.mock.invocationCallOrder[0]).toBeLessThan(suspend.mock.invocationCallOrder[0]);
 
     shutdown.resolve();
@@ -171,7 +171,7 @@ describe('handlePauseSession', () => {
 
     expect(response.ok).toBe(true);
     expect(mockApplySuspendDbWrites).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'user');
-    expect(suspend).toHaveBeenCalledWith('sess-stuck');
+    expect(suspend).toHaveBeenCalledWith('sess-stuck', { suspendedBy: 'user' });
   });
 
   it('waits for the task lock: a holder delays the reconcile and the suspend until it releases', async () => {
@@ -188,7 +188,7 @@ describe('handlePauseSession', () => {
     await held;
     const response = await pending;
     expect(response.ok).toBe(true);
-    expect(suspend).toHaveBeenCalledWith('sess-live');
+    expect(suspend).toHaveBeenCalledWith('sess-live', { suspendedBy: 'user' });
   });
 
   it('cancels a resume in flight for the task before queueing on the lock, as the desktop Pause does', async () => {
@@ -311,7 +311,7 @@ describe('pauseTaskSession (the SESSION_SUSPEND body)', () => {
       });
 
       await expect(pauseTaskSession(fakeContext(suspend), TASK_ID, { projectId: PROJECT_ID, onAccepted })).resolves.toBe('paused');
-      expect(suspend).toHaveBeenCalledWith('sess-live');
+      expect(suspend).toHaveBeenCalledWith('sess-live', { suspendedBy: 'user' });
     } finally {
       consoleWarn.mockRestore();
     }

@@ -585,10 +585,12 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
 
   suspendSession: async (taskId, projectId) => {
     const stampedProjectId = projectId ?? useProjectStore.getState().currentProject?.id ?? null;
-    // Optimistically mark session as suspended
+    // Optimistically mark session as suspended, as the user's (main records the
+    // Pause button's pause as `'user'`), so the window's line under Resume does
+    // not arrive a frame after the button.
     set((s) => {
       const sessions = s.sessions.map((sess) =>
-        sess.taskId === taskId ? { ...sess, status: 'suspended' as const } : sess
+        sess.taskId === taskId ? { ...sess, status: 'suspended' as const, suspendedBy: 'user' as const } : sess
       );
       return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions) };
     });

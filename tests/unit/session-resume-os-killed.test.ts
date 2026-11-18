@@ -819,7 +819,7 @@ describe('resumeSuspendedSessions: the resume re-checks its task under the task 
 
       expect(sessionManager.spawn).not.toHaveBeenCalled();
       expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'rec-lost', 'system');
-      expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-lost', projectId: 'proj-1', cwd: '/project/cwd' });
+      expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-lost', projectId: 'proj-1', cwd: '/project/cwd', suspendedBy: 'system' });
       expect(retireRecordMock).not.toHaveBeenCalled();
     });
 

@@ -360,7 +360,7 @@ describe('agent-never-started listener', () => {
 
     await vi.waitFor(() => expect(mockResumeTaskSession).toHaveBeenCalledTimes(1));
     expect(mockResumeTaskSession).toHaveBeenCalledWith(context, 'task-never', { projectId: 'proj-1', startPath: 'retry', onFailed: expect.any(Function) });
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never', { suspendedBy: 'system' });
     expect(notifySpawnBlocked).not.toHaveBeenCalled();
   });
 
@@ -679,7 +679,7 @@ describe('agent-never-started listener', () => {
     const noticeError = vi.mocked(notifySpawnBlocked).mock.calls[0][3] as Error;
     expect(noticeError.message).toBe(NEVER_STARTED_FALLBACK);
     expect(context.sessionManager.noteAgentExitedAtStart).not.toHaveBeenCalled();
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never', { suspendedBy: 'system' });
     expect(context.sessionManager.retireAgentlessSession).not.toHaveBeenCalled();
   });
 
@@ -805,7 +805,7 @@ describe('agent-never-started listener', () => {
 
     expect(markRecordSuspended).toHaveBeenCalledTimes(1);
     expect(vi.mocked(markRecordSuspended).mock.calls[0]).toContain('system');
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never', { suspendedBy: 'system' });
   });
 
   it('leaves a newer session of the task alone', async () => {
@@ -1079,7 +1079,7 @@ describe('agent-start-refused listener', () => {
     await fireRefused();
 
     await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledWith(context, task, 'agent', REFUSAL, 'proj-1'));
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-queued');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-queued', { suspendedBy: 'system' });
     expect(mockMarkLaunchFailed).toHaveBeenCalledWith('sess-queued');
     expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-queued', 'worktree-missing');
     expect(mockSetStartBlockedReason).toHaveBeenCalledWith('sess-queued', 'worktree-missing');
@@ -1214,7 +1214,7 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
       'auto',
     );
     expect(taskUpdate).toHaveBeenCalledWith({ id: 'task-idle', session_id: null });
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle', { suspendedBy: 'auto' });
   });
 
   it('writes the paused record before it suspends the PTY, so a quit in between keeps it paused', async () => {
@@ -1271,7 +1271,7 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
     await drainUntil(() => context.mainWindow.webContents.send.mock.calls.length > 0);
 
     expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle', { suspendedBy: 'auto' });
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
       IPC.SESSION_IDLE_TIMEOUT,
       'sess-idle',
@@ -1362,7 +1362,7 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
     fireIdleTimeout();
     await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
     expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle', { suspendedBy: 'auto' });
   });
 
   it('does not pause a task whose recovery started while the pause waited on the task lock', async () => {
@@ -1412,7 +1412,7 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
 
     expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle', { suspendedBy: 'auto' });
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
       IPC.SESSION_IDLE_TIMEOUT,
       'sess-idle',

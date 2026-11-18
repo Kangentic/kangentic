@@ -199,7 +199,7 @@ describe('agent-start-refused listener with a command too long for its shell', (
 
     await vi.waitFor(() => expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-queued', 'prompt-too-long'));
     expect(mockSetStartBlockedReason).toHaveBeenCalledWith('sess-queued', 'prompt-too-long');
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-queued');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-queued', { suspendedBy: 'system' });
     expect(mockMarkLaunchFailed).toHaveBeenCalledWith('sess-queued');
     expect(notifySpawnBlocked).toHaveBeenCalledWith(context, task, 'agent', refusal, 'proj-1');
     expect(context.sessionManager.retireRefusedStart).not.toHaveBeenCalled();

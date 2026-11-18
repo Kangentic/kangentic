@@ -1996,6 +1996,10 @@ msgid "Pause session"
 msgstr "Pause session"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Paused while idle."
+msgstr "Paused while idle."
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Pausing agent..."
 msgstr "Pausing agent..."
 
@@ -2546,6 +2550,10 @@ msgstr "Starts with a dash, so git would read it as an option"
 msgctxt "column header"
 msgid "Status"
 msgstr "Status"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Stays paused until resumed."
+msgstr "Stays paused until resumed."
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 msgctxt "leftover section"

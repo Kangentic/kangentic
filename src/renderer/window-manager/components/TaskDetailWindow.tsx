@@ -396,6 +396,8 @@ export function TaskDetailWindow({
   };
 
   const hasSessionContext = sessionState.hasSessionContext || actions.toggling;
+  // Who paused it, for the line under the body's Resume button.
+  const pausedDisplayState = sessionState.displayState.kind === 'suspended' ? sessionState.displayState : null;
 
   const hasDescriptionContent = taskHasDescriptionContent(task, attachments.savedAttachments.length);
   // Gate the peek affordance (kebab item + hotkey) on exactly the states whose
@@ -1064,6 +1066,8 @@ export function TaskDetailWindow({
               sessionId={bodySessionView.sessionId}
               displayKind={bodySessionView.displayKind}
               isSuspended={bodySessionView.isSuspended}
+              suspendedBy={pausedDisplayState?.suspendedBy}
+              startBlockedReason={pausedDisplayState?.startBlockedReason}
               toggling={bodySessionView.toggling}
               pendingAction={actions.pendingAction}
               pendingCommandLabel={pendingCommandLabel}

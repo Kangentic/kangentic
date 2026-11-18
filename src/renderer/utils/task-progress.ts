@@ -253,7 +253,11 @@ export function getTaskProgress(inputs: {
     case 'exited':
       return { kind: 'exited', exitCode: session.exitCode ?? 0, startBlockedReason: session.startBlockedReason ?? undefined };
     case 'suspended':
-      return { kind: 'suspended', startBlockedReason: session.startBlockedReason ?? undefined };
+      return {
+        kind: 'suspended',
+        startBlockedReason: session.startBlockedReason ?? undefined,
+        suspendedBy: session.suspendedBy ?? undefined,
+      };
     case 'queued':
       return { kind: 'queued' };
     case 'running': {

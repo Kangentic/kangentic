@@ -2415,6 +2415,10 @@ msgid "Pause session"
 msgstr "세션 일시 중지"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Paused while idle."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
 msgid "Pausing agent..."
 msgstr "에이전트 일시 중지 중..."
@@ -3089,6 +3093,10 @@ msgstr ""
 msgctxt "column header"
 msgid "Status"
 msgstr "상태"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Stays paused until resumed."
+msgstr ""
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy

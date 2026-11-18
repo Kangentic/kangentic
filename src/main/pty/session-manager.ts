@@ -63,7 +63,7 @@ import type {
 } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import { DEFAULT_CONFIG, EventType } from '../../shared/types';
-import type { HistoryViewOpenResult } from '../../shared/types';
+import type { HistoryViewOpenResult, SuspendedBy } from '../../shared/types';
 import { reportUnrecognizedHistoryView } from './history-view-report';
 import { isActive } from '../../shared/activity-state';
 import type {
@@ -4761,8 +4761,13 @@ export class SessionManager extends EventEmitter {
    *
    * Unlike kill(), the onExit handler will NOT clean up files because
    * file paths are nulled before the PTY is destroyed.
+   *
+   * `suspendedBy` is who paused it, the value its record carries
+   * (`pauseTaskSession` passes it). It rides the row to the renderer so the card
+   * can say "Paused while idle". A caller that names nobody (a Done move, a
+   * settings restart) leaves a plain "Paused".
    */
-  async suspend(sessionId: string): Promise<void> {
+  async suspend(sessionId: string, options: { suspendedBy?: SuspendedBy } = {}): Promise<void> {
     // A promotion still waiting on the host would otherwise come back running.
     // Its settle is waited for below, as the PTY's exit is: a Done move removes
     // the worktree once the suspend resolves.
@@ -4801,6 +4806,8 @@ export class SessionManager extends EventEmitter {
 
     // Mark suspended BEFORE killing so the async onExit handler preserves it
     session.status = 'suspended';
+    // Before the emit below, so the first paused paint already has it.
+    session.suspendedBy = options.suspendedBy ?? null;
 
     // ...and TELL the renderer now, not after the shutdown below. That await is
     // up to 1500ms for a natural exit plus another 1500ms for kill propagation,

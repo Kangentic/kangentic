@@ -97,6 +97,25 @@ describe('SessionManager suspend logic', () => {
     expect(result?.status).toBe('suspended');
   });
 
+  // The card says "Paused while idle" from this value, so the renderer has to
+  // have it on its FIRST paused paint, not on the push after the shutdown.
+  it('carries who paused it on the first session-changed push, and nothing when no one is named', async () => {
+    const { session } = await spawnSession('task-paused-by');
+    const firstPausedPush: Array<string | null | undefined> = [];
+    manager.on('session-changed', (_sessionId: string, pushed: { status: string; suspendedBy?: string | null }) => {
+      if (pushed.status === 'suspended' && firstPausedPush.length === 0) firstPausedPush.push(pushed.suspendedBy);
+    });
+
+    await manager.suspend(session.id, { suspendedBy: 'auto' });
+
+    expect(firstPausedPush).toEqual(['auto']);
+    expect(manager.getSession(session.id)?.suspendedBy).toBe('auto');
+
+    const { session: plainSession } = await spawnSession('task-paused-plain');
+    await manager.suspend(plainSession.id);
+    expect(manager.getSession(plainSession.id)?.suspendedBy).toBeUndefined();
+  });
+
   it('onExit preserves suspended status', async () => {
     const { session, triggerExit } = await spawnSession();
 

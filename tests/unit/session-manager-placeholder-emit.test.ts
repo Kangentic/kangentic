@@ -105,6 +105,22 @@ describe('SessionManager.registerSuspendedPlaceholder emit', () => {
     expect(emitted.projectId).toBe('project-placeholder-3');
   });
 
+  it('carries who paused the record, so a restored card keeps its words', () => {
+    const emittedSessions: Session[] = [];
+    manager.on('session-changed', (_sessionId: string, session: Session) => {
+      emittedSessions.push(session);
+    });
+
+    manager.registerSuspendedPlaceholder({
+      taskId: 'task-placeholder-paused-by',
+      projectId: 'project-placeholder-paused-by',
+      cwd: '/mock/cwd',
+      suspendedBy: 'auto',
+    });
+
+    expect(emittedSessions.map((session) => session.suspendedBy)).toEqual(['auto']);
+  });
+
   it('returned session matches the emitted session in full', () => {
     let emittedSession: Session | null = null;
     manager.on('session-changed', (_sessionId: string, session: Session) => {
