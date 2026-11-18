@@ -1070,6 +1070,10 @@ describe('resumeSuspendedSessions: a held pause stays paused across a restart', 
     await runResume(sessionManager);
 
     expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    // The restored card says who paused it (#1104). This is the held-pause
+    // branch, a different call site from the non-auto-spawn column's. Red-green:
+    // drop `suspendedBy` from that call and the placeholder carries nothing.
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({ suspendedBy }));
     expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
     expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
