@@ -9,7 +9,8 @@
  * asserts what reached `reportHandledError` and with which tags. It replaces the
  * source-text pins in error-reporting-chokepoints.test.ts for `runHandler`, both
  * request stages of the HTTP server, the three server builders' `withToolReporting`
- * wrap, and the browser driver's three reports.
+ * wrap, and the browser driver's three reports. A screenshot that times out runs the
+ * real capture path, so its extra tags are checked where the report is sent.
  *
  * A TypeError is the defect. A RefusalError is the expected failure that must send
  * nothing, so a case with it proves the filter is in the path rather than bypassed.
@@ -113,8 +114,10 @@ vi.mock('../../src/main/browser/cdp/cdp', async (importOriginal) => ({
   getDialogResponse: vi.fn(),
 }));
 
-import { webContents } from 'electron';
-import { attachDebugger, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
+import { BrowserWindow, webContents } from 'electron';
+import { attachDebugger, isDebuggerAttached, SCREENSHOT_TIMEOUT_MS } from '../../src/main/browser/cdp/cdp';
+import { captureScreenshotWithBudget } from '../../src/main/browser/cdp/screenshot';
+import { noteWake, resetWakeClockForTests } from '../../src/main/browser/wake-clock';
 import { RefusalError } from '../../src/shared/refusal';
 import { runHandler } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { CommandContext } from '../../src/main/agent/commands/types';
@@ -133,8 +136,9 @@ import {
 import { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { BrowserToolDependencies } from '../../src/main/agent/mcp-http/browser-tools';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import { browserDriverReporter, withGuest } from '../../src/main/browser/browser-pane-driver';
+import { browserDriverReporter, withGuest, type DriverResult } from '../../src/main/browser/browser-pane-driver';
 import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
+import { popOutWindowManager } from '../../src/main/pop-out/pop-out-window-manager';
 import { resetGuestDriveQueuesForTests } from '../../src/main/browser/guest-drive-queue';
 import { setAgentInputSender, resetAgentInputSignalForTests } from '../../src/main/browser/agent-input-signal';
 import type { ResolvedBrowserAutomationConfig } from '../../src/main/browser/browser-automation-config';
@@ -385,6 +389,124 @@ describe('withGuest reports a driver failure', () => {
       capability: 'interact',
       kind: 'cdp-attach-failed',
       error_name: 'CdpAttachFailedError',
+    });
+  });
+
+  describe('a screenshot that got no frame says what the capture found (DESKTOP-46)', () => {
+    /**
+     * A guest whose capture never gets a frame. Every other command answers with
+     * nothing useful, which the capture path already tolerates, so the real
+     * `captureScreenshotWithBudget` runs the whole way to the 5 s bound.
+     */
+    function uncompositedGuest(withHost: boolean) {
+      const sendCommand = (method: string): Promise<unknown> => (
+        method === 'Page.captureScreenshot' ? new Promise(() => undefined) : Promise.resolve({ result: {} })
+      );
+      const host = { isDestroyed: () => false, capturePage: async () => ({}) };
+      return {
+        id: 7,
+        isDestroyed: () => false,
+        capturePage: async () => ({}),
+        debugger: { sendCommand },
+        ...(withHost ? { hostWebContents: host } : {}),
+      };
+    }
+
+    async function captureUntilTimeout(): Promise<DriverResult<unknown>> {
+      const pending = withGuest({ ...options, capability: 'observe' }, (guest) =>
+        captureScreenshotWithBudget(guest, { surface: null }),
+      );
+      await vi.advanceTimersByTimeAsync(SCREENSHOT_TIMEOUT_MS);
+      return pending;
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      resetWakeClockForTests();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.mocked(BrowserWindow.fromWebContents).mockImplementation(() => null);
+    });
+
+    it('tags a parked pane whose hold armed behind a visible window, 12 s after an unlock', async () => {
+      browserPaneRegistry.detachAll();
+      browserPaneRegistry.register({
+        handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, visibility: 'parked',
+      });
+      vi.mocked(webContents.fromId).mockReturnValue(uncompositedGuest(true) as never);
+      vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => false, isVisible: () => true } as never);
+      noteWake(Date.now() - 12_000);
+
+      const result = await captureUntilTimeout();
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'driver-error' } });
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportedTags()).toMatchObject({
+        source: 'browser_driver',
+        capability: 'observe',
+        kind: 'driver-error',
+        error_name: 'ScreenshotNotComposited',
+        surface: 'parked',
+        host_window: 'visible',
+        hold: 'armed',
+        since_wake: 'under_30s',
+      });
+    });
+
+    it('tags a lane, which has no host and takes no hold', async () => {
+      browserPaneRegistry.detachAll();
+      browserPaneRegistry.register({
+        handle: 'lane_s', kind: 'lane', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null,
+      });
+      vi.mocked(webContents.fromId).mockReturnValue(uncompositedGuest(false) as never);
+
+      await captureUntilTimeout();
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportedTags()).toMatchObject({
+        error_name: 'ScreenshotNotComposited',
+        surface: 'lane',
+        host_window: 'none',
+        hold: 'no_host',
+        since_wake: 'none',
+      });
+    });
+
+    // Order matters: a lane wins, then an open pop-out (even for a parked pane), then the pane's own visibility.
+    it.each([
+      { label: 'parked pane with an open pop-out', visibility: 'parked', popOut: true, surface: 'popout' },
+      { label: 'hidden pane', visibility: 'hidden', popOut: false, surface: 'hidden' },
+      { label: 'showing pane', visibility: 'showing', popOut: false, surface: 'pane' },
+    ] as const)('tags a $label as $surface', async ({ visibility, popOut, surface }) => {
+      const hasSpy = vi.spyOn(popOutWindowManager, 'has').mockReturnValue(popOut);
+      try {
+        browserPaneRegistry.detachAll();
+        browserPaneRegistry.register({
+          handle: 'pane_v', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, visibility,
+        });
+        vi.mocked(webContents.fromId).mockReturnValue(uncompositedGuest(false) as never);
+
+        await captureUntilTimeout();
+
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        expect(reportedTags()).toMatchObject({ error_name: 'ScreenshotNotComposited', surface });
+        expect(hasSpy).toHaveBeenCalledWith('browser', { projectId: 'p', taskId: 't' });
+      } finally {
+        hasSpy.mockRestore();
+      }
+    });
+
+    it('adds none of these tags to any other driver error', async () => {
+      await withGuest(options, async () => {
+        throw new TypeError('body defect');
+      });
+
+      const tags = reportedTags();
+      for (const captureTag of ['surface', 'host_window', 'hold', 'since_wake']) {
+        expect(tags).not.toHaveProperty(captureTag);
+      }
     });
   });
 

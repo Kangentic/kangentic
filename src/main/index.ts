@@ -77,6 +77,7 @@ import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './s
 import { DEV_PROCESS_AUMID, applyDevTaskbarIdentity, resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
 import { findTaskByWorktreePath } from './worktree-task-lookup';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
+import { noteWake } from './browser/wake-clock';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { markBrowserGuestWebContents } from './analytics/renderer-classification';
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
@@ -2164,10 +2165,14 @@ app.whenReady().then(async () => {
   // in-flight pairing. Electron emits 'unlock-screen' on Windows and macOS
   // only; Linux recovers a zombie socket through 'resume', the rekey tick,
   // and the spent-budget redial alone.
+  // Both also stamp the wake clock, which a screenshot that timed out reports
+  // as a bucket (`src/main/browser/wake-clock.ts`).
   powerMonitor.on('resume', () => {
+    noteWake();
     getOptionalIpcContext()?.mobileBridgeService.resumeAllSessions('system resumed from sleep');
   });
   powerMonitor.on('unlock-screen', () => {
+    noteWake();
     getOptionalIpcContext()?.mobileBridgeService.probeAllPresence('screen unlocked');
   });
 

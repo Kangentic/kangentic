@@ -15,7 +15,7 @@ import { BrowserWindow, type WebContents } from 'electron';
  *
  * Measured on Electron 45.1.0, Windows, from a live agent on a parked pane, with
  * Kangentic's renderer reporting `visibilityState` hidden. macOS and Linux are
- * unmeasured, and what `hostWindowHidden` reads may differ there:
+ * unmeasured, and what `readHostState` reads may differ there:
  *
  *   hold                          result      renderer
  *   guest only                    5 s bound   hidden
@@ -59,10 +59,28 @@ const HOLD_RECT = { x: 0, y: 0, width: 1, height: 1 };
 const GUEST_HOLD_OPTIONS = { stayHidden: false, stayAwake: false };
 const HOST_HOLD_OPTIONS = { stayHidden: true, stayAwake: false };
 
-function hostWindowHidden(host: WebContents): boolean {
+/**
+ * What the hold did for one capture, kept for the report a capture that timed out
+ * sends (DESKTOP-46). `skipped_hidden` covers a host window hidden outright and a
+ * host with no window to read; `hostState` tells those two apart.
+ */
+export type CaptureHoldOutcome = 'armed' | 'skipped_hidden' | 'no_host';
+
+/** The host window as the hold read it when the capture started. `none`: no window, or no host. */
+export type CaptureHostState = 'visible' | 'minimized' | 'hidden' | 'none';
+
+export interface GuestCaptureHold {
+  outcome: CaptureHoldOutcome;
+  hostState: CaptureHostState;
+  /** Stop holding. Safe to call when nothing was held. */
+  end(): void;
+}
+
+function readHostState(host: WebContents): CaptureHostState {
   const hostWindow = BrowserWindow.fromWebContents(host);
-  if (!hostWindow) return true;
-  return !hostWindow.isVisible() && !hostWindow.isMinimized();
+  if (!hostWindow) return 'none';
+  if (hostWindow.isMinimized()) return 'minimized';
+  return hostWindow.isVisible() ? 'visible' : 'hidden';
 }
 
 function repeatCapture(contents: WebContents, options: typeof GUEST_HOLD_OPTIONS): () => void {
@@ -83,15 +101,26 @@ function repeatCapture(contents: WebContents, options: typeof GUEST_HOLD_OPTIONS
   return () => clearInterval(timer);
 }
 
-/** Start holding the guest visible for a capture. Returns the function that ends it. */
-export function holdGuestRendering(guest: WebContents): () => void {
+const NOTHING_HELD = (): void => undefined;
+
+/** Start holding the guest visible for a capture. Its `end` stops the hold. */
+export function holdGuestRendering(guest: WebContents): GuestCaptureHold {
   const host = guest.hostWebContents;
-  if (!host || hostWindowHidden(host)) return () => undefined;
+  if (!host) return { outcome: 'no_host', hostState: 'none', end: NOTHING_HELD };
+  const hostState = readHostState(host);
+  // A host with no window reads as hidden: nothing says its calls would settle.
+  if (hostState === 'hidden' || hostState === 'none') {
+    return { outcome: 'skipped_hidden', hostState, end: NOTHING_HELD };
+  }
 
   const endHostHold = repeatCapture(host, HOST_HOLD_OPTIONS);
   const endGuestHold = repeatCapture(guest, GUEST_HOLD_OPTIONS);
-  return () => {
-    endHostHold();
-    endGuestHold();
+  return {
+    outcome: 'armed',
+    hostState,
+    end: () => {
+      endHostHold();
+      endGuestHold();
+    },
   };
 }

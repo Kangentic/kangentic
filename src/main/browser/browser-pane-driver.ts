@@ -11,6 +11,7 @@ import {
   getDialogResponse,
   isDebuggerAttached,
   waitForDialogInterception,
+  type CaptureHoldDiagnostics,
 } from './cdp/cdp';
 import { KeyboardFocusNotInGuestError } from './cdp/keyboard-focus';
 import { AmbiguousSelectorError, ambiguousSelectorDetail, type SelectorCandidate } from './cdp/ambiguous-selector';
@@ -21,6 +22,8 @@ import { logDrive } from './drive-telemetry';
 import { touchLane } from './browser-lane-manager';
 import { isLoopbackHost } from './loopback-host';
 import { createChokepointReporter } from '../analytics/handled-report';
+import { popOutWindowManager } from '../pop-out/pop-out-window-manager';
+import { sinceWakeBucket } from './wake-clock';
 import { isRuntimeDefect } from '../../shared/handled-error-copy';
 
 /**
@@ -47,7 +50,8 @@ export type BrowserCapability = 'observe' | 'interact' | 'navigate' | 'eval';
  * (`cdp/cdp.ts`). Everything else a `driver-error` carries is the page, a
  * selector or the agent's own mistake, so only these and the runtime's own
  * classes (`TypeError`, `RangeError`, `ReferenceError`) report. `detail` is never
- * sent: it holds page content, selectors and URLs.
+ * sent: it holds page content, selectors and URLs. A capture that got no frame also
+ * carries `captureFailureTags`.
  */
 const REPORTED_DRIVER_ERROR_NAMES: ReadonlySet<string> = new Set([
   'CaptureExceedsSurface',
@@ -59,6 +63,53 @@ export const browserDriverReporter = createChokepointReporter('browser_driver', 
   shouldReport: (error) => error instanceof Error
     && (REPORTED_DRIVER_ERROR_NAMES.has(error.name) || isRuntimeDefect(error)),
 });
+
+/** Where the captured surface was, for the timeout report. Every value is a fixed enum. */
+type CaptureSurfaceTag = 'pane' | 'hidden' | 'parked' | 'popout' | 'lane';
+
+function captureSurfaceTag(entry: BrowserPaneEntry): CaptureSurfaceTag {
+  if (entry.kind === 'lane') return 'lane';
+  // The same test `viewport-override.ts` uses to pick the pop-out's resize.
+  if (entry.projectId && popOutWindowManager.has('browser', { projectId: entry.projectId, taskId: entry.taskId })) {
+    return 'popout';
+  }
+  if (entry.visibility === 'parked') return 'parked';
+  if (entry.visibility === 'hidden') return 'hidden';
+  return 'pane';
+}
+
+type ScreenshotTimeoutShape = { name: 'ScreenshotNotComposited' } & CaptureHoldDiagnostics;
+
+/** Read structurally, not with `instanceof`: a test may stand in for the whole `cdp` module. */
+function isScreenshotTimeout(error: unknown): error is ScreenshotTimeoutShape {
+  if (!(error instanceof Error) || error.name !== 'ScreenshotNotComposited') return false;
+  const fields = error as Partial<CaptureHoldDiagnostics>;
+  return typeof fields.hold === 'string' && typeof fields.hostState === 'string';
+}
+
+/**
+ * The tags a capture that timed out adds to its report (DESKTOP-46): which surface,
+ * the host window and the hold as the capture found them, and how long since the
+ * machine last woke. Fixed enums only, so nothing a page or a user wrote rides along.
+ * Every other error adds none.
+ *
+ * The reporter latches on its tags, so each distinct combination sends once per run
+ * rather than one timeout per run. That is the point: `since_wake` in the key is what
+ * lets a timeout right after an unlock report after an earlier one latched. The hold
+ * follows from the host window, so the two make 5 pairs, and 5 surfaces x 5 pairs x 5
+ * wake buckets is the bound in principle, a handful in practice. Every key counts
+ * toward the chokepoint's 25-key cap, so a run that spends it on timeouts sends no
+ * later driver report with a new key.
+ */
+function captureFailureTags(error: unknown, entry: BrowserPaneEntry): Record<string, string> {
+  if (!isScreenshotTimeout(error)) return {};
+  return {
+    surface: captureSurfaceTag(entry),
+    host_window: error.hostState,
+    hold: error.hold,
+    since_wake: sinceWakeBucket(),
+  };
+}
 
 /** A fixed error for a debugger that would not attach, which `attachDebugger` reports as `false`. */
 function cdpAttachFailure(): Error {
@@ -327,7 +378,9 @@ export async function withGuest<T>(
           } as DriverResult<T>;
         }
         report('driver-error');
-        browserDriverReporter.report(error, { tags: { capability: options.capability, kind: 'driver-error' } });
+        browserDriverReporter.report(error, {
+          tags: { capability: options.capability, kind: 'driver-error', ...captureFailureTags(error, target.entry) },
+        });
         return {
           ok: false,
           error: {
