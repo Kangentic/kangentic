@@ -654,6 +654,20 @@ describe('performSpawn - the opening prompt delivery on the session row', () => 
 
     expect(context.registry.get('session-opening-none-0000-000000000')?.openingPrompt).toBeUndefined();
   });
+
+  it('copies the session id creation outcome onto the registry row', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-idcreate-timeout-000-0000', sessionIdCreation: 'timeout' }), context);
+
+    expect(context.registry.get('session-idcreate-timeout-000-0000')?.sessionIdCreation).toBe('timeout');
+  });
+
+  it('leaves the row without a session id creation outcome when the spawn carried none', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-idcreate-none-00000-00000' }), context);
+
+    expect(context.registry.get('session-idcreate-none-00000-00000')?.sessionIdCreation).toBeUndefined();
+  });
 });
 
 describe('performSpawn - the resume evidence on the session row', () => {

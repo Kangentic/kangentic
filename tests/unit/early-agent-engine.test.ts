@@ -195,6 +195,15 @@ describe('launchEarlyAgent', () => {
     expect((sessionManager.spawned[0] as SpawnInput & { agentCliPath?: string | null }).agentCliPath).toBe('/opt/claude-shim');
   });
 
+  it('never asks the CLI to create a chat, so the session id report reads not_asked', async () => {
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine(sessionManager, makeSessionRepo());
+
+    await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' });
+
+    expect((sessionManager.spawned[0] as SpawnInput & { sessionIdCreation?: string }).sessionIdCreation).toBe('not_asked');
+  });
+
   it('reads as a board start when nothing named another', async () => {
     const sessionManager = makeSessionManager();
     const { engine } = makeEngine(sessionManager, makeSessionRepo());
