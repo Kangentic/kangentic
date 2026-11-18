@@ -1,7 +1,8 @@
 /**
  * The artifact platform table and the link readers built on it (#1056). A user
  * loses: a Figma, Miro or Excalidraw link that no longer lands on the task, a
- * pull request or a pricing page that suddenly does, a sentence's full stop
+ * pricing page that suddenly does or a pull request picked up from an agent's
+ * messages, a sentence's full stop
  * glued onto a link, or the same link listed twice under a different spelling.
  *
  * Every platform needs a real-shaped sample here, so adding a platform to
@@ -65,6 +66,8 @@ const SAMPLE_LINKS: Record<string, string> = {
   confluence: 'https://acme.atlassian.net/wiki/spaces/ENG/pages/123456',
   microsoft365: 'https://contoso.sharepoint.com/:w:/s/team/abc123',
   loom: 'https://www.loom.com/share/abc123',
+  youtube: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  substack: 'https://on.substack.com/p/substack-seo-guide',
   coda: 'https://coda.io/d/My-Doc_dabc123',
   obsidian: 'https://publish.obsidian.md/team-notes/Launch+plan',
   storybook: 'https://main--abc123.chromatic.com/',
@@ -96,8 +99,28 @@ describe('artifactPlatformOf', () => {
     ['a Figma pricing sub-page', 'https://www.figma.com/pricing/enterprise'],
     ['a Figma blog post', 'https://www.figma.com/blog/introducing'],
     ['a Figma community plugin', 'https://www.figma.com/community/plugin/123456/Name'],
-    ['a pull request', 'https://github.com/owner/repo/pull/3'],
     ['the Google Docs root', 'https://docs.google.com/'],
+    ['a YouTube channel handle', 'https://www.youtube.com/@acme'],
+    ['a YouTube channel id', 'https://www.youtube.com/channel/UCabc123'],
+    ['a YouTube custom channel', 'https://www.youtube.com/c/acme'],
+    ['a path that only starts like a YouTube watch page', 'https://www.youtube.com/watchlist'],
+    ['a path that only starts like a YouTube playlist page', 'https://www.youtube.com/playlists'],
+    ['a youtu.be link with no video id', 'https://youtu.be/'],
+    ['a youtu.be link with a too-short video id', 'https://youtu.be/abc'],
+    ['a GitHub release list, not a tag', 'https://github.com/owner/repo/releases'],
+    ['a GitHub path that only starts like the wiki', 'https://github.com/owner/repo/wikis'],
+    ['a GitHub gist profile with no gist id', 'https://gist.github.com/octocat'],
+    ['a Substack bare-domain post', 'https://substack.com/p/some-slug'],
+    ['a Substack bare-domain app post', 'https://substack.com/home/post/p-123'],
+    ['a YouTube search', 'https://www.youtube.com/results?search_query=kanban'],
+    ['the YouTube home page', 'https://www.youtube.com/'],
+    ['a YouTube Music track', 'https://music.youtube.com/watch?v=dQw4w9WgXcQ'],
+    ['the Substack home page', 'https://substack.com/'],
+    ['a Substack publication home page', 'https://acme.substack.com/'],
+    ['a Substack archive', 'https://acme.substack.com/archive'],
+    ['a bare GitHub repository root', 'https://github.com/owner/repo'],
+    ['a GitHub marketing page', 'https://github.com/features/actions'],
+    ['the bare GitHub Pages domain', 'https://github.io/'],
     ['the bare Obsidian Publish host', 'https://publish.obsidian.md/'],
     ['Excalidraw with no drawing in the fragment', 'https://excalidraw.com/'],
     ['a host that only ends like Figma', 'https://notfigma.com/design/abc123/x'],
@@ -114,6 +137,29 @@ describe('artifactPlatformOf', () => {
     ['board', 'https://www.figma.com/board/XyZ987abc/F'],
   ])('still recognises a Figma %s link with a real file key', (_word, link) => {
     expect(artifactPlatformOf(link)?.id).toBe('figma');
+  });
+
+  it.each([
+    ['youtube', 'a share link', 'https://youtu.be/dQw4w9WgXcQ'],
+    ['youtube', 'a Short', 'https://www.youtube.com/shorts/tPEE9ZwTmy0'],
+    ['youtube', 'a live stream', 'https://www.youtube.com/live/jfKfPfyJRdk'],
+    ['youtube', 'an embed', 'https://www.youtube.com/embed/dQw4w9WgXcQ'],
+    ['youtube', 'a playlist', 'https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI'],
+    ['youtube', 'a mobile video', 'https://m.youtube.com/watch?v=dQw4w9WgXcQ'],
+    ['substack', 'an app share link', 'https://open.substack.com/pub/on/p/substack-seo-guide'],
+    ['github', 'a pull request', 'https://github.com/owner/repo/pull/3'],
+    ['github', 'a discussion', 'https://github.com/vercel/next.js/discussions/95130'],
+    ['github', 'a file', 'https://github.com/github/codeql/blob/main/README.md'],
+    ['github', 'a folder', 'https://github.com/microsoft/vscode/tree/main/src'],
+    ['github', 'the wiki home', 'https://github.com/microsoft/vscode/wiki'],
+    ['github', 'a wiki page', 'https://github.com/microsoft/vscode/wiki/How-to-Contribute'],
+    ['github', 'a release', 'https://github.com/microsoft/vscode/releases/tag/1.90.0'],
+    ['github', 'the latest release', 'https://github.com/microsoft/vscode/releases/latest'],
+    ['github', 'a project', 'https://github.com/orgs/acme/projects/4'],
+    ['github', 'a gist', 'https://gist.github.com/octocat/6cad326836d38bd3a7ae'],
+    ['github', 'a Pages site', 'https://acme.github.io/docs/'],
+  ])('recognises a %s link: %s', (id, _shape, link) => {
+    expect(artifactPlatformOf(link)?.id).toBe(id);
   });
 
   it('matches a wildcard pattern on a real subdomain', () => {
@@ -165,6 +211,24 @@ describe('findArtifactLinks', () => {
     const text = `${SAMPLE_LINKS.github} ${SAMPLE_LINKS.jira} ${SAMPLE_LINKS.linear} ${SAMPLE_LINKS.trello} ${SAMPLE_LINKS.gitlab}`;
     expect(findArtifactLinks(text, { documents: false })).toEqual([]);
     expect(findArtifactLinks(text, { documents: true })).toEqual([]);
+  });
+
+  // An imported GitHub issue's body becomes the description, and it links to code all the time.
+  it('never returns a GitHub pull request, file, gist or Pages link, though each is recognised', () => {
+    const links = [
+      'https://github.com/owner/repo/pull/3',
+      'https://github.com/owner/repo/blob/main/src/index.ts',
+      'https://gist.github.com/octocat/6cad326836d38bd3a7ae',
+      'https://acme.github.io/docs/',
+    ];
+    for (const link of links) expect(artifactPlatformOf(link)?.id).toBe('github');
+    expect(findArtifactLinks(links.join(' '), { documents: true })).toEqual([]);
+  });
+
+  it('keeps a YouTube or Substack link for a description only', () => {
+    const text = `${SAMPLE_LINKS.youtube} ${SAMPLE_LINKS.substack}`;
+    expect(findArtifactLinks(text, { documents: false })).toEqual([]);
+    expect(findArtifactLinks(text, { documents: true })).toEqual([SAMPLE_LINKS.youtube, SAMPLE_LINKS.substack]);
   });
 
   it('reads a link out of markdown', () => {
@@ -245,6 +309,26 @@ describe('artifactNameFromUrl and artifactShortLink', () => {
 
   it('names a GitHub issue owner/repo #number', () => {
     expect(artifactNameFromUrl('https://github.com/acme/widgets/issues/42')).toBe('acme/widgets #42');
+  });
+
+  it('names a GitHub pull request and discussion the same way', () => {
+    expect(artifactNameFromUrl('https://github.com/acme/widgets/pull/7')).toBe('acme/widgets #7');
+    expect(artifactNameFromUrl('https://github.com/acme/widgets/discussions/9')).toBe('acme/widgets #9');
+  });
+
+  it('still names a GitHub link written with www', () => {
+    expect(artifactNameFromUrl('https://www.github.com/acme/widgets/pull/7')).toBe('acme/widgets #7');
+  });
+
+  it('reads no issue name out of a GitHub Pages path', () => {
+    expect(artifactNameFromUrl('https://acme.github.io/a/b/issues/3')).toBeNull();
+  });
+
+  it('reads a Substack post slug in both link shapes', () => {
+    expect(artifactNameFromUrl('https://acme.substack.com/p/launch-week-recap')).toBe('launch week recap');
+    expect(artifactNameFromUrl('https://open.substack.com/pub/acme/p/launch-week-recap')).toBe('launch week recap');
+    // The publication is itself called `p`: the slug is read by position, not by the first `/p/`.
+    expect(artifactNameFromUrl('https://open.substack.com/pub/p/p/launch-week-recap')).toBe('launch week recap');
   });
 
   it('names a Jira issue by its key', () => {

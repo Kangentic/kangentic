@@ -379,8 +379,9 @@ in one Sentry org, one triage surface.
 - **One report is not an error: an unrecognised artifact domain** (`reportHandledMessage`, level
   `info`). A task keeps links to its designs and documents
   ([Artifacts](../integrations/artifacts.md)), and Kangentic recognises a fixed list of platforms.
-  When a person or an agent adds a link on any other site, main reports that site's domain so the
-  list grows from what is used (`src/main/artifacts/artifact-domain-report.ts`). The event carries
+  When a person or an agent adds a link that no platform pattern matches, main reports that link's
+  domain so the list grows from what is used. That includes a page on a listed site that no pattern
+  covers, such as a YouTube channel (`src/main/artifacts/artifact-domain-report.ts`). The event carries
   two tags, `artifact_domain` and `artifact_source` (`user` or `agent`), and is fingerprinted per
   domain, so Sentry holds one issue per site. The domain is the site the host belongs to, without a
   leading `www.`, and every label left of it collapsed to `*` (`collapseTenantLabels`):

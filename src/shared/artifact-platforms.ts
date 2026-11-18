@@ -84,17 +84,34 @@ function slugBeforeId(url: URL): string | null {
   return withoutId === last || withoutId === '' ? null : words(withoutId);
 }
 
-/** GitHub: `owner/repo #12`, or the project's owner. */
+/**
+ * GitHub: `owner/repo #12` for an issue, a pull request or a discussion. Only
+ * on github.com: a gist's or a Pages site's path names no issue.
+ */
 function githubName(url: URL): string | null {
+  if (url.hostname.toLowerCase().replace(/^www\./, '') !== 'github.com') return null;
   const [owner, repository, kind, number] = url.pathname.split('/').filter((part) => part !== '');
-  if (kind === 'issues' && number) return `${owner}/${repository} #${number}`;
+  if ((kind === 'issues' || kind === 'pull' || kind === 'discussions') && number) return `${owner}/${repository} #${number}`;
   return null;
+}
+
+/**
+ * Substack: the post slug, in `<pub>.substack.com/p/<slug>` and
+ * `open.substack.com/pub/<pub>/p/<slug>`. Read by position, because a
+ * publication can itself be called `p`.
+ */
+function substackName(url: URL): string | null {
+  const slug = /^(?:\/pub\/[^/]+)?\/p\/([^/]+)/.exec(url.pathname)?.[1];
+  return slug ? words(slug) : null;
 }
 
 /** Jira: the issue key, `KEY-12`. */
 function jiraName(url: URL): string | null {
   return /^\/browse\/([A-Z][A-Z0-9]*-\d+)/.exec(url.pathname)?.[1] ?? null;
 }
+
+/** A YouTube video, Short, live stream, embed or playlist, on the desktop and the mobile host alike. */
+const YOUTUBE_PATH = /^\/(watch$|playlist$|(shorts|live|embed)\/[\w-]+)/;
 
 export const ARTIFACT_PLATFORMS: readonly ArtifactPlatform[] = [
   // ── Design and prototyping ──
@@ -187,8 +204,28 @@ export const ARTIFACT_PLATFORMS: readonly ArtifactPlatform[] = [
     patterns: [{ host: '*.sharepoint.com', path: /^\/:[wxpbf]:\// }, { host: '1drv.ms', path: /^\/\w/ }],
   },
   { id: 'loom', name: 'Loom', kind: 'document', detection: 'description', patterns: [{ host: 'loom.com', path: /^\/(share|embed)\// }] },
+  {
+    id: 'youtube', name: 'YouTube', kind: 'document', detection: 'description',
+    // The mobile host is listed on its own: `*.youtube.com` would also claim
+    // YouTube Music and Studio. A channel page (`/@handle`, `/channel/`) is not
+    // an artifact.
+    patterns: [
+      { host: 'youtube.com', path: YOUTUBE_PATH },
+      { host: 'm.youtube.com', path: YOUTUBE_PATH },
+      { host: 'youtu.be', path: /^\/[\w-]{6,}/ },
+    ],
+  },
   { id: 'coda', name: 'Coda', kind: 'document', detection: 'description', patterns: [{ host: 'coda.io', path: /^\/d\// }, { host: 'docs.superhuman.com', path: /^\/d\// }] },
   { id: 'obsidian', name: 'Obsidian', kind: 'document', detection: 'description', patterns: [{ host: 'publish.obsidian.md', path: /^\/[^/]+/ }] },
+  {
+    id: 'substack', name: 'Substack', kind: 'document', detection: 'description', nameFromUrl: substackName,
+    // A post on its publication's subdomain, and the app's share link, which
+    // redirects there. A publication on its own domain cannot be told apart by
+    // host. No source confirms the bare-domain shapes (`substack.com/@<handle>/p-<id>`,
+    // `substack.com/home/post/p-<id>`), so they are left out and still report as
+    // an unrecognised domain.
+    patterns: [{ host: 'open.substack.com', path: /^\/pub\/[^/]+\/p\/[^/]+/ }, { host: '*.substack.com', path: /^\/p\/[^/]+/ }],
+  },
 
   // ── Design systems ──
   { id: 'storybook', name: 'Storybook', kind: 'design-system', detection: 'messages', patterns: [{ host: '*.chromatic.com' }] },
@@ -197,7 +234,24 @@ export const ARTIFACT_PLATFORMS: readonly ArtifactPlatform[] = [
   // ── Trackers and boards: recognised, never detected ──
   {
     id: 'github', name: 'GitHub', kind: 'tracker', detection: 'manual', nameFromUrl: githubName,
-    patterns: [{ host: 'github.com', path: /^\/[^/]+\/[^/]+\/issues\/\d+/ }, { host: 'github.com', path: /^\/(orgs|users)\/[^/]+\/projects\/\d+/ }],
+    // One entry for every GitHub shape, all of them manual. Code, gists and Pages
+    // sites get no detected document entry of their own. An imported GitHub
+    // issue's body becomes the task description, and issue bodies link to code
+    // all the time. Agents cite library docs on `*.github.io` just as often.
+    // A pull request is recognised for its logo and name only. Manual detection
+    // never adds one by itself, and the task's own PR lives in `prUrl`.
+    // A bare repository root is left out. Its shape (`/<a>/<b>`) is also every
+    // GitHub page like `/features/actions`, so a root link still reports as an
+    // unrecognised domain.
+    patterns: [
+      { host: 'github.com', path: /^\/[^/]+\/[^/]+\/(issues|pull|discussions)\/\d+/ },
+      { host: 'github.com', path: /^\/[^/]+\/[^/]+\/(blob|tree)\// },
+      { host: 'github.com', path: /^\/[^/]+\/[^/]+\/wiki(\/|$)/ },
+      { host: 'github.com', path: /^\/[^/]+\/[^/]+\/releases\/(tag\/[^/]+|latest)/ },
+      { host: 'github.com', path: /^\/(orgs|users)\/[^/]+\/projects\/\d+/ },
+      { host: 'gist.github.com', path: /^\/([^/]+\/)?[0-9a-f]{20,}/ },
+      { host: '*.github.io' },
+    ],
   },
   { id: 'azuredevops', name: 'Azure DevOps', kind: 'tracker', detection: 'manual', patterns: [{ host: 'dev.azure.com', path: /\/_(workitems|boards|wiki)\// }] },
   { id: 'jira', name: 'Jira', kind: 'tracker', detection: 'manual', nameFromUrl: jiraName, patterns: [{ host: '*.atlassian.net', path: /^\/browse\/[A-Z][A-Z0-9]*-\d+/ }] },
