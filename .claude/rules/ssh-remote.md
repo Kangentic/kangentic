@@ -305,7 +305,9 @@ process, a path tested against the wrong disk, an environment that overwrites th
   returns null for any host reads the copy as absent. `resume-conversation-guard-ssh.test.ts` pins `unknown`
   whatever copy this computer holds, and `register-all-command-terminal-history.test.ts` the kept row.
   `tests/unit/remote-transcript-real-cli.test.ts` runs real CLIs end to end, only in the rig
-  (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed. `scripts/ssh-link-rig.mjs`,
+  (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed. `agent-clis.yml` runs
+  that rig every night against each CLI's newest release, and on a pull request that touches the rig.
+  `scripts/ssh-link-rig.mjs`,
   which `ssh-rig.yml` runs, takes an export past a frame's cap across a real `ssh` killed partway.
 - **Rig (removal, by hand):** `node scripts/ssh-link-rig.mjs --client removal --work <dir>` runs what only a host can
   prove on a real sshd: a Remove's leftover agents hung up by a new link, only those of the hidden projects, with

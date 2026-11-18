@@ -5,8 +5,10 @@
  * suite pinned.
  *
  * It needs the CLIs, so it runs only in the rig (`scripts/probe-ssh-rig/transcript-clis.sh`, which sets
- * `KANGENTIC_TRANSCRIPT_RIG`) and is skipped everywhere else, CI included. A model stand-in answers, so a run
- * costs no quota.
+ * `KANGENTIC_TRANSCRIPT_RIG`) and is skipped everywhere else, the unit tier on CI included. The rig runs every
+ * night against each CLI's newest release (`.github/workflows/agent-clis.yml`) and by hand. A model stand-in
+ * answers, so a run costs no quota. Each title starts with its CLI's name and a colon: the nightly's summary
+ * joins a test to the version the rig recorded by that prefix.
  *
  * What a user loses if it breaks: a host conversation that never reaches the viewer, the index or the ledger
  * while every test built on captures stays green.

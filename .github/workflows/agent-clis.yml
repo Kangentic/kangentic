@@ -1,0 +1,93 @@
+name: Agent CLIs at their newest versions
+
+# Runs seven real agent CLIs, each at the newest release its vendor ships, through
+# a whole conversation and a resume, and requires Kangentic's own readers to read
+# what they wrote: Kimi Code, Goose, OpenCode 1 and 2, Codex, Gemini, Aider and
+# Droid (tests/unit/remote-transcript-real-cli.test.ts).
+#
+# What it catches that nothing else can: a CLI release that changes what Kangentic
+# reads. Every other tier runs against captures and mock CLIs, which stay green
+# when a vendor renames a flag, moves a session file or changes a transcript's
+# format. That kind of break needs no commit here, and a user met it first. Claude
+# is not in this set: the team runs it all day, so it is the one CLI a change in
+# is noticed within hours.
+#
+# No account and no secret. scripts/probe-ssh-rig/transcript-clis.sh installs the
+# CLIs into a throwaway container and points each at a local stand-in for a model
+# API, so a run costs no quota. It runs in a container, not on the runner, because
+# the script installs packages as root and writes each CLI's config into the home
+# it runs in, and Goose is found through that home's login shell.
+#
+# What it costs: one ubuntu-24.04 job a night. It also runs on a pull request that
+# touches the rig itself, and on nothing else: no adapter path is in the filter, so
+# a vendor's release never turns an unrelated pull request red. Not a required
+# check.
+#
+# A red run names the CLI and the version it ran in the step summary
+# (scripts/probe-ssh-rig/transcript-summary.mjs). That script also fails a run
+# whose tests were all skipped, which vitest exits 0 on. /release reads the newest
+# scheduled run and reports it without stopping: a tag does not make a vendor's
+# change worse, and a vendor's installer being down should not hold a release.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/probe-ssh-rig/transcript-clis.sh'
+      - 'scripts/probe-ssh-rig/transcript-summary.mjs'
+      - 'scripts/probe-ssh-rig/stub-model-api.py'
+      - 'tests/unit/remote-transcript-real-cli.test.ts'
+      - '.github/workflows/agent-clis.yml'
+  schedule:
+    # 06:11 UTC. Off the hour so it does not land in the cron rush.
+    - cron: "11 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-clis-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  transcripts:
+    name: Real CLIs against a stand-in model
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # The commands below are the ones the script's header gives for a run by hand.
+      - name: Start the container
+        run: docker run -d --name kangentic-transcript-rig -e CI=1 --entrypoint sleep node:24-bookworm infinity
+      - name: Copy the checkout into it
+        run: docker cp "$GITHUB_WORKSPACE/." kangentic-transcript-rig:/work
+      # --ignore-scripts: the tests need no native module built, and none is fetched.
+      - name: Install dependencies in the container
+        run: docker exec -w /work kangentic-transcript-rig npm ci --ignore-scripts
+      # Exits 1 naming each CLI that did not install. The steps after it still run,
+      # so the CLIs that did install are tested and the summary shows all of them.
+      - name: Install the newest release of each CLI
+        run: docker exec kangentic-transcript-rig bash /work/scripts/probe-ssh-rig/transcript-clis.sh
+      - name: Run each CLI through a conversation and a resume
+        if: ${{ !cancelled() }}
+        run: docker exec -w /work kangentic-transcript-rig bash -c '. /root/transcript-rig.env; npx vitest run tests/unit/remote-transcript-real-cli.test.ts --reporter=default --reporter=json --outputFile.json=/root/transcript-rig.results.json'
+      # The verdict. A file that is missing is a failure there, so the copies may fail quietly here.
+      - name: Report each CLI's version and result
+        if: ${{ !cancelled() }}
+        run: |
+          docker cp kangentic-transcript-rig:/root/transcript-rig.versions "$RUNNER_TEMP/transcript-rig.versions" || echo "The container holds no versions file."
+          docker cp kangentic-transcript-rig:/root/transcript-rig.results.json "$RUNNER_TEMP/transcript-rig.results.json" || echo "The container holds no test report."
+          node scripts/probe-ssh-rig/transcript-summary.mjs --versions "$RUNNER_TEMP/transcript-rig.versions" --results "$RUNNER_TEMP/transcript-rig.results.json"
+      # Every request the CLIs made of the stand-in model, for a CLI that now calls
+      # an endpoint it does not speak.
+      - name: Stand-in model log on failure
+        if: ${{ failure() }}
+        run: docker exec kangentic-transcript-rig cat /tmp/stub-api.log || echo "The stand-in model wrote no log."

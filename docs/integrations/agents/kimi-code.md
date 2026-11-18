@@ -150,7 +150,7 @@ Kimi has no accounts in Settings > Accounts yet ([accounts](../accounts.md)). `K
 
 ## SSH
 
-A Kimi Code on a remote host over SSH (#913) runs as `kimi`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. A spawn is checked against a fake host in `tests/unit/kimi-ssh-remote.test.ts`, and its transcript against a real 2.5.1 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig.
+A Kimi Code on a remote host over SSH (#913) runs as `kimi`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. A spawn is checked against a fake host in `tests/unit/kimi-ssh-remote.test.ts`, and its transcript against a real 2.5.1 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig: every night against Kimi Code's newest release (`.github/workflows/agent-clis.yml`), and by hand.
 
 - **Synced file.** `remoteFiles()` declares the project's `.kimi-code/mcp.json`. Kangentic's stdio entry (the hook transport's bridge, by its path on the host) is merged beside the user's servers, the token stays in the session's environment, and the file is restored when the session releases. A file that is not JSON Kangentic can merge into is left as written.
 - **Trust and the first prompt.** `KIMI_CODE_TRUST_WORKSPACE`, `KIMI_CODE_NO_AUTO_UPDATE` and `KIMI_SHARE_DIR` ride the spawn environment, as locally.
