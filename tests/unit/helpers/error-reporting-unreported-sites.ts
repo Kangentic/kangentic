@@ -91,7 +91,7 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/agent/adapters/cursor/answer-stream.ts': 1,
   'src/main/agent/adapters/cursor/answer-workspace.ts': 3,
   'src/main/agent/adapters/cursor/capability-discovery.ts': 3,
-  'src/main/agent/adapters/cursor/cursor-adapter.ts': 3,
+  'src/main/agent/adapters/cursor/cursor-adapter.ts': 2,
   'src/main/agent/adapters/cursor/hook-config.ts': 6,
   'src/main/agent/adapters/cursor/project-mcp-config.ts': 4,
   'src/main/agent/adapters/cursor/session-paths.ts': 1,

@@ -247,11 +247,15 @@ describe('session id not captured', () => {
       state.agentSessionId = id;
       manager.noteCaptured('session-1');
     };
+    /** The agent's first Prompt event, as SessionManager's `onEvent` stamps it on the row. */
+    const prompt = (): void => {
+      session.promptObservedAt ??= Date.now();
+    };
     const sent = async (): Promise<Array<[Error, Record<string, string>]>> => {
       await vi.advanceTimersByTimeAsync(0);
       return hoisted.reportHandledError.mock.calls.map((call) => [call[0] as Error, call[1] as Record<string, string>]);
     };
-    return { manager, state, capture, sent };
+    return { manager, state, capture, prompt, sent };
   }
 
   beforeEach(() => {
@@ -292,6 +296,8 @@ describe('session id not captured', () => {
       start_path: 'board',
       shell: 'zsh',
       opening_prompt: 'none',
+      create_chat: 'unknown',
+      prompt_seen: 'no',
       hook_seen: 'no',
       agent_started: 'no',
       first_output: 'no',
@@ -311,6 +317,30 @@ describe('session id not captured', () => {
     const reports = await sent();
     expect(reports).toHaveLength(1);
     expect(reports[0][1]).toMatchObject({ settled_by: 'ceiling', id_store: 'unknown' });
+  });
+
+  // Sentry DESKTOP-45 and DESKTOP-3A: both runs had no opening prompt and
+  // reached the ceiling, and the report could not say whether anyone ever sent
+  // the agent a prompt. With none, the agent may never have made a conversation,
+  // so there is nothing to resume.
+  it('says no prompt was seen for a session with no opening prompt that never took one', async () => {
+    const { sent } = await armManager();
+    await vi.advanceTimersByTimeAsync(6 * 60_000);
+
+    const reports = await sent();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][1]).toMatchObject({ opening_prompt: 'none', settled_by: 'ceiling', prompt_seen: 'no' });
+  });
+
+  it('says a prompt was seen when one arrived after the window, before the ceiling', async () => {
+    const { prompt, sent } = await armManager();
+    await vi.advanceTimersByTimeAsync(60_000);
+    prompt();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const reports = await sent();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][1]).toMatchObject({ opening_prompt: 'none', settled_by: 'ceiling', prompt_seen: 'yes' });
   });
 
   it('stays quiet when an id arrived within the window, or the session was removed before it', async () => {

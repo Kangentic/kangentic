@@ -264,7 +264,7 @@ describe('a workflow\'s agent on a remote project', () => {
   it('asks an adapter that creates its own session id for one on the host, passing the ssh target', async () => {
     const adapter = harness.adapter as { supportsCallerSessionId: boolean; createSessionId?: ReturnType<typeof vi.fn> };
     adapter.supportsCallerSessionId = false;
-    adapter.createSessionId = vi.fn(async () => 'created-session-id');
+    adapter.createSessionId = vi.fn(async () => ({ agentSessionId: 'created-session-id', outcome: 'ok' }));
 
     await agent.openWorkflowAgent(context, 'home', workflowId, {});
 

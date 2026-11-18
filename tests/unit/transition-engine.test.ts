@@ -37,7 +37,7 @@ import type { ConversationExpiredNotice } from '../../src/shared/types';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
 import { AgentCliNotFoundError, agentCliNotFoundMessage } from '../../src/main/agent/shared/agent-cli-not-found';
-import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo, SessionStartReport, SessionUsage } from '../../src/shared/types';
+import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo, SessionIdCreation, SessionStartReport, SessionUsage } from '../../src/shared/types';
 import { claudeSessionStartLine } from './helpers/claude-session-start';
 import { setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
 import { setRemoteProjectLookup } from '../../src/main/remote/host-paths';
@@ -2524,7 +2524,7 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
   const CLI_PATH = '/opt/chat-cli/bin/chat-cli';
   const TASK_WORKTREE = '/some/project/.kangentic/worktrees/fix-login';
 
-  const createSessionId = vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => 'chat-created');
+  const createSessionId = vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<SessionIdCreation> => ({ agentSessionId: 'chat-created', outcome: 'ok' }));
   const reportsLaunchSessionId = vi.fn((_options: { permissionMode: string; nonInteractive?: boolean }): boolean => false);
   // mockAdapter is shared module state typed by its literal, which declares
   // neither optional method, so the cases set and clear them through this view.
@@ -2536,7 +2536,7 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    createSessionId.mockImplementation(async () => 'chat-created');
+    createSessionId.mockImplementation(async () => ({ agentSessionId: 'chat-created', outcome: 'ok' }));
     reportsLaunchSessionId.mockImplementation(() => false);
     mockAdapter.detect.mockResolvedValue({ found: true, path: CLI_PATH, version: '1.0.0' });
     mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
@@ -2568,7 +2568,7 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
     expect(createSessionId).toHaveBeenCalledTimes(1);
     expect(createSessionId).toHaveBeenCalledWith(CLI_PATH, TASK_WORKTREE);
     expect(mockAdapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'chat-created', resume: false }));
-    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'chat-created', resuming: false }));
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'chat-created', resuming: false, sessionIdCreation: 'ok' }));
     expect(sessionRepo.insertedRecords).toHaveLength(1);
     expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ agent_session_id: 'chat-created' }));
     // The chat exists before the command that opens it is built.
@@ -2587,12 +2587,12 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
     expect(createSessionId).not.toHaveBeenCalled();
     expect(buildCommandOptions().sessionId).toBeUndefined();
     expect(buildCommandOptions().resume).toBe(false);
-    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: null }));
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: null, sessionIdCreation: 'not_asked' }));
     expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ agent_session_id: null }));
   });
 
   it('starts with no agent session id when the chat could not be created', async () => {
-    createSessionId.mockImplementation(async () => null);
+    createSessionId.mockImplementation(async () => ({ agentSessionId: null, outcome: 'failed' }));
     const sessionManager = makeSessionManager();
     const sessionRepo = makeSessionRepo();
     const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
@@ -2601,7 +2601,8 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
 
     expect(createSessionId).toHaveBeenCalledTimes(1);
     expect(buildCommandOptions().sessionId).toBeUndefined();
-    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: null }));
+    // The miss reaches the session-id report as its fixed word.
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: null, sessionIdCreation: 'failed' }));
     expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ agent_session_id: null }));
   });
 
@@ -2650,7 +2651,7 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
     const chatRequested = new Promise<void>((resolve) => { signalChatRequested = resolve; });
     createSessionId.mockImplementation(() => {
       signalChatRequested();
-      return new Promise<string | null>(() => {});
+      return new Promise<SessionIdCreation>(() => {});
     });
     const sessionManager = makeSessionManager();
     const sessionRepo = makeSessionRepo();

@@ -18,6 +18,7 @@ import {
   CURSOR_HOOK_EVENTS_ENV,
   CURSOR_WSL_HOOK_COPY_NAME,
   CURSOR_WSL_HOOK_FLAG,
+  cursorSessionIdFromHook,
   removeCursorProjectHooks,
   writeCursorProjectHooks,
 } from '../../src/main/agent/adapters/cursor/hook-config';
@@ -663,6 +664,42 @@ describe('Cursor\'s published hook examples, through the real bridge', () => {
     const { events } = runHook('sessionEnd', publishedInputs('sessionEnd')[0], eventsPath());
     expect(events.map((event) => event.type)).toEqual(['session_start', 'prompt', 'compact', 'session_end']);
     expect(String(events[0].hookContext)).toContain('composer_mode');
+  });
+
+  // A session whose sessionStart never arrived (Sentry DESKTOP-45: a hook ran,
+  // SessionStart did not) gets its id from its first prompt. The published
+  // payload carries the prompt's text and the user's email beside the common
+  // `conversation_id`, and only the id may reach the event.
+  it('a prompt keeps only its conversation_id, never the prompt or the email', () => {
+    const { events } = runHook('beforeSubmitPrompt', publishedInputs('beforeSubmitPrompt')[0], eventsPath());
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('prompt');
+    expect(JSON.parse(String(events[0].hookContext))).toEqual({ conversation_id: 'string' });
+    expect(JSON.stringify(events[0])).not.toContain('user prompt text');
+    expect(JSON.stringify(events[0])).not.toContain('user_email');
+  });
+
+  // The whole payload, cut at 2048 characters, would lose an id that comes
+  // after a long prompt in the JSON. The narrow capture keeps it whatever the
+  // prompt's length.
+  it('reads the id a prompt names, after a prompt longer than the bridge keeps', () => {
+    const CONVERSATION_ID = '997bca3d-4c50-43e2-a038-9a99860f4e7c';
+    const longPrompt = 'Refactor the login flow. '.repeat(200);
+    const { events } = runHook('beforeSubmitPrompt', {
+      hook_event_name: 'beforeSubmitPrompt',
+      prompt: longPrompt,
+      attachments: [],
+      conversation_id: CONVERSATION_ID.toUpperCase(),
+      generation_id: 'gen-1',
+      user_email: 'dev@example.com',
+      workspace_roots: ['/projects/my-app'],
+    }, eventsPath());
+    expect(events).toHaveLength(1);
+    expect(cursorSessionIdFromHook(String(events[0].hookContext))).toBe(CONVERSATION_ID);
+    const line = JSON.stringify(events[0]);
+    expect(line).not.toContain('Refactor the login flow');
+    expect(line).not.toContain('dev@example.com');
+    expect(line).not.toContain('/projects/my-app');
   });
 
   // "Exit code `0` - Hook succeeded, use the JSON output", and a permission hook

@@ -9,7 +9,7 @@ import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
-import type { AppConfig, BoardProfile, PermissionMode, ResumeEvidenceSummary, SessionRecord, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
+import type { AppConfig, BoardProfile, PermissionMode, ResumeEvidenceSummary, SessionIdCreationOutcome, SessionRecord, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
 import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../../remote/host-file-sync';
 import { resolveSpawnCli } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
@@ -46,6 +46,8 @@ export interface PreparedSpawn {
   sessionRecordId: string;
   /** Agent-CLI-side session identifier. Null for agents that don't accept caller-specified IDs (Codex/Gemini). */
   agentSessionId: string | null;
+  /** How a fresh start got `agentSessionId` before launch; `not_asked` for a resume. Read only by the session-id report. */
+  sessionIdCreation: SessionIdCreationOutcome;
   /** Effective permission mode after lane override + global fallback. */
   permissionMode: PermissionMode;
   statusOutputPath: string;
@@ -348,14 +350,16 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
   }
   // Same id rule as the board spawn. This path's command carries no
   // nonInteractive flag, so the decision follows the permission mode alone.
-  const agentSessionId = canResume
-    ? resumedAgentSessionId
+  const freshId = canResume
+    ? null
     : await resolveFreshAgentSessionId(adapter, {
         cliPath: detectedCliPath,
         workingDirectory: cwd,
         permissionMode,
         place: cliTarget,
       });
+  const agentSessionId = canResume ? resumedAgentSessionId : freshId?.agentSessionId ?? null;
+  const sessionIdCreation: SessionIdCreationOutcome = freshId?.sessionIdCreation ?? 'not_asked';
 
   // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
   // under a PowerShell or Git Bash host is swapped for the sibling shim that
@@ -475,6 +479,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       cwd,
       sessionRecordId,
       agentSessionId,
+      sessionIdCreation,
       permissionMode,
       statusOutputPath,
       eventsOutputPath,

@@ -1112,8 +1112,8 @@ export class TransitionEngine {
     // - Fresh: an id the CLI accepts, or one it creates before launch when this
     //   start will not report its own (Cursor's session screen). Otherwise null,
     //   and hooks or the print stream fill it in after launch.
-    const agentSessionId = canResume
-      ? resumedAgentSessionId
+    const freshId = canResume
+      ? null
       : await resolveFreshAgentSessionId(adapter, {
           cliPath: detectedCliPath,
           workingDirectory: cwd,
@@ -1122,6 +1122,7 @@ export class TransitionEngine {
           signal,
           place: cliTarget,
         });
+    const agentSessionId = canResume ? resumedAgentSessionId : freshId?.agentSessionId ?? null;
     // A move that aborted this spawn while the chat was being created stops
     // here, before the session directory and the command exist.
     signal?.throwIfAborted();
@@ -1181,6 +1182,7 @@ export class TransitionEngine {
       cwd,
       startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
       openingPrompt: launch.openingPrompt,
+      sessionIdCreation: freshId?.sessionIdCreation ?? 'not_asked',
       agentCliVersion: spawnCli.version,
       agentCliPath: launch.commandOptions.agentPath,
       resumeEvidence: canResume && resumeEvidence ? { ...resumeEvidence, account: launch.resumeAccount } : null,
@@ -1578,6 +1580,8 @@ export class TransitionEngine {
       command,
       cwd,
       startPath: input.startPath ?? 'board',
+      // An early agent takes a caller id or none: it never asks the CLI to create one.
+      sessionIdCreation: 'not_asked',
       agentCliVersion: detection.version,
       agentCliPath: launch.commandOptions.agentPath,
       env: extraEnv ?? undefined,

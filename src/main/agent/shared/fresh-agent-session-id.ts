@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentAdapter } from '../agent-adapter';
-import type { PermissionMode } from '../../../shared/types';
+import type { PermissionMode, SessionIdCreation, SessionIdCreationOutcome } from '../../../shared/types';
 import type { CliPlace } from './cli-target';
+
+/** A fresh conversation's id, or null, and how the launch got it (the session-id report's `create_chat` tag). */
+export interface FreshAgentSessionId {
+  agentSessionId: string | null;
+  sessionIdCreation: SessionIdCreationOutcome;
+}
 
 /**
  * A fresh conversation's id.
@@ -11,7 +17,7 @@ import type { CliPlace } from './cli-target';
  * this launch will not report its own id. A print launch that already prints
  * the id (`reportsLaunchSessionId`) is left to do that, so the start does not
  * wait on a second, unused chat. Null when the CLI could not create one, or
- * reports it after launch.
+ * reports it after launch; `sessionIdCreation` says which, as a fixed word.
  *
  * `signal` is the spawn's own abort. Creating a chat runs the CLI (Cursor's
  * `create-chat` waits up to 20 s on its server) inside the task lock, so a
@@ -29,34 +35,33 @@ export async function resolveFreshAgentSessionId(
     /** Where the CLI runs when it is not on this computer (a WSL distro, an SSH host): the chat is made there. */
     place?: CliPlace | null;
   },
-): Promise<string | null> {
-  if (adapter.supportsCallerSessionId) return randomUUID();
-  if (!adapter.createSessionId) return null;
+): Promise<FreshAgentSessionId> {
+  if (adapter.supportsCallerSessionId) return { agentSessionId: randomUUID(), sessionIdCreation: 'not_asked' };
+  if (!adapter.createSessionId) return { agentSessionId: null, sessionIdCreation: 'not_asked' };
   if (adapter.reportsLaunchSessionId?.({
     permissionMode: input.permissionMode,
     nonInteractive: input.nonInteractive,
   })) {
-    return null;
+    return { agentSessionId: null, sessionIdCreation: 'not_asked' };
   }
-  // The place goes only when the CLI runs somewhere else, so a spawn on this computer calls it exactly as before.
-  const created = input.place
-    ? adapter.createSessionId(input.cliPath, input.workingDirectory, input.place)
-    : adapter.createSessionId(input.cliPath, input.workingDirectory);
   const { signal } = input;
+  if (signal?.aborted) return { agentSessionId: null, sessionIdCreation: 'aborted' };
+  // The place goes only when the CLI runs somewhere else, so a spawn on this computer calls it exactly as before.
+  const created = (input.place
+    ? adapter.createSessionId(input.cliPath, input.workingDirectory, input.place)
+    : adapter.createSessionId(input.cliPath, input.workingDirectory)
+  ).then(
+    (creation: SessionIdCreation): FreshAgentSessionId => ({ agentSessionId: creation.agentSessionId, sessionIdCreation: creation.outcome }),
+    // report-ok: the contract says never throws; a rejection anyway is reported as the fixed `failed` tag.
+    (): FreshAgentSessionId => ({ agentSessionId: null, sessionIdCreation: 'failed' }),
+  );
   if (!signal) return created;
-  if (signal.aborted) return null;
-  return new Promise<string | null>((resolve) => {
-    const onAbort = (): void => resolve(null);
+  return new Promise<FreshAgentSessionId>((resolve) => {
+    const onAbort = (): void => resolve({ agentSessionId: null, sessionIdCreation: 'aborted' });
     signal.addEventListener('abort', onAbort, { once: true });
-    created.then(
-      (agentSessionId) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(agentSessionId);
-      },
-      () => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(null);
-      },
-    );
+    void created.then((result) => {
+      signal.removeEventListener('abort', onAbort);
+      resolve(result);
+    });
   });
 }

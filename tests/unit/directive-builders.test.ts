@@ -19,6 +19,7 @@ import {
   extractDetail,
   extractDetailPath,
   captureHookContext,
+  captureHookContextFields,
   setDetail,
   setTypeWhen,
   setTypeWhenDetailContains,
@@ -75,6 +76,7 @@ describe('directive builders - wire format contract', () => {
     ['extractToolPath', extractToolPath(['toolCall', 'name']), 'extractToolPath', { path: ['toolCall', 'name'] }],
     ['extractDetailPath', extractDetailPath(['toolCall', 'args'], ['TargetFile', 'CommandLine']), 'extractDetailPath', { parents: ['toolCall', 'args'], fields: ['TargetFile', 'CommandLine'] }],
     ['captureHookContext', captureHookContext(), 'captureHookContext', {}],
+    ['captureHookContextFields', captureHookContextFields(['conversation_id']), 'captureHookContextFields', { fields: ['conversation_id'] }],
   ];
 
   it.each(cases)('%s encodes to <kind>:<base64> and round-trips', (_label, directive, expectedKind, expectedPayload) => {

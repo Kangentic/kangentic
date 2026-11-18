@@ -4,7 +4,7 @@ import { resolveSpawnAccount } from '../accounts/account-service';
 import { buildSessionEnv } from '../accounts/account-env';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
-import type { ActivityState, OpeningPromptDelivery, Project, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
+import type { ActivityState, OpeningPromptDelivery, Project, Session, SessionIdCreationOutcome, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../shared/workflow-agent-choice';
@@ -653,9 +653,14 @@ async function startWorkflowAgentWithPull(
   // yet. Without one the agent reports its own once it has it (hook, output or
   // session files), and the 'agent-session-id' listener records it.
   let agentSessionId: string | null = null;
+  let sessionIdCreation: SessionIdCreationOutcome = 'not_asked';
   if (resume && workflow.agent_session_id) agentSessionId = workflow.agent_session_id;
   else if (adapter.supportsCallerSessionId) agentSessionId = uuidv4();
-  else if (adapter.createSessionId) agentSessionId = await (cliTarget ? adapter.createSessionId(cliPath, projectRoot, cliTarget) : adapter.createSessionId(cliPath, projectRoot));
+  else if (adapter.createSessionId) {
+    const creation = await (cliTarget ? adapter.createSessionId(cliPath, projectRoot, cliTarget) : adapter.createSessionId(cliPath, projectRoot));
+    agentSessionId = creation.agentSessionId;
+    sessionIdCreation = creation.outcome;
+  }
   // A new conversation for a workflow whose agent already ran (its id was never
   // captured, or its conversation could not be resumed) continues from the saved
   // plan, and the pane says it started over. `agent_name` outlives a lost id
@@ -809,6 +814,7 @@ async function startWorkflowAgentWithPull(
     ...(remoteLaunch ? { remote: remoteLaunch.remote } : {}),
     startPath: 'workflow',
     openingPrompt,
+    sessionIdCreation,
     agentCliVersion: spawnCli.version,
     agentCliPath: launch.agentPath,
     env: extraEnv ?? undefined,

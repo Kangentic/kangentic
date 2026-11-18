@@ -21,6 +21,7 @@ let execVersionCallCount = 0;
 // (`agent about --format json`). Tests rewrite these to simulate
 // various Cursor CLI responses.
 let mockAboutShouldFail = false;
+let mockAboutTimesOut = false;
 let mockAboutStdout = JSON.stringify({
   cliVersion: '2026.04.15-dccdccd',
   model: 'Auto',
@@ -93,6 +94,10 @@ vi.mock('node:child_process', async (importOriginal) => {
             typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate),
         ) ?? {};
         recordCall({ path: pathArg, args, options });
+        if (mockAboutTimesOut) {
+          // What Node's exec rejects with when its `timeout` kills the child.
+          return Promise.reject(Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM', code: null }));
+        }
         if (mockAboutShouldFail) {
           return Promise.reject(new Error('agent about failed'));
         }
@@ -155,6 +160,7 @@ describe('CursorAdapter', () => {
     mockExecVersionShouldFail = false;
     execVersionCallCount = 0;
     mockAboutShouldFail = false;
+    mockAboutTimesOut = false;
     mockAboutStdout = JSON.stringify({
       cliVersion: '2026.04.15-dccdccd',
       model: 'Auto',
@@ -199,16 +205,21 @@ describe('CursorAdapter', () => {
 
     it('creates a chat and reads its id', async () => {
       mockAboutStdout = `${CHAT_ID}\n`;
-      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBe(CHAT_ID);
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toEqual({ agentSessionId: CHAT_ID, outcome: 'ok' });
       expect(aboutCallLog.at(-1)?.args).toContain('create-chat');
     });
 
-    it('is null when the CLI cannot create one, or prints no id', async () => {
+    // Each miss is its own fixed word, which the session-id report sends as its
+    // `create_chat` tag (Sentry DESKTOP-45 could not tell them apart).
+    it('says why there is no id: a failed run, a timeout, or output with no id', async () => {
       mockAboutShouldFail = true;
-      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBeNull();
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toEqual({ agentSessionId: null, outcome: 'failed' });
       mockAboutShouldFail = false;
+      mockAboutTimesOut = true;
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toEqual({ agentSessionId: null, outcome: 'timeout' });
+      mockAboutTimesOut = false;
       mockAboutStdout = 'Not logged in\n';
-      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBeNull();
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toEqual({ agentSessionId: null, outcome: 'no_id' });
     });
 
     // The folder matters if Cursor files chats by workspace, and the timeout is
@@ -222,7 +233,7 @@ describe('CursorAdapter', () => {
       const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
       Object.defineProperty(process, 'platform', { value: platform });
       try {
-        expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', workingDirectory)).toBe(CHAT_ID);
+        expect((await adapter.createSessionId('/usr/local/bin/cursor-agent', workingDirectory)).agentSessionId).toBe(CHAT_ID);
       } finally {
         Object.defineProperty(process, 'platform', originalPlatformDescriptor);
       }
@@ -235,12 +246,12 @@ describe('CursorAdapter', () => {
 
     it('reads an uppercase id on its own line of multi-line output, and returns it lowercase', async () => {
       mockAboutStdout = `Cursor Agent 2026.04.29\r\n${CHAT_ID.toUpperCase()}\r\n`;
-      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBe(CHAT_ID);
+      expect((await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).agentSessionId).toBe(CHAT_ID);
     });
 
     it('does not take an id that is only part of a longer line', async () => {
       mockAboutStdout = `Created chat ${CHAT_ID} for this folder\n`;
-      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toBeNull();
+      expect(await adapter.createSessionId('/usr/local/bin/cursor-agent', '/projects/my-app')).toEqual({ agentSessionId: null, outcome: 'no_id' });
     });
 
     it('opens the created chat on a fresh start, with the first message', () => {

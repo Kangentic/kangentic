@@ -32,6 +32,7 @@ import type {
   TranscriptPageDirection,
   TranscriptPageUnavailableReason,
   StoredCliTarget,
+  SessionIdCreation,
 } from '../../shared/types';
 import type { UserSetupMatch } from '../../shared/user-configuration-error';
 
@@ -745,12 +746,13 @@ export interface AgentAdapter {
    * no id of Kangentic's on its command line and prints none in a terminal, but
    * can create an empty conversation and name it (Cursor's `create-chat`). The
    * launch then opens that conversation, so Kangentic knows its id from the
-   * start, as with a caller-chosen one. Null when the CLI could not create one;
-   * never throws. A workflow's agent calls it on every fresh start. A task,
-   * startup recovery, and a Command Terminal call it when
-   * `reportsLaunchSessionId` is not true.
+   * start, as with a caller-chosen one. When the CLI could not create one, the
+   * id is null and `outcome` says why (`failed`, `timeout`, `no_id`), which the
+   * session-id report sends as a fixed tag; never throws. A workflow's agent
+   * calls it on every fresh start. A task, startup recovery, and a Command
+   * Terminal call it when `reportsLaunchSessionId` is not true.
    */
-  createSessionId?(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<string | null>;
+  createSessionId?(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<SessionIdCreation>;
 
   /**
    * True when this launch reports its own conversation id, so a fresh start

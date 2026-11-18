@@ -8395,6 +8395,21 @@ export type LaunchStartPath =
  */
 export type OpeningPromptDelivery = 'command_line' | 'typed' | 'none';
 
+/**
+ * How a fresh launch got the agent's conversation id before it ran, for the
+ * session-id report. `ok`, `failed`, `timeout` and `no_id` are the CLI's own
+ * answer when it was asked to create one (`createSessionId`); `aborted` is a
+ * spawn that stopped waiting for it; `not_asked` is every launch that never
+ * asked (a CLI that takes Kangentic's id, one that cannot create one, a run that
+ * reports its own id, a resume).
+ */
+export type SessionIdCreationOutcome = 'ok' | 'failed' | 'timeout' | 'no_id' | 'aborted' | 'not_asked';
+
+/** What an agent CLI's `createSessionId` answered: the id it created, or why there is none. */
+export type SessionIdCreation =
+  | { agentSessionId: string; outcome: 'ok' }
+  | { agentSessionId: null; outcome: 'failed' | 'timeout' | 'no_id' };
+
 /** Whether an agent's session store exists (`sessionId.storeEvidence`). */
 export type SessionIdStoreEvidence = 'present' | 'absent' | 'unknown';
 
@@ -8440,6 +8455,8 @@ export interface SpawnSessionInput {
   startPath: LaunchStartPath;
   /** How the opening prompt reaches the agent, where the spawn knows. Read only by the session-id report. */
   openingPrompt?: OpeningPromptDelivery;
+  /** How the launch got the agent's conversation id before it ran, where the spawn knows. Read only by the session-id report. */
+  sessionIdCreation?: SessionIdCreationOutcome;
   /**
    * The agent CLI's version as detection read it. Raw detector text, so
    * `launchVersionTag` vets it before it reaches an event.
@@ -9451,7 +9468,7 @@ export interface ElectronAPI {
     // `projectId` the renderer stamps at interaction time (same rationale as
     // the task mutations above). kill/write/resize/list operate by session id
     // and stay project-agnostic. See .claude/rules/project-scoped-ipc.md.
-    spawn: (input: Omit<SpawnSessionInput, 'startPath' | 'openingPrompt'>, projectId?: string | null) => Promise<Session>;
+    spawn: (input: Omit<SpawnSessionInput, 'startPath' | 'openingPrompt' | 'sessionIdCreation'>, projectId?: string | null) => Promise<Session>;
     kill: (sessionId: string) => Promise<void>;
     suspend: (taskId: string, projectId?: string | null) => Promise<void>;
     /** Null when a newer resume, a suspend, a reset or a relocation cancelled this one. */

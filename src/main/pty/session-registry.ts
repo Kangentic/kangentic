@@ -12,7 +12,7 @@ import type {
   StreamOutputParser,
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
-import type { LaunchStartPath, OpeningPromptDelivery, ResumeEvidenceSummary, StartBlockedReason } from '../../shared/types';
+import type { LaunchStartPath, OpeningPromptDelivery, ResumeEvidenceSummary, SessionIdCreationOutcome, StartBlockedReason } from '../../shared/types';
 import type { LaunchOutputClass } from './launch-output-class';
 import type { AgentProcessPresence } from './host/agent-process-presence';
 
@@ -166,6 +166,8 @@ export interface ManagedSession {
   startPath?: LaunchStartPath;
   /** How the opening prompt reached the agent (`SpawnSessionInput.openingPrompt`), where the spawn knew. */
   openingPrompt?: OpeningPromptDelivery;
+  /** How the launch got the agent's conversation id before it ran (`SpawnSessionInput.sessionIdCreation`), where the spawn knew. */
+  sessionIdCreation?: SessionIdCreationOutcome;
   /** The agent CLI's version as detection read it; `launchVersionTag` vets it. */
   agentCliVersion?: string | null;
   /**
@@ -196,6 +198,8 @@ export interface ManagedSession {
   agentOutputAt?: number | null;
   /** Epoch ms of the agent's first hook event, SessionEnd aside (a kill synthesizes one). */
   agentHookObservedAt?: number | null;
+  /** Epoch ms of the agent's first Prompt event: someone sent the agent a prompt. Read by the session-id report. */
+  promptObservedAt?: number | null;
   /**
    * Epoch ms of the first session id the agent itself gave, from a hook, its
    * status line, its output or a file it wrote. Never the id a caller assigned

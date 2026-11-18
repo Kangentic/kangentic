@@ -729,7 +729,15 @@ describe('the session id capture reports', () => {
 
   it('sends a never-captured session under a fixed message, grouped per agent, with fixed facts', async () => {
     await settle(
-      { agentName: 'codex', agentCliVersion: '0.163.0 (Codex CLI)', openingPrompt: 'typed', agentHookObservedAt: STARTED_AT_MS + 2_000, firstOutputAt: STARTED_AT_MS + 900 },
+      {
+        agentName: 'codex',
+        agentCliVersion: '0.163.0 (Codex CLI)',
+        openingPrompt: 'typed',
+        sessionIdCreation: 'not_asked',
+        agentHookObservedAt: STARTED_AT_MS + 2_000,
+        promptObservedAt: STARTED_AT_MS + 2_500,
+        firstOutputAt: STARTED_AT_MS + 900,
+      },
       never,
       async () => 'present',
     );
@@ -744,6 +752,8 @@ describe('the session id capture reports', () => {
       start_path: 'board',
       shell: 'zsh',
       opening_prompt: 'typed',
+      create_chat: 'not_asked',
+      prompt_seen: 'yes',
       hook_seen: 'yes',
       agent_started: 'no',
       first_output: 'yes',
@@ -761,7 +771,15 @@ describe('the session id capture reports', () => {
 
     const [error, eventTags, , fingerprint] = reportHandledError.mock.calls[0];
     expect((error as Error).name).toBe('AgentSessionIdCapturedLateError');
-    expect(eventTags).toMatchObject({ agent: 'opencode', captured_after_s: '30-60', fs_scan: 'pending', id_store: 'unknown', opening_prompt: 'unknown' });
+    expect(eventTags).toMatchObject({
+      agent: 'opencode',
+      captured_after_s: '30-60',
+      fs_scan: 'pending',
+      id_store: 'unknown',
+      opening_prompt: 'unknown',
+      create_chat: 'unknown',
+      prompt_seen: 'no',
+    });
     expect(eventTags).not.toHaveProperty('settled_by');
     expect(fingerprint).toEqual(['agent-session-id-captured-late', 'opencode']);
   });
@@ -804,12 +822,39 @@ describe('the session id capture reports', () => {
     expect(reportHandledError.mock.calls.map((call) => call[1].agent)).toEqual(['codex']);
   });
 
-  it('vets the opening prompt, so an unexpected string reports unknown', async () => {
-    await settle({ agentName: 'codex', openingPrompt: '/Users/dev/x' as never }, never);
+  it('vets the opening prompt and the id creation, so an unexpected string reports unknown', async () => {
+    await settle({ agentName: 'codex', openingPrompt: '/Users/dev/x' as never, sessionIdCreation: '/Users/dev/y' as never }, never);
 
     const eventTags = reportHandledError.mock.calls[0][1];
-    expect(eventTags).toMatchObject({ opening_prompt: 'unknown' });
+    expect(eventTags).toMatchObject({ opening_prompt: 'unknown', create_chat: 'unknown' });
     expect(JSON.stringify(eventTags)).not.toContain('/Users/dev');
+  });
+
+  // Sentry DESKTOP-45: a Cursor session reached the window with no id, and the
+  // report could not say whether `create-chat` failed, timed out, printed no id,
+  // or was never asked. Each outcome is its own fixed tag.
+  it.each(['ok', 'failed', 'timeout', 'no_id', 'aborted', 'not_asked'] as const)('sends the id creation outcome %s as its own tag', async (sessionIdCreation) => {
+    await settle({ agentName: 'cursor', sessionIdCreation }, never);
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ create_chat: sessionIdCreation });
+  });
+
+  // `prompt_seen` is read when the outcome lands, not at the window: a prompt
+  // typed after the window is the case that tells a conversation that never
+  // existed (no prompt, nothing to resume) from one the capture missed.
+  it('reads a prompt sent after the window as seen, on the never and the late report alike', async () => {
+    const neverSession = session({ agentName: 'opencode', resuming: false });
+    noteSessionIdCaptureWindowPassed(neverSession, null);
+    neverSession.promptObservedAt = STARTED_AT_MS + 60_000;
+    reportSessionIdCaptureOutcome(neverSession.id, never, 'running');
+    await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ prompt_seen: 'yes' });
+
+    const lateSession = session({ agentName: 'opencode', resuming: false, id: 'session-2-long-id' });
+    noteSessionIdCaptureWindowPassed(lateSession, null);
+    lateSession.promptObservedAt = STARTED_AT_MS + 60_000;
+    reportSessionIdCaptureOutcome(lateSession.id, late, 'running');
+    await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(2));
+    expect(reportHandledError.mock.calls[1][1]).toMatchObject({ prompt_seen: 'yes' });
   });
 
   it('does not run the store check for an agent that already spent both kinds, and sends nothing later', async () => {

@@ -797,6 +797,20 @@ describe('SessionManager agent-absence wiring', () => {
     });
   });
 
+  // The session-id report's `prompt_seen` reads this stamp off the row.
+  describe('a prompt the agent took', () => {
+    it('stamps the first Prompt event on the row, and keeps that first time', () => {
+      const session = seedSession({ reportsAgentStart: true });
+      sendAgentEvent('session_start');
+      expect(session.promptObservedAt).toBeUndefined();
+      sendAgentEvent('prompt');
+      const first = session.promptObservedAt;
+      expect(typeof first).toBe('number');
+      sendAgentEvent('prompt');
+      expect(session.promptObservedAt).toBe(first);
+    });
+  });
+
   describe('a shell the sweep cannot judge', () => {
     function armCheck(sessionId = 'session-1'): void {
       (manager as unknown as { armUnjudgedLaunchCheck(id: string): void }).armUnjudgedLaunchCheck(sessionId);

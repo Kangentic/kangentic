@@ -127,7 +127,7 @@ describe('a Cursor session on a remote host', () => {
     const workspace = await newWorkspace();
     workspace.host.commandResults.set('cursor-agent', () => ({ code: 0, stdout: `${CHAT_ID}\n`, stderr: '', timedOut: false }));
     const created = await new CursorAdapter().createSessionId('cursor-agent', workspace.projectFolder, workspace.place);
-    expect(created).toBe(CHAT_ID);
+    expect(created).toEqual({ agentSessionId: CHAT_ID, outcome: 'ok' });
     expect(workspace.host.commands).toHaveLength(1);
     expect(workspace.host.commands[0].file).toBe('cursor-agent');
     expect(workspace.host.commands[0].args).toEqual(['create-chat']);
@@ -136,9 +136,12 @@ describe('a Cursor session on a remote host', () => {
 
   it('starts without a chat id when the host cannot make one', async () => {
     const workspace = await newWorkspace();
-    expect(await new CursorAdapter().createSessionId('cursor-agent', workspace.projectFolder, workspace.place)).toBeNull();
+    expect((await new CursorAdapter().createSessionId('cursor-agent', workspace.projectFolder, workspace.place)).agentSessionId).toBeNull();
     workspace.host.commandResults.set('cursor-agent', () => ({ code: 1, stdout: '', stderr: 'not logged in', timedOut: false }));
-    expect(await new CursorAdapter().createSessionId('cursor-agent', workspace.projectFolder, workspace.place)).toBeNull();
+    expect(await new CursorAdapter().createSessionId('cursor-agent', workspace.projectFolder, workspace.place)).toEqual({ agentSessionId: null, outcome: 'failed' });
+    // The host's runner marks a run it stopped at the timeout `killed`, as Node's exec does.
+    workspace.host.commandResults.set('cursor-agent', () => ({ code: null, stdout: '', stderr: '', timedOut: true }));
+    expect(await new CursorAdapter().createSessionId('cursor-agent', workspace.projectFolder, workspace.place)).toEqual({ agentSessionId: null, outcome: 'timeout' });
   });
 
   it('derives the transcript folder from the working directory as the host names it', async () => {
