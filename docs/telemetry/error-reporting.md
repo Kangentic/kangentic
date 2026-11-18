@@ -455,7 +455,8 @@ in one Sentry org, one triage surface.
     `session_recovery`, `session_reconcile`, `host_connected`, `cold_open`,
     `deferred_board_config`, `pty_host_loss`, `activate_project`, `remote_projects`), `db_open` and
     `db_migration` (tags `database`, `stage`: `open`, `pragma`, `migrate`, `initialize`), `held_messages`, `session_handlers` (tag `stage`),
-    `accounts`, `artifact_detection`, `metrics_snapshot`, `worktree_removal` (tags `profile`,
+    `session_transcript_path` (a write of the agent's reported transcript path to its session row
+    that threw; tag `stage`: `status_line`, `session_start_hook`), `accounts`, `artifact_detection`, `metrics_snapshot`, `worktree_removal` (tags `profile`,
     `timed_out`, `holders`, `refused`, `platform`), `preload` (our own windows only),
     `pop_out_load` (tags `kind`, `error_code`), `dictation`, `owner_turn` (the read of whether an
     agent's move came in a turn the owner started; the move still runs, as the agent's).

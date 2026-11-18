@@ -5158,11 +5158,16 @@ export class SessionManager extends EventEmitter {
    * hook named. For a session record written after its agent started, an early
    * agent adopted once its worktree's setup script ends: its hook fired while
    * it was hidden, with no record to write to.
+   *
+   * Either one is a path on this computer. The cached usage holds the status
+   * line's path as the CLI wrote it, a Linux path for a CLI in a WSL distro, so
+   * it is mapped here as `usageOnHost` maps it for the `'usage'` listener. The
+   * hook's was mapped when it was kept.
    */
   getAgentReportedTranscriptPath(sessionId: string): string | null {
-    const fromStatusLine = this.telemetry.getReportedTranscriptPath(sessionId);
-    if (fromStatusLine) return fromStatusLine;
     const session = this.registry.get(sessionId);
+    const fromStatusLine = this.telemetry.getReportedTranscriptPath(sessionId);
+    if (fromStatusLine) return hostPathForTarget(fromStatusLine, placeFromStored(session?.cliTarget ?? null));
     const fromHook = session?.sessionStartTranscript;
     return fromHook && fromHook.agentSessionId === session.agentSessionId ? fromHook.transcriptPath : null;
   }

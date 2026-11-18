@@ -3,11 +3,15 @@
  * delivered, an idle agent that never pauses, a crash-resilience snapshot that
  * stops saving, artifact links that stop appearing, and a session that stalls at
  * its usage limit would each fail with nothing on screen and nothing in Sentry.
+ * So would a session record that fails to keep its transcript path: the restart
+ * then resumes into "No conversation found".
  *
  * Each case runs the real module, makes one dependency throw a code defect (a
  * TypeError), and reads the call that reached `reportHandledError`: its source
  * and its stage tag. Replaces the source-text pins in
- * error-reporting-feature-gaps.test.ts for these five sites.
+ * error-reporting-feature-gaps.test.ts for the first five sites. The transcript
+ * path site also pins that the path never reaches the report, and that a failed
+ * status line write is not remembered as written.
  *
  * Modules are re-imported per test (`vi.resetModules`) because each reporter is
  * module-private and latches a key once per run.
@@ -27,6 +31,10 @@ const databaseControl = vi.hoisted(() => ({
 }));
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: () => {
+    if (databaseControl.mode === 'throw') throw new TypeError('database handle is undefined');
+    return databaseControl.database;
+  },
+  getOpenProjectDb: () => {
     if (databaseControl.mode === 'throw') throw new TypeError('database handle is undefined');
     return databaseControl.database;
   },
@@ -196,6 +204,86 @@ describe('artifact detection', () => {
     })).not.toThrow();
 
     expect(onlyReportTags()).toMatchObject({ source: 'artifact_detection', stage: 'detect', error_name: 'TypeError' });
+  });
+});
+
+describe('session transcript path', () => {
+  const PROJECT_ID = 'project-path';
+  const TASK_ID = 'task-path';
+  const SESSION_ID = 'session-path';
+  const TRANSCRIPT_PATH = '/home/dev/.claude/projects/-home-dev-secret-app/conversation.jsonl';
+  const context = {
+    sessionManager: {
+      getSession: () => ({ id: SESSION_ID, transient: false }),
+      getSessionProjectId: () => PROJECT_ID,
+    },
+  };
+
+  /** A project database holding one session row with no transcript path. */
+  function seedSessionRow(): Database.Database {
+    const database = new Database(':memory:');
+    database.pragma('foreign_keys = ON');
+    runProjectMigrations(database);
+    const lane = database.prepare('SELECT id FROM swimlanes WHERE name = ?').get('Executing') as { id: string };
+    const now = new Date().toISOString();
+    database.prepare(`
+      INSERT INTO tasks (id, display_id, title, swimlane_id, position, created_at, updated_at, archived_at)
+      VALUES (?, 1, 'A task', ?, 0, ?, ?, NULL)
+    `).run(TASK_ID, lane.id, now, now);
+    database.prepare(`
+      INSERT INTO sessions (id, task_id, session_type, command, cwd, status, started_at)
+      VALUES (?, ?, 'claude_agent', 'claude', '/mock/project', 'running', ?)
+    `).run(SESSION_ID, TASK_ID, now);
+    databaseControl.database = database;
+    return database;
+  }
+
+  function storedPath(database: Database.Database): string | null {
+    return (database.prepare('SELECT transcript_path FROM sessions WHERE id = ?').get(SESSION_ID) as { transcript_path: string | null }).transcript_path;
+  }
+
+  /** Everything one report carried, as text, so a leaked path cannot hide in any field. */
+  function reportedText(): string {
+    const [reportedError, tags, contexts] = reportHandledError.mock.calls[0] as [Error, unknown, unknown];
+    return JSON.stringify({ message: reportedError.message, tags, contexts });
+  }
+
+  it('reports a status line write that fails, under source session_transcript_path and stage status_line, with no path in it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    databaseControl.mode = 'throw';
+    const { persistTranscriptPath } = await import('../../src/main/ipc/handlers/session-transcript-path');
+
+    persistTranscriptPath(context as never, SESSION_ID, { transcriptPath: TRANSCRIPT_PATH });
+
+    expect(onlyReportTags()).toMatchObject({ source: 'session_transcript_path', stage: 'status_line', error_name: 'TypeError' });
+    expect(reportedText()).not.toContain('secret-app');
+    expect(reportedText()).not.toContain(TRANSCRIPT_PATH);
+  });
+
+  it('reports a SessionStart hook write that fails under stage session_start_hook, with no path in it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    databaseControl.mode = 'throw';
+    const { persistHookTranscriptPath } = await import('../../src/main/ipc/handlers/session-transcript-path');
+
+    persistHookTranscriptPath(context as never, SESSION_ID, TRANSCRIPT_PATH);
+
+    expect(onlyReportTags()).toMatchObject({ source: 'session_transcript_path', stage: 'session_start_hook', error_name: 'TypeError' });
+    expect(reportedText()).not.toContain('secret-app');
+    expect(reportedText()).not.toContain(TRANSCRIPT_PATH);
+  });
+
+  it('does not remember a status line write that threw, so the same path is written on the next tick', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const database = seedSessionRow();
+    const { persistTranscriptPath } = await import('../../src/main/ipc/handlers/session-transcript-path');
+    databaseControl.mode = 'throw';
+    persistTranscriptPath(context as never, SESSION_ID, { transcriptPath: TRANSCRIPT_PATH });
+    expect(storedPath(database)).toBeNull();
+
+    databaseControl.mode = 'ok';
+    persistTranscriptPath(context as never, SESSION_ID, { transcriptPath: TRANSCRIPT_PATH });
+
+    expect(storedPath(database)).toBe(TRANSCRIPT_PATH);
   });
 });
 

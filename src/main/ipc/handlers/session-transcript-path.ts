@@ -1,7 +1,18 @@
 import { getOpenProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { isShuttingDown } from '../../shutdown-state';
+import { createChokepointReporter } from '../../analytics/handled-report';
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * A write of the path that threw. A row left with no path is the restart that
+ * resumes into "No conversation found", so the failure is reported, once per
+ * kind per run, under a fixed message that carries no path.
+ */
+const transcriptPathReporter = createChokepointReporter('session_transcript_path');
+
+/** Which of the agent's two reports a write carries. The failure report's `stage` tag. */
+type TranscriptPathReport = 'status_line' | 'session_start_hook';
 
 /**
  * The path last written per session, so a status tick that repeats it costs a
@@ -37,7 +48,7 @@ export function persistTranscriptPath(
   const transcriptPath = readTranscriptPath(usage);
   if (!transcriptPath) return;
   if (writtenPaths.get(sessionId) === transcriptPath) return;
-  const written = writeToRecord(context, sessionId, (repository) => repository.setTranscriptPath(sessionId, transcriptPath));
+  const written = writeToRecord(context, sessionId, 'status_line', (repository) => repository.setTranscriptPath(sessionId, transcriptPath));
   if (written) writtenPaths.set(sessionId, transcriptPath);
 }
 
@@ -68,7 +79,7 @@ export function persistHookTranscriptPath(
   transcriptPath: string,
 ): void {
   if (!transcriptPath) return;
-  writeToRecord(context, sessionId, (repository) => repository.fillTranscriptPath(sessionId, transcriptPath));
+  writeToRecord(context, sessionId, 'session_start_hook', (repository) => repository.fillTranscriptPath(sessionId, transcriptPath));
 }
 
 /** Forget a session that left the registry. */
@@ -79,11 +90,12 @@ export function forgetTranscriptPath(sessionId: string): void {
 /**
  * Run one write against a task session's record, behind the guards both
  * reports share. False when a guard held it back, when no row was written, or
- * when the write threw.
+ * when the write threw, which is reported.
  */
 function writeToRecord(
   context: Pick<IpcContext, 'sessionManager'>,
   sessionId: string,
+  report: TranscriptPathReport,
   write: (repository: SessionRepository) => boolean,
 ): boolean {
   if (isShuttingDown()) return false;
@@ -95,9 +107,11 @@ function writeToRecord(
     const database = getOpenProjectDb(projectId);
     if (!database) return false;
     return write(new SessionRepository(database));
-  } catch {
-    // Best-effort: without the path the resume check falls back to the
-    // session folder, and without that it resumes as it always did.
+  } catch (error) {
+    // The row keeps the path it had. The status line writes again on its next
+    // tick and the hook does not, so a failure that repeats leaves the resume
+    // check the session folder alone, which a quit deletes.
+    transcriptPathReporter.report(error, { tags: { stage: report } });
     return false;
   }
 }

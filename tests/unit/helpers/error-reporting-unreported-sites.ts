@@ -367,7 +367,6 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/ipc/handlers/session-reconcile.ts': 3,
   'src/main/ipc/handlers/session-resume-on-open.ts': 3,
   'src/main/ipc/handlers/session-resume.ts': 2,
-  'src/main/ipc/handlers/session-transcript-path.ts': 1,
   'src/main/ipc/handlers/sessions.ts': 13,
   'src/main/ipc/handlers/system.ts': 10,
   'src/main/ipc/handlers/task-archive.ts': 7,
