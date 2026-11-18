@@ -4142,6 +4142,7 @@
           keyFilePath: seed.keyFilePath || null,
           keyNames: seed.keyNames || [],
           email: seed.email === undefined ? null : seed.email,
+          orgId: seed.orgId === undefined ? null : seed.orgId,
           plan: seed.plan === undefined ? null : seed.plan,
           status: seed.status || 'ok',
           position: index + 1,
@@ -4219,11 +4220,17 @@
         if (!openLogin) return;
         var card = cards().filter(function (candidate) { return candidate.agent === openLogin.agent; })[0];
         if (!identity || !identity.email) { endLogin({}); return; }
-        var duplicate = card.accounts.filter(function (entry) { return entry.email === identity.email && entry.id !== openLogin.accountId; })[0];
+        // One login is an email and, when both report one, an organization, as main's `sameLogin`.
+        var identityOrg = identity.orgId || null;
+        var duplicate = card.accounts.filter(function (entry) {
+          return entry.email === identity.email && entry.id !== openLogin.accountId
+            && (!entry.orgId || !identityOrg || entry.orgId === identityOrg);
+        })[0];
         if (duplicate) { endLogin({ duplicateOf: duplicate }); return; }
         var existing = card.accounts.filter(function (entry) { return entry.id === openLogin.accountId; })[0];
         var signedIn = existing || account({ id: openLogin.accountId, kind: 'folder' }, card.agent, card.accounts.length);
         signedIn.email = identity.email;
+        signedIn.orgId = identityOrg;
         signedIn.plan = identity.plan || null;
         signedIn.status = 'ok';
         if (!existing) card.accounts.push(signedIn);

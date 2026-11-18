@@ -49,7 +49,10 @@ const hoisted = vi.hoisted(() => ({
     refreshAccount: vi.fn(async () => undefined),
     refreshAll: vi.fn(async () => undefined),
     readBeforeRanking: vi.fn(async () => undefined),
+    checkHome: vi.fn(async () => undefined),
   },
+  watchSync: vi.fn(),
+  sessionHomes: {} as Record<string, string | null>,
 }));
 
 vi.mock('electron', () => ({
@@ -68,6 +71,10 @@ vi.mock('../../src/main/accounts/account-report', () => ({
 }));
 vi.mock('../../src/main/accounts/account-login', () => ({ AccountLoginRunner: vi.fn(function () { return hoisted.runner; }) }));
 vi.mock('../../src/main/accounts/account-usage', () => ({ AccountUsageRefresher: vi.fn(function () { return hoisted.refresher; }) }));
+// The watch set is what registration hands `sync`; the real watch would open files.
+vi.mock('../../src/main/accounts/account-login-watch', () => ({
+  AccountLoginWatch: vi.fn(function () { return { sync: hoisted.watchSync, dispose: vi.fn(), watchedFiles: () => [] }; }),
+}));
 vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: {
     get: (name: string) => hoisted.adapters[name],
@@ -175,7 +182,11 @@ beforeEach(() => {
     listSessions: () => hoisted.sessions,
     getSessionAgentName: (sessionId: string) => hoisted.sessions.find((session) => session.id === sessionId)?.agentName,
     getActivityCache: () => ({}),
+    getSessionHomeAccountId: (sessionId: string) => hoisted.sessionHomes[sessionId] ?? null,
   });
+  hoisted.sessionHomes = {};
+  hoisted.refresher.checkHome.mockClear();
+  hoisted.watchSync.mockClear();
 });
 
 function register(): void {
@@ -464,5 +475,104 @@ describe('keeping Automatic and the tab current', () => {
     await resolveSpawnAccount('move-agent');
     const asked = hoisted.refresher.readBeforeRanking.mock.calls.map((call) => ((call as unknown[])[0] as AgentAccount[]).map((account) => account.id));
     expect(asked).toEqual([[own.id, second.id]]);
+  });
+});
+
+// A login replaced in a home (task #1113) is compared with its row at a turn end and a session
+// end, but only for an agent with two or more accounts: a one-account user's turn reads no file.
+describe('checking a home for a replaced login', () => {
+  it('checks the session home at a turn end for an agent with two accounts', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    const { second } = seedAccounts('move-agent');
+    register();
+    hoisted.sessionHomes.s1 = second.id;
+    sessionManager.emit('turn-ended', { sessionId: 's1' });
+    expect(hoisted.refresher.checkHome).toHaveBeenCalledTimes(1);
+    expect(hoisted.refresher.checkHome).toHaveBeenCalledWith(second.id);
+  });
+
+  it('checks nothing at a turn end for an agent with one account', () => {
+    hoisted.adapters = { 'solo-agent': adapterFor('solo-agent') };
+    const solo = repository.insert({ agent: 'solo-agent', kind: 'default' });
+    register();
+    hoisted.sessionHomes.s1 = solo.id;
+    sessionManager.emit('turn-ended', { sessionId: 's1' });
+    expect(hoisted.refresher.checkHome).not.toHaveBeenCalled();
+  });
+
+  it('checks nothing for a session with no home account, or a home that has no row', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    seedAccounts('move-agent');
+    register();
+    hoisted.sessionHomes.s1 = null;
+    sessionManager.emit('turn-ended', { sessionId: 's1' });
+    hoisted.sessionHomes.s2 = 'no-such-account';
+    sessionManager.emit('turn-ended', { sessionId: 's2' });
+    expect(hoisted.refresher.checkHome).not.toHaveBeenCalled();
+  });
+
+  it('checks the home when a session is removed, and not for a one-account agent', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent'), 'solo-agent': adapterFor('solo-agent') };
+    const { own } = seedAccounts('move-agent');
+    const solo = repository.insert({ agent: 'solo-agent', kind: 'default' });
+    register();
+    hoisted.sessionHomes.gone = own.id;
+    hoisted.sessionHomes.soloGone = solo.id;
+    sessionManager.emit('session-removed', 'soloGone');
+    expect(hoisted.refresher.checkHome).not.toHaveBeenCalled();
+    sessionManager.emit('session-removed', 'gone');
+    expect(hoisted.refresher.checkHome).toHaveBeenCalledTimes(1);
+    expect(hoisted.refresher.checkHome).toHaveBeenCalledWith(own.id);
+  });
+});
+
+describe('the login files the watch holds', () => {
+  const loginFiles = (accountHome: string | null): string[] => [accountHome === null ? 'default-home/.login' : path.join(accountHome, '.login')];
+
+  function lastWatchedSet(): Array<{ accountId: string; filePath: string }> {
+    const calls = hoisted.watchSync.mock.calls;
+    return calls[calls.length - 1][0] as Array<{ accountId: string; filePath: string }>;
+  }
+
+  it('lists the default row with no home and a folder row by its path, and skips key-file rows', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent', { loginFiles }) };
+    const { own, second } = seedAccounts('move-agent');
+    repository.insert({ agent: 'move-agent', kind: 'key-file', keyFilePath: path.join(root, 'key.env') });
+    register();
+    expect(lastWatchedSet()).toEqual(expect.arrayContaining([
+      { accountId: own.id, filePath: 'default-home/.login' },
+      { accountId: second.id, filePath: path.join(second.folderPath!, '.login') },
+    ]));
+    expect(lastWatchedSet()).toHaveLength(2);
+  });
+
+  it('skips a folder row with no path', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent', { loginFiles }) };
+    const { own } = seedAccounts('move-agent');
+    repository.insert({ agent: 'move-agent', kind: 'folder' });
+    register();
+    expect(lastWatchedSet().map((file) => file.accountId)).toEqual(expect.arrayContaining([own.id]));
+    expect(lastWatchedSet()).toHaveLength(2);
+  });
+
+  it('lists nothing for an agent with one account or an adapter that names no login file', () => {
+    hoisted.adapters = {
+      'solo-agent': adapterFor('solo-agent', { loginFiles }),
+      'move-agent': adapterFor('move-agent'),
+    };
+    repository.insert({ agent: 'solo-agent', kind: 'default' });
+    seedAccounts('move-agent');
+    register();
+    expect(lastWatchedSet()).toEqual([]);
+  });
+
+  it('lists again when the accounts change', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent', { loginFiles }) };
+    seedAccounts('move-agent');
+    register();
+    expect(lastWatchedSet()).toHaveLength(2);
+    repository.insert({ agent: 'move-agent', kind: 'folder', folderPath: path.join(root, 'accounts', 'move-agent', '3') });
+    noteAccountsConfigChanged();
+    expect(lastWatchedSet()).toHaveLength(3);
   });
 });

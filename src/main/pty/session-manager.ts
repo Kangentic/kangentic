@@ -3323,15 +3323,16 @@ export class SessionManager extends EventEmitter {
   /**
    * The live sessions spawned in `homeAccountId`'s home now run as `toAccountId` (task #1113): a
    * `/login` replaced the login there. Each one that changes is announced, so its context bar
-   * draws the new account's limits. Returns the sessions it changed, for their records.
+   * draws the new account's limits. Their records keep the home they started in. Returns how many
+   * sessions it changed.
    */
-  repointAccount(homeAccountId: string, toAccountId: string): Array<{ sessionId: string; projectId: string; transient: boolean }> {
-    const changed: Array<{ sessionId: string; projectId: string; transient: boolean }> = [];
+  repointAccount(homeAccountId: string, toAccountId: string): number {
+    let changed = 0;
     for (const session of this.registry.values()) {
       if (session.homeAccountId !== homeAccountId || session.accountId === toAccountId) continue;
       if (session.status !== 'running' && session.status !== 'queued') continue;
       session.accountId = toAccountId;
-      changed.push({ sessionId: session.id, projectId: session.projectId, transient: session.transient === true });
+      changed += 1;
       this.emit('session-changed', session.id, toSession(session));
     }
     return changed;

@@ -4,7 +4,6 @@ import { IPC } from '../../../shared/ipc-channels';
 import {
   DEFAULT_AGENT_ACCOUNTS_CONFIG,
   accountDisplayName,
-  type AgentAccount,
   type AgentAccountKeyFileResult,
   type AgentAccountLoginEnded,
   type AgentAccountLoginRequest,
@@ -18,11 +17,11 @@ import { EventType, type SessionEvent, type SessionUsage } from '../../../shared
 import { AccountContinuation } from '../../accounts/account-continuation';
 import { AccountLoginRunner } from '../../accounts/account-login';
 import { AccountLoginWatch } from '../../accounts/account-login-watch';
-import { loginOf, sameLogin } from '../../accounts/account-identity';
-import { setTaskAccountSwitcher } from '../../accounts/account-task-switch';
+import { createTaskAccountSwitcher, setTaskAccountSwitcher, type TaskAccountSwitcherHandle } from '../../accounts/account-task-switch';
 import { moveRunningSessions } from '../../accounts/account-session-move';
 import { AccountService, setAccountService } from '../../accounts/account-service';
 import { AccountUsageRefresher } from '../../accounts/account-usage';
+import { multiAccountAgents } from '../../accounts/account-order';
 import { setAccountsConfigListener } from '../../accounts/accounts-config-changed';
 import { agentRegistry } from '../../agent/agent-registry';
 import { resolveCliTarget } from '../../agent/shared/cli-target';
@@ -38,17 +37,20 @@ let usageRefresher: AccountUsageRefresher | null = null;
 let loginRunner: AccountLoginRunner | null = null;
 let loginWatch: AccountLoginWatch | null = null;
 let syncLoginWatch: (() => void) | null = null;
+let taskSwitcher: TaskAccountSwitcherHandle | null = null;
 
 /** Synchronous: clears the usage timers and ends any sign-in still open (app quit). */
 export function stopAccounts(): void {
   usageRefresher?.dispose();
   loginRunner?.dispose();
   loginWatch?.dispose();
+  taskSwitcher?.dispose();
   setTaskAccountSwitcher(null);
   usageRefresher = null;
   loginRunner = null;
   loginWatch = null;
   syncLoginWatch = null;
+  taskSwitcher = null;
   setAccountsConfigListener(null);
 }
 
@@ -119,7 +121,7 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     // keep the home they started in, which a background-session stop and a resume reach it by.
     repointSessions: (homeAccountId, toAccountId) => {
       const moved = context.sessionManager.repointAccount(homeAccountId, toAccountId);
-      if (moved.length > 0) console.log(`[ACCOUNTS] ${moved.length} session(s) follow the login their home now holds`);
+      if (moved > 0) console.log(`[ACCOUNTS] ${moved} session(s) follow the login their home now holds`);
     },
   });
   setAccountService(service);
@@ -147,18 +149,20 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     // An agent with one account has nothing to reconcile: its row is whatever its CLI is signed
     // in to, so a one-account user's turn ends read no file.
     const agent = repository.getById(accountId)?.agent;
-    if (!agent || repository.listForAgent(agent).length < 2) return;
+    if (!agent || !multiAccountAgents(repository.listForAgent(agent)).has(agent)) return;
     void refresher.checkHome(accountId);
   };
   const watch = new AccountLoginWatch((accountId) => checkHome(accountId));
   loginWatch = watch;
-  /** Watches the login file of every home of an agent with two or more accounts. */
+  /**
+   * Watches the login file of every home of an agent with two or more accounts. For a CLI in a WSL
+   * distro the check a change asks for reads nothing (`checkHomeIdentity` skips a remote target).
+   */
   syncLoginWatch = (): void => {
     const accounts = repository.list();
-    const perAgent = new Map<string, number>();
-    for (const account of accounts) perAgent.set(account.agent, (perAgent.get(account.agent) ?? 0) + 1);
+    const multiAccount = multiAccountAgents(accounts);
     watch.sync(accounts.flatMap((account) => {
-      if ((perAgent.get(account.agent) ?? 0) < 2 || account.kind === 'key-file') return [];
+      if (!multiAccount.has(account.agent) || account.kind === 'key-file') return [];
       const support = agentRegistry.get(account.agent)?.accounts;
       if (support?.kind !== 'folder' || !support.loginFiles) return [];
       if (account.kind === 'folder' && !account.folderPath) return [];
@@ -174,12 +178,12 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   /** When each task's session was last moved to another account, to tell a refused resume from any other failure. */
   const movedTasks = new Map<string, number>();
 
+  /** A task's live session: running, and not a Command Terminal's. */
+  const liveSessionOf = (taskId: string) => context.sessionManager.listSessions()
+    .find((candidate) => candidate.taskId === taskId && !candidate.transient && candidate.status === 'running') ?? null;
+
   /** The account a task's live session runs on, or null when it has none. */
-  const liveAccountOf = (taskId: string): string | null => {
-    const live = context.sessionManager.listSessions()
-      .find((candidate) => candidate.taskId === taskId && !candidate.transient && candidate.status === 'running');
-    return live?.accountId ?? null;
-  };
+  const liveAccountOf = (taskId: string): string | null => liveSessionOf(taskId)?.accountId ?? null;
 
   /** Restarts a task's session in place on `accountId`, resuming its conversation. */
   const restartTaskOn = (
@@ -217,43 +221,29 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   // `kangentic_switch_account` (task #1113): a task's agent moves its own session to another
   // listed account, so it never needs a `/login`. The call answers first; the restart waits for
   // the turn to end (or a bound, for an agent that keeps working), then resumes the conversation.
-  setTaskAccountSwitcher(async (taskId, requested) => {
-    const live = context.sessionManager.listSessions()
-      .find((candidate) => candidate.taskId === taskId && !candidate.transient && candidate.status === 'running');
-    if (!live) return { ok: false, reason: 'no-session', runnable: [], current: null };
-    const agent = context.sessionManager.getSessionAgentName(live.id);
-    const support = agent ? agentRegistry.get(agent)?.accounts : undefined;
-    if (!agent || !support) return { ok: false, reason: 'no-accounts', runnable: [], current: null };
-    const accounts = service.ordered(agent);
-    const nameOf = (account: AgentAccount): string => accountDisplayName(account) ?? 'the agent\'s own login';
-    const currentAccount = accounts.find((account) => account.id === live.accountId) ?? null;
-    const current = currentAccount ? nameOf(currentAccount) : null;
-    const runnable = accounts.filter((account) => account.status === 'ok' && account.id !== currentAccount?.id).map(nameOf);
-    if (support.kind === 'folder' && support.conversationsStayOnAccount) return { ok: false, reason: 'stays-on-account', runnable, current };
-    const wanted = requested.toLowerCase();
-    const target = accounts.find((account) => (accountDisplayName(account) ?? '').toLowerCase() === wanted);
-    if (!target) return { ok: false, reason: 'unknown-account', runnable, current };
-    if (target.status !== 'ok') return { ok: false, reason: 'not-signed-in', runnable, current };
-    if (currentAccount && (currentAccount.id === target.id || sameLogin(loginOf(currentAccount), loginOf(target)))) {
-      return { ok: false, reason: 'already-on-account', runnable, current };
-    }
-    const targetName = nameOf(target);
-    const restart = (): void => {
-      clearTimeout(bound);
-      context.sessionManager.off('turn-ended', onTurnEnded);
-      const prompt = `Continue. This session now runs as ${targetName}, the account you switched to.`;
-      void restartTaskOn({ sessionId: live.id, taskId, projectId: live.projectId }, target.id, prompt).catch((error: unknown) => {
-        accountsReporter.report(error, { tags: { stage: 'switch_tool' } });
-      });
-    };
-    const onTurnEnded = (payload: { sessionId: string }): void => {
-      if (payload.sessionId === live.id) restart();
-    };
-    const bound = setTimeout(restart, SWITCH_TOOL_TURN_END_BOUND_MS);
-    bound.unref?.();
-    context.sessionManager.on('turn-ended', onTurnEnded);
-    return { ok: true, accountName: targetName, agent };
+  const switcher = createTaskAccountSwitcher({
+    liveSession: (taskId) => {
+      const live = liveSessionOf(taskId);
+      return live ? { id: live.id, projectId: live.projectId, accountId: live.accountId ?? null } : null;
+    },
+    agentOf: (sessionId) => context.sessionManager.getSessionAgentName(sessionId),
+    sessionsCanMove: (agent) => {
+      const support = agentRegistry.get(agent)?.accounts;
+      if (!support) return null;
+      return !(support.kind === 'folder' && support.conversationsStayOnAccount);
+    },
+    ordered: (agent) => service.ordered(agent),
+    onTurnEnded: (listener) => {
+      const onTurnEnded = (payload: { sessionId: string }): void => listener(payload.sessionId);
+      context.sessionManager.on('turn-ended', onTurnEnded);
+      return () => { context.sessionManager.off('turn-ended', onTurnEnded); };
+    },
+    restartOn: restartTaskOn,
+    reportFailure: (error) => { accountsReporter.report(error, { tags: { stage: 'switch_tool' } }); },
+    turnEndBoundMs: SWITCH_TOOL_TURN_END_BOUND_MS,
   });
+  taskSwitcher = switcher;
+  setTaskAccountSwitcher(switcher.switchAccount);
 
   // The continuation at a usage limit (account-continuation.ts): a task session whose turn
   // failed on a limit, on an account a fresh read shows full, restarts on the next with room.

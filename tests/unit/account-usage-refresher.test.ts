@@ -37,12 +37,16 @@ function rig(accounts: AgentAccount[], optionOverrides: Partial<AccountUsageRefr
     reads.push(`identity:${accountId}`);
     return null;
   });
-  const refresher = new AccountUsageRefresher({ refreshUsage, refreshIdentity }, {
+  const checkHomeIdentity = vi.fn(async (accountId: string) => {
+    reads.push(`home:${accountId}`);
+    return null;
+  });
+  const refresher = new AccountUsageRefresher({ refreshUsage, refreshIdentity, checkHomeIdentity }, {
     listAccounts: () => accounts,
     now: () => NOW_MS,
     ...optionOverrides,
   });
-  return { refresher, refreshUsage, refreshIdentity, reads };
+  return { refresher, refreshUsage, refreshIdentity, checkHomeIdentity, reads };
 }
 
 beforeEach(() => {
@@ -116,7 +120,7 @@ describe('AccountUsageRefresher.refreshAll', () => {
     const parked = { ...account('own', 'multi', null), kind: 'default' as const, status: 'signed-out' as const };
     const { refresher, reads } = rig([parked, account('other', 'multi', null)]);
     await refresher.refreshAll('scheduled');
-    expect(reads).toEqual(['identity:own', 'usage:own', 'usage:other']);
+    expect(reads).toEqual(['identity:own', 'usage:own', 'home:other', 'usage:other']);
   });
 
   it('reads every sign-in at startup, and no key file', async () => {
@@ -124,6 +128,27 @@ describe('AccountUsageRefresher.refreshAll', () => {
     const { refresher, reads } = rig([account('one', 'multi', null), keyFile, account('solo', 'single', null)]);
     await refresher.refreshAll('startup');
     expect(reads).toEqual(['identity:one', 'usage:one', 'usage:key']);
+  });
+
+  it('checks the home of each ok account and reads the sign-in of each other one on a scheduled pass, never both', async () => {
+    const failureReporter = { report: vi.fn() };
+    const parked = { ...account('parked', 'multi', null), status: 'signed-out' as const };
+    const { refresher, refreshIdentity, checkHomeIdentity, reads } = rig(
+      [account('one', 'multi', null), parked, account('two', 'multi', null), account('solo', 'single', null)],
+      { failureReporter },
+    );
+    await refresher.refreshAll('scheduled');
+    expect(checkHomeIdentity.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
+    expect(refreshIdentity.mock.calls.map(([accountId]) => accountId)).toEqual(['parked']);
+    expect(reads.filter((read) => read.endsWith(':solo'))).toEqual([]);
+    expect(failureReporter.report).not.toHaveBeenCalled();
+  });
+
+  it('reads the sign-in, not the cheap check, of an ok account at startup', async () => {
+    const { refresher, refreshIdentity, checkHomeIdentity } = rig([account('one', 'multi', null), account('two', 'multi', null)]);
+    await refresher.refreshAll('startup');
+    expect(refreshIdentity.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
+    expect(checkHomeIdentity).not.toHaveBeenCalled();
   });
 
   it('reads no sign-in on a requested pass, whose caller reads them', async () => {
@@ -339,6 +364,25 @@ describe('AccountUsageRefresher failure reports', () => {
     expect(failureReporter.report).toHaveBeenCalledTimes(1);
     expect(failureReporter.report).toHaveBeenCalledWith(expect.any(Error), { tags: { stage: 'usage_read' } });
     expect(refreshUsage.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
+  });
+});
+
+describe('AccountUsageRefresher.checkHome', () => {
+  it('runs the cheap check once, behind a read already queued', async () => {
+    const { refresher, checkHomeIdentity, refreshIdentity, reads } = rig([account('one', 'multi', null), account('two', 'multi', null)]);
+    const usage = refresher.refreshAccount('one');
+    await refresher.checkHome('two');
+    await usage;
+    expect(checkHomeIdentity).toHaveBeenCalledTimes(1);
+    expect(checkHomeIdentity).toHaveBeenCalledWith('two');
+    expect(refreshIdentity).not.toHaveBeenCalled();
+    expect(reads).toEqual(['usage:one', 'home:two']);
+  });
+
+  it('adds no second check while one is queued for the same account', async () => {
+    const { refresher, checkHomeIdentity } = rig([account('one', 'multi', null)]);
+    await Promise.all([refresher.checkHome('one'), refresher.checkHome('one')]);
+    expect(checkHomeIdentity).toHaveBeenCalledTimes(1);
   });
 });
 

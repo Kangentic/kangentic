@@ -6,7 +6,7 @@ import type { RateLimitWindow, ResumeAccountMatch } from '../../shared/types';
 import type { AgentAccountRepository } from '../db/repositories/agent-account-repository';
 import { provisionAccountFolder, type AccountFolderProblemCode } from './account-folder';
 import { automaticOrder, topAccountWithRoom } from './account-order';
-import { decideIdentity, duplicateLoginRows, loginOf, sameLogin, type LoginIdentity } from './account-identity';
+import { decideIdentity, duplicateLoginRows, loginFromRead, loginOf, NO_LOGIN, sameLogin, type IdentityDecision, type LoginIdentity } from './account-identity';
 import { readKeyFile } from './key-file';
 import {
   EmptyUsageReadError,
@@ -96,8 +96,8 @@ export interface AccountServiceDependencies {
   /**
    * The login in an account's home changed, so every live session running in that home now runs
    * as `toAccountId` (the home's own row, or the row that already names the login it holds). The
-   * handler re-points each session and its record, so usage, the continuation and a resume follow
-   * the login, not the home. Absent: sessions keep the account they started on.
+   * handler re-points each live session, so usage and the continuation follow the login, not the
+   * home. Its record keeps the home it started in. Absent: sessions keep the account they started on.
    */
   repointSessions?: (homeAccountId: string, toAccountId: string) => void;
 }
@@ -308,8 +308,9 @@ export class AccountService {
   }
 
   /**
-   * Asks the CLI who is signed in to the account and stores the answer. A folder account's links
-   * are refreshed first, so `link-failed` is never overwritten by a good sign-in.
+   * Asks the CLI who is signed in to the account and stores the answer. A home that holds another
+   * login than its row names is reconciled (`applyIdentity`), and any login two running rows name
+   * is then set aside on one of them. A CLI that gives no answer changes nothing.
    */
   async refreshIdentity(accountId: string): Promise<AgentAccount | null> {
     const account = this.dependencies.repository.getById(accountId);
@@ -326,7 +327,8 @@ export class AccountService {
   /**
    * Asks the CLI who is signed in to an account's home. `skipped` where nothing can be read (no
    * folder support, no CLI, a CLI in WSL for a folder account); `no-answer` when the CLI gave none,
-   * which is logged and reported and changes nothing.
+   * which is logged and reported and changes nothing. A folder account's links are refreshed
+   * first, so `link-failed` is never overwritten by a good sign-in.
    */
   private async readIdentity(account: AgentAccount): Promise<{ identity: AccountIdentity; linked: boolean } | 'skipped' | 'no-answer'> {
     const support = this.dependencies.getAdapter(account.agent)?.accounts;
@@ -355,14 +357,20 @@ export class AccountService {
    * its row names is reconciled (`decideIdentity`) so that no login is listed twice and none is
    * dropped: the replaced login stays listed, set aside (`replaced`), one Sign in away.
    */
-  private async applyIdentity(account: AgentAccount, identity: AccountIdentity, linked: boolean): Promise<void> {
+  private async applyIdentity(snapshot: AgentAccount, identity: AccountIdentity, linked: boolean): Promise<void> {
     const repository = this.dependencies.repository;
+    // The row as it is now, not as it was before the CLI run: two reads of one home can overlap
+    // (the tab's refresh and a turn end's check), and the second must see what the first wrote,
+    // or both decide `to-new` and the replaced login is listed twice. Everything from here to the
+    // first write runs with no await, so the second read always lands after the first's writes.
+    const account = repository.getById(snapshot.id);
+    if (!account) return;
     const status = statusFor(linked, identity);
-    const found: LoginIdentity = { email: identity.email, orgId: identity.orgId ?? null };
+    const found = loginFromRead(identity);
     if (!identity.signedIn || !found.email) {
       // Signed out, or signed in with no email to compare (an API key): nothing names another
       // login. A signed-out answer keeps the email the row had, so the row still says whose it was.
-      if (account.status === 'ok' && status !== 'ok') console.warn(`[ACCOUNTS] A ${account.kind} account of ${account.agent} is now ${status}`);
+      this.noteStatusDrop(account, status);
       const keepsReplaced = account.status === 'replaced' && identity.signedIn;
       repository.updateIdentity(account.id, {
         email: account.email,
@@ -373,17 +381,17 @@ export class AccountService {
       return;
     }
     const agentAccounts = repository.listForAgent(account.agent);
-    const decided = decideIdentity(account, agentAccounts, found);
+    const rawDecision = decideIdentity(account, agentAccounts, found);
     // A user with one account sees no change anywhere: their list is whatever their CLI is signed
     // in to, as before accounts, so a new login there is the row's new login and adds no row.
-    const decision: typeof decided = decided.kind === 'to-new' && agentAccounts.length < 2 ? { kind: 'first-read' } : decided;
+    const decision: IdentityDecision = rawDecision.kind === 'to-new' && agentAccounts.length < 2 ? { kind: 'first-read' } : rawDecision;
     const takeFound = (rowId: string): void => {
       repository.updateIdentity(rowId, { email: found.email, orgId: found.orgId, plan: identity.plan, status });
     };
     switch (decision.kind) {
       case 'unchanged':
       case 'first-read': {
-        if (account.status === 'ok' && status !== 'ok') console.warn(`[ACCOUNTS] A ${account.kind} account of ${account.agent} is now ${status}`);
+        this.noteStatusDrop(account, status);
         // The email as the CLI spells it now, and an org id a row from before them did not have.
         repository.updateIdentity(account.id, { email: found.email, orgId: found.orgId ?? account.orgId, plan: identity.plan, status });
         // A row set aside whose login is back in its home: its sessions run as it again.
@@ -395,8 +403,7 @@ export class AccountService {
         this.repointSessions(account.id, decision.listedId);
         return;
       case 'already-listed':
-        repository.updateIdentity(account.id, { email: null, orgId: null, plan: account.plan, status: 'replaced' });
-        repository.clearUsage(account.id);
+        this.setAside(account, NO_LOGIN);
         this.noteIdentityChanged(account, 'already-listed');
         this.repointSessions(account.id, decision.listedId);
         return;
@@ -412,8 +419,7 @@ export class AccountService {
         // The set-aside row that named the new login takes the replaced one instead.
         takeFound(account.id);
         repository.clearUsage(account.id);
-        repository.updateIdentity(decision.replacedId, { email: account.email, orgId: account.orgId, plan: account.plan, status: 'replaced' });
-        repository.clearUsage(decision.replacedId);
+        this.setAside({ id: decision.replacedId, plan: account.plan }, loginOf(account));
         this.noteIdentityChanged(account, 'merged');
         this.repointSessions(account.id, account.id);
         return;
@@ -459,6 +465,20 @@ export class AccountService {
     }
   }
 
+  /**
+   * Sets a row aside (`replaced`) naming `login`, the login it keeps, or none, and forgets its
+   * usage, which was read for a login it no longer runs as.
+   */
+  private setAside(row: Pick<AgentAccount, 'id' | 'plan'>, login: LoginIdentity): void {
+    this.dependencies.repository.updateIdentity(row.id, { email: login.email, orgId: login.orgId, plan: row.plan, status: 'replaced' });
+    this.dependencies.repository.clearUsage(row.id);
+  }
+
+  /** Logs a working row that a sign-in read found no longer working. */
+  private noteStatusDrop(account: AgentAccount, status: AgentAccountStatus): void {
+    if (account.status === 'ok' && status !== 'ok') console.warn(`[ACCOUNTS] A ${account.kind} account of ${account.agent} is now ${status}`);
+  }
+
   /** Logs and reports a home whose login changed, with how it was reconciled and never the email. */
   private noteIdentityChanged(account: AgentAccount, change: IdentityChangeKind): void {
     console.warn(`[ACCOUNTS] The login in a ${account.kind} account's home of ${account.agent} changed (${change})`);
@@ -487,8 +507,7 @@ export class AccountService {
     const yielding = duplicateLoginRows(accounts);
     for (const account of yielding) {
       const kept = accounts.find((other) => other.id !== account.id && !yielding.includes(other) && sameLogin(loginOf(other), loginOf(account)));
-      repository.updateIdentity(account.id, { email: null, orgId: null, plan: account.plan, status: 'replaced' });
-      repository.clearUsage(account.id);
+      this.setAside(account, NO_LOGIN);
       this.noteIdentityChanged(account, 'duplicate');
       if (kept) this.repointSessions(account.id, kept.id);
     }
@@ -505,12 +524,8 @@ export class AccountService {
   async checkHomeIdentity(accountId: string): Promise<void> {
     const account = this.dependencies.repository.getById(accountId);
     if (!account || account.kind === 'key-file') return;
-    const support = this.dependencies.getAdapter(account.agent)?.accounts;
-    if (support?.kind !== 'folder' || !support.readHomeIdentity) return;
-    if (account.kind === 'folder' && (!account.folderPath || (await this.usesRemoteTarget(account.agent)))) return;
-    const found = await support.readHomeIdentity(account.kind === 'folder' ? account.folderPath : null);
-    if (!found) return;
-    const foundLogin: LoginIdentity = { email: found.email, orgId: found.orgId };
+    const foundLogin = await this.homeLoginOf(account);
+    if (!foundLogin) return;
     if (account.status !== 'replaced' && sameLogin(loginOf(account), foundLogin)) return;
     if (account.status === 'replaced') {
       // Still set aside for the same listed login: nothing to ask the CLI.
@@ -570,9 +585,9 @@ export class AccountService {
     }
     // The reading is the login the home holds now. When that is not the row's own login (a
     // `/login` replaced it), the reading belongs to another row: the home is reconciled instead.
-    if (account.email && support.readHomeIdentity) {
-      const found = await support.readHomeIdentity(account.folderPath);
-      if (found && !sameLogin(loginOf(account), { email: found.email, orgId: found.orgId })) {
+    if (account.email) {
+      const found = await this.homeLoginOf(account);
+      if (found && !sameLogin(loginOf(account), found)) {
         await this.refreshIdentity(accountId);
         return false;
       }
@@ -609,6 +624,9 @@ export class AccountService {
     if (!support || support.kind !== 'folder') return null;
     const cliPath = await this.dependencies.resolveCliPath?.(account.agent);
     if (!cliPath) return null;
+    // A CLI in a WSL distro keeps its own login there: a sign-in run from this side would start in
+    // a folder the distro does not use.
+    if (isOwnHome && (await this.usesRemoteTarget(account.agent))) return null;
     // The row's own login, filled in on the sign-in page where the CLI takes it.
     const emailArgs = account.email && support.loginEmailArgs ? support.loginEmailArgs(account.email) : [];
     // The agent's own home signs in with no home variable, exactly as the user's own terminal
@@ -648,47 +666,7 @@ export class AccountService {
     if (!before) return { account: null, duplicateOf: null };
     // A row made for this sign-in: it never named a login. Only such a row is ever removed here,
     // never the agent's own home or a row that named a login (a Sign in on a row set aside).
-    const isNewRow = before.kind === 'folder' && before.email === null && before.status === 'signed-out';
-    if (isNewRow) {
-      const read = await this.readIdentity(before);
-      if (read === 'skipped' || read === 'no-answer') return { account: repository.getById(accountId), duplicateOf: null };
-      if (!read.identity.signedIn) {
-        repository.delete(accountId);
-        this.changed();
-        return { account: null, duplicateOf: null };
-      }
-      const found: LoginIdentity = { email: read.identity.email, orgId: read.identity.orgId ?? null };
-      const duplicateOf = repository.listForAgent(before.agent)
-        .find((other) => other.id !== accountId && sameLogin(loginOf(other), found)) ?? null;
-      if (duplicateOf?.status === 'replaced' && duplicateOf.kind === 'folder' && before.folderPath) {
-        // The login of a row set aside, signed in again through Add account: that row takes this
-        // folder, which now holds its login, so it is listed once and keeps its place. Its old
-        // folder stays on disk.
-        repository.setFolderPath(duplicateOf.id, before.folderPath);
-        repository.delete(accountId);
-        const restored = await this.refreshIdentity(duplicateOf.id);
-        return { account: restored, duplicateOf: null };
-      }
-      if (duplicateOf?.status === 'replaced' && duplicateOf.kind === 'default') {
-        // The agent's own home lost this login to a `/login` and holds another listed one. The
-        // new folder now holds this login, so it keeps the row; the home's row stays set aside
-        // with no email, as a home whose login is listed elsewhere reads.
-        repository.updateIdentity(duplicateOf.id, { email: null, orgId: null, plan: duplicateOf.plan, status: 'replaced' });
-        repository.clearUsage(duplicateOf.id);
-        await this.applyIdentity(before, read.identity, read.linked);
-        this.changed();
-        return { account: repository.getById(accountId), duplicateOf: null };
-      }
-      if (duplicateOf) {
-        // Already listed: nothing is added, and the dialog names the existing row.
-        repository.delete(accountId);
-        this.changed();
-        return { account: null, duplicateOf };
-      }
-      await this.applyIdentity(before, read.identity, read.linked);
-      this.changed();
-      return { account: repository.getById(accountId), duplicateOf: null };
-    }
+    if (before.kind === 'folder' && before.email === null && before.status === 'signed-out') return this.completeNewRowLogin(before);
     const account = await this.refreshIdentity(accountId);
     if (!account) return { account: null, duplicateOf: null };
     // A Sign in on a row that landed another login already listed (the browser held another
@@ -703,12 +681,66 @@ export class AccountService {
     return { account, duplicateOf: null };
   }
 
-  /** The login an account's home records now, read with no CLI run. Null when it gives no answer. */
+  /** `completeLogin` for a row made for this sign-in, which never named a login. */
+  private async completeNewRowLogin(before: AgentAccount): Promise<{ account: AgentAccount | null; duplicateOf: AgentAccount | null }> {
+    const repository = this.dependencies.repository;
+    const read = await this.readIdentity(before);
+    if (read === 'skipped' || read === 'no-answer') return { account: repository.getById(before.id), duplicateOf: null };
+    if (!read.identity.signedIn) {
+      repository.delete(before.id);
+      this.changed();
+      return { account: null, duplicateOf: null };
+    }
+    const found = loginFromRead(read.identity);
+    const duplicateOf = repository.listForAgent(before.agent)
+      .find((other) => other.id !== before.id && sameLogin(loginOf(other), found)) ?? null;
+    if (duplicateOf?.status === 'replaced' && duplicateOf.kind === 'folder' && before.folderPath) {
+      // The login of a row set aside, signed in again through Add account: that row takes this
+      // folder, which now holds its login, so it is listed once and keeps its place. Its old
+      // folder stays on disk. Written from this read, never through `refreshIdentity`: that would
+      // re-point the sessions still running in the old folder, which holds another login, to it.
+      repository.setFolderPath(duplicateOf.id, before.folderPath);
+      repository.delete(before.id);
+      repository.updateIdentity(duplicateOf.id, {
+        email: found.email,
+        orgId: found.orgId ?? duplicateOf.orgId,
+        plan: read.identity.plan,
+        status: statusFor(read.linked, read.identity),
+      });
+      this.changed();
+      return { account: repository.getById(duplicateOf.id), duplicateOf: null };
+    }
+    if (duplicateOf?.status === 'replaced' && duplicateOf.kind === 'default') {
+      // The agent's own home lost this login to a `/login` and holds another listed one. The
+      // new folder now holds this login, so it keeps the row; the home's row stays set aside
+      // with no email, as a home whose login is listed elsewhere reads.
+      this.setAside(duplicateOf, NO_LOGIN);
+      await this.applyIdentity(before, read.identity, read.linked);
+      this.changed();
+      return { account: repository.getById(before.id), duplicateOf: null };
+    }
+    if (duplicateOf) {
+      // Already listed: nothing is added, and the dialog names the existing row.
+      repository.delete(before.id);
+      this.changed();
+      return { account: null, duplicateOf };
+    }
+    await this.applyIdentity(before, read.identity, read.linked);
+    this.changed();
+    return { account: repository.getById(before.id), duplicateOf: null };
+  }
+
+  /**
+   * The login an account's home records now, read with no CLI run. Null when it gives no answer,
+   * and for a CLI in a WSL distro, whose login is not in the home this side can read.
+   */
   private async homeLoginOf(account: AgentAccount): Promise<LoginIdentity | null> {
     const support = this.dependencies.getAdapter(account.agent)?.accounts;
     if (support?.kind !== 'folder' || !support.readHomeIdentity) return null;
+    if (account.kind === 'folder' && !account.folderPath) return null;
+    if (await this.usesRemoteTarget(account.agent)) return null;
     const found = await support.readHomeIdentity(account.kind === 'folder' ? account.folderPath : null);
-    return found ? { email: found.email, orgId: found.orgId } : null;
+    return found ? loginFromRead(found) : null;
   }
 
   /** Adds a key-file account: the path and the variable names it holds, never a key. */

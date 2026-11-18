@@ -1,0 +1,35 @@
+{
+  "numStartups": 412,
+  "installMethod": "native",
+  "autoUpdates": true,
+  "hasCompletedOnboarding": true,
+  "projects": {
+    "/home/dev/project": {
+      "allowedTools": [],
+      "hasTrustDialogAccepted": true
+    }
+  },
+  "oauthAccount": {
+    "accountUuid": "00000000-0000-0000-0000-000000000001",
+    "emailAddress": "dev@example.com",
+    "organizationUuid": "00000000-0000-0000-0000-000000000002",
+    "hasExtraUsageEnabled": false,
+    "billingType": "stripe_subscription",
+    "accountCreatedAt": "2026-01-01T00:00:00.000000Z",
+    "subscriptionCreatedAt": "2026-01-01T00:00:00.000000Z",
+    "ccOnboardingFlags": {},
+    "claudeCodeTrialEndsAt": null,
+    "claudeCodeTrialDurationDays": null,
+    "seatTier": null,
+    "planDisplayName": "Ultra",
+    "displayName": "Dev",
+    "fullName": "Dev",
+    "profileFetchedAt": 1800000000000,
+    "organizationRole": "admin",
+    "workspaceRole": null,
+    "organizationName": "dev@example.com's Organization",
+    "organizationType": "claude_max",
+    "organizationRateLimitTier": "default_claude_max_20x",
+    "userRateLimitTier": null
+  }
+}

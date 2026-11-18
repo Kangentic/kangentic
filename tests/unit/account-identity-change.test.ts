@@ -32,6 +32,12 @@ let repoints: Array<[string, string]>;
 let homes: Map<string, AccountIdentity | 'no-answer'>;
 let identifyCalls: number;
 let idleWindows: RateLimitWindow[];
+/** True when the agent's CLI runs somewhere account folders do not reach (a WSL distro). */
+let remoteTarget: boolean;
+/** When set, every `identify` waits on it after taking its answer, so a test holds reads in flight. */
+let identifyGate: Promise<void> | null;
+/** True when the sessions' re-point handler throws. */
+let repointThrows: boolean;
 
 function loginOf(email: string, orgId: string | null = null): AccountIdentity {
   return { signedIn: true, email, orgId, plan: 'Ultra', hasSubscription: true };
@@ -56,8 +62,9 @@ function support(): FolderAccountSupport {
     identify: async (_cliPath, folder) => {
       identifyCalls += 1;
       const held = homeOf(folder);
+      if (identifyGate) await identifyGate;
       if (held === 'no-answer') throw new IdentityReadError('run-failed');
-      return held ?? { signedIn: false, email: null, plan: null, hasSubscription: null };
+      return held ??{ signedIn: false, email: null, plan: null, hasSubscription: null };
     },
     readHomeIdentity: async (folder) => {
       const held = homeOf(folder);
@@ -77,7 +84,11 @@ function service(): AccountService {
     readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
     resolveCliPath: async () => '/usr/bin/test-cli',
     reportProblem: (...reportArguments) => { reports.push(reportArguments); },
-    repointSessions: (homeAccountId, toAccountId) => { repoints.push([homeAccountId, toAccountId]); },
+    usesRemoteTarget: async () => remoteTarget,
+    repointSessions: (homeAccountId, toAccountId) => {
+      if (repointThrows) throw new Error('repoint failed');
+      repoints.push([homeAccountId, toAccountId]);
+    },
     now: () => NOW_MS,
   });
 }
@@ -113,6 +124,9 @@ beforeEach(() => {
   homes = new Map();
   identifyCalls = 0;
   idleWindows = [sevenDay(5)];
+  remoteTarget = false;
+  identifyGate = null;
+  repointThrows = false;
 });
 
 afterEach(() => {
@@ -296,12 +310,20 @@ describe('signing a replaced login in again through Add account', () => {
     expect(repository.getById(folder.id)?.status).toBe('replaced');
     const created = await accountService.createFolderAccount(AGENT);
     homes.set(created!.folderPath!, loginOf('b@example.com'));
+    const repointsBefore = repoints.length;
+    const identifyBefore = identifyCalls;
     const result = await accountService.completeLogin(created!.id);
     expect(result.account?.id).toBe(folder.id);
     expect(result.account?.status).toBe('ok');
     expect(repository.getById(created!.id)).toBeNull();
     expect(repository.getById(folder.id)?.folderPath).toBe(created!.folderPath);
+    expect(repository.getById(folder.id)?.status).toBe('ok');
     expect(repository.getById(own.id)?.status).toBe('ok');
+    // The sessions still running in the old folder hold another login: they are never re-pointed
+    // to the row that now owns the new folder.
+    expect(repoints.slice(repointsBefore)).not.toContainEqual([folder.id, folder.id]);
+    // The one read completeLogin made is not repeated by a second pass through refreshIdentity.
+    expect(identifyCalls - identifyBefore).toBe(1);
   });
 });
 
@@ -318,5 +340,186 @@ describe('signing in a row again', () => {
     const command = await service().loginCommand(own.id);
     expect(command?.env).toEqual({});
     expect(command?.args).toEqual(['login', '--email', 'a@example.com']);
+  });
+
+  it('gives no sign-in command for the agent\'s own home when its CLI runs in a WSL distro', async () => {
+    const { own } = ownAndFolder('a@example.com', 'b@example.com');
+    remoteTarget = true;
+    expect(await service().loginCommand(own.id)).toBeNull();
+  });
+
+  it('ends a Sign in on a row that landed another listed login set aside, and names the row that holds it', async () => {
+    const { own, folder } = ownAndFolder('a@example.com', 'b@example.com');
+    // The browser held the login the agent's own home lists.
+    homes.set(folder.folderPath!, loginOf('a@example.com'));
+    const result = await service().completeLogin(folder.id);
+    expect(result.account?.id).toBe(folder.id);
+    expect(result.account?.status).toBe('replaced');
+    expect(result.duplicateOf?.id).toBe(own.id);
+  });
+});
+
+describe('two reads of one home that overlap', () => {
+  it('lists the replaced login once, because the second read decides from the row the first wrote', async () => {
+    const { own } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set('own', loginOf('c@example.com'));
+    let release: () => void = () => {};
+    identifyGate = new Promise<void>((resolve) => { release = resolve; });
+    const accountService = service();
+    const first = accountService.refreshIdentity(own.id);
+    const second = accountService.refreshIdentity(own.id);
+    // Both reads are in flight, each holding the row as it was before either applied.
+    for (let attempt = 0; attempt < 100 && identifyCalls < 2; attempt += 1) {
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
+    }
+    expect(identifyCalls).toBe(2);
+    release();
+    await Promise.all([first, second]);
+    expect(listedEmails().filter((email) => email === 'a@example.com')).toHaveLength(1);
+    expect(repository.listForAgent(AGENT).filter((account) => account.status === 'replaced')).toHaveLength(1);
+    expect(repository.listForAgent(AGENT)).toHaveLength(3);
+    expect(repository.getById(own.id)?.email).toBe('c@example.com');
+  });
+});
+
+describe('a home whose login a set-aside row already names', () => {
+  it('hands that row the replaced login instead of adding one', async () => {
+    const { own } = ownAndFolder('a@example.com', 'b@example.com');
+    const keptFolder = path.join(root, 'config', 'accounts', AGENT, '3');
+    fs.mkdirSync(keptFolder, { recursive: true });
+    const setAside = repository.insert({ agent: AGENT, kind: 'folder', folderPath: keptFolder, email: 'c@example.com', plan: 'Ultra', status: 'replaced' });
+    repository.updateUsage(setAside.id, [sevenDay(70)]);
+    homes.set('own', loginOf('c@example.com'));
+    const after = await service().refreshIdentity(own.id);
+    expect(repository.listForAgent(AGENT)).toHaveLength(3);
+    expect(after?.email).toBe('c@example.com');
+    expect(after?.status).toBe('ok');
+    expect(after?.lastUsage).toBeNull();
+    const handed = repository.getById(setAside.id);
+    expect(handed?.email).toBe('a@example.com');
+    expect(handed?.status).toBe('replaced');
+    expect(handed?.lastUsage).toBeNull();
+    expect(changeReports().map(([, , facts]) => facts?.change)).toEqual(['merged']);
+  });
+});
+
+describe('a row with no email whose home holds a listed login', () => {
+  it('is set aside with no email and its sessions move to the row that names the login', async () => {
+    const own = repository.insert({ agent: AGENT, kind: 'default' });
+    const folderPath = path.join(root, 'config', 'accounts', AGENT, '2');
+    fs.mkdirSync(folderPath, { recursive: true });
+    const folder = repository.insert({ agent: AGENT, kind: 'folder', folderPath, email: 'b@example.com', plan: 'Ultra' });
+    homes.set('own', loginOf('b@example.com'));
+    const after = await service().refreshIdentity(own.id);
+    expect(after?.status).toBe('replaced');
+    expect(after?.email).toBeNull();
+    expect(repository.getById(folder.id)?.status).toBe('ok');
+    expect(repoints).toEqual([[own.id, folder.id]]);
+    expect(changeReports().map(([, , facts]) => facts?.change)).toEqual(['already-listed']);
+  });
+});
+
+describe('the cheap check of a set-aside row or a remote home', () => {
+  it('runs no CLI for a replaced row whose home still holds the listed row\'s login', async () => {
+    const { own } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set('own', loginOf('b@example.com'));
+    const accountService = service();
+    await accountService.refreshIdentity(own.id);
+    identifyCalls = 0;
+    await accountService.checkHomeIdentity(own.id);
+    expect(identifyCalls).toBe(0);
+    expect(repository.getById(own.id)?.status).toBe('replaced');
+  });
+
+  it('runs the CLI once for a replaced row whose home holds its own login again, and it ends ok', async () => {
+    const { own } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set('own', loginOf('b@example.com'));
+    const accountService = service();
+    await accountService.refreshIdentity(own.id);
+    homes.set('own', loginOf('a@example.com'));
+    identifyCalls = 0;
+    await accountService.checkHomeIdentity(own.id);
+    expect(identifyCalls).toBe(1);
+    expect(repository.getById(own.id)?.status).toBe('ok');
+  });
+
+  it('reads nothing and runs no CLI for any home when the CLI runs in a WSL distro', async () => {
+    const { own, folder } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set('own', loginOf('c@example.com'));
+    homes.set(folder.folderPath!, loginOf('d@example.com'));
+    remoteTarget = true;
+    const accountService = service();
+    await accountService.checkHomeIdentity(own.id);
+    await accountService.checkHomeIdentity(folder.id);
+    expect(identifyCalls).toBe(0);
+    expect(repository.getById(own.id)?.email).toBe('a@example.com');
+    expect(repository.getById(folder.id)?.email).toBe('b@example.com');
+    expect(changeReports()).toEqual([]);
+  });
+});
+
+describe('an idle usage read of a set-aside row', () => {
+  it('reads nothing and stores nothing, even when its home holds its own login', async () => {
+    const { own } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set('own', loginOf('b@example.com'));
+    const accountService = service();
+    await accountService.refreshIdentity(own.id);
+    repository.updateUsage(own.id, [sevenDay(40)]);
+    homes.set('own', loginOf('a@example.com'));
+    idleWindows = [sevenDay(5)];
+    identifyCalls = 0;
+    expect(await accountService.refreshUsage(own.id)).toBe(false);
+    expect(repository.getById(own.id)?.status).toBe('replaced');
+    expect(repository.getById(own.id)?.lastUsage?.[0]?.usedPercentage).toBe(40);
+    expect(identifyCalls).toBe(0);
+  });
+});
+
+describe('the sign-in of a row made for it', () => {
+  it('deletes the row and returns no account when the read is signed out', async () => {
+    const accountService = service();
+    const created = await accountService.createFolderAccount(AGENT);
+    const result = await accountService.completeLogin(created!.id);
+    expect(result.account).toBeNull();
+    expect(result.duplicateOf).toBeNull();
+    expect(repository.getById(created!.id)).toBeNull();
+  });
+
+  it('deletes the row and names the listed row when the read is a login already listed', async () => {
+    const { folder } = ownAndFolder('a@example.com', 'b@example.com');
+    const accountService = service();
+    const created = await accountService.createFolderAccount(AGENT);
+    homes.set(created!.folderPath!, loginOf('b@example.com'));
+    const result = await accountService.completeLogin(created!.id);
+    expect(result.account).toBeNull();
+    expect(result.duplicateOf?.id).toBe(folder.id);
+    expect(repository.getById(created!.id)).toBeNull();
+    expect(listedEmails().filter((email) => email === 'b@example.com')).toHaveLength(1);
+  });
+
+  it('keeps the row ok with its email on a clean first login', async () => {
+    const accountService = service();
+    const created = await accountService.createFolderAccount(AGENT);
+    homes.set(created!.folderPath!, loginOf('a@example.com'));
+    const result = await accountService.completeLogin(created!.id);
+    expect(result.duplicateOf).toBeNull();
+    expect(result.account?.id).toBe(created!.id);
+    expect(result.account?.status).toBe('ok');
+    expect(result.account?.email).toBe('a@example.com');
+  });
+});
+
+describe('a re-point that throws', () => {
+  it('leaves the list right and reports the repoint stage', async () => {
+    const { own } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set('own', loginOf('b@example.com'));
+    repointThrows = true;
+    const after = await service().refreshIdentity(own.id);
+    expect(after?.status).toBe('replaced');
+    expect(after?.email).toBe('a@example.com');
+    expect(listedEmails().filter((email) => email === 'b@example.com')).toHaveLength(1);
+    const repointReports = reports.filter(([problem, , facts]) => problem === 'identity-changed' && facts?.stage === 'repoint');
+    expect(repointReports).toHaveLength(1);
+    expect(repointReports[0][1]).toBe(AGENT);
   });
 });

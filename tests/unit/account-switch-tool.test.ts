@@ -71,4 +71,49 @@ describe('AccountLoginWatch', () => {
     fire();
     expect(changed).toEqual(['own']);
   });
+
+  it('re-assigns a file to another account by closing the old watcher and opening a new one', () => {
+    const changed: string[] = [];
+    const opened: Array<{ fire: () => void; closed: boolean }> = [];
+    const watch = new AccountLoginWatch((accountId) => changed.push(accountId), (_filePath, onChange) => {
+      const entry = { fire: onChange, closed: false };
+      opened.push(entry);
+      return { close: () => { entry.closed = true; } };
+    });
+    watch.sync([{ accountId: 'first', filePath: '/home/.credentials.json' }]);
+    watch.sync([{ accountId: 'second', filePath: '/home/.credentials.json' }]);
+    expect(opened).toHaveLength(2);
+    expect(opened[0].closed).toBe(true);
+    expect(opened[1].closed).toBe(false);
+    expect(watch.watchedFiles()).toEqual(['/home/.credentials.json']);
+    opened[1].fire();
+    expect(changed).toEqual(['second']);
+  });
+
+  it('swallows a factory that throws for one file and still watches the others', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const watch = new AccountLoginWatch(() => undefined, (filePath) => {
+        if (filePath === '/bad/.credentials.json') throw new Error('EMFILE');
+        return { close: () => undefined };
+      });
+      expect(() => watch.sync([
+        { accountId: 'a', filePath: '/a/.credentials.json' },
+        { accountId: 'bad', filePath: '/bad/.credentials.json' },
+        { accountId: 'c', filePath: '/c/.credentials.json' },
+      ])).not.toThrow();
+      expect(watch.watchedFiles()).toEqual(['/a/.credentials.json', '/c/.credentials.json']);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('dispose closes every watcher and leaves nothing watched', () => {
+    const closed: string[] = [];
+    const watch = new AccountLoginWatch(() => undefined, (filePath) => ({ close: () => closed.push(filePath) }));
+    watch.sync([{ accountId: 'a', filePath: '/a/.credentials.json' }, { accountId: 'b', filePath: '/b/.credentials.json' }]);
+    watch.dispose();
+    expect(closed.sort()).toEqual(['/a/.credentials.json', '/b/.credentials.json']);
+    expect(watch.watchedFiles()).toEqual([]);
+  });
 });

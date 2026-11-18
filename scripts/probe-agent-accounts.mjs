@@ -306,7 +306,10 @@ const commands = {
       snapshot[name] = {
         cli: agent.whoami(home),
         recorded: agent.recordedLogin ? agent.recordedLogin(home) : null,
-        loginFile: stat ? { bytes: stat.size, changedAt: stat.mtime.toISOString() } : null,
+        // On macOS Claude keeps the login in the Keychain, so a missing file there is not "no login".
+        loginFile: process.platform === 'darwin'
+          ? 'keychain'
+          : stat ? { bytes: stat.size, changedAt: stat.mtime.toISOString() } : null,
       };
     }
     saveResult(`logins_${label}`, snapshot);

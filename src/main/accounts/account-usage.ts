@@ -1,6 +1,7 @@
 import type { AgentAccount } from '../../shared/agent-accounts';
 import type { ChokepointReporter } from '../analytics/handled-report';
 import type { AccountService } from './account-service';
+import { multiAccountAgents } from './account-order';
 
 /** How often idle accounts are read while the app runs. */
 export const USAGE_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
@@ -16,13 +17,6 @@ const READ_BEFORE_RANKING_RETRY_MS = 60 * 1000;
 const AFTER_RESET_MS = 30 * 1000;
 /** The first read after the app opens, once startup's own work is out of the way. */
 const STARTUP_DELAY_MS = 20 * 1000;
-
-/** The agents with two or more accounts: the only ones whose usage is read on a schedule. */
-function multiAccountAgents(accounts: readonly AgentAccount[]): Set<string> {
-  const perAgent = new Map<string, number>();
-  for (const account of accounts) perAgent.set(account.agent, (perAgent.get(account.agent) ?? 0) + 1);
-  return new Set([...perAgent].filter(([, count]) => count >= 2).map(([agent]) => agent));
-}
 
 /**
  * True when the account's reading is no older than `maxAgeMs` and no window in it has reset since.

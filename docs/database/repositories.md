@@ -383,7 +383,9 @@ does not fail soft: a failed read or write throws to its caller, the account ser
 | `listForAgent(agent)` | One agent's accounts in run order |
 | `getById(id)` | One account, or null |
 | `insert(input)` | Add an account at the bottom of its agent's list, `status` `ok` unless given, and return it |
-| `updateIdentity(id, identity)` | Write the `email`, `plan` and `status` the CLI reported |
+| `updateIdentity(id, identity)` | Write the `email`, `org_id`, `plan` and `status` the CLI reported |
+| `setFolderPath(id, folderPath)` | Point a folder account at another folder, one that now holds its login |
+| `clearUsage(id)` | Clear `last_usage_json` and `last_usage_at`, read for a login the row no longer names |
 | `updateStatus(id, status)` | Write `status` alone |
 | `setHistoryPrivate(id, historyPrivate)` | Record whether the account keeps its own prompt history |
 | `updateUsage(id, windows)` | Write the account's last usage windows (`last_usage_json`) and stamp `last_usage_at` |
