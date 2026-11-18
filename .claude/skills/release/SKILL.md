@@ -187,6 +187,15 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    `release.yml`'s own preflight jobs only prove each secret is non-empty, so this read is the
    one that knows whether a secret still works.
 
+   While that run is green, look for a credential nothing uses any more: `gh secret list --repo
+   Kangentic/kangentic --json name --jq ".[].name"`. The Windows leg signs in to Azure through a
+   federated credential, so no workflow reads `AZURE_CLIENT_SECRET`. If the list still names it,
+   say so in the pre-flight report and go on: the client secret behind it still signs as Kangentic
+   for anyone who holds it, until the owner deletes it on the app registration (Entra, App
+   registrations, Kangentic CI Signing, Certificates & secrets) and removes the repository secret
+   (`gh secret delete AZURE_CLIENT_SECRET --repo Kangentic/kangentic`). Never delete either one from
+   inside `/release`.
+
    Last, read the agent CLI nightly and report it without stopping: `gh run list --repo
    Kangentic/kangentic --workflow=agent-clis.yml --event schedule --limit 1 --json
    conclusion,createdAt,url`. It runs seven real agent CLIs at their newest versions through a

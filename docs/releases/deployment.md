@@ -168,7 +168,7 @@ The signing endpoint (`https://eus.codesigning.azure.net/`), the Trusted Signing
 | Subject | `repo:Kangentic/kangentic:environment:release-windows` |
 | Audience | `api://AzureADTokenExchange` |
 
-The subject is the Windows leg's environment. Entra matches it exactly, with no wildcard, so renaming the repository, the organization or that environment breaks the sign-in until the credential's subject is changed to match. The app registration keeps its Trusted Signing Certificate Profile Signer role on the signing account. A client secret on the app, and an `AZURE_CLIENT_SECRET` repository secret, are no longer read by anything and can be deleted.
+The subject is the Windows leg's environment. Entra matches it exactly, with no wildcard, so renaming the repository, the organization or that environment breaks the sign-in until the credential's subject is changed to match. The app registration keeps its Trusted Signing Certificate Profile Signer role on the signing account. A client secret on the app, and an `AZURE_CLIENT_SECRET` repository secret, are no longer read by anything. Delete both: until then the secret still signs as Kangentic for anyone who holds it. `/release` names a leftover `AZURE_CLIENT_SECRET` in its pre-flight report until it is gone.
 
 Two details in the workflow carry weight:
 
