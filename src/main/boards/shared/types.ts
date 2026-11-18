@@ -202,6 +202,17 @@ export interface BoardAdapter {
    */
   resolveLabel?(repository: string): Promise<string | null>;
 
+  /**
+   * Renew every saved browser sign-in that is due (`isSignInRenewalDue`), so its
+   * refresh token does not lapse while the user imports nothing. Called by the
+   * keep-alive pass (`../sign-in-keep-alive.ts`) shortly after launch and once a
+   * day. A pasted token or key, a recent sign-in and no sign-in are left alone. A
+   * renewal the provider refuses or does not answer resolves like any other: the
+   * next import shows it. Only a failure nobody expected rejects. A provider whose
+   * sign-in never lapses (Trello), or that has no browser sign-in, omits this.
+   */
+  keepSignInAlive?(now?: number): Promise<void>;
+
   /** Future: initiate an auth flow (PAT, OAuth, CLI). Not wired up yet. */
   authenticate?(input: AuthInput): Promise<AuthResult>;
 

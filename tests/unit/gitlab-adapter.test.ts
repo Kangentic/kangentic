@@ -17,6 +17,7 @@ const { GitLabAdapter } = await import('../../src/main/boards/adapters/gitlab/ad
 const { clearGitLabProbeCache } = await import('../../src/main/boards/adapters/gitlab/instance');
 const { clearGitLabRenewals } = await import('../../src/main/boards/adapters/gitlab/fresh-credential');
 const { encodeGitLabRepository } = await import('../../src/main/boards/adapters/gitlab/url-parser');
+const { RefusalError, SignInRefusedError } = await import('../../src/shared/refusal');
 type GitLabCredential = import('../../src/main/boards/adapters/gitlab/credential-store').GitLabCredential;
 
 const GITLAB_COM: GitLabCredential = { site: 'https://gitlab.com', method: 'token', secret: 'glpat-com', account: 'dev', savedAt: '2026-11-17T00:00:00.000Z' };
@@ -225,6 +226,55 @@ describe('sign-in renewal', () => {
   });
 });
 
+/**
+ * What a user loses without these: a browser sign-in nobody imports from is
+ * renewed only when its two-hour access token is asked for, so nothing kept it
+ * fresh between imports. And a keep-alive that renewed a personal access token,
+ * or a sign-in renewed yesterday, would ask gitlab.com for a token pair for nothing.
+ */
+describe('keepSignInAlive', () => {
+  const SAVED_AT = '2026-11-01T00:00:00.000Z';
+  const EIGHT_DAYS_ON = Date.parse('2026-11-09T00:00:00.000Z');
+  const SIX_DAYS_ON = Date.parse('2026-11-07T00:00:00.000Z');
+
+  /** A sign-in whose access token is hours from lapsing, so only its age makes it due. */
+  function idleOauthCredential(): GitLabCredential {
+    return { ...expiringOauthCredential(), expiresAt: new Date(EIGHT_DAYS_ON + 90 * 60_000).toISOString(), savedAt: SAVED_AT };
+  }
+
+  it('renews a sign-in saved more than seven days ago and saves the new pair, with no API call', async () => {
+    const { adapter, requests, saved } = recordingAdapter({ 'https://gitlab.com': idleOauthCredential() }, (url) =>
+      url.pathname === '/oauth/token' ? { body: RENEWED_TOKENS } : undefined);
+    await adapter.keepSignInAlive(EIGHT_DAYS_ON);
+    expect(requests.map((request) => request.url.pathname)).toEqual(['/oauth/token']);
+    expect(new URLSearchParams(requests[0].body).get('refresh_token')).toBe('old-refresh');
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ secret: 'new-access', refreshToken: 'new-refresh' });
+  });
+
+  it('leaves a recent sign-in and a personal access token alone', async () => {
+    const recent = recordingAdapter({ 'https://gitlab.com': idleOauthCredential() }, () => undefined);
+    await recent.adapter.keepSignInAlive(SIX_DAYS_ON);
+    const token = recordingAdapter({ 'https://gitlab.com': { ...GITLAB_COM, savedAt: SAVED_AT } }, () => undefined);
+    await token.adapter.keepSignInAlive(EIGHT_DAYS_ON);
+    expect(recent.requests).toEqual([]);
+    expect(token.requests).toEqual([]);
+  });
+
+  it('resolves when GitLab refuses the renewal, and saves nothing', async () => {
+    const { adapter, saved } = recordingAdapter({ 'https://gitlab.com': idleOauthCredential() }, (url) =>
+      url.pathname === '/oauth/token' ? { status: 400, body: { error: 'invalid_grant' } } : undefined);
+    await expect(adapter.keepSignInAlive(EIGHT_DAYS_ON)).resolves.toBeUndefined();
+    expect(saved).toEqual([]);
+  });
+
+  it('throws a failure nobody expected, so the pass can report it', async () => {
+    const { adapter } = recordingAdapter({ 'https://gitlab.com': idleOauthCredential() }, (url) =>
+      url.pathname === '/oauth/token' ? { status: 503, body: {} } : undefined);
+    await expect(adapter.keepSignInAlive(EIGHT_DAYS_ON)).rejects.toMatchObject({ status: 503 });
+  });
+});
+
 describe('checkPrerequisites', () => {
   it('reads a 401 from the user endpoint as a refused token, with GitLab\'s text', async () => {
     const { adapter } = adapterWith({ [GITLAB_COM.site]: GITLAB_COM }, (url) =>
@@ -254,6 +304,22 @@ describe('refusals', () => {
     }) as typeof fetch;
     const adapter = new GitLabAdapter({ loadCredentials: async () => ({}), saveCredential: async () => {}, fetchImpl: unreachable });
     await expect(adapter.getAuthStatus('https://git.example.com/platform/api')).rejects.toThrow("Couldn't reach git.example.com.");
+  });
+
+  // Add Source acts on the class: a refused sign-in reopens Connect, in GitLab's own words,
+  // and a source GitLab cannot find must not.
+  it('marks a 401 on a source check as the saved sign-in being refused, and a 404 as a plain refusal', async () => {
+    const refused = adapterWith({ 'https://gitlab.com': GITLAB_COM }, () => ({ status: 401, body: { message: '401 Unauthorized' } }));
+    const signInError = await refused.adapter.prepareSource(encodeGitLabRepository({ base: 'https://gitlab.com', path: 'acme/web' }))
+      .then(() => null, (error: unknown) => error);
+    expect(signInError).toBeInstanceOf(SignInRefusedError);
+    expect((signInError as Error).message).toBe('401 Unauthorized');
+
+    const missing = adapterWith({ 'https://gitlab.com': GITLAB_COM }, () => ({ status: 404, body: { message: '404 Project Not Found' } }));
+    const sourceError = await missing.adapter.prepareSource(encodeGitLabRepository({ base: 'https://gitlab.com', path: 'acme/web' }))
+      .then(() => null, (error: unknown) => error);
+    expect(sourceError).toBeInstanceOf(RefusalError);
+    expect(sourceError).not.toBeInstanceOf(SignInRefusedError);
   });
 });
 

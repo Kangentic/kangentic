@@ -87,6 +87,19 @@ function uncovered(providers: string[], covered: Iterable<string>): string[] {
   return providers.filter((provider) => !names.some((name) => name === provider || name.startsWith(`${provider} `))).sort();
 }
 
+/**
+ * Browser sign-ins whose token never lapses, so there is nothing to keep alive.
+ * Every other one implements `BoardAdapter.keepSignInAlive`.
+ */
+const SIGN_INS_THAT_NEVER_LAPSE: Record<string, string> = {
+  trello: 'The sign-in asks Trello for one token with expiration=never. There is no refresh token.',
+};
+
+/** The providers that neither renew an idle sign-in nor are listed as never lapsing, sorted. */
+function withoutKeepAlive(providers: string[], renews: (provider: string) => boolean): string[] {
+  return providers.filter((provider) => !renews(provider) && !(provider in SIGN_INS_THAT_NEVER_LAPSE)).sort();
+}
+
 /** The shipped values with every id (each `{ value, source }` field) replaced. */
 function withEveryId(values: ShippedValues, id: string): ShippedValues {
   const replaced = Object.entries(values).map(([key, value]) => {
@@ -145,6 +158,19 @@ describe('every board that signs in through the browser', () => {
     expect(results.filter((result) => result.status === 'ok')).toEqual([]);
   });
 
+  it('keeps its sign-in alive, or is listed with why its token never lapses', () => {
+    const adapters = new Map(boardRegistry.list().map((adapter) => [String(adapter.id), adapter]));
+    const unregistered = providers.filter((provider) => !adapters.has(provider));
+    expect(unregistered, 'A LoopbackProvider has no adapter registered under the same id, so this test cannot check it.').toEqual([]);
+    expect(
+      withoutKeepAlive(providers, (provider) => typeof adapters.get(provider)?.keepSignInAlive === 'function'),
+      'A browser sign-in is never renewed while idle. Implement BoardAdapter.keepSignInAlive on its adapter, or add it to SIGN_INS_THAT_NEVER_LAPSE with the reason.',
+    ).toEqual([]);
+    const staleExemptions = Object.keys(SIGN_INS_THAT_NEVER_LAPSE)
+      .filter((provider) => !providers.includes(provider) || typeof adapters.get(provider)?.keepSignInAlive === 'function');
+    expect(staleExemptions, 'SIGN_INS_THAT_NEVER_LAPSE names a provider that is gone or that now renews itself.').toEqual([]);
+  });
+
   it('has its owner steps and its probe written down', () => {
     const ownerSteps = tableUnder(boardsDoc, 'Owner steps for the browser sign-ins').map((row) => row[0]);
     const dailyCheck = tableUnder(boardsDoc, 'Daily sign-in check').map((row) => row[0]);
@@ -174,6 +200,12 @@ describe('the comparisons can fail', () => {
     expect(uncovered(providers, tableUnder(withoutGitLab, 'Owner steps for the browser sign-ins').map((row) => row[0]))).toEqual(['gitlab']);
     expect(uncovered(providers, tableUnder(withoutGitLab, 'Daily sign-in check').map((row) => row[0]))).toEqual(['gitlab']);
     expect(tableUnder(withoutGitLab, 'Adapter Status')).toHaveLength(boardRegistry.list().length - 1);
+  });
+
+  it('names a browser sign-in that nothing keeps alive', () => {
+    expect(withoutKeepAlive(['jira', 'trello', 'linear', 'gitlab'], (provider) => provider !== 'linear')).toEqual(['linear']);
+    // Trello is exempt by name, not by having a renewal.
+    expect(withoutKeepAlive(['trello'], () => false)).toEqual([]);
   });
 
   it('refuses a union or a section it cannot read', () => {

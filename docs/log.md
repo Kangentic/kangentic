@@ -13,6 +13,16 @@ what Jira, Trello, Linear and GitLab each need registered, and the decision that
 browser sign-in. Its "Daily sign-in check" gains the GitLab client row. `releases/deployment.md` lists the eight signing secrets `preflight-signing` now
 requires and the two new workflows.
 
+**Changed:** the four browser sign-ins are registered. `integrations/boards.md` says where each app
+lives, what each provider really answers (all seen from the registered clients), what expires, why
+Trello stays on its API key, and how the keep-alive pass renews an idle Linear, Jira or GitLab
+sign-in (`BoardAdapter.keepSignInAlive`, `src/main/boards/sign-in-keep-alive.ts`).
+`user-guide/backlog.md` says a browser sign-in is renewed in the background.
+
+**Changed:** `releases/deployment.md` and `releases/scheduled-checks.md` for the Windows signing
+sign-in, which moved from a client secret to GitHub's OIDC federation. Seven signing values are
+required now, and none of the Azure ones is a credential.
+
 ## 2026-11-05
 
 **New audit:** `audits/ssh-transcript-exports-audit.md`, what real Kimi Code, Goose and OpenCode do on a

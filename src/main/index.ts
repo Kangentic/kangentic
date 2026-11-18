@@ -91,6 +91,7 @@ import { createSignalExitHandler } from './pty/shutdown/signal-exit';
 import { isProcessAlive } from './shared/process-liveness';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from './git/git-fetch-scheduler';
+import { signInKeepAlive } from './boards/sign-in-keep-alive';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
 import { worktreeCopyClient } from './git/worktree-copy/worktree-copy-client';
@@ -2387,6 +2388,10 @@ app.whenReady().then(async () => {
   trackSettingsSnapshot(getOptionalIpcContext()?.configManager ?? windowConfigManager);
   heartbeatInterval = setInterval(trackHeartbeat, HEARTBEAT_INTERVAL_MS);
 
+  // Renew board sign-ins that would lapse unused (Linear, Jira, GitLab). The first
+  // pass is two minutes out and reads three small files for a user with none.
+  signInKeepAlive.start();
+
   // Load React DevTools extension in development (fire-and-forget, after window is visible)
   if (!app.isPackaged) {
     loadReactDevTools();
@@ -2565,10 +2570,12 @@ function getShutdownDependencies() {
         stopHostMemorySampler();
         stopHostMemorySampler = null;
       }
-      // Stop the background PR-refresh and remote-fetch timers (both
-      // .unref()'d, but clear them explicitly so no tick fires mid-shutdown).
+      // Stop the background PR-refresh, remote-fetch and sign-in keep-alive
+      // timers (all .unref()'d, but clear them explicitly so no tick fires
+      // mid-shutdown).
       prRefreshScheduler.stop();
       gitFetchScheduler.stop();
+      signInKeepAlive.stop();
       // Stop conversation-memory indexing synchronously: drop pending finalize
       // timers and abandon any in-flight sweep (recovered on next open).
       retrievalService.dispose();

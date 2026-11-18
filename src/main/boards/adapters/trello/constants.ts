@@ -11,10 +11,12 @@ import { DOCS_BASE_URL } from '../../../../shared/docs-links';
 export const TRELLO_API_BASE = 'https://api.trello.com/1';
 
 /**
- * Kangentic's own Trello API key, from the Trello app the team owns. While it is empty, "Sign in
- * with Trello" is hidden and Connect offers only the user's own key.
+ * Kangentic's own Trello API key, from the Trello app the team owns, registered on 2026-11-17 with
+ * `https://kangentic.com` as its one allowed origin. A Trello key is public: it names the app and
+ * grants nothing without a user's token. While it is empty, "Sign in with Trello" is hidden and
+ * Connect offers only the user's own key.
  */
-export const TRELLO_API_KEY = '';
+export const TRELLO_API_KEY = '97e54a62dab01a06d65eb2c8c63d7af7';
 
 export function isTrelloSignInAvailable(): boolean {
   return TRELLO_API_KEY.length > 0;

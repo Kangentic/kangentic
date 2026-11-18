@@ -5,6 +5,7 @@ description: The BoardAdapter contract for importing issues from GitHub, Azure D
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
+  - resource: src/main/boards/sign-in-keep-alive.ts
   - resource: src/main/boards/shared/
   - resource: src/shared/types.ts
     title: ExternalSource, FileAttachmentRef
@@ -38,6 +39,7 @@ src/main/boards/
     loopback-sign-in.ts  # the one loopback server for a browser sign-in: Linear, Jira, Trello, GitLab
     pkce.ts              # createPkcePair: the PKCE verifier and S256 challenge Linear and GitLab use
     sealed-token.ts      # the sealed token a kangentic.com sign-in hands back: Jira, Trello
+    sign-in-renewal.ts   # isSignInRenewalDue: when an idle browser sign-in is renewed
     index.ts             # barrel
   adapters/
     github-common/    # shared `gh` CLI client (not a BoardAdapter)
@@ -51,6 +53,7 @@ src/main/boards/
     obsidian/         # a vault on this computer: two source types, added by folder
     trello/           # API key + user token, read-only, dedicated IPC group
   board-registry.ts   # BoardRegistry + boardRegistry singleton
+  sign-in-keep-alive.ts  # the pass that asks each adapter to renew its idle sign-ins
   index.ts
 ```
 
@@ -72,7 +75,7 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `status` | yes | `'stable'` for working providers, `'stub'` for placeholder folders. IPC handlers short-circuit stubs before dispatch. |
 | `checkPrerequisites(repository?)` | yes | Structured check of CLI availability + auth state. Returns `{ cliOk, authOk, message? }`. `repository` scopes the check for a provider whose sign-ins are per site (Jira); others ignore it. |
 | `checkCli(repository?)` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. The Import dialog passes the saved source's `repository` (`importCheckCli(source, repository)`), so a provider whose sign-ins are per site (Jira) checks the right one, and one whose source can disappear on its own says so before the list loads (Obsidian answers "Folder not found" here). An `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect. Providers that check only a CLI ignore the repository. |
-| `prepareSource(repository)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site, a GitLab link its server's real base and canonical path). It may also return `scopeKind` (`project` or `group`) and `host`, which the saved source keeps for its subtitle ("GitLab Group on git.example.com"). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. Implemented by Jira and GitLab; other providers keep `resolveLabel`. |
+| `prepareSource(repository)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site, a GitLab link its server's real base and canonical path). It may also return `scopeKind` (`project` or `group`) and `host`, which the saved source keeps for its subtitle ("GitLab Group on git.example.com"). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. When the saved sign-in is what the provider refused (a 401), the adapter throws `SignInRefusedError` (`src/shared/refusal.ts`), a `RefusalError` whose class name survives IPC: the popover reads it with `ipcErrorClassName` and opens the provider's Connect dialog with that line, the site filled in, and the add carried on once a new sign-in is saved. Before that, a refused sign-in on a site with no saved source could not be replaced at all. Implemented by Jira and GitLab; other providers keep `resolveLabel`. |
 | `workItemTypeIsItemType` | optional | True when `ExternalIssue.workItemType` is the item's type, so the import stores it as the backlog item's type. Set by Azure DevOps, Jira and GitLab; Asana uses the field for its section and leaves it off. |
 | `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. |
 | `hydrateForImport(repository, issues)` | optional | Fetch deferred per-item detail for the SELECTED import set and fold it into each body, called at import time only. Lets a provider keep the list fetch cheap. Implemented by Azure DevOps to fetch work item comments (one `az rest` per item) for just the items being imported instead of every listed one, and by Jira to fetch each issue's comments, four issues at a time. |
@@ -80,6 +83,7 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `downloadImages(markdownBody)` | yes | Download inline markdown images referenced in an issue body. |
 | `downloadFileAttachments(...)` | optional | Download authenticated file attachments. Takes `Array<FileAttachmentRef>` (see below). Implemented by Azure DevOps for `AttachedFile` relations, by Asana for inline images and uploaded attachments, by Trello for uploaded attachments (the OAuth header goes only to Trello's own download address), and by Obsidian for files embedded in a note (copied from the vault on disk). |
 | `resolveLabel(repository)` | optional | Resolve a human-readable display label from a repository identifier, called by the backlog handler after a source is added (Asana: project GID to project name; Linear: team key to team name; Trello: board short link to board name). Best-effort: returning `null`, or throwing, keeps the label the URL parser built. |
+| `keepSignInAlive(now?)` | optional | Renew every saved browser sign-in that is due, so its refresh token does not lapse while nothing is imported. Implemented by Linear, Jira and GitLab. A refused or unanswered renewal resolves; only a failure nobody expected rejects. See [What expires](#what-expires). |
 | `authenticate(input)` | optional | Future: PAT / OAuth flow. Not wired to any IPC handler yet. |
 | `listProjects(credentials)` | optional | Future: list boards/projects the user can pick from. |
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
@@ -235,15 +239,26 @@ kangentic.com repo) and serves Trello's return page, and both hand the token bac
   strings are `kangentic-jira-oauth-v1` and `kangentic-trello-oauth-v1`, so one provider's payload
   never opens as the other's.
 - **Jira.** `jira/oauth.ts` opens `auth.atlassian.com/authorize` with `audience=api.atlassian.com`,
-  the client id, `read:jira-work read:jira-user offline_access` and the Jira Software board read
-  scopes, `redirect_uri=https://kangentic.com/oauth/jira/callback` and `prompt=consent`. The payload
+  the client id, `read:jira-work read:jira-user offline_access` and the four granular scopes the
+  board reads need, `redirect_uri=https://kangentic.com/oauth/jira/callback` and `prompt=consent`.
+  Jira Software takes no classic scope, and Atlassian's gateway answers 401 on a board operation
+  unless the token holds every scope its spec lists for it: a board and its issues need
+  `read:board-scope:jira-software` with `read:issue-details:jira`, and a board's columns need
+  `read:board-scope.admin:jira-software` with `read:project:jira`. The first real sign-in asked for
+  the two board scopes alone, and a project imported while a board was refused (2026-11-17).
+  `tests/fixtures/jira-software-operation-scopes.json` holds each list as the spec gives it, and
+  `tests/unit/jira-oauth.test.ts` fails when the consent misses one or the client calls a board
+  path with no list recorded. The payload
   is Atlassian's token answer as sent, read loosely; one with no refresh token fails, since it would
   die within the hour. The site maps to a cloud id from
   `api.atlassian.com/oauth/token/accessible-resources`: the site's own `_edge/tenant_info` id, then
   its host. A site the grant does not cover shows "This sign-in can't open <site>." Every call goes
   through `api.atlassian.com/ex/jira/{cloudId}`. An `error` shows Atlassian's `error_description`
   when there is one (the service cuts it to 300 characters), otherwise a line for the code
-  (`access_denied`, `temporarily_unavailable`, `server_error`) or the code itself.
+  (`access_denied`, `temporarily_unavailable`, `server_error`) or the code itself. An Atlassian
+  account with no Jira site never reaches the consent page: Atlassian shows its own "Access denied"
+  page and sends nothing back (seen 2026-11-17), so the waiting screen's Back and Cancel and the
+  five-minute timeout are the way out.
 - **Jira tokens.** `jira/oauth-tokens.ts` renews five minutes before expiry and once after a 401, by
   `POST https://kangentic.com/oauth/jira/refresh` with `{ "refresh_token" }`. Atlassian rotates the
   refresh token, so the new pair is saved before the new access token is used, one refresh runs per
@@ -277,33 +292,92 @@ kangentic.com repo) and serves Trello's return page, and both hand the token bac
 
 ## Owner steps for the browser sign-ins
 
-Four sign-ins ship switched off. Jira, Trello, Linear and GitLab each have an empty client id or key
-(`JIRA_OAUTH_CLIENT_ID`, `TRELLO_API_KEY`, `LINEAR_OAUTH_CLIENT_ID`, `GITLAB_COM_OAUTH_CLIENT_ID`), and
-an empty value hides that sign-in and leaves the token or key as the way in. Each needs an app
-registered under an account the team owns, and then its id committed. This is the whole list. As of
-2026-11-17 none is registered.
+Jira, Trello, Linear and GitLab each sign in through an app registered under an account the team
+owns. The app's public id is one constant (`JIRA_OAUTH_CLIENT_ID`, `TRELLO_API_KEY`,
+`LINEAR_OAUTH_CLIENT_ID`, `GITLAB_COM_OAUTH_CLIENT_ID`), and an empty constant hides that sign-in
+and leaves the token or key as the way in. This table is everything each registration holds, so an
+app that is lost or revoked can be made again from it.
 
 | Sign-in | Register | With | Then |
 |---|---|---|---|
-| Trello | A Power-Up in the Power-Up admin portal (`trello.com/power-ups/admin`), then its API key | Allowed origins: `https://kangentic.com`. With no allowed origin Trello refuses every `return_url` | `TRELLO_API_KEY` in `trello/constants.ts` |
+| Trello | An app at `trello.com/apps/admin`, made as an app and not a Power-Up, then **Generate a new API key** on its Trello Auth tab | Allowed origins: `https://kangentic.com`. With no allowed origin Trello refuses every `return_url`. The app belongs to one Trello Workspace, and Trello documents no way to move it | `TRELLO_API_KEY` in `trello/constants.ts`. The secret beside the key is not used |
 | Linear | An OAuth application (Settings, API) | Callback URLs `http://127.0.0.1:37421/callback`, `http://127.0.0.1:37422/callback` and `http://127.0.0.1:37423/callback`, which Linear matches exactly. Public on, or only the workspace that made it can sign in | `LINEAR_OAUTH_CLIENT_ID` in `linear/constants.ts`. Linear also shows a client secret, which nothing uses: the exchange is PKCE |
-| GitLab | An application on gitlab.com, a group's or a user's | Redirect URI `http://127.0.0.1/callback`, Confidential off, scope `read_api` | `GITLAB_COM_OAUTH_CLIENT_ID` in `gitlab/constants.ts`. Its secret is not used either |
-| Jira | An OAuth 2.0 integration in the Atlassian developer console | The Jira API scopes `read:jira-work`, `read:jira-user`, `read:board-scope:jira-software` and `read:board-scope.admin:jira-software`. Callback URL `https://kangentic.com/oauth/jira/callback`. Distribution set to Sharing, because a new app is private and only its owner can sign in | The client id and secret as the `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET` Pages secrets on kangentic.com, then a redeploy of the site, then `JIRA_OAUTH_CLIENT_ID` in `jira/constants.ts`. Until the secrets are live the callback answers `error=server_error` |
+| GitLab | An application on gitlab.com under a group (Settings, Applications, which only a group Owner sees), so the owners can change without a new id | Redirect URI `http://127.0.0.1/callback`, Confidential off, scope `read_api` | `GITLAB_COM_OAUTH_CLIENT_ID` in `gitlab/constants.ts`. Its secret is not used either |
+| Jira | An OAuth 2.0 integration in the Atlassian developer console, access type Resource-level, so a grant covers the one site the user picks | Under Permissions, Jira API: the classic scopes `read:jira-work` and `read:jira-user`, and the granular scopes `read:board-scope:jira-software`, `read:board-scope.admin:jira-software`, `read:issue-details:jira` and `read:project:jira`. The list must equal `JIRA_OAUTH_SCOPES`, less `offline_access`. Under Authorization: callback URL `https://kangentic.com/oauth/jira/callback`. Under Distribution: Sharing with anyone, because a new app is private and only its owner can sign in. Sharing needs a vendor name and a privacy policy URL (`https://kangentic.com/privacy/`), and asks whether the app stores personal data | The client id and secret as the `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET` Pages secrets on kangentic.com, then a redeploy of the site, then `JIRA_OAUTH_CLIENT_ID` in `jira/constants.ts`. Until the secrets are live the callback answers `error=server_error` |
+
+Where each one stands, as of 2026-11-17:
+
+| Sign-in | Registered | Lives in |
+|---|---|---|
+| Trello | Yes, key live and `https://kangentic.com` allowed | The team account's Trello Workspace |
+| Linear | Yes, Public on | The team's Linear workspace |
+| Jira | Yes, shared with anyone, declared as storing no personal data, both Pages secrets live | The team account's Atlassian developer console |
+| GitLab | Yes | The private `kangentic` group on gitlab.com, so its owners can change without a new id |
 
 After each registration, run one real sign-in in the system browser. That is the only run of the hop
 from the public site to `127.0.0.1`, which no test reaches. Where the token expires (Jira, Linear,
 GitLab), also see one refresh save a new pair.
 
-Three answers are read from documentation or source and not yet seen from a real client:
+All four were run that way in a preview build on 2026-11-17. Each sign-in saved a credential and
+listed its source: a Linear team, a Trello board, a GitLab group, and a Jira board with its issues
+and its columns in board order. With the renewal threshold lowered to three minutes for the run,
+the keep-alive pass renewed the Linear, GitLab and Jira sign-ins with no import under way, each
+source still read afterwards, and Trello's credential was left untouched. Jira's renewal went
+through kangentic.com's refresh route with the real secret.
 
-- **Atlassian, for a refresh token it does not know.** Its guide gives 403 `invalid_grant`. Forum
-  reports show 403 `unauthorized_client` with "refresh_token is invalid" for the same case. The
-  desktop is right either way, since it reads any 4xx but 408 and 429 as a refusal. The daily
-  sign-in check passes either one, and tells the second from a refused client by its description.
-- **Linear, for a made-up code and a client it knows.** `invalid_grant` is expected. `invalid_client`
-  for a client it does not know was seen on 2026-11-17.
-- **gitlab.com, for a loopback redirect on a port that was never registered.** See
-  [GitLab](#gitlab). If gitlab.com refuses it, GitLab moves to three registered ports, as Linear has.
+### What expires
+
+Nothing the team registered has an end date. No provider documents one for an app, its id or its
+key, and Atlassian documents none for its secret, the only secret in use. What expires is each
+user's own sign-in, on the provider's terms:
+
+| Sign-in | The user's token | Lapses when |
+|---|---|---|
+| Trello | One token, asked for with `expiration=never` | Never. The user revokes it in Trello, or the key is regenerated |
+| Linear | A 24 hour access token and a refresh token | No refresh for 30 days. Each refresh starts a new 30 days, and plain API calls do not |
+| Jira | A one hour access token and a refresh token | No refresh for 90 days |
+| GitLab | A 2 hour access token and a refresh token | GitLab documents no end for the refresh token |
+
+**The keep-alive pass.** An adapter renews a sign-in only when an import reads through it, so a
+user who opened Kangentic daily and imported from Linear monthly was signed out. Two minutes after
+launch and then once a day, `sign-in-keep-alive.ts` calls `keepSignInAlive` on every adapter that
+has one. Each renews the browser sign-ins it saved more than seven days ago
+(`SIGN_IN_RENEWAL_AFTER_MS`, read against the `savedAt` every sign-in and refresh writes), through
+the same one-at-a-time refresh an import uses. So a sign-in now lapses only when Kangentic itself
+stays closed for the provider's whole window.
+
+- **What a pass costs.** Nothing on the network for a user with no browser sign-in: each adapter
+  reads its own credential file and returns. Otherwise one token request per sign-in per week.
+  Jira's goes through kangentic.com's refresh route like any other Jira refresh.
+- **A refusal is not handled twice.** Linear forgets a sign-in whose refresh token it refuses, as
+  on an import. Jira and GitLab keep theirs, and the next Import shows Connect. No toast: nothing
+  the user asked for failed.
+- **Failures.** A provider that is down or a network that is gone is skipped and tried again on
+  the next pass. Anything else is reported once per run with the provider as its tag
+  (`board-sign-in-keep-alive`), and the pass goes on to the next provider.
+- **Trello has none.** Its token never lapses. `tests/unit/board-adapter-coverage.test.ts` holds
+  every other browser sign-in to having one.
+
+**Trello stays on the API key, by decision (2026-11-17).** Trello's app page now recommends OAuth
+2.0 over the key. Its OAuth 2.0 guides (last updated 2026-10-01) give a one hour access token and a
+refresh token that expires after 90 days. A public client runs only through the Power-Up client
+library, inside a Power-Up iframe. Anything else is a confidential client with a secret, which
+would be a third kangentic.com Function. The key flow has one token that never expires, no secret,
+and no end date in Trello's authorization guide. Revisit this when Trello sets one.
+
+Every answer that was first read from documentation or source has now been seen from the
+registered clients, on 2026-11-17:
+
+- **Atlassian, for a refresh token it does not know.** 403 `unauthorized_client` with the
+  description "refresh_token is invalid". Its guide gives 403 `invalid_grant`, which the
+  registered client did not get. The desktop is right either way, since it reads any 4xx but 408
+  and 429 as a refusal. The daily sign-in check passes either one, and tells the first from a
+  refused client by its description.
+- **gitlab.com, for a loopback redirect on a port that was never registered.** Accepted: it showed
+  its consent page for `http://127.0.0.1:54321/callback` against the registered
+  `http://127.0.0.1/callback`. GitLab keeps any free port and needs no registered list.
+- **Linear and gitlab.com, for a made-up code sent with the registered client id.** 400
+  `invalid_grant` from both. A client neither knows gets `invalid_client`.
 
 **Asana has no browser sign-in, by decision (2026-11-17).** Asana's OAuth documentation describes
 the code exchange with the app's client secret, and PKCE as an addition to it. It documents no
@@ -353,15 +427,14 @@ check too, and so does no answer at all.
   `LINEAR_OAUTH_CLIENT_ID`, `GITLAB_COM_OAUTH_CLIENT_ID` or `DOCS_BASE_URL` replaces the shipped value. That checks a new key
   before it is committed, or points the page checks at a preview deployment. An empty variable counts
   as unset, so it cannot turn a shipped id's checks into pending ones.
-- **Answers not yet seen.** Three passing answers have never been seen with a real client:
-  Atlassian's `invalid_grant`, which its docs give for a refresh token it will not take, and
-  Linear's and gitlab.com's `invalid_grant` for a client each knows. The pull request that commits
-  each id runs this check, so that run confirms the answer or shows the real one. Atlassian's is
-  the one most likely to differ: forum reports show `unauthorized_client` with "refresh_token is
-  invalid" for the same case, from a client that works. The check passes that pair too, because
-  the description names the token and not the client, and it still fails `unauthorized_client`
-  with any other description. That second answer is as unseen as the first. The check never uses
-  Linear's refresh grant, which answers `invalid_grant` for a made-up client too.
+- **Answers not yet seen.** None. Every passing answer was seen from the registered clients on
+  2026-11-17 and is in the fixture: Trello's two for a live key, `invalid_grant` from Linear and
+  from gitlab.com, and Atlassian's 403 `unauthorized_client` with "refresh_token is invalid".
+  Atlassian's own guide gives `invalid_grant` for that case, which the check also passes and
+  nobody here has seen. It still fails `unauthorized_client` with any other description, because
+  only that description names the token and not the client. The check never uses Linear's refresh
+  grant, which answers `invalid_grant` for a made-up client too. A new sign-in lists its unseen
+  answers here until its app is registered.
 - **Who hears.** A run writes the table to its summary, one error annotation per failure and one
   notice per pending check. A failed scheduled run emails the person who last changed the
   workflow's schedule (its `cron` line), or who re-enabled the workflow after that, under that
@@ -390,8 +463,8 @@ link. Import is read-only; nothing is written back.
   admin registers: OAuth with PKCE (`read_api`), handed back to `http://127.0.0.1:<free port>/callback`
   through `shared/loopback-sign-in.ts`. Doorkeeper, GitLab's OAuth server, drops the port of a
   loopback IP redirect on both sides before comparing (RFC 8252 section 7.3), but not of `localhost`.
-  This is read from Doorkeeper's `uri_checker.rb`; nobody has tried it on gitlab.com yet, because the
-  OAuth app is not registered.
+  This is read from Doorkeeper's `uri_checker.rb`, and gitlab.com bore it out on 2026-11-17: it
+  showed its consent page for a port that was never registered.
   An empty `GITLAB_COM_OAUTH_CLIENT_ID` hides it. Access tokens last 2 hours; `fresh-credential.ts`
   renews one five minutes before expiry, once for overlapping callers, and saves the new pair before
   using it, because GitLab revokes the old refresh token. Every personal access token expires (365
@@ -467,7 +540,7 @@ vault, and the vault is read on this computer even for a remote project.
 5. **No IPC changes.** Dispatch goes through the registry in `src/main/ipc/handlers/backlog.ts`: `boardRegistry.requireStable(source)` for the reconcile and the import, `boardRegistry.get(source)` for the check and for adding a source. Adding a provider does not touch this file.
 
 6. **Docs row.** Add the provider to the [Adapter Status](#adapter-status) table, saying how it signs in.
-7. **A browser sign-in brings its coverage.** If the provider signs in through the browser, give it a name in `LoopbackProvider`, a row in `scripts/check-integrations.mjs`, a row in [Owner steps for the browser sign-ins](#owner-steps-for-the-browser-sign-ins) and a row in the [Daily sign-in check](#daily-sign-in-check) table, and keep a pasted token or key beside it. `.claude/rules/board-adapter-coverage.md` has each step and why.
+7. **A browser sign-in brings its coverage.** If the provider signs in through the browser, give it a name in `LoopbackProvider`, a row in `scripts/check-integrations.mjs`, a row in [Owner steps for the browser sign-ins](#owner-steps-for-the-browser-sign-ins) and a row in the [Daily sign-in check](#daily-sign-in-check) table, keep a pasted token or key beside it, and where its token expires give the adapter a `keepSignInAlive` (see [What expires](#what-expires)). `.claude/rules/board-adapter-coverage.md` has each step and why.
 
 The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if a new provider is added to the union but not registered, or if any adapter is missing a required field. `tests/unit/board-adapter-coverage.test.ts` fails when an adapter has no row in the status table, or when a browser sign-in has no row in the daily check, the owner steps or the check's table.
 
@@ -497,8 +570,8 @@ with Trello** opens the approval page for Kangentic's own key, `TRELLO_API_KEY` 
 `trello/constants.ts`, and waits while kangentic.com's return page hands the token back (see
 [Browser sign-ins through kangentic.com](#browser-sign-ins-through-kangenticcom)); there is nothing
 to paste. A declined approval, a page that fails or a timeout goes back to the two choices with the
-reason. The choice shows only when that constant is set. It is empty until the team makes its Trello
-app, so a build without it opens straight on the own-key steps. The key never crosses to the
+reason. The choice shows only when that constant is set, so a build with it empty opens straight
+on the own-key steps. The key never crosses to the
 renderer: `boards:trello:signIn` reads it in main.
 
 Every key Trello issues shares one rate limit across all of its tokens (300 requests per 10

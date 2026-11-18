@@ -8,12 +8,13 @@
 import { DOCS_BASE_URL } from '../../../../shared/docs-links';
 
 /**
- * Public client id of Kangentic's Atlassian OAuth app. Not a secret: Atlassian's
- * consent page needs it, and the secret stays on kangentic.com. Empty until the
- * app is registered, and an empty id hides "Sign in with Atlassian", leaving the
- * API token as Cloud's one way in.
+ * Public client id of Kangentic's Atlassian OAuth app, registered on 2026-11-17
+ * with resource-level access, so a grant covers the one site the user picks.
+ * Not a secret: Atlassian's consent page needs it, and the secret stays on
+ * kangentic.com. An empty id hides "Sign in with Atlassian", leaving the API
+ * token as Cloud's one way in.
  */
-export const JIRA_OAUTH_CLIENT_ID = '';
+export const JIRA_OAUTH_CLIENT_ID = '6by0AlZqoY87FxgNsUxKzOXHleygaerR';
 
 export const JIRA_OAUTH_AUTHORIZE_URL = 'https://auth.atlassian.com/authorize';
 
@@ -29,6 +30,14 @@ export const JIRA_OAUTH_CALLBACK_PATH = '/jira/callback';
 /**
  * Read-only Jira, the Jira Software board reads, and `offline_access` for a
  * refresh token. The same list the Atlassian app is registered with.
+ *
+ * The two classic scopes cover the platform API (`/rest/api/3`). Jira Software
+ * takes no classic scope, and each board operation needs every granular scope
+ * Atlassian's spec lists for it: a board and its issues need
+ * `read:board-scope:jira-software` with `read:issue-details:jira`, and a board's
+ * columns need `read:board-scope.admin:jira-software` with `read:project:jira`.
+ * Without the second of each pair the gateway answers 401 on the board API alone,
+ * while a project, a filter and a search still work.
  */
 export const JIRA_OAUTH_SCOPES = [
   'read:jira-work',
@@ -36,6 +45,8 @@ export const JIRA_OAUTH_SCOPES = [
   'offline_access',
   'read:board-scope:jira-software',
   'read:board-scope.admin:jira-software',
+  'read:issue-details:jira',
+  'read:project:jira',
 ].join(' ');
 
 /** The Cloud sites a 3LO token can open, each with its cloud id. */

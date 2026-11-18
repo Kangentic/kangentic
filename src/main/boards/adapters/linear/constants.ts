@@ -8,12 +8,13 @@ export const LINEAR_OAUTH_TOKEN_URL = 'https://api.linear.app/oauth/token';
 export const LINEAR_OAUTH_REVOKE_URL = 'https://api.linear.app/oauth/revoke';
 
 /**
- * Public client id of Kangentic's Linear OAuth application. Not a secret: the
- * sign-in uses PKCE, so no client secret ships. Empty until the application is
- * registered, and an empty id hides the "Sign in with Linear" choice, leaving
- * the personal API key as the only way in.
+ * Public client id of Kangentic's Linear OAuth application, registered on
+ * 2026-11-17 in the team's own Linear workspace with Public on, so any
+ * workspace can sign in. Not a secret: the sign-in uses PKCE, so no client
+ * secret ships. An empty id hides the "Sign in with Linear" choice, leaving the
+ * personal API key as the only way in.
  */
-export const LINEAR_OAUTH_CLIENT_ID = '';
+export const LINEAR_OAUTH_CLIENT_ID = '8168d3421eb40a88f70a27ecb44ba8fe';
 
 /**
  * Loopback ports registered as redirect URIs on the OAuth application, tried in

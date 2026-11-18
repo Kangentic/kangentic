@@ -41,18 +41,25 @@ When you add a board adapter, or give an existing one a browser sign-in:
    one.
 7. **No secret in the app.** PKCE to the loopback where the provider takes a public client. Where
    it does not, the secret lives in a kangentic.com Function, as Jira's does.
+8. **An idle sign-in is kept alive.** A sign-in with a refresh token implements
+   `BoardAdapter.keepSignInAlive`, which renews what `isSignInRenewalDue` says is due through the
+   adapter's own one-at-a-time refresh. The pass in `src/main/boards/sign-in-keep-alive.ts` calls
+   it, so the adapter adds no timer of its own. A sign-in whose token never lapses (Trello) is
+   listed with its reason in the test below instead. Where the provider offers a flow whose token
+   does not expire and has no end date, take that one over a newer flow with short-lived tokens.
 
 A provider that signs in through a CLI's own login (`gh`, `az`), a pasted token alone, or a local
 folder has no browser sign-in. Step 1 is all it owes.
 
 ## Enforcement (self-maintaining)
 
-- **Test (mechanical, CI):** `tests/unit/board-adapter-coverage.test.ts` holds steps 1, 2, 4 and 5
-  against the real registry, the real `LoopbackProvider` union and the real check script. It fails
-  when a registered adapter has no row in the "Adapter Status" table, and when a `LoopbackProvider`
-  has no `pending` row in the daily check with its id empty, is sent a request while its id is
-  empty, has no `fail` row when its provider does not answer, or is missing from the owner steps
-  or the "Daily sign-in check" table. It runs `runChecks` itself, so a row that exists only on paper
+- **Test (mechanical, CI):** `tests/unit/board-adapter-coverage.test.ts` holds steps 1, 2, 4, 5
+  and 8 against the real registry, the real `LoopbackProvider` union and the real check script. It
+  fails when a registered adapter has no row in the "Adapter Status" table, and when a
+  `LoopbackProvider` has no `pending` row in the daily check with its id empty, is sent a request
+  while its id is empty, has no `fail` row when its provider does not answer, is missing from the
+  owner steps or the "Daily sign-in check" table, or has an adapter with no `keepSignInAlive` and
+  no entry in the test's `SIGN_INS_THAT_NEVER_LAPSE`. It runs `runChecks` itself, so a row that exists only on paper
   does not pass. Its red cases add a provider to the union and remove a row from the docs in
   memory. Runs in CI via `npm run test:unit`.
 - **Test (mechanical, CI):** `tests/unit/check-integrations.test.ts` holds every value the check

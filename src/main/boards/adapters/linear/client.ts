@@ -23,6 +23,7 @@ import { refreshAccessToken, type LinearTokenSet } from './oauth-tokens';
 import {
   downloadFile,
   extractInlineImageUrls,
+  isSignInRenewalDue,
   mediaTypeFromFilename,
   retryAfterMsFrom,
   withBackoff,
@@ -260,6 +261,26 @@ export class LinearClient {
   async saveCredential(credential: LinearCredential): Promise<void> {
     await saveLinearCredential(credential);
     this.credential = credential;
+  }
+
+  /**
+   * Renew a browser sign-in that is due, so its refresh token (good for 30 days
+   * from the last refresh) does not lapse while nothing is imported. An API key,
+   * a recent sign-in and no sign-in are left alone. Linear refusing the refresh
+   * token forgets the sign-in, exactly as it does on an import.
+   */
+  async keepSignInAlive(now: number = Date.now()): Promise<void> {
+    const credential = await this.getCredential();
+    if (!credential || credential.kind !== 'oauth') return;
+    if (!isSignInRenewalDue(credential.savedAt, now)) return;
+    try {
+      this.credential = await this.refreshOrDisconnect(credential);
+    } catch (error) {
+      // A refused refresh token already cleared the sign-in, and the next Import
+      // shows Connect Linear. Anything else is the caller's to report.
+      if (isRefreshTokenRefused(error)) return;
+      throw error;
+    }
   }
 
   async getViewer(): Promise<LinearViewer> {

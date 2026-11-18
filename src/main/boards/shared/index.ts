@@ -22,3 +22,4 @@ export { encryptSecret, decryptSecret, isGenuineEncryptionAvailable } from './au
 export { retryAfterMsFrom, withBackoff, sleep } from './rate-limit';
 export { convertHtmlToMarkdown } from './html-to-markdown';
 export { formatCommentsSection } from './comments-section';
+export { SIGN_IN_RENEWAL_AFTER_MS, isSignInRenewalDue } from './sign-in-renewal';

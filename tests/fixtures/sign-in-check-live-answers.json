@@ -1,5 +1,5 @@
 {
-  "about": "Answers scripts/check-integrations.mjs got from the live services on the date below (UTC), recorded by sending the check's own requests with no credentials. The Trello, Linear and GitLab requests used a made-up key and client id. The Jira redirect's port and nonce are replaced with {port} and {nonce}. The return page's data-pub and data-nonce belong to a throwaway probe key. The bad-state page's body is left out because it repeats the good page's style and script.",
+  "about": "Answers scripts/check-integrations.mjs got from the live services on the date below (UTC), recorded by sending the check's own requests with no credentials. The Trello, Linear and GitLab requests used a made-up key and client id, except the entries named LiveKey and KnownClient, which used the registered ones (all are public). jiraRefreshKnownClient is what the token service passes back from Atlassian for a made-up refresh token once its secrets are set. The approval page's body for a live key is left out because the check reads only its status. The Jira redirect's port and nonce are replaced with {port} and {nonce}. The return page's data-pub and data-nonce belong to a throwaway probe key. The bad-state page's body is left out because it repeats the good page's style and script.",
   "capturedOn": "2026-11-18",
   "site": "https://kangentic.com",
   "returnPage": {
@@ -39,6 +39,13 @@
     },
     "body": "{\"error\":\"server_error\"}"
   },
+  "jiraRefreshKnownClient": {
+    "status": 403,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"error\":\"unauthorized_client\",\"error_description\":\"refresh_token is invalid\"}"
+  },
   "trelloUnknownKey": {
     "status": 401,
     "headers": {
@@ -53,6 +60,20 @@
     },
     "body": "App not found"
   },
+  "trelloLiveKey": {
+    "status": 400,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8"
+    },
+    "body": "invalid token"
+  },
+  "trelloApprovalLiveKey": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/html; charset=utf-8"
+    },
+    "body": null
+  },
   "linearUnknownClient": {
     "status": 400,
     "headers": {
@@ -60,11 +81,25 @@
     },
     "body": "{\"error\":\"invalid_client\",\"error_description\":\"Invalid client: client is invalid\"}"
   },
+  "linearKnownClient": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body": "{\"error\":\"invalid_grant\",\"error_description\":\"Invalid grant: authorization code is invalid\"}"
+  },
   "gitlabUnknownClient": {
     "status": 401,
     "headers": {
       "content-type": "application/json; charset=utf-8"
     },
     "body": "{\"error\":\"invalid_client\",\"error_description\":\"Client authentication failed due to unknown client, no client authentication included, or unsupported authentication method.\"}"
+  },
+  "gitlabKnownClient": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body": "{\"error\":\"invalid_grant\",\"error_description\":\"The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client.\"}"
   }
 }

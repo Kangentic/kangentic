@@ -1,0 +1,9 @@
+{
+  "about": "The OAuth 2.0 scopes Atlassian's Jira Software Cloud spec lists for each board operation Kangentic's Jira client calls, copied from the `security` entry of each GET operation in developer.atlassian.com/cloud/jira/software/swagger.v3.json on the date below (UTC). Jira Software takes no classic scope, and the gateway answers 401 on an operation unless the token holds every scope in its list. The registered app first asked for the two board scopes alone: a project imported and a board was refused.",
+  "capturedOn": "2026-11-18",
+  "operations": {
+    "/rest/agile/1.0/board/{boardId}": ["read:board-scope:jira-software", "read:issue-details:jira"],
+    "/rest/agile/1.0/board/{boardId}/configuration": ["read:board-scope.admin:jira-software", "read:project:jira"],
+    "/rest/agile/1.0/board/{boardId}/issue": ["read:board-scope:jira-software", "read:issue-details:jira"]
+  }
+}
