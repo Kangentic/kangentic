@@ -1139,7 +1139,8 @@ export function App() {
     }
 
     // This install cannot update itself until the user acts: the macOS read-only
-    // volume (DESKTOP-1A) or a .deb install with no package manager (DESKTOP-R).
+    // volume (DESKTOP-1A), a refused signature (DESKTOP-2R), a .deb install with
+    // no package manager (DESKTOP-R), or a sudo that cannot prompt (DESKTOP-44).
     // Main chooses the body and latches it for the app's lifetime, so this
     // toasts it verbatim under its title, same as onWriteFailed above.
     // Persistent rather than timed: unlike a failed write, this does not resolve

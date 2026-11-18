@@ -258,6 +258,11 @@ msgstr "Zeitüberschreitung bei der Linear-Anmeldung."
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Verschieben Sie Kangentic in den Ordner „Programme“, um es aktuell zu halten."
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "No graphical password prompt, such as pkexec, is installed."
+msgstr "Es ist keine grafische Passwortabfrage wie pkexec installiert."
+
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "No local port was free for GitLab sign-in."

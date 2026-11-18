@@ -11,6 +11,7 @@ import { reportHandledError } from './analytics/error-reporting';
 import { errorCodeOf, errorNameOf, firstFrameOf, markReported } from './analytics/handled-report';
 import { translateText } from './i18n/main-i18n';
 import { normalizeReleaseNotes } from './updater-release-notes';
+import { execFileAsync } from './utility-process/off-main-exec';
 import {
   bundlePathFromExecutable,
   readRunningAppSigning,
@@ -238,11 +239,13 @@ const ELEVATION_DENIED_PATTERN =
  * dpkg exits 1 or 2 while rpm exits 1, so a genuine install failure never
  * wears either code and stays reportable.
  *
- * Deliberate gap: sudo exits 1 on an authentication failure, and gksudo and
- * kdesudo exit 1 when cancelled, which is indistinguishable from a command
- * that ran and failed. Those declines are not suppressed. determineSudoCommand
- * resolves to pkexec on any current GNOME or KDE desktop, which is the case
- * that actually ships and the one this was written for.
+ * Exit 1 is not matched here. gksudo and kdesudo exit 1 when cancelled, which
+ * is indistinguishable from a command that ran and failed, so those declines
+ * still report. determineSudoCommand resolves to pkexec on a stock GNOME or KDE
+ * desktop, which is the case this was written for. A host with none of the four
+ * graphical front-ends falls back to bare sudo, whose exit 1 has its own gate:
+ * isSudoFallbackFailure below, which asks sudo itself whether it could have
+ * prompted (DESKTOP-44).
  *
  * The pattern is unanchored for the reason benign-renderer-errors.ts
  * documents. Nothing is appended to this message today, so anchoring would
@@ -362,6 +365,39 @@ async function handleSignatureRequirement(error: Error): Promise<void> {
   reportHandledError(report.error, { source: 'updater', running_signing: signing }, {}, report.fingerprint);
 }
 
+/**
+ * The `sudo -n true` probe still running, if any. One click fails twice, for
+ * `dpkg -i` and again for the `apt-get install -f -y` repair, and both failures
+ * wait on one probe. Cleared once it settles, because a user can add a sudoers
+ * rule mid-run, and a later failure deserves a fresh answer.
+ */
+let sudoProbeInFlight: Promise<SudoElevation> | null = null;
+
+/**
+ * Tell the user and drop the report when the install's bare-sudo fallback could
+ * not have prompted, and report as usual when it could have (DESKTOP-44).
+ *
+ * `reportStructuralFailure` is the handler's own reporting tail, so a host where
+ * sudo works, whose exit 1 came from the package manager, keeps the handler's
+ * latch and dedupe.
+ */
+async function handleSudoFallbackFailure(
+  error: Error,
+  errorPreview: string,
+  reportStructuralFailure: (failure: Error) => void,
+): Promise<void> {
+  sudoProbeInFlight ??= probeSudoElevation().finally(() => {
+    sudoProbeInFlight = null;
+  });
+  if (await sudoProbeInFlight !== 'cannot-elevate') {
+    reportStructuralFailure(error);
+    return;
+  }
+  console.log('[UPDATER] Counting but not reporting a sudo fallback that cannot prompt:',
+    errorPreview);
+  notifyUpdateBlocked(NO_GRAPHICAL_ELEVATION_MESSAGE);
+}
+
 /** The opening clause of the error DebUpdater dispatches when it finds no package manager. */
 const PACKAGE_MANAGER_MISSING_PATTERN = /Neither dpkg nor apt command found/;
 
@@ -386,6 +422,64 @@ const PACKAGE_MANAGER_MISSING_PATTERN = /Neither dpkg nor apt command found/;
  */
 export function isPackageManagerMissingError(error: Error): boolean {
   return PACKAGE_MANAGER_MISSING_PATTERN.test(error.message ?? '');
+}
+
+/** spawnSyncLog's template with determineSudoCommand's fallback as the command and exit 1. */
+const SUDO_FALLBACK_FAILURE_PATTERN = /\bCommand sudo exited with code 1\b/;
+
+/**
+ * True when a Linux install's elevation fell back to bare sudo and sudo exited 1.
+ *
+ * The command name is the elevator electron-updater picked, so `sudo` already
+ * means none of gksudo, kdesudo, pkexec or beesu was on PATH. A GUI-launched app
+ * has no terminal for sudo to ask on, so on most such hosts sudo exits 1 at once
+ * and no prompt is ever shown (DESKTOP-44). sudo also exits 1 when it ran the
+ * package manager and that failed, so this predicate alone does not decide
+ * anything. The handler asks `probeSudoElevation` which of the two it was.
+ *
+ * Message-only for the reason isElevationDeniedError's docblock gives, and never
+ * sudo's stderr, which classic sudo translates and the breadcrumbs filter. A
+ * separate predicate because nothing was declined, the same reason
+ * isPackageManagerMissingError is its own.
+ */
+export function isSudoFallbackFailure(error: Error): boolean {
+  return SUDO_FALLBACK_FAILURE_PATTERN.test(error.message ?? '');
+}
+
+/** How long `sudo -n true` may take. It never prompts, so it answers at once. */
+const SUDO_PROBE_TIMEOUT_MS = 5_000;
+
+/** What `sudo -n true` says about whether the install's sudo could have run. */
+export type SudoElevation = 'cannot-elevate' | 'can-elevate' | 'unknown';
+
+/** Runs `sudo -n true`. Resolves on exit 0 and rejects as execFile does otherwise. */
+export type SudoProbe = () => Promise<unknown>;
+
+const runSudoNonInteractiveProbe: SudoProbe = () =>
+  execFileAsync('sudo', ['-n', 'true'], { timeout: SUDO_PROBE_TIMEOUT_MS });
+
+/**
+ * Whether sudo could run a command for this app with no terminal prompt.
+ *
+ * `-n` makes sudo fail rather than ask. Classic sudo exits 1 when a password is
+ * needed, and sudo-rs parses `-n` the same way and exits with an
+ * InteractionRequired error, so any non-zero exit means the install's sudo could
+ * not have prompted either. A passwordless or cached sudo runs `true` and exits
+ * 0, and then the install's exit 1 came from the package manager, which is a
+ * real failure. A timeout, a kill, or a spawn error answers neither question,
+ * and the tie goes to reporting.
+ *
+ * Runs through execFileAsync, so the spawn happens in the pty host, not on main.
+ */
+export async function probeSudoElevation(probe: SudoProbe = runSudoNonInteractiveProbe): Promise<SudoElevation> {
+  try {
+    await probe();
+    return 'can-elevate';
+  } catch (probeError) { // report-ok: a failed `sudo -n` is the answer this probe asks for, not a defect
+    const failure = probeError as { code?: unknown; killed?: unknown } | null | undefined;
+    if (typeof failure?.code === 'number' && failure.code !== 0 && failure.killed !== true) return 'cannot-elevate';
+    return 'unknown';
+  }
 }
 
 /** strerror(EAGAIN), as macOS renders it into an NSError's description. */
@@ -488,6 +582,13 @@ const READ_ONLY_VOLUME_MESSAGE = msg`Move Kangentic to Applications to keep it u
 const SIGNATURE_REQUIREMENT_MESSAGE = msg`Download Kangentic again to keep it updated.`;
 
 /**
+ * The body for a Linux host whose only elevator is a sudo that cannot prompt
+ * from a GUI app (DESKTOP-44). It names the condition rather than a fix, because
+ * which package provides a polkit agent depends on the desktop.
+ */
+const NO_GRAPHICAL_ELEVATION_MESSAGE = msg`No graphical password prompt, such as pkexec, is installed.`;
+
+/**
  * Tell the user, once per app run, that this install can never update itself.
  * `message` is the toast's body, which the renderer shows verbatim, so a
  * descriptor is translated here, after the latch and window guards.
@@ -495,10 +596,12 @@ const SIGNATURE_REQUIREMENT_MESSAGE = msg`Download Kangentic again to keep it up
  * Latched for the reason write-failure-notice.ts latches: the condition is
  * permanent, so the rest of the run rediscovers it. On a read-only volume every
  * check does, and DESKTOP-1A produced 11 events from one install, which without
- * this flag would be 11 toasts. With no package manager every "Restart to update"
- * click does, and a refused signature (DESKTOP-2R) comes back on every check.
- * One latch covers all three. The Linux case never meets the other two. The two
- * macOS cases can both be true of one copy, and then the first one sent in a run
+ * this flag would be 11 toasts. With no package manager, or with only a sudo that
+ * cannot prompt (DESKTOP-44), every "Restart to update" click does, and the second
+ * fires twice per click. A refused signature (DESKTOP-2R) comes back on every
+ * check. One latch covers all four. The two Linux cases never meet each other or
+ * the macOS ones: a host with no package manager fails before any elevation. The
+ * two macOS cases can both be true of one copy, and then the first one sent in a run
  * is the one the user reads; the next launch tells them the other once the first
  * is fixed. The latch is in memory and not persisted on purpose - a
  * later launch of the same install still cannot update, and the person who missed
@@ -693,9 +796,31 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     }
   });
 
-  // Log every error. Surface three to the user: the read-only volume
-  // (DESKTOP-1A), a copy whose signature no release satisfies (DESKTOP-2R), and
-  // a .deb install with no package manager (DESKTOP-R). Each is permanent and
+  /** `name:code` of each structural updater failure reported since this init. */
+  const reportedUpdaterErrors = new Set<string>();
+  // Handled, so Sentry's global handlers never see it; forward the real
+  // error so structural updater failures are diagnosable, not just counted.
+  // The updater retries every check interval, so each failure reports once per
+  // run. A coded failure is keyed and fingerprinted on its name and code, so one
+  // cause is one issue whatever path hit it. A failure with no code has nothing
+  // to key on but where it was thrown: it latches on its first frame too, and
+  // Sentry groups it by stack, or every code-less failure after the first would
+  // be dropped as a repeat of it.
+  const reportStructuralFailure = (error: Error): void => {
+    const code = errorCodeOf(error);
+    const name = errorNameOf(error);
+    const firstFrame = firstFrameOf(error);
+    const latchKey = code ? `${name}:${code}` : `${name}:none:${firstFrame}`;
+    if (reportedUpdaterErrors.has(latchKey)) return;
+    reportedUpdaterErrors.add(latchKey);
+    reportHandledError(withoutUrlQueries(error), { source: 'updater' }, {}, code ? ['updater', name, code] : undefined);
+    markReported(error);
+  };
+
+  // Log every error. Surface four to the user: the read-only volume
+  // (DESKTOP-1A), a copy whose signature no release satisfies (DESKTOP-2R),
+  // a .deb install with no package manager (DESKTOP-R), and a Linux host whose
+  // only elevator is a sudo that cannot prompt (DESKTOP-44). Each is permanent and
   // silent and would otherwise leave an install frozen on its version with no
   // explanation. Everything else stays invisible, because there is nothing the
   // user could do about it.
@@ -719,8 +844,6 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   // (2026-04-16), so it is a telemetry decision rather than a cleanup.
   //
   // A NEW gate goes below trackEvent unless there is a reason to lose the count.
-  /** `name:code` of each structural updater failure reported since this init. */
-  const reportedUpdaterErrors = new Set<string>();
   autoUpdater.on('error', (error) => {
     console.error('[UPDATER] Error:', error);
     if (checkRetrying || downloadRetrying) return;
@@ -798,6 +921,24 @@ export function initUpdater(mainWindow: BrowserWindow): void {
       notifyUpdateBlocked(error.message);
       return;
     }
+    // A Linux install whose elevation fell back to bare sudo because none of the
+    // graphical front-ends is installed, and sudo exited 1 (DESKTOP-44). From a
+    // GUI app sudo has no terminal to ask on, so that is usually the user never
+    // being asked, which repeats on every click and is not ours to fix: counted,
+    // not filed, and the user hears about it. But a passwordless sudo exits 1
+    // when the package manager under it fails, which is ours, so `sudo -n true`
+    // decides, off main, and a host where it succeeds reports as below. Same
+    // position as the gates above.
+    if (isSudoFallbackFailure(error)) {
+      handleSudoFallbackFailure(error, errorPreview, reportStructuralFailure).catch((handlingError: unknown) => {
+        // The probe never rejects, so this is the toast or the reporting tail
+        // throwing, which is a defect of ours. Reported straight to the
+        // reporter rather than through the tail, which may be what threw.
+        console.warn('[UPDATER] Could not classify a sudo install failure:', handlingError);
+        reportHandledError(handlingError, { source: 'updater' });
+      });
+      return;
+    }
     // EAGAIN, arriving through macOS's NSError rendering rather than through
     // Node, which is the only reason isTransientUpdaterError's errno branches
     // miss it. As transient as the network blips above and treated the same.
@@ -815,22 +956,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
         errorPreview);
       return;
     }
-    // Handled, so Sentry's global handlers never see it; forward the real
-    // error so structural updater failures are diagnosable, not just counted.
-    // The updater retries every check interval, so each failure reports once per
-    // run. A coded failure is keyed and fingerprinted on its name and code, so one
-    // cause is one issue whatever path hit it. A failure with no code has nothing
-    // to key on but where it was thrown: it latches on its first frame too, and
-    // Sentry groups it by stack, or every code-less failure after the first would
-    // be dropped as a repeat of it.
-    const code = errorCodeOf(error);
-    const name = errorNameOf(error);
-    const firstFrame = firstFrameOf(error);
-    const latchKey = code ? `${name}:${code}` : `${name}:none:${firstFrame}`;
-    if (reportedUpdaterErrors.has(latchKey)) return;
-    reportedUpdaterErrors.add(latchKey);
-    reportHandledError(withoutUrlQueries(error), { source: 'updater' }, {}, code ? ['updater', name, code] : undefined);
-    markReported(error);
+    reportStructuralFailure(error);
   });
 
   // Schedule checks

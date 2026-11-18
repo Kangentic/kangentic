@@ -666,8 +666,10 @@ export const IPC = {
   UPDATE_INSTALL: 'updater:install',
   UPDATE_DOWNLOADED: 'updater:downloaded',
   // Push: this install cannot update itself and never will until the user acts
-  // on it - the macOS read-only volume (DESKTOP-1A) or a .deb install with no
-  // package manager (DESKTOP-R).
+  // on it - the macOS read-only volume (DESKTOP-1A), a macOS copy whose signature
+  // no release satisfies (DESKTOP-2R), a .deb install with no package manager
+  // (DESKTOP-R), or a Linux host whose only elevator is a sudo that cannot
+  // prompt from a GUI app (DESKTOP-44).
   // Carries the user-facing message to toast, chosen in main and latched there
   // for the app's lifetime (`notifyUpdateBlocked` in src/main/updater.ts), so a
   // condition the updater keeps rediscovering still toasts once.

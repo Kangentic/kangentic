@@ -27,6 +27,8 @@ import {
   isElevationDeniedError,
   isReadOnlyVolumeError,
   isPackageManagerMissingError,
+  isSudoFallbackFailure,
+  probeSudoElevation,
   isResourceUnavailableError,
   isPrereleaseWithNoMatchingRelease,
   isSignatureRequirementError,
@@ -517,13 +519,11 @@ describe('isElevationDeniedError', () => {
     });
   });
 
-  describe('The deliberate exit-1 gap', () => {
-    // sudo(8) exits 1 for an authentication failure, a permission problem, OR a
-    // command it could not execute, and gksudo/kdesudo exit 1 when cancelled.
-    // Exit 1 is therefore indistinguishable from a command that ran and failed,
-    // so these declines are NOT suppressed. This is a decision, not an
-    // oversight: pkexec is what determineSudoCommand picks on any current
-    // desktop, and it has distinct codes.
+  describe('Exit 1 is not this predicate\'s to claim', () => {
+    // gksudo/kdesudo exit 1 when cancelled, which is indistinguishable from a
+    // command that ran and failed, so those declines still report. sudo exits 1
+    // for an authentication failure OR a failed command, and that one is
+    // isSudoFallbackFailure's, which probes sudo to tell the two apart.
     it.each(['sudo', 'gksudo', 'kdesudo'])(
       'still reports a cancelled %s prompt, which is indistinguishable at exit 1',
       (frontEnd) => {
@@ -652,6 +652,77 @@ describe('isPackageManagerMissingError', () => {
     expect(hasTransientNetworkCause(error)).toBe(false);
     expect(isElevationDeniedError(error)).toBe(false);
     expect(isReadOnlyVolumeError(error)).toBe(false);
+  });
+});
+
+/** DESKTOP-44, verbatim. Both failed calls in the event carry exactly this. */
+const SUDO_FALLBACK_MESSAGE = 'Command sudo exited with code 1';
+
+describe('isSudoFallbackFailure', () => {
+  it('matches the production DESKTOP-44 message, which has no code', () => {
+    const error = makeError({ message: SUDO_FALLBACK_MESSAGE });
+    expect((error as NodeJS.ErrnoException).code).toBeUndefined();
+    expect(isSudoFallbackFailure(error)).toBe(true);
+  });
+
+  it('survives a hypothetical upstream prefix and suffix', () => {
+    expect(isSudoFallbackFailure(makeError({
+      message: `Install failed: ${SUDO_FALLBACK_MESSAGE} (stderr: ...)`,
+    }))).toBe(true);
+  });
+
+  it.each([
+    // A graphical elevator was found, so the prompt could be shown.
+    'Command pkexec exited with code 1',
+    'Command gksudo exited with code 1',
+    'Command kdesudo exited with code 1',
+    // isElevationDeniedError's, not this one's.
+    'Command sudo exited with code 126',
+    'Command sudo exited with code 127',
+    'Command sudo exited with code 12',
+    'Command sudo exited with code 100',
+    // No elevator named (an install running as root), so not this predicate's.
+    'Command dpkg exited with code 1',
+    '',
+  ])('does not claim "%s"', (message) => {
+    expect(isSudoFallbackFailure(makeError({ message }))).toBe(false);
+  });
+
+  it('is not claimed by any classifier that runs before it, so the count and the gate both survive', () => {
+    const error = makeError({ message: SUDO_FALLBACK_MESSAGE });
+    expect(isTransientUpdaterError(error)).toBe(false);
+    expect(hasTransientNetworkCause(error)).toBe(false);
+    expect(isElevationDeniedError(error)).toBe(false);
+    expect(isReadOnlyVolumeError(error)).toBe(false);
+    expect(isSignatureRequirementError(error)).toBe(false);
+    expect(isPackageManagerMissingError(error)).toBe(false);
+  });
+});
+
+describe('probeSudoElevation', () => {
+  // Every case injects the probe. The default runs real sudo, which CI runners
+  // grant without a password and a Windows host does not have.
+  const probeFailure = (fields: { code?: number | string; killed?: boolean }): (() => Promise<never>) =>
+    () => Promise.reject(Object.assign(new Error('Command failed: sudo -n true'), fields));
+
+  it('says cannot-elevate when sudo -n needs a password (classic sudo exits 1)', async () => {
+    expect(await probeSudoElevation(probeFailure({ code: 1, killed: false }))).toBe('cannot-elevate');
+  });
+
+  it('says cannot-elevate for any other non-zero exit, since sudo-rs documents none', async () => {
+    expect(await probeSudoElevation(probeFailure({ code: 2 }))).toBe('cannot-elevate');
+  });
+
+  it('says can-elevate when sudo runs true, so the install exit 1 was the package manager', async () => {
+    expect(await probeSudoElevation(() => Promise.resolve({ stdout: '', stderr: '' }))).toBe('can-elevate');
+  });
+
+  it.each([
+    ['a killed probe', { code: 1, killed: true }],
+    ['a spawn error', { code: 'ENOENT' }],
+    ['a failure with no exit code', {}],
+  ])('says unknown for %s, so the failure still reports', async (_label, fields) => {
+    expect(await probeSudoElevation(probeFailure(fields))).toBe('unknown');
   });
 });
 
@@ -902,6 +973,17 @@ describe('against the installed electron-updater source', () => {
     // the same reason as above: the compiled output's quote style is not a
     // semantic change.
     expect(linuxUpdaterSource).toMatch(/return ['"]sudo['"]/);
+  });
+
+  it('still names the elevator it picked as the failed command, which is what isSudoFallbackFailure reads', () => {
+    // If upstream ever spawned the elevator through a wrapper, the message would
+    // name the wrapper, and `Command sudo` would stop meaning "no graphical
+    // elevator was found".
+    const linuxUpdaterSource = fs.readFileSync(
+      path.join(updaterOutDir, 'LinuxUpdater.js'),
+      'utf-8',
+    );
+    expect(linuxUpdaterSource).toMatch(/this\.spawnSyncLog\(sudo\[0\],/);
   });
 
   it('still dispatches the one DebUpdater message the missing-package-manager gate matches', () => {

@@ -21,7 +21,7 @@
  *          and the same two position regressions are pinned here.
  *       5. isReadOnlyVolumeError - trackEvent YES, reportHandledError NO, PLUS one
  *          updater:blocked push. The same split again for the macOS install path
- *          (DESKTOP-1A), and one of three branches in the handler that say anything to
+ *          (DESKTOP-1A), and one of four branches in the handler that say anything to
  *          the user: an app running from a read-only volume never updates again,
  *          silently, until someone moves it. The push is latched for the app run, so
  *          a condition every 4-hour check rediscovers still toasts once.
@@ -30,6 +30,11 @@
  *          on a host with neither dpkg nor apt (DESKTOP-R's second failure shape) refuses
  *          on every "Restart to update" click, so the shared latch is what keeps two
  *          clicks to one toast.
+ *      6b. isSudoFallbackFailure - a `Command sudo exited with code 1`, which means
+ *          electron-updater found no graphical elevator and fell back to sudo, probed with
+ *          `sudo -n true`. A failing probe (sudo needs a terminal prompt a GUI app cannot
+ *          show, DESKTOP-44) is trackEvent YES, reportHandledError NO, PLUS the
+ *          updater:blocked push. A passing or inconclusive probe reports as structural.
  *       7. isResourceUnavailableError - trackEvent YES, reportHandledError NO. EAGAIN
  *          (DESKTOP-1B) reaching us through macOS's NSError rendering rather than
  *          through Node, which is the only reason branch 2's errno list misses it.
@@ -77,6 +82,9 @@ const mocks = vi.hoisted(() => ({
   // Wraps main's real translator (set in the mock factory below) so one test
   // can swap in a marker and prove the body is translated at send time.
   translateText: vi.fn(),
+  // The DESKTOP-44 gate's `sudo -n true` probe. Never real sudo: CI runners
+  // have passwordless sudo and a Windows host has none.
+  execFileAsync: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -131,6 +139,10 @@ vi.mock('../../src/main/i18n/main-i18n', async () => {
   mocks.translateText.mockImplementation(actual.translateText);
   return { ...actual, translateText: mocks.translateText };
 });
+
+vi.mock('../../src/main/utility-process/off-main-exec', () => ({
+  execFileAsync: mocks.execFileAsync,
+}));
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -685,6 +697,128 @@ describe("autoUpdater.on('error') listener", () => {
     expect(mocks.webContentsSend).toHaveBeenCalledWith('updater:blocked', message);
 
     consoleLogSpy.mockRestore();
+  });
+
+  describe('a sudo fallback that exits 1 (DESKTOP-44)', () => {
+    // The DESKTOP-44 text, verbatim. The command name is the elevator
+    // electron-updater picked, so `sudo` means none of the four graphical ones
+    // was on PATH. One click produces two of these: dpkg -i, then apt-get -f.
+    const SUDO_FALLBACK_MESSAGE = 'Command sudo exited with code 1';
+    const NO_ELEVATOR_TEXT = 'No graphical password prompt, such as pkexec, is installed.';
+
+    const probeExit = (exitCode: number, killed = false): Error => {
+      const failure = new Error('Command failed: sudo -n true') as Error & { code?: number; killed?: boolean };
+      failure.code = exitCode;
+      failure.killed = killed;
+      return failure;
+    };
+
+    beforeEach(() => {
+      mocks.execFileAsync.mockReset();
+    });
+
+    it('counts it, never reports it, and tells the user once when sudo needs a terminal prompt', async () => {
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      mocks.execFileAsync.mockRejectedValue(probeExit(1));
+
+      const errorListener = getRegisteredListener('error');
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The probe is bounded, so a hung sudo cannot hold the failure handler open.
+      expect(mocks.execFileAsync).toHaveBeenCalledWith(
+        'sudo',
+        ['-n', 'true'],
+        expect.objectContaining({ timeout: 5_000 }),
+      );
+      expect(mocks.trackEvent).toHaveBeenCalledTimes(2);
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[UPDATER] Counting but not reporting a sudo fallback that cannot prompt:'),
+        expect.any(String),
+      );
+      // The latch keeps two failed calls, or two clicks, to one toast.
+      expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
+      expect(mocks.webContentsSend).toHaveBeenCalledWith('updater:blocked', NO_ELEVATOR_TEXT);
+      expect(mocks.reportHandledError).not.toHaveBeenCalled();
+
+      consoleLogSpy.mockRestore();
+    });
+
+    it('still reports it when sudo -n succeeds, because then the package manager itself failed', async () => {
+      mocks.execFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
+
+      const errorListener = getRegisteredListener('error');
+      const installFailure = makeError(SUDO_FALLBACK_MESSAGE);
+      errorListener(installFailure);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mocks.trackEvent).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError).toHaveBeenCalledWith(installFailure, { source: 'updater' }, {}, undefined);
+      expect(mocks.webContentsSend).not.toHaveBeenCalled();
+    });
+
+    it('still reports it when the probe was killed, since that answers nothing', async () => {
+      mocks.execFileAsync.mockRejectedValue(probeExit(1, true));
+
+      const errorListener = getRegisteredListener('error');
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.webContentsSend).not.toHaveBeenCalled();
+    });
+
+    it('probes once and reports once for two failures in one click on a host whose sudo works', async () => {
+      mocks.execFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
+
+      const errorListener = getRegisteredListener('error');
+      // Same message from the same makeError call site, so both share a first
+      // frame and therefore a dedupe key.
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+
+      // One probe answers both failures, and the second report is deduped.
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(1);
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.trackEvent).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports a throw on the toast path instead of losing it', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const toastFailure = new Error('send failed');
+      mocks.execFileAsync.mockRejectedValue(probeExit(1));
+      // initUpdater in the outer beforeEach re-armed the notice latch, so the
+      // send is reached here.
+      mocks.webContentsSend.mockImplementationOnce(() => {
+        throw toastFailure;
+      });
+
+      const errorListener = getRegisteredListener('error');
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Could not classify a sudo install failure'),
+        toastFailure,
+      );
+      expect(mocks.reportHandledError).toHaveBeenCalledWith(toastFailure, { source: 'updater' });
+
+      consoleWarnSpy.mockRestore();
+      consoleLogSpy.mockRestore();
+    });
+
+    it('never probes for pkexec, whose exit 1 is the package manager failing', async () => {
+      const errorListener = getRegisteredListener('error');
+      errorListener(makeError('Command pkexec exited with code 1'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      expect(mocks.execFileAsync).not.toHaveBeenCalled();
+    });
   });
 
   it('counts an EAGAIN install failure but does NOT report it to Sentry', () => {

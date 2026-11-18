@@ -258,6 +258,11 @@ msgstr "Linear 로그인 시간이 초과되었습니다."
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Kangentic을 계속 업데이트하려면 응용 프로그램 폴더로 옮기세요."
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "No graphical password prompt, such as pkexec, is installed."
+msgstr "pkexec 같은 그래픽 암호 입력 창이 설치되어 있지 않습니다."
+
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "No local port was free for GitLab sign-in."

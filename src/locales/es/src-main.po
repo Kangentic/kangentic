@@ -258,6 +258,11 @@ msgstr "Se agotó el tiempo de espera del inicio de sesión en Linear."
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Mueva Kangentic a Aplicaciones para mantenerlo actualizado."
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "No graphical password prompt, such as pkexec, is installed."
+msgstr "No hay instalado ningún diálogo gráfico de contraseña, como pkexec."
+
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "No local port was free for GitLab sign-in."

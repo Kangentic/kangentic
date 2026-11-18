@@ -258,6 +258,11 @@ msgstr "Linear oturum açma işlemi zaman aşımına uğradı."
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Kangentic'i güncel tutmak için Uygulamalar klasörüne taşıyın."
 
+#: src/main/updater.ts
+#, fuzzy
+msgid "No graphical password prompt, such as pkexec, is installed."
+msgstr "pkexec gibi grafik bir parola istemi yüklü değil."
+
 #: src/main/boards/adapters/gitlab/oauth.ts
 msgctxt "GitLab connect error"
 msgid "No local port was free for GitLab sign-in."
