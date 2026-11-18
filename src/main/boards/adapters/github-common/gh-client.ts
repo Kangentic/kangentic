@@ -496,6 +496,89 @@ function ghErrorToThrow(error: unknown): GhUnavailableError | GhTransientError |
   }
 }
 
+/**
+ * gh's own words for a refused sign-in: a 401, a signed-out gh, or a token
+ * missing a scope. Read only on the import path; see `importGhErrorToThrow`.
+ */
+const GH_SIGN_IN_REFUSED_PATTERN = /HTTP 401|Bad credentials|not logged in|authentication token|gh auth login/i;
+
+/** The fields of a failed exec that the import classifier reads, checked rather than cast. */
+interface GhExecFailureFields {
+  stderr: string;
+  /** An errno string (`ENOENT`), the exit code as a number, or null after a kill. */
+  code: string | number | null | undefined;
+  killed: boolean;
+}
+
+function readGhExecFailure(error: unknown): GhExecFailureFields {
+  if (typeof error !== 'object' || error === null) return { stderr: '', code: undefined, killed: false };
+  const { stderr, code, killed } = error as { stderr?: unknown; code?: unknown; killed?: unknown };
+  return {
+    stderr: typeof stderr === 'string' ? stderr : '',
+    code: typeof code === 'string' || typeof code === 'number' || code === null ? code : undefined,
+    killed: killed === true,
+  };
+}
+
+/** gh's `error:` line, or its first line when there is none. */
+function ghStderrReasonLine(stderr: string): string | undefined {
+  const lines = stderr.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  return lines.find((line) => /^error\b/i.test(line)) ?? lines[0];
+}
+
+/**
+ * The throw for a failed `gh` call on the import fetch (the Import dialog's
+ * sync), the GitHub twin of the Azure DevOps client's `importAzErrorToThrow`
+ * (Sentry DESKTOP-47). The default is the ORIGINAL error, not null: on import
+ * a swallowed failure would read as an empty repository, and an unrecognized
+ * gh failure is a defect that should still report.
+ *
+ * Classifies on gh's own answer (stderr, errno, the timeout kill) and never on
+ * `message`: execFile's message opens with the command line, which carries the
+ * repository and the search text, and `classifyGhError`'s bare `auth|login`
+ * pattern would read a repository named `oauth-lib` as a sign-in failure.
+ * gh also prints the request URL on stderr (`HTTP 404: Not Found (<url>)`),
+ * so URLs are dropped from stderr before it is classified.
+ *
+ * That same bare pattern also matches gh's own answer for an owner that does
+ * not exist ("Could not resolve to a User with the login of '<owner>'"), so an
+ * `unavailable` stands here only when gh's words say the sign-in was refused.
+ * The gate lives here and not in `classifyGhError`, which the PR resolvers share.
+ */
+function importGhErrorToThrow(error: unknown): unknown {
+  const failure = readGhExecFailure(error);
+  const stderrWithoutUrls = failure.stderr.replace(/https?:\/\/\S+/g, '');
+  const classification = classifyGhError({ stderr: stderrWithoutUrls, code: failure.code, killed: failure.killed });
+  const reason = ghStderrReasonLine(failure.stderr);
+  const detail = reason ? `\n${reason}` : '';
+  switch (classification) {
+    case 'unavailable':
+      if (!GH_SIGN_IN_REFUSED_PATTERN.test(stderrWithoutUrls)) return error;
+      return new GhUnavailableError(`gh CLI is not signed in or lacks a scope. Run: gh auth login${detail}`);
+    case 'transient':
+      return new GhTransientError(`GitHub did not answer. Try again.${detail}`);
+    default:
+      return error;
+  }
+}
+
+/**
+ * `execFileAsync` for the import fetch: a gh failure leaves as the classified
+ * throw. Wraps the exec only, so a `JSON.parse` failure on gh's output still
+ * reaches the reporter.
+ */
+async function execGhForImport(
+  ghPath: string,
+  args: string[],
+  options: { timeout: number },
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await execFileAsync(ghPath, args, options);
+  } catch (error: unknown) {
+    throw importGhErrorToThrow(error);
+  }
+}
+
 /** Raw PR shape from the REST endpoint `repos/{owner}/{repo}/commits/{sha}/pulls`. */
 interface GhCommitPullRaw {
   number: number;
@@ -911,7 +994,7 @@ export class GitHubImporter {
         per_page: String(perPage),
       });
 
-      const { stdout } = await execFileAsync(
+      const { stdout } = await execGhForImport(
         ghPath,
         ['api', `search/issues?${searchParams.toString()}`, '--jq', '.items'],
         { timeout: COMMAND_TIMEOUT },
@@ -926,7 +1009,7 @@ export class GitHubImporter {
       };
     }
 
-    const { stdout } = await execFileAsync(
+    const { stdout } = await execGhForImport(
       ghPath,
       ['api', `repos/${repository}/issues?${queryParams.toString()}`],
       { timeout: COMMAND_TIMEOUT },
@@ -949,7 +1032,7 @@ export class GitHubImporter {
     const ghPath = await this.detect();
     if (!ghPath) throw new RefusalError('gh CLI not found');
 
-    const { stdout } = await execFileAsync(
+    const { stdout } = await execGhForImport(
       ghPath,
       ['project', 'item-list', String(projectNumber), '--owner', owner, '--format', 'json', '--limit', '500'],
       { timeout: 30_000 },

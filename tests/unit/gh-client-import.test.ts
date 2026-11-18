@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   whichResult: '/usr/bin/gh' as string | Error,
   lastArgs: [] as readonly string[],
+  /** When set, every gh call rejects with it. */
+  ghError: null as Error | null,
 }));
 
 vi.mock('which', () => ({
@@ -34,6 +36,7 @@ vi.mock('node:child_process', async (importOriginal) => {
     {
       [promisifyCustom]: async (_file: string, args?: readonly string[] | unknown) => {
         state.lastArgs = Array.isArray(args) ? (args as readonly string[]) : [];
+        if (state.ghError) throw state.ghError;
         return { stdout: '[]', stderr: '' };
       },
     },
@@ -42,6 +45,16 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 const { GitHubImporter } = await import('../../src/main/boards/adapters/github-common/gh-client');
+const { isExpectedFailure } = await import('../../src/main/analytics/handled-report');
+
+/**
+ * A rejection shaped like execFile's: the message opens with the whole command
+ * line, which carries the repository and the search text, then gh's stderr.
+ */
+function ghFailure(stderr: string, extra: Record<string, unknown> = {}): Error {
+  const commandLine = 'Command failed: gh api repos/owner/oauth-lib/issues?state=open&q=login';
+  return Object.assign(new Error(`${commandLine}\n${stderr}`), { code: 1, killed: false, signal: null, stdout: '', stderr, ...extra });
+}
 
 function makeRawIssue(overrides: Partial<{
   number: number;
@@ -75,6 +88,7 @@ function makeRawIssue(overrides: Partial<{
 beforeEach(() => {
   state.whichResult = '/usr/bin/gh';
   state.lastArgs = [];
+  state.ghError = null;
 });
 
 describe('GitHubImporter.mapToExternalIssues - stateCategory bucketing', () => {
@@ -148,5 +162,86 @@ describe('GitHubImporter.fetchIssues - since query param', () => {
     expect(apiArg).toBeDefined();
     const query = new URLSearchParams(apiArg?.split('?')[1] ?? '');
     expect(query.get('since')).toBe('not-a-timestamp');
+  });
+});
+
+/**
+ * The same gap as Sentry DESKTOP-47 on the Azure DevOps side: a gh failure
+ * during an import sync escaped as a plain Error and read as a code defect.
+ * A signed-out gh or a dropped connection now throws the expected classes,
+ * and anything unrecognized rethrows unchanged so it still reports.
+ */
+describe('GitHubImporter import fetch - gh failure classification', () => {
+  const fetchCalls: Array<[string, (importer: InstanceType<typeof GitHubImporter>) => Promise<unknown>]> = [
+    ['fetchIssues (REST)', (importer) => importer.fetchIssues('owner/oauth-lib', 1, 50)],
+    ['fetchIssues (search)', (importer) => importer.fetchIssues('owner/oauth-lib', 1, 50, 'login')],
+    ['fetchProjectItems', (importer) => importer.fetchProjectItems('owner', 3)],
+  ];
+
+  async function rejectionOf(call: (importer: InstanceType<typeof GitHubImporter>) => Promise<unknown>): Promise<unknown> {
+    try {
+      await call(new GitHubImporter());
+    } catch (error: unknown) {
+      return error;
+    }
+    throw new Error('the fetch resolved, expected a rejection');
+  }
+
+  it.each(fetchCalls)('%s: a signed-out gh throws GhUnavailableError, which isExpectedFailure skips', async (_label, call) => {
+    state.ghError = ghFailure('HTTP 401: Bad credentials (https://api.github.com/)\nTry authenticating with:  gh auth login');
+
+    const error = await rejectionOf(call);
+
+    expect((error as Error).name).toBe('GhUnavailableError');
+    expect(isExpectedFailure(error)).toBe(true);
+    expect((error as Error).message).toContain('gh auth login');
+    expect((error as Error).message).toContain('HTTP 401: Bad credentials');
+    // One reason line from gh, not its whole stderr.
+    expect((error as Error).message).not.toContain('Try authenticating');
+    expect((error as Error).message).not.toContain('Command failed');
+  });
+
+  it.each(fetchCalls)('%s: a timed-out gh throws GhTransientError with no command line in its message', async (_label, call) => {
+    state.ghError = ghFailure('', { code: null, killed: true, signal: 'SIGTERM' });
+
+    const error = await rejectionOf(call);
+
+    expect((error as Error).name).toBe('GhTransientError');
+    expect(isExpectedFailure(error)).toBe(true);
+    // No stderr, so no reason line: the message never falls back to the command line.
+    expect((error as Error).message).not.toContain('\n');
+    expect((error as Error).message).not.toContain('Command failed');
+  });
+
+  it.each(fetchCalls)('%s: a token missing a scope throws GhUnavailableError that names the scope', async (_label, call) => {
+    state.ghError = ghFailure('error: your authentication token is missing required scopes [read:project]\nTo request it, run:  gh auth refresh -s read:project');
+
+    const error = await rejectionOf(call);
+
+    expect((error as Error).name).toBe('GhUnavailableError');
+    expect((error as Error).message).toContain('missing required scopes [read:project]');
+  });
+
+  it('an owner that does not exist rethrows unchanged: "the login of" in gh\'s answer is not a sign-in failure', async () => {
+    const original = ghFailure("GraphQL: Could not resolve to a User with the login of 'no-such-owner'. (user)");
+    state.ghError = original;
+
+    const error = await rejectionOf((importer) => importer.fetchProjectItems('no-such-owner', 3));
+
+    expect(error).toBe(original);
+    expect(isExpectedFailure(error)).toBe(false);
+  });
+
+  it.each(fetchCalls)('%s: an unrecognized failure rethrows unchanged and still reports', async (_label, call) => {
+    // The repo "oauth-lib" and the search for "login" appear in the command line
+    // AND in the request URL gh prints on stderr, and the gh auth pattern
+    // matches both words. Only gh's own words name the cause.
+    const original = ghFailure('HTTP 422: Validation Failed (https://api.github.com/repos/owner/oauth-lib/issues?q=login)');
+    state.ghError = original;
+
+    const error = await rejectionOf(call);
+
+    expect(error).toBe(original);
+    expect(isExpectedFailure(error)).toBe(false);
   });
 });
