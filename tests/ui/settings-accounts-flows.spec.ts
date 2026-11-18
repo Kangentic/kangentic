@@ -61,6 +61,30 @@ test.describe('Settings > Accounts: order and switches', () => {
           .toBe('automatic');
       });
 
+      await test.step('changing the Order relists the accounts through the accounts:changed push', async () => {
+        // The tab's Order onChange only saves config; main's CONFIG_SET then pushes
+        // accounts:changed and App's subscription lists again. Count the lists across the click.
+        await page.evaluate(() => {
+          const counterWindow = window as unknown as { __accountsListCount: number };
+          counterWindow.__accountsListCount = 0;
+          const originalList = window.electronAPI.accounts.list.bind(window.electronAPI.accounts);
+          window.electronAPI.accounts.list = (...listArguments: Parameters<typeof originalList>) => {
+            counterWindow.__accountsListCount += 1;
+            return originalList(...listArguments);
+          };
+        });
+        const readListCount = () => page.evaluate(() => (window as unknown as { __accountsListCount: number }).__accountsListCount);
+        const control = page.getByTestId('accounts-order-mode');
+        const listsBefore = await readListCount();
+
+        await control.getByRole('radio', { name: 'Manual' }).click();
+        await expect.poll(readListCount, { timeout: 3000 }).toBeGreaterThan(listsBefore);
+
+        const listsAfterManual = await readListCount();
+        await control.getByRole('radio', { name: 'Automatic' }).click();
+        await expect.poll(readListCount, { timeout: 3000 }).toBeGreaterThan(listsAfterManual);
+      });
+
       await test.step('the auto-switch switch writes agent.accounts.autoSwitchAtLimit', async () => {
         const readValue = () => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).agent.accounts.autoSwitchAtLimit);
         expect(await readValue()).toBe(true);

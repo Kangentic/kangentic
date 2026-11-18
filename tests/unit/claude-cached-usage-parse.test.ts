@@ -1,5 +1,5 @@
 /**
- * `parseClaudeCachedUsage` reads Claude's own state file (`cachedUsageUtilization`), and the home
+ * `readClaudeCachedUsage` reads Claude's own state file (`cachedUsageUtilization`), and the home
  * helpers that locate that file. The fixture keeps the real key names and nesting with made-up
  * values (tests/fixtures/claude-state-cached-usage.json).
  */
@@ -7,8 +7,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseClaudeCachedUsage } from '../../src/main/agent/adapters/claude/accounts';
+import { readClaudeCachedUsage } from '../../src/main/agent/adapters/claude/accounts';
 import { claudeStatePathForHome, isDefaultClaudeHome } from '../../src/main/agent/adapters/claude/claude-json-lock';
+import type { RateLimitWindow } from '../../src/shared/types';
 
 interface CachedUsageState {
   cachedUsageUtilization: {
@@ -22,12 +23,18 @@ function loadState(): CachedUsageState {
   return JSON.parse(text) as CachedUsageState;
 }
 
+/** The windows a reading holds, or null when it names why it holds none. */
+function windowsOf(state: unknown, nowMs: number): RateLimitWindow[] | null {
+  const reading = readClaudeCachedUsage(state, nowMs);
+  return 'windows' in reading ? reading.windows : null;
+}
+
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 
-describe('parseClaudeCachedUsage', () => {
+describe('readClaudeCachedUsage', () => {
   it('reads both windows of a real-shape cache, with resets_at as epoch seconds', () => {
     const state = loadState();
-    const windows = parseClaudeCachedUsage(state, state.cachedUsageUtilization.fetchedAtMs + 1000);
+    const windows = windowsOf(state, state.cachedUsageUtilization.fetchedAtMs + 1000);
     expect(windows?.map((window) => window.id)).toEqual(['five-hour', 'seven-day']);
     expect(windows?.[0].usedPercentage).toBe(37);
     expect(windows?.[0].resetsAt).toBe(Date.UTC(2027, 0, 15, 8, 30, 0) / 1000);
@@ -35,17 +42,17 @@ describe('parseClaudeCachedUsage', () => {
     expect(windows?.[1].resetsAt).toBe(Date.UTC(2027, 0, 18, 0, 0, 0) / 1000);
   });
 
-  it('accepts a cache exactly ten minutes old and rejects one a millisecond older', () => {
+  it('accepts a cache exactly ten minutes old and calls one a millisecond older stale', () => {
     const state = loadState();
     const fetchedAtMs = state.cachedUsageUtilization.fetchedAtMs;
-    expect(parseClaudeCachedUsage(state, fetchedAtMs + TEN_MINUTES_MS)).not.toBeNull();
-    expect(parseClaudeCachedUsage(state, fetchedAtMs + TEN_MINUTES_MS + 1)).toBeNull();
+    expect(windowsOf(state, fetchedAtMs + TEN_MINUTES_MS)).not.toBeNull();
+    expect(readClaudeCachedUsage(state, fetchedAtMs + TEN_MINUTES_MS + 1)).toEqual({ empty: 'cache-stale' });
   });
 
   it('skips a null window, as a plan with no 5h window has', () => {
     const state = loadState();
     state.cachedUsageUtilization.utilization.five_hour = null;
-    const windows = parseClaudeCachedUsage(state, state.cachedUsageUtilization.fetchedAtMs);
+    const windows = windowsOf(state, state.cachedUsageUtilization.fetchedAtMs);
     expect(windows?.map((window) => window.id)).toEqual(['seven-day']);
   });
 
@@ -53,8 +60,14 @@ describe('parseClaudeCachedUsage', () => {
     const state = loadState();
     state.cachedUsageUtilization.utilization.five_hour = { utilization: 140, resets_at: '2027-01-15T08:30:00+00:00' };
     state.cachedUsageUtilization.utilization.seven_day = { utilization: -5, resets_at: '2027-01-18T00:00:00+00:00' };
-    const windows = parseClaudeCachedUsage(state, state.cachedUsageUtilization.fetchedAtMs);
+    const windows = windowsOf(state, state.cachedUsageUtilization.fetchedAtMs);
     expect(windows?.map((window) => window.usedPercentage)).toEqual([100, 0]);
+  });
+
+  it('names no-windows when utilization is not an object', () => {
+    const state = loadState();
+    const broken = { cachedUsageUtilization: { fetchedAtMs: state.cachedUsageUtilization.fetchedAtMs, utilization: 'x' } };
+    expect(readClaudeCachedUsage(broken, state.cachedUsageUtilization.fetchedAtMs)).toEqual({ empty: 'no-windows' });
   });
 });
 
