@@ -19,6 +19,6 @@ export { downloadFile, mediaTypeFromFilename, MAX_ATTACHMENT_SIZE, DOWNLOAD_CONC
 export { ImportSourceStore, registerSourceUrlParser, parseUrlForSource } from './source-store';
 export type { SourceUrlParser } from './source-store';
 export { encryptSecret, decryptSecret, isGenuineEncryptionAvailable } from './auth';
-export { withBackoff, sleep } from './rate-limit';
+export { retryAfterMsFrom, withBackoff, sleep } from './rate-limit';
 export { convertHtmlToMarkdown } from './html-to-markdown';
 export { formatCommentsSection } from './comments-section';

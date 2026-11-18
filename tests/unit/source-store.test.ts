@@ -121,6 +121,49 @@ describe('ImportSourceStore.add with a prepared source', () => {
     expect(store.list().map((source) => source.repository)).toEqual(['site.example|one', 'site.example|two']);
   });
 
+  it('stores and returns scopeKind and host when the prepared source carries them', () => {
+    const added = store.add(TEST_SOURCE, url, {
+      label: 'acme/platform',
+      repository: 'git.example.com|group:acme/platform',
+      scopeKind: 'group',
+      host: 'git.example.com',
+    });
+
+    expect(added.scopeKind).toBe('group');
+    expect(added.host).toBe('git.example.com');
+    expect(store.list()[0]).toMatchObject({ scopeKind: 'group', host: 'git.example.com' });
+    const raw = JSON.parse(fs.readFileSync(path.join(tmpDir, '.kangentic', 'config.json'), 'utf-8')) as {
+      importSources: Array<{ scopeKind?: string; host?: string }>;
+    };
+    expect(raw.importSources[0].scopeKind).toBe('group');
+    expect(raw.importSources[0].host).toBe('git.example.com');
+  });
+
+  it('stores neither scopeKind nor host for a prepared source without them', () => {
+    const added = store.add(TEST_SOURCE, url, { label: 'Sprint board', repository: 'site.example|project = X' });
+
+    expect(added).not.toHaveProperty('scopeKind');
+    expect(added).not.toHaveProperty('host');
+    const persisted = store.list()[0];
+    expect(persisted).not.toHaveProperty('scopeKind');
+    expect(persisted).not.toHaveProperty('host');
+  });
+
+  it('returns the existing scoped source when the same repository is added again', () => {
+    const prepared = {
+      label: 'acme/platform',
+      repository: 'git.example.com|group:acme/platform',
+      scopeKind: 'group' as const,
+      host: 'git.example.com',
+    };
+    const first = store.add(TEST_SOURCE, url, prepared);
+    const second = store.add(TEST_SOURCE, url, prepared);
+
+    expect(second).toEqual(first);
+    expect(second.scopeKind).toBe('group');
+    expect(store.list()).toHaveLength(1);
+  });
+
   it('falls back to the URL parser label when the prepared label is blank', () => {
     const added = store.add(TEST_SOURCE, url, { label: '   ', repository: 'site.example|project = X' });
 

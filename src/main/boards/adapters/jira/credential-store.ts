@@ -1,13 +1,8 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import type { JiraConnectMethod, JiraDeployment } from '../../../../shared/types';
 import { PATHS } from '../../../config/paths';
-import {
-  readEncryptedSecretFile,
-  rewriteEncryptedSecretFile,
-  writeEncryptedSecretFile,
-  type EncryptedSecretFile,
-} from '../../shared/encrypted-secret-file';
+import type { EncryptedSecretFile } from '../../shared/encrypted-secret-file';
+import { createSiteCredentialStore } from '../../shared/site-credential-store';
 
 /**
  * One saved Jira sign-in. Jira sign-ins are per site (an API token is good on
@@ -41,19 +36,11 @@ export interface JiraSiteCredential {
   savedAt: string;
 }
 
-interface StoredCredentials {
-  sites: Record<string, JiraSiteCredential>;
-}
-
 const STORE_FILENAME = 'jira-credentials.json';
-
-function storePath(): string {
-  return path.join(PATHS.configDir, STORE_FILENAME);
-}
 
 function credentialFile(): EncryptedSecretFile {
   return {
-    filePath: storePath(),
+    filePath: path.join(PATHS.configDir, STORE_FILENAME),
     writeSource: 'jira_credential',
     logPrefix: '[jira/credential-store]',
     noun: 'credentials',
@@ -75,57 +62,14 @@ function isCredential(value: unknown): value is JiraSiteCredential {
     && typeof candidate.cloudId === 'string' && candidate.cloudId.length > 0;
 }
 
-function parseStored(plaintext: string): StoredCredentials | null {
-  const parsed = JSON.parse(plaintext) as Partial<StoredCredentials>;
-  if (typeof parsed !== 'object' || parsed === null || typeof parsed.sites !== 'object' || parsed.sites === null) return null;
-  // Drop any entry that cannot be sent as a credential, rather than failing the
-  // whole file: one malformed site must not sign every other site out.
-  const sites: Record<string, JiraSiteCredential> = {};
-  for (const [site, credential] of Object.entries(parsed.sites)) {
-    if (isCredential(credential)) sites[site] = credential;
-  }
-  return { sites };
-}
+const store = createSiteCredentialStore<JiraSiteCredential>({ file: credentialFile, isCredential });
 
 /** Every saved Jira sign-in, keyed by site base URL. Empty when none is saved. */
-export async function loadJiraCredentials(): Promise<Record<string, JiraSiteCredential>> {
-  const file = credentialFile();
-  const read = await readEncryptedSecretFile(file, parseStored);
-  if (!read) return {};
-  if (read.shouldRewrite) await rewriteEncryptedSecretFile(file, read);
-  return read.value.sites;
+export function loadJiraCredentials(): Promise<Record<string, JiraSiteCredential>> {
+  return store.load();
 }
-
-/**
- * The saved sign-ins a save starts from. A file that is there but cannot be read
- * (the OS keychain refused the decrypt, the file is damaged) reads as no sites,
- * and writing one site over it would sign every other site out for good, so it
- * is copied aside first. A failed copy fails the save, and the file stays as it was.
- */
-async function loadSitesForSave(): Promise<Record<string, JiraSiteCredential>> {
-  const file = credentialFile();
-  const read = await readEncryptedSecretFile(file, parseStored);
-  if (read) return read.value.sites;
-  if (fs.existsSync(file.filePath)) {
-    await fs.promises.copyFile(file.filePath, `${file.filePath}.unreadable-${Date.now()}`);
-  }
-  return {};
-}
-
-/**
- * Saves run one at a time. Each one reads the whole file, changes one site and
- * writes it back, so two overlapping connects would otherwise each drop the
- * other's site.
- */
-let saveChain: Promise<void> = Promise.resolve();
 
 /** Save or replace the sign-in for one site. */
 export function saveJiraCredential(credential: JiraSiteCredential): Promise<void> {
-  const save = saveChain.then(async () => {
-    const sites = await loadSitesForSave();
-    sites[credential.site] = credential;
-    await writeEncryptedSecretFile(credentialFile(), JSON.stringify({ sites } satisfies StoredCredentials));
-  });
-  saveChain = save.catch(() => undefined); // report-ok: the caller's own promise carries this save's failure; the chain only orders the next save behind it
-  return save;
+  return store.save(credential);
 }

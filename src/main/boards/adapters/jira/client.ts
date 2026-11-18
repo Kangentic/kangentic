@@ -1,4 +1,4 @@
-import { withBackoff } from '../../shared';
+import { retryAfterMsFrom, withBackoff } from '../../shared';
 import type { JiraSiteCredential } from './credential-store';
 import { JiraRefreshRejectedError, freshJiraCredential } from './oauth-tokens';
 import type { JiraIssueRaw } from './mapper';
@@ -323,15 +323,13 @@ export class JiraClient {
     });
     if (!response.ok) {
       const body = await response.text().catch(() => ''); // report-ok: an unreadable error body leaves only the status to report
-      const retryAfterSeconds = Number(response.headers.get('retry-after'));
+      const retryAfterMs = response.status === 429 ? retryAfterMsFrom(response.headers.get('retry-after')) : undefined;
       throw new JiraHttpError(
         `Jira GET ${path} failed (${response.status})`,
         response.status,
         body.slice(0, 2000),
         response.headers.get('x-seraph-loginreason'),
-        response.status === 429 && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-          ? retryAfterSeconds * 1000
-          : undefined,
+        retryAfterMs !== undefined && retryAfterMs > 0 ? retryAfterMs : undefined,
       );
     }
     const text = await response.text();
