@@ -17,6 +17,8 @@ sources:
   - resource: src/main/updater-mac-signing.ts
   - resource: build/verify-signed-team-id.js
   - resource: src/shared/apple-team-id.json
+  - resource: .github/workflows/signing-credentials.yml
+  - resource: build/windowsSign.js
 ---
 # Deployment
 
@@ -249,6 +251,7 @@ for any release without uploading.
 | `integrations.yml` | Daily; PRs touching `scripts/check-integrations.mjs`, the Trello, Jira and Linear `constants.ts`, `loopback-sign-in.ts`, `docs-links.ts` or the workflow; `workflow_dispatch` | Runs `scripts/check-integrations.mjs`, which asks Trello, Atlassian (through kangentic.com) and Linear whether the key and client ids the checkout ships still work, and checks kangentic.com's Trello return page, Jira callback and Jira refresh route. No secrets and no `npm ci`. A sign-in whose id is empty reports as pending. Each probe is in [Board integration](../integrations/boards.md#daily-sign-in-check). `/release` reads the last scheduled run before a tag. Not a required check |
 | `release.yml` | Tag push (`v*`) or `workflow_dispatch` | Fail fast if the Sentry symbol-upload secret or an Apple signing secret is absent, create one draft Release, build the SSH host program archives into it (`build-host`), build + sign all 5 targets into it, rebuild `latest-mac.yml` for both macOS arches from the binaries on the release and write the macOS floor into it, verify the asset manifest, then publish with notes (one atomic `gh release edit`) + publish launcher to npm (via OIDC trusted publishing) + redeploy the web demo + attach the docs poster set (`demo-posters-<version>.zip`) + gate every poster against its live frame on three OSes (`demo-poster-gate.yml`) |
 | `demo-poster-gate.yml` | Called by `release.yml` after the poster set is attached; `workflow_dispatch` on a branch, which shoots its own set first | Boots every poster's scene on Windows, macOS and Linux (two shards each) at 1, 1.25, 1.5 and 2x and fails on a different wrap, a moved line box, a terminal on another grid, or a pixel beyond antialiasing past the per-OS budget. Not a required check |
+| `signing-credentials.yml` | Nightly at 05:43 UTC; `workflow_dispatch` | Proves the credentials a release signs with still work: signs a throwaway file with Azure Trusted Signing through `build/windowsSign.js` and requires a valid, timestamped signature, asks Apple for the notarization history, reads the Developer ID certificate's end date (red inside 30 days), and asks Sentry whether the symbol-upload token authenticates. `/release` requires its newest scheduled run to be green before a tag. Never on a pull request |
 
 ### CI Build Matrix
 

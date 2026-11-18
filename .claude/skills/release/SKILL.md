@@ -170,6 +170,18 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    running. `gh workflow run integrations.yml --ref main` gets a fresh answer, under `--event
    workflow_dispatch`. Each probe is in `docs/integrations/boards.md`, "Daily sign-in check".
 
+   Then check the credentials the release signs with: `gh run list --repo Kangentic/kangentic
+   --workflow=signing-credentials.yml --event schedule --limit 1 --json headSha,conclusion,createdAt`.
+   Require `conclusion: success` and a `createdAt` within the last 48 hours. That nightly signs a
+   throwaway file with Azure Trusted Signing, asks Apple for the notarization history, reads the
+   Developer ID certificate's end date, and checks the Sentry token. On any other conclusion, an
+   older run, or an empty list, stop: a credential is dead or about to end, or the nightly has
+   stopped running, and the release matrix would find out after the tag exists. The failed job's
+   `::error::` line names the credential and what to replace. After the fix, `gh workflow run
+   signing-credentials.yml --ref main` gets a fresh answer under `--event workflow_dispatch`.
+   `release.yml`'s own preflight jobs only prove each secret is non-empty, so this read is the
+   one that knows whether a secret still works.
+
    A green conclusion already rules out a flaky test. CI runs the UI, E2E and web demo tiers with
    `retries: 1` and `--fail-on-flaky-tests`, so a test that passes only on its retry fails its
    shard and the run's conclusion is `failure` (`tests/unit/ci-workflow-hygiene.test.ts` pins the
