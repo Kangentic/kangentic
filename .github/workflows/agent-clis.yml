@@ -18,7 +18,8 @@ name: Agent CLIs at their newest versions
 # the script installs packages as root and writes each CLI's config into the home
 # it runs in, and Goose is found through that home's login shell.
 #
-# What it costs: one ubuntu-24.04 job a night. It also runs on a pull request that
+# What it costs: one ubuntu-24.04 job a night, about five minutes when run by hand
+# on 2026-11-17. It also runs on a pull request that
 # touches the rig itself, and on nothing else: no adapter path is in the filter, so
 # a vendor's release never turns an unrelated pull request red. Not a required
 # check.
