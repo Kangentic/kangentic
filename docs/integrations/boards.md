@@ -313,13 +313,14 @@ little. Revisit it if Asana documents a public client.
 
 ## Daily sign-in check
 
-The three browser sign-ins can break with no code change. Someone deletes or regenerates the Trello
-key, drops `https://kangentic.com` from its allowed origins, revokes the Atlassian or Linear app, or
-the kangentic.com pages stop serving. `.github/workflows/integrations.yml` runs
+The four browser sign-ins can break with no code change. Someone deletes or regenerates the Trello
+key, drops `https://kangentic.com` from its allowed origins, revokes the Atlassian, Linear or GitLab
+app, or the kangentic.com pages stop serving. `.github/workflows/integrations.yml` runs
 `scripts/check-integrations.mjs` every day, on demand, and on a pull request that changes a file
 the script reads, the script itself or the workflow. `npm run check:integrations` runs it by hand.
 The script holds no secret and needs no install. Every probe is a request a stranger could make,
-and none signs anyone in.
+and none signs anyone in. The same workflow's second job checks the published release, the npm
+launcher, the site and the domain: see [Scheduled checks](../releases/scheduled-checks.md).
 
 | Check | What it asks | Passes on | Fails on |
 |-------|--------------|-----------|----------|
@@ -329,14 +330,15 @@ and none signs anyone in.
 | Jira callback | `kangentic.com/oauth/jira/callback` with a bad state, then a valid state and no code | A 400, then a 302 to `http://127.0.0.1:<port>/jira/callback?error=invalid_request&nonce=<nonce>`, with the port and nonce the probe's own state carried | A bad state that is not refused, or a redirect anywhere else |
 | Jira token service | A made-up refresh token posted to `kangentic.com/oauth/jira/refresh` | `invalid_grant`, which means Atlassian accepted the client | 500 `server_error` (the Pages secrets are unset), `unauthorized_client`, `invalid_client`, `access_denied` |
 | Linear client | A made-up authorization code exchanged at `api.linear.app/oauth/token` for `LINEAR_OAUTH_CLIENT_ID`, with the first registered redirect URI | `invalid_grant`, which means Linear knows the client | `invalid_client` |
+| GitLab client | A made-up authorization code exchanged at `gitlab.com/oauth/token` for `GITLAB_COM_OAUTH_CLIENT_ID`, in the form the desktop's own exchange sends | `invalid_grant`, which means gitlab.com knows the client | 401 `invalid_client` |
 
 The Fails on column names the answers the check knows the cause of. Any other answer fails its
 check too, and so does no answer at all.
 
-- **Pending.** An empty `TRELLO_API_KEY`, `JIRA_OAUTH_CLIENT_ID` or `LINEAR_OAUTH_CLIENT_ID` means
-  that sign-in is not shipped. Its checks report `pending` and do not fail the run, so the run's
-  summary is also the list of owner steps left. The Trello and Linear checks send nothing while
-  their id is empty. The Jira token service still sends its request, and a service that is not
+- **Pending.** An empty `TRELLO_API_KEY`, `JIRA_OAUTH_CLIENT_ID`, `LINEAR_OAUTH_CLIENT_ID` or
+  `GITLAB_COM_OAUTH_CLIENT_ID` means that sign-in is not shipped. Its checks report `pending` and do
+  not fail the run, so the run's summary is also the list of owner steps left. The Trello, Linear
+  and GitLab checks send nothing while their id is empty. The Jira token service still sends its request, and a service that is not
   ready is `pending` only until the id ships. An answer that check does not know fails it even
   before then. A non-empty id that fails is a red run. The return page and the callback are
   checked on every run.
@@ -348,21 +350,26 @@ check too, and so does no answer at all.
   replays the answers a stranger can get today from
   `tests/fixtures/sign-in-check-live-answers.json`, which was recorded from the live services.
 - **Overrides.** An environment variable named `TRELLO_API_KEY`, `JIRA_OAUTH_CLIENT_ID`,
-  `LINEAR_OAUTH_CLIENT_ID` or `DOCS_BASE_URL` replaces the shipped value. That checks a new key
+  `LINEAR_OAUTH_CLIENT_ID`, `GITLAB_COM_OAUTH_CLIENT_ID` or `DOCS_BASE_URL` replaces the shipped value. That checks a new key
   before it is committed, or points the page checks at a preview deployment. An empty variable counts
   as unset, so it cannot turn a shipped id's checks into pending ones.
-- **Answers not yet seen.** Two passing answers have never been seen with a real client: Atlassian's
-  `invalid_grant`, which its docs give for a refresh token it will not take, and Linear's
-  `invalid_grant` for a client it knows. The pull request that commits each id runs this check, so
-  that run confirms the answer or shows the real one. The check never uses Linear's refresh grant,
-  which answers `invalid_grant` for a made-up client too.
+- **Answers not yet seen.** Three passing answers have never been seen with a real client:
+  Atlassian's `invalid_grant`, which its docs give for a refresh token it will not take, and
+  Linear's and gitlab.com's `invalid_grant` for a client each knows. The pull request that commits
+  each id runs this check, so that run confirms the answer or shows the real one. Atlassian's is
+  the one most likely to differ: forum reports show `unauthorized_client` with "refresh_token is
+  invalid" for the same case, which this check reads as a refused client (see
+  [Owner steps for the browser sign-ins](#owner-steps-for-the-browser-sign-ins)). If the run that
+  commits the Jira id shows that pair, Atlassian accepted the client, and the token service's
+  verdict needs that answer added. The check never uses Linear's refresh grant, which answers
+  `invalid_grant` for a made-up client too.
 - **Who hears.** A run writes the table to its summary, one error annotation per failure and one
   notice per pending check. A failed scheduled run emails the person who last changed the
   workflow's schedule (its `cron` line), or who re-enabled the workflow after that, under that
   person's own GitHub Actions notification settings. `/release` reads the last scheduled run
   before a tag and stops when it did not succeed, is older than 48 hours, or is missing. It is not
-  a required check, because an outage at Trello, Linear or kangentic.com must not block an
-  unrelated merge.
+  a required check, because an outage at Trello, Linear, gitlab.com or kangentic.com must not block
+  an unrelated merge.
 
 ## GitLab
 

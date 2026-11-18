@@ -1,11 +1,14 @@
 ---
 type: Reference
 title: Scheduled checks
-description: "The workflows that run on a schedule to catch what breaks with no commit (a dead signing credential, an agent CLI release that changes what Kangentic reads), what reads each one, what to do when one is red, and what is deliberately not checked."
+description: "The workflows that run on a schedule to catch what breaks with no commit (a dead signing credential, an agent CLI release that changes what Kangentic reads, a published release that lost a file, a domain near its end date), what reads each one, what to do when one is red, and what is deliberately not checked."
 tags: [ci, release, credentials, agents]
 sources:
   - resource: .github/workflows/signing-credentials.yml
   - resource: .github/workflows/agent-clis.yml
+  - resource: .github/workflows/integrations.yml
+  - resource: scripts/check-distribution.mjs
+  - resource: scripts/lib/check-report.mjs
   - resource: scripts/probe-ssh-rig/transcript-clis.sh
   - resource: scripts/probe-ssh-rig/transcript-summary.mjs
   - resource: tests/unit/scheduled-workflows.test.ts
@@ -22,6 +25,7 @@ out before a user or a release does.
 | Workflow | When (UTC) | What it proves | Who reads it |
 |---|---|---|---|
 | `package-smoke.yml` | Nightly, 03:17 | The packaged app launches on all five release legs | `/release` requires the newest scheduled run green, within 48 hours |
+| `integrations.yml` | Nightly, 04:43 | The shipped browser sign-ins still work, and the published release, the npm launcher, the site and the domain are whole | `/release` stops on a red run and tells the owner which rows are red |
 | `signing-credentials.yml` | Nightly, 05:43 | The credentials a release signs with still work | `/release` requires the newest scheduled run green, within 48 hours |
 | `agent-clis.yml` | Nightly, 06:11 | Seven agent CLIs at their newest versions still write what Kangentic reads | `/release` reports the newest scheduled run and does not stop on it |
 | `codeql.yml` | Mondays, 04:27 | Code scanning against newly published queries | Its findings are code scanning alerts. Nothing reads the run's conclusion |
@@ -118,6 +122,53 @@ within hours.
   names the version. Its page under `docs/integrations/agents/` says what the adapter depends on.
 - **Every test was skipped.** The gate variable did not reach the test run, so the rig itself is
   broken, not a CLI.
+
+## Daily distribution check
+
+`integrations.yml` has two jobs. The first checks the shipped sign-ins and is described in
+[Board integration](../integrations/boards.md#daily-sign-in-check). The second runs
+`scripts/check-distribution.mjs`, which checks what an install and an update depend on outside
+the repository. `npm run check:distribution` runs it by hand. It holds no secret and needs no
+install, and every probe is a request a stranger could make.
+
+| Check | What it asks | Fails on |
+|---|---|---|
+| release, latest tag | `github.com/<owner>/<repo>/releases/latest`, the address electron-updater follows to find the release to offer | No `vX.Y.Z` tag. The other release rows and the npm row are then not run |
+| release, highest version | GitHub's release feed (`releases.atom`) | A published `vX.Y.Z` higher than the latest tag. A release re-created for an older tag can take "latest" back, and installed apps then stop at the older version |
+| release, assets | A `HEAD` for every file the release must carry, and the content of each update feed | A file that answers 404, a file it could not ask about, or a `latest-mac.yml` that does not list a zip for each Mac arch. The verdict is the publish gate's own (`verifyReleaseAssets` in `scripts/verify-release-assets.js`) |
+| release, feed versions | The `version:` of each update feed | A feed that names another version, or did not download |
+| npm, launcher | `registry.npmjs.org/kangentic/latest` | A version that is not the latest release. It is `pending` for two hours after a release, while `publish-npm` may still be running |
+| site, hero stars | The landing page | A star count that stays hidden or is not a number. It reads the page up to four times first, since a cold cache serves the page without the count and a failed read of GitHub is cached for 60 seconds |
+| domain, registration | The registry's RDAP record for the site's domain | An end date 10 days away or less, or a domain its registry holds for deletion |
+| domain, tls site and tls relay | A TLS handshake with the site and with the relay | A certificate 14 days from its end or less, or one that is refused |
+
+- **Values.** The repository comes from `electron-builder.yml`'s `publish:` block, the package from
+  the launcher's `package.json`, the site from `DOCS_BASE_URL` and the relay host from
+  `KANGENTIC_HOSTED_RELAY_URL`, all read from the checkout. A value that is gone fails the run.
+  `tests/unit/check-distribution.test.ts` holds each equal to its source and drives every verdict
+  with canned answers. It sends no request.
+- **The expected files come from the released tag.** `scripts/release-assets.js` on main describes
+  the next release, and it changed twice in five weeks. Checked against main's list, the row would
+  be red from such a change until the next tag. The check fetches the publish gate's three files
+  from the tag, loads them from a temp folder, and removes the folder.
+- **The thresholds.** Both hosts serve 90-day certificates that are replaced about 30 days before
+  their end, so one inside 14 days has stopped renewing. The domain's threshold sits below the
+  registrar's auto-renew lead, which a third party gives as about 14 days, so a domain with
+  auto-renew on never reaches it. One with auto-renew off does, ten days before it lapses.
+- **Known end dates, as of 2026-11-17.** The domain's registration ends on 2027-02-22. Both
+  certificates end on 2027-01-27.
+
+### When it is red
+
+- **A `release` row.** Read which file or feed it names. Publishing a new release repairs a
+  release that lost a file, and `gh release edit <tag> --latest` repairs a "latest" that points at
+  an older tag.
+- **`npm launcher`.** The newest release's `publish-npm` job did not finish. Re-run that job.
+- **`site hero stars`.** The landing page's Function could not read GitHub as its GitHub App. Its
+  log (`wrangler pages deployment tail`) names the cause, most often the app's installation on the
+  repository being removed.
+- **A `domain` row.** Renew the domain at its registrar, or look at why the host's certificate
+  stopped renewing.
 
 ## What is not checked, and why
 
