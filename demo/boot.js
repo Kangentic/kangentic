@@ -167,7 +167,23 @@
   var scenes = window.__demoScenes || {};
   var version = window.__demoVersion || '0.0.0';
   var params = new URLSearchParams(window.location.search);
+  // What the error card and the console show, in full.
   var errors = [];
+  // What the host is told in the kangentic-demo-error message, one line per line of `errors`.
+  // The frame posts to any origin ('*', since the site, the docs and the localhost rigs all embed
+  // it), so a refusal whose text can name a session posts a fixed line here instead.
+  var postedErrors = [];
+
+  /**
+   * Refuse the frame. The only writer of `errors` and `postedErrors`, so the two stay line for
+   * line. `postedText` is what the host is told when `cardText` can name a session; without it
+   * the host reads the card's text. Returns the card's text.
+   */
+  function refuse(cardText, postedText) {
+    errors.push(cardText);
+    postedErrors.push(postedText === undefined ? cardText : postedText);
+    return cardText;
+  }
 
   function decodeBase64Url(text) {
     var base64 = text.replace(/-/g, '+').replace(/_/g, '/');
@@ -382,7 +398,7 @@
   var scene = null;
   if (sceneName !== null) {
     scene = scenes[sceneName] || null;
-    if (!scene) errors.push('Unknown scene "' + sceneName + '". Scenes that boot here: ' + Object.keys(scenes).join(', ') + '.');
+    if (!scene) refuse('Unknown scene "' + sceneName + '". Scenes that boot here: ' + Object.keys(scenes).join(', ') + '.');
   }
 
   var urlState = null;
@@ -392,14 +408,19 @@
       validateState(urlState, 'state=');
     } catch (error) {
       urlState = null;
-      errors.push('The state= parameter is not usable: ' + (error && error.message ? error.message : String(error)));
+      // A session patch's refusal names its session id. The validator's text is never posted,
+      // whichever check refused, so the host reads one fixed line for every state= refusal.
+      refuse(
+        'The state= parameter is not usable: ' + (error && error.message ? error.message : String(error)),
+        'The state= parameter is not usable; the frame\'s error card says why.'
+      );
     }
   }
 
   var themeParam = params.get('theme');
   var theme = themeParam ? (THEME_ALIASES[themeParam] || themeParam) : 'dark';
   if (APP_THEMES.indexOf(theme) === -1) {
-    errors.push('Unknown theme "' + themeParam + '". Use night, sand, or an app theme id: ' + APP_THEMES.join(', ') + '.');
+    refuse('Unknown theme "' + themeParam + '". Use night, sand, or an app theme id: ' + APP_THEMES.join(', ') + '.');
     theme = 'dark';
   }
 
@@ -416,11 +437,11 @@
   // A still frame has no clock to loop, so asking for both is a contradiction rather than a
   // preference: say so instead of quietly dropping one.
   var loop = params.get('loop') === '1';
-  if (loop && still) errors.push('loop=1 and still=1 cannot both be set: a still frame has no replay to loop.');
+  if (loop && still) refuse('loop=1 and still=1 cannot both be set: a still frame has no replay to loop.');
   var fontSize = null;
   if (params.has('fs')) {
     var parsed = parseInt(params.get('fs') || '', 10);
-    if (Number.isNaN(parsed) || parsed < 8 || parsed > 32) errors.push('fs must be an integer between 8 and 32 (got "' + params.get('fs') + '").');
+    if (Number.isNaN(parsed) || parsed < 8 || parsed > 32) refuse('fs must be an integer between 8 and 32 (got "' + params.get('fs') + '").');
     else fontSize = parsed;
   }
 
@@ -432,7 +453,7 @@
   // the frame no poster can match, so it is refused rather than booted.
   var demoFonts = window.__demoFonts || null;
   if (!demoFonts || !Array.isArray(demoFonts.faces) || demoFonts.faces.length === 0 || !demoFonts.stacks) {
-    errors.push('This build carries no fonts (window.__demoFonts); rebuild with "npm run build:demo".');
+    refuse('This build carries no fonts (window.__demoFonts); rebuild with "npm run build:demo".');
     demoFonts = null;
   }
 
@@ -823,7 +844,7 @@
     var sceneRowData = window.__demoSceneRowData || {};
     var unloadedRows = effective.rows.filter(function (taskId) { return !sceneRowData[taskId]; });
     if (unloadedRows.length > 0) {
-      errors.push('The recorded sessions of the scene-only task "' + unloadedRows.join('", "') + '" did not load.');
+      refuse('The recorded sessions of the scene-only task "' + unloadedRows.join('", "') + '" did not load.');
       return;
     }
     // The same for a recorded Send's rest frame: without it the session would rest on another
@@ -831,7 +852,12 @@
     var sendFrames = window.__demoSendFrames || {};
     var unloadedFrames = sendFrameSessions.filter(function (sessionId) { return typeof sendFrames[sessionId] !== 'string'; });
     if (unloadedFrames.length > 0) {
-      errors.push('The frame the session "' + unloadedFrames.join('", "') + '" rests on before its recorded Send did not load.');
+      // The card names the session, as every refusal names what it refused; the host is told
+      // without the id.
+      refuse(
+        'The frame the session "' + unloadedFrames.join('", "') + '" rests on before its recorded Send did not load.',
+        'The frame a session rests on before its recorded Send did not load; the frame\'s error card names it.'
+      );
       return;
     }
     // Session patches are the SEED's input, not a pass over its output: the seed derives the
@@ -1230,10 +1256,14 @@
     }).catch(function (error) {
       if (veiled && root) unveil(root);
       var reason = error && error.message ? error.message : String(error);
-      errors.push(error && error.demoFontLoad ? reason : 'Boot step failed: ' + reason);
-      console.error('[kangentic-demo]', errors[errors.length - 1]);
+      // A font's failure names the build's own file, so the host reads it whole. A step's
+      // failure names its selector, and a scene's selector can name a session.
+      var cardText = error && error.demoFontLoad
+        ? refuse(reason)
+        : refuse('Boot step failed: ' + reason, 'A boot step failed; the frame\'s error card says why.');
+      console.error('[kangentic-demo]', cardText);
       renderErrorCard();
-      notifyParent({ type: 'kangentic-demo-error', reason: errors.join(' ') });
+      notifyParent({ type: 'kangentic-demo-error', reason: postedErrors.join(' ') });
     });
   }
 
@@ -1241,7 +1271,7 @@
     if (errors.length > 0) {
       errors.forEach(function (text) { console.error('[kangentic-demo] ' + text); });
       renderErrorCard();
-      notifyParent({ type: 'kangentic-demo-error', reason: errors.join(' ') });
+      notifyParent({ type: 'kangentic-demo-error', reason: postedErrors.join(' ') });
       return;
     }
     runBootSteps();
