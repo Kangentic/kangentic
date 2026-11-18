@@ -256,8 +256,8 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 | `accounts:remove` | invoke | Delete an account's row. Its folder and sign-in stay on disk. Resolves false for the agent's own login (`default`), which cannot be removed |
 | `accounts:reorder` | invoke | A drag: the agent's list takes the given order, and for an agent that reports usage the run order becomes Manual. New sessions only |
 | `accounts:switchTo` | invoke | Move an account to the top and, for an agent that reports usage, set Manual order, then restart the agent's running task sessions in place on it, one at a time. Resolves an `AgentAccountSwitchResult` once they have moved (how many moved, how many could not), which the renderer turns into one toast |
-| `accounts:refreshUsage` | invoke | Ask the CLI who is signed in on each account that is not a key file, then read every account's usage. Resolves once the reads are done |
-| `accounts:changed` | on | Event with no payload: something the tab shows changed, so it re-lists |
+| `accounts:refreshUsage` | invoke | Ask the CLI who is signed in on each account that is not a key file, then read every account's usage. Resolves once the reads are done. Calls that overlap share one batch |
+| `accounts:changed` | on | Event with no payload: something the tab shows changed, so it re-lists. Main sends it for a service change and when `config:set` saves the accounts settings, and rechecks waiting continuations on it |
 | `accounts:switched` | on | Event: a task's session reached its account's limit and continues on another account (`AgentAccountSwitched`) |
 | `accounts:allFull` | on | Event: every account of an agent is at its limit and a session waits for the first reset (`AgentAccountsAllFull`) |
 

@@ -104,6 +104,39 @@ describe('useAccountsStore when the bridge rejects', () => {
     expect(useAccountsStore.getState().login).toBeNull();
   });
 
+  // Main lists slowly, so lists overlap. The tab showed a Manual-era order after Order went back
+  // to Automatic because an older list landed last.
+  it('applies the latest list, not the one that lands last', async () => {
+    let answerOlder: (cards: AgentAccountsCard[]) => void = () => undefined;
+    accountsBridge.list
+      .mockReturnValueOnce(new Promise<AgentAccountsCard[]>((resolve) => { answerOlder = resolve; }))
+      .mockResolvedValueOnce([makeCard(['b', 'a'])]);
+    const older = useAccountsStore.getState().loadAccounts();
+    await useAccountsStore.getState().loadAccounts();
+    expect(accountIds()).toEqual(['b', 'a']);
+    answerOlder([makeCard(['a', 'b'])]);
+    await older;
+    expect(accountIds()).toEqual(['b', 'a']);
+  });
+
+  it('shows the older answer when it lands first and the newer request then fails', async () => {
+    useAccountsStore.setState({ cards: [], loaded: false });
+    let answerOlder: (cards: AgentAccountsCard[]) => void = () => undefined;
+    let failNewer: (error: Error) => void = () => undefined;
+    accountsBridge.list
+      .mockReturnValueOnce(new Promise<AgentAccountsCard[]>((resolve) => { answerOlder = resolve; }))
+      .mockReturnValueOnce(new Promise<AgentAccountsCard[]>((_resolve, reject) => { failNewer = reject; }));
+    const older = useAccountsStore.getState().loadAccounts();
+    const newer = useAccountsStore.getState().loadAccounts();
+    answerOlder([makeCard(['x', 'y'])]);
+    await older;
+    expect(accountIds()).toEqual(['x', 'y']);
+    failNewer(new Error('main is busy'));
+    await expect(newer).resolves.toBeUndefined();
+    expect(accountIds()).toEqual(['x', 'y']);
+    expect(useAccountsStore.getState().loaded).toBe(true);
+  });
+
   it('switchTo raises the failure toast', async () => {
     accountsBridge.switchTo.mockRejectedValue(new Error('main is busy'));
     accountsBridge.list.mockResolvedValue([makeCard(['a', 'b'])]);

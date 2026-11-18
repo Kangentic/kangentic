@@ -7,7 +7,13 @@ import type { AgentAccountRepository } from '../db/repositories/agent-account-re
 import { provisionAccountFolder, type AccountFolderProblemCode } from './account-folder';
 import { automaticOrder, topAccountWithRoom } from './account-order';
 import { readKeyFile } from './key-file';
-import { UnreadableUsageError, type AccountIdentity } from './account-support';
+import {
+  EmptyUsageReadError,
+  IdentityReadError,
+  UnreadableUsageError,
+  type AccountIdentity,
+  type EmptyUsageReadReason,
+} from './account-support';
 import type { AccountProblem, AccountProblemFacts } from './account-report';
 
 /** The folder problems worth a report, by the name they are reported under. */
@@ -80,6 +86,12 @@ export interface AccountServiceDependencies {
   environment?: () => NodeJS.ProcessEnv;
   /** Sends an account problem to error reporting (`account-report.ts`). Absent: nothing is sent. */
   reportProblem?: (problem: AccountProblem, agent: string, facts?: AccountProblemFacts, error?: unknown) => void;
+  /**
+   * Reads the stale or missing readings among an agent's accounts before Automatic ranks them for
+   * a spawn (`AccountUsageRefresher.readBeforeRanking`). Must resolve within its own bound and
+   * never reject. Absent: a spawn ranks on the stored readings.
+   */
+  readBeforeRanking?: (accounts: readonly AgentAccount[]) => Promise<void>;
 }
 
 /** What runs an account's sign-in in a terminal: the CLI's own login, pointed at the account's home. */
@@ -100,6 +112,9 @@ export type AddKeyFileResult =
  * ask; every spawn chokepoint passes the result into `CommandOptions.account`.
  */
 export class AccountService {
+  /** Why each account's last usage read gave no windows, so a repeat is not logged again. */
+  private readonly emptyUsageReasons = new Map<string, EmptyUsageReadReason>();
+
   constructor(private readonly dependencies: AccountServiceDependencies) {}
 
   private nowSeconds(): number {
@@ -296,24 +311,56 @@ export class AccountService {
     // for this folder, so a folder account is left as it was.
     if (account.kind === 'folder' && (await this.usesRemoteTarget(account.agent))) return account;
     const linked = account.kind === 'default' || (await this.refreshFolder(account));
-    const identity = await support.identify(cliPath, account.folderPath);
+    let identity: AccountIdentity;
+    try {
+      identity = await support.identify(cliPath, account.folderPath);
+    } catch (error) {
+      if (!(error instanceof IdentityReadError)) throw error;
+      // No answer is not a signed-out answer: the account keeps the status it had. Marking it
+      // signed out here parked a working account at the bottom of Automatic for days, since only
+      // a sign-in read sets it back.
+      console.warn(`[ACCOUNTS] Could not read who is signed in to a ${account.kind} account (${error.reason}); it keeps its status`);
+      this.reportProblem('identity-read-failed', account.agent, { kind: account.kind, reason: error.reason });
+      return this.dependencies.repository.getById(accountId);
+    }
+    const status = statusFor(linked, identity);
+    if (account.status === 'ok' && status !== 'ok') {
+      console.warn(`[ACCOUNTS] A ${account.kind} account of ${account.agent} is now ${status}`);
+    }
     // A signed-out answer keeps the email the row had, so the row still says whose it was.
     this.dependencies.repository.updateIdentity(accountId, {
       email: identity.email ?? account.email,
       plan: identity.signedIn ? identity.plan : account.plan,
-      status: statusFor(linked, identity),
+      status,
     });
     this.changed();
     return this.dependencies.repository.getById(accountId);
   }
 
   /**
+   * A usage read that gave no windows: the account keeps its last values, and the local log says
+   * why each time the reason changes, so a read that keeps failing is one line, not one per pass.
+   */
+  private noteEmptyUsageRead(account: AgentAccount, reason: EmptyUsageReadReason): void {
+    if (this.emptyUsageReasons.get(account.id) !== reason) {
+      console.warn(`[ACCOUNTS] A usage read for a ${account.kind} account of ${account.agent} gave no windows (${reason}); it keeps its last reading`);
+    }
+    this.emptyUsageReasons.set(account.id, reason);
+    this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason });
+  }
+
+  /**
    * Reads an account's usage with no session running on it (`readIdleUsage`) and stores it. False
-   * when the adapter has no such read or it failed; the account keeps its last values.
+   * when the adapter has no such read or it gave no windows; the account then keeps its last
+   * values, and a read that gave none is logged and reported.
    */
   async refreshUsage(accountId: string): Promise<boolean> {
     const account = this.dependencies.repository.getById(accountId);
-    if (!account || account.kind === 'key-file' || account.status === 'signed-out' || account.status === 'not-found') return false;
+    if (!account || account.kind === 'key-file') return false;
+    if (account.status === 'signed-out' || account.status === 'not-found') {
+      console.debug(`[ACCOUNTS] Usage read skipped: a ${account.kind} account is ${account.status}`);
+      return false;
+    }
     const support = this.dependencies.getAdapter(account.agent)?.accounts;
     if (!support || support.kind !== 'folder' || !support.readIdleUsage) return false;
     const cliPath = await this.dependencies.resolveCliPath?.(account.agent);
@@ -323,14 +370,39 @@ export class AccountService {
     try {
       windows = await support.readIdleUsage(cliPath, account.folderPath);
     } catch (error) {
+      if (error instanceof EmptyUsageReadError) {
+        this.noteEmptyUsageRead(account, error.reason);
+        return false;
+      }
       if (!(error instanceof UnreadableUsageError)) throw error;
       this.reportProblem('usage-read-unreadable', account.agent, { keys: error.keys });
       return false;
     }
-    if (!windows) return false;
+    // An empty list would replace good windows with none and still stamp the read as fresh.
+    if (!windows || windows.length === 0) {
+      this.noteEmptyUsageRead(account, windows ? 'no-windows' : 'no-answer');
+      return false;
+    }
+    this.emptyUsageReasons.delete(accountId);
     this.dependencies.repository.updateUsage(accountId, windows);
     this.changed();
     return true;
+  }
+
+  /**
+   * Before Automatic ranks an agent's accounts for a spawn: reads every account whose reading is
+   * missing or stale (`needsReadBeforeRanking`), so the order is never decided from a reading that
+   * has run out. Bounded by the reader. Nothing for Manual, an agent with one account, or an agent
+   * whose accounts cannot be read idle.
+   */
+  private async readBeforeRanking(agent: string): Promise<void> {
+    const readStaleAccounts = this.dependencies.readBeforeRanking;
+    if (!readStaleAccounts || this.dependencies.readConfig().orderMode !== 'automatic' || !this.followsOrderMode(agent)) return;
+    const support = this.dependencies.getAdapter(agent)?.accounts;
+    if (support?.kind !== 'folder' || !support.readIdleUsage) return;
+    const accounts = this.dependencies.repository.listForAgent(agent);
+    if (accounts.length < 2) return;
+    await readStaleAccounts(accounts);
   }
 
   /** The CLI's own sign-in for a folder account, to run in a terminal. Null when it cannot run. */
@@ -522,6 +594,9 @@ export class AccountService {
     // The agent's own login is account #1, so its sessions are recorded against it too and its
     // usage lands on its row. Its env is empty: the spawn is exactly what it was before accounts.
     this.ensureDefaultAccount(agent);
+    // A named account needs no ranking. Otherwise Automatic reads what has run out first, which
+    // also covers a spawn at boot, before the first scheduled read.
+    if (!overrideAccountId) await this.readBeforeRanking(agent);
     const ordered = this.ordered(agent);
     if (ordered.length === 1 && ordered[0].kind === 'default' && !overrideAccountId) {
       // One account: nothing to choose between.

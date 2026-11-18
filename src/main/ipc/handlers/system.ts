@@ -13,6 +13,7 @@ import { deepMergeConfig } from '../../../shared/object-utils';
 import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
+import { noteAccountsConfigChanged } from '../../accounts/accounts-config-changed';
 import { resolvePickerStartFolder } from '../helpers/picker-start-folder';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { refreshPlanApprovals } from '../../plan-approval/plan-approval-writer';
@@ -208,6 +209,8 @@ export function registerSystemHandlers(context: IpcContext): void {
       // its task stays in plan mode.
       refreshPlanApprovals();
       invalidateAgentListCache();
+      // Order mode decides the order the Accounts tab shows, so it lists again from main now.
+      if (config.agent.accounts) noteAccountsConfigChanged();
       import('../../agent/agent-registry').then(({ agentRegistry }) => {
         for (const agentName of agentRegistry.list()) {
           agentRegistry.getOrThrow(agentName).invalidateDetectionCache();

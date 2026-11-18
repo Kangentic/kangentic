@@ -11,6 +11,8 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountService, type AccountServiceDependencies } from '../../src/main/accounts/account-service';
 import {
+  EmptyUsageReadError,
+  IdentityReadError,
   UnreadableUsageError,
   type AccountIdentity,
   type FolderAccountSupport,
@@ -220,6 +222,28 @@ describe('AccountService.refreshIdentity', () => {
     // A folder refresh on a row with no folder fails, so an ok status shows it never ran.
     expect(refreshed?.status).toBe('ok');
     expect(defaultHomeCalls).toBe(0);
+  });
+
+  // The incident: one `auth status` run that timed out on a busy machine marked the agent's own
+  // login signed out, Automatic put it last, and no scheduled pass set it back for two days.
+  it('keeps the status, email and plan when the CLI gives no answer, and reports it', async () => {
+    const accountService = folderService(folderSupport({
+      identify: async () => { throw new IdentityReadError('run-failed'); },
+    }));
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    repository.updateIdentity(own.id, { email: 'dev@example.com', plan: 'pro', status: 'ok' });
+    const refreshed = await accountService.refreshIdentity(own.id);
+    expect(refreshed).toMatchObject({ status: 'ok', email: 'dev@example.com', plan: 'pro' });
+    expect(reports.map((entry) => entry.slice(0, 3))).toEqual([['identity-read-failed', AGENT, { kind: 'default', reason: 'run-failed' }]]);
+  });
+
+  it('still throws an identify failure it does not know', async () => {
+    const accountService = folderService(folderSupport({
+      identify: async () => { throw new TypeError('broken adapter'); },
+    }));
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    await expect(accountService.refreshIdentity(own.id)).rejects.toThrow('broken adapter');
+    expect(repository.getById(own.id)?.status).toBe('ok');
   });
 
   it('leaves a folder account alone, and never asks the CLI, when the CLI runs on a remote target', async () => {
@@ -454,6 +478,85 @@ describe('AccountService.cards', () => {
   });
 });
 
+describe('AccountService.resolveForSpawn under Automatic', () => {
+  /**
+   * The incident's three accounts: the agent's own login resets soonest but its stored reading ran
+   * out, a full-ish folder account resets next, and a fresh one resets last.
+   */
+  function seedIncident() {
+    const accountService = folderService(folderSupport({ readIdleUsage: async () => null }), {
+      readBeforeRanking: async (accounts) => {
+        readAsked.push(accounts.map((account) => account.id));
+        // The read lands: the own login now has a live window that resets soonest.
+        repository.updateUsage(own.id, [sevenDay(1, NOW + 86_400)]);
+      },
+    });
+    const own = accountService.ensureDefaultAccount(AGENT)!;
+    const busy = insertFolderAccount();
+    const fresh = insertFolderAccount();
+    repository.reorder(AGENT, [busy.id, own.id, fresh.id]);
+    repository.updateUsage(own.id, [sevenDay(1, NOW - 60)]);
+    repository.updateUsage(busy.id, [sevenDay(90, NOW + 5 * 86_400)]);
+    repository.updateUsage(fresh.id, [sevenDay(0, NOW + 6 * 86_400)]);
+    return { accountService, own, busy, fresh };
+  }
+
+  let readAsked: string[][];
+  beforeEach(() => {
+    readAsked = [];
+    config = { orderMode: 'automatic', autoSwitchAtLimit: true };
+  });
+
+  it('reads before it ranks, so the account whose reading ran out is ranked on a new one', async () => {
+    const { accountService, own } = seedIncident();
+    const resolved = await accountService.resolveForSpawn(AGENT);
+    expect(readAsked).toHaveLength(1);
+    expect(resolved?.id).toBe(own.id);
+  });
+
+  it('reads nothing under Manual, or for a named account', async () => {
+    const { accountService, busy } = seedIncident();
+    expect((await accountService.resolveForSpawn(AGENT, busy.id))?.id).toBe(busy.id);
+    config = { orderMode: 'manual', autoSwitchAtLimit: true };
+    expect((await accountService.resolveForSpawn(AGENT))?.id).toBe(busy.id);
+    expect(readAsked).toEqual([]);
+  });
+
+  describe('asks the reader for nothing when there is nothing to read', () => {
+    const readBeforeRanking = vi.fn(async (_accounts: readonly unknown[]) => undefined);
+
+    function twoFolderAccounts(): void {
+      insertFolderAccount();
+      insertFolderAccount();
+    }
+
+    function twoKeyFileAccounts(): void {
+      for (const name of ['one.env', 'two.env']) {
+        repository.insert({ agent: AGENT, kind: 'key-file', keyFilePath: path.join(root, name), keyNames: ['OPENROUTER_API_KEY'] });
+      }
+    }
+
+    beforeEach(() => {
+      readBeforeRanking.mockClear();
+    });
+
+    it.each<[string, () => AccountService, () => void, number]>([
+      // The control: two folder accounts of an agent whose usage can be read idle.
+      ['two readable folder accounts (control)', () => makeService({ [AGENT]: adapterOf(AGENT, folderSupport({ readIdleUsage: async () => null })) }, { readBeforeRanking }), twoFolderAccounts, 1],
+      // A spawn adds the agent's own login row itself, so no seeded row leaves exactly one account.
+      ['an agent with a single account', () => makeService({ [AGENT]: adapterOf(AGENT, folderSupport({ readIdleUsage: async () => null })) }, { readBeforeRanking }), () => undefined, 0],
+      ['a folder adapter without readIdleUsage', () => makeService({ [AGENT]: adapterOf(AGENT, folderSupport(), { reportsRateLimits: true }) }, { readBeforeRanking }), twoFolderAccounts, 0],
+      ['key-file accounts', () => makeService({ [AGENT]: adapterOf(AGENT, keyFileSupport(), { reportsRateLimits: true }) }, { readBeforeRanking }), twoKeyFileAccounts, 0],
+      ['an adapter that reports no usage', () => makeService({ [AGENT]: adapterOf(AGENT, folderSupport()) }, { readBeforeRanking }), twoFolderAccounts, 0],
+    ])('%s', async (_name, buildService, seed, expectedCalls) => {
+      const accountService = buildService();
+      seed();
+      await accountService.resolveForSpawn(AGENT);
+      expect(readBeforeRanking).toHaveBeenCalledTimes(expectedCalls);
+    });
+  });
+});
+
 describe('AccountService.resolveForSpawn', () => {
   it('refreshes an account named by the conversation, the top and the ok list once', async () => {
     let provisions = 0;
@@ -639,6 +742,65 @@ describe('AccountService.refreshUsage', () => {
     expect(await accountService.refreshUsage(own.id)).toBe(false);
     expect(reports.map((entry) => entry.slice(0, 3))).toEqual([['usage-read-unreadable', AGENT, { keys: 'alpha,beta' }]]);
     expect(repository.getById(own.id)?.lastUsage).toBeNull();
+  });
+
+  describe('a read that gives no windows', () => {
+    const GOOD = [sevenDay(1, NOW + 86_400)];
+    const READ_AT = '2026-11-18T05:19:00.000Z';
+
+    it.each<[string, () => Promise<RateLimitWindow[] | null>, string]>([
+      ['null', async () => null, 'no-answer'],
+      ['an empty list', async () => [], 'no-windows'],
+      ['a thrown empty read', async () => { throw new EmptyUsageReadError('cache-stale'); }, 'cache-stale'],
+    ])('keeps the stored windows and their read time on %s, and reports why', async (_name, readIdleUsage, reason) => {
+      const accountService = folderService(folderSupport({ readIdleUsage }));
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      database.prepare('UPDATE agent_accounts SET last_usage_json = ?, last_usage_at = ? WHERE id = ?').run(JSON.stringify(GOOD), READ_AT, own.id);
+
+      expect(await accountService.refreshUsage(own.id)).toBe(false);
+      expect(repository.getById(own.id)?.lastUsage).toEqual(GOOD);
+      expect(repository.getById(own.id)?.lastUsageAt).toBe(READ_AT);
+      expect(reports.map((entry) => entry.slice(0, 3))).toEqual([['usage-read-empty', AGENT, { kind: 'default', reason }]]);
+      expect(changeCount).toBe(0);
+    });
+
+    it('logs a repeat of the same reason once, and again once it changes', async () => {
+      const reasons: Array<'cache-stale' | 'run-failed'> = ['cache-stale', 'cache-stale', 'run-failed'];
+      const accountService = folderService(folderSupport({
+        readIdleUsage: async () => { throw new EmptyUsageReadError(reasons.shift()!); },
+      }));
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        for (let read = 0; read < 3; read += 1) await accountService.refreshUsage(own.id);
+        const lines = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('gave no windows'));
+        expect(lines).toHaveLength(2);
+        expect(lines[1]).toContain('run-failed');
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('logs the same reason again after a good read in between', async () => {
+      const reads: Array<() => Promise<RateLimitWindow[] | null>> = [
+        async () => { throw new EmptyUsageReadError('cache-stale'); },
+        async () => [sevenDay(5, NOW + 3600)],
+        async () => { throw new EmptyUsageReadError('cache-stale'); },
+      ];
+      const accountService = folderService(folderSupport({ readIdleUsage: async () => reads.shift()!() }));
+      const own = accountService.ensureDefaultAccount(AGENT)!;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const outcomes: boolean[] = [];
+        for (let read = 0; read < 3; read += 1) outcomes.push(await accountService.refreshUsage(own.id));
+        expect(outcomes).toEqual([false, true, false]);
+        const lines = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('gave no windows'));
+        expect(lines).toHaveLength(2);
+        expect(lines.every((line) => line.includes('cache-stale'))).toBe(true);
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 
   it('stores the windows a good read returns', async () => {

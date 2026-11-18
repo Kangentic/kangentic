@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { claudePlanDisplayName, deriveClaudeAccountState, parseClaudeAuthStatus } from '../../src/main/agent/adapters/claude/accounts';
 import { parseKeyFileText } from '../../src/main/accounts/key-file';
@@ -48,20 +50,33 @@ describe('parseClaudeAuthStatus', () => {
   });
 
   it('prefers the plan tier when the CLI reports one', () => {
-    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, email: 'dev@example.com', subscriptionType: 'max', planTier: 'ultra' })).plan).toBe('Ultra');
+    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, email: 'dev@example.com', subscriptionType: 'max', planTier: 'ultra' }))?.plan).toBe('Ultra');
   });
 
   it('writes a plan tier with a multiplier as words', () => {
-    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, email: 'dev@example.com', planTier: 'max_20x' })).plan).toBe('Max 20x');
+    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, email: 'dev@example.com', planTier: 'max_20x' }))?.plan).toBe('Max 20x');
   });
 
-  it('reports a signed-out folder and an unreadable answer as signed out', () => {
-    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: false })).signedIn).toBe(false);
-    expect(parseClaudeAuthStatus('not json').signedIn).toBe(false);
+  it('reads a signed-out answer as signed out', () => {
+    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: false }))?.signedIn).toBe(false);
+  });
+
+  // No answer is not a signed-out answer: reading it as one parked a working account at the
+  // bottom of Automatic until the Accounts tab was opened.
+  it.each(['not json', '', '[]', 'null', '{}', '{"error":"x"}', '{"loggedIn":"false"}'])('gives no identity for output that is not the CLI answer (%j)', (output) => {
+    expect(parseClaudeAuthStatus(output)).toBeNull();
+  });
+
+  // Captured from `claude auth status` on 2.1.327 with every personal value replaced: a signed-in
+  // home, and an empty home that exits 1 and still prints its answer.
+  it('reads both real-shape answers', () => {
+    const captured = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-auth-status.json'), 'utf8')) as { signedIn: unknown; signedOut: unknown };
+    expect(parseClaudeAuthStatus(JSON.stringify(captured.signedIn))).toEqual({ signedIn: true, email: 'dev@example.com', plan: 'Max 20x', hasSubscription: true });
+    expect(parseClaudeAuthStatus(JSON.stringify(captured.signedOut))).toEqual({ signedIn: false, email: null, plan: null, hasSubscription: null });
   });
 
   it('reports a signed-in account with no plan as having no subscription', () => {
-    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: 'dev@example.com' })).hasSubscription).toBe(false);
+    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: 'dev@example.com' }))?.hasSubscription).toBe(false);
   });
 });
 
