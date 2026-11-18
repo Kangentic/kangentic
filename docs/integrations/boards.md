@@ -284,8 +284,9 @@ The three browser sign-ins can break with no code change. Someone deletes or reg
 key, drops `https://kangentic.com` from its allowed origins, revokes the Atlassian or Linear app, or
 the kangentic.com pages stop serving. `.github/workflows/integrations.yml` runs
 `scripts/check-integrations.mjs` every day, on demand, and on a pull request that changes a file
-the script reads, the script itself or the workflow. `npm run check:integrations` runs it by hand. The script holds no secret and
-needs no install. Every probe is a request a stranger could make, and none signs anyone in.
+the script reads, the script itself or the workflow. `npm run check:integrations` runs it by hand.
+The script holds no secret and needs no install. Every probe is a request a stranger could make,
+and none signs anyone in.
 
 | Check | What it asks | Passes on | Fails on |
 |-------|--------------|-----------|----------|
@@ -301,10 +302,11 @@ check too, and so does no answer at all.
 
 - **Pending.** An empty `TRELLO_API_KEY`, `JIRA_OAUTH_CLIENT_ID` or `LINEAR_OAUTH_CLIENT_ID` means
   that sign-in is not shipped. Its checks report `pending` and do not fail the run, so the run's
-  summary is also the list of owner steps left. The Jira token service still gets its request while
-  the id is empty, and a service that is not ready is `pending` only until the id ships. An answer
-  the check does not know fails even while the id is empty. A non-empty id that fails is a red run.
-  The return page and the callback are checked on every run.
+  summary is also the list of owner steps left. The Trello and Linear checks send nothing while
+  their id is empty. The Jira token service still sends its request, and a service that is not
+  ready is `pending` only until the id ships. An answer that check does not know fails it even
+  before then. A non-empty id that fails is a red run. The return page and the callback are
+  checked on every run.
 - **Values.** The script reads the ids, the site (`DOCS_BASE_URL`), the page paths and Linear's
   redirect URI from the source text of the checkout, so a pull request checks its own values. It
   cannot import them, because it runs before any install. A constant that is gone or written another
@@ -325,8 +327,9 @@ check too, and so does no answer at all.
   notice per pending check. A failed scheduled run emails the person who last changed the
   workflow's schedule (its `cron` line), or who re-enabled the workflow after that, under that
   person's own GitHub Actions notification settings. `/release` reads the last scheduled run
-  before a tag and stops on a failed, stale or missing one. It is not a required check, because an
-  outage at Trello, Linear or kangentic.com must not block an unrelated merge.
+  before a tag and stops when it did not succeed, is older than 48 hours, or is missing. It is not
+  a required check, because an outage at Trello, Linear or kangentic.com must not block an
+  unrelated merge.
 
 ## GitLab
 
