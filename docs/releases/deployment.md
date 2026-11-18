@@ -142,11 +142,11 @@ Releases require two things:
 - **Write** role (minimum) to trigger the workflow or push a tag
 - **`release-<platform>` environment reviewer** to approve the workflow run, when the environments carry a reviewer rule
 
-Each build leg names its own environment: `release-linux`, `release-linux-arm64`, `release-windows`, `release-macos-arm64` and `release-macos-x64`. Add required reviewers to each in Settings > Environments; even Admin users cannot bypass environment approval. GitHub creates an environment the workflow names on its first run, with no rules, so a newly added leg runs unreviewed until one is added. Secrets stay repository secrets, which every environment inherits; `preflight-signing` and `preflight-symbols` read them with no environment at all.
+Each build leg names its own environment: `release-linux`, `release-linux-arm64`, `release-windows`, `release-macos-arm64` and `release-macos-x64`. Add required reviewers to each in Settings > Environments; even Admin users cannot bypass environment approval. `release-windows` is also the environment the nightly `signing-credentials.yml` signs in from, so a reviewer rule there holds that nightly until someone approves it. GitHub creates an environment the workflow names on its first run, with no rules, so a newly added leg runs unreviewed until one is added. Secrets stay repository secrets, which every environment inherits; `preflight-signing` and `preflight-symbols` read them with no environment at all.
 
 ### Code Signing Secrets
 
-Signing only activates when the corresponding env vars are present. Local dev builds remain unsigned. A release requires the five Apple secrets and the three Azure secrets: `preflight-signing` fails the run before anything builds when one is missing, and names every missing one. Without that check a missing Azure secret would ship an installer with no signature, because `build/windowsSign.js` signs only when `AZURE_TENANT_ID` is set and otherwise logs that it skipped.
+Signing only activates when the corresponding env vars are present. Local dev builds remain unsigned. A release requires the five Apple secrets and the two Azure values: `preflight-signing` fails the run before anything builds when one is missing, and names every missing one. Without that check a missing Azure value would fail the Windows leg at its sign-in step, after the tag and the draft release exist.
 
 | Secret | Source |
 |--------|--------|
@@ -155,11 +155,27 @@ Signing only activates when the corresponding env vars are present. Local dev bu
 | `APPLE_ID` | Apple ID email |
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password (not account password) |
 | `APPLE_TEAM_ID` | Apple Developer Team ID |
-| `AZURE_TENANT_ID` | Azure AD tenant ID |
-| `AZURE_CLIENT_ID` | App registration (service principal) client ID |
-| `AZURE_CLIENT_SECRET` | App registration client secret |
+| `AZURE_TENANT_ID` | Azure AD tenant ID. Says where to sign in, and is not a credential |
+| `AZURE_CLIENT_ID` | App registration (service principal) client ID. Says which app, and is not a credential |
 
-The signing endpoint (`https://eus.codesigning.azure.net/`), the Trusted Signing account name and the certificate profile name are not secrets. `release.yml` sets them as literals in the build step's env (`AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`).
+The signing endpoint (`https://eus.codesigning.azure.net/`), the Trusted Signing account name and the certificate profile name are not secrets. `release.yml` sets them as literals in the build step's env (`AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_CERT_PROFILE`). `build/windowsSign.js` signs when the account is named and otherwise logs that it skipped.
+
+**The Windows sign-in has no secret, so nothing in it expires.** The Windows leg runs `azure/login`, which hands Azure the OIDC token GitHub issues the job. Azure accepts it through a federated credential on the app registration (Entra, App registrations, the app, Certificates & secrets, Federated credentials):
+
+| Field | Value |
+|---|---|
+| Issuer | `https://token.actions.githubusercontent.com` |
+| Subject | `repo:Kangentic/kangentic:environment:release-windows` |
+| Audience | `api://AzureADTokenExchange` |
+
+The subject is the Windows leg's environment. Entra matches it exactly, with no wildcard, so renaming the repository, the organization or that environment breaks the sign-in until the credential's subject is changed to match. The app registration keeps its Trusted Signing Certificate Profile Signer role on the signing account. A client secret on the app, and an `AZURE_CLIENT_SECRET` repository secret, are no longer read by anything and can be deleted.
+
+Two details in the workflow carry weight:
+
+- **The token is taken early.** GitHub's OIDC token is good for minutes and the build signs later than that. Right after the sign-in, a step asks the Azure CLI for a code signing token, which the CLI caches for about an hour. The Windows build takes under ten minutes (5.5 on v0.59.0). The same step fails in seconds when the app has lost its signing role.
+- **Only the Azure CLI's sign-in is tried.** `Invoke-TrustedSigning` would otherwise try nine other kinds first. `build/windowsSign.js` excludes each one (`EXCLUDED_CREDENTIALS`), as Microsoft's own signing action does for this setup.
+
+`signing-credentials.yml` signs in the same way, in the same environment, every night, and `tests/unit/scheduled-workflows.test.ts` fails when the two sign-ins differ or either reads a client secret.
 
 `build/windowsSign.js` gives `Invoke-TrustedSigning` Microsoft's timestamp server (`http://timestamp.acs.microsoft.com`). The timestamp is what keeps a signature good: a Trusted Signing certificate lasts about three days, and Windows judges a signature with no timestamp against today's date, so it stops verifying the day its certificate ends. The module adds a timestamp only when it is given a server. The installers through 0.59.0 were signed without one, so each of those signatures has lapsed and Windows treats those downloads as it treats an unsigned file. `tests/unit/windows-sign.test.ts` holds the argument in the command, and `signing-credentials.yml` signs a file through the hook every night and fails when the signature carries no timestamp.
 

@@ -99,11 +99,14 @@ jobs:
   # them and so does this job, which carries no `environment:` for the same
   # reason preflight-symbols does not.
   #
-  # The Windows leg has the same gap. build/windowsSign.js signs only when
-  # AZURE_TENANT_ID is set and otherwise logs a skip, so an unset Azure secret
-  # ships an installer with no signature while every job reports success. The
-  # three Azure secrets are checked here beside the Apple ones, and both lists
-  # are reported before the job fails, so one run names everything missing.
+  # The Windows leg signs in to Azure with no client secret: azure/login trades
+  # GitHub's OIDC token for an Azure one, through a federated credential on the
+  # app registration whose subject is the release-windows environment. Nothing
+  # in that expires. The sign-in still needs to know which tenant and which
+  # app, and an unset one fails the Windows leg at its sign-in step, after the
+  # tag and the draft exist. Both are checked here beside the Apple secrets,
+  # and both lists are reported before the job fails, so one run names
+  # everything missing.
   preflight-signing:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -117,7 +120,6 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: |
           missing_apple=""
           for name in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD; do
@@ -126,7 +128,7 @@ jobs:
             fi
           done
           missing_azure=""
-          for name in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET; do
+          for name in AZURE_TENANT_ID AZURE_CLIENT_ID; do
             if [ -z "${!name}" ]; then
               missing_azure="$missing_azure $name"
             fi
@@ -135,7 +137,7 @@ jobs:
             echo "::error::Missing Apple secret(s):$missing_apple. Both macOS legs would build an app that is unsigned or not notarized, and macOS refuses to open it."
           fi
           if [ -n "$missing_azure" ]; then
-            echo "::error::Missing Azure secret(s):$missing_azure. The Windows leg would ship an installer with no signature, which SmartScreen blocks."
+            echo "::error::Missing Azure secret(s):$missing_azure. The Windows leg could not sign in to Azure, so it would fail before it signs the installer."
           fi
           if [ -n "$missing_apple$missing_azure" ]; then
             echo "::error::Add them as repository secrets on this repo, so every release-<platform> environment inherits them."
@@ -382,6 +384,14 @@ jobs:
     # FAILED, straight back to the three-way split this job exists to prevent.
     if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.create-draft-release.result == 'success' && needs.build-host.result == 'success'
     environment: release-${{ matrix.platform }}
+    # contents: write is the workflow's own grant, restated because a job-level
+    # block replaces it. id-token: write lets the Windows leg ask GitHub for the
+    # OIDC token azure/login trades for an Azure sign-in. The other legs ask for
+    # no token, and Azure would refuse theirs: the federated credential's subject
+    # is the release-windows environment alone.
+    permissions:
+      contents: write
+      id-token: write
     # Every leg builds on a runner of its own arch, never cross-built: npm installs
     # only the host's per-arch native packages (sherpa-onnx, sqlite-vec, koffi,
     # sharp), and build/afterPack.js loads the native modules with the packaged
@@ -467,6 +477,37 @@ jobs:
           sudo dscacheutil -flushcache
           sudo killall -HUP mDNSResponder
 
+      # Azure Trusted Signing, with no client secret to expire. GitHub issues this
+      # job an OIDC token, and Azure accepts it through the federated credential
+      # on the app registration, whose subject is this leg's environment
+      # (repo:Kangentic/kangentic:environment:release-windows). The two inputs
+      # say which tenant and which app. Neither is a credential.
+      # .github/workflows/signing-credentials.yml signs in the same way, in the
+      # same environment, every night.
+      - name: Sign in to Azure for code signing
+        if: matrix.platform == 'windows'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # The sign-in above rests on an OIDC token that is good for minutes, and the
+      # build signs later than that. A code signing token asked for now is cached
+      # by the Azure CLI for about an hour, which the build (under ten minutes)
+      # finishes well inside. It also fails here, in seconds, when the app has
+      # lost its signing role. Only the expiry is printed, never the token.
+      - name: Get the code signing token while the sign-in is fresh
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $expires = az account get-access-token --resource https://codesigning.azure.net --query expiresOn --output tsv
+          if ($LASTEXITCODE -ne 0 -or -not $expires) {
+            Write-Output "::error::Azure gave no code signing token. The installer could not be signed. Check the federated credential and the signing role on the app registration."
+            exit 1
+          }
+          Write-Output "The code signing token is good until $expires."
+
       - name: Build and publish
         run: npm run publish
         env:
@@ -488,10 +529,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Azure Trusted Signing (Windows custom sign script)
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # Azure Trusted Signing (build/windowsSign.js). These three are not
+          # secrets. The hook signs when the account is named, with the Azure CLI
+          # sign-in the two steps above made.
           AZURE_SIGNING_ENDPOINT: https://eus.codesigning.azure.net/
           AZURE_SIGNING_ACCOUNT: sign-kangentic
           AZURE_CERT_PROFILE: kangentic-signing

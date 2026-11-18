@@ -15,7 +15,7 @@ sources:
 ---
 # Scheduled checks
 
-Some failures need no commit. A client secret reaches its end date, an agreement goes unaccepted, a
+Some failures need no commit. A certificate reaches its end date, an agreement goes unaccepted, a
 vendor ships a CLI that writes its transcript somewhere new. No pull request check can see these,
 because nothing in the repository changed. The workflows here run on a schedule so the team finds
 out before a user or a release does.
@@ -44,11 +44,14 @@ They cannot tell a live secret from a dead one, so a dead one used to be found i
 matrix, after the tag and the draft release existed. The nightly uses each credential the way the
 release does:
 
-- **Azure Trusted Signing.** A Windows job builds a throwaway library, signs it through
-  `build/windowsSign.js` (the hook electron-builder calls) and requires
+- **Azure Trusted Signing.** A Windows job signs in to Azure exactly as the release's Windows leg
+  does: `azure/login` with GitHub's OIDC token, in the `release-windows` environment, with no
+  client secret (see [Deployment](deployment.md), Code Signing Secrets). It builds a throwaway
+  library, signs it through `build/windowsSign.js` (the hook electron-builder calls) and requires
   `Get-AuthenticodeSignature` to report `Valid` with a timestamp. This also covers the
   `TrustedSigning` PowerShell module, which the hook installs from the PowerShell Gallery with no
-  pinned version.
+  pinned version. The job is in the release's environment because the federated credential's
+  subject names it: a job anywhere else would sign in with a credential the release does not use.
 - **Apple notarization.** A macOS job runs `xcrun notarytool history` with the Apple ID, the
   app-specific password and the team id. It submits nothing. It needs macOS because only notarytool
   takes that kind of sign-in.
@@ -59,13 +62,16 @@ release does:
 
 It adds no secret, uploads nothing, and never runs on a pull request.
 `tests/unit/scheduled-workflows.test.ts` fails when `release.yml` reads a secret the nightly does
-not, or when the two sign with a different endpoint, account or profile.
+not, when the two sign with a different endpoint, account or profile, or when they sign in to
+Azure differently.
 
 ### When it is red
 
 | Job | Likely cause | Fix |
 |---|---|---|
-| Azure Trusted Signing | The client secret reached its end date (Entra's error for that is `AADSTS7000222`), the app registration lost its signing role, or the PowerShell module changed | Create a new client secret on the app registration and replace `AZURE_CLIENT_SECRET`. For the module, pin or update the install in `build/windowsSign.js` |
+| Azure Trusted Signing, at the sign-in, with `AADSTS700213: No matching federated identity record found for presented assertion subject` | The federated credential was deleted, or its subject no longer matches (the repository, the organization or the `release-windows` environment was renamed). The error prints the subject GitHub presented | Add the credential again on the app registration with the three values in [Deployment](deployment.md), Code Signing Secrets, or change its subject to the one the error prints |
+| Azure Trusted Signing, "no code signing token" or at the signing step | The app registration lost its signing role on the account, or the PowerShell module changed | Give the app the Trusted Signing Certificate Profile Signer role again. For the module, pin or update the install in `build/windowsSign.js` |
+| Azure Trusted Signing, waiting and then timed out | Someone added a reviewer rule to the `release-windows` environment | Approve the run, or move the rule off that environment |
 | Azure Trusted Signing, "no timestamp" | The signature would stop verifying when its short-lived certificate ends | Name a timestamp server in `build/windowsSign.js` |
 | Apple notarization sign-in | A revoked app-specific password, an agreement waiting at developer.apple.com, or a lapsed membership | Accept the agreement, or create a new app-specific password and replace `APPLE_APP_SPECIFIC_PASSWORD` |
 | Developer ID certificate | It ends within 30 days | Create a new Developer ID Application certificate, export it as a `.p12`, replace `APPLE_CERTIFICATE_BASE64` and `APPLE_CERTIFICATE_PASSWORD` |
@@ -73,19 +79,26 @@ not, or when the two sign with a different endpoint, account or profile.
 
 Then `gh workflow run signing-credentials.yml --ref main` gets a fresh answer.
 
-Two end dates are known as of 2026-11-17:
+One end date is known as of 2026-11-17:
 
 - **The Developer ID certificate ends on 2027-02-01.** The nightly goes red on 2027-01-02, and
   `/release` stops from then until the certificate is replaced. Apps already signed and notarized
   keep opening after that date. Only new builds need the new certificate.
-- **The Azure client secret's end date is not readable from here.** Only the app registration in
-  Entra shows it. The repository secret was last set on 2026-03-09, and Entra allows 24 months at
-  most. The nightly finds a dead secret the next morning, not before.
+
+The Windows sign-in has none. It used a client secret that ended on 2028-03-08, until the release
+moved to GitHub's OIDC federation.
 
 The workflow was proven on a scratch branch on 2026-11-17 before it reached main: one green run,
 and a red run for each of a made-up certificate profile, a removed sign step, a 4,000 day
 certificate threshold and a made-up Sentry token. Its first run is also what found that the
 installers had no timestamp (see [Deployment](deployment.md), Code Signing Secrets).
+
+The federated sign-in was proven the same way on 2026-11-18, with the Windows job alone and no
+client secret in the workflow. One run signed and timestamped the probe file. One run with the job
+outside the `release-windows` environment was refused at the sign-in, with `AADSTS700213` naming
+the branch subject it presented. One run waited eleven minutes between the sign-in and the signing
+step and still produced a valid, timestamped signature, which is twice the 5.5 minutes the
+v0.59.0 Windows build took.
 
 ## Agent CLIs
 
@@ -177,6 +190,7 @@ Each of these can also break with no commit. None has a scheduled check, by deci
 | Dependency | Who notices today | Why no check |
 |---|---|---|
 | The response shapes of Trello, Linear, Jira, Asana, Azure DevOps and GitLab | A user, then Sentry, since the board clients report | A probe needs a test account per service, and three of those tokens expire within a year. The check would join the class it guards |
+| Jira's board issues endpoint | A user, then Sentry | Atlassian's Jira Software spec marked `GET /rest/agile/1.0/board/{boardId}/issue` deprecated when read on 2026-11-18, beside an "enhanced" twin under `/rest/software/1.0/`. The changelog pages read that day gave no removal date. `boardIssues` in `jira/client.ts` moves to the twin when Atlassian announces one. A board and its columns have no twin and are not marked |
 | Model downloads from Hugging Face | A user. Sentry for dictation models | Thirteen of the URLs follow `main` with no checksum. Pinning them to commits would remove the failure, and is the fix if it ever happens |
 | The mobile app's Apple Distribution certificate and profile | Whoever runs the next iOS device build | They live in the mobile repository's CI, which is where a check belongs |
 | Push notifications | A user | The desktop posts to Expo with no credential, and the push keys Expo holds have no end date |

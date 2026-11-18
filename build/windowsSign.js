@@ -8,6 +8,27 @@ const { execFileSync } = require('child_process');
 const TIMESTAMP_SERVER = 'http://timestamp.acs.microsoft.com';
 const TIMESTAMP_DIGEST = 'SHA256';
 
+/**
+ * Every kind of sign-in Invoke-TrustedSigning would try before the Azure CLI's, and after it.
+ *
+ * The workflow signs in to Azure before it builds (azure/login, through GitHub's OIDC federation:
+ * no client secret, so nothing to expire or renew), and the Azure CLI then holds the only sign-in
+ * that can work. The cmdlet's default is to try each kind in turn. Excluding the rest means none
+ * is tried first, which is what Microsoft's own signing action does for this setup, and it means
+ * a runner that happens to carry another kind of sign-in can never sign as someone else.
+ */
+const EXCLUDED_CREDENTIALS = [
+  'EnvironmentCredential',
+  'WorkloadIdentityCredential',
+  'ManagedIdentityCredential',
+  'SharedTokenCacheCredential',
+  'VisualStudioCredential',
+  'VisualStudioCodeCredential',
+  'AzurePowerShellCredential',
+  'AzureDeveloperCliCredential',
+  'InteractiveBrowserCredential',
+];
+
 let moduleInstalled = false;
 
 function ensureTrustedSigningModule() {
@@ -48,6 +69,7 @@ function signingCommand(filePath, env) {
     '-Endpoint', quote(env.AZURE_SIGNING_ENDPOINT),
     '-CertificateProfileName', quote(env.AZURE_CERT_PROFILE),
     '-CodeSigningAccountName', quote(env.AZURE_SIGNING_ACCOUNT),
+    ...EXCLUDED_CREDENTIALS.map((kind) => `-Exclude${kind}`),
     '-Files', quote(filePath),
   ].join(' ');
 }
@@ -55,12 +77,13 @@ function signingCommand(filePath, env) {
 let skipLogged = false;
 
 exports.default = async function sign(configuration) {
-  if (!process.env.AZURE_TENANT_ID) {
+  if (!process.env.AZURE_SIGNING_ACCOUNT) {
     // electron-builder calls this once per file. Say it once: a release cannot
-    // reach here unsigned, because release.yml's preflight-signing job fails
-    // first when an Azure secret is missing.
+    // reach here unsigned, because release.yml names the account on its build
+    // step and its preflight-signing job fails first when an Azure secret the
+    // sign-in needs is missing.
     if (!skipLogged) {
-      console.log('[windowsSign] Skipping signing: AZURE_TENANT_ID is not set (dev build).');
+      console.log('[windowsSign] Skipping signing: AZURE_SIGNING_ACCOUNT is not set (dev build).');
       skipLogged = true;
     }
     return;
@@ -79,3 +102,4 @@ exports.default = async function sign(configuration) {
 
 exports.signingCommand = signingCommand;
 exports.TIMESTAMP_SERVER = TIMESTAMP_SERVER;
+exports.EXCLUDED_CREDENTIALS = EXCLUDED_CREDENTIALS;

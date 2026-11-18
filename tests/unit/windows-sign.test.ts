@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
 const windowsSign = require('../../build/windowsSign.js') as {
   signingCommand: (filePath: string, env: Record<string, string | undefined>) => string;
   TIMESTAMP_SERVER: string;
+  EXCLUDED_CREDENTIALS: string[];
 };
 
 const ENVIRONMENT = {
@@ -43,6 +44,20 @@ describe('the Windows signing command', () => {
     expect(command).toContain("-CertificateProfileName 'example-profile'");
     expect(command).toContain("-Files 'C:\\out\\Kangentic-Setup-1.0.0.exe'");
     expect(command).toContain('-FileDigest SHA256');
+  });
+
+  // The release signs in to Azure through GitHub's OIDC federation and the Azure CLI then holds
+  // the sign-in. If the Azure CLI's kind were excluded, or the environment's kind let back in, the
+  // cmdlet would look for a client secret that no longer exists and sign nothing.
+  it('leaves the Azure CLI sign-in as the only kind the cmdlet may use', () => {
+    const command = windowsSign.signingCommand('C:\\out\\app.exe', ENVIRONMENT);
+    const excluded = [...command.matchAll(/ -Exclude([A-Za-z]+Credential)\b/g)].map((match) => match[1]);
+    expect(excluded).toEqual(windowsSign.EXCLUDED_CREDENTIALS);
+    expect(excluded).toContain('EnvironmentCredential');
+    expect(excluded).toContain('ManagedIdentityCredential');
+    expect(excluded).not.toContain('AzureCliCredential');
+    // The ten kinds Invoke-TrustedSigning 0.5.8 can exclude, less the one that is used.
+    expect(excluded).toHaveLength(9);
   });
 
   it('keeps a path with a space or a quote one argument', () => {
