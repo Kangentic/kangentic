@@ -257,7 +257,8 @@ export class JiraAdapter implements BoardAdapter {
       const issues = mapJiraIssues(page.issues, { site: ref.site, boardColumns, alreadyImported });
       return { issues, totalCount: page.total ?? issues.length, hasNextPage: this.hasNextPage(page) };
     } catch (error) {
-      if (error instanceof JiraHttpError && error.status === 401) throw new RefusalError(JIRA_REJECTED_SAVED_TOKEN);
+      // The same class a source check throws for it, so one condition has one class on every call.
+      if (error instanceof JiraHttpError && error.status === 401) throw new SignInRefusedError(JIRA_REJECTED_SAVED_TOKEN);
       if (error instanceof JiraHttpError) throw new RefusalError(error.jiraMessage ?? error.message);
       throw error;
     }

@@ -58,7 +58,8 @@ export function tableLines(results) {
   return results.map(({ area, check, status, detail }) => `${status.padEnd(8)}${area.padEnd(8)}${check.padEnd(16)}${detail}`);
 }
 
-function escapeCommandData(text) {
+/** The message of a workflow command (`::error ...::<message>`), so no part of it starts a command of its own. */
+export function escapeCommandData(text) {
   return text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 }
 

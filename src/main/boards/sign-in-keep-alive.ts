@@ -51,7 +51,9 @@ function arm(delayMs: number): void {
   timer = setTimeout(() => {
     timer = null;
     void runSignInKeepAlivePass().finally(() => {
-      if (running) arm(KEEP_ALIVE_PASS_INTERVAL_MS);
+      // A stop and a start during this pass armed the next one already. Arming
+      // again would leave that timer running where stop() cannot clear it.
+      if (running && timer === null) arm(KEEP_ALIVE_PASS_INTERVAL_MS);
     });
   }, delayMs);
   timer.unref();

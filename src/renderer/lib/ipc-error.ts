@@ -18,14 +18,30 @@ import { msg } from '@lingui/core/runtime-macro';
 const REMOTE_METHOD_PREFIX = /^Error invoking remote method '[^']*':\s*/;
 
 /**
+ * What a class name looks like: it ends in `Error`, and a bare `Error` counts.
+ * Both patterns below are built from it, so they cannot disagree about a name.
+ */
+const ERROR_CLASS = '(?:[A-Z][A-Za-z0-9_$]*)?Error';
+
+/**
  * A leading `SomeError: `, including a bare `Error: `. Only stripped when the
  * name ends in `Error`, so a legitimate message that happens to contain a colon,
  * such as a drive letter or `fatal: ...` from git, is left alone.
  */
-const ERROR_CLASS_PREFIX = /^(?:[A-Z][A-Za-z0-9_$]*)?Error:\s*/;
+const ERROR_CLASS_PREFIX = new RegExp(`^${ERROR_CLASS}:\\s*`);
 
-/** The class name in front of the message, once the channel prefix is gone. */
-const ERROR_CLASS_NAME = /^((?:[A-Z][A-Za-z0-9_$]*)?Error):\s/;
+/**
+ * The class name in front of the message, once the channel prefix is gone. It
+ * asks for the space Electron writes after the colon, which stripping does not:
+ * a caller acts on this name, so it has to be a class and not text shaped like one.
+ */
+const ERROR_CLASS_NAME = new RegExp(`^(${ERROR_CLASS}):\\s`);
+
+/** The rejection's text with the channel prefix gone, or null when there is none to read. */
+function messageWithoutChannel(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.message) return null;
+  return error.message.replace(REMOTE_METHOD_PREFIX, '');
+}
 
 /**
  * The class main threw, as Electron leaves it in the rejection, or null when the
@@ -34,8 +50,8 @@ const ERROR_CLASS_NAME = /^((?:[A-Z][A-Za-z0-9_$]*)?Error):\s/;
  * provider wrote. A message that only looks like a class (`fatal: ...`) is not one.
  */
 export function ipcErrorClassName(error: unknown): string | null {
-  if (!(error instanceof Error) || !error.message) return null;
-  const withoutChannel = error.message.replace(REMOTE_METHOD_PREFIX, '');
+  const withoutChannel = messageWithoutChannel(error);
+  if (withoutChannel === null) return null;
   return ERROR_CLASS_NAME.exec(withoutChannel)?.[1] ?? null;
 }
 
@@ -44,8 +60,8 @@ export function ipcErrorClassName(error: unknown): string | null {
  * a non-Error rejection so callers never interpolate `undefined`.
  */
 export function describeIpcError(error: unknown, fallback = i18n._(msg`Unknown error`)): string {
-  if (!(error instanceof Error) || !error.message) return fallback;
-  const withoutChannel = error.message.replace(REMOTE_METHOD_PREFIX, '');
+  const withoutChannel = messageWithoutChannel(error);
+  if (withoutChannel === null) return fallback;
   const withoutClass = withoutChannel.replace(ERROR_CLASS_PREFIX, '');
   return withoutClass.trim() || fallback;
 }

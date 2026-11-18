@@ -311,6 +311,67 @@ describe('JiraAdapter.fetch', () => {
     await expect(adapter.fetch({ source: 'jira', repository: `${CLOUD}::project::ENG`, page: 1, perPage: 100 }, findNone))
       .rejects.toThrow('Jira rejected the saved token.');
   });
+
+  // Add Source and the Import dialog act on the class: a refused saved token reopens Connect
+  // on a fetch as it does on a source check, and a refusal about the query does not.
+  it('marks a refused saved token as a refused sign-in, and another Jira failure as a plain refusal', async () => {
+    const input = { source: 'jira' as const, repository: `${CLOUD}::project::ENG`, page: 1, perPage: 100 };
+    const refused = adapterWith({ [CLOUD]: credential() }, () => ({ status: 401, body: {} }));
+    const refusedError = await refused.adapter.fetch(input, findNone).then(() => null, (error: unknown) => error);
+    expect(refusedError).toBeInstanceOf(SignInRefusedError);
+    expect((refusedError as Error).message).toBe('Jira rejected the saved token.');
+
+    const badQuery = adapterWith({ [CLOUD]: credential() }, () => ({ status: 400, body: { errorMessages: ['bad query'] } }));
+    const badQueryError = await badQuery.adapter.fetch(input, findNone).then(() => null, (error: unknown) => error);
+    expect(badQueryError).toBeInstanceOf(RefusalError);
+    expect(badQueryError).not.toBeInstanceOf(SignInRefusedError);
+  });
+});
+
+describe('JiraAdapter.keepSignInAlive', () => {
+  const REFRESH_URL = 'https://kangentic.com/oauth/jira/refresh';
+  const DAY_MS = 24 * 60 * 60_000;
+  // Far from the real clock on purpose: a sign-in saved six days before this is
+  // recent here, but the real clock calls it years old and due.
+  const NOW = Date.parse('2020-06-15T00:00:00.000Z');
+
+  beforeEach(() => {
+    storedCredentials.sites = {};
+  });
+
+  function oauthSignIn(site: string, savedDaysBeforeNow: number): JiraSiteCredential {
+    return credential({
+      site,
+      method: 'oauth',
+      email: undefined,
+      secret: 'access-old',
+      refreshToken: 'refresh-old',
+      expiresAt: new Date(NOW + 60 * 60_000).toISOString(),
+      cloudId: 'cloud-123',
+      viaGateway: true,
+      savedAt: new Date(NOW - savedDaysBeforeNow * DAY_MS).toISOString(),
+    });
+  }
+
+  const refreshRoute: Route = (url) => (url.toString() === REFRESH_URL
+    ? { body: { access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 } }
+    : undefined);
+
+  it('renews an old sign-in through the adapter own credentials and fetch', async () => {
+    const site = 'https://keep-old.atlassian.net';
+    // Only the adapter's own loader holds the sign-in: the module's default store is empty.
+    const { adapter, calls } = adapterWith({ [site]: oauthSignIn(site, 8) }, refreshRoute);
+    await adapter.keepSignInAlive(NOW);
+    expect(calls.filter((call) => call.url.toString() === REFRESH_URL)).toHaveLength(1);
+    expect(storedCredentials.sites[site]).toMatchObject({ secret: 'access-new', refreshToken: 'refresh-new' });
+  });
+
+  it('judges due-ness by the time it is given, not the real clock', async () => {
+    const site = 'https://keep-recent.atlassian.net';
+    const { adapter, calls } = adapterWith({ [site]: oauthSignIn(site, 6) }, refreshRoute);
+    await adapter.keepSignInAlive(NOW);
+    expect(calls).toEqual([]);
+  });
 });
 
 describe('JiraAdapter.prepareSource', () => {

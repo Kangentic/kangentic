@@ -217,9 +217,9 @@ async function sendFollowing(send, url, init) {
 /** Positive when `left` is the higher version, by its three numbers. */
 function compareVersions(left, right) {
   const numbers = (version) => version.replace(/^v/, '').split('.').map(Number);
-  const [a, b] = [numbers(left), numbers(right)];
+  const [leftNumbers, rightNumbers] = [numbers(left), numbers(right)];
   for (let index = 0; index < 3; index++) {
-    if (a[index] !== b[index]) return a[index] - b[index];
+    if (leftNumbers[index] !== rightNumbers[index]) return leftNumbers[index] - rightNumbers[index];
   }
   return 0;
 }

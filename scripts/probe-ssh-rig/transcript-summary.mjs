@@ -15,7 +15,8 @@
  * In GitHub Actions it also writes the step summary and one annotation per problem.
  */
 import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { escapeCommandData, markdownCell } from '../lib/check-report.mjs';
+import { isEntrypoint } from '../lib/is-entrypoint.mjs';
 
 /** What transcript-clis.sh records for a CLI whose `--version` failed. */
 const NOT_INSTALLED = 'not installed';
@@ -180,17 +181,17 @@ function main(argv) {
     console.log(`${row.result.padEnd(15)}${row.name.padEnd(12)}${row.version.padEnd(28)}${row.detail}`);
   }
   if (process.env.GITHUB_ACTIONS === 'true') {
-    for (const problem of problems) console.log(`::error title=Agent CLIs::${problem}`);
+    // A version and a failure line are text a CLI wrote, so neither reaches the runner or the summary unescaped.
+    for (const problem of problems) console.log(`::error title=Agent CLIs::${escapeCommandData(problem)}`);
     if (process.env.GITHUB_STEP_SUMMARY) {
-      const cell = (text) => text.replace(/\|/g, '\\|');
       const lines = [
         '## Agent CLIs at their newest versions',
         '',
         '| Result | CLI | Version | Detail |',
         '| --- | --- | --- | --- |',
-        ...rows.map((row) => `| ${row.result} | ${cell(row.name)} | ${cell(row.version)} | ${cell(row.detail)} |`),
+        ...rows.map((row) => `| ${row.result} | ${markdownCell(row.name)} | ${markdownCell(row.version)} | ${markdownCell(row.detail)} |`),
         '',
-        ...(problems.length > 0 ? ['Problems:', '', ...problems.map((problem) => `- ${problem}`), ''] : []),
+        ...(problems.length > 0 ? ['Problems:', '', ...problems.map((problem) => `- ${markdownCell(problem)}`), ''] : []),
       ];
       fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n'));
     }
@@ -204,6 +205,6 @@ function main(argv) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntrypoint(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }

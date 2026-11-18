@@ -40,9 +40,16 @@ function ensureTrustedSigningModule() {
   moduleInstalled = true;
 }
 
-/** A PowerShell single-quoted string. A quote inside one is written twice. */
+/**
+ * Every character PowerShell reads as a single quote: the plain one and four typographic ones
+ * (U+2018, U+2019, U+201A and U+201B). Any of them ends a single-quoted string. The four are built
+ * from their codes, so none of them sits in this file.
+ */
+const SINGLE_QUOTES = new RegExp(`['${String.fromCharCode(0x2018, 0x2019, 0x201a, 0x201b)}]`, 'g');
+
+/** A PowerShell single-quoted string. A quote of any of those five kinds inside one is written twice. */
 function quote(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
+  return `'${String(value).replace(SINGLE_QUOTES, '$&$&')}'`;
 }
 
 /**

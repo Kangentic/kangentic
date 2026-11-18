@@ -19,9 +19,10 @@
  * as a preview deployment. An empty variable counts as unset, so it can never
  * turn a shipped id's checks into pending ones.
  *
- * The probes. Each answer was seen against the live service on 2026-11-17,
- * except the three marked "not yet seen" below. The answers a stranger can get
- * today are recorded in tests/fixtures/sign-in-check-live-answers.json.
+ * The probes. Each answer below was seen against the live service on
+ * 2026-11-17, the passing ones from the registered clients. The one exception
+ * is Atlassian's documented `invalid_grant`, which nobody here has seen. The
+ * answers are recorded in tests/fixtures/sign-in-check-live-answers.json.
  * - Trello key: with a key and no token, Trello's API answers 400 "invalid
  *   token" for a live key and 401 "invalid key" for one it does not know.
  * - Trello origin: signed out, Trello's approval page answers 200 when the key
@@ -34,21 +35,20 @@
  *   to the loopback with `error=invalid_request`, without calling Atlassian.
  * - Jira token service: a made-up refresh token sent through the refresh route.
  *   500 `server_error` means the Pages secrets are not set. With them set,
- *   Atlassian's docs name `invalid_grant` for a refresh token it will not take,
- *   so that answer means Atlassian accepted the client. Developers also report
- *   `unauthorized_client` with the description "refresh_token is invalid" for
- *   the same case, so that pair passes too, and the same code with any other
- *   description is a refused client. Neither has been seen with a real client.
- *   The first run after the secrets are set shows which one Atlassian sends.
+ *   Atlassian answers the registered client 403 `unauthorized_client` with the
+ *   description "refresh_token is invalid", so that pair passes, and the same
+ *   code with any other description is a refused client. Atlassian's docs name
+ *   `invalid_grant` for a refresh token it will not take. That answer passes
+ *   too, and it is the one answer here that has not been seen.
  * - Linear client: a made-up code exchanged for the shipped client id. Linear
- *   answers `invalid_client` for a client it does not know, which was seen. A
- *   known client should get as far as `invalid_grant`, not yet seen. The check
- *   never uses the refresh grant, which answers `invalid_grant` for a made-up
- *   client too.
+ *   answers `invalid_client` for a client it does not know and `invalid_grant`
+ *   for the registered one, which gets as far as the code. The check never
+ *   uses the refresh grant, which answers `invalid_grant` for a made-up client
+ *   too.
  * - GitLab client: a made-up code exchanged at gitlab.com for the shipped client
  *   id, with the form `exchangeGitLabAuthorizationCode` sends. gitlab.com
- *   answers 401 `invalid_client` for a client it does not know, which was seen.
- *   A known client should get as far as `invalid_grant`, not yet seen.
+ *   answers 401 `invalid_client` for a client it does not know and 400
+ *   `invalid_grant` for the registered one.
  *
  * Any answer not named above fails its check, and so does no answer at all.
  *
@@ -93,11 +93,13 @@ const TRELLO_AUTHORIZE_URL = 'https://trello.com/1/authorize';
 const GITLAB_TOKEN_PATH = '/oauth/token';
 /**
  * How Atlassian describes a refresh token it will not take when it answers `unauthorized_client`
- * and not `invalid_grant`. Developers report "refresh_token is invalid" for a healthy client.
+ * and not `invalid_grant`. The registered client gets "refresh_token is invalid".
  */
 const REFUSED_REFRESH_TOKEN = /refresh[_ ]token is invalid/i;
 
 const PROBE = 'kangentic-integration-check';
+/** A PKCE verifier of a legal length (43 to 128 characters), sent with the made-up code. */
+const PROBE_VERIFIER = `${PROBE}-${'0'.repeat(24)}`;
 /** A loopback port for the state. Nothing listens on it, and nothing here follows a redirect. */
 const STATE_PORT = 43123;
 /** The desktop's nonce length (`NONCE_BYTES` in sealed-token.ts). */
@@ -456,7 +458,7 @@ async function checkLinear(values, send) {
         grant_type: 'authorization_code',
         client_id: client.value,
         code: PROBE,
-        code_verifier: `${PROBE}-${'0'.repeat(24)}`,
+        code_verifier: PROBE_VERIFIER,
         redirect_uri: values.linearRedirectUri,
       }),
     });
@@ -490,7 +492,7 @@ async function checkGitLab(values, send) {
         code: PROBE,
         redirect_uri: values.gitlabRedirectUri,
         client_id: client.value,
-        code_verifier: `${PROBE}-${'0'.repeat(24)}`,
+        code_verifier: PROBE_VERIFIER,
       }),
     });
     const code = await errorCodeOf(answer);

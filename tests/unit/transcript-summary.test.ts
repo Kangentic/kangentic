@@ -8,7 +8,11 @@
  *
  * Tier: Unit. It imports the script's own decision and feeds it reports in vitest's JSON shape.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { assertionsOf, parseVersions, summarize } from '../../scripts/probe-ssh-rig/transcript-summary.mjs';
 
 const VERSIONS = ['Kimi\tkimi-code 2.5.1', 'Codex\tcodex-cli 0.171.0', 'OpenCode 1\t1.19.5', 'OpenCode 2\t2.2.5', ''].join('\n');
@@ -115,5 +119,66 @@ describe('the agent CLI rig summary', () => {
       { title: '', status: '', failureMessages: [] },
       { title: '', status: '', failureMessages: [] },
     ]);
+  });
+});
+
+// The file layer runs only when the script is the entrypoint, so these spawn the real script.
+describe('the agent CLI rig summary as a command', () => {
+  const SCRIPT_PATH = path.resolve(__dirname, '../../scripts/probe-ssh-rig/transcript-summary.mjs');
+  const directories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  function runScript(files: { versions?: string; results?: string }, githubActions: boolean) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'transcript-summary-'));
+    directories.push(directory);
+    const versionsFile = path.join(directory, 'rig.versions');
+    const resultsFile = path.join(directory, 'rig.results.json');
+    const summaryFile = path.join(directory, 'step-summary.md');
+    if (files.versions !== undefined) fs.writeFileSync(versionsFile, files.versions);
+    if (files.results !== undefined) fs.writeFileSync(resultsFile, files.results);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.GITHUB_ACTIONS;
+    delete env.GITHUB_STEP_SUMMARY;
+    if (githubActions) {
+      env.GITHUB_ACTIONS = 'true';
+      env.GITHUB_STEP_SUMMARY = summaryFile;
+    }
+    const run = spawnSync(process.execPath, [SCRIPT_PATH, '--versions', versionsFile, '--results', resultsFile], { encoding: 'utf8', env, timeout: 30_000 });
+    const summary = fs.existsSync(summaryFile) ? fs.readFileSync(summaryFile, 'utf8') : '';
+    return { run, summary };
+  }
+
+  it('prints the usage line and exits 1 without both files named, which proves the entrypoint runs', () => {
+    const run = spawnSync(process.execPath, [SCRIPT_PATH, '--versions', 'only-one.txt'], { encoding: 'utf8', env: { ...process.env }, timeout: 30_000 });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('Usage: node scripts/probe-ssh-rig/transcript-summary.mjs --versions <file> --results <file>');
+  });
+
+  it('exits 0 and says so when every CLI installed, ran and passed', () => {
+    const { run } = runScript({ versions: 'Kimi\tkimi-code 2.5.1\n', results: JSON.stringify(reportOf([ALL_PASSED[0]])) }, false);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain('All 1 CLIs installed, ran and passed.');
+  });
+
+  it('fails a test report that is there but is not JSON, so a truncated report never reads as a pass', () => {
+    const { run } = runScript({ versions: 'Kimi\tkimi-code 2.5.1\n', results: '{"testResults": [' }, false);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('The test report is not JSON:');
+  });
+
+  // A version and a failure line are text a CLI wrote. Unescaped, a percent sign and markdown
+  // characters reach the runner's command parser and the job summary.
+  it('escapes a CLI\'s own text in the annotation and in the step summary', () => {
+    const { run, summary } = runScript({ versions: 'Kimi\t1.0 100%_beta*\n', results: JSON.stringify(reportOf([ALL_PASSED[1]])) }, true);
+    expect(run.status).toBe(1);
+    const annotation = run.stdout.split('\n').find((line) => line.startsWith('::error title=Agent CLIs::Kimi 1.0 100%25'));
+    expect(annotation).toBeDefined();
+    expect(annotation).toContain('100%25_beta*');
+    expect(annotation).not.toContain('%_');
+    expect(summary).toContain('| no test | Kimi | 1.0 100%\\_beta\\* |');
+    expect(summary).toContain('- Kimi 1.0 100%\\_beta\\*: no test');
   });
 });
