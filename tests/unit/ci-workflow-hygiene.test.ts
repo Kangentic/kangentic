@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Four pins on .github/workflows/*.yml that nothing else watches.
+// Five pins on .github/workflows/*.yml that nothing else watches.
 //
 // 1. Every Linux runner is pinned to Ubuntu 24.04. The node_modules and Playwright cache keys start
 //    with `runner.os`, which reads `Linux` on every Ubuntu release, so a job that drifts to a
@@ -28,6 +28,13 @@ import path from 'node:path';
 //    because a job-level env covers only its own job and a called workflow inherits nothing. The
 //    key check holds ci.yml's note that the prefix changes in all six jobs together: a job left on
 //    an old key restores a tree installed another way.
+//
+// 5. Every one-line `run:` is one YAML string. A plain scalar ends at a colon followed by a space,
+//    so `run: node -e "sign({ path: file })"` is a mapping inside a mapping. GitHub then refuses the
+//    whole file at startup ("This run likely failed because of a workflow file issue") and no job
+//    runs. Nothing in the repository parses the workflows, so the first to notice was a pushed run
+//    of signing-credentials.yml. A workflow that only runs on a schedule would have failed nightly
+//    with nothing in a pull request to show it.
 //
 // The collectors read the YAML with line-anchored regexes, like release-workflow-gates.test.ts,
 // because js-yaml is only a transitive dependency. A collector that quietly matches nothing would
@@ -926,5 +933,82 @@ describe('ci.yml node_modules cache keys agree', () => {
     const regressed = lines.join('\n');
     expect(regressed).not.toBe(ciSource);
     expect(new Set(collectNodeModulesCacheKeys(regressed).map((entry) => entry.key)).size).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Pin 5: a one-line `run:` is one YAML string
+// ---------------------------------------------------------------------------------------------
+
+interface UnreadableRun {
+  file: string;
+  line: number;
+  command: string;
+}
+
+/**
+ * One-line `run:` values YAML cannot read as one string. A value that opens with `|` or `>` is a
+ * block scalar and one that opens with a quote is a quoted scalar, and both may hold a colon and a
+ * space. Any other value is a plain scalar, which ends there.
+ */
+function findUnreadableOneLineRuns(workflows: WorkflowFile[]): UnreadableRun[] {
+  return workflows.flatMap((workflow) =>
+    normalizeLineEndings(workflow.source).split('\n').flatMap((rawLine, lineIndex) => {
+      if (isBlankOrComment(rawLine)) return [];
+      const run = /^\s*(?:-\s+)?run:\s+(\S.*)$/.exec(rawLine);
+      if (!run) return [];
+      const command = run[1];
+      if (/^[|>'"]/.test(command)) return [];
+      return /:(\s|$)/.test(command) ? [{ file: workflow.name, line: lineIndex + 1, command }] : [];
+    }),
+  );
+}
+
+describe('every one-line run: is one YAML string', () => {
+  it('reads the one-line runs it is meant to guard', () => {
+    // If the collector stopped seeing one-line runs at all, the empty list below would mean nothing.
+    const oneLineRuns = readWorkflows().flatMap((workflow) =>
+      normalizeLineEndings(workflow.source).split('\n').filter((line) => /^\s*(?:-\s+)?run:\s+[^|>\s]/.test(line)),
+    );
+    expect(oneLineRuns.length).toBeGreaterThan(20);
+  });
+
+  it('finds none in the real workflows', () => {
+    const unreadable = findUnreadableOneLineRuns(readWorkflows());
+    expect(
+      unreadable.map((entry) => `${entry.file}:${entry.line} ${entry.command}`),
+      'A one-line run: holds a colon followed by a space, which ends a plain YAML scalar. GitHub refuses the whole workflow file at startup. Write the command under `run: |`.',
+    ).toEqual([]);
+  });
+
+  it('catches the command that failed a pushed run of signing-credentials.yml', () => {
+    const source = readWorkflowSource('signing-credentials.yml');
+    const blockForm = '        run: |\n          node -e "require(\'./build/windowsSign.js\')';
+    expect(source, 'the sign step is no longer written as a block scalar').toContain(blockForm);
+    const oneLine = source.replace(blockForm, '        run: node -e "require(\'./build/windowsSign.js\')');
+    const found = findUnreadableOneLineRuns([{ name: 'signing-credentials.yml', source: oneLine }]);
+    expect(found).toHaveLength(1);
+    expect(found[0].command).toContain('{ path: process.env.PROBE_FILE }');
+  });
+
+  it('leaves block scalars, quoted scalars and colons with no space alone', () => {
+    const source = [
+      'jobs:',
+      '  check:',
+      '    steps:',
+      '      - run: docker run --entrypoint sleep node:24-bookworm infinity',
+      '      - run: |',
+      '          echo "status: ok"',
+      '      - name: quoted',
+      '        run: "echo status: ok"',
+      "      - run: 'echo status: ok'",
+      '      - run: >-',
+      '          echo status: ok',
+      '      # run: echo commented: out',
+      '      - name: bad',
+      '        run: echo status: broken',
+      '      - run: echo trailing:',
+    ].join('\n');
+    expect(findUnreadableOneLineRuns([{ name: 'example.yml', source }]).map((entry) => entry.line)).toEqual([14, 15]);
   });
 });

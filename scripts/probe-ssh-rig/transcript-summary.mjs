@@ -101,7 +101,8 @@ export function summarize({ versionsText, report }) {
 
   const belongsTo = (assertion, name) => assertion.title.startsWith(`${name}:`);
   const notRun = assertions.filter((assertion) => assertion.status !== 'passed' && assertion.status !== 'failed');
-  if (assertions.length > 0 && notRun.length === assertions.length) {
+  const nothingRan = assertions.length > 0 && notRun.length === assertions.length;
+  if (nothingRan) {
     problems.push(`All ${assertions.length} tests were skipped, so nothing ran. The test file skips itself unless KANGENTIC_TRANSCRIPT_RIG is 1.`);
   }
 
@@ -127,8 +128,9 @@ export function summarize({ versionsText, report }) {
   });
   for (const row of rows) {
     if (row.result === 'passed') continue;
-    // A missing report is already one problem. Each row repeating it would bury that line.
-    if (report === null && row.result === 'skipped') continue;
+    // A missing report, or a run where nothing ran, is already one problem. Each row repeating
+    // it would bury that line.
+    if ((report === null || nothingRan) && row.result === 'skipped') continue;
     const label = row.version === NOT_INSTALLED || row.version === '' ? row.name : `${row.name} ${row.version}`;
     problems.push(`${label}: ${row.result}, ${row.detail}`);
   }
