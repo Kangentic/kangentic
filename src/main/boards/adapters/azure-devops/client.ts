@@ -290,6 +290,97 @@ function azErrorToThrow(error: unknown): AzUnavailableError | AzTransientError |
   }
 }
 
+/** The fields of a failed exec that the import classifier reads, checked rather than cast. */
+interface ExecFailureFields {
+  stderr: string;
+  /** An errno string (`ENOENT`), the exit code as a number, or null after a kill. */
+  code: string | number | null | undefined;
+  killed: boolean;
+}
+
+function readExecFailure(error: unknown): ExecFailureFields {
+  if (typeof error !== 'object' || error === null) return { stderr: '', code: undefined, killed: false };
+  const { stderr, code, killed } = error as { stderr?: unknown; code?: unknown; killed?: unknown };
+  return {
+    stderr: typeof stderr === 'string' ? stderr : '',
+    code: typeof code === 'string' || typeof code === 'number' || code === null ? code : undefined,
+    killed: killed === true,
+  };
+}
+
+/**
+ * An Azure DevOps server code (`TF200016`, `VS402337`) in az's answer means the
+ * server answered, so the failure is neither a sign-in nor the network. These
+ * messages echo the user's own names ("The following project does not exist:
+ * Network Ops"), which `classifyAzError`'s patterns would otherwise read. The
+ * two sign-in codes stay with the classifier.
+ */
+const AZ_SERVER_CODE_PATTERN = /\b(?:TF|VS)\d{5,6}\b/g;
+const AZ_SIGN_IN_SERVER_CODES = new Set(['TF400813', 'VS30063']);
+
+/**
+ * The throw for a failed `az` call on the import path: the Import dialog's
+ * sync, and the token its downloads use. Sentry DESKTOP-47: a signed-out az
+ * escaped this path as a plain Error and reported as a code defect.
+ *
+ * Unlike `azErrorToThrow`, the default is the ORIGINAL error, not null. On
+ * import a swallowed failure would read as an empty remote with no error
+ * shown, and an unrecognized az failure (a WIQL field az refused) is a defect
+ * that should still report.
+ *
+ * Classifies on az's own answer (stderr, errno, the timeout kill) and never on
+ * `message`. execFile's message opens with the whole command line, which
+ * carries the WIQL and the user's search text, so a search for "network" would
+ * otherwise hide any failure. The reason shown is az's stderr line for the
+ * same reason. URLs az echoes on stderr carry the organization and project
+ * names, so they are dropped before it is classified. A server code returns
+ * the original error before any pattern runs. Both gates live here and not in
+ * `classifyAzError`, which the PR resolvers share.
+ */
+function importAzErrorToThrow(error: unknown): unknown {
+  const failure = readExecFailure(error);
+  const stderrWithoutUrls = failure.stderr.replace(/https?:\/\/\S+/g, '');
+  const serverCodes = stderrWithoutUrls.match(AZ_SERVER_CODE_PATTERN) ?? [];
+  if (serverCodes.some((serverCode) => !AZ_SIGN_IN_SERVER_CODES.has(serverCode))) return error;
+  const classification = classifyAzError({ stderr: stderrWithoutUrls, code: failure.code, killed: failure.killed });
+  // Not `describeAzFailure`: with no stderr (a timeout, a missing binary) it
+  // falls back to the message's first line, which is the command line.
+  const reason = stderrReasonLine(failure.stderr);
+  const detail = reason ? `\n${reason}` : '';
+  switch (classification) {
+    case 'unavailable':
+      return new AzUnavailableError(
+        `Azure CLI is not signed in or lacks the azure-devops extension. Run: az login, or az extension add --name azure-devops${detail}`,
+      );
+    case 'transient':
+      return new AzTransientError(`Azure DevOps did not answer. Try again.${detail}`);
+    default:
+      return error;
+  }
+}
+
+/** az's `ERROR:` line, or its first line when there is none. az prints `WARNING:` lines ahead of the error. */
+function stderrReasonLine(stderr: string): string | undefined {
+  const lines = stderr.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  return lines.find((line) => /^error\b/i.test(line)) ?? lines[0];
+}
+
+/**
+ * `execAz` for the import fetch: an az failure leaves as the classified throw.
+ * Wraps the exec only, so a `JSON.parse` failure on az's output (this module's
+ * own read failing) still reaches the reporter.
+ */
+async function execAzForImport(
+  args: string[],
+  options: { timeout?: number; maxBuffer?: number },
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await execAz(args, options);
+  } catch (error: unknown) {
+    throw importAzErrorToThrow(error);
+  }
+}
+
 /** `refs/heads/feature/x` -> `feature/x`. Any other ref namespace is left intact so an oddity stays visible. */
 function stripRefsHeads(ref: string): string {
   return ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref;
@@ -509,7 +600,7 @@ export class AzureDevOpsImporter {
       const wiql = buildWiqlQuery(project, state, searchQuery, iterationPath, changedSince);
       const organizationUrl = `https://dev.azure.com/${organization}`;
 
-      const { stdout } = await execAz(
+      const { stdout } = await execAzForImport(
         [
           'boards', 'query',
           '--wiql', wiql,
@@ -560,7 +651,7 @@ export class AzureDevOpsImporter {
 
     for (let batchStart = 0; batchStart < workItemIds.length; batchStart += batchSize) {
       const batchIds = workItemIds.slice(batchStart, batchStart + batchSize);
-      const { stdout } = await execAz(
+      const { stdout } = await execAzForImport(
         [
           'boards', 'work-item', 'show',
           '--id', batchIds.join(','),
@@ -623,7 +714,9 @@ export class AzureDevOpsImporter {
       return this.tokenCache.token;
     }
 
-    const { stdout } = await execAz(
+    // Called only by the import's image and attachment downloads, so a
+    // signed-out az leaves as the classified throw, as on the sync.
+    const { stdout } = await execAzForImport(
       ['account', 'get-access-token', '--resource', AZURE_DEVOPS_RESOURCE_ID, '--output', 'json'],
       { timeout: COMMAND_TIMEOUT },
     );
@@ -915,7 +1008,9 @@ export class AzureDevOpsImporter {
     for (let batchStart = 0; batchStart < workItemIds.length; batchStart += batchSize) {
       const batchIds = workItemIds.slice(batchStart, batchStart + batchSize);
 
-      const { stdout } = await execAz(
+      // On the import fetch path: `adapter.fetch` runs this right after the
+      // WIQL query, so a sign-in that lapses between the two fails here.
+      const { stdout } = await execAzForImport(
         [
           'rest', '--method', 'get',
           '--url', `${organizationUrl}/${project}/_apis/wit/workitems`,
