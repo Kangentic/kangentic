@@ -46,7 +46,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 |-------|-------|-------------|
 | `queued` | Both | Waiting for a concurrency slot or a column's agent limit to open |
 | `running` | Both | PTY is live, Claude Code CLI process is active |
-| `suspended` | Both | PTY killed, but session ID and files preserved for resume. A start that never reached an agent leaves one too, with `Session.startBlockedReason` set so the card says why. `Session.suspendedBy` carries the record's `suspended_by`, so an idle pause reads "Paused while idle" |
+| `suspended` | Both | PTY killed, but session ID and files preserved for resume. A start that never reached an agent leaves one too, with `Session.startBlockedReason` set so the card says why. `Session.suspendedBy` carries the record's `suspended_by` (or the value the pause was made with when no record backs it), so an idle pause reads "Paused while idle" |
 | `exited` | Both | Process exited naturally or was killed; terminal state |
 | `orphaned` | DB only | App crashed while session was running; discovered on next launch |
 
