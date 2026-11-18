@@ -884,6 +884,21 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: expected }));
   });
 
+  // Red-green: drop `sessionIdCreation: input.sessionIdCreation` from the spawn call
+  // in resume-suspended.ts and this fails.
+  it('hands spawn the session id creation outcome preparation recorded', async () => {
+    prepareAgentSpawnMock.mockResolvedValue({
+      ...preparedResume(),
+      data: { ...preparedResume().data, sessionIdCreation: 'timeout' },
+    });
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockResolvedValue({ id: 'prepared-session', status: 'running' });
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ sessionIdCreation: 'timeout' }));
+  });
+
   // Red-green: drop `resumeEvidence: input.resumeEvidence` from the spawn call in
   // resume-suspended.ts and this fails.
   it('hands spawn the evidence the resume check read', async () => {

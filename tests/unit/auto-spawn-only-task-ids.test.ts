@@ -355,6 +355,25 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ openingPrompt: expected }));
   });
 
+  // The session-id report's create_chat tag reads the outcome off the session row.
+  //
+  // Red-green: drop `sessionIdCreation: input.sessionIdCreation` from the spawn call
+  // in auto-spawn.ts and this fails.
+  it('hands spawn the session id creation outcome preparation recorded', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      const prepared = preparedSpawn('task-lost');
+      return { ...prepared, data: { ...prepared.data, sessionIdCreation: 'timeout' } } as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+      new Set(['session-lost']),
+    );
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ sessionIdCreation: 'timeout' }));
+  });
+
   // The launch report's resume tags read the evidence off the session row, so a
   // startup respawn that drops it sends a resume failure with nothing to triage.
   //

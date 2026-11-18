@@ -422,6 +422,19 @@ describe('sessions.ts renderer port broker', () => {
       expect(spawnInput.command).toBe('claude');
       expect(spawnInput.openingPrompt).toBeUndefined();
     });
+
+    // The session-id report's create_chat tag is stamped by main's spawn paths only.
+    it('drops a session id creation outcome the renderer sent', () => {
+      const spawn = vi.fn();
+      (context.sessionManager as unknown as { spawn: typeof spawn }).spawn = spawn;
+
+      findIpcHandleHandler(IPC.SESSION_SPAWN)({}, { command: 'claude', sessionIdCreation: 'ok' }, 'proj-1');
+
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const spawnInput = spawn.mock.calls[0][0] as { command: string; sessionIdCreation?: string };
+      expect(spawnInput.command).toBe('claude');
+      expect(spawnInput.sessionIdCreation).toBeUndefined();
+    });
   });
 
   describe("sessionManager 'renderer-ports-lost' (a restarted host)", () => {
