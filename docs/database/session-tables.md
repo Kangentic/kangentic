@@ -64,7 +64,7 @@ sources:
 | start_blocked_reason | TEXT | | NULL |
 | account_id | TEXT | | NULL |
 
-`transcript_path` is the transcript file the agent reported. Its status line writes it whenever it changes, and its SessionStart hook fills it when the row has none. A new row for a conversation that already has one inherits the newest reported path of the same `agent_session_id` at insert (`SessionRepository.insert`), because a resumed Claude conversation keeps writing the file it started in.
+`transcript_path` is the transcript file the agent reported. Its status line writes it whenever it changes, and its SessionStart hook fills it when the row has none. A new row for a conversation that already has one inherits the newest reported path of the same `agent_session_id` at insert (`SessionRepository.insert`), because a resumed Claude conversation keeps writing the file it started in. A path the row's own agent had already reported when the row is written comes ahead of the inherited one.
 
 Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `ollama_agent`, `grok_agent`, `antigravity_agent`, `goose_agent`, `run_script`.
 

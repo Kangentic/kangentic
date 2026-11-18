@@ -191,7 +191,7 @@ sharing the reconciled `agent_session_id`, newest first), from three agent-writt
 
 | Source | Transcript path | Turns |
 |---|---|---|
-| the session row | `sessions.transcript_path`, written from the status line when it changes, filled from the SessionStart hook when the row has none, and inherited at insert from the same conversation's newest row | token or cost totals above zero prove turns; zero proves nothing |
+| the session row | `sessions.transcript_path`, written from the status line when it changes, filled from the SessionStart hook when the row has none, and set at insert to the path its agent had already reported, else inherited from the same conversation's newest row | token or cost totals above zero prove turns; zero proves nothing |
 | `status.json` | the status line's `transcript_path`, when its `session_id` is the resumed id (another process with the same `--settings`, such as a background daemon's spare, can write it last) | tokens or cost |
 | `events.jsonl` | `transcript_path` inside the SessionStart hook payload | any event beyond `session_start` / `session_end` |
 
