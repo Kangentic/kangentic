@@ -103,17 +103,26 @@ export function resolveResumeLineage(params: {
  *  - The path is one the AGENT reported (its status line, its SessionStart
  *    hook, or the copy of it kept on the session record), never one derived
  *    here.
- *  - `never-started` also needs the agent's own report that nothing
- *    ever happened. `expired` needs the adapter's proof that the file is gone
- *    from every place it could be (`proveConversationGone`), which only an
- *    adapter that knows its layout can give.
- *  - Absence of evidence is never evidence. A missing session folder, a
- *    malformed report, an adapter with no status pipeline, or no reported path
- *    all give `unknown`. Mocked E2E resumes hit that structurally (mock-claude
- *    writes no status file), which is what broke the ten session-resume specs
- *    the first time around. The one record that decides `never-started` with
- *    no report is one the launch check marked (`launch_failed_at`): that check
- *    saw no agent, no start and no turn, so there is no report to wait for.
+ *  - `expired` needs the adapter's proof that the file is gone from every
+ *    place it could be (`proveConversationGone`), which only an adapter that
+ *    knows its layout can give. `never-started` needs no turns and one of:
+ *    the agent's own report that nothing happened, naming a transcript that
+ *    fails with ENOENT; a launch check's mark (`launch_failed_at`), since that
+ *    check saw no agent, no start and no turn; or, when no report is left, the
+ *    row's path failing with ENOENT AND the adapter's proof.
+ *  - That last case is the restart case (Sentry DESKTOP-2M). A quit deletes
+ *    the session folder (`detachAndDelete`), so a restored never-turned
+ *    session has no report left, and it used to resume into "No conversation
+ *    found". It stays clear of #255 for the same two reasons. The row's path
+ *    is one the agent reported (`persistTranscriptPath` copies it from the
+ *    status line). The proof is the adapter's, not a file check: Claude's
+ *    needs the reported path and the reader's path to fail with ENOENT and no
+ *    project folder to hold `<id>.jsonl`, so a moved project still resumes.
+ *  - Absence of evidence is never evidence. A missing session folder with no
+ *    path on any row, a malformed report, an adapter with no status pipeline,
+ *    or no reported path all give `unknown`. Mocked E2E resumes hit that
+ *    structurally (mock-claude writes no status file, so no row keeps a path),
+ *    which is what broke the ten session-resume specs the first time around.
  *
  * A wrong `expired` costs a new conversation in place of the resume and
  * deletes nothing: the caller retires and keeps the old record.
@@ -138,6 +147,19 @@ export async function assessResumeConversation(params: ResumeConversationParams)
 export interface ResumeConversationAssessment {
   verdict: ResumeConversationVerdict;
   evidence: ResumeEvidenceSummary | null;
+  /**
+   * Set on a `never-started` decided from a row's path and the adapter's proof.
+   * No record shows a turn, so the fresh start replays the lineage's prompt
+   * (`owedPromptOf`). That is where `markResumeMiss` and its retry ended before
+   * this check could decide without the dead launch, on the same rows-only turn
+   * evidence (`lineageHadTurns`). A `launch_failed_at` record owes its prompt
+   * too. Callers read that mark on the record, which also covers a
+   * place-mismatch `never-started` that returns before this check reads it.
+   * Only startup recovery (`prepareAgentSpawn`) reads this field. A board start,
+   * the Resume button included, re-resolves the task template on any
+   * `never-started`.
+   */
+  promptOwed?: true;
 }
 
 /** `assessResumeConversation`, and what it saw. Both spawn chokepoints call this one. */
@@ -179,6 +201,8 @@ export async function assessResumeConversationWithEvidence(params: ResumeConvers
   const evidence = summaryWith(transcript);
   const withEvidence = (verdict: ResumeConversationVerdict): ResumeConversationAssessment => ({ verdict, evidence });
 
+  const proofArgs = { agentSessionId, reportedPaths, cwd, place: newestPlace ?? null };
+
   if (!hadTurns) {
     if (records.find(Boolean)?.launch_failed_at) return withEvidence('never-started');
     // The agent's own report says nothing ever happened, and the transcript it
@@ -186,16 +210,31 @@ export async function assessResumeConversationWithEvidence(params: ResumeConvers
     if (firstAgentReport && firstAgentReport.transcriptPath && transcript === 'missing') {
       return withEvidence('never-started');
     }
+    // No report left to read: a quit deleted the session folder, so only the
+    // path a row kept from the agent's status line is left (Sentry DESKTOP-2M).
+    // That path is missing, and the adapter proves the conversation gone from
+    // every place it could be, so a resume would print "No conversation found".
+    if (!firstAgentReport && transcript === 'missing' && await proveConversationGone(adapter, proofArgs)) {
+      return { ...withEvidence('never-started'), promptOwed: true };
+    }
     return withEvidence('unknown');
   }
 
-  if (!adapter.proveConversationGone || reportedPaths.length === 0) return withEvidence('unknown');
+  if (reportedPaths.length === 0) return withEvidence('unknown');
+  return withEvidence(await proveConversationGone(adapter, proofArgs) ? 'expired' : 'unknown');
+}
+
+/** The adapter's proof that a conversation is gone. False when it has none, or when it fails. */
+async function proveConversationGone(
+  adapter: AgentAdapter,
+  args: Parameters<NonNullable<AgentAdapter['proveConversationGone']>>[0],
+): Promise<boolean> {
+  if (!adapter.proveConversationGone) return false;
   try {
-    const gone = await adapter.proveConversationGone({ agentSessionId, reportedPaths, cwd, place: newestPlace ?? null });
-    return withEvidence(gone ? 'expired' : 'unknown');
+    return await adapter.proveConversationGone(args);
   } catch (error) {
-    console.warn(`[SESSION_LIFECYCLE] Conversation-gone probe failed for ${agentSessionId.slice(0, 8)}:`, error);
-    return withEvidence('unknown');
+    console.warn(`[SESSION_LIFECYCLE] Conversation-gone probe failed for ${args.agentSessionId.slice(0, 8)}:`, error);
+    return false;
   }
 }
 

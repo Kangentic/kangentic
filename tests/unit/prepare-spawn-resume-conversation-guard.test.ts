@@ -307,6 +307,70 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(result.data.prompt).toBe('Fix the login redirect');
   });
 
+  describe('a never-turned session whose report a quit deleted (DESKTOP-2M)', () => {
+    // No session folder, so no status or hook report: only the path the row kept
+    // from the status line, at a projects folder that holds no copy of it.
+    function rowLeftByAQuit(): SessionRecord {
+      const projectsRoot = path.join(projectPath, 'claude-projects');
+      fs.mkdirSync(projectsRoot, { recursive: true });
+      return makeSessionRecord({
+        id: RECORD_ID,
+        agent_session_id: STORED_ID,
+        prompt: 'Fix the login redirect',
+        transcript_path: path.join(projectsRoot, '-work-project', `${STORED_ID}.jsonl`),
+      });
+    }
+    const adapterWithProof = adapter as typeof adapter & { proveConversationGone?: typeof proveClaudeConversationGone };
+
+    afterEach(() => {
+      delete adapterWithProof.proveConversationGone;
+    });
+
+    it('starts fresh with the prompt it still owes, as the heal after a dead resume would', async () => {
+      adapterWithProof.proveConversationGone = proveClaudeConversationGone;
+
+      const { result } = await runPrepare({ taskRecords: [rowLeftByAQuit()] });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // An unknown here would resume, and Claude answers that resume with "No conversation found".
+      expect(result.data.startOver).toBe('never-started');
+      expect(result.data.resumed).toBe(false);
+      expect(result.data.agentSessionId).not.toBe(STORED_ID);
+      // `promptOwed` replays the prompt, as the heal after a dead resume would; without it the start opens idle.
+      expect(result.data.prompt).toBe('Fix the login redirect');
+      expect(buildCommandMock.mock.calls[0][0]).toMatchObject({ resume: false, prompt: 'Fix the login redirect' });
+    });
+
+    it('starts fresh but hands no prompt to an agent whose fresh prompt can only be typed', async () => {
+      const typedAdapter = adapter as typeof adapter & { freshPromptDelivery?: 'command-line' | 'typed' };
+      adapterWithProof.proveConversationGone = proveClaudeConversationGone;
+      typedAdapter.freshPromptDelivery = 'typed';
+      try {
+        const { result } = await runPrepare({ taskRecords: [rowLeftByAQuit()] });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.data.startOver).toBe('never-started');
+        expect(result.data.resumed).toBe(false);
+        // This path types nothing, so an owed prompt handed over here would be lost.
+        expect(result.data.prompt).toBeNull();
+      } finally {
+        delete typedAdapter.freshPromptDelivery;
+      }
+    });
+
+    it('resumes as before when the adapter has no proof (the control)', async () => {
+      const { result } = await runPrepare({ taskRecords: [rowLeftByAQuit()] });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.startOver).toBeNull();
+      expect(result.data.resumed).toBe(true);
+      expect(result.data.agentSessionId).toBe(STORED_ID);
+    });
+  });
+
   it('does not hand the owed prompt of a launch that never ran to an agent whose fresh prompt can only be typed', async () => {
     // This path types nothing, so the prompt would be lost, or run twice once typed.
     const typedAdapter = adapter as typeof adapter & { freshPromptDelivery?: 'command-line' | 'typed' };

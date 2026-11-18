@@ -179,13 +179,29 @@ describe('assessResumeConversation - never-started', () => {
     await expect(assess({})).resolves.toBe('unknown');
   });
 
-  it('never reads zero totals on a row as no turns', async () => {
+  /** A row with zero totals and the path its status line reported, and no session folder: what a quit leaves. */
+  function rowLeftByAQuit(): ResumeLineageRecord {
+    return { id: RECORD_ID, transcript_path: transcriptPath, total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 };
+  }
+
+  it('never decides from the row alone: with no adapter proof, a row with a missing path is unknown', async () => {
     // The path is written on the first status tick, before any metrics
-    // capture, so a row with a path and zero totals proves nothing. Without the
-    // agent's own report, the answer is unknown, never never-started.
-    await expect(assess({
-      records: [{ id: RECORD_ID, transcript_path: transcriptPath, total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 }],
-    })).resolves.toBe('unknown');
+    // capture, so a row with a path and zero totals proves nothing by itself.
+    await expect(assess({ adapter: adapterWithoutProof(), records: [rowLeftByAQuit()] })).resolves.toBe('unknown');
+  });
+
+  it('reports never-started from the row once Claude\'s own proof finds the conversation nowhere (DESKTOP-2M)', async () => {
+    // A quit deleted the session folder, so the row's path is the only report
+    // left. The projects folder exists and holds no `<id>.jsonl` anywhere.
+    await expect(assess({ records: [rowLeftByAQuit()] })).resolves.toBe('never-started');
+  });
+
+  it('resumes when another project folder holds the conversation, as after a moved project', async () => {
+    const movedTo = path.join(projectsRoot, '-work-project-renamed', `${AGENT_SESSION_ID}.jsonl`);
+    fs.mkdirSync(path.dirname(movedTo), { recursive: true });
+    fs.writeFileSync(movedTo, '{"type":"user"}\n', 'utf8');
+
+    await expect(assess({ records: [rowLeftByAQuit()] })).resolves.toBe('unknown');
   });
 });
 
