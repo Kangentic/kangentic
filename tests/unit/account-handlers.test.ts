@@ -96,6 +96,7 @@ const { registerAccountHandlers, stopAccounts } = await import('../../src/main/i
 const { noteAccountsConfigChanged } = await import('../../src/main/accounts/accounts-config-changed');
 const { sendToRenderer } = await import('../../src/main/ipc/send-to-renderer');
 const { setAccountService } = await import('../../src/main/accounts/account-service');
+const { AccountUsageRefresher } = await import('../../src/main/accounts/account-usage');
 const { AgentAccountRepository } = await import('../../src/main/db/repositories/agent-account-repository');
 const { runGlobalMigrations } = await import('../../src/main/db/migrations/global-schema');
 const { IPC } = await import('../../src/shared/ipc-channels');
@@ -534,11 +535,33 @@ describe('the login files the watch holds', () => {
     return calls[calls.length - 1][0] as Array<{ accountId: string; filePath: string }>;
   }
 
+  /**
+   * The real refresher calls `onStartup` at the start of its startup pass, which is when the watch
+   * starts. The refresher here is a stub, so the test plays that moment.
+   */
+  function runStartupPass(): void {
+    const constructions = vi.mocked(AccountUsageRefresher).mock.calls as unknown as Array<[unknown, { onStartup?: () => void }]>;
+    constructions[constructions.length - 1][1].onStartup?.();
+  }
+
+  // Registration reads no database: starting the watch there made every registerAllIpc test, whose
+  // database is a stub, throw. The startup pass is the first read, and starts it.
+  it('starts no watch at registration, and starts it on the refresher\'s startup pass', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent', { loginFiles }) };
+    seedAccounts('move-agent');
+    register();
+    expect(hoisted.watchSync).not.toHaveBeenCalled();
+    runStartupPass();
+    expect(hoisted.watchSync).toHaveBeenCalledTimes(1);
+    expect(lastWatchedSet()).toHaveLength(2);
+  });
+
   it('lists the default row with no home and a folder row by its path, and skips key-file rows', () => {
     hoisted.adapters = { 'move-agent': adapterFor('move-agent', { loginFiles }) };
     const { own, second } = seedAccounts('move-agent');
     repository.insert({ agent: 'move-agent', kind: 'key-file', keyFilePath: path.join(root, 'key.env') });
     register();
+    runStartupPass();
     expect(lastWatchedSet()).toEqual(expect.arrayContaining([
       { accountId: own.id, filePath: 'default-home/.login' },
       { accountId: second.id, filePath: path.join(second.folderPath!, '.login') },
@@ -551,6 +574,7 @@ describe('the login files the watch holds', () => {
     const { own } = seedAccounts('move-agent');
     repository.insert({ agent: 'move-agent', kind: 'folder' });
     register();
+    runStartupPass();
     expect(lastWatchedSet().map((file) => file.accountId)).toEqual(expect.arrayContaining([own.id]));
     expect(lastWatchedSet()).toHaveLength(2);
   });
@@ -563,6 +587,7 @@ describe('the login files the watch holds', () => {
     repository.insert({ agent: 'solo-agent', kind: 'default' });
     seedAccounts('move-agent');
     register();
+    runStartupPass();
     expect(lastWatchedSet()).toEqual([]);
   });
 
@@ -570,6 +595,7 @@ describe('the login files the watch holds', () => {
     hoisted.adapters = { 'move-agent': adapterFor('move-agent', { loginFiles }) };
     seedAccounts('move-agent');
     register();
+    runStartupPass();
     expect(lastWatchedSet()).toHaveLength(2);
     repository.insert({ agent: 'move-agent', kind: 'folder', folderPath: path.join(root, 'accounts', 'move-agent', '3') });
     noteAccountsConfigChanged();
