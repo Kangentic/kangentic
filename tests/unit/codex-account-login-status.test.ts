@@ -1,6 +1,6 @@
 /**
- * Codex `identify` with no `auth.json` asks `codex login status` (exit 0 = signed in), under the
- * account's CODEX_HOME and CODEX_SQLITE_HOME.
+ * Codex `identify` with no `auth.json` asks `codex login status` (exit 0 = signed in, 1 = signed
+ * out, anything else = no answer), under the account's CODEX_HOME and CODEX_SQLITE_HOME.
  */
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -50,13 +50,31 @@ describe('Codex identify without auth.json', () => {
     expect(env).toEqual({ CODEX_HOME: home, CODEX_SQLITE_HOME: home });
   });
 
-  it('reads a non-zero exit as signed out', async () => {
+  it('reads exit 1 as signed out', async () => {
     const identity = await identifyThen(() => child.emit('exit', 1));
     expect(identity.signedIn).toBe(false);
   });
 
-  it('reads a spawn error as signed out', async () => {
-    const identity = await identifyThen(() => child.emit('error', new Error('spawn ENOENT')));
-    expect(identity.signedIn).toBe(false);
+  // No answer is not a signed-out answer: the account keeps its status (`IdentityReadError`).
+  it.each([
+    ['a spawn error', () => child.emit('error', new Error('spawn ENOENT'))],
+    ['another exit code', () => child.emit('exit', 2)],
+    ['an exit by signal', () => child.emit('exit', null)],
+  ])('gives no answer on %s', async (_label, settle) => {
+    await expect(identifyThen(settle)).rejects.toMatchObject({ name: 'IdentityReadError', reason: 'run-failed' });
+  });
+
+  it('gives no answer when login status times out, and stops the run', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = CODEX_ACCOUNT_SUPPORT.identify('codex', home);
+      const outcome = expect(pending).rejects.toMatchObject({ name: 'IdentityReadError', reason: 'run-failed' });
+      await vi.waitFor(() => expect(spawnCli).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(20_000);
+      await outcome;
+      expect(stopCli).toHaveBeenCalledWith(child);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

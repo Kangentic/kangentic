@@ -1,0 +1,28 @@
+{
+  "signedIn": {
+    "loggedIn": true,
+    "authMethod": "claude.ai",
+    "apiProvider": "firstParty",
+    "analyticsDisabled": false,
+    "projectsDirectory": "C:\\Users\\dev\\.claude\\projects",
+    "configDirectory": "C:\\Users\\dev\\.claude",
+    "loginExpiresAt": "2027-01-08T05:06:41.917Z",
+    "consoleProfileSignInOffered": true,
+    "email": "dev@example.com",
+    "orgId": "00000000-0000-4000-8000-000000000000",
+    "orgName": "Example Organization",
+    "subscriptionType": "max",
+    "storedClaudeAiLogin": true,
+    "planTier": "max_20x"
+  },
+  "signedOut": {
+    "loggedIn": false,
+    "authMethod": "none",
+    "apiProvider": "firstParty",
+    "analyticsDisabled": false,
+    "projectsDirectory": "C:\\Users\\dev\\accounts\\claude\\2\\projects",
+    "configDirectory": "C:/Users/dev/accounts/claude/2",
+    "loginExpiresAt": null,
+    "consoleProfileSignInOffered": true
+  }
+}

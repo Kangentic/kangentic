@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AccountIdentity, FolderAccountSupport, SharedEntry } from '../../../accounts/account-support';
+import { IdentityReadError, type AccountIdentity, type FolderAccountSupport, type SharedEntry } from '../../../accounts/account-support';
 import { spawnCli, stopCli } from '../../shared/cli-print';
 import { isPlainRecord } from '../../shared/plain-record';
 import { codexHomeDir } from './config-toml';
@@ -121,13 +121,14 @@ function homeEnv(home: string | null): Record<string, string> | undefined {
 /**
  * `codex login status`: exit 0 signed in, 1 signed out, and it creates nothing in the home
  * (measured signed out on 0.163.0). The answer for a login kept outside `auth.json` (the keyring
- * store), which names no person.
+ * store), which names no person. Null when the CLI gave no answer: it timed out, could not start,
+ * or exited with another code.
  */
-function codexLoginStatus(cliPath: string, home: string | null): Promise<boolean> {
+function codexLoginStatus(cliPath: string, home: string | null): Promise<boolean | null> {
   return new Promise((resolve) => {
     const child = spawnCli(cliPath, ['login', 'status'], os.tmpdir(), homeEnv(home));
     let settled = false;
-    const finish = (signedIn: boolean): void => {
+    const finish = (signedIn: boolean | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -135,16 +136,17 @@ function codexLoginStatus(cliPath: string, home: string | null): Promise<boolean
     };
     const timer = setTimeout(() => {
       stopCli(child);
-      finish(false);
+      finish(null);
     }, 20_000);
     timer.unref?.();
     child.stdout.resume();
     child.stderr.resume();
-    child.once('error', () => finish(false));
-    child.once('exit', (code: number | null) => finish(code === 0));
+    child.once('error', () => finish(null));
+    child.once('exit', (code: number | null) => finish(code === 0 ? true : code === 1 ? false : null));
   });
 }
 
+/** Throws `IdentityReadError` when the CLI gave no answer, so a failed run never signs an account out. */
 async function identifyCodexAccount(cliPath: string, home: string | null): Promise<AccountIdentity> {
   try {
     const fromFile = identifyCodexAuthFile(await fs.promises.readFile(path.join(home ?? codexHomeDir(), 'auth.json'), 'utf8'));
@@ -152,7 +154,9 @@ async function identifyCodexAccount(cliPath: string, home: string | null): Promi
   } catch {
     // No `auth.json`: signed out, or a login kept in the keyring. The CLI knows which.
   }
-  return { signedIn: await codexLoginStatus(cliPath, home), email: null, plan: null, hasSubscription: null };
+  const signedIn = await codexLoginStatus(cliPath, home);
+  if (signedIn === null) throw new IdentityReadError('run-failed');
+  return { signedIn, email: null, plan: null, hasSubscription: null };
 }
 
 export const CODEX_ACCOUNT_SUPPORT: FolderAccountSupport = {
