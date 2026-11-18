@@ -182,6 +182,14 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    `release.yml`'s own preflight jobs only prove each secret is non-empty, so this read is the
    one that knows whether a secret still works.
 
+   Last, read the agent CLI nightly and report it without stopping: `gh run list --repo
+   Kangentic/kangentic --workflow=agent-clis.yml --event schedule --limit 1 --json
+   conclusion,createdAt,url`. It runs seven real agent CLIs at their newest versions through a
+   conversation and a resume. A red run means a vendor's release changed what an adapter reads, or
+   a vendor's installer was down that night. A tag makes neither worse, so name the run's
+   conclusion and its URL in the pre-flight report and go on. Its step summary names the CLI and
+   the version.
+
    A green conclusion already rules out a flaky test. CI runs the UI, E2E and web demo tiers with
    `retries: 1` and `--fail-on-flaky-tests`, so a test that passes only on its retry fails its
    shard and the run's conclusion is `failure` (`tests/unit/ci-workflow-hygiene.test.ts` pins the

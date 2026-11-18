@@ -182,7 +182,7 @@ The shapes were checked against this machine's OpenCode 1.18.31 and the distro's
 
 ## SSH
 
-An OpenCode on a remote host over SSH (#913) runs as `opencode`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. This is a different feature from Remote Execution below, which attaches to a server you run yourself. A spawn is checked against a fake host in `tests/unit/opencode-ssh-remote.test.ts`, and its transcript against real 1.19.5 and 2.2.5 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig.
+An OpenCode on a remote host over SSH (#913) runs as `opencode`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. This is a different feature from Remote Execution below, which attaches to a server you run yourself. A spawn is checked against a fake host in `tests/unit/opencode-ssh-remote.test.ts`, and its transcript against real 1.19.5 and 2.2.5 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig: every night against the newest release of each major (`.github/workflows/agent-clis.yml`), and by hand.
 
 - **Version.** The host's CLI is never detected here, so `ensureTrust` runs `opencode --version` on the host once and the builders pick OpenCode 1 or 2 flags from it. If that fails, the spawn goes on with OpenCode 1's command line.
 - **Synced files.** `remoteFiles()` declares `.opencode/plugins/kangentic-activity.js` (OpenCode 1) and `.opencode/plugins/kangentic-activity/index.js` (OpenCode 2). Only the one for the host's major is written, and it is removed again, or never kept, when the session releases. The plugin goes in the task's working folder, which is its worktree on the host when it has one.

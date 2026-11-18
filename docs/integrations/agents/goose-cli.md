@@ -154,7 +154,7 @@ A Goose installed in a WSL distro runs there (`supportsWslCli`) when its CLI pat
 
 ## SSH
 
-A Goose on a remote host over SSH (#913) runs as `goose`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there. A spawn is checked against a fake host in `tests/unit/goose-ssh-remote.test.ts`, and its transcript against a real 1.57.0 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig.
+A Goose on a remote host over SSH (#913) runs as `goose`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there. A spawn is checked against a fake host in `tests/unit/goose-ssh-remote.test.ts`, and its transcript against a real 1.57.0 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig: every night against Goose's newest release (`.github/workflows/agent-clis.yml`), and by hand.
 
 - **Synced files.** `remoteFiles()` declares the plugin Kangentic owns (`.agents/plugins/kangentic-goose/plugin.json` and `hooks/hooks.json`) and the folder's copy of the hook transport's script (`.kangentic/goose-wsl-hook.sh`). The hook commands run that script on the host, so the host needs no node, and the files are removed again when the session releases.
 - `GOOSE_MODE` travels as the spawn's environment (the host's own variables are kept), and the provider and model stay in the host's Goose config. Goose is handed no MCP server, as locally.
