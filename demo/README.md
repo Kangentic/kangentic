@@ -211,7 +211,11 @@ fractions stay valid across a resize or a zoom and the host re-derives pixels fr
 size. There is no follow-up message to listen for. An unknown scene or a malformed `state=`
 renders a full-frame error card, logs the reason, posts
 `{ type: 'kangentic-demo-error', reason }`, and seeds nothing: a page can never caption a scene
-the visitor is not looking at.
+the visitor is not looking at. The frame posts to any origin, so `reason` never names a session.
+Three refusals can name one, and each posts a fixed line instead: any `state=` refusal (a session
+patch names its session), a recorded Send's missing frame, and a failed boot step (its selector
+can name one). The card and the console carry their full text. Every other refusal posts the
+card's text.
 
 One more message goes out, and it is the only one tied to a keystroke.
 `{ type: 'kangentic-demo-escape', scene }` fires when an Escape keydown reaches the frame and the

@@ -1,5 +1,5 @@
 /**
- * Five contracts of the web demo that static-demo.spec.ts does not reach:
+ * Six contracts of the web demo that static-demo.spec.ts does not reach:
  *
  *  1. demo/boot.js validateSessionPatch refuses a state= blob's session patch for five reasons.
  *     static-demo.spec.ts covers "resumes a session it also stops"; this file covers the other
@@ -18,6 +18,10 @@
  *     mergeStates keeps each id once across sources. A `rows` that is not an array, an id the build
  *     does not carry, and a non-string id are each refused by name. A scene and a state= blob that
  *     both name the same row boot normally and carry its card, session, and Monitor row once.
+ *  6. demo/boot.js posts its kangentic-demo-error message to any origin, so a refusal that names a
+ *     session (a state= session patch, a recorded Send's missing rest frame, a failed boot step)
+ *     names it on the error card and leaves it out of the posted `reason` (CodeQL
+ *     js/cross-window-information-leak). A refusal that names no session posts the card's text.
  *
  * The harness is a small copy of static-demo.spec.ts's (server boot, demoUrl, gotoScene,
  * encodeState, readyMessageFor). Importing that file instead would register its tests here too.
@@ -83,23 +87,35 @@ function encodeState(state: unknown): string {
   return Buffer.from(JSON.stringify(state)).toString('base64url');
 }
 
-interface DemoReadyMessage { type: string; scene: string | null; version: string; focus: { x: number; y: number; w: number; h: number } | null }
+/** A message the frame posts to its host page. */
+interface DemoHostMessage { type: string }
+
+interface DemoReadyMessage extends DemoHostMessage { scene: string | null; version: string; focus: { x: number; y: number; w: number; h: number } | null }
 
 /**
- * Host the frame in an iframe the way the site does and return the ready message it posts.
+ * Host a still frame in an iframe the way the site does, collecting every message it posts.
  * boot.js posts to its parent only when it has one, so a top-level visit observes nothing.
  */
-async function readyMessageFor(page: Page, sceneName: string): Promise<DemoReadyMessage> {
-  const src = demoUrl({ view: sceneName, embed: '1', still: '1' });
+async function hostFrame(page: Page, params: Record<string, string>): Promise<void> {
+  const frameUrl = demoUrl({ ...params, embed: '1', still: '1' });
   await page.setContent(
     '<script>window.__demoMessages = []; window.addEventListener("message", (event) => { window.__demoMessages.push(event.data); });</script>'
-    + `<iframe id="demo" width="1600" height="1000" style="border:0" src="${src}"></iframe>`,
+    + `<iframe id="demo" width="1600" height="1000" style="border:0" src="${frameUrl}"></iframe>`,
   );
+}
+
+/** The messages of one type the frame hostFrame hosts has posted so far. */
+async function readHostMessages<Message extends DemoHostMessage>(page: Page, type: string): Promise<Message[]> {
+  const messages = await page.evaluate(() => (window as { __demoMessages?: DemoHostMessage[] }).__demoMessages ?? []);
+  return messages.filter((message): message is Message => message.type === type);
+}
+
+/** Host the frame and return the ready message it posts. */
+async function readyMessageFor(page: Page, sceneName: string): Promise<DemoReadyMessage> {
+  await hostFrame(page, { view: sceneName });
   await expect(page.frameLocator('#demo').locator('html')).toHaveAttribute('data-demo-ready', '1', { timeout: READY_TIMEOUT_MS });
-  const readMessages = () => page.evaluate(() => (window as { __demoMessages?: DemoReadyMessage[] }).__demoMessages ?? []);
-  await expect.poll(async () => (await readMessages()).some((message) => message.type === 'kangentic-demo-ready')).toBe(true);
-  const message = (await readMessages()).find((candidate) => candidate.type === 'kangentic-demo-ready');
-  if (!message) throw new Error('no ready message');
+  await expect.poll(async () => (await readHostMessages(page, 'kangentic-demo-ready')).length).toBeGreaterThan(0);
+  const [message] = await readHostMessages<DemoReadyMessage>(page, 'kangentic-demo-ready');
   return message;
 }
 
@@ -406,4 +422,72 @@ test('a scene and a state= blob that both name the same scene-only row carry its
   expect(counts).toEqual({ tasks: 1, sessions: 1, monitorRows: 1, boardCards: 1 });
 
   expect(getUnexpectedErrors()).toEqual([]);
+});
+
+// the error message a host is posted
+
+interface DemoErrorMessage extends DemoHostMessage { reason: string }
+
+interface PostedReasonCase {
+  readonly title: string;
+  readonly params: Record<string, string>;
+  /** The session the refusal names: on the card, never in the posted reason. */
+  readonly sessionId: string;
+  /** Requests to fail before the frame loads, so the refusal fires. */
+  readonly failRoute?: string;
+}
+
+const POSTED_REASON_CASES: readonly PostedReasonCase[] = [
+  {
+    title: 'a state= session patch refusal',
+    params: { state: encodeState({ sessions: { [SESSION_WEBSOCKET]: { foo: 1 } } }) },
+    sessionId: SESSION_WEBSOCKET,
+  },
+  {
+    title: 'a recorded Send whose rest frame did not load',
+    params: { view: 'browser' },
+    sessionId: SESSION_MIDDLEWARE,
+    failRoute: '**/send-frames/*',
+  },
+  {
+    // The step's selector embeds the id and never mounts, so the step waits out its timeout and
+    // the boot-step catch fires with a message that names the selector.
+    title: 'a failed boot step',
+    params: { state: encodeState({ steps: [{ click: `[data-demo-absent="${SESSION_WEBSOCKET}"]` }] }) },
+    sessionId: SESSION_WEBSOCKET,
+  },
+];
+
+for (const reasonCase of POSTED_REASON_CASES) {
+  test(`${reasonCase.title} names its session on the card but not in the message posted to the host`, async ({ page }) => {
+    // The frame posts to any origin ('*'), so whatever a refusal names reaches every page that
+    // embeds it. The card is the frame's own and keeps the id.
+    if (reasonCase.failRoute) {
+      await page.route(reasonCase.failRoute, (route) => route.fulfill({ status: 404, contentType: 'text/plain', body: 'missing' }));
+    }
+    await hostFrame(page, reasonCase.params);
+    const errorCard = page.frameLocator('#demo').locator('[data-testid="demo-error"]');
+    await expect(errorCard).toBeVisible({ timeout: READY_TIMEOUT_MS });
+    await expect(errorCard).toContainText(reasonCase.sessionId);
+
+    // Waits for the message itself, so an empty list cannot pass the check below.
+    await expect.poll(async () => (await readHostMessages(page, 'kangentic-demo-error')).length).toBe(1);
+    const [message] = await readHostMessages<DemoErrorMessage>(page, 'kangentic-demo-error');
+    expect(typeof message.reason).toBe('string');
+    expect(message.reason.length).toBeGreaterThan(0);
+    expect(message.reason).not.toContain(reasonCase.sessionId);
+  });
+}
+
+test('a refusal that names no session posts the card\'s own text to the host', async ({ page }) => {
+  // refuse() posts the card's text unless a caller passes a fixed line, so a host reads why a
+  // frame refused when nothing in the text is private.
+  await hostFrame(page, { view: 'no-such-scene' });
+  const errorCard = page.frameLocator('#demo').locator('[data-testid="demo-error"]');
+  await expect(errorCard).toBeVisible({ timeout: READY_TIMEOUT_MS });
+  await expect(errorCard).toContainText('Unknown scene "no-such-scene"');
+
+  await expect.poll(async () => (await readHostMessages(page, 'kangentic-demo-error')).length).toBe(1);
+  const [message] = await readHostMessages<DemoErrorMessage>(page, 'kangentic-demo-error');
+  expect(message.reason).toContain('Unknown scene "no-such-scene"');
 });
