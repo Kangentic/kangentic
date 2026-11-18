@@ -314,7 +314,8 @@ of stored. `recordUsage` drops a live report stamped with a `replaced` row.
 **Detection.** The adapter declares two cheap reads on its account support: `readHomeIdentity` (the
 state file, no CLI run) and `loginFiles` (`<home>/.credentials.json` on Windows and Linux, nothing on
 macOS, where the login is in the Keychain). For an agent with two or more accounts, Kangentic
-watches each home's login file (`account-login-watch.ts`, debounced two seconds), and checks a
+watches each home's login file (`account-login-watch.ts`, debounced two seconds, started by the
+usage refresher's startup pass since registration reads no database), and checks a
 session's home at each turn end and when the session ends. Every scheduled pass checks every `ok`
 row the same way. A check runs `claude auth status` only when the state file names another login
 than the row. Startup and the tab opening read every row through the CLI, as before. The state file
