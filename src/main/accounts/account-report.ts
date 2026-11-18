@@ -32,7 +32,12 @@ export type AccountProblem =
   /** A usage read gave no windows (the run failed, or its cache was missing or old), so the account kept its last values. */
   | 'usage-read-empty'
   /** The CLI gave no answer about an account's login, so the account kept its last status. */
-  | 'identity-read-failed';
+  | 'identity-read-failed'
+  /**
+   * The login in an account's home is no longer the one its row named (a `/login` in a session, a
+   * sign-in outside Kangentic). Sent with how it was reconciled, never the email.
+   */
+  | 'identity-changed';
 
 export type AccountProblemFacts = Record<string, string | number | boolean | null>;
 

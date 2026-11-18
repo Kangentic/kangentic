@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { UserPlus } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
+import { isSignedOutStatus } from '../../../../shared/agent-accounts';
 import { useAccountsStore } from '../../../stores/accounts-store';
 import { agentDisplayName } from '../../../utils/agent-display-name';
 import { BaseDialog } from '../../dialogs/BaseDialog';
@@ -19,7 +20,8 @@ export function AccountLoginDialog() {
   const signInIsInteractive = useAccountsStore((state) =>
     state.cards.find((card) => card.agent === state.login?.agent)?.signInIsInteractive === true);
 
-  const signedIn = ended?.account != null && ended.account.status !== 'signed-out';
+  // A row set aside stays so after a Sign in that landed another login: the window stays to say so.
+  const signedIn = ended?.account != null && !isSignedOutStatus(ended.account.status);
   useEffect(() => {
     if (signedIn) closeLogin();
   }, [signedIn, closeLogin]);

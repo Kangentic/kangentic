@@ -169,4 +169,11 @@ export function runGlobalMigrations(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_agent_accounts_agent ON agent_accounts(agent, position);
   `);
+
+  // Migration: the organization of an account's login (task #1113). With the email it names one
+  // login, so one email in two organizations stays two accounts. Null until a sign-in read fills it.
+  const accountColumns = db.pragma('table_info(agent_accounts)') as Array<{ name: string }>;
+  if (!accountColumns.some((col) => col.name === 'org_id')) {
+    db.exec('ALTER TABLE agent_accounts ADD COLUMN org_id TEXT DEFAULT NULL');
+  }
 }

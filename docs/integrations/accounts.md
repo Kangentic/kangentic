@@ -7,6 +7,8 @@ sources:
   - resource: src/shared/agent-accounts.ts
   - resource: src/main/accounts/
   - resource: src/main/accounts/account-report.ts
+  - resource: src/main/accounts/account-identity.ts
+  - resource: src/main/accounts/account-login-watch.ts
   - resource: src/main/agent/adapters/claude/accounts.ts
   - resource: src/main/agent/adapters/claude/plan-carry.ts
   - resource: src/main/agent/adapters/claude/auto-memory-folder.ts
@@ -37,10 +39,11 @@ the login they already have, and a spawn sets no extra variable.
 | `key-file` | An API key in a file the user owns. Kangentic stores the path and the variable names, never a key. | The file's keys the agent reads. |
 
 Accounts live in the global database, table `agent_accounts`: one row per account with its agent,
-kind, folder or key file path, the email and plan the CLI reports, a status (`ok`, `signed-out`,
-`no-subscription`, `not-found`, `link-failed`), its position, and its last usage windows. A session
-records the account it ran on in `sessions.account_id`. The two settings are global, under
-`agent.accounts`: `orderMode` (`automatic` or `manual`) and `autoSwitchAtLimit`.
+kind, folder or key file path, the email, organization (`org_id`) and plan the CLI reports, a status
+(`ok`, `signed-out`, `no-subscription`, `not-found`, `link-failed`, `replaced`), its position, and its
+last usage windows. A session records the account whose home it started in, in `sessions.account_id`.
+The two settings are global, under `agent.accounts`: `orderMode` (`automatic` or `manual`) and
+`autoSwitchAtLimit`.
 
 ## The account folder
 
@@ -141,7 +144,8 @@ nothing gets no card.
 
 - **Folder** (`FolderAccountSupport`): `accountEnv(accountFolder, defaultHome)` (the variables
   that put a run on the folder), `defaultHome()`, the login arguments, the shared entries,
-  `identify(cliPath, home)`, and optionally `readIdleUsage`, `isUsageLimitFailure`,
+  `identify(cliPath, home)`, and optionally `readHomeIdentity` and `loginFiles` (the cheap reads
+  that notice a replaced login), `loginEmailArgs`, `readIdleUsage`, `isUsageLimitFailure`,
   `carryConversation` (copies a resumed conversation's own files into the home it runs on),
   `accountDataSubfolder`, `loginIsInteractive`, `conversationsStayOnAccount`, `unproven` (built
   with no second account to run it on, so its sign-in and session failures are reported) and
@@ -256,6 +260,106 @@ carries a `rate_limits` snapshot (`primary` and `secondary`, each `used_percent`
 parser reads it (`adapters/codex/rate-limits.ts`), and usage from a history file is stamped with
 the session's agent and account like usage from a status line. A session on an API key writes a
 null snapshot, so it shows no windows.
+
+## A login replaced inside a session
+
+A home holds one login, so a `/login` in any session on it, or `claude auth login` in a terminal,
+replaces the login of that home. No hook fires and the status line names no account, so Kangentic
+notices it itself. Before task #1113 the next sign-in read rewrote the row's email: a `/login` in a
+session on the agent's own home, to a login folder account 3 held, left the tab listing that login
+twice and the login the home held before listed nowhere.
+
+**One login is its email and organization.** `claude auth status` reports `email` and `orgId`, and
+the home's state file records `oauthAccount.emailAddress` and `organizationUuid`. Two identities name
+one login when the emails match ignoring case and the org ids match where both are known
+(`sameLogin`, `account-identity.ts`), so one email in two organizations is two accounts, and a row
+stored before org ids still matches its own login.
+
+**A row never silently becomes another login.** Every sign-in read goes through `decideIdentity`,
+which is pure and idempotent, and the service applies its answer:
+
+| The home now holds | The home's row | The list |
+|---|---|---|
+| Its own login | Unchanged; a `replaced` row runs again | |
+| A login another row names | Keeps its email, `replaced`, usage dropped | The other row is the login's only row |
+| A login no row names | Takes the new login, usage dropped | The old login moves to a new folder row, `replaced` |
+| A login only a `replaced` row names | Takes the new login | That row takes the old login instead |
+
+A `replaced` row reads as signed out in the tab, with its email and Sign in, and takes no session
+and no usage. The new folder row in the third case is there so its Sign in lands in a folder of its
+own and never replaces the login the home holds now. Nothing on disk is moved or deleted. A user
+with one account is the exception: their row is whatever their CLI is signed in to, as before
+accounts, so a new login there adds no row. A list that already names one login twice (written
+before this) is settled on the next read: the agent's own home yields, else the newer row, set aside
+with no email since the login it held before cannot be known.
+
+A read with no answer, or a signed-in answer with no email, is never a change. Each change is
+logged and reported as `identity-changed` with how it was reconciled (`to-listed`, `to-new`,
+`merged`, `already-listed`, `duplicate`) and never the email.
+
+**Sessions follow the login, not the home.** A live session keeps two accounts: `homeAccountId`, the
+home it was spawned in, which never changes, and `accountId`, the login it runs as. When a home's
+login changes, every live session spawned there is re-pointed to the row that names the login the
+home now holds (`SessionManager.repointAccount`), and pushed so its context bar follows. Its usage
+reports, the continuation at a limit, and Switch to read `accountId`. A background-session stop, a
+Command Terminal's reap and the session's record keep the home, which is where the CLI keeps what
+they reach. Every session on the home follows, which assumes a running session reads the new login;
+probe P2 below decides that.
+
+**Usage never lands on the wrong row.** `refreshUsage` skips a `replaced` row, and after an idle read
+it compares the home's state file with the row: a home holding another login is reconciled instead
+of stored. `recordUsage` drops a live report stamped with a `replaced` row.
+
+**Detection.** The adapter declares two cheap reads on its account support: `readHomeIdentity` (the
+state file, no CLI run) and `loginFiles` (`<home>/.credentials.json` on Windows and Linux, nothing on
+macOS, where the login is in the Keychain). For an agent with two or more accounts, Kangentic
+watches each home's login file (`account-login-watch.ts`, debounced two seconds), and checks a
+session's home at each turn end and when the session ends. Every scheduled pass checks every `ok`
+row the same way. A check runs `claude auth status` only when the state file names another login
+than the row. Startup and the tab opening read every row through the CLI, as before.
+
+**Sign in on any row.** `loginCommand` covers the agent's own home too, run with no home variable as
+the user's own terminal does, and `loginEmailArgs` fills in the row's email (`claude auth login
+--email`). The browser still signs in whatever claude.ai login it holds. A Sign in that lands
+another listed login leaves the row set aside and the dialog names the row that login belongs to.
+An Add account that signs in a set-aside row's login hands that row the new folder. The tab offers
+Sign in on a set-aside folder row; the same item on the agent's own home waits for its design.
+
+**An agent switches with a tool, not `/login`.** `kangentic_switch_account` restarts the calling
+task's own session on a listed account once its turn ends. Its description, which every agent with
+the MCP server reads, says to use it instead of suggesting `/login`
+([session tools](mcp-server/session-tools.md#kangentic_switch_account)). The server's instructions
+carry no line for it: they are capped at 4,096 characters and the worst case is already at the cap.
+
+Kangentic never refuses or delays a `/login` or `/logout`: no setting, hook or wrapper makes one
+fail. Every guard above acts after the command lands. Claude's `forceLoginOrgUUID` would refuse a
+`/login` to another organization, so it is not used.
+
+### Probes
+
+The design rests on what Claude does, and some of it is not documented. These run in sandbox homes
+only, each swap a real `claude auth login`, never a copied `.credentials.json`, and need the owner's
+browser sign-ins, so none has been run yet:
+
+| Probe | Question | Decides |
+|---|---|---|
+| P2 | Does a running session pick up a login another process wrote to its home? | Whether every session on a home follows a swap, as built, or only the one that ran `/login` |
+| P2b | Does a session's token refresh write its old login back over a new one? | Whether a home's identity can flip back, which the reconcile above follows either way |
+| P6 | What does a `/login` write, in what order? | That the watched file and the state file change together |
+| P7 | What does `/logout` inside a session leave? | That it reads as signed out, never as a change of login |
+| P8 | Which login lands with `--email` when the browser holds another? | The Sign in dialog's warning |
+| P3, P4 | Does `/login` revoke the replaced login, and does a superseded refresh token revoke its family? | Whether Phase 3 can be built. Destructive: a throwaway login only |
+| P5 | Where does `/login` write on macOS for a non-default `CLAUDE_CONFIG_DIR`? | Not measured: no Mac is available |
+
+`node scripts/probe-agent-accounts.mjs logins --agent claude --label <name>` records each sandbox
+home's login by the CLI and by its state file, and when its `.credentials.json` last changed, never
+a token. Run it before and after each swap.
+
+**Keeping a replaced login signed in is not built.** Doing it means keeping a copy of each home's
+login and moving the replaced one into a folder of its own after a swap. Claude rotates its refresh
+token, and user reports on its issue tracker say presenting a superseded one can revoke the whole
+token family. Until P3 and P4 show a moved login survives with one live holder, a replaced login
+stays listed one Sign in away, and macOS stays out unless P5 finds a safe path.
 
 ## At a usage limit
 
@@ -404,6 +508,7 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know. |
 | `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `cache-missing`, `cache-stale`, `no-windows`, `no-answer`). |
 | `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. |
+| `identity-changed` | A home's login was replaced, with the account's kind and how it was reconciled (`to-listed`, `to-new`, `merged`, `already-listed`, `duplicate`), or `stage: repoint` when its sessions could not be moved. |
 
 Only fixed facts are sent: the agent, the problem, an entry's name, a count. Never a folder path,
 an email or a key. A provider's own error text is never sent, because its words can name the

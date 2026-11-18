@@ -3320,6 +3320,28 @@ export class SessionManager extends EventEmitter {
     this.emit('session-changed', sessionId, toSession(session));
   }
 
+  /**
+   * The live sessions spawned in `homeAccountId`'s home now run as `toAccountId` (task #1113): a
+   * `/login` replaced the login there. Each one that changes is announced, so its context bar
+   * draws the new account's limits. Returns the sessions it changed, for their records.
+   */
+  repointAccount(homeAccountId: string, toAccountId: string): Array<{ sessionId: string; projectId: string; transient: boolean }> {
+    const changed: Array<{ sessionId: string; projectId: string; transient: boolean }> = [];
+    for (const session of this.registry.values()) {
+      if (session.homeAccountId !== homeAccountId || session.accountId === toAccountId) continue;
+      if (session.status !== 'running' && session.status !== 'queued') continue;
+      session.accountId = toAccountId;
+      changed.push({ sessionId: session.id, projectId: session.projectId, transient: session.transient === true });
+      this.emit('session-changed', session.id, toSession(session));
+    }
+    return changed;
+  }
+
+  /** The account whose home a session was spawned in, or null for none (an agent with no accounts). */
+  getSessionHomeAccountId(sessionId: string): string | null {
+    return this.registry.get(sessionId)?.homeAccountId ?? null;
+  }
+
   /** Put the reason a start failed on its row, for the card. A row already replaced is a no-op. */
   markStartBlocked(sessionId: string, reason: StartBlockedReason): void {
     const session = this.registry.get(sessionId);

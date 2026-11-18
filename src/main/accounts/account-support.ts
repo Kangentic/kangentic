@@ -140,6 +140,8 @@ export class IdentityReadError extends Error {
 export interface AccountIdentity {
   signedIn: boolean;
   email: string | null;
+  /** The login's organization, when the CLI reports one. With the email it names one login. */
+  orgId?: string | null;
   /** The plan as the CLI names it, or null when it reports none. */
   plan: string | null;
   /** False when signed in with no subscription; null when the CLI cannot tell. */
@@ -186,6 +188,23 @@ export interface FolderAccountSupport extends AccountSupportBase {
   accountDataSubfolder?: string;
   /** The arguments that run the CLI's own sign-in in a terminal. Empty: the CLI itself. */
   loginArgs: readonly string[];
+  /**
+   * Arguments added to `loginArgs` to fill in the email of the login a row names, when the CLI's
+   * sign-in takes one (Claude's `--email`). Absent: the sign-in starts with no email.
+   */
+  loginEmailArgs?(email: string): string[];
+  /**
+   * Who is signed in to `home` (null: the agent's own login), read from the CLI's own files with
+   * no CLI run, so it is cheap enough for every turn end. Null when the files give no answer (a
+   * file missing or mid-write, no login recorded): no answer is never a change of login. A read
+   * that differs from the row is confirmed with `identify` before anything changes.
+   */
+  readHomeIdentity?(home: string | null): Promise<{ email: string; orgId: string | null } | null>;
+  /**
+   * The files a sign-in rewrites in `home` (null: the agent's own), watched so a login replaced
+   * outside Kangentic is noticed. Empty where the login lives elsewhere (an OS keychain).
+   */
+  loginFiles?(home: string | null): string[];
   /**
    * The sign-in happens inside the CLI's own screen, which the user leaves when done, instead of
    * a command that ends by itself. The terminal then starts in the account folder: such a CLI

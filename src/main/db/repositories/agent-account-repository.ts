@@ -13,6 +13,7 @@ interface AgentAccountRow {
   key_file_path: string | null;
   key_names: string;
   email: string | null;
+  org_id: string | null;
   plan: string | null;
   status: AgentAccountStatus;
   position: number;
@@ -41,6 +42,7 @@ function toAccount(row: AgentAccountRow): AgentAccount {
     keyFilePath: row.key_file_path,
     keyNames: parseJsonArray<string>(row.key_names) ?? [],
     email: row.email,
+    orgId: row.org_id ?? null,
     plan: row.plan,
     status: row.status,
     position: row.position,
@@ -58,8 +60,17 @@ export interface AgentAccountInsert {
   keyFilePath?: string | null;
   keyNames?: string[];
   email?: string | null;
+  orgId?: string | null;
   plan?: string | null;
   status?: AgentAccountStatus;
+}
+
+/** What a sign-in read stores on a row. */
+export interface AgentAccountIdentityUpdate {
+  email: string | null;
+  orgId: string | null;
+  plan: string | null;
+  status: AgentAccountStatus;
 }
 
 /**
@@ -99,8 +110,8 @@ export class AgentAccountRepository {
       .get(input.agent) as { next: number };
     database
       .prepare(`
-        INSERT INTO agent_accounts (id, agent, kind, folder_path, key_file_path, key_names, email, plan, status, position, history_private, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        INSERT INTO agent_accounts (id, agent, kind, folder_path, key_file_path, key_names, email, org_id, plan, status, position, history_private, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
       `)
       .run(
         id,
@@ -110,6 +121,7 @@ export class AgentAccountRepository {
         input.keyFilePath ?? null,
         JSON.stringify(input.keyNames ?? []),
         input.email ?? null,
+        input.orgId ?? null,
         input.plan ?? null,
         input.status ?? 'ok',
         next,
@@ -120,10 +132,20 @@ export class AgentAccountRepository {
     return account;
   }
 
-  updateIdentity(id: string, identity: { email: string | null; plan: string | null; status: AgentAccountStatus }): void {
+  updateIdentity(id: string, identity: AgentAccountIdentityUpdate): void {
     this.database()
-      .prepare('UPDATE agent_accounts SET email = ?, plan = ?, status = ? WHERE id = ?')
-      .run(identity.email, identity.plan, identity.status, id);
+      .prepare('UPDATE agent_accounts SET email = ?, org_id = ?, plan = ?, status = ? WHERE id = ?')
+      .run(identity.email, identity.orgId, identity.plan, identity.status, id);
+  }
+
+  /** Points a folder account at another folder (one that now holds its login). */
+  setFolderPath(id: string, folderPath: string): void {
+    this.database().prepare("UPDATE agent_accounts SET folder_path = ? WHERE id = ? AND kind = 'folder'").run(folderPath, id);
+  }
+
+  /** Forgets the row's usage: it was read for a login the row no longer names. */
+  clearUsage(id: string): void {
+    this.database().prepare('UPDATE agent_accounts SET last_usage_json = NULL, last_usage_at = NULL WHERE id = ?').run(id);
   }
 
   updateStatus(id: string, status: AgentAccountStatus): void {

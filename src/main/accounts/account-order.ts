@@ -1,5 +1,6 @@
 import type { AgentAccount } from '../../shared/agent-accounts';
 import type { RateLimitWindow } from '../../shared/types';
+import { loginOf, oneRowPerLogin, sameLogin } from './account-identity';
 
 /**
  * Pure ordering rules for one agent's accounts (docs/integrations/accounts.md). No I/O, so they are unit-tested
@@ -43,8 +44,11 @@ export function orderingReset(account: AgentAccount, nowSeconds: number): number
  */
 export function automaticOrder(accounts: readonly AgentAccount[], nowSeconds: number): AgentAccount[] {
   const byPosition = [...accounts].sort((left, right) => left.position - right.position);
-  const runnable = byPosition.filter((account) => account.status === 'ok');
-  const skipped = byPosition.filter((account) => account.status !== 'ok');
+  // One login counts once: a second row naming a login an earlier one names sorts with the
+  // skipped, so its reading never ranks that login twice.
+  const firstOfLogin = new Set(oneRowPerLogin(byPosition.filter((account) => account.status === 'ok')).map((account) => account.id));
+  const runnable = byPosition.filter((account) => firstOfLogin.has(account.id));
+  const skipped = byPosition.filter((account) => !firstOfLogin.has(account.id));
   const withReset = runnable
     .map((account) => ({ account, reset: orderingReset(account, nowSeconds) }))
     .sort((left, right) => {
@@ -64,7 +68,8 @@ export function topAccountWithRoom(ordered: readonly AgentAccount[], nowSeconds:
 
 /**
  * Where a session at its limit continues: the first account with room after the one it ran on,
- * then from the top. Never the account it ran on.
+ * then from the top. Never the account it ran on, and never another row naming its login, which
+ * would continue it on the login that just ran out.
  */
 export function nextAccountWithRoom(
   ordered: readonly AgentAccount[],
@@ -72,8 +77,10 @@ export function nextAccountWithRoom(
   nowSeconds: number,
 ): AgentAccount | null {
   const index = ordered.findIndex((account) => account.id === currentAccountId);
+  const current = index < 0 ? undefined : ordered[index];
   const rotated = index < 0 ? [...ordered] : [...ordered.slice(index + 1), ...ordered.slice(0, index)];
-  return rotated.find((account) => hasRoom(account, nowSeconds)) ?? null;
+  return rotated.find((account) => hasRoom(account, nowSeconds)
+    && !(current && sameLogin(loginOf(current), loginOf(account)))) ?? null;
 }
 
 /** When every account is full: the account and time of the soonest reset that frees one. */

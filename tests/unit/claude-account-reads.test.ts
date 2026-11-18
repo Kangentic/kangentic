@@ -63,8 +63,32 @@ describe('CLAUDE_ACCOUNT_SUPPORT.identify', () => {
     runClaudeCli.mockResolvedValue(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: 'dev@example.com', planTier: 'max_20x' }));
     writeState({ oauthAccount: { planDisplayName: 'Ultra' } });
     await expect(CLAUDE_ACCOUNT_SUPPORT.identify('claude', accountFolder)).resolves.toEqual({
-      signedIn: true, email: 'dev@example.com', plan: 'Ultra', hasSubscription: true,
+      signedIn: true, email: 'dev@example.com', orgId: null, plan: 'Ultra', hasSubscription: true,
     });
+  });
+});
+
+// The cheap read a turn end and the login file watch run: the home's state file, no CLI.
+describe('CLAUDE_ACCOUNT_SUPPORT.readHomeIdentity', () => {
+  it('reads the login the state file records, with no CLI run', async () => {
+    writeState({ oauthAccount: { emailAddress: 'dev@example.com', organizationUuid: 'org-a', planDisplayName: 'Ultra' } });
+    await expect(CLAUDE_ACCOUNT_SUPPORT.readHomeIdentity!(accountFolder)).resolves.toEqual({ email: 'dev@example.com', orgId: 'org-a' });
+    expect(runClaudeCli).not.toHaveBeenCalled();
+  });
+
+  // No answer is never a change of login: a home mid-write or signed out reads as nothing.
+  it.each([
+    ['no state file', null],
+    ['no login recorded', {}],
+    ['a login with no email', { oauthAccount: { organizationUuid: 'org-a' } }],
+  ])('gives no answer for %s', async (_case, state) => {
+    if (state) writeState(state);
+    await expect(CLAUDE_ACCOUNT_SUPPORT.readHomeIdentity!(accountFolder)).resolves.toBeNull();
+  });
+
+  it('gives no answer for a state file caught mid-write', async () => {
+    fs.writeFileSync(path.join(accountFolder, '.claude.json'), '{"oauthAccount": {"emailAdd');
+    await expect(CLAUDE_ACCOUNT_SUPPORT.readHomeIdentity!(accountFolder)).resolves.toBeNull();
   });
 });
 

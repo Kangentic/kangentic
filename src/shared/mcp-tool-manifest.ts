@@ -122,6 +122,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_get_activity_intervals', label: 'Activity Intervals', blurb: 'durable history of active vs idle time for a task or session', category: 'sessions' },
   { name: 'kangentic_reserve_dev_ports', label: 'Reserve Dev Ports', blurb: 'claim free TCP ports before starting a dev server, so concurrent agents never collide', category: 'sessions' },
   { name: 'kangentic_check_dev_ports', label: 'Check Dev Ports', blurb: 'which ports a task holds, and what is actually listening', category: 'sessions' },
+  { name: 'kangentic_switch_account', label: 'Switch Account', blurb: 'restart the calling task\'s session on another listed account, instead of a /login', category: 'sessions' },
   { name: 'kangentic_get_handoff_context', label: 'Handoff Context', blurb: 'the most recent cross-agent handoff record for a task', category: 'sessions' },
   { name: 'kangentic_get_transcript', label: 'Get Transcript', blurb: 'read what the agent on another task or project said', category: 'sessions' },
   { name: 'kangentic_send_session_message', label: 'Send Session Message', blurb: 'send a message to another task\'s agent to steer it, held for its next agent when none is running', category: 'sessions' },

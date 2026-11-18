@@ -15,6 +15,8 @@
  *   shared       the prompt history is still one file, and the account's private entries are its own (P7)
  *   planwrite    a plan-mode run on the account writes its plan file into its own `plans` (P9, Claude)
  *   memorywrite  an acceptEdits run on the account saves auto memory into the home's folder (P10, Claude)
+ *   logins       each home's login by the CLI and by its own files, and its login file's time
+ *                (task #1113: run before and after a swap, with --label, for P2, P2b, P6, P7, P8)
  *
  * P9 and P10 are task #1070: Claude refuses or prompts for a Write through a link into its home, so
  * an account keeps its own `plans` and names its memory folder by its real path in the home
@@ -64,7 +66,16 @@ const AGENTS = {
       const result = run(agent.cli, ['auth', 'status'], { home, homeVar: 'CLAUDE_CONFIG_DIR' });
       let parsed = null;
       try { parsed = JSON.parse(result.stdout); } catch { /* text output */ }
-      return { signedIn: parsed?.loggedIn ?? false, who: parsed?.email ?? null, plan: parsed?.subscriptionType ?? null };
+      return { signedIn: parsed?.loggedIn ?? false, who: parsed?.email ?? null, orgId: parsed?.orgId ?? null, plan: parsed?.subscriptionType ?? null };
+    },
+    // The login the home's state file records, which Kangentic reads with no CLI run (task #1113).
+    recordedLogin: (home) => {
+      try {
+        const account = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).oauthAccount;
+        return account ? { who: account.emailAddress ?? null, orgId: account.organizationUuid ?? null } : null;
+      } catch {
+        return null;
+      }
     },
     // The first-run answers a fresh home asks for, so a print run does not stop at a dialog.
     seed: (home, folders) => {
@@ -130,7 +141,7 @@ function parseArguments(argv) {
 const options = parseArguments(process.argv.slice(2));
 const agent = AGENTS[options.agent];
 if (!agent) {
-  console.log(`usage: node scripts/probe-agent-accounts.mjs <setup|login|status|history|concurrent|resume|shared|planwrite|memorywrite|final|all|report|cleanup> --agent <${Object.keys(AGENTS).join('|')}> [--sandbox <dir>] [--which home|account]`);
+  console.log(`usage: node scripts/probe-agent-accounts.mjs <setup|login|logins|status|history|concurrent|resume|shared|planwrite|memorywrite|final|all|report|cleanup> --agent <${Object.keys(AGENTS).join('|')}> [--sandbox <dir>] [--which home|account]`);
   process.exit(1);
 }
 // The CLI to run: an executable on PATH (claude.exe, codex.exe), or a path given with --cli. A .cmd shim
@@ -280,6 +291,26 @@ const commands = {
     const home = options.which === 'account' ? ACCOUNT : HOME;
     console.log(`Signing ${options.which ?? 'home'} in with ${agent.homeVar}=${home}`);
     spawnSync(agent.cli, agent.loginArgs, { cwd: REPO, env: runEnv(home, agent.homeVar), stdio: 'inherit' });
+  },
+
+  // Task #1113's probes (P2, P2b, P6, P7, P8): what each home's login is, by the CLI and by its own
+  // files, and when its login file last changed. Run it, swap a login (a `/login` in a session
+  // started with the home variable, `login --which home`, a `/logout`), run it again with another
+  // `--label`, and compare. Reads only: never a token, only the login file's size and time.
+  logins() {
+    const label = options.label ?? new Date().toISOString();
+    const snapshot = {};
+    for (const [name, home] of [['home', HOME], ['account', ACCOUNT]]) {
+      const loginFile = path.join(home, '.credentials.json');
+      const stat = fs.existsSync(loginFile) ? fs.statSync(loginFile) : null;
+      snapshot[name] = {
+        cli: agent.whoami(home),
+        recorded: agent.recordedLogin ? agent.recordedLogin(home) : null,
+        loginFile: stat ? { bytes: stat.size, changedAt: stat.mtime.toISOString() } : null,
+      };
+    }
+    saveResult(`logins_${label}`, snapshot);
+    console.log(JSON.stringify(snapshot, null, 2));
   },
 
   status() {

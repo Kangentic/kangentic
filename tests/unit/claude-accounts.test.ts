@@ -46,7 +46,12 @@ describe('deriveClaudeAccountState', () => {
 describe('parseClaudeAuthStatus', () => {
   it('reads the signed-in email and plan, never a token', () => {
     const identity = parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: 'dev@example.com', subscriptionType: 'max' }));
-    expect(identity).toEqual({ signedIn: true, email: 'dev@example.com', plan: 'Max', hasSubscription: true });
+    expect(identity).toEqual({ signedIn: true, email: 'dev@example.com', orgId: null, plan: 'Max', hasSubscription: true });
+  });
+
+  // With the email the org id names one login, so one email in two organizations is two accounts.
+  it('reads the org id the CLI reports with the email', () => {
+    expect(parseClaudeAuthStatus(JSON.stringify({ loggedIn: true, email: 'dev@example.com', orgId: 'org-a', subscriptionType: 'max' }))?.orgId).toBe('org-a');
   });
 
   it('prefers the plan tier when the CLI reports one', () => {
@@ -71,8 +76,10 @@ describe('parseClaudeAuthStatus', () => {
   // home, and an empty home that exits 1 and still prints its answer.
   it('reads both real-shape answers', () => {
     const captured = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-auth-status.json'), 'utf8')) as { signedIn: unknown; signedOut: unknown };
-    expect(parseClaudeAuthStatus(JSON.stringify(captured.signedIn))).toEqual({ signedIn: true, email: 'dev@example.com', plan: 'Max 20x', hasSubscription: true });
-    expect(parseClaudeAuthStatus(JSON.stringify(captured.signedOut))).toEqual({ signedIn: false, email: null, plan: null, hasSubscription: null });
+    expect(parseClaudeAuthStatus(JSON.stringify(captured.signedIn))).toEqual({
+      signedIn: true, email: 'dev@example.com', orgId: '00000000-0000-4000-8000-000000000000', plan: 'Max 20x', hasSubscription: true,
+    });
+    expect(parseClaudeAuthStatus(JSON.stringify(captured.signedOut))).toEqual({ signedIn: false, email: null, orgId: null, plan: null, hasSubscription: null });
   });
 
   it('reports a signed-in account with no plan as having no subscription', () => {
