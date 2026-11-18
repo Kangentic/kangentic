@@ -268,6 +268,43 @@ describe('the cheap check of a home', () => {
   });
 });
 
+describe('signing a replaced login in again through Add account', () => {
+  // The incident's way back: the agent's own home lost A to a /login and holds B, which a folder
+  // account holds. Add account signs A into a new folder.
+  it('lists the agent\'s own home\'s old login on the new folder and each login once', async () => {
+    const { own, folder } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set('own', loginOf('b@example.com'));
+    const accountService = service();
+    await accountService.refreshIdentity(own.id);
+    const created = await accountService.createFolderAccount(AGENT);
+    homes.set(created!.folderPath!, loginOf('a@example.com'));
+    const result = await accountService.completeLogin(created!.id);
+    expect(result.account?.id).toBe(created!.id);
+    expect(result.account?.status).toBe('ok');
+    expect(result.duplicateOf).toBeNull();
+    expect(listedEmails().filter((email) => email === 'a@example.com')).toHaveLength(1);
+    expect(listedEmails().filter((email) => email === 'b@example.com')).toHaveLength(1);
+    expect(repository.getById(own.id)?.status).toBe('replaced');
+    expect(repository.getById(folder.id)?.status).toBe('ok');
+  });
+
+  it('hands a replaced folder row the new folder that holds its login', async () => {
+    const { own, folder } = ownAndFolder('a@example.com', 'b@example.com');
+    homes.set(folder.folderPath!, loginOf('a@example.com'));
+    const accountService = service();
+    await accountService.refreshIdentity(folder.id);
+    expect(repository.getById(folder.id)?.status).toBe('replaced');
+    const created = await accountService.createFolderAccount(AGENT);
+    homes.set(created!.folderPath!, loginOf('b@example.com'));
+    const result = await accountService.completeLogin(created!.id);
+    expect(result.account?.id).toBe(folder.id);
+    expect(result.account?.status).toBe('ok');
+    expect(repository.getById(created!.id)).toBeNull();
+    expect(repository.getById(folder.id)?.folderPath).toBe(created!.folderPath);
+    expect(repository.getById(own.id)?.status).toBe('ok');
+  });
+});
+
 describe('signing in a row again', () => {
   it('never deletes the agent\'s own home when its sign-in ends signed out', async () => {
     const own = repository.insert({ agent: AGENT, kind: 'default', status: 'signed-out' });

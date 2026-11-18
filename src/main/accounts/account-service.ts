@@ -669,6 +669,16 @@ export class AccountService {
         const restored = await this.refreshIdentity(duplicateOf.id);
         return { account: restored, duplicateOf: null };
       }
+      if (duplicateOf?.status === 'replaced' && duplicateOf.kind === 'default') {
+        // The agent's own home lost this login to a `/login` and holds another listed one. The
+        // new folder now holds this login, so it keeps the row; the home's row stays set aside
+        // with no email, as a home whose login is listed elsewhere reads.
+        repository.updateIdentity(duplicateOf.id, { email: null, orgId: null, plan: duplicateOf.plan, status: 'replaced' });
+        repository.clearUsage(duplicateOf.id);
+        await this.applyIdentity(before, read.identity, read.linked);
+        this.changed();
+        return { account: repository.getById(accountId), duplicateOf: null };
+      }
       if (duplicateOf) {
         // Already listed: nothing is added, and the dialog names the existing row.
         repository.delete(accountId);

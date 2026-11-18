@@ -322,7 +322,9 @@ than the row. Startup and the tab opening read every row through the CLI, as bef
 the user's own terminal does, and `loginEmailArgs` fills in the row's email (`claude auth login
 --email`). The browser still signs in whatever claude.ai login it holds. A Sign in that lands
 another listed login leaves the row set aside and the dialog names the row that login belongs to.
-An Add account that signs in a set-aside row's login hands that row the new folder. The tab offers
+An Add account that signs in a set-aside row's login hands that row the new folder. For the agent's
+own home, which cannot move, the new folder keeps the login and the home's row stays set aside with
+no email. The tab offers
 Sign in on a set-aside folder row; the same item on the agent's own home waits for its design.
 
 **An agent switches with a tool, not `/login`.** `kangentic_switch_account` restarts the calling
