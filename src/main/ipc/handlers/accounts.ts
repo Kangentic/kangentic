@@ -143,7 +143,12 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   // when the home's login file changes, at each turn end and when a session ends (task #1113).
   // Each compares the home's own record with the row, and the CLI runs only when they differ.
   const checkHome = (accountId: string | null): void => {
-    if (accountId) void refresher.checkHome(accountId);
+    if (!accountId) return;
+    // An agent with one account has nothing to reconcile: its row is whatever its CLI is signed
+    // in to, so a one-account user's turn ends read no file.
+    const agent = repository.getById(accountId)?.agent;
+    if (!agent || repository.listForAgent(agent).length < 2) return;
+    void refresher.checkHome(accountId);
   };
   const watch = new AccountLoginWatch((accountId) => checkHome(accountId));
   loginWatch = watch;
