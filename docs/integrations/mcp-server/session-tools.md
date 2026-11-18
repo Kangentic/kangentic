@@ -294,6 +294,9 @@ The task is always the caller's own, from the MCP request's caller segment, neve
 call answers at once and tells the agent to end its turn. When that turn ends, or two minutes later
 for an agent that keeps working, the session restarts on the account through the same path as the
 continuation at a usage limit, with a prompt that names the account. The list's order is left alone.
+A second call before the turn ends replaces the first, so the session moves once, to the account
+named last. An email that names two accounts, in two organizations, picks the one that can run and
+is not the session's own login.
 
 Refusals are recoverable and list the accounts that can run: no running session, an agent without
 accounts, an agent whose conversations stay on their account (Codex), an account the list does not

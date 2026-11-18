@@ -198,11 +198,24 @@ export function claudeStateLogin(state: unknown): { email: string; orgId: string
   };
 }
 
-/** `readHomeIdentity` for Claude: the home's state file, read with no lock and no CLI. */
+/** The last login read from each state file, with the size and time it was read at. */
+const stateLoginCache = new Map<string, { size: number; changedAtMs: number; login: { email: string; orgId: string | null } | null }>();
+
+/**
+ * `readHomeIdentity` for Claude: the home's state file, read with no lock and no CLI. The file
+ * also holds every project's history and runs past a megabyte, and this read runs at each turn
+ * end, so it is parsed again only when its size or time has changed since the last read.
+ */
 async function readClaudeHomeLogin(home: string | null): Promise<{ email: string; orgId: string | null } | null> {
+  const statePath = claudeStatePathForHome(home ?? claudeHomeDir());
   try {
-    const text = await fs.promises.readFile(claudeStatePathForHome(home ?? claudeHomeDir()), 'utf8');
-    return claudeStateLogin(JSON.parse(text));
+    const stat = await fs.promises.stat(statePath);
+    const cached = stateLoginCache.get(statePath);
+    if (cached && cached.size === stat.size && cached.changedAtMs === stat.mtimeMs) return cached.login;
+    const text = await fs.promises.readFile(statePath, 'utf8');
+    const login = claudeStateLogin(JSON.parse(text));
+    stateLoginCache.set(statePath, { size: stat.size, changedAtMs: stat.mtimeMs, login });
+    return login;
   } catch {
     // report-ok: a state file that is missing or mid-write is no answer, which the caller treats
     // as no change; the CLI read that confirms a change reports its own failures.
@@ -212,7 +225,8 @@ async function readClaudeHomeLogin(home: string | null): Promise<{ email: string
 
 /**
  * The file a Claude sign-in rewrites in a home: `.credentials.json` on Windows and Linux. On macOS
- * the login is in the Keychain, so there is nothing to watch.
+ * the login is in the Keychain, so there is nothing to watch, and a replaced login there is
+ * noticed at the next turn end, session end or scheduled pass.
  */
 function claudeLoginFiles(home: string | null): string[] {
   if (process.platform === 'darwin') return [];

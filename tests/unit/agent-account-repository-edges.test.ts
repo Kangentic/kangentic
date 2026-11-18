@@ -42,6 +42,31 @@ describe('AgentAccountRepository writes and reads', () => {
   });
 });
 
+describe('org_id migration', () => {
+  function columnNames(): string[] {
+    return (database.pragma('table_info(agent_accounts)') as Array<{ name: string }>).map((column) => column.name);
+  }
+
+  it('adds org_id to a legacy table, reads old rows as orgId null, and is safe to run twice', () => {
+    // A legacy database: the table as it was before org_id, holding one row.
+    database.exec('DROP INDEX IF EXISTS idx_agent_accounts_agent');
+    database.exec('ALTER TABLE agent_accounts DROP COLUMN org_id');
+    expect(columnNames()).not.toContain('org_id');
+    database.prepare(
+      "INSERT INTO agent_accounts (id, agent, kind, email, position, created_at) VALUES ('legacy', 'claude', 'folder', 'old@example.com', 1, '2026-01-01T00:00:00.000Z')",
+    ).run();
+
+    runGlobalMigrations(database);
+    expect(columnNames()).toContain('org_id');
+    const stored = repository.getById('legacy');
+    expect(stored?.email).toBe('old@example.com');
+    expect(stored?.orgId).toBeNull();
+
+    expect(() => runGlobalMigrations(database)).not.toThrow();
+    expect(repository.getById('legacy')?.orgId).toBeNull();
+  });
+});
+
 describe('AgentAccountRepository ordering', () => {
   it('reorder with a repeated id leaves dense positions 1..n', () => {
     const [first, second, third] = addThree();

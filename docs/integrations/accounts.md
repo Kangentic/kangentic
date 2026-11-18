@@ -316,13 +316,16 @@ macOS, where the login is in the Keychain). For an agent with two or more accoun
 watches each home's login file (`account-login-watch.ts`, debounced two seconds), and checks a
 session's home at each turn end and when the session ends. Every scheduled pass checks every `ok`
 row the same way. A check runs `claude auth status` only when the state file names another login
-than the row. Startup and the tab opening read every row through the CLI, as before.
+than the row. Startup and the tab opening read every row through the CLI, as before. The state file
+is parsed again only when its size or time changed. A CLI in a WSL distro keeps its login in the
+distro, so its homes get no cheap check and its own home no Sign in from this side.
 
 **Sign in on any row.** `loginCommand` covers the agent's own home too, run with no home variable as
 the user's own terminal does, and `loginEmailArgs` fills in the row's email (`claude auth login
 --email`). The browser still signs in whatever claude.ai login it holds. A Sign in that lands
 another listed login leaves the row set aside and the dialog names the row that login belongs to.
-An Add account that signs in a set-aside row's login hands that row the new folder. For the agent's
+An Add account that signs in a set-aside row's login hands that row the new folder. Sessions still
+running in its old folder keep following the login that folder holds. For the agent's
 own home, which cannot move, the new folder keeps the login and the home's row stays set aside with
 no email. The tab offers
 Sign in on a set-aside folder row; the same item on the agent's own home waits for its design.

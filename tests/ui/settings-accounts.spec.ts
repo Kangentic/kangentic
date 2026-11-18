@@ -90,6 +90,40 @@ test.describe('Settings > Accounts', () => {
     }
   });
 
+  // A login replaced in its home (a /login in a session) reads as signed out: the row keeps its
+  // email, says Not signed in, draws no usage, and a folder row offers Sign in.
+  test('a replaced account reads as signed out: its label, no usage, and Sign in on a folder row only', async () => {
+    const replacedUsage = [fiveHour(30, 2 * HOUR), sevenDay(40, 2 * DAY)];
+    const { browser, page } = await launchPage({
+      beforeLoad: seedAccounts([{
+        agent: 'claude',
+        accounts: [
+          { id: 'account-1', email: 'own@example.com', plan: 'Max', status: 'replaced', lastUsage: replacedUsage },
+          { id: 'account-2', email: 'folder@example.com', plan: 'Max', status: 'replaced', lastUsage: replacedUsage },
+        ],
+      }]),
+    });
+    try {
+      await openAccounts(page);
+      await test.step('both replaced rows say Not signed in, keep their email and draw no usage', async () => {
+        for (const [id, email] of [['account-1', 'own@example.com'], ['account-2', 'folder@example.com']]) {
+          const row = page.getByTestId(`account-row-${id}`);
+          await expect(row).toContainText('Not signed in');
+          await expect(row.getByTestId('account-name')).toHaveText(email);
+          await expect(row.getByTestId('account-usage-line')).toHaveCount(0);
+        }
+      });
+
+      await test.step('the folder row offers Sign in, the agent own home row has no menu', async () => {
+        await expect(page.getByTestId('account-row-account-1').getByTestId('account-menu')).toHaveCount(0);
+        await page.getByTestId('account-row-account-2').getByTestId('account-menu').click();
+        await expect(page.getByTestId('account-sign-in')).toBeVisible();
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('position is one signal: no numbers, a grip only once the order is Manual, and no outline on the active row', async () => {
     const { browser, page } = await launchPage({ beforeLoad: seedAccounts(THREE_ACCOUNTS) });
     try {

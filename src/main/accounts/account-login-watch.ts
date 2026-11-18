@@ -22,7 +22,8 @@ const defaultFactory: LoginFileWatcherFactory = (filePath, onChange) =>
 /**
  * Watches the file each account's home keeps its login in (task #1113), so a login replaced
  * outside a Kangentic sign-in (a `/login` in any session on that home, `claude auth login` in a
- * terminal) is noticed without waiting for a turn end or a scheduled pass. The file is rewritten
+ * terminal) is noticed without waiting for a turn end or a scheduled pass. Where the adapter names
+ * no file (Claude on macOS keeps its login in the Keychain) only those later checks notice it. The file is rewritten
  * on every token refresh too, so a change only asks for the cheap comparison of the home's own
  * record with the row (`onChange`), which runs the CLI only when they differ.
  */

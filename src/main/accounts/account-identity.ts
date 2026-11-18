@@ -33,6 +33,14 @@ export function loginOf(account: Pick<AgentAccount, 'email' | 'orgId'>): LoginId
   return { email: account.email, orgId: account.orgId };
 }
 
+/** The identity a read found: a CLI answer or a home's own record, with no org id as null. */
+export function loginFromRead(read: { email: string | null; orgId?: string | null }): LoginIdentity {
+  return { email: read.email, orgId: read.orgId ?? null };
+}
+
+/** No login: what a row set aside with no email names. */
+export const NO_LOGIN: LoginIdentity = { email: null, orgId: null };
+
 /** A row that names a login it can run on, as opposed to one whose home moved to another. */
 function isLive(account: AgentAccount): boolean {
   return account.status !== 'replaced';
@@ -87,19 +95,14 @@ export function decideIdentity(account: AgentAccount, others: readonly AgentAcco
  * are set aside with no email, because the login they held before cannot be known.
  */
 export function duplicateLoginRows(accounts: readonly AgentAccount[]): AgentAccount[] {
-  const yielding: AgentAccount[] = [];
   const live = accounts.filter((account) => isLive(account) && account.email);
   const ranked = [...live].sort((first, second) => {
     const firstDefault = Number(first.kind === 'default');
     const secondDefault = Number(second.kind === 'default');
     return firstDefault - secondDefault || first.createdAt.localeCompare(second.createdAt) || first.position - second.position;
   });
-  const kept: AgentAccount[] = [];
-  for (const account of ranked) {
-    if (kept.some((other) => sameLogin(loginOf(other), loginOf(account)))) yielding.push(account);
-    else kept.push(account);
-  }
-  return yielding;
+  const kept = new Set(oneRowPerLogin(ranked));
+  return ranked.filter((account) => !kept.has(account));
 }
 
 /**

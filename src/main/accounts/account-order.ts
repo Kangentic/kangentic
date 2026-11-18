@@ -3,6 +3,16 @@ import type { RateLimitWindow } from '../../shared/types';
 import { loginOf, oneRowPerLogin, sameLogin } from './account-identity';
 
 /**
+ * The agents with two or more accounts: the only ones whose usage is read on a schedule, and whose
+ * homes are watched and compared with their rows.
+ */
+export function multiAccountAgents(accounts: readonly AgentAccount[]): Set<string> {
+  const perAgent = new Map<string, number>();
+  for (const account of accounts) perAgent.set(account.agent, (perAgent.get(account.agent) ?? 0) + 1);
+  return new Set([...perAgent].filter(([, count]) => count >= 2).map(([agent]) => agent));
+}
+
+/**
  * Pure ordering rules for one agent's accounts (docs/integrations/accounts.md). No I/O, so they are unit-tested
  * against fixed clocks.
  */
