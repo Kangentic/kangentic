@@ -2,7 +2,7 @@ import type { WebContents } from 'electron';
 import type { QueryAllResult } from './types';
 import { keyboardFocusIsInHost, KeyboardFocusNotInGuestError } from './keyboard-focus';
 import { MODIFIER_FLAGS, chordKeyIdentity, parseKeyCombo } from './key-combo';
-import { holdGuestRendering } from './guest-capture-hold';
+import { holdGuestRendering, type CaptureHoldOutcome, type CaptureHostState } from './guest-capture-hold';
 import { AMBIGUOUS_CANDIDATE_LIMIT, AmbiguousSelectorError, parseSelectorCandidates } from './ambiguous-selector';
 
 /**
@@ -609,14 +609,25 @@ export interface ScreenshotOptions {
  */
 export const SCREENSHOT_TIMEOUT_MS = 5000;
 
+/** What the capture hold did, carried to the driver's report (never to the agent). */
+export interface CaptureHoldDiagnostics {
+  hold: CaptureHoldOutcome;
+  hostState: CaptureHostState;
+}
+
 export class ScreenshotNotComposited extends Error {
-  constructor() {
+  readonly hold: CaptureHoldOutcome;
+  readonly hostState: CaptureHostState;
+
+  constructor(diagnostics: CaptureHoldDiagnostics) {
     // The bound is interpolated, never restated: the agent-facing message, the
     // race below, and the test all have to move together when it changes.
     super(
       `The Browser pane produced no frame within ${SCREENSHOT_TIMEOUT_MS / 1000}s, which means its window is not being composited. Retrying will not help until Kangentic is showing again. Tools that do not need pixels, such as query_dom, query_all and click, still work, so verify through them instead.`,
     );
     this.name = 'ScreenshotNotComposited';
+    this.hold = diagnostics.hold;
+    this.hostState = diagnostics.hostState;
   }
 }
 
@@ -625,7 +636,7 @@ export async function captureScreenshot(
   options: ScreenshotOptions = {},
 ): Promise<string | null> {
   let timer: NodeJS.Timeout | undefined;
-  const endHold = holdGuestRendering(webContents);
+  const captureHold = holdGuestRendering(webContents);
   try {
     const capture = webContents.debugger.sendCommand('Page.captureScreenshot', {
       format: options.format ?? 'png',
@@ -636,12 +647,15 @@ export async function captureScreenshot(
       captureBeyondViewport: options.captureBeyondViewport ?? options.fullPage ?? false,
     }) as Promise<{ data: string }>;
     const bounded = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new ScreenshotNotComposited()), SCREENSHOT_TIMEOUT_MS);
+      timer = setTimeout(
+        () => reject(new ScreenshotNotComposited({ hold: captureHold.outcome, hostState: captureHold.hostState })),
+        SCREENSHOT_TIMEOUT_MS,
+      );
     });
     const result = await Promise.race([capture, bounded]);
     return result.data ?? null;
   } finally {
-    endHold();
+    captureHold.end();
     if (timer) clearTimeout(timer);
   }
 }

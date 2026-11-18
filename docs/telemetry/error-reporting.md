@@ -36,6 +36,7 @@ sources:
   - resource: src/main/agent/shared/cli-identity.ts
   - resource: scripts/sentry-upload-gate.js
   - resource: src/main/analytics/handled-report.ts
+  - resource: src/main/browser/wake-clock.ts
   - resource: src/main/analytics/ipc-handler-report.ts
   - resource: src/shared/handled-error-copy.ts
   - resource: src/shared/ipc-rejection.ts
@@ -431,7 +432,17 @@ in one Sentry org, one triage surface.
     the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`).
   - `mobile_verb` (tag `verb`), `automation_runner` (tag `automation_type`), `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
-    classes and the attach, capture and composite failures only).
+    classes and the attach, capture and composite failures only). A `ScreenshotNotComposited`
+    report also carries four fixed tags, so it can say why the capture got no frame (Sentry
+    DESKTOP-46, a timeout 18 s after an unlock that could not say whether the capture hold armed):
+    `surface` (`pane`, `hidden`, `parked`, `popout`, `lane`), `host_window` (`visible`,
+    `minimized`, `hidden`, `none`) and `hold` (`armed`, `skipped_hidden`, `no_host`), both read
+    when the capture started, and `since_wake` (`none`, `under_30s`, `under_2m`, `under_10m`,
+    `over_10m`), the time since the last `unlock-screen` or `resume` (`src/main/browser/wake-clock.ts`).
+    None is a new data class: the `electron` breadcrumbs already carry power events and window
+    focus with their timestamps. The error's `detail` is never sent. The latch keys on tags, so
+    each combination reports once per run, and those reports count toward the source's 25-key
+    cap.
   - `task_move` (a rollback that failed), `project_recovery` (tag `pass`: `resource_cleanup`,
     `session_recovery`, `session_reconcile`, `host_connected`, `cold_open`,
     `deferred_board_config`, `pty_host_loss`, `activate_project`, `remote_projects`), `db_open` and

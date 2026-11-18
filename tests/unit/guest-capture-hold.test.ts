@@ -55,12 +55,13 @@ describe('holdGuestRendering', () => {
     hostWindow({ minimized: true, visible: false });
     const { guest, capturePageSpy, hostCapturePageSpy } = fakeGuest(async () => ({}));
 
-    const end = holdGuestRendering(guest);
+    const hold = holdGuestRendering(guest);
+    expect(hold).toMatchObject({ outcome: 'armed', hostState: 'minimized' });
     await vi.advanceTimersByTimeAsync(100);
     expect(capturePageSpy.mock.calls.length).toBeGreaterThan(3);
     expect(hostCapturePageSpy.mock.calls.length).toBeGreaterThan(3);
 
-    end();
+    hold.end();
     const guestAtEnd = capturePageSpy.mock.calls.length;
     const hostAtEnd = hostCapturePageSpy.mock.calls.length;
     await vi.advanceTimersByTimeAsync(100);
@@ -74,8 +75,7 @@ describe('holdGuestRendering', () => {
     hostWindow();
     const { guest, capturePageSpy } = fakeGuest(async () => ({}));
 
-    const end = holdGuestRendering(guest);
-    end();
+    holdGuestRendering(guest).end();
 
     expect(capturePageSpy).toHaveBeenCalledWith(
       { x: 0, y: 0, width: 1, height: 1 },
@@ -91,8 +91,7 @@ describe('holdGuestRendering', () => {
     hostWindow();
     const { guest, hostCapturePageSpy } = fakeGuest(async () => ({}));
 
-    const end = holdGuestRendering(guest);
-    end();
+    holdGuestRendering(guest).end();
 
     expect(hostCapturePageSpy).toHaveBeenCalledWith(
       { x: 0, y: 0, width: 1, height: 1 },
@@ -104,8 +103,10 @@ describe('holdGuestRendering', () => {
     vi.useFakeTimers();
     hostWindow({ visible: true });
     const { guest, capturePageSpy } = fakeGuest(async () => ({}));
-    holdGuestRendering(guest)();
+    const hold = holdGuestRendering(guest);
+    hold.end();
     expect(capturePageSpy).toHaveBeenCalled();
+    expect(hold).toMatchObject({ outcome: 'armed', hostState: 'visible' });
   });
 
   it('stays off a host hidden outright, where a call would never settle', () => {
@@ -115,8 +116,10 @@ describe('holdGuestRendering', () => {
     hostWindow({ visible: false, minimized: false });
     const { guest, capturePageSpy, hostCapturePageSpy } = fakeGuest(async () => ({}));
 
-    holdGuestRendering(guest)();
+    const hold = holdGuestRendering(guest);
+    hold.end();
 
+    expect(hold).toMatchObject({ outcome: 'skipped_hidden', hostState: 'hidden' });
     expect(capturePageSpy).not.toHaveBeenCalled();
     expect(hostCapturePageSpy).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
@@ -127,8 +130,10 @@ describe('holdGuestRendering', () => {
     vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null as never);
     const { guest, capturePageSpy, hostCapturePageSpy } = fakeGuest(async () => ({}));
 
-    holdGuestRendering(guest)();
+    const hold = holdGuestRendering(guest);
+    hold.end();
 
+    expect(hold).toMatchObject({ outcome: 'skipped_hidden', hostState: 'none' });
     expect(capturePageSpy).not.toHaveBeenCalled();
     expect(hostCapturePageSpy).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
@@ -141,9 +146,9 @@ describe('holdGuestRendering', () => {
     hostWindow();
     const { guest, capturePageSpy, hostCapturePageSpy } = fakeGuest(() => new Promise(() => undefined));
 
-    const end = holdGuestRendering(guest);
+    const hold = holdGuestRendering(guest);
     await vi.advanceTimersByTimeAsync(1000);
-    end();
+    hold.end();
 
     expect(capturePageSpy).toHaveBeenCalledTimes(2);
     expect(hostCapturePageSpy).toHaveBeenCalledTimes(2);
@@ -154,17 +159,19 @@ describe('holdGuestRendering', () => {
     hostWindow();
     const { guest, capturePageSpy } = fakeGuest(() => Promise.reject(new Error('no surface')));
 
-    const end = holdGuestRendering(guest);
+    const hold = holdGuestRendering(guest);
     await vi.advanceTimersByTimeAsync(40);
-    end();
+    hold.end();
 
     expect(capturePageSpy.mock.calls.length).toBeGreaterThan(1);
   });
 
   it('passes straight through for a surface with no host: a lane, or Kangentic itself', () => {
     const capturePage = vi.fn();
-    holdGuestRendering({ capturePage } as unknown as WebContents)();
+    const hold = holdGuestRendering({ capturePage } as unknown as WebContents);
+    hold.end();
     expect(capturePage).not.toHaveBeenCalled();
+    expect(hold).toMatchObject({ outcome: 'no_host', hostState: 'none' });
   });
 });
 
@@ -206,7 +213,13 @@ describe('captureScreenshot holds the guest for the capture', () => {
     const { guest, capturePageSpy } = fakeGuest(async () => ({}), () => new Promise(() => undefined));
 
     const pending = captureScreenshot(guest);
-    const assertion = expect(pending).rejects.toThrow(/not being composited/);
+    // The error carries what the hold did, for the driver's report (DESKTOP-46).
+    const assertion = expect(pending).rejects.toMatchObject({
+      name: 'ScreenshotNotComposited',
+      message: expect.stringMatching(/not being composited/),
+      hold: 'armed',
+      hostState: 'visible',
+    });
     await vi.advanceTimersByTimeAsync(SCREENSHOT_TIMEOUT_MS);
     await assertion;
 
