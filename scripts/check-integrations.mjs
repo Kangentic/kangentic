@@ -35,8 +35,11 @@
  * - Jira token service: a made-up refresh token sent through the refresh route.
  *   500 `server_error` means the Pages secrets are not set. With them set,
  *   Atlassian's docs name `invalid_grant` for a refresh token it will not take,
- *   so that answer means Atlassian accepted the client. Not yet seen with a
- *   real client. The first run after the secrets are set confirms it.
+ *   so that answer means Atlassian accepted the client. Developers also report
+ *   `unauthorized_client` with the description "refresh_token is invalid" for
+ *   the same case, so that pair passes too, and the same code with any other
+ *   description is a refused client. Neither has been seen with a real client.
+ *   The first run after the secrets are set shows which one Atlassian sends.
  * - Linear client: a made-up code exchanged for the shipped client id. Linear
  *   answers `invalid_client` for a client it does not know, which was seen. A
  *   known client should get as far as `invalid_grant`, not yet seen. The check
@@ -88,6 +91,11 @@ const SOURCE_FILES = [DOCS_LINKS_FILE, LOOPBACK_FILE, TRELLO_FILE, JIRA_FILE, LI
 const TRELLO_AUTHORIZE_URL = 'https://trello.com/1/authorize';
 /** gitlab.com's token route, under `GITLAB_COM_BASE`. The desktop spells it out inside `postTokenForm`. */
 const GITLAB_TOKEN_PATH = '/oauth/token';
+/**
+ * How Atlassian describes a refresh token it will not take when it answers `unauthorized_client`
+ * and not `invalid_grant`. Developers report "refresh_token is invalid" for a healthy client.
+ */
+const REFUSED_REFRESH_TOKEN = /refresh[_ ]token is invalid/i;
 
 const PROBE = 'kangentic-integration-check';
 /** A loopback port for the state. Nothing listens on it, and nothing here follows a redirect. */
@@ -261,11 +269,19 @@ function sha256(text) {
   return `sha256-${createHash('sha256').update(text, 'utf8').digest('base64')}`;
 }
 
-/** The OAuth `error` code of a JSON answer, or '' when the answer is not JSON or carries none. */
-async function errorCodeOf(answer) {
+/** The OAuth `error` code and `error_description` of a JSON answer, each '' when the answer is not JSON or carries none. */
+async function errorOf(answer) {
   // A body that is not JSON reads as no code, which every caller fails on.
   const body = await answer.json().catch(() => ({}));
-  return typeof body?.error === 'string' ? snippet(body.error) : '';
+  return {
+    code: typeof body?.error === 'string' ? snippet(body.error) : '',
+    description: typeof body?.error_description === 'string' ? snippet(body.error_description) : '',
+  };
+}
+
+/** The OAuth `error` code of a JSON answer, or '' when the answer is not JSON or carries none. */
+async function errorCodeOf(answer) {
+  return (await errorOf(answer)).code;
 }
 
 /** @returns {Result} */
@@ -405,9 +421,14 @@ async function checkJiraService(values, send) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: PROBE }),
     });
-    const code = await errorCodeOf(answer);
+    const { code, description } = await errorOf(answer);
     if (answer.status === 500 && code === 'server_error') return [notReady('JIRA_OAUTH_CLIENT_ID or JIRA_OAUTH_CLIENT_SECRET is not set on the Pages project')];
     if (code === 'invalid_grant') return [result(area, check, 'ok', 'Atlassian accepted the client and refused the made-up refresh token')];
+    // Atlassian's other answer for a refresh token it will not take. The description names the
+    // token, so the client was accepted. The same code with any other description is a refusal.
+    if (code === 'unauthorized_client' && REFUSED_REFRESH_TOKEN.test(description)) {
+      return [result(area, check, 'ok', `Atlassian accepted the client and refused the made-up refresh token (${code}: ${description})`)];
+    }
     if (['unauthorized_client', 'invalid_client', 'access_denied'].includes(code)) return [notReady(`Atlassian refused the client: ${answer.status} ${code}`)];
     return [unexpectedAnswer(area, check, answer, code)];
   } catch (problem) {
