@@ -2,7 +2,7 @@ import { ArrowLeftRight, Check, EllipsisVertical, GripVertical, KeyRound, LogIn,
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { AgentAccount, AgentAccountStatus, AgentUsageWindowShape } from '../../../../shared/agent-accounts';
+import { isSignedOutStatus, type AgentAccount, type AgentAccountStatus, type AgentUsageWindowShape } from '../../../../shared/agent-accounts';
 import type { RateLimitWindow } from '../../../../shared/types';
 import { accountUsageLines, liveRateLimitWindows, windowElapsedPercentage, type AccountUsageLine } from '../../../utils/rate-limit-window';
 import { KebabMenu, KebabMenuItem } from '../../KebabMenu';
@@ -132,6 +132,8 @@ function AccountRowContent({
     'no-subscription': t`No subscription`,
     'not-found': t`File not found`,
     'link-failed': t`History not shared`,
+    // A login replaced in its folder reads as signed out: the row keeps its email and offers Sign in.
+    replaced: t`Not signed in`,
   };
   const keyFileName = account.keyFilePath?.split(/[\\/]/).pop() ?? null;
   // The agent's own login, before the CLI reports an email for it. A key-file agent's own login
@@ -139,9 +141,10 @@ function AccountRowContent({
   const ownName = keyFileAgent ? t`Own sign-in` : t`Signed in on this machine`;
   // A CLI that reports no email leaves a signed-in account its folder's number to go by.
   const folderNumber = account.folderPath?.split(/[\\/]/).pop() ?? null;
-  const unnamed = account.status !== 'signed-out' && folderNumber ? t`Account ${folderNumber}` : t`New account`;
+  const signedOut = isSignedOutStatus(account.status);
+  const unnamed = !signedOut && folderNumber ? t`Account ${folderNumber}` : t`New account`;
   const name = account.email ?? keyFileName ?? (account.kind === 'default' ? ownName : unnamed);
-  const showsUsage = reportsUsage && account.kind !== 'key-file' && account.status !== 'signed-out';
+  const showsUsage = reportsUsage && account.kind !== 'key-file' && !signedOut;
   const lines = showsUsage
     ? accountUsageLines(usageWindows, liveRateLimitWindows(account.lastUsage ?? [], now), account.lastUsage !== null)
     : [];
@@ -220,7 +223,7 @@ function AccountRowContent({
           >
             {(close) => (
               <>
-                {account.status === 'signed-out' && account.kind === 'folder' ? (
+                {signedOut && account.kind === 'folder' ? (
                   <KebabMenuItem icon={<LogIn size={14} />} label={t`Sign in`} onClick={() => { close(); onSignIn(); }} data-testid="account-sign-in" />
                 ) : null}
                 {account.kind !== 'default' ? (

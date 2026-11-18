@@ -56,6 +56,8 @@ export interface CommandTerminalLeftoverDeps {
     /** Read during the removal, while the registry row is still there. */
     getSessionAgentName?(sessionId: string): string | undefined;
     getSessionCliTarget?(sessionId: string): StoredCliTarget | null;
+    /** The account whose home the session ran in, which a `/login` there never changes. */
+    getSessionHomeAccountId?(sessionId: string): string | null;
   };
   /**
    * `reapTaskLeftovers` for one terminal: its folder, its tag, its name for the
@@ -146,8 +148,9 @@ export class CommandTerminalLeftoverReaper {
       agentSessionId: session.agentSessionId,
       cwd: session.cwd,
       cliTarget: this.deps.sessionManager.getSessionCliTarget?.(sessionId) ?? null,
-      // Its background sessions are listed only under the account it ran on.
-      accountId: session.accountId,
+      // Its background sessions are listed only under the home it ran in, which a `/login` there
+      // does not move, though the account it runs as may follow the new login.
+      accountId: this.deps.sessionManager.getSessionHomeAccountId?.(sessionId) ?? session.accountId,
     };
     // Called on a later tick, so a dep that throws never throws into the emit.
     return Promise.resolve().then(() => stopBackgroundSession(ended)).catch((error: unknown) => {

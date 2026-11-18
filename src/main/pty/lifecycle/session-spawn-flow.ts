@@ -703,6 +703,7 @@ export async function performSpawn(
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
     accountId: input.accountId ?? null,
+    homeAccountId: input.accountId ?? null,
     permissionMode: input.permissionMode ?? null,
     // Known before launch (a caller-owned id, or a chat created for this
     // start). Capture still overwrites it when the agent reports another.

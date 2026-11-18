@@ -4,6 +4,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import {
   DEFAULT_AGENT_ACCOUNTS_CONFIG,
   accountDisplayName,
+  type AgentAccount,
   type AgentAccountKeyFileResult,
   type AgentAccountLoginEnded,
   type AgentAccountLoginRequest,
@@ -16,6 +17,9 @@ import {
 import { EventType, type SessionEvent, type SessionUsage } from '../../../shared/types';
 import { AccountContinuation } from '../../accounts/account-continuation';
 import { AccountLoginRunner } from '../../accounts/account-login';
+import { AccountLoginWatch } from '../../accounts/account-login-watch';
+import { loginOf, sameLogin } from '../../accounts/account-identity';
+import { setTaskAccountSwitcher } from '../../accounts/account-task-switch';
 import { moveRunningSessions } from '../../accounts/account-session-move';
 import { AccountService, setAccountService } from '../../accounts/account-service';
 import { AccountUsageRefresher } from '../../accounts/account-usage';
@@ -32,18 +36,30 @@ import { sendToRenderer } from '../send-to-renderer';
 
 let usageRefresher: AccountUsageRefresher | null = null;
 let loginRunner: AccountLoginRunner | null = null;
+let loginWatch: AccountLoginWatch | null = null;
+let syncLoginWatch: (() => void) | null = null;
 
 /** Synchronous: clears the usage timers and ends any sign-in still open (app quit). */
 export function stopAccounts(): void {
   usageRefresher?.dispose();
   loginRunner?.dispose();
+  loginWatch?.dispose();
+  setTaskAccountSwitcher(null);
   usageRefresher = null;
   loginRunner = null;
+  loginWatch = null;
+  syncLoginWatch = null;
   setAccountsConfigListener(null);
 }
 
 /** How long after an account move a failed turn still counts as the move's. */
 const TURN_AFTER_MOVE_WINDOW_MS = 10 * 60 * 1000;
+/**
+ * How long `kangentic_switch_account` waits for the calling agent's turn to end before it
+ * restarts the session anyway: the tool tells the agent to end its turn, and one that keeps
+ * working is moved once this runs out.
+ */
+const SWITCH_TOOL_TURN_END_BOUND_MS = 2 * 60 * 1000;
 
 /** A sign-in request as the renderer may send it: a new account of an agent, or an existing account again. */
 function parseLoginRequest(request: unknown): AgentAccountLoginRequest | null {
@@ -71,6 +87,8 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   let continuation: AccountContinuation | null = null;
   const notifyChanged = (): void => {
     sendToRenderer(context.mainWindow, IPC.ACCOUNTS_CHANGED);
+    // An account added, removed or moved to another folder changes which login files are watched.
+    syncLoginWatch?.();
     // A reset or a read may have freed an account a waiting session can continue on.
     void continuation?.recheck();
   };
@@ -96,6 +114,13 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     readBeforeRanking: async (accounts) => {
       await usageRefresher?.readBeforeRanking(accounts);
     },
+    // A `/login` replaced the login in a home: the sessions running there now run as the row that
+    // names it, so their usage and the continuation follow the login (task #1113). Their records
+    // keep the home they started in, which a background-session stop and a resume reach it by.
+    repointSessions: (homeAccountId, toAccountId) => {
+      const moved = context.sessionManager.repointAccount(homeAccountId, toAccountId);
+      if (moved.length > 0) console.log(`[ACCOUNTS] ${moved.length} session(s) follow the login their home now holds`);
+    },
   });
   setAccountService(service);
   // A saved Order mode changes the order main lists: the tab lists again once the write landed.
@@ -113,6 +138,33 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
   const refresher = new AccountUsageRefresher(service, { listAccounts: () => repository.list(), failureReporter: accountsReporter });
   refresher.start();
   usageRefresher = refresher;
+
+  // A login replaced in a home, by a `/login` in a session or a sign-in in a terminal, is noticed
+  // when the home's login file changes, at each turn end and when a session ends (task #1113).
+  // Each compares the home's own record with the row, and the CLI runs only when they differ.
+  const checkHome = (accountId: string | null): void => {
+    if (accountId) void refresher.checkHome(accountId);
+  };
+  const watch = new AccountLoginWatch((accountId) => checkHome(accountId));
+  loginWatch = watch;
+  /** Watches the login file of every home of an agent with two or more accounts. */
+  syncLoginWatch = (): void => {
+    const accounts = repository.list();
+    const perAgent = new Map<string, number>();
+    for (const account of accounts) perAgent.set(account.agent, (perAgent.get(account.agent) ?? 0) + 1);
+    watch.sync(accounts.flatMap((account) => {
+      if ((perAgent.get(account.agent) ?? 0) < 2 || account.kind === 'key-file') return [];
+      const support = agentRegistry.get(account.agent)?.accounts;
+      if (support?.kind !== 'folder' || !support.loginFiles) return [];
+      if (account.kind === 'folder' && !account.folderPath) return [];
+      return support.loginFiles(account.kind === 'folder' ? account.folderPath : null)
+        .map((filePath) => ({ accountId: account.id, filePath }));
+    }));
+  };
+  syncLoginWatch();
+  context.sessionManager.on('turn-ended', (payload: { sessionId: string }) => {
+    checkHome(context.sessionManager.getSessionHomeAccountId(payload.sessionId));
+  });
 
   /** When each task's session was last moved to another account, to tell a refused resume from any other failure. */
   const movedTasks = new Map<string, number>();
@@ -155,6 +207,47 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       return false;
     }
     return true;
+  });
+
+  // `kangentic_switch_account` (task #1113): a task's agent moves its own session to another
+  // listed account, so it never needs a `/login`. The call answers first; the restart waits for
+  // the turn to end (or a bound, for an agent that keeps working), then resumes the conversation.
+  setTaskAccountSwitcher(async (taskId, requested) => {
+    const live = context.sessionManager.listSessions()
+      .find((candidate) => candidate.taskId === taskId && !candidate.transient && candidate.status === 'running');
+    if (!live) return { ok: false, reason: 'no-session', runnable: [], current: null };
+    const agent = context.sessionManager.getSessionAgentName(live.id);
+    const support = agent ? agentRegistry.get(agent)?.accounts : undefined;
+    if (!agent || !support) return { ok: false, reason: 'no-accounts', runnable: [], current: null };
+    const accounts = service.ordered(agent);
+    const nameOf = (account: AgentAccount): string => accountDisplayName(account) ?? 'the agent\'s own login';
+    const currentAccount = accounts.find((account) => account.id === live.accountId) ?? null;
+    const current = currentAccount ? nameOf(currentAccount) : null;
+    const runnable = accounts.filter((account) => account.status === 'ok' && account.id !== currentAccount?.id).map(nameOf);
+    if (support.kind === 'folder' && support.conversationsStayOnAccount) return { ok: false, reason: 'stays-on-account', runnable, current };
+    const wanted = requested.toLowerCase();
+    const target = accounts.find((account) => (accountDisplayName(account) ?? '').toLowerCase() === wanted);
+    if (!target) return { ok: false, reason: 'unknown-account', runnable, current };
+    if (target.status !== 'ok') return { ok: false, reason: 'not-signed-in', runnable, current };
+    if (currentAccount && (currentAccount.id === target.id || sameLogin(loginOf(currentAccount), loginOf(target)))) {
+      return { ok: false, reason: 'already-on-account', runnable, current };
+    }
+    const targetName = nameOf(target);
+    const restart = (): void => {
+      clearTimeout(bound);
+      context.sessionManager.off('turn-ended', onTurnEnded);
+      const prompt = `Continue. This session now runs as ${targetName}, the account you switched to.`;
+      void restartTaskOn({ sessionId: live.id, taskId, projectId: live.projectId }, target.id, prompt).catch((error: unknown) => {
+        accountsReporter.report(error, { tags: { stage: 'switch_tool' } });
+      });
+    };
+    const onTurnEnded = (payload: { sessionId: string }): void => {
+      if (payload.sessionId === live.id) restart();
+    };
+    const bound = setTimeout(restart, SWITCH_TOOL_TURN_END_BOUND_MS);
+    bound.unref?.();
+    context.sessionManager.on('turn-ended', onTurnEnded);
+    return { ok: true, accountName: targetName, agent };
   });
 
   // The continuation at a usage limit (account-continuation.ts): a task session whose turn
@@ -223,7 +316,11 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     // Off the event's stack: the decision reads usage through the CLI.
     setImmediate(() => { void activeContinuation.onTurnFailure(sessionId, event.detail ?? ''); });
   });
-  context.sessionManager.on('session-removed', (sessionId: string) => activeContinuation.forgetSession(sessionId));
+  context.sessionManager.on('session-removed', (sessionId: string) => {
+    activeContinuation.forgetSession(sessionId);
+    // Read while the row is still in the registry: the session ended on this home.
+    checkHome(context.sessionManager.getSessionHomeAccountId(sessionId));
+  });
 
   const runner = new AccountLoginRunner({
     // Sent directly, never through `sendToRenderer`: that records each push in the IPC log, and a
@@ -266,7 +363,8 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       const account = 'accountId' in request
         ? repository.getById(request.accountId)
         : await service.createFolderAccount(request.agent);
-      if (!account || account.kind !== 'folder') return { ok: false, reason: 'unsupported' };
+      // A folder account, or the agent's own home signed in again (its row set aside or signed out).
+      if (!account || account.kind === 'key-file') return { ok: false, reason: 'unsupported' };
       if (!('accountId' in request)) createdAccountId = account.id;
       const command = await service.loginCommand(account.id);
       if (!command) {

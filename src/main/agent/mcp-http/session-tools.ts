@@ -295,6 +295,20 @@ export function registerSessionTools(
       callHandler('check_dev_ports', { taskId, ports }, { ...ctx, callerTaskId }, 'Failed to check dev ports')),
   );
 
+  // --- kangentic_switch_account ---
+  server.registerTool(
+    'kangentic_switch_account',
+    {
+      description: 'Move YOUR OWN task session to another of the user\'s accounts for this agent, as Settings > Accounts lists them (for example one whose plan or claude.ai connectors this work needs). Use this instead of suggesting /login: a /login replaces the login of the folder this session runs in, for every session there. Name the account by its email. The call answers at once; end your turn after it, and when the turn ends Kangentic restarts this session on that account and resumes this conversation. A refusal lists the accounts that can run.',
+      inputSchema: z.object({
+        account: z.string().describe('The account to switch to: its email as Settings > Accounts lists it.'),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ account }) => withProject(resolver, undefined, (ctx) =>
+      callHandler('switch_account', { account }, { ...ctx, callerTaskId, callerKind: 'agent' }, 'Could not switch accounts')),
+  );
+
   // --- kangentic_query_db ---
   server.registerTool(
     'kangentic_query_db',

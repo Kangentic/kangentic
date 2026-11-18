@@ -163,7 +163,8 @@ export function parseClaudeAuthStatus(output: string): AccountIdentity | null {
   }
   if (!parsed || typeof parsed.loggedIn !== 'boolean') return null;
   const signedIn = parsed.loggedIn;
-  const email = typeof parsed.email === 'string' ? parsed.email : null;
+  const email = typeof parsed.email === 'string' && parsed.email !== '' ? parsed.email : null;
+  const orgId = typeof parsed.orgId === 'string' && parsed.orgId !== '' ? parsed.orgId : null;
   const planSource = typeof parsed.planTier === 'string' && parsed.planTier
     ? parsed.planTier
     : typeof parsed.subscriptionType === 'string' && parsed.subscriptionType
@@ -176,9 +177,46 @@ export function parseClaudeAuthStatus(output: string): AccountIdentity | null {
   return {
     signedIn,
     email,
+    orgId,
     plan,
     hasSubscription: signedIn && usesSubscription ? plan !== null : null,
   };
+}
+
+/**
+ * The login a Claude state file records (`oauthAccount.emailAddress` and `organizationUuid`,
+ * present on 2.1.327), with no CLI run. Null when the file records none: no answer, never a
+ * change of login.
+ */
+export function claudeStateLogin(state: unknown): { email: string; orgId: string | null } | null {
+  if (!isPlainRecord(state) || !isPlainRecord(state.oauthAccount)) return null;
+  const { emailAddress, organizationUuid } = state.oauthAccount;
+  if (typeof emailAddress !== 'string' || emailAddress.trim() === '') return null;
+  return {
+    email: emailAddress.trim(),
+    orgId: typeof organizationUuid === 'string' && organizationUuid !== '' ? organizationUuid : null,
+  };
+}
+
+/** `readHomeIdentity` for Claude: the home's state file, read with no lock and no CLI. */
+async function readClaudeHomeLogin(home: string | null): Promise<{ email: string; orgId: string | null } | null> {
+  try {
+    const text = await fs.promises.readFile(claudeStatePathForHome(home ?? claudeHomeDir()), 'utf8');
+    return claudeStateLogin(JSON.parse(text));
+  } catch {
+    // report-ok: a state file that is missing or mid-write is no answer, which the caller treats
+    // as no change; the CLI read that confirms a change reports its own failures.
+    return null;
+  }
+}
+
+/**
+ * The file a Claude sign-in rewrites in a home: `.credentials.json` on Windows and Linux. On macOS
+ * the login is in the Keychain, so there is nothing to watch.
+ */
+function claudeLoginFiles(home: string | null): string[] {
+  if (process.platform === 'darwin') return [];
+  return [path.join(home ?? claudeHomeDir(), '.credentials.json')];
 }
 
 /** The env that points one CLI run at an account's home. None for the agent's own login. */
@@ -303,6 +341,11 @@ export const CLAUDE_ACCOUNT_SUPPORT: FolderAccountSupport = {
   // The agent's own home (account #1), which honours an inherited `CLAUDE_CONFIG_DIR`.
   defaultHome: claudeHomeDir,
   loginArgs: ['auth', 'login'],
+  // `claude auth login --email` fills in the address on the sign-in page; the browser still signs
+  // in whatever claude.ai login it holds.
+  loginEmailArgs: (email) => ['--email', email],
+  readHomeIdentity: readClaudeHomeLogin,
+  loginFiles: claudeLoginFiles,
   sharedEntries: SHARED_ENTRIES,
   carryConversation: carryClaudePlanFiles,
   identify: identifyClaudeAccount,

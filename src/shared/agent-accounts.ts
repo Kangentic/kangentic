@@ -32,8 +32,16 @@ export type AgentAccountKind = 'default' | 'folder' | 'key-file';
  * - `not-found`: a key file or folder that no longer exists or cannot be read.
  * - `link-failed`: a conversation-bearing link could not be made, so a session there could write
  *   history Kangentic cannot read. Skipped until the link is made.
+ * - `replaced`: the login this row names was replaced in its home by another one (a `/login` in a
+ *   session, a sign-in outside Kangentic). The row keeps its email and offers Sign in; nothing
+ *   runs on it until the login is back.
  */
-export type AgentAccountStatus = 'ok' | 'signed-out' | 'no-subscription' | 'not-found' | 'link-failed';
+export type AgentAccountStatus = 'ok' | 'signed-out' | 'no-subscription' | 'not-found' | 'link-failed' | 'replaced';
+
+/** Statuses a row reads as signed out with: the tab offers Sign in, and its usage is not shown. */
+export function isSignedOutStatus(status: AgentAccountStatus): boolean {
+  return status === 'signed-out' || status === 'replaced';
+}
 
 export interface AgentAccount {
   id: string;
@@ -47,6 +55,11 @@ export interface AgentAccount {
   keyNames: string[];
   /** The email the CLI reports, or null when it reports none (a key-file account). */
   email: string | null;
+  /**
+   * The organization the login belongs to, as the CLI reports it. With the email it names one
+   * login: one email in two organizations is two accounts. Null until a read reports one.
+   */
+  orgId: string | null;
   /** The plan name the CLI reports (`Ultra`, `Pro`), as reported. */
   plan: string | null;
   status: AgentAccountStatus;

@@ -26,6 +26,7 @@ import { handleGetTranscript, handleQueryDb } from './inspect-commands';
 import { handleGetSessionFiles, handleGetSessionEvents } from './session-files-commands';
 import { handleGetActivityIntervals } from './activity-interval-commands';
 import { handleReserveDevPorts, handleCheckDevPorts } from './dev-port-commands';
+import { handleSwitchAccount } from './account-commands';
 import {
   handleListWorkflows,
   handleGetWorkflow,
@@ -92,6 +93,7 @@ export const commandHandlers: Record<string, CommandHandler> = {
   get_activity_intervals: handleGetActivityIntervals,
   reserve_dev_ports: handleReserveDevPorts,
   check_dev_ports: handleCheckDevPorts,
+  switch_account: handleSwitchAccount,
   list_workflows: handleListWorkflows,
   get_workflow: handleGetWorkflow,
   save_workflow: handleSaveWorkflow,

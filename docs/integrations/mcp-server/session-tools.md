@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Session tools
-description: "MCP tools for inspecting and steering agent sessions: list_sessions, get_transcript formats and views, session files, events and activity intervals, send_session_message delivery modes, held messages and loop guards, mark_background_service, and reserve_dev_ports and check_dev_ports."
+description: "MCP tools for inspecting and steering agent sessions: list_sessions, get_transcript formats and views, session files, events and activity intervals, send_session_message delivery modes, held messages and loop guards, mark_background_service, switch_account, and reserve_dev_ports and check_dev_ports."
 tags: [mcp, sessions, transcript, steering]
 sources:
   - resource: src/main/agent/mcp-http/session-tools.ts
@@ -15,6 +15,8 @@ sources:
   - resource: src/main/agent/commands/session-files-commands.ts
   - resource: src/main/agent/commands/activity-interval-commands.ts
   - resource: src/main/agent/commands/dev-port-commands.ts
+  - resource: src/main/agent/commands/account-commands.ts
+  - resource: src/main/accounts/account-task-switch.ts
   - resource: src/main/agent/commands/structured-transcript.ts
 ---
 # Session tools
@@ -280,6 +282,27 @@ Both port tools resolve `taskId` to the task's UUID before they touch the ledger
 key as given, and reserved ports under a task that does not exist. With no `taskId`, the caller's own
 task comes from the MCP request's caller segment, not from the parameters. A call from no task, or
 from a task that is not in the target project, is refused with a line saying to pass `taskId`.
+
+## kangentic_switch_account
+
+Restart the calling task's own session on another of the user's listed accounts, resuming its
+conversation (task #1113). An agent that needs another login (a plan, a claude.ai connector) calls
+this instead of suggesting `/login`: a `/login` replaces the login of the folder the session runs in,
+for every session on it, and the account Kangentic listed there is then one Sign in away.
+
+The task is always the caller's own, from the MCP request's caller segment, never a parameter. The
+call answers at once and tells the agent to end its turn. When that turn ends, or two minutes later
+for an agent that keeps working, the session restarts on the account through the same path as the
+continuation at a usage limit, with a prompt that names the account. The list's order is left alone.
+
+Refusals are recoverable and list the accounts that can run: no running session, an agent without
+accounts, an agent whose conversations stay on their account (Codex), an account the list does not
+name, one that cannot run now (signed out, or `replaced`), and the login the session already runs as.
+The phone's board tools do not offer it.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account` | string | Yes | The account to switch to: its email as Settings > Accounts lists it. |
 
 ## kangentic_check_dev_ports
 

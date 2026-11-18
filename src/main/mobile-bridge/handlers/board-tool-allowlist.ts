@@ -87,6 +87,9 @@ export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([
   // neither name has to enter the published protocol tuples.
   'reserve_dev_ports',
   'check_dev_ports',
+  // An agent moving its OWN session to another account: it acts on the caller's task, which a
+  // phone call has none of. A person switches accounts in Settings > Accounts.
+  'switch_account',
   // A column's automations are board CONFIGURATION, the same class as
   // create_column / delete_column above, and `run_automation` is a bare
   // execute verb on top of it. Two separate reasons to keep both off this

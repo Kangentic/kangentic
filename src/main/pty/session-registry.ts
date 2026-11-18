@@ -243,8 +243,18 @@ export interface ManagedSession {
    *  "gemini"). Used for diagnostic logs - survives minification unlike
    *  `agentParser.constructor.name`. */
   agentName?: string;
-  /** The agent account the session runs on (task #1057), from `SpawnSessionInput.accountId`. */
+  /**
+   * The agent account the session runs as (task #1057), from `SpawnSessionInput.accountId`. A
+   * `/login` in its home can change the login it runs as, and this follows it (task #1113):
+   * usage, the continuation and its record read it.
+   */
   accountId?: string | null;
+  /**
+   * The account whose home the session was spawned in, which never changes: the CLI's home
+   * variable it runs under. What reaches the CLI by its home (a background session's stop) reads
+   * this, never `accountId`.
+   */
+  homeAccountId?: string | null;
   /** Where the agent's CLI runs when it is not this machine (a WSL distro),
    *  from `SpawnSessionInput.cliTarget`. Main-side only: its readers and its
    *  reap look here, and the renderer reads the shell. */

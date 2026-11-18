@@ -85,7 +85,7 @@ export class AccountUsageRefresher {
   private disposed = false;
 
   constructor(
-    private readonly service: Pick<AccountService, 'refreshUsage' | 'refreshIdentity'>,
+    private readonly service: Pick<AccountService, 'refreshUsage' | 'refreshIdentity' | 'checkHomeIdentity'>,
     private readonly options: AccountUsageRefresherOptions,
   ) {}
 
@@ -112,15 +112,20 @@ export class AccountUsageRefresher {
     this.resetTimer = null;
   }
 
-  /** Reads who is signed in to one account, behind any read already queued. */
-  private identifyAccount(accountId: string): Promise<void> {
+  /**
+   * Reads who is signed in to one account, behind any read already queued. `cheap` reads the
+   * home's own files and runs the CLI only when they name another login than the row
+   * (`checkHomeIdentity`), so a pass over working accounts costs no CLI run.
+   */
+  private identifyAccount(accountId: string, cheap = false): Promise<void> {
     if (this.disposed || this.identityQueued.has(accountId)) return this.queue;
     this.identityQueued.add(accountId);
     this.queue = this.queue.then(async () => {
       this.identityQueued.delete(accountId);
       if (this.disposed) return;
       try {
-        await this.service.refreshIdentity(accountId);
+        if (cheap) await this.service.checkHomeIdentity(accountId);
+        else await this.service.refreshIdentity(accountId);
       } catch (error) {
         // The service handles a sign-in read that gave no answer, so what reaches here is a defect.
         // The account keeps its status, and the next pass asks again.
@@ -129,6 +134,14 @@ export class AccountUsageRefresher {
       }
     });
     return this.queue;
+  }
+
+  /**
+   * Compares an account's home with its row now (a turn ended or a session ended on it, or its
+   * login file changed), behind any read already queued. The CLI runs only when they differ.
+   */
+  checkHome(accountId: string): Promise<void> {
+    return this.identifyAccount(accountId, true);
   }
 
   /**
@@ -177,8 +190,12 @@ export class AccountUsageRefresher {
     const multiAccount = multiAccountAgents(accounts);
     for (const account of accounts) {
       if (scope !== 'requested' && !multiAccount.has(account.agent)) continue;
-      const readsSignIn = account.kind !== 'key-file' && (scope === 'startup' || (scope === 'scheduled' && account.status !== 'ok'));
-      if (readsSignIn) void this.identifyAccount(account.id);
+      if (account.kind !== 'key-file') {
+        if (scope === 'startup' || (scope === 'scheduled' && account.status !== 'ok')) void this.identifyAccount(account.id);
+        // A working account's login can be replaced by a `/login` in any session on its home:
+        // each pass compares the home's own record with the row, with no CLI run.
+        else if (scope === 'scheduled') void this.identifyAccount(account.id, true);
+      }
       void this.refreshAccount(account.id);
     }
     await this.queue;

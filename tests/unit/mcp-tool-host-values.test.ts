@@ -85,6 +85,7 @@ const NO_PATH: Record<string, readonly string[]> = {
   'commits and files by their repository paths, which name the same thing on both machines': ['kangentic_get_task_report'],
   'text sent to and read from an agent': ['kangentic_send_session_message', 'kangentic_get_session_messages_sent'],
   'the agent\'s own shell ids': ['kangentic_mark_background_service'],
+  'an account named by its email, acting on the caller\'s own session': ['kangentic_switch_account'],
   'the page in the pane, by selector and pixel, with no path or URL of its own': [
     'kangentic_browser_close_pane', 'kangentic_browser_click', 'kangentic_browser_type', 'kangentic_browser_keypress', 'kangentic_browser_hover',
     'kangentic_browser_scroll', 'kangentic_browser_drag', 'kangentic_browser_select_option', 'kangentic_browser_wait', 'kangentic_browser_query_all',
