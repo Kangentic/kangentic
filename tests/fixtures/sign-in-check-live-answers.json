@@ -1,0 +1,63 @@
+{
+  "about": "Answers scripts/check-integrations.mjs got from the live services on the date below (UTC), recorded by sending the check's own requests with no credentials. The Trello and Linear requests used a made-up key and client id. The Jira redirect's port and nonce are replaced with {port} and {nonce}. The return page's data-pub and data-nonce belong to a throwaway probe key. The bad-state page's body is left out because it repeats the good page's style and script.",
+  "capturedOn": "2026-11-18",
+  "site": "https://kangentic.com",
+  "returnPage": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'; script-src 'sha256-aFmgLZwgelRyL9uyCDtvEfmLywEB7EXHZh0TikGZOYs='; style-src 'sha256-9FiuKpb4aHNKzGXkGWTsUDk35A+aG7Jtj7F8G8RmrRs='; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    },
+    "body": "<!doctype html>\n<html lang=\"en\" data-port=\"43123\" data-pub=\"BDVBNvPssRwB9YB2pEcpc6d0Zt6NrFnbox6G0gvKeiFR57KFX3yQf4CGCI33x90pzJOt3_P3ZZXs3PKNwq4l_OY\" data-nonce=\"Z7hzltSPUG9QW5Hdps8gcN-HVYURmCu0mbL11AaoZ-s\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"robots\" content=\"noindex\">\n<title>Trello sign-in | Kangentic</title>\n<link rel=\"icon\" href=\"/favicon.ico\" sizes=\"any\">\n<style>\n@font-face {\n  font-family: \"Bricolage Grotesque\";\n  font-weight: 700;\n  font-display: swap;\n  src: url(\"/fonts/BricolageGrotesque-Bold-latin.woff2\") format(\"woff2\");\n}\n@font-face {\n  font-family: \"Switzer\";\n  font-weight: 400;\n  font-display: swap;\n  src: url(\"/fonts/Switzer-Regular.woff2\") format(\"woff2\");\n}\n@font-face {\n  font-family: \"Departure Mono\";\n  font-weight: 400;\n  font-display: swap;\n  src: url(\"/fonts/DepartureMono-Regular.woff2\") format(\"woff2\");\n}\nhtml { color-scheme: light; }\nbody {\n  box-sizing: border-box;\n  margin: 0;\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n  padding: 24px 16px;\n  background: #fdfbf7;\n  color: #24201b;\n  font: 16px/1.55 \"Switzer\", system-ui, -apple-system, \"Segoe UI\", sans-serif;\n}\nmain {\n  width: 100%;\n  max-width: 30rem;\n  display: grid;\n  gap: 20px;\n}\n.brand {\n  justify-self: start;\n  display: inline-flex;\n  align-items: center;\n  gap: 0.55rem;\n  font: 700 1.15rem/1 \"Bricolage Grotesque\", system-ui, sans-serif;\n  letter-spacing: -0.02em;\n  color: #24201b;\n  text-decoration: none;\n}\n.brand img { display: block; }\n.card {\n  padding: 28px 32px 30px;\n  background: #fff;\n  border: 1px solid rgba(36, 32, 27, 0.22);\n  border-radius: 8px;\n  box-shadow: 0 2px 0 rgba(36, 32, 27, 0.18);\n}\n.plate {\n  margin: 0 0 14px;\n  font: 11px/1 \"Departure Mono\", ui-monospace, monospace;\n  letter-spacing: 0.05em;\n  text-transform: uppercase;\n  color: #6e6659;\n}\nh1 {\n  margin: 0 0 10px;\n  font: 700 1.6rem/1.15 \"Bricolage Grotesque\", system-ui, sans-serif;\n  letter-spacing: -0.02em;\n}\n.card p:not(.plate) { margin: 0; color: #6e6659; }\n@media (scripting: none) { .when-script { display: none; } }\n@media (scripting: enabled) { .when-no-script { display: none; } }\n@media (max-width: 480px) {\n  .card { padding: 22px 20px 24px; }\n  h1 { font-size: 1.4rem; }\n}\n</style>\n</head>\n<body>\n<main>\n<a class=\"brand\" href=\"/\" aria-label=\"Kangentic home\"><img src=\"/brandmark-small.svg\" alt=\"\" width=\"26\" height=\"26\"><span>Kangentic</span></a>\n<section class=\"card\">\n<p class=\"plate\">Trello sign-in</p>\n<div class=\"when-script\">\n<h1>Returning you to Kangentic</h1>\n<p>Handing your Trello sign-in back to the app.</p>\n</div>\n<div class=\"when-no-script\">\n<h1>This page needs JavaScript</h1>\n<p>It finishes the Trello sign-in in your browser, so your token never reaches a server. Turn JavaScript on, then start the sign-in again from Kangentic.</p>\n</div>\n</section>\n</main>\n<script>(async () => {\n  const fragment = new URLSearchParams(location.hash.slice(1));\n  history.replaceState(null, \"\", location.pathname + location.search);\n  const data = document.documentElement.dataset;\n  if (!data.port || !data.pub || !data.nonce) return;\n  const port = Number(data.port);\n  if (!Number.isInteger(port) || port < 1024 || port > 65535) return;\n  const target = new URL(\"http://127.0.0.1/trello/callback\");\n  target.port = String(port);\n  if (target.hostname !== \"127.0.0.1\" || target.port !== String(port)) return;\n\n  let outcome;\n  try {\n    outcome = await decide(fragment, data.pub, data.nonce);\n  } catch {\n    outcome = { error: \"server_error\" };\n  }\n  for (const [name, value] of Object.entries(outcome)) target.searchParams.set(name, value);\n  target.searchParams.set(\"nonce\", data.nonce);\n  location.replace(target.href);\n\n  // Trello's Deny leaves an empty token and its message in error.\n  async function decide(fragment, pub, nonce) {\n    const token = fragment.get(\"token\");\n    const error = fragment.get(\"error\");\n    if (error !== null || token === \"\") {\n      return error ? { error: \"access_denied\", error_description: error.slice(0, 300) } : { error: \"access_denied\" };\n    }\n    if (token === null || token.length > 1024 || /\\s/.test(token)) return { error: \"invalid_request\" };\n    return { payload: await seal(JSON.stringify({ token }), pub, nonce) };\n  }\n\n  async function seal(plaintext, pub, nonce) {\n    const curve = { name: \"ECDH\", namedCurve: \"P-256\" };\n    const desktopKey = await crypto.subtle.importKey(\"raw\", bytes(pub), curve, false, []);\n    const ephemeral = await crypto.subtle.generateKey(curve, true, [\"deriveBits\"]);\n    const shared = await crypto.subtle.deriveBits({ name: \"ECDH\", public: desktopKey }, ephemeral.privateKey, 256);\n    const material = await crypto.subtle.importKey(\"raw\", shared, \"HKDF\", false, [\"deriveKey\"]);\n    const info = new TextEncoder().encode(\"kangentic-trello-oauth-v1\");\n    const key = await crypto.subtle.deriveKey(\n      { name: \"HKDF\", hash: \"SHA-256\", salt: bytes(nonce), info },\n      material,\n      { name: \"AES-GCM\", length: 256 },\n      false,\n      [\"encrypt\"],\n    );\n    const iv = crypto.getRandomValues(new Uint8Array(12));\n    const ciphertext = await crypto.subtle.encrypt({ name: \"AES-GCM\", iv }, key, new TextEncoder().encode(plaintext));\n    const publicKey = await crypto.subtle.exportKey(\"raw\", ephemeral.publicKey);\n    return text([new Uint8Array(publicKey), iv, new Uint8Array(ciphertext)]);\n  }\n\n  // base64url, which the server already checked, with up to two \"=\" allowed.\n  function bytes(value) {\n    const body = value.replace(/={1,2}$/, \"\").replace(/-/g, \"+\").replace(/_/g, \"/\");\n    return Uint8Array.from(atob(body + \"=\".repeat((4 - (body.length % 4)) % 4)), (char) => char.charCodeAt(0));\n  }\n\n  function text(parts) {\n    let binary = \"\";\n    for (const part of parts) for (const byte of part) binary += String.fromCharCode(byte);\n    return btoa(binary).replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\");\n  }\n})();\n</script>\n</body>\n</html>\n"
+  },
+  "returnPageBadState": {
+    "status": 400,
+    "headers": {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'; script-src 'sha256-aFmgLZwgelRyL9uyCDtvEfmLywEB7EXHZh0TikGZOYs='; style-src 'sha256-9FiuKpb4aHNKzGXkGWTsUDk35A+aG7Jtj7F8G8RmrRs='; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    },
+    "body": null
+  },
+  "jiraCallbackBadState": {
+    "status": 400,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8"
+    },
+    "body": "This is not a valid Kangentic sign-in. Start the sign-in again from Kangentic.\n"
+  },
+  "jiraCallbackNoCode": {
+    "status": 302,
+    "headers": {
+      "location": "http://127.0.0.1:{port}/jira/callback?error=invalid_request&nonce={nonce}"
+    },
+    "body": ""
+  },
+  "jiraRefreshSecretsUnset": {
+    "status": 500,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"error\":\"server_error\"}"
+  },
+  "trelloUnknownKey": {
+    "status": 401,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8"
+    },
+    "body": "invalid key"
+  },
+  "trelloApprovalUnknownKey": {
+    "status": 404,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8"
+    },
+    "body": "App not found"
+  },
+  "linearUnknownClient": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body": "{\"error\":\"invalid_client\",\"error_description\":\"Invalid client: client is invalid\"}"
+  }
+}
