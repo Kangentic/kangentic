@@ -10,7 +10,8 @@ import type { Provider, SourceTypeOption } from './import-providers';
 import type { BoardConnectPrefill, ImportSource } from '../../../shared/types';
 import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
 import { reportRendererFailure } from '../../utils/renderer-failure';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, ipcErrorClassName } from '../../lib/ipc-error';
+import { SIGN_IN_REFUSED_ERROR_NAME } from '../../../shared/refusal';
 
 interface ImportPopoverProps {
   onOpenImportDialog: (source: ImportSource) => void;
@@ -256,15 +257,19 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     setLoading(true);
     setError(null);
 
+    // What Connect fills in again if the saved sign-in for this link's site turns out to be refused.
+    let savedSignInPrefill: BoardConnectPrefill | undefined;
+    const auth = selectedProvider?.auth;
+
     try {
       // A sign-in that belongs to a site is checked against the site the pasted link names.
-      const auth = selectedProvider?.auth;
       if (auth?.checksPastedLink) {
         const status = await auth.getStatus(sourceUrl);
         if (status.reason === 'ambiguous-site') {
           setError(t`Paste a search link so the site is known.`);
           return;
         }
+        savedSignInPrefill = status.prefill;
         if (!status.connected) {
           connectAfterSignInRef.current = true;
           setSetupDialogError(null);
@@ -292,7 +297,18 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
       setOpen(false);
       onOpenImportDialog(source);
     } catch (addError: unknown) {
-      setError(describeIpcError(addError, t`Failed to add source`));
+      const reason = describeIpcError(addError, t`Failed to add source`);
+      setError(reason);
+      // A sign-in is saved for this site and the provider refused it. `getStatus`
+      // only says one is saved, so without this the popover showed the refusal and
+      // had no way to replace the sign-in. Open Connect with the provider's reason,
+      // as a source picker does when its list fails on sign-in.
+      if (auth?.checksPastedLink && ipcErrorClassName(addError) === SIGN_IN_REFUSED_ERROR_NAME) {
+        connectAfterSignInRef.current = true;
+        setSetupDialogError(reason);
+        setSetupDialogPrefill(savedSignInPrefill);
+        setSetupDialogOpen(true);
+      }
     } finally {
       setLoading(false);
     }

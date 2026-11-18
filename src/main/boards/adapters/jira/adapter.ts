@@ -20,12 +20,13 @@ import {
   prerequisiteToCheckCli,
   registerSourceUrlParser,
 } from '../../shared';
-import { RefusalError } from '../../../../shared/refusal';
+import { RefusalError, SignInRefusedError } from '../../../../shared/refusal';
 import { JiraClient, JiraHttpError, type JiraCommentRaw, type JiraPage } from './client';
 import { isJiraSignInAvailable } from './constants';
 import { loadJiraCredentials, type JiraSiteCredential } from './credential-store';
 import { withUpdatedSince } from './jql';
 import { mapBoardColumns, mapJiraIssues, type JiraBoardColumn } from './mapper';
+import { keepJiraSignInsAlive } from './oauth-tokens';
 import { siteLabel } from './site';
 import {
   buildJiraLabel,
@@ -158,6 +159,14 @@ export class JiraAdapter implements BoardAdapter {
     return prerequisiteToCheckCli(await this.checkPrerequisites(repository));
   }
 
+  keepSignInAlive(now?: number): Promise<void> {
+    return keepJiraSignInsAlive({
+      loadCredentials: this.deps.loadCredentials,
+      fetchImpl: this.deps.fetchImpl,
+      ...(now === undefined ? {} : { now: () => now }),
+    });
+  }
+
   private async clientFor(site: string): Promise<JiraClient> {
     const credentials = await this.deps.loadCredentials();
     const credential = credentials[site];
@@ -214,7 +223,8 @@ export class JiraAdapter implements BoardAdapter {
       // The token passed Connect, so a 401 on the board API alone is a scoped
       // token missing the board scopes; on anything else the token died. A browser
       // sign-in was granted the board scopes, so its 401 is always a refused sign-in.
-      return new RefusalError(ref.kind === 'board' && client.isScopedApiToken
+      // Either way only a new sign-in fixes it, which the class tells Add Source.
+      return new SignInRefusedError(ref.kind === 'board' && client.isScopedApiToken
         ? "This token's scopes can't read boards."
         : JIRA_REJECTED_SAVED_TOKEN);
     }

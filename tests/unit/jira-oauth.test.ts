@@ -12,7 +12,9 @@
  * The token service is the WebCrypto port in `helpers/kangentic-token-service.ts`;
  * Atlassian and Jira are a fetch stub.
  */
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { JiraSiteCredential } from '../../src/main/boards/adapters/jira/credential-store';
 
@@ -156,6 +158,51 @@ describe('the consent URL', () => {
     expect(url.searchParams.get('scope')?.split(' ')).toEqual(expect.arrayContaining([
       'read:jira-work', 'read:jira-user', 'offline_access', 'read:board-scope:jira-software',
     ]));
+  });
+
+  // The first real sign-in imported a project and was refused a board: the consent asked for the
+  // two board scopes, and Atlassian's gateway wants every scope it lists for an operation. The
+  // fixture holds those lists as Atlassian's spec gives them.
+  describe('covers the Jira Software board operations the client calls', () => {
+    const recorded = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'jira-software-operation-scopes.json'), 'utf8'),
+    ) as { operations: Record<string, string[]> };
+    const clientSource = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'src', 'main', 'boards', 'adapters', 'jira', 'client.ts'),
+      'utf8',
+    );
+
+    /** Every Jira Software path the client builds, with each interpolation as `{boardId}`. */
+    function agilePathsCalled(source: string): string[] {
+      const paths = [...source.matchAll(/`(\/rest\/agile\/1\.0\/[^`]*)`/g)].map((match) => match[1].replace(/\$\{[^}]*\}/g, '{boardId}'));
+      return [...new Set(paths)].sort();
+    }
+
+    /** The scopes an operation needs that the consent does not ask for. */
+    function scopesNotAskedFor(needed: string[], asked: string[]): string[] {
+      return needed.filter((scope) => !asked.includes(scope));
+    }
+
+    const asked = new URL(buildJiraAuthorizeUrl('the-state')).searchParams.get('scope')?.split(' ') ?? [];
+
+    it('asks for every scope Atlassian lists for each one', () => {
+      expect(Object.keys(recorded.operations).length).toBeGreaterThan(0);
+      for (const [operation, needed] of Object.entries(recorded.operations)) {
+        expect(scopesNotAskedFor(needed, asked), `the consent does not ask for a scope ${operation} needs`).toEqual([]);
+      }
+    });
+
+    it('has a recorded scope list for every board path the client calls', () => {
+      const called = agilePathsCalled(clientSource);
+      expect(called).toEqual(Object.keys(recorded.operations).sort());
+    });
+
+    it('names a missing scope and an unrecorded path', () => {
+      expect(scopesNotAskedFor(['read:board-scope:jira-software', 'read:issue-details:jira'], ['read:board-scope:jira-software']))
+        .toEqual(['read:issue-details:jira']);
+      const withNewCall = `${clientSource}\nconst sprint = \`/rest/agile/1.0/board/\${encodeURIComponent(boardId)}/sprint\`;\n`;
+      expect(agilePathsCalled(withNewCall)).toContain('/rest/agile/1.0/board/{boardId}/sprint');
+    });
   });
 });
 
@@ -438,6 +485,84 @@ describe('freshJiraCredential', () => {
     const adopted = await isolated.freshJiraCredential(stale, { force: true }, { fetchImpl, now: () => NOW });
     expect(adopted.refreshToken).toBe('refresh-new');
     expect(refreshCalls()).toBe(1);
+  });
+});
+
+/**
+ * What a user loses without these: Atlassian drops a refresh token unused for
+ * 90 days, and only an import renews one, so a sign-in on a site nobody imports
+ * from for a quarter was gone. A pass that stopped at the first refused site
+ * would leave every site after it to lapse.
+ */
+describe('keepJiraSignInsAlive', () => {
+  const rotated = { access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 };
+  const DAY_MS = 24 * 60 * 60_000;
+  const OLD_SITE = 'https://old.atlassian.net';
+  const RECENT_SITE = 'https://recent.atlassian.net';
+  const TOKEN_SITE = 'https://token.atlassian.net';
+  const refreshTokensSent = (fetchImpl: ReturnType<typeof fakeFetch>) => fetchImpl.mock.calls
+    .filter(([url]) => String(url) === REFRESH_URL)
+    .map(([, init]) => (JSON.parse(String(init?.body)) as { refresh_token: string }).refresh_token);
+
+  // The refreshes in flight and the unsaved pairs are module state, so each case runs on its own copy.
+  async function isolatedKeepAlive() {
+    vi.resetModules();
+    return (await import('../../src/main/boards/adapters/jira/oauth-tokens')).keepJiraSignInsAlive;
+  }
+
+  it('renews a sign-in saved more than seven days ago, and leaves a recent one and a token alone', async () => {
+    const keepJiraSignInsAlive = await isolatedKeepAlive();
+    storedCredentials.sites[OLD_SITE] = oauthCredential({
+      site: OLD_SITE, refreshToken: 'refresh-old-site', savedAt: new Date(NOW - 8 * DAY_MS).toISOString(),
+    });
+    storedCredentials.sites[RECENT_SITE] = oauthCredential({
+      site: RECENT_SITE, refreshToken: 'refresh-recent-site', savedAt: new Date(NOW - 6 * DAY_MS).toISOString(),
+    });
+    storedCredentials.sites[TOKEN_SITE] = {
+      ...oauthCredential({ site: TOKEN_SITE, savedAt: new Date(NOW - 400 * DAY_MS).toISOString() }),
+      method: 'api-token',
+    };
+    const fetchImpl = fakeFetch({ refresh: () => json(200, rotated) });
+    await keepJiraSignInsAlive({ fetchImpl, now: () => NOW });
+    expect(refreshTokensSent(fetchImpl)).toEqual(['refresh-old-site']);
+    expect(storedCredentials.sites[OLD_SITE]).toMatchObject({
+      secret: 'access-new', refreshToken: 'refresh-new', savedAt: new Date(NOW).toISOString(),
+    });
+    expect(storedCredentials.sites[RECENT_SITE].refreshToken).toBe('refresh-recent-site');
+  });
+
+  it('keeps a sign-in Atlassian refuses or does not answer for, and still renews the next site', async () => {
+    const keepJiraSignInsAlive = await isolatedKeepAlive();
+    const eightDaysAgo = new Date(NOW - 8 * DAY_MS).toISOString();
+    storedCredentials.sites[OLD_SITE] = oauthCredential({ site: OLD_SITE, refreshToken: 'refresh-refused', savedAt: eightDaysAgo });
+    storedCredentials.sites[RECENT_SITE] = oauthCredential({ site: RECENT_SITE, refreshToken: 'refresh-outage', savedAt: eightDaysAgo });
+    storedCredentials.sites[TOKEN_SITE] = oauthCredential({ site: TOKEN_SITE, refreshToken: 'refresh-good', savedAt: eightDaysAgo });
+    const answers: Record<string, () => Response> = {
+      'refresh-refused': () => json(403, { error: 'unauthorized_client', error_description: 'refresh_token is invalid' }),
+      'refresh-outage': () => json(502, { error: 'temporarily_unavailable' }),
+      'refresh-good': () => json(200, rotated),
+    };
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const sent = (JSON.parse(String(init?.body)) as { refresh_token: string }).refresh_token;
+      return answers[sent]();
+    });
+    await expect(keepJiraSignInsAlive({ fetchImpl, now: () => NOW })).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(storedCredentials.sites[OLD_SITE].refreshToken).toBe('refresh-refused');
+    expect(storedCredentials.sites[RECENT_SITE].refreshToken).toBe('refresh-outage');
+    expect(storedCredentials.sites[TOKEN_SITE].refreshToken).toBe('refresh-new');
+  });
+
+  it('tries every site before it throws a failure nobody expected', async () => {
+    const keepJiraSignInsAlive = await isolatedKeepAlive();
+    const eightDaysAgo = new Date(NOW - 8 * DAY_MS).toISOString();
+    storedCredentials.sites[OLD_SITE] = oauthCredential({ site: OLD_SITE, refreshToken: 'refresh-first', savedAt: eightDaysAgo });
+    storedCredentials.sites[RECENT_SITE] = oauthCredential({ site: RECENT_SITE, refreshToken: 'refresh-second', savedAt: eightDaysAgo });
+    saveSpy.mockRejectedValueOnce(new Error('disk full'));
+    const fetchImpl = fakeFetch({ refresh: () => json(200, rotated) });
+    await expect(keepJiraSignInsAlive({ fetchImpl, now: () => NOW })).rejects.toThrow('disk full');
+    expect(refreshTokensSent(fetchImpl)).toEqual(['refresh-first', 'refresh-second']);
+    expect(storedCredentials.sites[RECENT_SITE].refreshToken).toBe('refresh-new');
   });
 });
 

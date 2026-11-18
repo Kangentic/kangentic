@@ -472,6 +472,65 @@ describe('LinearClient: paging', () => {
   });
 });
 
+/**
+ * What a user loses without these: Linear's refresh token lasts 30 days from
+ * the last refresh, and only an import refreshes. Someone who opens Kangentic
+ * daily and imports monthly was signed out. And a keep-alive that renewed a
+ * recent sign-in, or touched an API key, would spend a token request a day for
+ * nothing.
+ */
+describe('LinearClient: keeping a sign-in alive', () => {
+  const SAVED_AT = '2026-11-01T00:00:00.000Z';
+  const EIGHT_DAYS_ON = Date.parse('2026-11-09T00:00:00.000Z');
+  const SIX_DAYS_ON = Date.parse('2026-11-07T00:00:00.000Z');
+  const renewedTokens = { accessToken: 'access-new', refreshToken: 'refresh-new', expiresAt: '2026-11-10T00:00:00.000Z' };
+
+  it('renews a sign-in saved more than seven days ago, saves the new pair, and asks Linear for nothing else', async () => {
+    loadSpy.mockResolvedValue(oauthCredential({ savedAt: SAVED_AT }));
+    refreshSpy.mockResolvedValue(renewedTokens);
+    await new LinearClient().keepSignInAlive(EIGHT_DAYS_ON);
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith('refresh-old');
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy.mock.calls[0][0]).toMatchObject({ kind: 'oauth', ...renewedTokens });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('renews a sign-in whose save time does not parse, since its age is unknown', async () => {
+    loadSpy.mockResolvedValue(oauthCredential({ savedAt: '' }));
+    refreshSpy.mockResolvedValue(renewedTokens);
+    await new LinearClient().keepSignInAlive(EIGHT_DAYS_ON);
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a recent sign-in, an API key and no sign-in alone', async () => {
+    loadSpy.mockResolvedValue(oauthCredential({ savedAt: SAVED_AT }));
+    await new LinearClient().keepSignInAlive(SIX_DAYS_ON);
+    loadSpy.mockResolvedValue({ ...apiKeyCredential(), savedAt: SAVED_AT });
+    await new LinearClient().keepSignInAlive(EIGHT_DAYS_ON);
+    loadSpy.mockResolvedValue(null);
+    await new LinearClient().keepSignInAlive(EIGHT_DAYS_ON);
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(clearSpy).not.toHaveBeenCalled();
+  });
+
+  it('forgets a sign-in whose refresh token Linear refuses, and does not throw', async () => {
+    loadSpy.mockResolvedValue(oauthCredential({ savedAt: SAVED_AT }));
+    refreshSpy.mockRejectedValue(new LinearError('Client revoked', 401));
+    await expect(new LinearClient().keepSignInAlive(EIGHT_DAYS_ON)).resolves.toBeUndefined();
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the sign-in and rethrows when Linear is busy, so the pass can report it', async () => {
+    loadSpy.mockResolvedValue(oauthCredential({ savedAt: SAVED_AT }));
+    refreshSpy.mockRejectedValue(new LinearError('Linear is busy', 503));
+    const error = await new LinearClient().keepSignInAlive(EIGHT_DAYS_ON).then(() => null, (rejected: unknown) => rejected);
+    expect(error).toBeInstanceOf(LinearError);
+    expect(clearSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('LinearClient: a real-shape issues response', () => {
   it('maps the fixture Linear\'s schema describes, nulls and all', async () => {
     const fixtureText = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'linear-issues-response.json'), 'utf8');

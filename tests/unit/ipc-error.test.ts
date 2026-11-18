@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { asSentence, capitalizeFirstWord, describeIpcError } from '../../src/renderer/lib/ipc-error';
+import { asSentence, capitalizeFirstWord, describeIpcError, ipcErrorClassName } from '../../src/renderer/lib/ipc-error';
+import { RefusalError, SIGN_IN_REFUSED_ERROR_NAME, SignInRefusedError } from '../../src/shared/refusal';
 
 describe('capitalizeFirstWord', () => {
   it('capitalizes a leading lowercase word and changes nothing else, adding no stop', () => {
@@ -55,6 +56,37 @@ describe('describeIpcError', () => {
     expect(describeIpcError(undefined)).toBe('Unknown error');
     expect(describeIpcError(new Error(''))).toBe('Unknown error');
     expect(describeIpcError(new Error("Error invoking remote method 'x': "), 'Move failed')).toBe('Move failed');
+  });
+});
+
+/**
+ * Add Source opens Connect when the class says the saved sign-in is what failed. A user with a
+ * sign-in the provider refuses otherwise reads the refusal and has no way to replace it. The
+ * class is read, never the wording, because GitLab's refusal is GitLab's own text.
+ */
+describe('ipcErrorClassName', () => {
+  /** What Electron hands the renderer for an error main threw from a handler. */
+  function overIpc(thrown: Error): Error {
+    return new Error(`Error invoking remote method 'backlog:importSourcesAdd': ${thrown.name}: ${thrown.message}`);
+  }
+
+  it('reads the class main threw, for a refused sign-in and for any other refusal', () => {
+    expect(ipcErrorClassName(overIpc(new SignInRefusedError('401 Unauthorized')))).toBe(SIGN_IN_REFUSED_ERROR_NAME);
+    expect(ipcErrorClassName(overIpc(new RefusalError('No board 12 that this account can open.')))).toBe('RefusalError');
+    expect(ipcErrorClassName(overIpc(new Error('disk full')))).toBe('Error');
+  });
+
+  it('keeps the message a refused sign-in carries, with the class stripped', () => {
+    expect(describeIpcError(overIpc(new SignInRefusedError('Jira rejected the saved token.')))).toBe('Jira rejected the saved token.');
+  });
+
+  it('names no class for text that only looks like one, or for no error at all', () => {
+    expect(ipcErrorClassName(new Error('fatal: not a git repository'))).toBeNull();
+    expect(ipcErrorClassName(new Error('Cannot read C:\\proj'))).toBeNull();
+    // A message that mentions the class further in is not an error of that class.
+    expect(ipcErrorClassName(new Error("Error invoking remote method 'x': RefusalError: see SignInRefusedError: docs"))).toBe('RefusalError');
+    expect(ipcErrorClassName('a string')).toBeNull();
+    expect(ipcErrorClassName(new Error(''))).toBeNull();
   });
 });
 

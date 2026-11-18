@@ -57,6 +57,10 @@ export class LinearAdapter implements BoardAdapter {
     return prerequisiteToCheckCli(await this.checkPrerequisites());
   }
 
+  keepSignInAlive(now?: number): Promise<void> {
+    return this.client.keepSignInAlive(now);
+  }
+
   async fetch(
     input: ImportFetchInput,
     findAlreadyImported: (source: ExternalSource, externalIds: string[]) => Set<string>,

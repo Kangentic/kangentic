@@ -136,6 +136,39 @@ test.describe('Jira in Add Source', () => {
     await openJiraLinkStep(page);
     await pasteAndConnect(page, 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12');
     await expect(page.locator('[data-testid="import-source-error"]')).toHaveText('No board 12 that this account can open.');
+    // A refusal about the source says nothing against the sign-in, so Connect stays shut.
+    await expect(page.locator('[data-testid="jira-connect-dialog"]')).toHaveCount(0);
+    await browser.close();
+  });
+
+  // The first real browser sign-in hit this: a sign-in was saved for the site, Jira refused it,
+  // and the popover showed the refusal with no way to replace the sign-in.
+  test('a saved sign-in Jira refuses reopens Connect with the site and email, and the add carries on once it is replaced', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'jira-refused-sign-in');
+    await setJiraPreset(page, { sites: { 'acme.atlassian.net': { method: 'api-token', email: 'a@example.com', account: 'a@example.com' } } });
+    await page.evaluate(() => {
+      // As main's refusal arrives over IPC: the class says the saved sign-in is what failed.
+      (window as unknown as { __mockImportSourcesAddError?: string }).__mockImportSourcesAddError =
+        "Error invoking remote method 'backlog:importSourcesAdd': SignInRefusedError: Jira rejected the saved token.";
+    });
+    await openJiraLinkStep(page);
+    await pasteAndConnect(page, 'https://acme.atlassian.net/jira/software/projects/ENG/boards/12');
+
+    const dialog = page.locator('[data-testid="jira-connect-dialog"]');
+    await expect(dialog).toBeVisible();
+    await expect(page.locator('[data-testid="jira-connect-error"]')).toHaveText('Jira rejected the saved token.');
+    await expect(page.locator('[data-testid="jira-connect-site-input"]')).toHaveValue('acme.atlassian.net');
+    await expect(page.locator('[data-testid="jira-connect-email-input"]')).toHaveValue('a@example.com');
+
+    // Jira takes the new token, so the add that was refused goes through this time.
+    await page.evaluate(() => {
+      (window as unknown as { __mockImportSourcesAddError?: string }).__mockImportSourcesAddError = undefined;
+    });
+    await page.locator('[data-testid="jira-connect-secret-input"]').fill('new-token');
+    await page.locator('[data-testid="jira-connect-connect-btn"]').click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('[data-testid="import-dialog"]')).toBeVisible();
     await browser.close();
   });
 });

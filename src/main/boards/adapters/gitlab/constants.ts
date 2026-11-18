@@ -3,10 +3,11 @@ export const GITLAB_COM_BASE = 'https://gitlab.com';
 
 /**
  * The client id of the non-confidential OAuth application registered on
- * gitlab.com for Kangentic (PKCE, no secret). Empty until the team registers it:
- * while it is empty, Connect GitLab offers the personal access token only.
+ * gitlab.com for Kangentic (PKCE, no secret), on 2026-11-17 under the team's
+ * private `kangentic` group, so its owners can change without a new id. While it
+ * is empty, Connect GitLab offers the personal access token only.
  */
-export const GITLAB_COM_OAUTH_CLIENT_ID = '';
+export const GITLAB_COM_OAUTH_CLIENT_ID = '1e2a6e0a14da5d8c8eaeff00263fa26fa8243ba1580d5653d38bd6ad83607e50';
 
 /** Read access to the API. The only scope Kangentic asks for, by token or sign-in. */
 export const GITLAB_READ_SCOPE = 'read_api';

@@ -1,3 +1,4 @@
+import { isSignInRenewalDue } from '../../shared/sign-in-renewal';
 import { JIRA_OAUTH_REFRESH_URL, JIRA_TOKEN_REFRESH_MARGIN_MS } from './constants';
 import { loadJiraCredentials, saveJiraCredential, type JiraSiteCredential } from './credential-store';
 
@@ -197,4 +198,30 @@ export async function freshJiraCredential(
   } finally {
     if (refreshInFlight.get(credential.site) === refresh) refreshInFlight.delete(credential.site);
   }
+}
+
+/**
+ * Renew every saved browser sign-in that is due, so its refresh token (which
+ * Atlassian drops after 90 days unused) does not lapse while nothing is imported.
+ * Each site holds its own grant, so each is renewed by itself. A token method and
+ * a recent sign-in are left alone. A renewal Atlassian refuses, or that gets no
+ * answer, changes nothing here: the credential is kept, as a refused import keeps
+ * it, and the next Import or the next pass meets it again. Every site is tried
+ * before a failure nobody expected is thrown.
+ */
+export async function keepJiraSignInsAlive(overrides: Partial<JiraOauthDependencies> = {}): Promise<void> {
+  const dependencies = { ...defaultDependencies, ...overrides };
+  const credentials = await dependencies.loadCredentials();
+  let unexpected: unknown;
+  for (const credential of Object.values(credentials)) {
+    if (credential.method !== 'oauth') continue;
+    if (!isSignInRenewalDue(credential.savedAt, dependencies.now())) continue;
+    try {
+      await freshJiraCredential(credential, { force: true }, overrides);
+    } catch (error) { // report-ok: a refusal or an outage is the next Import's to show; anything else is thrown below, once every site was tried
+      if (error instanceof JiraRefreshRejectedError || error instanceof JiraRefreshUnavailableError) continue;
+      unexpected ??= error;
+    }
+  }
+  if (unexpected !== undefined) throw unexpected;
 }

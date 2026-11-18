@@ -24,6 +24,21 @@ const REMOTE_METHOD_PREFIX = /^Error invoking remote method '[^']*':\s*/;
  */
 const ERROR_CLASS_PREFIX = /^(?:[A-Z][A-Za-z0-9_$]*)?Error:\s*/;
 
+/** The class name in front of the message, once the channel prefix is gone. */
+const ERROR_CLASS_NAME = /^((?:[A-Z][A-Za-z0-9_$]*)?Error):\s/;
+
+/**
+ * The class main threw, as Electron leaves it in the rejection, or null when the
+ * rejection names none. For a caller that acts on WHAT failed and not on its
+ * wording: Add Source opens Connect for a `SignInRefusedError`, whatever line the
+ * provider wrote. A message that only looks like a class (`fatal: ...`) is not one.
+ */
+export function ipcErrorClassName(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.message) return null;
+  const withoutChannel = error.message.replace(REMOTE_METHOD_PREFIX, '');
+  return ERROR_CLASS_NAME.exec(withoutChannel)?.[1] ?? null;
+}
+
 /**
  * The user-facing text of a failed IPC call. Falls back to a generic string for
  * a non-Error rejection so callers never interpolate `undefined`.

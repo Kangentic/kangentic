@@ -21,3 +21,22 @@ export class RefusalError extends UserConfigurationError {
     if (options && 'cause' in options) this.cause = options.cause;
   }
 }
+
+/** The class name Electron keeps in front of a `SignInRefusedError`'s message when it crosses IPC. */
+export const SIGN_IN_REFUSED_ERROR_NAME = 'SignInRefusedError';
+
+/**
+ * A refusal whose cause is the saved sign-in: the provider turned the token down,
+ * or the token lacks what the request needs. The message is still the line the
+ * user reads. The class is what the renderer acts on: Add Source reads the name
+ * Electron leaves in the rejection (`ipcErrorClassName`) and opens the provider's
+ * Connect dialog, because a sign-in that is saved and refused has no other way to
+ * be replaced from there. Text cannot carry this, since a provider's own wording
+ * of a refusal varies.
+ */
+export class SignInRefusedError extends RefusalError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = SIGN_IN_REFUSED_ERROR_NAME;
+  }
+}

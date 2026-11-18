@@ -934,10 +934,15 @@ interface RecordedAnswers {
   jiraCallbackBadState: RecordedAnswer;
   jiraCallbackNoCode: RecordedAnswer;
   jiraRefreshSecretsUnset: RecordedAnswer;
+  jiraRefreshKnownClient: RecordedAnswer;
   trelloUnknownKey: RecordedAnswer;
   trelloApprovalUnknownKey: RecordedAnswer;
+  trelloLiveKey: RecordedAnswer;
+  trelloApprovalLiveKey: RecordedAnswer;
   linearUnknownClient: RecordedAnswer;
+  linearKnownClient: RecordedAnswer;
   gitlabUnknownClient: RecordedAnswer;
+  gitlabKnownClient: RecordedAnswer;
 }
 
 describe('the answers the live services gave', () => {
@@ -973,6 +978,11 @@ describe('the answers the live services gave', () => {
     expect(statusesOf(await checkJiraService({ ...shipped, jiraClientId: SET }, send))).toEqual(['fail']);
   });
 
+  it('passes what Atlassian really answers a made-up refresh token from the registered client', async () => {
+    const send: SendRequest = async () => replay(recorded.jiraRefreshKnownClient);
+    expect(statusesOf(await checkJiraService({ ...shipped, jiraClientId: SET }, send))).toEqual(['ok']);
+  });
+
   it('fails a key Trello does not know, at the API and at the approval page', async () => {
     const send = trelloAnswers(() => replay(recorded.trelloUnknownKey), () => replay(recorded.trelloApprovalUnknownKey));
     const results = await checkTrelloKey({ ...shipped, trelloKey: SET }, send);
@@ -981,15 +991,30 @@ describe('the answers the live services gave', () => {
     expect(results[1].detail).toContain('does not know the key');
   });
 
+  it('passes the registered Trello key, at the API and at the approval page', async () => {
+    const send = trelloAnswers(() => replay(recorded.trelloLiveKey), () => replay(recorded.trelloApprovalLiveKey));
+    expect(statusesOf(await checkTrelloKey({ ...shipped, trelloKey: SET }, send))).toEqual(['ok', 'ok']);
+  });
+
   it('fails a client Linear does not know', async () => {
     const results = await checkLinear({ ...shipped, linearClientId: SET }, async () => replay(recorded.linearUnknownClient));
     expect(statusesOf(results)).toEqual(['fail']);
     expect(results[0].detail).toContain('no longer knows the client');
   });
 
+  it('passes the registered Linear client', async () => {
+    const results = await checkLinear({ ...shipped, linearClientId: SET }, async () => replay(recorded.linearKnownClient));
+    expect(statusesOf(results)).toEqual(['ok']);
+  });
+
   it('fails a client gitlab.com does not know', async () => {
     const results = await checkGitLab({ ...shipped, gitlabClientId: SET }, async () => replay(recorded.gitlabUnknownClient));
     expect(statusesOf(results)).toEqual(['fail']);
     expect(results[0].detail).toContain('gitlab.com no longer knows the client');
+  });
+
+  it('passes the registered gitlab.com client', async () => {
+    const results = await checkGitLab({ ...shipped, gitlabClientId: SET }, async () => replay(recorded.gitlabKnownClient));
+    expect(statusesOf(results)).toEqual(['ok']);
   });
 });

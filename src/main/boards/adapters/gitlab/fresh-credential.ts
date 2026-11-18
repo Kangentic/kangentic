@@ -34,14 +34,17 @@ export function clearGitLabRenewals(): void {
  * and the new pair is saved before it is used, because GitLab revokes the old
  * refresh token on every renewal. A renewal GitLab refuses (a revoked sign-in)
  * throws as a 401, so every caller reads it as a refused sign-in and offers Connect.
+ * `force` renews a browser sign-in however much time its access token has left,
+ * which is how the keep-alive pass keeps an unused one from going stale.
  */
 export async function freshCredential(
   credential: GitLabCredential,
   dependencies: FreshCredentialDependencies,
+  options: { force?: boolean } = {},
 ): Promise<GitLabCredential> {
   if (credential.method !== 'oauth' || !credential.refreshToken || !credential.expiresAt) return credential;
   const now = dependencies.now?.() ?? Date.now();
-  if (Date.parse(credential.expiresAt) - now > GITLAB_REFRESH_MARGIN_MS) return credential;
+  if (!options.force && Date.parse(credential.expiresAt) - now > GITLAB_REFRESH_MARGIN_MS) return credential;
 
   const last = lastRenewals.get(credential.site);
   if (last && last.replacedRefreshToken === credential.refreshToken) return last.renewed;

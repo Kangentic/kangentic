@@ -5,7 +5,7 @@ import type {
   ImportFetchInput,
   ImportFetchResult,
 } from '../../../../shared/types';
-import { RefusalError } from '../../../../shared/refusal';
+import { RefusalError, SignInRefusedError } from '../../../../shared/refusal';
 import {
   type AdapterStatus,
   type BoardAdapter,
@@ -14,6 +14,7 @@ import {
   DOWNLOAD_CONCURRENCY,
   downloadFile,
   extractInlineImageUrls,
+  isSignInRenewalDue,
   mediaTypeFromFilename,
   prerequisiteToCheckCli,
   registerSourceUrlParser,
@@ -57,10 +58,16 @@ export interface GitLabAdapterDependencies {
   fetchImpl: typeof fetch;
 }
 
-/** The refusal a GitLab error becomes on a surface that shows one line: GitLab's own text when it sent one. */
+/**
+ * The refusal a GitLab error becomes on a surface that shows one line: GitLab's
+ * own text when it sent one. A 401 is the saved sign-in being refused, which the
+ * class tells Add Source so it can offer Connect again.
+ */
 function refusalFrom(error: unknown): unknown {
   if (!(error instanceof GitLabHttpError)) return error;
-  return new RefusalError(error.providerMessage ?? (error.status === 401 ? GITLAB_REJECTED_SAVED_TOKEN : error.message));
+  // The status is read here, not through `isAuthRefusal`: that guard would narrow the rest to `never`.
+  if (error.status === 401) return new SignInRefusedError(error.providerMessage ?? GITLAB_REJECTED_SAVED_TOKEN);
+  return new RefusalError(error.providerMessage ?? error.message);
 }
 
 /**
@@ -143,6 +150,32 @@ export class GitLabAdapter implements BoardAdapter {
 
   async checkCli(repository?: string): Promise<ImportCheckCliResult> {
     return prerequisiteToCheckCli(await this.checkPrerequisites(repository));
+  }
+
+  /**
+   * Renew every saved browser sign-in that is due, so one nobody imports from
+   * does not go stale. A personal access token and a recent sign-in are left
+   * alone. A renewal GitLab refuses changes nothing here: the next Import shows
+   * it and offers Connect. Every server is tried before a failure nobody
+   * expected is thrown.
+   */
+  async keepSignInAlive(now: number = Date.now()): Promise<void> {
+    const credentials = await this.dependencies.loadCredentials();
+    let unexpected: unknown;
+    for (const credential of Object.values(credentials)) {
+      if (credential.method !== 'oauth' || !isSignInRenewalDue(credential.savedAt, now)) continue;
+      try {
+        await freshCredential(
+          credential,
+          { fetchImpl: this.dependencies.fetchImpl, save: this.dependencies.saveCredential, now: () => now },
+          { force: true },
+        );
+      } catch (error) { // report-ok: a refused sign-in is the next Import's to show; anything else is thrown below, once every server was tried
+        if (isAuthRefusal(error)) continue;
+        unexpected ??= error;
+      }
+    }
+    if (unexpected !== undefined) throw unexpected;
   }
 
   /** A client for the credential, renewing a browser sign-in that is about to lapse. */

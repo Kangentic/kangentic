@@ -44,7 +44,7 @@ vi.mock('../../src/main/boards/adapters/jira/credential-store', () => ({
 
 import { JiraAdapter } from '../../src/main/boards/adapters/jira/adapter';
 import { JiraClient, JiraHttpError } from '../../src/main/boards/adapters/jira/client';
-import { RefusalError } from '../../src/shared/refusal';
+import { RefusalError, SIGN_IN_REFUSED_ERROR_NAME, SignInRefusedError } from '../../src/shared/refusal';
 import { connectJiraSite } from '../../src/main/boards/adapters/jira/ipc-handlers';
 import { mapJiraIssues, type JiraIssueRaw } from '../../src/main/boards/adapters/jira/mapper';
 import { priorityIndexForName } from '../../src/shared/priority-scale';
@@ -342,6 +342,24 @@ describe('JiraAdapter.prepareSource', () => {
       const { adapter } = adapterWith({ [CLOUD]: saved }, () => ({ status: testCase.status, body: testCase.body ?? {} }));
       await expect(adapter.prepareSource(testCase.repository)).rejects.toThrow(testCase.line);
     }
+  });
+
+  // Add Source acts on the class, not the line: a refused sign-in reopens Connect, and a refusal
+  // about the source itself (no such board) must not.
+  it('marks a 401 as the saved sign-in being refused, and no other refusal', async () => {
+    const refusedPlain = adapterWith({ [CLOUD]: credential() }, () => ({ status: 401, body: {} }));
+    const plainError = await refusedPlain.adapter.prepareSource(`${CLOUD}::board::12`).then(() => null, (error: unknown) => error);
+    expect(plainError).toBeInstanceOf(SignInRefusedError);
+    expect((plainError as Error).name).toBe(SIGN_IN_REFUSED_ERROR_NAME);
+    expect((plainError as Error).message).toBe('Jira rejected the saved token.');
+
+    const refusedScoped = adapterWith({ [CLOUD]: credential({ viaGateway: true, cloudId: 'cloud-123' }) }, () => ({ status: 401, body: {} }));
+    await expect(refusedScoped.adapter.prepareSource(`${CLOUD}::board::12`)).rejects.toBeInstanceOf(SignInRefusedError);
+
+    const noSuchBoard = adapterWith({ [CLOUD]: credential() }, () => ({ status: 404, body: {} }));
+    const sourceError = await noSuchBoard.adapter.prepareSource(`${CLOUD}::board::12`).then(() => null, (error: unknown) => error);
+    expect(sourceError).toBeInstanceOf(RefusalError);
+    expect(sourceError).not.toBeInstanceOf(SignInRefusedError);
   });
 
   it('asks for a link when typed JQL could run on two connected sites', async () => {
