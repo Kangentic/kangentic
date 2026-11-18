@@ -207,7 +207,7 @@ transcript, and a relocate would move the folder from under it.
 3. Flush the transcript to the DB
 4. Emit a synthetic `session_end` event (the agent's own hook will not fire on a kill)
 5. Clear subagent depth tracking
-6. Mark status as `suspended`
+6. Mark status as `suspended` and stamp `suspendedBy` with the caller's value (a second suspend that names nobody keeps the first)
 7. **Emit `session-changed`** - before the shutdown below, not after
 8. Release backpressure so the agent's exit-sequence output is not held back
 9. `gracefulPtyShutdown`: send the exit sequence, wait up to 1500ms for a natural exit, then
