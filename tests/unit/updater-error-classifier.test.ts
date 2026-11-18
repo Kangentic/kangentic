@@ -724,6 +724,16 @@ describe('probeSudoElevation', () => {
   ])('says unknown for %s, so the failure still reports', async (_label, fields) => {
     expect(await probeSudoElevation(probeFailure(fields))).toBe('unknown');
   });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'sudo: a terminal is required'],
+  ])('says unknown, without throwing, when the probe rejects with %s', async (_label, rejection) => {
+    // The handler's .catch is not a safety net for this: a throw here would
+    // turn an inconclusive probe into a lost report.
+    expect(await probeSudoElevation(() => Promise.reject(rejection))).toBe('unknown');
+  });
 });
 
 describe('isResourceUnavailableError', () => {

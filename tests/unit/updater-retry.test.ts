@@ -786,6 +786,20 @@ describe("autoUpdater.on('error') listener", () => {
       expect(mocks.trackEvent).toHaveBeenCalledTimes(2);
     });
 
+    it('runs a fresh probe for a failure that arrives after the first probe settled', async () => {
+      // A user can add a sudoers rule mid-run, so a stale answer must not outlive its click.
+      mocks.execFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
+
+      const errorListener = getRegisteredListener('error');
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(1);
+
+      errorListener(makeError(SUDO_FALLBACK_MESSAGE));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(2);
+    });
+
     it('reports a throw on the toast path instead of losing it', async () => {
       const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
