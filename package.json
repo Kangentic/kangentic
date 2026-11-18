@@ -45,6 +45,7 @@
     "demo:posters": "node demo/posters.mjs",
     "demo:poster-gate": "node demo/poster-gate.mjs",
     "cursor:rules": "node scripts/cursor-rules.js",
+    "check:integrations": "node scripts/check-integrations.mjs",
     "prepare": "husky && node scripts/cursor-rules.js"
   },
   "keywords": [
