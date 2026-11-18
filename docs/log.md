@@ -10,7 +10,7 @@ the agent CLI nightly (`.github/workflows/agent-clis.yml`), the daily distributi
 
 **Changed:** `integrations/boards.md` gains "Owner steps for the browser sign-ins", the one list of
 what Jira, Trello, Linear and GitLab each need registered, and the decision that Asana gets no
-browser sign-in. Its "Daily sign-in check" gains the GitLab client row. `releases/deployment.md` lists the eight signing secrets `preflight-signing` now
+browser sign-in. Its "Daily sign-in check" gains the GitLab client row. `releases/deployment.md` lists the signing values `preflight-signing` now
 requires and the two new workflows.
 
 **Changed:** the four browser sign-ins are registered. `integrations/boards.md` says where each app

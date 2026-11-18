@@ -231,6 +231,63 @@ describe('the signing credentials nightly', () => {
   });
 });
 
+const AGENT_CLIS_WORKFLOW = 'agent-clis.yml';
+const VERDICT_SCRIPT = 'scripts/probe-ssh-rig/transcript-summary.mjs';
+const RUN_EVEN_AFTER_A_FAILURE = 'if: ${{ !cancelled() }}';
+
+/** The steps of the workflow's one job, each as its own text, comments left out. */
+function stepsOf(source: string): string[] {
+  const afterStepsKey = withoutCommentLines(source).split(/^ {4}steps:\n/m)[1] ?? '';
+  return afterStepsKey.split(/^ {6}- /m).slice(1);
+}
+
+/** What would let a night that tested nothing read as green, as a list of reasons. */
+function agentCliVerdictProblems(source: string): string[] {
+  const problems: string[] = [];
+  const steps = stepsOf(source);
+  const verdict = steps.filter((step) => step.includes(`node ${VERDICT_SCRIPT}`));
+  const tests = steps.filter((step) => step.includes('remote-transcript-real-cli.test.ts'));
+  if (verdict.length !== 1) problems.push(`${verdict.length} steps run the verdict script, not one`);
+  if (tests.length !== 1) problems.push(`${tests.length} steps run the tests, not one`);
+  for (const step of verdict) {
+    if (!step.includes('--versions ') || !step.includes('--results ')) problems.push('the verdict step does not name both --versions and --results');
+    if (!step.includes(RUN_EVEN_AFTER_A_FAILURE)) problems.push('the verdict step does not run after a failed step');
+  }
+  for (const step of tests) {
+    if (!step.includes(RUN_EVEN_AFTER_A_FAILURE)) problems.push('the test step does not run after a failed install step');
+  }
+  if (withoutCommentLines(source).includes('continue-on-error')) problems.push('a step sets continue-on-error');
+  return problems;
+}
+
+describe('the agent CLI nightly', () => {
+  const agentClisSource = readWorkflow(AGENT_CLIS_WORKFLOW);
+
+  // Vitest exits 0 when every test skips itself. The verdict script is what fails that night, so a
+  // workflow that stops running it, or skips it after a failed install, reads green having tested nothing.
+  it('runs its verdict after the tests and after a failed install, and lets no step fail quietly', () => {
+    expect(agentCliVerdictProblems(agentClisSource)).toEqual([]);
+  });
+
+  it('goes red when the verdict step is gone, loses its condition, or a step may fail quietly', () => {
+    const verdictStepHead = "      - name: Report each CLI's version and result\n        if: ${{ !cancelled() }}\n";
+    const withoutCondition = replaceExactly(agentClisSource, verdictStepHead, "      - name: Report each CLI's version and result\n");
+    expect(agentCliVerdictProblems(withoutCondition)).toEqual(['the verdict step does not run after a failed step']);
+    const withoutVerdict = replaceExactly(agentClisSource, `node ${VERDICT_SCRIPT}`, 'echo done');
+    expect(agentCliVerdictProblems(withoutVerdict)).toEqual(['0 steps run the verdict script, not one']);
+    const withoutResults = replaceExactly(agentClisSource, '--results ', '--other ');
+    expect(agentCliVerdictProblems(withoutResults)).toEqual(['the verdict step does not name both --versions and --results']);
+    const testsWithoutCondition = replaceExactly(
+      agentClisSource,
+      "      - name: Run each CLI through a conversation and a resume\n        if: ${{ !cancelled() }}\n",
+      '      - name: Run each CLI through a conversation and a resume\n',
+    );
+    expect(agentCliVerdictProblems(testsWithoutCondition)).toEqual(['the test step does not run after a failed install step']);
+    const quiet = replaceExactly(agentClisSource, '    timeout-minutes: 30\n', '    timeout-minutes: 30\n    continue-on-error: true\n');
+    expect(agentCliVerdictProblems(quiet)).toEqual(['a step sets continue-on-error']);
+  });
+});
+
 describe('scheduled workflows', () => {
   it('are each read by /release, or say why not', () => {
     // package-smoke is the known case. If the collector stopped seeing it, the list below is empty for the wrong reason.

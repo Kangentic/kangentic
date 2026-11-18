@@ -15,10 +15,9 @@
  *
  * The recorded block replays what the live services answered, from
  * tests/fixtures/sign-in-check-live-answers.json. The hand-built answers in the
- * tables follow the shapes the script's header lists. Atlassian's invalid_grant,
- * its refusal codes, Linear's and GitLab's invalid_grant and the answers that
- * need a live Trello key have not been recorded, so those rows are the
- * documented shape and not a recording. No test here sends a request.
+ * tables follow the shapes the script's header lists. Atlassian's invalid_grant
+ * and its refusal codes have not been recorded, so those rows are the documented
+ * shape and not a recording. No test here sends a request.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -575,10 +574,11 @@ describe('the Jira token service', () => {
     expect(statusesOf(results)).toEqual(['fail']);
   });
 
-  // Atlassian's guide gives invalid_grant for a refresh token it will not take. Developers report
-  // this pair for the same case, from a client that works. Neither has been recorded, so these
-  // rows are the reported shape. What tells the two unauthorized_client answers apart is the
-  // description: one names the token, and any other is about the client.
+  // Atlassian's guide gives invalid_grant for a refresh token it will not take. The registered
+  // client gets this pair for the same case, and the recorded block replays that answer
+  // (jiraRefreshKnownClient). The rows here are hand-built around it. What tells the two
+  // unauthorized_client answers apart is the description: one names the token, and any other is
+  // about the client.
   const describedRefusal = (status: number, error: string, description: string) =>
     answer(status, JSON.stringify({ error, error_description: description }), { 'content-type': 'application/json' });
 
@@ -607,7 +607,8 @@ describe('the Jira token service', () => {
 });
 
 describe('the Linear client', () => {
-  // Only invalid_client was recorded. The invalid_grant and invalid_request rows are the documented shape.
+  // Hand-built rows. The recorded block replays Linear's real invalid_client and invalid_grant, and
+  // invalid_request is an answer nobody has seen.
   it.each([
     { name: 'a client Linear knows', error: 'invalid_grant', expected: 'ok' },
     { name: 'a client Linear does not know', error: 'invalid_client', expected: 'fail' },
@@ -633,7 +634,8 @@ describe('the Linear client', () => {
 });
 
 describe('the GitLab client', () => {
-  // Only invalid_client was recorded. The invalid_grant and invalid_request rows are the documented shape.
+  // Hand-built rows. The recorded block replays gitlab.com's real invalid_client and invalid_grant,
+  // and invalid_request is an answer nobody has seen.
   it.each([
     { name: 'a client gitlab.com knows', status: 400, error: 'invalid_grant', expected: 'ok' },
     { name: 'a client gitlab.com does not know', status: 401, error: 'invalid_client', expected: 'fail' },

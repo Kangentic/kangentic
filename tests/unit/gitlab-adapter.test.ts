@@ -273,6 +273,33 @@ describe('keepSignInAlive', () => {
       url.pathname === '/oauth/token' ? { status: 503, body: {} } : undefined);
     await expect(adapter.keepSignInAlive(EIGHT_DAYS_ON)).rejects.toMatchObject({ status: 503 });
   });
+
+  /** Two due sign-ins in the order the adapter walks them: gitlab.com, then a self-managed host. */
+  function twoDueCredentials(): Record<string, GitLabCredential> {
+    const first = idleOauthCredential();
+    const second: GitLabCredential = { ...idleOauthCredential(), site: 'https://example.com/gitlab', secret: 'self-access', refreshToken: 'self-refresh' };
+    return { [first.site]: first, [second.site]: second };
+  }
+
+  it('still renews the next server after one refuses its renewal', async () => {
+    const { adapter, saved } = recordingAdapter(twoDueCredentials(), (url, _method, body) => {
+      if (url.pathname !== '/oauth/token') return undefined;
+      const refreshToken = new URLSearchParams(body).get('refresh_token');
+      return refreshToken === 'old-refresh' ? { status: 400, body: { error: 'invalid_grant' } } : { body: RENEWED_TOKENS };
+    });
+    await expect(adapter.keepSignInAlive(EIGHT_DAYS_ON)).resolves.toBeUndefined();
+    expect(saved.map((credential) => credential.site)).toEqual(['https://example.com/gitlab']);
+  });
+
+  it('still renews the next server after an unexpected failure, then throws the first one', async () => {
+    const { adapter, saved } = recordingAdapter(twoDueCredentials(), (url, _method, body) => {
+      if (url.pathname !== '/oauth/token') return undefined;
+      const refreshToken = new URLSearchParams(body).get('refresh_token');
+      return refreshToken === 'old-refresh' ? { status: 503, body: {} } : { body: RENEWED_TOKENS };
+    });
+    await expect(adapter.keepSignInAlive(EIGHT_DAYS_ON)).rejects.toMatchObject({ status: 503 });
+    expect(saved.map((credential) => credential.site)).toEqual(['https://example.com/gitlab']);
+  });
 });
 
 describe('checkPrerequisites', () => {

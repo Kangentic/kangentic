@@ -121,20 +121,21 @@ describe('runSignInKeepAlivePass', () => {
 describe('signInKeepAlive', () => {
   it('runs the first pass two minutes after start, then once a day, and not after stop', async () => {
     vi.useFakeTimers();
-    const pass = vi.spyOn(boardRegistry, 'list').mockReturnValue([]);
+    // Each pass reads the registry once, so the calls to `list` count the passes.
+    const registryList = vi.spyOn(boardRegistry, 'list').mockReturnValue([]);
     signInKeepAlive.start();
     signInKeepAlive.start();
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_FIRST_PASS_DELAY_MS - 1);
-    expect(pass).not.toHaveBeenCalled();
+    expect(registryList).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(pass).toHaveBeenCalledTimes(1);
+    expect(registryList).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_PASS_INTERVAL_MS);
-    expect(pass).toHaveBeenCalledTimes(2);
+    expect(registryList).toHaveBeenCalledTimes(2);
 
     signInKeepAlive.stop();
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_PASS_INTERVAL_MS * 3);
-    expect(pass).toHaveBeenCalledTimes(2);
-    pass.mockRestore();
+    expect(registryList).toHaveBeenCalledTimes(2);
+    registryList.mockRestore();
   });
 
   it('does not re-arm when it was stopped while a pass was under way', async () => {
@@ -142,14 +143,42 @@ describe('signInKeepAlive', () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const slow = adapterNamed('linear', () => gate);
-    const pass = vi.spyOn(boardRegistry, 'list').mockReturnValue([slow]);
+    const registryList = vi.spyOn(boardRegistry, 'list').mockReturnValue([slow]);
     signInKeepAlive.start();
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_FIRST_PASS_DELAY_MS);
-    expect(pass).toHaveBeenCalledTimes(1);
+    expect(registryList).toHaveBeenCalledTimes(1);
     signInKeepAlive.stop();
     release();
     await vi.advanceTimersByTimeAsync(KEEP_ALIVE_PASS_INTERVAL_MS * 2);
-    expect(pass).toHaveBeenCalledTimes(1);
-    pass.mockRestore();
+    expect(registryList).toHaveBeenCalledTimes(1);
+    registryList.mockRestore();
+  });
+
+  it('leaves one timer that stop clears when it was stopped and started again during a pass', async () => {
+    vi.useFakeTimers();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const slow = adapterNamed('linear', () => gate);
+    const registryList = vi.spyOn(boardRegistry, 'list').mockReturnValue([slow]);
+    try {
+      signInKeepAlive.start();
+      await vi.advanceTimersByTimeAsync(KEEP_ALIVE_FIRST_PASS_DELAY_MS);
+      expect(registryList).toHaveBeenCalledTimes(1);
+
+      signInKeepAlive.stop();
+      signInKeepAlive.start();
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      // The restart's own timer is the only one. The finished pass must not arm a second.
+      expect(vi.getTimerCount()).toBe(1);
+
+      signInKeepAlive.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(KEEP_ALIVE_PASS_INTERVAL_MS * 3);
+      expect(registryList).toHaveBeenCalledTimes(1);
+    } finally {
+      release();
+      registryList.mockRestore();
+    }
   });
 });

@@ -411,6 +411,53 @@ describe('the release GitHub calls latest', () => {
     expect(rowOf(results, 'release assets').detail).toContain('at v1.2.3 answered 404');
   });
 
+  /** The canned world, except that `intercept` may answer a URL itself. */
+  function withAnswers(intercept: (url: string) => Response | null): Dependencies {
+    const { dependencies } = dependenciesFor(world());
+    return { ...dependencies, send: async (url, init) => intercept(url) ?? dependencies.send(url, init) };
+  }
+
+  it('fails the highest-version row, and keeps the other rows, when the release feed does not answer', async () => {
+    const results = await checkRelease(shipped, withAnswers((url) => (url === `${REPOSITORY}/releases.atom` ? answer(503, 'unavailable') : null)));
+    expect(namesOf(results)).toEqual(RELEASE_ROWS);
+    const row = rowOf(results, 'release highest version');
+    expect(row.status).toBe('fail');
+    expect(row.detail).toContain('answered 503');
+    expect(rowOf(results, 'release assets').status).toBe('ok');
+  });
+
+  it('fails when the release feed lists no plain vX.Y.Z release', async () => {
+    const { dependencies } = dependenciesFor(world({ feed: [{ tag: 'protocol-v1.0.0', updated: '' }] }));
+    const row = rowOf(await checkRelease(shipped, dependencies), 'release highest version');
+    expect(row.status).toBe('fail');
+    expect(row.detail).toContain('lists no vX.Y.Z release');
+  });
+
+  it('fails both file rows, without crashing the run, when a feed download keeps redirecting', async () => {
+    const loop = 'https://release-assets.example.test/latest.yml';
+    const results = await checkRelease(shipped, withAnswers((url) => (url.startsWith(loop) ? answer(302, null, { location: `${loop}?again` }) : null)));
+    expect(namesOf(results)).toEqual(RELEASE_ROWS);
+    for (const name of ['release assets', 'release feed versions']) {
+      expect(rowOf(results, name).status).toBe('fail');
+      expect(rowOf(results, name).detail).toContain('redirected more than three times');
+    }
+  });
+
+  it('fails both file rows when the gate files at the tag no longer export what the check calls', async () => {
+    const gateUrl = `https://raw.githubusercontent.com/${shipped.owner}/${shipped.repo}/${TAG}/scripts/verify-release-assets.js`;
+    const results = await checkRelease(shipped, withAnswers((url) => (url === gateUrl ? answer(200, 'module.exports = {};') : null)));
+    for (const name of ['release assets', 'release feed versions']) {
+      expect(rowOf(results, name).status).toBe('fail');
+      expect(rowOf(results, name).detail).toContain('no longer export what this check calls');
+    }
+  });
+
+  it('reads the latest tag from the JSON body when releases/latest answers 200 instead of redirecting', async () => {
+    const results = await checkRelease(shipped, withAnswers((url) => (url === `${REPOSITORY}/releases/latest` ? answer(200, JSON.stringify({ tag_name: TAG })) : null)));
+    expect(statusesOf(results)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok']);
+    expect(rowOf(results, 'release latest tag').detail).toContain(`GitHub calls ${TAG} the latest release`);
+  });
+
   it('fails the one row, and keeps the rest of the run, when GitHub does not answer', async () => {
     const down: Dependencies = { ...dependenciesFor(world()).dependencies, send: async () => { throw new TypeError('fetch failed', { cause: new Error('getaddrinfo ENOTFOUND github.com') }); } };
     const results = await checkRelease(shipped, down);
