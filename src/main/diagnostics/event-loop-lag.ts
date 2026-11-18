@@ -335,8 +335,9 @@ function measureSyncWork<T>(label: string, work: () => T): T {
 /**
  * Tell `sink` the label of each `timeSyncWork` span as it starts, and the
  * enclosing label (or null) as it ends, in production as well as dev. The
- * retrieval worker's event-loop watchdog uses it to name the step that held
- * the loop. Main never sets one, so its spans pay one null check.
+ * event-loop watchdog the retrieval worker and the pty host run uses it to
+ * name the step that held the loop. Main never sets one, so its spans pay one
+ * null check.
  */
 export function setSyncSpanLabelSink(sink: ((label: string | null) => void) | null): void {
   spanLabelSink = sink;

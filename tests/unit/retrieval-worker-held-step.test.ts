@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { FromWorkerMessage, ReplyMessage } from '../../src/main/retrieval/worker/protocol';
-import { startEventLoopWatchdog, type EventLoopWatchdog } from '../../src/main/retrieval/worker/event-loop-watchdog';
+import { startEventLoopWatchdog, type EventLoopWatchdog } from '../../src/main/utility-process/event-loop-watchdog';
 
 const { getProjectDbMock } = vi.hoisted(() => ({ getProjectDbMock: vi.fn() }));
 

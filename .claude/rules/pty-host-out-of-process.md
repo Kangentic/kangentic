@@ -104,6 +104,15 @@ at the Windows timer floor.
   the unpacked tree doubles and breaks every spawn. Windows and Linux fork from the unpacked tree,
   where the ConPTY conout worker loads from a real directory. The afterPack probe loads node-pty
   the same way per platform, and `spawn-helper-upstream-parity.test.ts` pins both.
+- **The host runs the event-loop watchdog** (`src/main/utility-process/event-loop-watchdog.ts`,
+  the retrieval worker's, see [[retrieval-out-of-process]]), started first in `initialize()` with
+  the `[pty-host]` prefix. It is a second thread beside the spawn worker, inline source that
+  requires only `node:` built-ins. Its stderr line names the `timeSyncWork` span that held the
+  loop (`pty:spawn`, `pty:data`, `pty:headless-parse`, `pty:headless-serialize`,
+  `transcript:flush`), and the heartbeat
+  stall report carries it as `heldStep`, sent once the stall ends with its outcome (Sentry
+  DESKTOP-43). xterm parses a write on a later macrotask, so the parse is labeled by wrapping its
+  write buffer's action (`labelHeadlessParse`), never by a span around `write()`.
 - **The host stays free of main-only modules.** No `electron` import, no IPC layer, no analytics,
   no Sentry, no retrieval code. It writes transcripts on its own database connection (migrations
   off, `wal_autocheckpoint` 0: the retrieval worker runs the checkpoints).
@@ -201,8 +210,10 @@ at the Windows timer floor.
 - **Tests:** `tests/unit/pty-host-core.test.ts` pins the core's behavior;
   `tests/unit/utility-pty-host-transport.test.ts` pins the fork, init, request timeout (its
   rejection types, the budget a queued reap or Stop gets back on `batch-started`, and the late
-  answer of a request that timed out), crash
-  restart, fallback, heartbeat and shutdown; `tests/unit/verify-unpacked-worker.test.ts` pins the
+  answer of a request that timed out), crash restart, fallback, heartbeat (the stall report's
+  outcome, stderr tail and held step) and shutdown; `tests/unit/event-loop-watchdog.test.ts` pins
+  the watchdog's start in the host's `initialize()`; `tests/unit/headless-frame.test.ts` pins the
+  parse and serialize spans and the xterm seam; `tests/unit/verify-unpacked-worker.test.ts` pins the
   packaging (all of `node_modules/node-pty/**` and `.vite/build/pty-host.js` unpacked) and runs the
   afterPack probe's real spawn under this checkout's Electron.
 - **Packaging gate:** `build/afterPack.js` resolves node-pty from the unpacked tree and spawns a

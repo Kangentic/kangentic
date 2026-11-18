@@ -10,6 +10,8 @@
  * Tier: Unit.
  */
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -31,11 +33,22 @@ class FakeChild extends EventEmitter {
   }
 }
 
-const { forks, forkMock } = vi.hoisted(() => {
+/** A host's stderr tail whose text a test sets, one per fork, in fork order. */
+interface FakeStderrTail {
+  text: string;
+  /** What `whenDrained` hands back: null while nothing is still arriving. */
+  drain: Promise<void> | null;
+  snapshot(): string;
+  watchdogLineCount(): number;
+  whenDrained(timeoutMs: number): Promise<void> | null;
+}
+
+const { forks, forkMock, stderrTails } = vi.hoisted(() => {
   const forkList: FakeChild[] = [];
   return {
     forks: forkList,
     forkMock: vi.fn(),
+    stderrTails: [] as FakeStderrTail[],
   };
 });
 
@@ -43,13 +56,32 @@ vi.mock('electron', () => ({
   app: { isPackaged: false },
   utilityProcess: { fork: forkMock },
 }));
-vi.mock('../../src/main/utility-process/stderr-tail', () => ({
-  UTILITY_PROCESS_STDIO: ['ignore', 'pipe', 'pipe'],
-  StderrTail: class { snapshot(): string { return ''; } },
-  captureWorkerStderr: vi.fn(),
-  summarizeStderrTail: (text: string) => text,
-  watchdogLine: () => null,
-}));
+// The real text helpers (`watchdogLine` names the held step), with a tail a test fills
+// in place of the piped stderr.
+vi.mock('../../src/main/utility-process/stderr-tail', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/utility-process/stderr-tail')>();
+  return {
+    ...actual,
+    UTILITY_PROCESS_STDIO: ['ignore', 'pipe', 'pipe'],
+    StderrTail: class implements FakeStderrTail {
+      text = '';
+      drain: Promise<void> | null = null;
+      constructor() {
+        stderrTails.push(this);
+      }
+      snapshot(): string {
+        return this.text;
+      }
+      watchdogLineCount(): number {
+        return actual.watchdogLineCount(this.text);
+      }
+      whenDrained(): Promise<void> | null {
+        return this.drain;
+      }
+    },
+    captureWorkerStderr: vi.fn(),
+  };
+});
 // The packaged mapping, so the entry-path test can tell the two trees apart.
 vi.mock('../../src/main/utility-process/paths', () => ({ unpacked: (target: string) => target.replace('app.asar', 'app.asar.unpacked') }));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
@@ -62,6 +94,7 @@ import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { MessagePortMain } from 'electron';
 import { UtilityRestartPolicy, resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
 import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
+import { reportPtyHostStallFromLastRun, resetPtyHostReports } from '../../src/main/pty/host/pty-host-report';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 
 const REAP_REQUEST: TaggedReapRequest = { tasks: [], mainPid: 1, stop: true };
@@ -104,6 +137,10 @@ describe('UtilityPtyHostTransport', () => {
       return child;
     });
     resetUtilityCrashTelemetryForTests();
+    // The stall report latches once per run, at module scope.
+    resetPtyHostReports();
+    stderrTails.length = 0;
+    vi.mocked(reportHandledError).mockClear();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
@@ -355,6 +392,252 @@ describe('UtilityPtyHostTransport', () => {
     latestChild().emit('message', { type: 'ready' });
     await vi.advanceTimersByTimeAsync(5_000 + 11_000);
     expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/has not answered a heartbeat/));
+  });
+
+  // Sentry DESKTOP-43 carried only the 11 s threshold: a host that came back at 12 s and one
+  // that never answered looked the same, and nothing said what held it. The report now waits
+  // for the stall to end, and carries the host's stderr with its watchdog's line.
+  describe('the heartbeat stall report', () => {
+    const WATCHDOG_LINE = '[pty-host] event loop held 5 s in pty:headless-parse';
+    const EARLIER_STDERR = 'an earlier line';
+    const HOST_STDERR = `${EARLIER_STDERR}\n${WATCHDOG_LINE}`;
+
+    /** The host's watchdog writes its line while the stall holds the loop. */
+    function watchdogWritesDuringStall(): void {
+      stderrTails[stderrTails.length - 1].text = HOST_STDERR;
+    }
+
+    function stallReports(): Array<{ tags: Record<string, string>; contexts: Record<string, Record<string, unknown>>; fingerprint: string[] | undefined }> {
+      return vi.mocked(reportHandledError).mock.calls
+        .filter(([, tags]) => tags?.code === 'heartbeat_stall')
+        .map(([, tags, contexts, fingerprint]) => ({ tags: tags ?? {}, contexts: contexts ?? {}, fingerprint }));
+    }
+
+    /** A ready host with stderr in its tail, its first ping sent and still waiting. */
+    async function hostWithPingSent(stallAtQuitFilePath?: string): Promise<{ transport: UtilityPtyHostTransport; child: FakeChild; pingId: number }> {
+      const transport = new UtilityPtyHostTransport({ projectsDir: '/mock/projects', stallAtQuitFilePath });
+      transport.setEventListener(() => undefined);
+      transport.setLifecycleListener({ onHostDown: vi.fn(), onHostUp: vi.fn() });
+      transport.start();
+      const child = latestChild();
+      stderrTails[stderrTails.length - 1].text = EARLIER_STDERR;
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(5_000);
+      return { transport, child, pingId: lastRequestId(child) };
+    }
+
+    it('says how late a host that came back answered, with its stderr and the step that held it', async () => {
+      const { transport, child, pingId } = await hostWithPingSent();
+      // A spawn waiting behind the stall is named; the ping itself is not.
+      void transport.request('spawn', {} as never).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(6_000);
+      watchdogWritesDuringStall();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(stallReports(), 'nothing is sent until the stall ends').toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      reply(child, pingId, null);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const reports = stallReports();
+      expect(reports).toHaveLength(1);
+      const [report] = reports;
+      expect(report.tags).toMatchObject({ source: 'pty_host', code: 'heartbeat_stall', outcome: 'answered' });
+      expect(report.fingerprint).toEqual(['pty-host', 'heartbeat-stall']);
+      expect(report.contexts.pty_host).toMatchObject({
+        unansweredMs: 11_000,
+        outcome: 'answered',
+        answeredAfterMs: 12_000,
+        neverAnswered: false,
+        inFlight: ['spawn'],
+        heldStep: WATCHDOG_LINE,
+      });
+      expect(report.contexts.utility_process).toEqual({ service: 'kangentic-pty-host', stderrTail: HOST_STDERR });
+    });
+
+    it('says a host never answered when the ping runs out its budget, with its stderr', async () => {
+      await hostWithPingSent();
+      await vi.advanceTimersByTimeAsync(6_000);
+      watchdogWritesDuringStall();
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const reports = stallReports();
+      expect(reports).toHaveLength(1);
+      expect(reports[0].tags.outcome).toBe('no_answer');
+      expect(reports[0].contexts.pty_host).toMatchObject({ answeredAfterMs: null, neverAnswered: true, heldStep: WATCHDOG_LINE });
+      expect(reports[0].contexts.utility_process.stderrTail).toBe(HOST_STDERR);
+    });
+
+    it('says the host exited, with the stderr the exit took from the transport, read once its pipe drained', async () => {
+      const { child } = await hostWithPingSent();
+      await vi.advanceTimersByTimeAsync(11_000);
+      // The dying host's last stderr lands after its exit (Electron drains the pipe after it).
+      let finishDrain = (): void => undefined;
+      // Held here: the exit restarts the host at once, and the new host gets a tail of its own.
+      const dyingTail = stderrTails[stderrTails.length - 1];
+      dyingTail.drain = new Promise<void>((resolve) => {
+        finishDrain = resolve;
+      });
+      // The exit drops the transport's own tail before the ping's rejection runs.
+      child.emit('exit', 1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stallReports(), 'the report waits for the pipe').toHaveLength(0);
+      dyingTail.text = HOST_STDERR;
+      finishDrain();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const reports = stallReports();
+      expect(reports).toHaveLength(1);
+      expect(reports[0].tags.outcome).toBe('host_exited');
+      expect(reports[0].contexts.pty_host).toMatchObject({ neverAnswered: true, heldStep: WATCHDOG_LINE });
+      expect(reports[0].contexts.utility_process.stderrTail).toBe(HOST_STDERR);
+    });
+
+    it('names no held step from a watchdog line written before this stall', async () => {
+      // A hold long before (a spawn an hour earlier) is still the tail's newest line. With no new
+      // line, main's own loop was held or the host's watchdog never ran: naming the old step
+      // would blame the wrong work.
+      const { transport } = makeTransport();
+      transport.start();
+      const child = latestChild();
+      stderrTails[stderrTails.length - 1].text = HOST_STDERR;
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(5_000 + 16_000);
+
+      const reports = stallReports();
+      expect(reports).toHaveLength(1);
+      expect(reports[0].contexts.pty_host).toMatchObject({ heldStep: null });
+      expect(reports[0].contexts.utility_process.stderrTail).toBe(HOST_STDERR);
+    });
+
+    it('names the timer overshoot when the clock jumped past the threshold', async () => {
+      // A loop held by main itself shows as a timer that fires late. Losing timerLateMs would
+      // leave a stall on main's own loop indistinguishable from one on the host's.
+      const { child, pingId } = await hostWithPingSent();
+      await vi.advanceTimersByTimeAsync(10_999);
+      vi.setSystemTime(Date.now() + 700);
+      await vi.advanceTimersByTimeAsync(1);
+      reply(child, pingId, null);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const reports = stallReports();
+      expect(reports).toHaveLength(1);
+      expect(reports[0].contexts.pty_host).toMatchObject({ timerLateMs: 700 });
+    });
+
+    it('lists the requests waiting beside the ping once each, sorted', async () => {
+      // A report that repeated or shuffled the methods would group differently run to run.
+      const { transport, child, pingId } = await hostWithPingSent();
+      for (const method of ['spawn', 'getDiagnostics', 'spawn', 'exec'] as const) {
+        void transport.request(method, {} as never).catch(() => undefined);
+      }
+      await vi.advanceTimersByTimeAsync(11_000);
+      reply(child, pingId, null);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const reports = stallReports();
+      expect(reports).toHaveLength(1);
+      expect(reports[0].contexts.pty_host.inFlight).toEqual(['exec', 'getDiagnostics', 'spawn']);
+    });
+
+    it('reports nothing when the host answers a stalled ping with an error of its own', async () => {
+      // Only a lost host or a spent budget ends a stall; a plain error reply is neither, and a
+      // report claiming an outcome for it would be invented.
+      const { child, pingId } = await hostWithPingSent();
+      await vi.advanceTimersByTimeAsync(11_000);
+      child.emit('message', { type: 'reply', id: pingId, ok: false, error: { message: 'x', name: 'Error' } });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(stallReports()).toHaveLength(0);
+    });
+
+    describe('at quit', () => {
+      let directory: string;
+      let stallAtQuitFilePath: string;
+
+      beforeEach(() => {
+        directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-host-stall-at-quit-'));
+        stallAtQuitFilePath = path.join(directory, 'pty-host-stall-at-quit.json');
+      });
+
+      afterEach(() => {
+        fs.rmSync(directory, { recursive: true, force: true });
+      });
+
+      it('records a stall the app quits on for the next launch, sends nothing from the quit, and never reports the quit\'s exit', async () => {
+        // Nothing sent from the quit path lands (synchronous-shutdown.md, rule 3), so a quit
+        // writes the stall to disk and the next launch reports it.
+        const { transport, child } = await hostWithPingSent(stallAtQuitFilePath);
+        await vi.advanceTimersByTimeAsync(6_000);
+        watchdogWritesDuringStall();
+        await vi.advanceTimersByTimeAsync(5_000);
+
+        transport.shutdown();
+        child.emit('exit', 0);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stallReports(), 'the quit path sends nothing').toHaveLength(0);
+
+        reportPtyHostStallFromLastRun(stallAtQuitFilePath);
+        const reports = stallReports();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].tags.outcome).toBe('shutdown');
+        expect(reports[0].contexts.pty_host).toMatchObject({ neverAnswered: true, heldStep: WATCHDOG_LINE });
+        expect(reports[0].contexts.utility_process.stderrTail).toBe(HOST_STDERR);
+        expect(fs.existsSync(stallAtQuitFilePath), 'read once, then gone').toBe(false);
+      });
+
+      it('writes nothing for a quit with no stall', async () => {
+        const { transport } = await hostWithPingSent(stallAtQuitFilePath);
+        await vi.advanceTimersByTimeAsync(2_000);
+        transport.shutdown();
+        expect(fs.existsSync(stallAtQuitFilePath)).toBe(false);
+      });
+
+      it('still shuts the host down when the stall cannot be written', async () => {
+        // A failed disk write must never block the quit: losing the try/catch would throw out of
+        // shutdown() and the host would never be told to exit.
+        const blocker = path.join(directory, 'not-a-directory');
+        fs.writeFileSync(blocker, 'file');
+        const { transport, child } = await hostWithPingSent(path.join(blocker, 'pty-host-stall-at-quit.json'));
+        await vi.advanceTimersByTimeAsync(11_000);
+
+        expect(() => transport.shutdown()).not.toThrow();
+        expect(child.postedTypes()).toContain('shutdown');
+        expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/could not record a heartbeat stall/), expect.anything());
+      });
+
+      it('never reports or records a stall that only begins after the quit started', async () => {
+        // The quit saw no stall yet, so the host's exit that follows is the quit's. Without the
+        // guard in endStall the late stall would report a host_exited the quit caused.
+        const { transport, child } = await hostWithPingSent(stallAtQuitFilePath);
+        await vi.advanceTimersByTimeAsync(3_000);
+        transport.shutdown();
+        await vi.advanceTimersByTimeAsync(9_000);
+        child.emit('exit', 0);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(stallReports()).toHaveLength(0);
+        expect(fs.existsSync(stallAtQuitFilePath)).toBe(false);
+      });
+    });
+
+    it('sends nothing for a ping answered inside the threshold, and once per run for repeated stalls', async () => {
+      const { child, pingId } = await hostWithPingSent();
+      await vi.advanceTimersByTimeAsync(10_000);
+      reply(child, pingId, null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stallReports()).toHaveLength(0);
+
+      // Two stalls in a row, each answered late.
+      for (let stall = 0; stall < 2; stall++) {
+        await vi.advanceTimersByTimeAsync(5_000);
+        const nextPing = lastRequestId(child);
+        await vi.advanceTimersByTimeAsync(12_000);
+        reply(child, nextPing, null);
+        await vi.advanceTimersByTimeAsync(0);
+      }
+      expect(stallReports()).toHaveLength(1);
+    });
   });
 
   it('forks from the unpacked tree on Windows and Linux, and from inside the asar on macOS', () => {

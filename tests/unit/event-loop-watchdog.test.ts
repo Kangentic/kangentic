@@ -5,10 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * The retrieval worker's event-loop watchdog (Sentry DESKTOP-1Q). A worker that
- * hangs is killed after 15 s and its latch report used to say only "exit code
- * unknown". The watchdog thread writes which step held the loop to stderr, which
- * the restart policy already puts in the report.
+ * The utility processes' event-loop watchdog (Sentry DESKTOP-1Q, DESKTOP-43). A
+ * retrieval worker that hangs is killed after 15 s and its latch report used to
+ * say only "exit code unknown"; a pty host that misses its heartbeat reported
+ * only the threshold. The watchdog thread writes which step held the loop to
+ * stderr, which the restart policy and the host's stall report put in the report.
  *
  * These run a REAL worker thread and hold this thread's loop with a busy wait,
  * because the property that matters is that the line leaves while the loop is
@@ -23,7 +24,7 @@ import {
   WATCHDOG_THREAD_SOURCE,
   type EventLoopWatchdog,
   type EventLoopWatchdogOptions,
-} from '../../src/main/retrieval/worker/event-loop-watchdog';
+} from '../../src/main/utility-process/event-loop-watchdog';
 import { watchdogLine } from '../../src/main/utility-process/stderr-tail';
 import * as eventLoopLag from '../../src/main/diagnostics/event-loop-lag';
 import { setSyncSpanLabelSink, timeSyncWork } from '../../src/main/diagnostics/event-loop-lag';
@@ -352,17 +353,17 @@ describe('event-loop watchdog', () => {
     for (const moduleName of requires) expect(moduleName.startsWith('node:')).toBe(true);
   });
 
-  it('is one of the two worker threads in src/main, both loading only node built-ins', () => {
-    // The second is the pty host's spawn worker (started in pty-host-entry.ts),
-    // which keeps process starts off the thread that carries terminal I/O. Its
-    // graph is held to built-ins and pure modules by pty-host-boundary.test.ts.
+  it('is one of the worker-thread users in src/main, all loading only node built-ins', () => {
+    // The pty host's entry starts the spawn worker, which keeps process starts off
+    // the thread that carries terminal I/O. Its graph is held to built-ins and pure
+    // modules by pty-host-boundary.test.ts.
     expect(
       sourceFilesContaining(/['"](node:)?worker_threads['"]/),
       'A new worker thread in src/main: see .claude/rules/retrieval-out-of-process.md and pty-host-out-of-process.md before adding one, and update this list if it is deliberate.',
     ).toEqual([
       'pty/host/pty-host-entry.ts',
       'pty/host/spawn-worker/spawn-worker-entry.ts',
-      'retrieval/worker/event-loop-watchdog.ts',
+      'utility-process/event-loop-watchdog.ts',
     ]);
   });
 
@@ -394,13 +395,17 @@ describe('event-loop watchdog', () => {
     expect(stderrText).toMatch(/\[pipe-watchdog\] event loop held \d+ s outside any labelled step\n/);
   });
 
-  it('is started first in the worker\'s initialize(), before the database is configured', () => {
-    const workerSource = fs.readFileSync(
-      path.join(__dirname, '..', '..', 'src', 'main', 'retrieval', 'worker', 'retrieval-worker.ts'),
-      'utf8',
-    );
+  // Both utility processes run it, the retrieval worker and the pty host (Sentry DESKTOP-43:
+  // a heartbeat stall could not say what held the host). The entries cannot be imported in a
+  // test (each reads `process.parentPort` at module scope), so this reads their source.
+  it.each([
+    ['retrieval worker', ['retrieval', 'worker', 'retrieval-worker.ts'], '[retrieval-worker]'],
+    ['pty host', ['pty', 'host', 'pty-host-entry.ts'], '[pty-host]'],
+  ])('is started first in the %s\'s initialize(), before the database is configured', (_name, segments, prefix) => {
+    const fileName = segments[segments.length - 1];
+    const workerSource = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main', ...segments), 'utf8');
     const layoutChanged =
-      'retrieval-worker.ts no longer has a top-level initialize() calling both functions; update this scan to the new layout.';
+      `${fileName} no longer has a top-level initialize() calling both functions; update this scan to the new layout.`;
     const functionStart = workerSource.indexOf('function initialize(');
     expect(functionStart, layoutChanged).toBeGreaterThanOrEqual(0);
     // A top-level function ends at the first closing brace in column 0.
@@ -413,6 +418,8 @@ describe('event-loop watchdog', () => {
     expect(watchdogCall, layoutChanged).toBeGreaterThanOrEqual(0);
     expect(databaseCall, layoutChanged).toBeGreaterThanOrEqual(0);
     expect(watchdogCall, 'startEventLoopWatchdog() must run before the database is configured.').toBeLessThan(databaseCall);
+    // Each process names itself, so a tail says whose loop was held.
+    expect(initializeBody).toContain(`prefix: '${prefix}'`);
   });
 });
 
@@ -454,7 +461,7 @@ describe('event-loop watchdog when the thread cannot start', () => {
     }));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      const freshWatchdog = await import('../../src/main/retrieval/worker/event-loop-watchdog');
+      const freshWatchdog = await import('../../src/main/utility-process/event-loop-watchdog');
       const freshLag = await import('../../src/main/diagnostics/event-loop-lag');
 
       let started: EventLoopWatchdog | undefined;
@@ -471,6 +478,31 @@ describe('event-loop watchdog when the thread cannot start', () => {
 
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('did not start'), expect.any(Error));
       expect(freshLag.timeSyncWork('test:no-thread', () => 'work result')).toBe('work result');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    ['the given prefix', { prefix: '[pty-host]' }, '[pty-host] event-loop watchdog did not start'],
+    ['the retrieval worker prefix when none is given', undefined, '[retrieval-worker] event-loop watchdog did not start'],
+  ])('names its process in the start warning: %s', async (_name, options, expectedStart) => {
+    vi.resetModules();
+    vi.doMock('node:worker_threads', () => ({
+      Worker: class {
+        constructor() {
+          throw new Error('no threads');
+        }
+      },
+    }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const freshWatchdog = await import('../../src/main/utility-process/event-loop-watchdog');
+      const started = freshWatchdog.startEventLoopWatchdog(options);
+      await started.stop();
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0][0]).startsWith(expectedStart)).toBe(true);
     } finally {
       warnSpy.mockRestore();
     }
@@ -498,7 +530,7 @@ describe('event-loop watchdog when the thread cannot start', () => {
     const freshLag = await import('../../src/main/diagnostics/event-loop-lag');
     let started: EventLoopWatchdog | undefined;
     try {
-      const freshWatchdog = await import('../../src/main/retrieval/worker/event-loop-watchdog');
+      const freshWatchdog = await import('../../src/main/utility-process/event-loop-watchdog');
       started = freshWatchdog.startEventLoopWatchdog();
       expect(constructed.instance).not.toBeNull();
 
@@ -541,7 +573,7 @@ describe('event-loop watchdog when the thread cannot start', () => {
     let started: EventLoopWatchdog | undefined;
     let budgetTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const freshWatchdog = await import('../../src/main/retrieval/worker/event-loop-watchdog');
+      const freshWatchdog = await import('../../src/main/utility-process/event-loop-watchdog');
       started = freshWatchdog.startEventLoopWatchdog();
       expect(constructed.instance).not.toBeNull();
 
@@ -616,13 +648,13 @@ describe('setSyncSpanLabelSink', () => {
     expect(replacementSeen).toEqual(['inner', null]);
   });
 
-  it('is set only by the retrieval worker\'s watchdog, so main\'s spans keep their one null check', () => {
+  it('is set only by the utility processes\' watchdog, so main\'s spans keep their one null check', () => {
     expect(
       sourceFilesContaining(/setSyncSpanLabelSink\(/),
       'A new file mentions setSyncSpanLabelSink( (a caller, or prose in a comment). Main must not set a sink; update this list only if the new file is not one.',
     ).toEqual([
       'diagnostics/event-loop-lag.ts',
-      'retrieval/worker/event-loop-watchdog.ts',
+      'utility-process/event-loop-watchdog.ts',
     ]);
   });
 });

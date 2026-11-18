@@ -1,6 +1,7 @@
 import { Terminal, type ITerminalAddon } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { activateUnicode11 } from '../../../shared/xterm-unicode11';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { SERIALIZED_SCROLLBACK_LINES } from '../host/protocol';
 import type { TerminalCursor } from './terminal-mode-reset';
 
@@ -59,6 +60,42 @@ interface TerminalWithAltBuffer {
   };
 }
 
+/** What xterm's write buffer calls to parse one queued chunk. */
+type WriteBufferAction = (data: string | Uint8Array, promiseResult?: boolean) => void | Promise<boolean>;
+
+/**
+ * The write buffer that runs the parse, reached through the same private
+ * `_core` door. `write()` only queues a chunk; xterm parses it later, on a
+ * timer of its own, by calling `_action` for each queued chunk inside
+ * `WriteBuffer._innerWrite`. So a span around `write()` measures the enqueue
+ * and never the parse, and a watchdog line for a loop held in the parse would
+ * name no step. Wrapping `_action` is the one place the parse can be labeled
+ * (Sentry DESKTOP-43). `_action` is an instance field set in the
+ * WriteBuffer's constructor, so replacing it changes only this terminal.
+ */
+interface TerminalWithWriteBuffer {
+  _core?: { _writeBuffer?: { _action?: WriteBufferAction } };
+}
+
+/** The span label of the headless parse, as a heartbeat stall's watchdog line names it. */
+export const HEADLESS_PARSE_SPAN_LABEL = 'pty:headless-parse';
+/** The span label of the serialize that answers a replay or a seed frame. */
+export const HEADLESS_SERIALIZE_SPAN_LABEL = 'pty:headless-serialize';
+
+/**
+ * Run every parse of `terminal`'s queued output inside a `timeSyncWork` span.
+ * Returns false and changes nothing when the seam is missing (an xterm upgrade
+ * moved it): the parse then runs unlabeled, which costs only the label.
+ * `headless-frame.test.ts` fails when that happens.
+ */
+export function labelHeadlessParse(terminal: Terminal): boolean {
+  const writeBuffer = (terminal as unknown as TerminalWithWriteBuffer)._core?._writeBuffer;
+  const parse = writeBuffer?._action;
+  if (!writeBuffer || typeof parse !== 'function') return false;
+  writeBuffer._action = (data, promiseResult) => timeSyncWork(HEADLESS_PARSE_SPAN_LABEL, () => parse(data, promiseResult));
+  return true;
+}
+
 /**
  * A per-session HEADLESS xterm parser kept in the MAIN process, fed the same
  * PTY output as the raw scrollback ring. Its serialized frame is a snapshot of
@@ -97,6 +134,7 @@ export class HeadlessFrameBuffer {
     // UNWIND(xterm.js#4531): the day the addon serializes links, a replay can carry them
     // only if this parser kept them, so this line goes with that upgrade.
     this.terminal.parser.registerOscHandler(8, () => true);
+    labelHeadlessParse(this.terminal);
   }
 
   /** Feed a raw PTY chunk into the parser (the same bytes the scrollback ring receives). */
@@ -266,10 +304,10 @@ export class HeadlessFrameBuffer {
         // serializer disposed mid-sample) would otherwise escape as an uncaught
         // main-process exception instead of rejecting this promise.
         try {
-          resolve(
-            this.serializer.serialize({ scrollback: historyRows })
-              + this.scrollRegionSuffix(),
-          );
+          resolve(timeSyncWork(
+            HEADLESS_SERIALIZE_SPAN_LABEL,
+            () => this.serializer.serialize({ scrollback: historyRows }) + this.scrollRegionSuffix(),
+          ));
         } catch (error) {
           reject(error instanceof Error ? error : new Error(String(error)));
         }

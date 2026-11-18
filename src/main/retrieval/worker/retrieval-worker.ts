@@ -20,7 +20,7 @@ import { setAfterCommitHook } from '../../db/transaction';
 import { relaySlowSyncSpans, timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
 import { createCheckpointPacer } from './checkpoint-pacing';
-import { startEventLoopWatchdog } from './event-loop-watchdog';
+import { startEventLoopWatchdog } from '../../utility-process/event-loop-watchdog';
 import { installWriteBudget } from '../write-budget';
 import { retrievalHandlers, type WorkerContext } from './methods';
 import type { KnowledgeGraphBuildProgress } from '../../../shared/types';
@@ -66,7 +66,7 @@ function initialize(message: InitMessage): void {
   // First, so a startup that hangs is named too. Production as well as dev:
   // the slow-span relay below is dev-only, and this is what a packaged build
   // has when a call times out.
-  startEventLoopWatchdog();
+  startEventLoopWatchdog({ prefix: '[retrieval-worker]' });
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
   // Checkpoints are PASSIVE and come from two places only: main's 5 s request
   // (checkpoint-driver.ts), which covers what the pty host writes, and the

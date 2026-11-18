@@ -3,7 +3,8 @@
  * every node-pty instance, so PTY output never crosses the main process's
  * event loop (VS Code runs its terminals the same way). The work itself is in
  * `pty-host-core.ts`; this file adds the message loop, the host's own database
- * connection for raw transcripts, and the dev-only relays.
+ * connection for raw transcripts, the event-loop watchdog
+ * (`utility-process/event-loop-watchdog.ts`), and the dev-only relays.
  *
  * Bundled by esbuild as its own entry (`.vite/build/pty-host.js`) and forked
  * from the unpacked tree, so node-pty and better-sqlite3 load from real
@@ -18,6 +19,7 @@ import { closeProjectDb, configureProjectDbAccess, getProjectDb, setWalAutoCheck
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { agentRegistry } from '../../agent/agent-registry';
 import { relaySlowSyncSpans, startEventLoopLagMonitor } from '../../diagnostics/event-loop-lag';
+import { startEventLoopWatchdog } from '../../utility-process/event-loop-watchdog';
 import { setTerminalTraceRelay } from '../terminal-trace';
 import { skipConsoleListHelper } from '../spawn/conpty-console-list';
 import { loadWin32OrphanApi } from '../process-tag/win32-reader';
@@ -137,6 +139,11 @@ function createSpawnService(message: PtyHostInitMessage, hooks: SpawnServiceHook
 }
 
 function initialize(message: PtyHostInitMessage): void {
+  // First, so a startup that hangs is named too, in production as well as dev.
+  // A heartbeat stall report reads the line it writes from this host's stderr
+  // (Sentry DESKTOP-43), and every `timeSyncWork` span here (`pty:spawn`,
+  // `pty:data`, `pty:headless-parse`, `transcript:flush`) names the step.
+  startEventLoopWatchdog({ prefix: '[pty-host]' });
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
   setMainExecutable(message.mainExecutable);
   // The retrieval worker runs the PASSIVE checkpoints for every process; a

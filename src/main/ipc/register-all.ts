@@ -13,6 +13,7 @@ import { ProjectRepository } from '../db/repositories/project-repository';
 import { ProjectGroupRepository } from '../db/repositories/project-group-repository';
 import { SessionManager } from '../pty/session-manager';
 import { UtilityPtyHostTransport } from '../pty/host/utility-pty-host-transport';
+import { PTY_HOST_STALL_AT_QUIT_FILE_NAME } from '../pty/host/pty-host-report';
 import { setOffMainExecutor } from '../utility-process/off-main-exec';
 import { setOffMainPtySpawner } from '../utility-process/off-main-pty';
 import { setOffMainCliSpawner } from '../utility-process/off-main-cli';
@@ -151,7 +152,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // Every PTY runs in the `kangentic-pty-host` utility process, so terminal
   // output never crosses this process's event loop. Forked now, ahead of the
   // first spawn.
-  const ptyHostTransport = new UtilityPtyHostTransport({ projectsDir: PATHS.projectsDir });
+  const ptyHostTransport = new UtilityPtyHostTransport({
+    projectsDir: PATHS.projectsDir,
+    stallAtQuitFilePath: path.join(PATHS.configDir, PTY_HOST_STALL_AT_QUIT_FILE_NAME),
+  });
   const sessionManager = new SessionManager({ ptyHostTransport });
   ptyHostTransport.start();
   // SSH hosts (#913): the host table, the service that connects them, and the resolver both spawn
