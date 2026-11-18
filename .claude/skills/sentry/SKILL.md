@@ -83,19 +83,21 @@ A project target is `kangentic/desktop` or `kangentic/mobile`. An issue target i
 command per call:
 
 ```
-sentry api organizations/kangentic/issues/ -f project=4511996066660352 -f "query=is:unresolved is:unassigned environment:production" -f statsPeriod=30d -f limit=100 --json --fields shortId,title,level,count,userCount,firstSeen,lastSeen,assignedTo
+sentry api organizations/kangentic/issues/ -f project=4511996066660352 -f "query=is:unresolved is:unassigned environment:production" -f statsPeriod=30d -f limit=100 --json --fields 'shortId,title,level,count,userCount,firstSeen,lastSeen,assignedTo'
 sentry issue view kangentic/DESKTOP-1N
-sentry issue view kangentic/DESKTOP-1N --json --fields event.contexts.native_crash,event.contexts.chromium_stability_report,event.contexts.crashpad,event.contexts.host_memory,event.contexts.utility_process
+sentry issue view kangentic/DESKTOP-1N --json --fields 'event.contexts.native_crash,event.contexts.chromium_stability_report,event.contexts.crashpad,event.contexts.host_memory,event.contexts.utility_process'
 sentry api organizations/kangentic/issues/DESKTOP-1N/tags/release/
 sentry api organizations/kangentic/issues/DESKTOP-1N/ -X PUT -f assignedTo=user:<id>
 ```
 
-- **The triage list** is `sentry api` on the org's issues endpoint, not `sentry issue list`. On
-  0.49.0, `issue list --json --fields` returns one empty object per row, while `issue view`,
-  `auth whoami` and `sentry api` all honor `--fields` (checked 2026-11-17). Bare `issue list --json`
-  is about 4 KB a row, and the readable table cuts titles off. After an upgrade, try
-  `issue list --fields` again, and switch back if it returns filled rows. Run the list once per
-  project; for mobile pass `-f project=4511808149651456`. `--json` wraps the response as
+- **Quote every `--fields` list in single quotes.** PowerShell reads an unquoted `a,b` as an
+  array, and the CLI then returns `{}` for every row or issue, which looks like a CLI bug. Single
+  quotes work the same in PowerShell and Bash. A single field (`--fields id`) needs none.
+- **The triage list** is `sentry api` on the org's issues endpoint. `sentry issue list --json
+  --fields '...'` returns the same rows under `data` (checked on 0.49.0, 2026-11-17). An earlier
+  note here said it returned empty objects, but that was the unquoted list above. Bare
+  `issue list --json` is about 4 KB a row, and the readable table cuts titles off. Run the list
+  once per project; for mobile pass `-f project=4511808149651456`. `--json` wraps the response as
   `{status, statusText, body}`, with one row per issue in `body`, 100 at most per call
   (`--cursor next` pages). `query` takes Sentry issue search syntax, and the query above is the
   triage set. Retention is 30 days, so no `statsPeriod` reaches further back. The readable
