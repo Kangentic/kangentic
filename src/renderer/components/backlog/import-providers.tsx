@@ -95,7 +95,7 @@ export interface Provider {
   icon: React.ReactNode;
   available: boolean;
   comingSoon?: boolean;
-  /** Present for a provider that signs in through Kangentic (Asana, Jira, Linear, Trello). */
+  /** Present for a provider that signs in through Kangentic (Asana, Jira, Linear, Trello, GitLab). */
   auth?: ProviderAuth;
   sourceTypes: SourceTypeOption[];
 }

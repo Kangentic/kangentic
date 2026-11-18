@@ -35,6 +35,8 @@ src/main/boards/
     comments-section.ts  # the "## Comments" section ADO and Jira fold in at import
     loopback-sign-in.ts  # the one loopback server for a browser sign-in: Linear, Jira, Trello, GitLab
     pkce.ts              # createPkcePair: the PKCE verifier and S256 challenge Linear and GitLab use
+    sealed-token.ts      # the sealed token a kangentic.com sign-in hands back: Jira, Trello
+    index.ts             # barrel
   adapters/
     github-common/    # shared `gh` CLI client (not a BoardAdapter)
     github-issues/
