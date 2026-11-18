@@ -69,9 +69,19 @@ not, or when the two sign with a different endpoint, account or profile.
 
 Then `gh workflow run signing-credentials.yml --ref main` gets a fresh answer.
 
-The Azure client secret has an end date that only the app registration in Entra shows. The
-repository secret was last set on 2026-03-09, and Entra allows 24 months at most. The nightly finds
-a dead secret the next morning, not before.
+Two end dates are known as of 2026-11-17:
+
+- **The Developer ID certificate ends on 2027-02-01.** The nightly goes red on 2027-01-02, and
+  `/release` stops from then until the certificate is replaced. Apps already signed and notarized
+  keep opening after that date. Only new builds need the new certificate.
+- **The Azure client secret's end date is not readable from here.** Only the app registration in
+  Entra shows it. The repository secret was last set on 2026-03-09, and Entra allows 24 months at
+  most. The nightly finds a dead secret the next morning, not before.
+
+The workflow was proven on a scratch branch on 2026-11-17 before it reached main: one green run,
+and a red run for each of a made-up certificate profile, a removed sign step, a 4,000 day
+certificate threshold and a made-up Sentry token. Its first run is also what found that the
+installers had no timestamp (see [Deployment](deployment.md), Code Signing Secrets).
 
 ## Agent CLIs
 
@@ -89,6 +99,12 @@ vitest itself exits 0 on, and a CLI that did not install.
 
 It also runs on a pull request that touches the rig's own files. No adapter path is in that filter,
 so a vendor's release never turns an unrelated pull request red.
+
+A run by hand in a container on 2026-11-17 took about five minutes: a minute for `npm ci`, three
+to install the CLIs and twenty seconds for the eight tests. All eight passed, on Kimi Code 2.6.3,
+Goose 1.60.1, OpenCode 1.19.6 and 2.3.2, Codex 0.169.1, Gemini 0.68.0, Aider 0.86.2 and Droid
+1.14.0. The same container proved the red cases: every test skipped, one CLI removed, one vendor's
+installer unreachable, and no report at all.
 
 Claude is not in the set. The team runs it all day from `npm start`, so a change in it is noticed
 within hours.
