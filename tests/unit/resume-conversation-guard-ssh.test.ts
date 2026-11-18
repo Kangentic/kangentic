@@ -108,6 +108,46 @@ describe('a conversation that ran on a host', () => {
     expect(verdict).toBe('unknown');
   });
 
+  describe('that never ran and left no report, with a transcript path missing from this disk', () => {
+    const noTurns = { total_input_tokens: 0, total_output_tokens: 0, total_cost_usd: 0 };
+
+    it('is unknown when the spawn is on the host, and never asks the adapter to prove it', async () => {
+      const proveConversationGone = vi.fn<NonNullable<AgentAdapter['proveConversationGone']>>().mockResolvedValue(true);
+      expect(fs.existsSync(path.join(projectPath, '.kangentic', 'sessions', RECORD_ID))).toBe(false);
+      expect(fs.existsSync(HOST_TRANSCRIPT)).toBe(false);
+
+      const verdict = await assessResumeConversation({
+        adapter: adapterWithProof(proveConversationGone),
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', noTurns)],
+        cwd: projectPath,
+        projectPath,
+        place: sshPlace('host-a'),
+      });
+
+      expect(verdict).toBe('unknown');
+      expect(proveConversationGone).not.toHaveBeenCalled();
+    });
+
+    it('is unknown when only the record ran on the host, and never asks the adapter to prove it', async () => {
+      const proveConversationGone = vi.fn<NonNullable<AgentAdapter['proveConversationGone']>>().mockResolvedValue(true);
+      expect(fs.existsSync(path.join(projectPath, '.kangentic', 'sessions', RECORD_ID))).toBe(false);
+
+      const verdict = await assessResumeConversation({
+        adapter: adapterWithProof(proveConversationGone),
+        agentSessionId: AGENT_SESSION_ID,
+        records: [recordOn('host-a', noTurns)],
+        cwd: projectPath,
+        projectPath,
+        // No spawn place is given, so the place check is skipped and only the record's own host decides.
+        place: undefined,
+      });
+
+      expect(verdict).toBe('unknown');
+      expect(proveConversationGone).not.toHaveBeenCalled();
+    });
+  });
+
   it('reads the same whatever copy this computer holds: empty, stale, or none, since only the host can say', async () => {
     const copy = path.join(projectPath, 'mirror', '.kangentic', 'transcripts', 'agent', `${AGENT_SESSION_ID}.json`);
     const assess = (): ReturnType<typeof assessResumeConversation> => assessResumeConversation({
