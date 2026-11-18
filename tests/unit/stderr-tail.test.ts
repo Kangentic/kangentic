@@ -10,6 +10,7 @@ import {
   redactHomeDirectory,
   summarizeStderrTail,
   watchdogLine,
+  watchdogLineCount,
 } from '../../src/main/utility-process/stderr-tail';
 
 /**
@@ -222,6 +223,28 @@ describe('watchdogLine', () => {
 
   it('returns null for an empty tail', () => {
     expect(watchdogLine('')).toBeNull();
+  });
+});
+
+describe('watchdogLineCount', () => {
+  it('counts none, one and two watchdog lines', () => {
+    expect(watchdogLineCount('')).toBe(0);
+    expect(watchdogLineCount('Error: Cannot find module\n  at load')).toBe(0);
+    expect(watchdogLineCount('[pty-host] event loop held 5 s in pty:data\n')).toBe(1);
+    expect(
+      watchdogLineCount('[pty-host] event loop held 5 s in a\nnoise\n[pty-host] event loop held 6 s in b\n'),
+    ).toBe(2);
+  });
+
+  it('counts the phrase as written, even repeated on one line', () => {
+    expect(watchdogLineCount('event loop held, event loop held')).toBe(2);
+  });
+
+  it('is exposed on StderrTail, counting the retained text', () => {
+    const tail = makeTail();
+    expect(tail.watchdogLineCount()).toBe(0);
+    tail.append('[pty-host] event loop held 5 s in a\nnoise\n[pty-host] event loop held 6 s in b\n');
+    expect(tail.watchdogLineCount()).toBe(2);
   });
 });
 
