@@ -43,6 +43,7 @@ const EXPECTED_PROVIDERS: ExternalSource[] = [
   'trello',
   'obsidian_notes',
   'obsidian_checklist',
+  'gitlab',
 ];
 
 describe('boardRegistry', () => {
@@ -88,6 +89,7 @@ describe('boardRegistry', () => {
     expect(boardRegistry.getOrThrow('obsidian_notes').status).toBe('stable');
     expect(boardRegistry.getOrThrow('obsidian_checklist').status).toBe('stable');
     expect(boardRegistry.getOrThrow('trello').status).toBe('stable');
+    expect(boardRegistry.getOrThrow('gitlab').status).toBe('stable');
   });
 
   it('getOrThrow throws for unknown provider id', () => {
@@ -111,6 +113,15 @@ describe('boardRegistry', () => {
     expect(result.available).toBe(true);
     expect(result.authenticated).toBe(false);
     expect(result.error).toMatch(/not connected to linear/i);
+  });
+
+  it('gitlab reports not-connected via checkCli when no credential is stored (not a stub)', async () => {
+    const adapter = boardRegistry.getOrThrow('gitlab');
+    const result = await adapter.checkCli();
+    // GitLab signs in through Kangentic, so `available` stays true; Connect GitLab is the fix.
+    expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.error).toMatch(/not connected to gitlab/i);
   });
 
   it('trello reports not-connected via checkCli when no token is stored (not a stub)', async () => {

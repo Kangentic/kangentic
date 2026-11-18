@@ -9,6 +9,7 @@ import { LinearSetupDialog } from '../linear/LinearSetupDialog';
 import { LinearTeamPicker } from '../linear/LinearTeamPicker';
 import { TrelloSetupDialog } from '../trello/TrelloSetupDialog';
 import { TrelloBoardPicker } from '../trello/TrelloBoardPicker';
+import { GitLabConnectDialog } from './gitlab/GitLabConnectDialog';
 import { translateText } from '../../i18n/translate';
 import type { LocalizedText } from '../../../shared/i18n/text';
 import type { BoardConnectPrefill, ExternalSource, ImportSource } from '../../../shared/types';
@@ -205,6 +206,27 @@ export const PROVIDERS: Provider[] = [
     ],
   },
   {
+    id: 'gitlab',
+    label: 'GitLab', // i18n-ok: a provider's own name
+    icon: <ArtifactPlatformLogo platformId="gitlab" size={16} />,
+    available: true,
+    auth: {
+      getStatus: (target) => window.electronAPI.backlog.gitlab.authStatus(target),
+      SetupDialog: GitLabConnectDialog,
+      checksPastedLink: true,
+    },
+    sourceTypes: [
+      {
+        value: 'gitlab',
+        label: msg({ message: 'Issues', context: 'import source type' }),
+        description: msg({ message: 'Import from a GitLab project, group or board', context: 'import source type' }),
+        placeholder: 'https://gitlab.com/acme/web', // i18n-ok: an example URL
+        hint: msg({ message: 'Paste a GitLab project, group or board link.', context: 'import source type' }),
+        icon: <ArtifactPlatformLogo platformId="gitlab" size={16} />,
+      },
+    ],
+  },
+  {
     id: 'obsidian',
     label: 'Obsidian', // i18n-ok: a provider's own name
     icon: <ArtifactPlatformLogo platformId="obsidian" size={16} />,
@@ -273,6 +295,30 @@ export function getSourceLabel(source: ExternalSource): string {
     provider: translateText(provider.label),
     sourceType: translateText(sourceType.label),
   });
+}
+
+const SCOPE_KIND_LABELS = {
+  project: msg({ message: 'Project', context: 'import source type' }),
+  group: msg({ message: 'Group', context: 'import source type' }),
+} as const;
+
+/** A saved source on a server that is not the provider's own cloud ("GitLab Project on git.example.com"). */
+const SOURCE_ON_HOST_MESSAGE = msg({ message: '{sourceLabel} on {host}', context: 'import source' });
+
+/**
+ * The subtitle a saved source shows under its name. A source that says what it
+ * names (a GitLab project or group) shows that in place of its source type, and
+ * one on a self-managed server adds the server.
+ */
+export function getSavedSourceLabel(source: ImportSource): string {
+  const provider = getProviderForSource(source.source);
+  const sourceLabel = provider && source.scopeKind
+    ? translateText(SOURCE_LABEL_MESSAGE, {
+        provider: translateText(provider.label),
+        sourceType: translateText(SCOPE_KIND_LABELS[source.scopeKind]),
+      })
+    : getSourceLabel(source.source);
+  return source.host ? translateText(SOURCE_ON_HOST_MESSAGE, { sourceLabel, host: source.host }) : sourceLabel;
 }
 
 /** Get the provider icon for a source type. Returns the icon at its default size. */

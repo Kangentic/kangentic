@@ -136,6 +136,7 @@ Two agents have no transcript reader. For those, `registerArtifactDetection` sca
 | Jira | manual | `<site>.atlassian.net/browse/<KEY-1>` |
 | Linear | manual | `linear.app/<team>/issue/` and `/project/` |
 | Trello | manual | `trello.com/b/` (a board) and `trello.com/c/` (a card) |
+| GitLab | manual | `gitlab.com/<path>/-/issues/<n>`, `/-/work_items/<n>` and `/-/boards/<n>` |
 
 Not matched, because no share link shape could be confirmed: Cursor shared canvases, Mural,
 Microsoft Loop's own links, Lucidspark paths and Google Drawings. InVision and Abstract have shut

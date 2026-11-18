@@ -5,7 +5,7 @@ import { translateText } from '../../i18n/translate';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
-import { PROVIDERS, getSourceLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
+import { PROVIDERS, getSavedSourceLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
 import type { BoardConnectPrefill, ImportSource } from '../../../shared/types';
 import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
@@ -372,7 +372,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                     <Tooltip label={getSourceTypeOption(source.source)?.folder ? source.url : ''}>
                       <span className="text-sm text-fg truncate block">{source.label}</span>
                     </Tooltip>
-                    <span className="text-[11px] text-fg-faint">{getSourceLabel(source.source)}</span>
+                    <span className="text-[11px] text-fg-faint">{getSavedSourceLabel(source)}</span>
                   </div>
                   <button
                     type="button"

@@ -203,6 +203,7 @@ export const ARTIFACT_PLATFORMS: readonly ArtifactPlatform[] = [
   { id: 'jira', name: 'Jira', kind: 'tracker', detection: 'manual', nameFromUrl: jiraName, patterns: [{ host: '*.atlassian.net', path: /^\/browse\/[A-Z][A-Z0-9]*-\d+/ }] },
   { id: 'linear', name: 'Linear', kind: 'tracker', detection: 'manual', patterns: [{ host: 'linear.app', path: /^\/[^/]+\/(issue|project)\// }] },
   { id: 'trello', name: 'Trello', kind: 'tracker', detection: 'manual', patterns: [{ host: 'trello.com', path: /^\/[bc]\// }] },
+  { id: 'gitlab', name: 'GitLab', kind: 'tracker', detection: 'manual', patterns: [{ host: 'gitlab.com', path: /^\/.+\/-\/(issues|work_items|boards)\/\d+/ }] },
 ];
 
 /**

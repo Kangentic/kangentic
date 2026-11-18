@@ -50,10 +50,14 @@ export class ImportSourceStore {
   /**
    * Save a source, or return the one already saved for the same repository.
    * `prepared` carries what a validating provider (`BoardAdapter.prepareSource`)
-   * resolved: the label it read from the remote, and a repository it completed
-   * (typed JQL gains its site).
+   * resolved: the label it read from the remote, a repository it completed
+   * (typed JQL gains its site), and what the source names for its subtitle.
    */
-  add(source: ExternalSource, url: string, prepared?: { label: string; repository: string }): ImportSource {
+  add(
+    source: ExternalSource,
+    url: string,
+    prepared?: { label: string; repository: string; scopeKind?: ImportSource['scopeKind']; host?: string },
+  ): ImportSource {
     const config = this.readConfig();
     const sources = config.importSources ?? [];
 
@@ -75,6 +79,8 @@ export class ImportSourceStore {
       repository,
       url,
       createdAt: new Date().toISOString(),
+      ...(prepared?.scopeKind ? { scopeKind: prepared.scopeKind } : {}),
+      ...(prepared?.host ? { host: prepared.host } : {}),
     };
 
     sources.push(newSource);

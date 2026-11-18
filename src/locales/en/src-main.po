@@ -145,6 +145,11 @@ msgctxt "Jira connect error"
 msgid "Could not open the browser for Atlassian sign-in."
 msgstr "Could not open the browser for Atlassian sign-in."
 
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "Could not open the browser for GitLab sign-in."
+msgstr "Could not open the browser for GitLab sign-in."
+
 #: src/main/boards/adapters/linear/oauth.ts
 msgctxt "Linear connect error"
 msgid "Could not open the browser for Linear sign-in."
@@ -162,6 +167,16 @@ msgstr "Download Kangentic again to keep it updated."
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
 msgstr "Free system memory (commit) at the time: {remainingMb} MB."
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab sign-in browser page"
+msgid "GitLab sign-in did not finish. Return to Kangentic to try again."
+msgstr "GitLab sign-in did not finish. Return to Kangentic to try again."
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "GitLab sign-in timed out."
+msgstr "GitLab sign-in timed out."
 
 #: src/main/db/global-db-dialog.ts
 msgid "Kangentic can't create its data folder"
@@ -198,6 +213,11 @@ msgstr "Linear sign-in timed out."
 #: src/main/updater.ts
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "Move Kangentic to Applications to keep it updated."
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "No local port was free for GitLab sign-in."
+msgstr "No local port was free for GitLab sign-in."
 
 #: src/main/boards/adapters/jira/oauth.ts
 msgctxt "Jira connect error"
@@ -266,6 +286,11 @@ msgctxt "Jira connect error"
 msgid "Sign in with Atlassian is not available in this build."
 msgstr "Sign in with Atlassian is not available in this build."
 
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "Sign in with GitLab is not available in this build."
+msgstr "Sign in with GitLab is not available in this build."
+
 #: src/main/boards/adapters/linear/oauth.ts
 msgctxt "Linear connect error"
 msgid "Sign in with Linear is not available in this build."
@@ -323,6 +348,11 @@ msgstr "Trello sign-in was declined."
 #: src/main/window-open-policy.ts
 msgid "Unknown site"
 msgstr "Unknown site"
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr "You can close this tab and return to Kangentic."
 
 #: src/main/boards/adapters/jira/oauth.ts
 msgctxt "Jira sign-in browser page"

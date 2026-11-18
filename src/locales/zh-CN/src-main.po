@@ -163,6 +163,11 @@ msgctxt "Jira connect error"
 msgid "Could not open the browser for Atlassian sign-in."
 msgstr "无法打开浏览器进行 Atlassian 登录。"
 
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "Could not open the browser for GitLab sign-in."
+msgstr ""
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -183,6 +188,16 @@ msgstr "请重新下载 Kangentic 以保持更新。"
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
 msgstr "当时空闲系统内存（提交量）：{remainingMb} MB。"
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab sign-in browser page"
+msgid "GitLab sign-in did not finish. Return to Kangentic to try again."
+msgstr ""
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "GitLab sign-in timed out."
+msgstr ""
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
@@ -225,6 +240,11 @@ msgstr "Linear 登录超时。"
 #, fuzzy
 msgid "Move Kangentic to Applications to keep it updated."
 msgstr "请将 Kangentic 移至“应用程序”文件夹以保持更新。"
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "No local port was free for GitLab sign-in."
+msgstr ""
 
 #: src/main/boards/adapters/jira/oauth.ts
 #, fuzzy
@@ -300,6 +320,11 @@ msgctxt "Jira connect error"
 msgid "Sign in with Atlassian is not available in this build."
 msgstr "此版本不支持使用 Atlassian 登录。"
 
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab connect error"
+msgid "Sign in with GitLab is not available in this build."
+msgstr ""
+
 #: src/main/boards/adapters/linear/oauth.ts
 #, fuzzy
 msgctxt "Linear connect error"
@@ -366,6 +391,11 @@ msgstr "Trello 登录被拒绝。"
 #: src/main/window-open-policy.ts
 msgid "Unknown site"
 msgstr "未知站点"
+
+#: src/main/boards/adapters/gitlab/oauth.ts
+msgctxt "GitLab sign-in browser page"
+msgid "You can close this tab and return to Kangentic."
+msgstr ""
 
 #: src/main/boards/adapters/jira/oauth.ts
 #, fuzzy

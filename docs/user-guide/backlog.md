@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Backlog
-description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear and Trello items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
+description: "The backlog staging view: creating and editing items, labels and the priority scale, filtering, bulk Move to Board, drag reorder, and Import, which pulls GitHub Issues, GitHub Projects, Azure DevOps, Asana, Jira, Linear, Trello and GitLab items, and Obsidian notes and checklist items, with incremental sync and duplicate detection."
 tags: [backlog, import, labels, priorities]
 sources:
   - resource: src/renderer/components/backlog/
@@ -68,6 +68,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **Jira** - import issues from a Jira Cloud or Data Center board, project, saved filter, or JQL query
 - **Linear** - import issues from a Linear team, picked from a list of your teams
 - **Trello** - import cards from a Trello board, picked from a list of your boards
+- **GitLab** - import issues from a GitLab project or group, on gitlab.com or your own GitLab server
 - **Obsidian Notes** - import each note in a folder of an Obsidian vault as a task
 - **Obsidian Checklist items** - import each task line in a folder's notes (`- [ ]`, and the done, in-progress and cancelled marks) as a task
 
@@ -90,14 +91,21 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
   **Sign in with Trello**, which skips making an app and the paste: approve Kangentic in your
   browser and the dialog closes on its own. A declined approval goes back to the two choices with
   the reason.
+- **GitLab:** a sign-in for the server, asked for the first time a link names it. **Connect GitLab**
+  takes a personal access token with the `read_api` scope: its first step opens your server's access
+  token page with the name and scope filled in. On gitlab.com, a build that carries Kangentic's
+  GitLab OAuth client id also offers **Sign in with GitLab** beside the token, which approves
+  Kangentic in your browser and renews itself. A self-managed server offers the token only. The
+  sign-in is checked against GitLab and stored encrypted on this machine, one per server. GitLab
+  tokens always expire (365 days at most), so expect to connect again when yours does.
 - **Obsidian:** nothing to install or sign in to. The vault is read from this computer, also for a
   remote project, and Kangentic never writes to it.
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, Trello, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). Linear lists your teams instead, and Trello your open boards under their Workspace: click one. One you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
-4. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it.
+2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, Trello, GitLab, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). For GitLab, paste any project, group, issue list, issue or board link (`https://gitlab.com/acme/web`, `https://gitlab.com/groups/acme/-/issues`, `https://gitlab.com/acme/web/-/boards/12`); filters in the link are dropped. A link on a server that is not GitLab is refused ("github.com is not a GitLab instance."). Linear lists your teams instead, and Trello your open boards under their Workspace: click one. One you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
+4. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it. For GitLab it checks that the account can open the project or group (and the board a board link names), and names the source by its path. The saved source says whether it is a project or a group, and names a self-managed server ("GitLab Group on git.example.com").
 5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
 
 An Obsidian vault is the folder that holds `.obsidian`. Choose a folder inside one and Kangentic
@@ -106,11 +114,11 @@ the vault, then the folder (`Work: Projects`), and its row's tooltip shows the f
 in no vault is refused with "Not in a vault" and nothing is saved. To import both notes and
 checklist items from one vault, add it twice, once with each type.
 
-If a saved sign-in stops working (a revoked Asana token, Jira token, Linear key or Trello token, or
-a Linear or Atlassian sign-in that lapsed), the import dialog's error banner carries a **Connect Asana**,
-**Connect Jira**, **Connect Linear** or **Connect Trello** button. It reopens the setup dialog
+If a saved sign-in stops working (a revoked Asana token, Jira token, Linear key, Trello token or
+GitLab token, or a Linear or Atlassian sign-in that lapsed), the import dialog's error banner carries a **Connect Asana**,
+**Connect Jira**, **Connect Linear**, **Connect Trello** or **Connect GitLab** button. It reopens the setup dialog
 the way you signed in: Sign in with Atlassian starts the browser sign-in again, and a Jira token
-reopens its steps with the site and email filled in. Once the new credential works the dialog syncs.
+reopens its steps with the site and email filled in, as a GitLab token does with the server. Once the new credential works the dialog syncs.
 If Atlassian or Kangentic's sign-in service is down, a browser sign-in is kept and the banner offers
 **Retry** instead. If an Obsidian source's folder moved, its drive is gone, or it is no longer
 inside a vault, the banner says "Folder not found" or "Not in a vault" and carries **Choose
@@ -157,6 +165,17 @@ untick that list in the Status filter to leave it out. A label with a color and 
 (`green`), checklists become task lists in the description, and the card's list, members, start
 and due dates and saved links go into a **Trello** section at the end. Uploaded files come over as
 attachments.
+
+GitLab issues show `#214` for a project source and GitLab's group-relative id (`web#214`) for a
+group source. A group source covers its subgroups and, like GitLab's own list, leaves out archived
+projects. GitLab has no status field, so the Status filter follows the source's issue board: Open,
+then the board's label lists left to right, then Closed. A board link picks that board; otherwise
+it is the board GitLab treats as default, first by name. Issues, tasks and incidents all import, and
+the Type filter tells them apart. GitLab issues have no priority, so they import at the bottom
+level. Labels come over as written, scoped labels (`workflow::doing`) included, and milestone,
+iteration, weight, due date and assignees go into a **GitLab** section at the end of the
+description. Images in a GitLab issue download with your sign-in on GitLab 17.4 and later; on an
+older server they stay as links.
 
 ### What an Obsidian note or item becomes
 

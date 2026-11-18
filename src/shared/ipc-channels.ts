@@ -488,6 +488,14 @@ export const IPC = {
   BOARDS_TRELLO_LIST_BOARDS: 'boards:trello:listBoards',
   BOARDS_TRELLO_CLEAR_CREDENTIAL: 'boards:trello:clearCredential',
 
+  // Board Auth - GitLab
+  BOARDS_GITLAB_AUTH_STATUS: 'boards:gitlab:authStatus',
+  BOARDS_GITLAB_DETECT_SERVER: 'boards:gitlab:detectServer',
+  BOARDS_GITLAB_CONNECT_TOKEN: 'boards:gitlab:connectToken',
+  BOARDS_GITLAB_SIGN_IN: 'boards:gitlab:signIn',
+  BOARDS_GITLAB_REOPEN_SIGN_IN: 'boards:gitlab:reopenSignIn',
+  BOARDS_GITLAB_CANCEL_SIGN_IN: 'boards:gitlab:cancelSignIn',
+
   // Backlog Attachments
   BACKLOG_ATTACHMENT_LIST: 'backlogAttachment:list',
   BACKLOG_ATTACHMENT_ADD: 'backlogAttachment:add',

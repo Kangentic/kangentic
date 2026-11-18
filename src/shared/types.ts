@@ -5926,7 +5926,8 @@ export type ExternalSource =
   | 'linear'
   | 'trello'
   | 'obsidian_notes'
-  | 'obsidian_checklist';
+  | 'obsidian_checklist'
+  | 'gitlab';
 
 export interface ImportSource {
   id: string;
@@ -5935,6 +5936,17 @@ export interface ImportSource {
   repository: string;
   url: string;
   createdAt: string;
+  /**
+   * What the source names, for a provider whose one source type covers more
+   * than one kind (a GitLab project or group). Shown in the saved source's
+   * subtitle in place of the source type. Absent for every other provider.
+   */
+  scopeKind?: 'project' | 'group';
+  /**
+   * The server the source lives on, when it is not the provider's own cloud (a
+   * self-managed GitLab), so two servers with the same path read apart.
+   */
+  host?: string;
 }
 
 export interface ExternalIssue {
@@ -6295,6 +6307,71 @@ export interface TrelloListBoardsResult {
   /** Trello's own text when the list could not load (a revoked token). */
   error?: string;
 }
+
+/**
+ * Whether Kangentic holds a GitLab sign-in for the server a pasted link or a
+ * saved source names. GitLab sign-ins are per server (gitlab.com, or a
+ * self-managed instance), like Jira's per site.
+ */
+export interface GitLabAuthStatus {
+  connected: boolean;
+  /** `none`: nothing saved for that server. */
+  reason?: 'none';
+  /** The server's base URL the target resolved to (`https://gitlab.com`, a self-managed base with any path prefix). */
+  site?: string;
+  /** Who the saved sign-in belongs to (a GitLab username), when known. */
+  account?: string;
+  /** What Connect fills in: the server. Never a secret. */
+  prefill?: BoardConnectPrefill;
+}
+
+/** The server the Connect dialog's Server field names, checked against GitLab. */
+export type GitLabDetectServerResult =
+  | {
+      ok: true;
+      /** The server's base URL, normalized. */
+      site: string;
+      /** True for gitlab.com, whose sign-in Kangentic registers itself. */
+      isGitLabCom: boolean;
+      /** True when this build can sign in through the browser on this server. */
+      signInAvailable: boolean;
+    }
+  | {
+      ok: false;
+      /** `not-gitlab`: the server answers, but not as GitLab. `unreachable`: no answer. `invalid`: not a server address. */
+      code: 'not-gitlab' | 'unreachable' | 'invalid';
+      site?: string;
+      /** The network's own reason for `unreachable` (an errno such as ENOTFOUND). */
+      detail?: string;
+    };
+
+export interface GitLabConnectTokenInput {
+  /** A host, a base URL, or any link on the server. */
+  site: string;
+  token: string;
+}
+
+/**
+ * Why a Connect failed. `rejected` is GitLab refusing the credential (its own
+ * text is in `message`), `unreachable` no usable answer, `not-gitlab` a server
+ * that is not GitLab, `invalid` an empty field, `sign-in-failed` a browser
+ * sign-in that did not finish (its reason in `message`), `cancelled` a browser
+ * sign-in the user stopped waiting for.
+ */
+export type GitLabConnectErrorCode = 'rejected' | 'unreachable' | 'not-gitlab' | 'invalid' | 'sign-in-failed' | 'cancelled';
+
+export type GitLabConnectResult =
+  | { ok: true; site: string; account: string }
+  | {
+      ok: false;
+      code: GitLabConnectErrorCode;
+      /** GitLab's own message, shown as sent (`401 Unauthorized`). */
+      message?: string;
+      /** The server, for the lines that name it. */
+      site?: string;
+      /** The network's own reason for `unreachable`. */
+      detail?: string;
+    };
 
 export interface ImportCheckCliResult {
   available: boolean;
@@ -10055,6 +10132,23 @@ export interface ElectronAPI {
       listBoards: () => Promise<TrelloListBoardsResult>;
       /** Forget the saved key and token. */
       clearCredential: () => Promise<void>;
+    };
+    gitlab: {
+      /**
+       * Whether a sign-in is saved for the server `target` names: a pasted link or
+       * a saved source's repository. Refuses a link whose server is not GitLab.
+       */
+      authStatus: (target?: string) => Promise<GitLabAuthStatus>;
+      /** Normalize a server address and check that it runs GitLab. */
+      detectServer: (siteOrUrl: string) => Promise<GitLabDetectServerResult>;
+      /** Check a personal access token against the server and save it when GitLab accepts it. */
+      connectToken: (input: GitLabConnectTokenInput) => Promise<GitLabConnectResult>;
+      /** Open GitLab's approval page in the browser and resolve when it hands back (gitlab.com only). */
+      signIn: (site: string) => Promise<GitLabConnectResult>;
+      /** Open the pending sign-in's page again. */
+      reopenSignIn: () => Promise<void>;
+      /** Stop waiting for the browser; the pending `signIn` resolves as cancelled. */
+      cancelSignIn: () => Promise<void>;
     };
   };
 
