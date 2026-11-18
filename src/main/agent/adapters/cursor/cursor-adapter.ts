@@ -49,6 +49,7 @@ import type {
   SessionUsagePatch,
   SessionContext,
   SessionAttachment,
+  SessionIdCreation,
   StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
@@ -502,9 +503,12 @@ export class CursorAdapter implements AgentAdapter {
    * a fresh interactive start would otherwise have nothing to resume.
    * `create-chat` makes an empty chat and prints its id; the launch opens it
    * with `--resume=<id>`. Run in the session's own folder, in case Cursor
-   * files chats by workspace as the editor does.
+   * files chats by workspace as the editor does. A miss says which kind it
+   * was, for the session-id report: `timeout` when the run hit
+   * `CREATE_CHAT_TIMEOUT_MS` (Node's exec kills it and sets `killed`), `no_id`
+   * when it printed no id, `failed` for anything else.
    */
-  async createSessionId(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<string | null> {
+  async createSessionId(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<SessionIdCreation> {
     try {
       // A Cursor in a WSL distro makes the chat there, so the session opens it. One on a remote host
       // (#913) makes it there too, run by the host's helper in the project's folder on the host: a chat
@@ -514,12 +518,15 @@ export class CursorAdapter implements AgentAdapter {
         : await resolveCliTarget(cliPath, true);
       const stdout = await runCursorCli(cliPath, ['create-chat'], { timeoutMs: CREATE_CHAT_TIMEOUT_MS, workingDirectory, target });
       const match = stdout.match(CHAT_ID_LINE);
-      if (match) return match[0].toLowerCase();
+      if (match) return { agentSessionId: match[0].toLowerCase(), outcome: 'ok' };
       console.warn(`[cursor] create-chat printed no chat id: ${stdout.trim().slice(0, 200)}`);
+      return { agentSessionId: null, outcome: 'no_id' };
     } catch (error) {
+      // report-ok: the session-id report carries the miss as its fixed `create_chat` tag.
       console.warn('[cursor] create-chat failed; the session starts without a known id:', error);
+      const timedOut = typeof error === 'object' && error !== null && (error as { killed?: unknown }).killed === true;
+      return { agentSessionId: null, outcome: timedOut ? 'timeout' : 'failed' };
     }
-    return null;
   }
 
   /**
@@ -577,9 +584,9 @@ export class CursorAdapter implements AgentAdapter {
    *   permission). Its tool_call started/completed events drive activity, and
    *   its terminal `result` event is the turn end (stream-parser.ts).
    *
-   * - Session ID: the NDJSON init event on the print path, and a
-   *   sessionStart hook's `session_id` on a session screen, for a start whose
-   *   `create-chat` gave none.
+   * - Session ID: the NDJSON init event on the print path, and on a session
+   *   screen whose `create-chat` gave none, a sessionStart hook's `session_id`
+   *   or the first prompt hook's `conversation_id`, whichever arrives first.
    * - streamOutput: the init event populates SessionUsage.model so
    *   ContextBar can lift its "Starting agent..." spinner. Interactive
    *   TUI status (`Composer 2.5 · 7.8%`) is parsed from the same stream

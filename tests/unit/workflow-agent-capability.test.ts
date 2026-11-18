@@ -12,8 +12,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { canBeWorkflowAgent } from '../../src/main/agent/shared/workflow-agent-capability';
+import type { SessionIdCreation } from '../../src/shared/types';
 
-const createSessionId = async (): Promise<string | null> => 'chat-created';
+const createSessionId = async (): Promise<SessionIdCreation> => ({ agentSessionId: 'chat-created', outcome: 'ok' });
 
 describe('canBeWorkflowAgent', () => {
   it.each([

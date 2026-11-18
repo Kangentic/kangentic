@@ -31,7 +31,7 @@ import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
 import { shellProgramName } from '../../shared/shell-quote';
-import type { LaunchStartPath, OpeningPromptDelivery, SessionIdStoreEvidence } from '../../shared/types';
+import type { LaunchStartPath, OpeningPromptDelivery, SessionIdCreationOutcome, SessionIdStoreEvidence } from '../../shared/types';
 import type { SessionIdCaptureOutcome } from './lifecycle/session-id-manager';
 import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
 import { WorktreeSetupScriptError } from '../git/worktree-errors';
@@ -630,11 +630,16 @@ const SESSION_ID_OUTCOME_REPORTS = {
 /** The longest a session-id report waits on the agent's own store check. */
 const STORE_EVIDENCE_WAIT_MS = 2_000;
 
-/** A session past the capture window: its facts at the window, and the store check started then. */
+/**
+ * A session past the capture window: its facts at the window, the store check
+ * started then, and its row, for the facts read when the outcome is known.
+ */
 interface PendingSessionIdReport {
   agent: string;
   tags: Record<string, string>;
   storeEvidence: Promise<SessionIdStoreEvidence>;
+  /** Kept past a removal from the registry: `prompt_seen` is read off it at the outcome. */
+  session: ManagedSession;
 }
 
 const pendingSessionIdReports = new Map<string, PendingSessionIdReport>();
@@ -649,6 +654,15 @@ const OPENING_PROMPT_TAGS: ReadonlySet<string> = new Set<OpeningPromptDelivery>(
 /** How the opening prompt was delivered, or `unknown`: a value from anywhere else never reaches a tag. */
 function openingPromptTag(delivery: unknown): string {
   return typeof delivery === 'string' && OPENING_PROMPT_TAGS.has(delivery) ? delivery : 'unknown';
+}
+
+const SESSION_ID_CREATION_TAGS: ReadonlySet<string> = new Set<SessionIdCreationOutcome>(
+  ['ok', 'failed', 'timeout', 'no_id', 'aborted', 'not_asked'],
+);
+
+/** How the launch got the conversation id before it ran, or `unknown`: a value from anywhere else never reaches a tag. */
+function sessionIdCreationTag(outcome: unknown): string {
+  return typeof outcome === 'string' && SESSION_ID_CREATION_TAGS.has(outcome) ? outcome : 'unknown';
 }
 
 /** The agent's store check, bounded, and `unknown` for anything but its own answer. */
@@ -692,11 +706,13 @@ export function noteSessionIdCaptureWindowPassed(
       start_path: session.startPath ?? 'board',
       shell: shellLabelOf(session.shell),
       opening_prompt: openingPromptTag(session.openingPrompt),
+      create_chat: sessionIdCreationTag(session.sessionIdCreation),
       hook_seen: observedTag(session.agentHookObservedAt),
       agent_started: observedTag(session.agentStartObservedAt),
       first_output: observedTag(session.firstOutputAt),
     },
     storeEvidence: boundedStoreEvidence(storeCheck),
+    session,
   });
 }
 
@@ -721,6 +737,9 @@ export function reportSessionIdCaptureOutcome(
   const outcomeTags: Record<string, string> = outcome.kind === 'late'
     ? { captured_after_s: secondsBucket(outcome.capturedAfterMs) }
     : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed' };
+  // Read now, not at the window: a prompt typed after it is the case that
+  // tells a conversation that never existed from one the capture missed.
+  const promptSeen = observedTag(pending.session.promptObservedAt);
   void pending.storeEvidence.then((idStore) => {
     if (isShuttingDown()) return;
     const error = new Error(`${outcomeReport.message} (${pending.agent})`);
@@ -731,6 +750,7 @@ export function reportSessionIdCaptureOutcome(
         source: 'agent_session_id',
         agent: pending.agent,
         ...pending.tags,
+        prompt_seen: promptSeen,
         ...outcomeTags,
         fs_scan: outcome.filesystemScan,
         id_store: idStore,

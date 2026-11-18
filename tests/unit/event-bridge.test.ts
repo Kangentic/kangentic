@@ -32,6 +32,7 @@ import {
 } from './helpers/shell-argv-probe';
 import {
   captureHookContext,
+  captureHookContextFields,
   extractTool,
   extractToolId,
   extractSubagentId,
@@ -481,6 +482,44 @@ describe('event-bridge', () => {
   it('captureHookContext omits hookContext when stdin is empty or not JSON', () => {
     runBridge('', [outputFile, 'prompt', captureHookContext()]);
     expect(readEvent().hookContext).toBeUndefined();
+  });
+
+  // --- captureHookContextFields directive (only the named fields) ---
+
+  it('captureHookContextFields keeps only the named string fields', () => {
+    const stdin = JSON.stringify({
+      conversation_id: '3db42741-6af4-4632-99cf-e5f230f7bc94',
+      prompt: 'secret plan',
+      user_email: 'dev@example.com',
+      generation_id: 7,
+    });
+    runBridge(stdin, [outputFile, 'prompt', captureHookContextFields(['conversation_id', 'generation_id', 'missing'])]);
+    const line = readEvent();
+    expect(line.type).toBe('prompt');
+    // A number is not a string, and a missing field adds nothing.
+    expect(JSON.parse(line.hookContext as string)).toEqual({ conversation_id: '3db42741-6af4-4632-99cf-e5f230f7bc94' });
+    expect(JSON.stringify(line)).not.toContain('secret plan');
+    expect(JSON.stringify(line)).not.toContain('dev@example.com');
+  });
+
+  it.each([
+    ['no named field is in stdin', JSON.stringify({ prompt: 'secret plan' })],
+    ['stdin is empty', ''],
+  ])('captureHookContextFields omits hookContext when %s', (_label, stdin) => {
+    runBridge(stdin, [outputFile, 'prompt', captureHookContextFields(['conversation_id'])]);
+    expect(readEvent().hookContext).toBeUndefined();
+  });
+
+  it('captureHookContextFields caps a long picked value at 2000 characters', () => {
+    const longValue = 'a'.repeat(1500) + 'b'.repeat(1500);
+    runBridge(JSON.stringify({ conversation_id: longValue }), [outputFile, 'prompt', captureHookContextFields(['conversation_id'])]);
+    const captured = JSON.parse(readEvent().hookContext as string) as { conversation_id: string };
+    expect(captured.conversation_id).toBe(longValue.slice(0, 2000));
+    expect(captured.conversation_id).toHaveLength(2000);
+  });
+
+  it('captureHookContextFields rejects an empty field list', () => {
+    expect(() => captureHookContextFields([])).toThrow('captureHookContextFields requires at least one field');
   });
 
   // --- extractToolPath / extractDetailPath (nested-payload agents) ---

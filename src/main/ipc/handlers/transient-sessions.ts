@@ -371,13 +371,14 @@ export async function startCommandTerminal(
     // first, which the launch opens. A resume already has one. The caller-id
     // check is deliberate: the helper would mint an id for such a CLI, and a
     // Command Terminal lets that CLI report its own after launch, as before.
-    const createdAgentSessionId = resume || adapter.supportsCallerSessionId
+    const freshId = resume || adapter.supportsCallerSessionId
       ? null
       : await resolveFreshAgentSessionId(adapter, {
           cliPath: detection.path,
           workingDirectory: projectRoot,
           permissionMode,
         });
+    const createdAgentSessionId = freshId?.agentSessionId ?? null;
     // The conversation the command opens and the session record carries: the
     // resumed one through the CLI's own resume, or the empty chat just created.
     // A resume names the id settled above, which is the one a `--resume` reaches
@@ -461,6 +462,7 @@ export async function startCommandTerminal(
       startPath: commandTerminalStartPath(input, restore),
       // A Command Terminal starts with no prompt.
       openingPrompt: 'none',
+      sessionIdCreation: freshId?.sessionIdCreation ?? 'not_asked',
       agentCliVersion: detection.version,
       agentCliPath: launch.agentPath,
       env: extraEnv ?? undefined,

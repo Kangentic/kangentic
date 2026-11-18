@@ -714,6 +714,7 @@ export async function performSpawn(
     launcherPath: typedLaunch?.launcher?.filePath ?? null,
     startPath: input.startPath,
     ...(input.openingPrompt ? { openingPrompt: input.openingPrompt } : {}),
+    ...(input.sessionIdCreation ? { sessionIdCreation: input.sessionIdCreation } : {}),
     agentCliVersion: input.agentCliVersion ?? null,
     agentCliPath: input.agentCliPath ?? null,
     resumeEvidence: input.resumeEvidence ?? null,

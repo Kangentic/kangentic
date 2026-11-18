@@ -38,6 +38,9 @@
  *                                 (2048 cap) regardless of event type, for agents whose
  *                                 hook schema has no once-per-session event to ride the
  *                                 automatic session_start capture below.
+ *   captureHookContextFields   { fields[] }          -> event.hookContext = JSON of only those
+ *                                 top-level string fields, for a payload that carries
+ *                                 what an event must not (a prompt's text, an email).
  *   extractDetailWhenTool      { fields[], nested?, whenTool }
  *                                 -> same as extractDetail, but only when
  *                                 ctx.tool_name === whenTool. A SEPARATE kind rather
@@ -450,6 +453,17 @@ function transformHookEvent(options) {
         if (ctx && Object.keys(ctx).length > 0) {
           event.hookContext = JSON.stringify(ctx).slice(0, 2048);
         }
+        break;
+      }
+      case 'captureHookContextFields': {
+        // Only the named top-level string fields, never the rest of the
+        // payload (a prompt hook's text, an email, workspace paths).
+        if (!ctx || !Array.isArray(payload.fields)) break;
+        const picked = {};
+        for (const field of payload.fields) {
+          if (typeof field === 'string' && typeof ctx[field] === 'string') picked[field] = ctx[field].slice(0, FIELD_CAP);
+        }
+        if (Object.keys(picked).length > 0) event.hookContext = JSON.stringify(picked);
         break;
       }
       case 'setDetail': {

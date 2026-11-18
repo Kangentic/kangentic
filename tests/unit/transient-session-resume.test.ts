@@ -82,7 +82,7 @@ import { registerTransientSessionHandlers, startCommandTerminal } from '../../sr
 import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { IPC } from '../../src/shared/ipc-channels';
 import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
-import type { SpawnTransientSessionInput } from '../../src/shared/types';
+import type { SessionIdCreation, SpawnTransientSessionInput } from '../../src/shared/types';
 
 const PROJECT_ROOT = 'C:/Users/dev/proj';
 
@@ -568,7 +568,9 @@ describe('startCommandTerminal: the conversation a fresh start opens', () => {
     const chat = options.chat === undefined ? 'chat-created' : options.chat;
     return {
       ...makeAdapter(name, { resumable: options.supportsCallerSessionId === true }),
-      createSessionId: vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => chat),
+      createSessionId: vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<SessionIdCreation> => (
+        chat ? { agentSessionId: chat, outcome: 'ok' } : { agentSessionId: null, outcome: 'no_id' }
+      )),
       reportsLaunchSessionId: vi.fn((_launch: { permissionMode: string; nonInteractive?: boolean }): boolean => options.reportsLaunchSession === true),
     };
   }
@@ -596,7 +598,7 @@ describe('startCommandTerminal: the conversation a fresh start opens', () => {
     expect(launch.nonInteractive).toBeUndefined();
 
     expect(adapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'chat-created', resume: false }));
-    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'chat-created' }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'chat-created', sessionIdCreation: 'ok' }));
     // A fresh chat is not a resumed, already-used terminal.
     expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ resuming: true }));
     expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ hasUserInput: true }));
@@ -621,9 +623,9 @@ describe('startCommandTerminal: the conversation a fresh start opens', () => {
   });
 
   it.each([
-    ['the launch reports its own id', { reportsLaunchSession: true }, 0],
-    ['the CLI could not create a chat', { chat: null }, 1],
-  ])('opens no conversation, seeds no id and announces nothing when %s', async (_name, options, chatRequests) => {
+    ['the launch reports its own id', { reportsLaunchSession: true }, 0, 'not_asked'],
+    ['the CLI could not create a chat', { chat: null }, 1, 'no_id'],
+  ])('opens no conversation, seeds no id and announces nothing when %s', async (_name, options, chatRequests, sessionIdCreation) => {
     const adapter = makeChatAdapter('codex', options);
     adapters.set('codex', adapter);
     const context = createContext({});
@@ -634,6 +636,7 @@ describe('startCommandTerminal: the conversation a fresh start opens', () => {
     expect(adapter.buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ sessionId: expect.anything() }));
     expect(adapter.buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ resume: true }));
     expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ agentSessionId: expect.anything() }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ sessionIdCreation }));
     expect(context.sessionManager.emit).not.toHaveBeenCalled();
   });
 
@@ -647,6 +650,7 @@ describe('startCommandTerminal: the conversation a fresh start opens', () => {
     expect(adapter.createSessionId).not.toHaveBeenCalled();
     expect(adapter.buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ sessionId: expect.anything() }));
     expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ agentSessionId: expect.anything() }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ sessionIdCreation: 'not_asked' }));
     expect(context.sessionManager.emit).not.toHaveBeenCalled();
   });
 
@@ -664,6 +668,7 @@ describe('startCommandTerminal: the conversation a fresh start opens', () => {
       agentSessionId: 'conversation-a',
       resuming: true,
       hasUserInput: true,
+      sessionIdCreation: 'not_asked',
     }));
     expect(context.sessionManager.emit).not.toHaveBeenCalled();
   });

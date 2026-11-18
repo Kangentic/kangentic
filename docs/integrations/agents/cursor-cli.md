@@ -163,7 +163,7 @@ an earlier install wrote from another bridge path.
 |---|---|---|
 | `sessionStart` | `session_start` | the whole payload as `hookContext`; `session_id` feeds `runtime.sessionId.fromHook` |
 | `sessionEnd` | `session_end` | |
-| `beforeSubmitPrompt` | `prompt` | replies `{ "continue": true }` |
+| `beforeSubmitPrompt` | `prompt` | only `conversation_id` as `hookContext` (`captureHookContextFields`), which also feeds `fromHook`; replies `{ "continue": true }` |
 | `preToolUse` | `tool_start` | `tool_name`, `tool_use_id` |
 | `postToolUse`, `postToolUseFailure` | `tool_end` | `tool_name`, `tool_use_id` |
 | `subagentStart` | `subagent_start` | `subagent_id`, `subagent_type` |
@@ -247,6 +247,13 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   path as that report is the guard that #255 reverted.
 - The `create-chat` wait runs inside the task lock, so it races the spawn's abort signal: a move
   that aborts the spawn stops waiting at once, and the CLI run ends on its own 20 s timeout.
+- A start whose `create-chat` gave no id says why: `createSessionId` returns `failed`, `timeout`
+  (the run was killed at the 20 s timeout) or `no_id` (it printed no id line), and the session-id
+  report carries it as `create_chat`. Its only other trace is the local `console.warn`.
+- Such a session screen takes its id from whichever hook names it first: sessionStart's
+  `session_id`, or the first `beforeSubmitPrompt`'s `conversation_id`, a common input on every hook
+  (Sentry DESKTOP-45 saw a hook run and no sessionStart arrive). The prompt hook keeps only that
+  field, never the whole payload: it also carries the prompt's text and the user's email.
 - No `transcript-cleanup.ts` (uses streaming text output, not a TUI alternate screen)
 - `locateSessionHistoryFile` returns
   `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` when that file
@@ -277,9 +284,10 @@ v2026.10.22:
   line, so a JSON line in a session screen's own text never ends a turn:
   [output format](https://cursor.com/docs/cli/reference/output-format).
 - `runtime.sessionId.fromHook` on `sessionStart`'s `session_id` ("same as `conversation_id`", hooks
-  reference). `create-chat` still supplies the id first. This read covers a start where it failed.
-  The capture is one-shot: the session's first `sessionStart`, the main agent's own, is read, and
-  an id that differs from `create-chat`'s replaces it as the CLI's own report.
+  reference), or on the first `beforeSubmitPrompt`'s `conversation_id`. `create-chat` still
+  supplies the id first. This read covers a start where it failed. The capture is one-shot: the
+  first of those hook lines to name an id is read, and an id that differs from `create-chat`'s
+  replaces it as the CLI's own report.
   `capturesInteractiveSessionId` stays undeclared until a run shows the hook fires.
 - Plan mode (`--mode plan`): [CLI parameters](https://cursor.com/docs/cli/reference/parameters),
   [Modes](https://cursor.com/docs/cli/overview), changelog January 2026 and v2026.07.20.

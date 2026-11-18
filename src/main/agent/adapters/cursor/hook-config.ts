@@ -54,6 +54,7 @@ import { toForwardSlash } from '../../../../shared/paths';
 import { buildBridgeCommand, filterKangenticHooks, type HookShell } from '../../shared/hook-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import {
+  captureHookContextFields,
   extractDetail,
   extractSubagentId,
   extractTool,
@@ -186,7 +187,11 @@ export function buildCursorHookCommands(
   return {
     [CURSOR_HOOK_EVENTS.sessionStart]: silentCommand(EventType.SessionStart),
     [CURSOR_HOOK_EVENTS.sessionEnd]: silentCommand(EventType.SessionEnd),
-    [CURSOR_HOOK_EVENTS.beforeSubmitPrompt]: buildHookCommand(EventType.Prompt, [], { continue: true }),
+    // `conversation_id` is a common input on every hook (hooks docs), so a
+    // session whose sessionStart never arrived gets its id from its first
+    // prompt. Only that field is kept: the payload also carries the prompt's
+    // text and the user's email, which an event never holds.
+    [CURSOR_HOOK_EVENTS.beforeSubmitPrompt]: buildHookCommand(EventType.Prompt, [captureHookContextFields(['conversation_id'])], { continue: true }),
     [CURSOR_HOOK_EVENTS.preToolUse]: silentCommand(EventType.ToolStart, ...toolDirectives),
     [CURSOR_HOOK_EVENTS.postToolUse]: silentCommand(EventType.ToolEnd, ...toolDirectives),
     [CURSOR_HOOK_EVENTS.postToolUseFailure]: silentCommand(EventType.ToolEnd, ...toolDirectives),
@@ -381,14 +386,15 @@ export function parseCursorHookEvent(line: string): SessionEvent | null {
   }
 }
 
-/** A sessionStart payload's conversation id field, its UUID captured. */
+/** A hook payload's conversation id field, its UUID captured. */
 const HOOK_CONVERSATION_ID = /"(?:session_id|conversation_id)"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i;
 
 /**
- * The conversation id a sessionStart hook names: `session_id` ("same as
- * `conversation_id`", hooks docs), else the common `conversation_id`. Read with
- * a pattern, not a parse: the bridge cuts the payload it keeps at 2048
- * characters, which can leave the JSON unclosed.
+ * The conversation id a hook names: a sessionStart's `session_id` ("same as
+ * `conversation_id`", hooks docs), else the common `conversation_id`, which the
+ * `beforeSubmitPrompt` hook keeps alone. Read with a pattern, not a parse: the
+ * bridge cuts a whole payload it keeps at 2048 characters, which can leave the
+ * JSON unclosed.
  */
 export function cursorSessionIdFromHook(hookContext: string): string | null {
   const match = hookContext.match(HOOK_CONVERSATION_ID);

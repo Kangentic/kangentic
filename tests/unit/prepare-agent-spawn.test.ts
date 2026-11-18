@@ -18,7 +18,7 @@ import type { AgentAdapter, SpawnCommandOptions } from '../../src/main/agent/age
 import type { Task, Swimlane, AppConfig } from '../../src/shared/types';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
-import type { AgentLaunchOptionInfo } from '../../src/shared/types';
+import type { AgentLaunchOptionInfo, SessionIdCreation } from '../../src/shared/types';
 // Type-only: erased at compile time, so importing it does not drag the heavy
 // mcp-http-server module graph (SDK, agent commands, ...) into this test.
 import type { McpHttpServerHandle } from '../../src/main/agent/mcp-http-server';
@@ -874,7 +874,9 @@ describe('prepareAgentSpawn - the id of a fresh agent session', () => {
   // reportsLaunchSessionId gate (calling `adapter.createSessionId` directly)
   // fails the print-launch case.
   const makeChatAdapter = (options: { reportsLaunchSession: boolean; chat: string | null }) => {
-    const createSessionId = vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => options.chat);
+    const createSessionId = vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<SessionIdCreation> => (
+      options.chat ? { agentSessionId: options.chat, outcome: 'ok' } : { agentSessionId: null, outcome: 'timeout' }
+    ));
     const reportsLaunchSessionId = vi.fn((_launch: { permissionMode: string; nonInteractive?: boolean }): boolean => options.reportsLaunchSession);
     const captured = makeCaptureAdapter({ createSessionId, reportsLaunchSessionId });
     return { ...captured, createSessionId, reportsLaunchSessionId };
@@ -900,6 +902,7 @@ describe('prepareAgentSpawn - the id of a fresh agent session', () => {
     expect(capturedCommandOptions[0].sessionId).toBe('chat-created');
     expect(capturedCommandOptions[0].resume).toBe(false);
     expect(result.data.agentSessionId).toBe('chat-created');
+    expect(result.data.sessionIdCreation).toBe('ok');
     expect(result.data.resumed).toBe(false);
     // The launch is asked with the resolved permission mode, and with no
     // nonInteractive flag: this path's command never sets one.
@@ -925,6 +928,7 @@ describe('prepareAgentSpawn - the id of a fresh agent session', () => {
     expect(capturedCommandOptions[0].sessionId).toBeUndefined();
     expect(capturedCommandOptions[0].resume).toBe(false);
     expect(result.data.agentSessionId).toBeNull();
+    expect(result.data.sessionIdCreation).toBe('not_asked');
   });
 
   it('starts with no agent session id when the chat could not be created', async () => {
@@ -941,10 +945,12 @@ describe('prepareAgentSpawn - the id of a fresh agent session', () => {
     expect(createSessionId).toHaveBeenCalledTimes(1);
     expect(capturedCommandOptions[0].sessionId).toBeUndefined();
     expect(result.data.agentSessionId).toBeNull();
+    // The miss reaches the session-id report as its fixed word.
+    expect(result.data.sessionIdCreation).toBe('timeout');
   });
 
   it('hands a CLI that accepts a chosen id an id of Kangentic\'s own and never asks it to create a chat', async () => {
-    const createSessionId = vi.fn(async (): Promise<string | null> => 'chat-created');
+    const createSessionId = vi.fn(async (): Promise<SessionIdCreation> => ({ agentSessionId: 'chat-created', outcome: 'ok' }));
     const { adapter, capturedCommandOptions } = makeCaptureAdapter({ supportsCallerSessionId: true, createSessionId });
     agentRegistryGetMock.mockReturnValue(adapter);
 

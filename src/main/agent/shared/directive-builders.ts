@@ -80,6 +80,23 @@ export function captureHookContext(): string {
 }
 
 /**
+ * Capture only the named top-level stdin fields as `event.hookContext`
+ * (`{"<field>":"<value>"}`), each one a string. The narrow sibling of
+ * `captureHookContext`, for a hook whose payload carries what an event must
+ * not: a prompt hook's `prompt` text, an email, the workspace paths. Cursor's
+ * `beforeSubmitPrompt` names the conversation with `conversation_id`, so a
+ * session whose sessionStart never arrived still gets its id from its first
+ * prompt, and a long prompt cannot push the id past the 2048 cap.
+ *
+ * Its own kind, so a stale `event-bridge.js` copy rejects it via `default` (a
+ * logged no-op): the event then carries no hookContext, as before.
+ */
+export function captureHookContextFields(fields: string[]): string {
+  if (fields.length === 0) throw new Error('captureHookContextFields requires at least one field');
+  return encodeDirective('captureHookContextFields', { fields });
+}
+
+/**
  * Extract `event.toolId` from the first non-null of `fields`, read from the
  * top-level stdin object or - when `nested` is given - from `ctx[nested]`.
  * The first directive (in list order) to resolve a value wins.

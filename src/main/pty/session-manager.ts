@@ -907,7 +907,11 @@ export class SessionManager extends EventEmitter {
           hookSession.agentHookObservedAt ??= Date.now();
           this.noteAgentRan(hookSession);
         }
-        if (event.type === EventType.Prompt) this.tookPrompt.add(sessionId);
+        if (event.type === EventType.Prompt) {
+          this.tookPrompt.add(sessionId);
+          const promptSession = this.registry.get(sessionId);
+          if (promptSession) promptSession.promptObservedAt ??= Date.now();
+        }
         this.noteCommandTerminalAgentEvent(sessionId, event);
         this.emit('event', sessionId, event);
       },

@@ -477,12 +477,22 @@ in one Sentry org, one triage surface.
     sends `AgentSessionIdNotCapturedError` with `settled_by` (`removed`, `ceiling`) and
     `session_status`. Each kind reports once per agent per run, as its own issue. Both carry
     `agent_cli_version`, `start_path`, `shell`, `opening_prompt` (`command_line`, `typed`, `none`,
-    or `unknown` where the spawn did not say), `hook_seen`, `agent_started` and `first_output`
-    (`yes`, `no`, at the window), `fs_scan` (what the filesystem pathway did: `none`, `pending`,
+    or `unknown` where the spawn did not say), `create_chat` (how a fresh start got the id before
+    launch: `ok`, or the CLI's miss, `failed`, `timeout` or `no_id`, from the adapter's
+    `createSessionId`; `aborted` when the spawn stopped waiting for it; `not_asked` for a CLI that
+    takes Kangentic's id, one that cannot create one, a run that reports its own, and a resume;
+    `unknown` where the spawn did not say), `hook_seen`, `agent_started` and `first_output`
+    (`yes`, `no`, at the window), `prompt_seen` (`yes`, `no`: whether the agent's own Prompt event
+    arrived, read when the outcome is known, so a prompt typed after the window counts; with no
+    opening prompt and none seen, the agent may never have made a conversation to resume),
+    `fs_scan` (what the filesystem pathway did: `none`, `pending`,
     `found`, `empty`, `dropped` for a match another session could own, `failed`) and `id_store`
     (`present`, `absent`, `unknown`: whether the agent's own store exists, from the adapter's
     `sessionId.storeEvidence`, today's or yesterday's rollout folder for Codex and `opencode.db`
-    for OpenCode). Every value is fixed; no path or id leaves.
+    for OpenCode). Every value is fixed; no path or id leaves. No `prompt_seen` source has been
+    confirmed in a real run yet. OpenCode's plugin writes `prompt` on `chat.message`, pinned only
+    on a fixture, and Cursor's `beforeSubmitPrompt` hook was written from its docs. Until a run
+    confirms one, a `no` is not grounds to stop a report.
   - `preload_callback` (tag `method`, such as `config.onChanged`): a renderer callback that threw
     when the preload called it on a push. That throw is an error of the preload's isolated world,
     which the renderer's SDK cannot see: measured in Electron 45, the main world's `error` and

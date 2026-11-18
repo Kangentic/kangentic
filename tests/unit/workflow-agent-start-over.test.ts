@@ -1199,7 +1199,7 @@ describe('a workflow\'s own agent starting over', () => {
         supportsReadOnlyLaunch: undefined,
         supportsCallerSessionId: false,
         capturesInteractiveSessionId: undefined,
-        createSessionId: vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => 'chat-created'),
+        createSessionId: vi.fn(async (_cliPath: string, _workingDirectory: string) => ({ agentSessionId: 'chat-created', outcome: 'ok' })),
         detect: vi.fn(async () => ({ found: true, path: '/mock/bin/cursor-agent' })),
         ensureTrust: vi.fn(async () => undefined),
         buildCommand: vi.fn((_options: unknown) => 'mock-cursor-command'),
@@ -1216,6 +1216,7 @@ describe('a workflow\'s own agent starting over', () => {
       expect(createdAgent.createSessionId).toHaveBeenCalledWith('/mock/bin/cursor-agent', path.join(root, 'home'));
       expect(createdAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, sessionId: 'chat-created', prompt: 'FIRST MESSAGE' });
       expect(manager.spawn.mock.calls[0][0].agentSessionId).toBe('chat-created');
+      expect(manager.spawn.mock.calls[0][0].sessionIdCreation).toBe('ok');
       expect(recordedConversation(id)).toEqual({ agent_name: 'cursor', agent_session_id: 'chat-created' });
       agentEffort.forgetWorkflowAgentEffort(status.session!.id);
       await agent.endWorkflowAgent(context, id);
@@ -1254,12 +1255,13 @@ describe('a workflow\'s own agent starting over', () => {
     });
 
     it('starts with no id when the CLI could not create one', async () => {
-      createdAgent.createSessionId.mockResolvedValueOnce(null);
+      createdAgent.createSessionId.mockResolvedValueOnce({ agentSessionId: null, outcome: 'no_id' });
       const id = newWorkflow();
 
       const status = await agent.openWorkflowAgent(context, 'home', id, {});
 
       expect(createdAgent.buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, sessionId: undefined });
+      expect(manager.spawn.mock.calls[0][0].sessionIdCreation).toBe('no_id');
       expect(recordedConversation(id)).toEqual({ agent_name: 'cursor', agent_session_id: null });
       agentEffort.forgetWorkflowAgentEffort(status.session!.id);
       await agent.endWorkflowAgent(context, id);
