@@ -1,24 +1,27 @@
 /**
- * Names the step that held the retrieval worker's event loop, for a worker
- * that hangs rather than exits.
+ * Names the step that held a utility process's event loop, for a worker that
+ * hangs rather than exits. The retrieval worker and the pty host both run one.
  *
- * Main kills a worker that does not answer an interactive call in 15 s
- * (`INTERACTIVE_TIMEOUT_MS`), and the latch report then says which call timed
- * out and which others were pending (Sentry DESKTOP-1Q). It cannot say which
- * of those interleaved jobs was running the synchronous step that held the
- * loop, and a hung worker cannot answer the question itself. A thread can:
+ * Main kills a retrieval worker that does not answer an interactive call in
+ * 15 s (`INTERACTIVE_TIMEOUT_MS`), and the latch report then says which call
+ * timed out and which others were pending (Sentry DESKTOP-1Q). The pty host is
+ * never killed, and its heartbeat stall report could say only that it missed
+ * a beat (Sentry DESKTOP-43). Neither report can say which synchronous step
+ * held the loop, and a hung worker cannot answer the question itself. A
+ * thread can:
  *
  * - The worker's own thread bumps a heartbeat in a `SharedArrayBuffer` every
  *   500 ms, and writes the label of the `timeSyncWork` span it is running into
  *   the same buffer (`setSyncSpanLabelSink`). Neither posts a message, so main
  *   pays nothing while the worker is healthy.
  * - A watchdog thread checks the heartbeat every second. After five checks
- *   with no beat, about 5 s, well inside the 15 s kill, it writes one line to
- *   stderr: `[retrieval-worker] event loop held 5 s in index:chunk-window`.
- *   That stderr is the tail the restart policy puts in its crash log line and
+ *   with no beat, about 5 s, well inside the 15 s kill and the pty host's
+ *   11 s heartbeat stall, it writes one line to stderr:
+ *   `[retrieval-worker] event loop held 5 s in index:chunk-window`. That
+ *   stderr is the tail the restart policy puts in its crash log line and
  *   latch report, and the latch report also copies the line onto its own
  *   crash's entry (`watchdogLine`), so a report of three crashes says which
- *   one held the loop.
+ *   one held the loop. The pty host's stall report reads it the same way.
  *
  * The watchdog writes with `fs.writeSync` on the stderr descriptor. A worker
  * thread's `console` and `process.stderr` are forwarded through the thread
@@ -34,8 +37,8 @@
  */
 
 import { Worker } from 'node:worker_threads';
-import { setSyncSpanLabelSink } from '../../diagnostics/event-loop-lag';
-import { EVENT_LOOP_HELD_PHRASE } from '../../utility-process/stderr-tail';
+import { setSyncSpanLabelSink } from '../diagnostics/event-loop-lag';
+import { EVENT_LOOP_HELD_PHRASE } from './stderr-tail';
 
 /** Longest label kept, in UTF-8 bytes. Labels are short fixed identifiers. */
 export const LABEL_BYTES = 96;
@@ -112,6 +115,7 @@ export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): 
   const header = new Int32Array(buffer, 0, HEADER_SLOTS);
   const labelBytes = new Uint8Array(buffer, HEADER_BYTES, LABEL_BYTES);
   const encoder = new TextEncoder();
+  const prefix = options.prefix ?? '[retrieval-worker]';
 
   // The thread first, and nothing else until it exists. The caller runs ahead
   // of the worker's `ready`, so a constructor that throws must cost only the
@@ -125,18 +129,18 @@ export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): 
         fd: options.fd ?? 2,
         checkIntervalMs: options.checkIntervalMs ?? WATCHDOG_CHECK_INTERVAL_MS,
         heldChecks: options.heldChecks ?? WATCHDOG_HELD_CHECKS,
-        prefix: options.prefix ?? '[retrieval-worker]',
+        prefix,
       },
     });
   } catch (error) {
-    console.warn('[retrieval-worker] event-loop watchdog did not start:', error);
+    console.warn(`${prefix} event-loop watchdog did not start:`, error);
     return { online: Promise.resolve(), stop: async () => undefined };
   }
   // Diagnostics only. The thread never keeps the worker alive, and a thread
   // that fails takes nothing else with it.
   watchdog.unref();
   watchdog.on('error', (error) => {
-    console.warn('[retrieval-worker] event-loop watchdog stopped:', error);
+    console.warn(`${prefix} event-loop watchdog stopped:`, error);
   });
   // Settles on a failed start too, so a waiter never hangs on a thread that never runs.
   const online = new Promise<void>((resolve) => {

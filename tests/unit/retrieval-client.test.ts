@@ -27,7 +27,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   WATCHDOG_CHECK_INTERVAL_MS,
   WATCHDOG_HELD_CHECKS,
-} from '../../src/main/retrieval/worker/event-loop-watchdog';
+} from '../../src/main/utility-process/event-loop-watchdog';
 
 interface FakeChild extends EventEmitter {
   postMessage: ReturnType<typeof vi.fn>;

@@ -23,7 +23,8 @@
  * - The host runs reaps and Stops one batch at a time. It posts
  *   `batch-started` as each starts, and every request of that method still
  *   waiting gets its budget back, so time spent queued never counts.
- * - A heartbeat (VS Code's intervals) logs a host that stops answering.
+ * - A heartbeat (VS Code's intervals) logs a host that stops answering, and
+ *   reports the stall once it ends, with how it ended and the host's stderr.
  * - Quit posts `shutdown`; the host flushes, kills, waits for the exit
  *   callbacks and exits itself. Its pid joins the before-quit drain.
  */
@@ -32,7 +33,7 @@ import path from 'node:path';
 import { app, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
 import { recordRelayedSyncSpan } from '../../diagnostics/event-loop-lag';
 import { unpacked } from '../../utility-process/paths';
-import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
+import { STDERR_DRAIN_BOUND_MS, UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../../utility-process/stderr-tail';
 import type { PtyHostLifecycleListener, PtyHostRequestOptions, PtyHostTransport } from './pty-host-client';
@@ -48,7 +49,12 @@ import {
   fromPtyHostError,
 } from './protocol';
 import { PtyHostExitedError, PtyHostTimeoutError } from './pty-host-request-errors';
-import { reportPtyHostHeartbeatStall } from './pty-host-report';
+import {
+  recordPtyHostStallAtQuit,
+  reportPtyHostHeartbeatStall,
+  type PtyHostHeartbeatStall,
+  type PtyHostHeartbeatStallOutcome,
+} from './pty-host-report';
 
 const SERVICE_NAME = 'kangentic-pty-host';
 /** VS Code's pty host restart cap. */
@@ -103,8 +109,30 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+/** One heartbeat's ping, from its send until it settles. */
+interface HeartbeatBeat {
+  startedAt: number;
+  /** The host's stderr when the beat was sent. Kept here because a host exit
+   *  drops `childStderr` before the ping's rejection runs. */
+  stderrTail: StderrTail | null;
+  /** Watchdog lines in that tail when the beat was sent, so the report names
+   *  only a hold written during this stall. */
+  watchdogLinesBefore: number;
+  /** Set when the ping passed `HEARTBEAT_UNRESPONSIVE_MS`. */
+  stalled: boolean;
+  /** How late the threshold timer fired on main's own loop. */
+  timerLateMs: number;
+  /** The other requests waiting on the host when the stall was seen. */
+  inFlight: string[];
+  /** The stall was handed to the report once, whichever way it ended first. */
+  ended: boolean;
+}
+
 export interface UtilityPtyHostTransportOptions {
   projectsDir: string;
+  /** Where a heartbeat stall the app quits on is written for the next launch
+   *  to report (`recordPtyHostStallAtQuit`). Without one it is dropped. */
+  stallAtQuitFilePath?: string;
 }
 
 export class UtilityPtyHostTransport implements PtyHostTransport {
@@ -137,6 +165,8 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatInFlight = false;
+  /** The beat whose ping has not settled yet, for a quit that ends its stall. */
+  private currentBeat: HeartbeatBeat | null = null;
   private shuttingDown = false;
   private hadHost = false;
   /** A host exited unexpectedly since the last `ready`, before or after its
@@ -277,6 +307,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.stopHeartbeat();
+    this.recordStallAtQuit();
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
     if (this.fallback) {
@@ -453,26 +484,106 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     this.lifecycle?.onHostUp(true);
   }
 
+  /**
+   * A ping every `HEARTBEAT_INTERVAL_MS`. One that passes
+   * `HEARTBEAT_UNRESPONSIVE_MS` is logged at once and reported when it
+   * settles, so the report says how the stall ended: answered late, the host
+   * exited, no answer within the ping's budget, or the app quit.
+   */
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (this.heartbeatInFlight) return;
       this.heartbeatInFlight = true;
-      const startedAt = Date.now();
+      const beat: HeartbeatBeat = {
+        startedAt: Date.now(),
+        stderrTail: this.childStderr,
+        watchdogLinesBefore: this.childStderr?.watchdogLineCount() ?? 0,
+        stalled: false,
+        timerLateMs: 0,
+        inFlight: [],
+        ended: false,
+      };
+      this.currentBeat = beat;
       const warnTimer = setTimeout(() => {
+        beat.stalled = true;
+        beat.timerLateMs = Math.max(0, Date.now() - beat.startedAt - HEARTBEAT_UNRESPONSIVE_MS);
+        beat.inFlight = this.pendingMethodsBesidePing();
         console.warn(`[pty-host] has not answered a heartbeat for ${HEARTBEAT_UNRESPONSIVE_MS / 1000} s; terminals may be stalled`);
-        reportPtyHostHeartbeatStall(HEARTBEAT_UNRESPONSIVE_MS);
       }, HEARTBEAT_UNRESPONSIVE_MS);
       warnTimer.unref();
       this.request('ping', {}).then(() => {
-        const elapsedMs = Date.now() - startedAt;
+        const elapsedMs = Date.now() - beat.startedAt;
         if (elapsedMs >= HEARTBEAT_UNRESPONSIVE_MS) console.warn(`[pty-host] answered a heartbeat after ${elapsedMs} ms`);
-      }, () => undefined).finally(() => {
+        this.endStall(beat, 'answered', elapsedMs);
+      }, (error: unknown) => {
+        // A ping that fails is how a stall ends without an answer. Any other
+        // error the host sent back for a ping has nothing to report.
+        if (error instanceof PtyHostExitedError) this.endStall(beat, 'host_exited', null);
+        else if (error instanceof PtyHostTimeoutError) this.endStall(beat, 'no_answer', null);
+      }).finally(() => {
         clearTimeout(warnTimer);
+        if (this.currentBeat === beat) this.currentBeat = null;
         this.heartbeatInFlight = false;
       });
     }, HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref();
+  }
+
+  /**
+   * The quit ends a stall still waiting. A host that never answers usually
+   * ends this way: a person quits a window of frozen terminals. Nothing
+   * sent from the quit path lands (`synchronous-shutdown.md`, rule 3), so it
+   * goes on disk for the next launch to report. The ping's own rejection, when
+   * the host exits, is then the quit's and reports nothing.
+   */
+  private recordStallAtQuit(): void {
+    const beat = this.currentBeat;
+    if (!beat?.stalled || beat.ended) return;
+    beat.ended = true;
+    const filePath = this.options.stallAtQuitFilePath;
+    if (!filePath) return;
+    try {
+      recordPtyHostStallAtQuit(filePath, this.stallOf(beat, 'shutdown', null));
+    } catch (error) {
+      // report-ok: a report from the quit path never lands; the disk write was the one way it could.
+      console.warn('[pty-host] could not record a heartbeat stall for the next launch:', error);
+    }
+  }
+
+  private stallOf(beat: HeartbeatBeat, outcome: PtyHostHeartbeatStallOutcome, answeredAfterMs: number | null): PtyHostHeartbeatStall {
+    return {
+      unansweredMs: HEARTBEAT_UNRESPONSIVE_MS,
+      outcome,
+      answeredAfterMs,
+      timerLateMs: beat.timerLateMs,
+      inFlight: beat.inFlight,
+      stderrTail: beat.stderrTail?.snapshot() ?? '',
+      watchdogLinesBefore: beat.watchdogLinesBefore,
+    };
+  }
+
+  /** Report a stalled beat's end, once. A beat that never stalled reports nothing. */
+  private endStall(beat: HeartbeatBeat, outcome: PtyHostHeartbeatStallOutcome, answeredAfterMs: number | null): void {
+    if (!beat.stalled || beat.ended) return;
+    beat.ended = true;
+    // The host a quit shuts down exits too; that stall is the quit's to record.
+    if (this.shuttingDown) return;
+    const send = (): void => reportPtyHostHeartbeatStall(this.stallOf(beat, outcome, answeredAfterMs));
+    // A host that exited can still be draining its last stderr, the
+    // watchdog's line among it (see `StderrTail.whenDrained`).
+    const drained = outcome === 'host_exited' && beat.stderrTail ? beat.stderrTail.whenDrained(STDERR_DRAIN_BOUND_MS) : null;
+    if (drained) void drained.then(send);
+    else send();
+  }
+
+  /** The methods of the requests waiting on the host, the heartbeat's own ping left out. */
+  private pendingMethodsBesidePing(): string[] {
+    const methods = new Set<string>();
+    for (const entry of this.pending.values()) {
+      if (entry.method !== 'ping') methods.add(entry.method);
+    }
+    return [...methods].sort();
   }
 
   private stopHeartbeat(): void {

@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { Terminal } from '@xterm/headless';
-import { HeadlessFrameBuffer } from '../../src/main/pty/buffer/headless-frame';
+import {
+  HEADLESS_PARSE_SPAN_LABEL,
+  HEADLESS_SERIALIZE_SPAN_LABEL,
+  HeadlessFrameBuffer,
+  labelHeadlessParse,
+} from '../../src/main/pty/buffer/headless-frame';
+import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
 import { activateUnicode11 } from '../../src/shared/xterm-unicode11';
 
 /**
@@ -54,6 +60,41 @@ function readScrollRegion(terminal: Terminal): { top: number; bottom: number } {
  * pty-buffer-manager.test.ts.
  */
 describe('HeadlessFrameBuffer', () => {
+  // The pty host's event-loop watchdog names the step that held the loop from the span
+  // running (Sentry DESKTOP-43). xterm parses a write later, on its own timer, so a span
+  // around write() never covers the parse; only the wrapped write-buffer action does.
+  describe('span labels for the event-loop watchdog', () => {
+    afterEach(() => {
+      setSyncSpanLabelSink(null);
+    });
+
+    it('runs the deferred parse and the serialize inside labelled spans', async () => {
+      const labels: Array<string | null> = [];
+      setSyncSpanLabelSink((label) => labels.push(label));
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      buffer.write('hello from the agent\r\n');
+      expect(labels, 'write() only queues the chunk; the parse comes later').not.toContain(HEADLESS_PARSE_SPAN_LABEL);
+
+      expect(await buffer.serialize()).toContain('hello from the agent');
+      expect(labels).toContain(HEADLESS_PARSE_SPAN_LABEL);
+      expect(labels).toContain(HEADLESS_SERIALIZE_SPAN_LABEL);
+      // Each span hands the label back when it ends.
+      expect(labels[labels.length - 1]).toBeNull();
+    });
+
+    it('finds the write buffer seam in the installed xterm, so an upgrade that moves it fails here', () => {
+      const terminal = new Terminal({ cols: 10, rows: 2, allowProposedApi: true });
+      activateUnicode11(terminal);
+      expect(labelHeadlessParse(terminal)).toBe(true);
+      terminal.dispose();
+    });
+
+    it('leaves a terminal without the seam alone, so the parse runs unlabelled rather than failing', () => {
+      const withoutSeam = { _core: {} } as unknown as Terminal;
+      expect(labelHeadlessParse(withoutSeam)).toBe(false);
+    });
+  });
+
   describe('OSC 8 links', () => {
     interface ParserAccessor {
       terminal: { _core: { buffer: { markers: unknown[] } } };

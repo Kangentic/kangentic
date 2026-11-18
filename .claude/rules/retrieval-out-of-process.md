@@ -57,8 +57,9 @@ connection.
 - **`RetrievalClient` is constructed only in `retrieval-client.ts`**, as the shared
   `retrievalClient`. The worker is its own esbuild entry in `scripts/build.js` and `scripts/dev.js`
   and carries no `electron`, IPC, analytics or Sentry import.
-- **The worker's one thread is its event-loop watchdog** (`worker/event-loop-watchdog.ts`), which
-  names the step that held the loop when a call times out. It runs inline source that requires
+- **The worker's one thread is its event-loop watchdog**
+  (`src/main/utility-process/event-loop-watchdog.ts`, shared with the pty host), which names the
+  step that held the loop when a call times out. It runs inline source that requires
   only `node:` built-ins, since loading a native module in a worker thread is unsafe, and it
   writes with `fs.writeSync`, since a thread's console waits on the thread that is hung. It posts
   no message, so main pays nothing while the worker is healthy.
@@ -83,8 +84,9 @@ connection.
 - **Test:** `tests/unit/event-loop-watchdog.test.ts` runs the watchdog on a real thread, holds the
   loop, and reads the line it wrote while the loop was still held. It also fails when the thread
   requires anything but a `node:` built-in, or when `worker_threads` is imported anywhere else in
-  `src/main` but the pty host's spawn worker, the one other thread, which loads no native module
-  either ([[pty-host-out-of-process]]). It fails when an adapter that reads a transcript window has
+  `src/main` but the pty host's spawn worker and the shared watchdog module
+  (`src/main/utility-process/event-loop-watchdog.ts`, started by the retrieval worker and the pty
+  host alike), which load no native module either ([[pty-host-out-of-process]]). It fails when an adapter that reads a transcript window has
   no `transcript:parse-` span: each parses in its own code after the read's `await`, so nothing
   shared can label it. `tests/unit/retrieval-worker-held-step.test.ts` holds the loop inside a
   handler through the real entry and reads `in method:<name>`.

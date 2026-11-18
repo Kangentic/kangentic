@@ -83,6 +83,7 @@ import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-clea
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { reportAbandonedLaunches } from './pty/abandoned-launches';
+import { PTY_HOST_STALL_AT_QUIT_FILE_NAME, reportPtyHostStallFromLastRun } from './pty/host/pty-host-report';
 import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
 import { drainPtyExitCallbacks, type PtyExitDrainResult } from './pty/shutdown/exit-callback-drain';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
@@ -2218,6 +2219,14 @@ app.whenReady().then(async () => {
     reportAbandonedLaunches(ABANDONED_LAUNCHES_FILE_PATH);
   } catch (error) {
     console.warn('[AGENT-LAUNCH] Reading the launches a quit ended failed:', error);
+  }
+  // A pty host heartbeat stall the last run quit on (pty-host-report.ts). Same
+  // wrap: a telemetry-only failure must not disrupt startup.
+  try {
+    reportPtyHostStallFromLastRun(path.join(PATHS.configDir, PTY_HOST_STALL_AT_QUIT_FILE_NAME));
+  } catch (error) {
+    // report-ok: the read is itself a report; a file that cannot be read or deleted holds nothing to send.
+    console.warn('[pty-host] Reading the heartbeat stall the last quit ended failed:', error);
   }
 
   // A GPU health escalation (repeated GPU process deaths within one launch,

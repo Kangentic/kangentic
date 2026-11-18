@@ -19,6 +19,7 @@ sources:
   - resource: src/main/analytics/reportable-module-name.ts
   - resource: src/main/analytics/renderer-classification.ts
   - resource: src/main/utility-process/stderr-tail.ts
+  - resource: src/main/utility-process/event-loop-watchdog.ts
   - resource: src/shared/benign-renderer-errors.ts
   - resource: src/renderer/monaco-error-funnel.ts
   - resource: src/main/diagnostics/gpu-health.ts
@@ -441,7 +442,17 @@ in one Sentry org, one triage surface.
     agent's move came in a turn the owner started; the move still runs, as the agent's).
   - `pty_host`: a fixed code the host relays as a `handledError` event (`root_pin`, `cli_pin`,
     `orphan_cleanup`, `pty_kill`, `transcript_flush`, `spawn_worker_fallback`, `uncaught`), and a
-    heartbeat stall, once per run. The first host crash of a run reports too, fingerprinted
+    heartbeat stall, once per run, fingerprinted `['pty-host', 'heartbeat-stall']`. The stall is
+    sent when it ends, not at the 11 s threshold, because DESKTOP-43 could not tell a late answer
+    from none. Its `outcome` tag is `answered` (with `answeredAfterMs`), `host_exited`,
+    `no_answer` (no answer within the ping's 15 s budget) or `shutdown` (the app quit first).
+    Nothing sent from the quit path lands. So a `shutdown` stall is written to
+    `pty-host-stall-at-quit.json` in the config directory, and the next launch reports it, as
+    `abandoned-launches.ts` does. Its `pty_host` context lists the other requests in flight and
+    `heldStep`. That is the host watchdog's line when one was written during this stall, and null
+    when none was: main's own loop was held, or the watchdog never ran. Its
+    `utility_process.stderrTail` is the host's stderr, redacted as a crash report's is.
+  - `pty_host` also reports the first host crash of a run, fingerprinted
     `['utility-process-first-crash', service, cause]`, apart from the five-crash latch.
   - `retrieval`: the worker's reply carries the error's class and code, and a sqlite-vec load
     failure and an embeddings init failure each report once.
@@ -571,7 +582,8 @@ in one Sentry org, one triage surface.
   because Sentry normalizes contexts to depth 3, which turns an object inside the list into
   `[Object]`. The pending list names every job in flight, since the retrieval worker schedules
   nothing itself, but not which one held the loop. For that, the worker runs an event-loop watchdog
-  thread (`src/main/retrieval/worker/event-loop-watchdog.ts`). When its heartbeat stops for about
+  thread (`src/main/utility-process/event-loop-watchdog.ts`, which the pty host runs too, with the
+  `[pty-host]` prefix, for its heartbeat stall). When its heartbeat stops for about
   5 s, it writes `[retrieval-worker] event loop held 5 s in <step>` straight to stderr, naming the
   innermost `timeSyncWork` span that was running (or `outside any labelled step` when none was), so
   the line is in the stderr tail by the 15 s kill. Every handler's synchronous slice runs inside a

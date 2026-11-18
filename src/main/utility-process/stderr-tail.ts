@@ -133,6 +133,12 @@ export class StderrTail implements StderrSource {
     });
   }
 
+  /** `watchdogLineCount` of the retained text, without the redaction a
+   *  snapshot pays for, since the count reads only the fixed phrase. */
+  watchdogLineCount(): number {
+    return watchdogLineCount(this.text);
+  }
+
   /** The retained text, home directory redacted, trailing whitespace dropped. */
   snapshot(): string {
     return redactHomeDirectory(this.text, this.homeDirectory, this.caseInsensitiveHome).trimEnd();
@@ -251,11 +257,26 @@ export function summarizeStderrTail(tail: string, maxLength = 160): string | nul
   return chosen.length > maxLength ? `${chosen.slice(0, Math.max(0, maxLength - 3))}...` : chosen;
 }
 
-/** What every line the retrieval worker's event-loop watchdog writes contains.
+/** What every line the event-loop watchdog writes contains, in the retrieval
+ *  worker and the pty host alike.
  *  The watchdog builds its line from this and `watchdogLine` looks for it, so
  *  the two cannot drift. Lives here because main reads it, and main must not
  *  import the watchdog's thread module. */
 export const EVENT_LOOP_HELD_PHRASE = 'event loop held';
+
+/** How many watchdog lines a stderr tail holds. A caller that counts before and
+ *  after a stall can tell a line the stall wrote from an older one still in the
+ *  tail. A trim can drop an old line as a new one lands, which reads as none:
+ *  the safe direction. */
+export function watchdogLineCount(tail: string): number {
+  let count = 0;
+  let index = tail.indexOf(EVENT_LOOP_HELD_PHRASE);
+  while (index !== -1) {
+    count += 1;
+    index = tail.indexOf(EVENT_LOOP_HELD_PHRASE, index + EVENT_LOOP_HELD_PHRASE.length);
+  }
+  return count;
+}
 
 /** The newest watchdog line in a stderr tail, or null when there is none. */
 export function watchdogLine(tail: string): string | null {
