@@ -249,6 +249,7 @@ path of the user's key file and the variable names in it, never a key. See
 | key_file_path | TEXT | | NULL |
 | key_names | TEXT | NOT NULL | '[]' |
 | email | TEXT | | NULL |
+| org_id | TEXT | | NULL |
 | plan | TEXT | | NULL |
 | status | TEXT | NOT NULL | 'ok' |
 | position | INTEGER | NOT NULL | |
@@ -257,11 +258,16 @@ path of the user's key file and the variable names in it, never a key. See
 | last_usage_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 
-Index: `idx_agent_accounts_agent` on `(agent, position)`. `status` is one of `ok`, `signed-out`,
-`no-subscription`, `not-found` or `link-failed`. `history_private` is 1 when the account folder's
+Index: `idx_agent_accounts_agent` on `(agent, position)`. `org_id` is the organization the CLI
+reports for the login, null until a sign-in read fills it. With `email` it names one login. `status`
+is one of `ok`, `signed-out`, `no-subscription`, `not-found`, `link-failed` or `replaced`. A
+`replaced` row keeps its email after another login took its home, and takes no session or usage.
+`history_private` is 1 when the account folder's
 `history.jsonl` could not be hard linked to the agent's home, so that account keeps its own prompt
 history. `last_usage_json` holds the account's last usage windows, read when no session runs on it.
-Each project database's `sessions.account_id` names the row a session ran on.
+Each project database's `sessions.account_id` names the row of the home a session was spawned in,
+written at insert. A live session whose home changes login follows the new login in memory only, so
+the column keeps the spawn-time row.
 
 ## Connection Management
 

@@ -245,7 +245,7 @@ Machine-global (like Config), never project-scoped. Backs Settings > Accounts an
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `accounts:list` | invoke | One card (`AgentAccountsCard`) per installed agent that declares accounts, its accounts in run order |
-| `accounts:startLogin` | invoke | Run the CLI's own sign-in in a terminal of its own, for a new folder account of an agent or again for a signed-out account. Resolves `AgentAccountLoginStart`: the `loginId` and `accountId`, or a refusal (`unsupported`, `no-cli`, `failed`) |
+| `accounts:startLogin` | invoke | Run the CLI's own sign-in in a terminal of its own, for a new folder account of an agent or again for a signed-out or `replaced` account. Resolves `AgentAccountLoginStart`: the `loginId` and `accountId`, or a refusal (`unsupported`, `no-cli`, `failed`) |
 | `accounts:loginBacklog` | invoke | What a sign-in printed before its terminal mounted, by `loginId` |
 | `accounts:loginInput` | send | Keys typed into a sign-in's terminal (a pasted code, Enter) |
 | `accounts:loginResize` | send | Resize a sign-in's terminal |

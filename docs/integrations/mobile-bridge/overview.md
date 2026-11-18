@@ -86,7 +86,7 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
     terminal-size-guard.ts     # restores desktop PTY dims when a phone-held grid releases (any path)
     answer-permission-prompt.ts # binds the response to a specific outstanding prompt id
     board-tool.ts                # board-tool-read/board-tool-write - NOT MCP; routes directly into commandHandlers, gated by board-tool-allowlist.ts
-    board-tool-allowlist.ts      # per-tool read/mutate classification (excludes query_db + create_column/delete_column + move_task/reorder_tasks/list_tasks/list_columns/list_backlog + reserve_dev_ports/check_dev_ports + the automation tools + every workflow tool but list/get/pause/resume; browser/devtools/diagnostics/cross-project tools are absent from commandHandlers, so they are excluded for free)
+    board-tool-allowlist.ts      # per-tool read/mutate classification (excludes query_db + create_column/delete_column + move_task/reorder_tasks/list_tasks/list_columns/list_backlog + reserve_dev_ports/check_dev_ports + switch_account + the automation tools + every workflow tool but list/get/pause/resume; browser/devtools/diagnostics/cross-project tools are absent from commandHandlers, so they are excluded for free)
     workflow-wire.ts             # a board's workflow facts per task (strip, route, wait, lock), read from the desktop board's own workflow summaries
     register-push.ts             # push registration keyed by the requesting session's roster deviceId
     project-color.ts             # deterministic per-project accent color for read-board

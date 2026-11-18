@@ -143,7 +143,7 @@ reads only that. Nothing outside `adapters/` branches on an agent's name. An ada
 nothing gets no card.
 
 - **Folder** (`FolderAccountSupport`): `accountEnv(accountFolder, defaultHome)` (the variables
-  that put a run on the folder), `defaultHome()`, the login arguments, the shared entries,
+  that put a run on the folder), `defaultHome()`, `loginArgs` (the arguments that run the CLI's own sign-in), the shared entries,
   `identify(cliPath, home)`, and optionally `readHomeIdentity` and `loginFiles` (the cheap reads
   that notice a replaced login), `loginEmailArgs`, `readIdleUsage`, `isUsageLimitFailure`,
   `carryConversation` (copies a resumed conversation's own files into the home it runs on),
@@ -198,7 +198,7 @@ moves no running session, and its tip says so. The call answers once the session
 and the renderer raises one toast from it (`describeAccountSwitchResult`): how many running
 sessions moved, that new sessions start on the account when none was running, or that some
 could not be moved and stay on their accounts.
-An account that is signed out, has no plan, or has a window at 100% is skipped.
+An account that is signed out or `replaced`, has no plan, or has a window at 100% is skipped.
 
 Automatic never ranks from a reading that has run out. Before a spawn that is not named to an
 account, for an agent with two or more accounts whose usage can be read idle (`readIdleUsage`),
@@ -249,7 +249,8 @@ before its usage. `refreshUsage` skips an account that is signed out, so without
 nothing but the tab set one back. A sign-in read that gives no answer (a timeout, a CLI
 mid-update, JSON with no `loggedIn`) throws `IdentityReadError` from the adapter: the account keeps
 the status it had, and `identity-read-failed` is reported. Only the CLI's own signed-out answer
-marks an account signed out. Before this, a failed or unreadable sign-in read marked a working
+marks an account signed out. The one other writer of a set-aside status is the reconcile in "A
+login replaced inside a session", which sets `replaced`. Before this, a failed or unreadable sign-in read marked a working
 account signed out, its usage was never read again, and Automatic put it last until the Accounts
 tab was opened. Any other failure of a sign-in or usage read is a defect, reported through the
 `accounts` reporter (stage `sign_in_read` or `usage_read`).
@@ -320,7 +321,7 @@ than the row. Startup and the tab opening read every row through the CLI, as bef
 is parsed again only when its size or time changed. A CLI in a WSL distro keeps its login in the
 distro, so its homes get no cheap check and its own home no Sign in from this side.
 
-**Sign in on any row.** `loginCommand` covers the agent's own home too, run with no home variable as
+**Sign in beyond a folder row.** `loginCommand` covers the agent's own home too, run with no home variable as
 the user's own terminal does, and `loginEmailArgs` fills in the row's email (`claude auth login
 --email`). The browser still signs in whatever claude.ai login it holds. A Sign in that lands
 another listed login leaves the row set aside and the dialog names the row that login belongs to.
@@ -328,7 +329,8 @@ An Add account that signs in a set-aside row's login hands that row the new fold
 running in its old folder keep following the login that folder holds. For the agent's
 own home, which cannot move, the new folder keeps the login and the home's row stays set aside with
 no email. The tab offers
-Sign in on a set-aside folder row; the same item on the agent's own home waits for its design.
+Sign in on a signed-out or set-aside folder row. The agent's own home has no menu item for it yet:
+the backend runs its sign-in, and the item waits for its design.
 
 **An agent switches with a tool, not `/login`.** `kangentic_switch_account` restarts the calling
 task's own session on a listed account once its turn ends. Its description, which every agent with
@@ -405,8 +407,9 @@ has passed, which is what the tick on the bar marks.
 Add account runs the CLI's own sign-in (`claude auth login`) in a terminal of its own
 (`account-login.ts`), pointed at a new account folder. It is a raw PTY in the pty host and not an
 agent session, so it has no registry row, no hooks and no task tag. Kangentic reads nothing from
-that screen. When the terminal ends, `identify` asks the CLI who signed in. An email already in the
-list adds nothing and the dialog names the existing account. A sign-in that did not finish removes
+that screen. When the terminal ends, `identify` asks the CLI who signed in. A login already in the
+list (the same email and, when both report one, the same organization) adds nothing, and the dialog
+names the existing account. A sign-in that did not finish removes
 the row it made, and so does one whose terminal could not start. The folder stays.
 
 ## Per agent
