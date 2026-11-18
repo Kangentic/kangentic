@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, the daily check that the shipped Trello, Jira and Linear sign-ins still work, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, the daily check that the shipped Trello, Jira, Linear and GitLab sign-ins still work, the keep-alive pass that renews an idle sign-in, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -338,8 +338,8 @@ user's own sign-in, on the provider's terms:
 | Jira | A one hour access token and a refresh token | No refresh for 90 days |
 | GitLab | A 2 hour access token and a refresh token | GitLab documents no end for the refresh token |
 
-**The keep-alive pass.** An adapter renews a sign-in only when an import reads through it, so a
-user who opened Kangentic daily and imported from Linear monthly was signed out. Two minutes after
+**The keep-alive pass.** Before this pass, an adapter renewed a sign-in only when an import read
+through it, so a user who opened Kangentic daily and imported from Linear monthly was signed out. Two minutes after
 launch and then once a day, `sign-in-keep-alive.ts` calls `keepSignInAlive` on every adapter that
 has one. Each renews the browser sign-ins it saved more than seven days ago
 (`SIGN_IN_RENEWAL_AFTER_MS`, read against the `savedAt` every sign-in and refresh writes), through
@@ -365,8 +365,8 @@ library, inside a Power-Up iframe. Anything else is a confidential client with a
 would be a third kangentic.com Function. The key flow has one token that never expires, no secret,
 and no end date in Trello's authorization guide. Revisit this when Trello sets one.
 
-Every answer that was first read from documentation or source has now been seen from the
-registered clients, on 2026-11-17:
+The answers first read from documentation or source were checked against the registered clients
+on 2026-11-17. All but one were seen, and the first bullet names the one that was not:
 
 - **Atlassian, for a refresh token it does not know.** 403 `unauthorized_client` with the
   description "refresh_token is invalid". Its guide gives 403 `invalid_grant`, which the
@@ -427,11 +427,12 @@ check too, and so does no answer at all.
   `LINEAR_OAUTH_CLIENT_ID`, `GITLAB_COM_OAUTH_CLIENT_ID` or `DOCS_BASE_URL` replaces the shipped value. That checks a new key
   before it is committed, or points the page checks at a preview deployment. An empty variable counts
   as unset, so it cannot turn a shipped id's checks into pending ones.
-- **Answers not yet seen.** None. Every passing answer was seen from the registered clients on
-  2026-11-17 and is in the fixture: Trello's two for a live key, `invalid_grant` from Linear and
-  from gitlab.com, and Atlassian's 403 `unauthorized_client` with "refresh_token is invalid".
-  Atlassian's own guide gives `invalid_grant` for that case, which the check also passes and
-  nobody here has seen. It still fails `unauthorized_client` with any other description, because
+- **Answers not yet seen.** One. Atlassian's own guide gives `invalid_grant` for a refresh token
+  it will not take, which the check passes and nobody here has seen. Every other passing answer
+  was seen from the registered clients on 2026-11-17 and is in the fixture: Trello's two for a
+  live key, `invalid_grant` from Linear and from gitlab.com, and Atlassian's 403
+  `unauthorized_client` with "refresh_token is invalid", which is what it answered in place of
+  the documented one. The check still fails `unauthorized_client` with any other description, because
   only that description names the token and not the client. The check never uses Linear's refresh
   grant, which answers `invalid_grant` for a made-up client too. A new sign-in lists its unseen
   answers here until its app is registered.
