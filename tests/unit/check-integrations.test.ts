@@ -574,6 +574,36 @@ describe('the Jira token service', () => {
     const results = await checkJiraService({ ...shipped, jiraClientId: SET }, async () => answer(502, '<html>Bad gateway</html>'));
     expect(statusesOf(results)).toEqual(['fail']);
   });
+
+  // Atlassian's guide gives invalid_grant for a refresh token it will not take. Developers report
+  // this pair for the same case, from a client that works. Neither has been recorded, so these
+  // rows are the reported shape. What tells the two unauthorized_client answers apart is the
+  // description: one names the token, and any other is about the client.
+  const describedRefusal = (status: number, error: string, description: string) =>
+    answer(status, JSON.stringify({ error, error_description: description }), { 'content-type': 'application/json' });
+
+  it('passes an unauthorized_client whose description says the refresh token is invalid', async () => {
+    const send = async () => describedRefusal(403, 'unauthorized_client', 'refresh_token is invalid');
+    const results = await checkJiraService({ ...shipped, jiraClientId: SET }, send);
+    expect(statusesOf(results)).toEqual(['ok']);
+    expect(results[0].detail).toContain('unauthorized_client: refresh_token is invalid');
+  });
+
+  it.each([
+    { name: 'another description', description: 'Unauthorized client' },
+    { name: 'no description', description: '' },
+    { name: 'a description about the client secret', description: 'client_secret is invalid' },
+  ])('still fails an unauthorized_client with $name', async ({ description }) => {
+    const send = async () => describedRefusal(403, 'unauthorized_client', description);
+    expect(statusesOf(await checkJiraService({ ...shipped, jiraClientId: SET }, send))).toEqual(['fail']);
+    // Before the id ships it is pending, as every refused client is.
+    expect(statusesOf(await checkJiraService({ ...shipped, jiraClientId: NOT_SHIPPED }, send))).toEqual(['pending']);
+  });
+
+  it('does not let that description excuse another refusal code', async () => {
+    const send = async () => describedRefusal(401, 'invalid_client', 'refresh_token is invalid');
+    expect(statusesOf(await checkJiraService({ ...shipped, jiraClientId: SET }, send))).toEqual(['fail']);
+  });
 });
 
 describe('the Linear client', () => {

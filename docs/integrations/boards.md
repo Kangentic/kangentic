@@ -298,8 +298,8 @@ Three answers are read from documentation or source and not yet seen from a real
 
 - **Atlassian, for a refresh token it does not know.** Its guide gives 403 `invalid_grant`. Forum
   reports show 403 `unauthorized_client` with "refresh_token is invalid" for the same case. The
-  desktop is right either way, since it reads any 4xx but 408 and 429 as a refusal. A check that
-  tells a refused client from a refused token has to know which one a healthy client gets.
+  desktop is right either way, since it reads any 4xx but 408 and 429 as a refusal. The daily
+  sign-in check passes either one, and tells the second from a refused client by its description.
 - **Linear, for a made-up code and a client it knows.** `invalid_grant` is expected. `invalid_client`
   for a client it does not know was seen on 2026-11-17.
 - **gitlab.com, for a loopback redirect on a port that was never registered.** See
@@ -328,7 +328,7 @@ launcher, the site and the domain: see [Scheduled checks](../releases/scheduled-
 | Trello allowed origin | Trello's approval page, signed out, with the `return_url` the desktop sends | 200 | 400 `Invalid return_url` (the key does not list kangentic.com), 404 (a key Trello does not know) |
 | Trello return page | `kangentic.com/oauth/trello/return` with a valid state, then a bad one | The served `<script>` and `<style>` hash to the values in the page's own `Content-Security-Policy`, and the bad state gets a 400 | A hash that no longer matches. Browsers then run nothing and the sign-in waits until it times out |
 | Jira callback | `kangentic.com/oauth/jira/callback` with a bad state, then a valid state and no code | A 400, then a 302 to `http://127.0.0.1:<port>/jira/callback?error=invalid_request&nonce=<nonce>`, with the port and nonce the probe's own state carried | A bad state that is not refused, or a redirect anywhere else |
-| Jira token service | A made-up refresh token posted to `kangentic.com/oauth/jira/refresh` | `invalid_grant`, which means Atlassian accepted the client | 500 `server_error` (the Pages secrets are unset), `unauthorized_client`, `invalid_client`, `access_denied` |
+| Jira token service | A made-up refresh token posted to `kangentic.com/oauth/jira/refresh` | `invalid_grant`, or `unauthorized_client` with the description "refresh_token is invalid". Either means Atlassian accepted the client and refused the token | 500 `server_error` (the Pages secrets are unset), `unauthorized_client` with any other description, `invalid_client`, `access_denied` |
 | Linear client | A made-up authorization code exchanged at `api.linear.app/oauth/token` for `LINEAR_OAUTH_CLIENT_ID`, with the first registered redirect URI | `invalid_grant`, which means Linear knows the client | `invalid_client` |
 | GitLab client | A made-up authorization code exchanged at `gitlab.com/oauth/token` for `GITLAB_COM_OAUTH_CLIENT_ID`, in the form the desktop's own exchange sends | `invalid_grant`, which means gitlab.com knows the client | 401 `invalid_client` |
 
@@ -358,11 +358,10 @@ check too, and so does no answer at all.
   Linear's and gitlab.com's `invalid_grant` for a client each knows. The pull request that commits
   each id runs this check, so that run confirms the answer or shows the real one. Atlassian's is
   the one most likely to differ: forum reports show `unauthorized_client` with "refresh_token is
-  invalid" for the same case, which this check reads as a refused client (see
-  [Owner steps for the browser sign-ins](#owner-steps-for-the-browser-sign-ins)). If the run that
-  commits the Jira id shows that pair, Atlassian accepted the client, and the token service's
-  verdict needs that answer added. The check never uses Linear's refresh grant, which answers
-  `invalid_grant` for a made-up client too.
+  invalid" for the same case, from a client that works. The check passes that pair too, because
+  the description names the token and not the client, and it still fails `unauthorized_client`
+  with any other description. That second answer is as unseen as the first. The check never uses
+  Linear's refresh grant, which answers `invalid_grant` for a made-up client too.
 - **Who hears.** A run writes the table to its summary, one error annotation per failure and one
   notice per pending check. A failed scheduled run emails the person who last changed the
   workflow's schedule (its `cron` line), or who re-enabled the workflow after that, under that
