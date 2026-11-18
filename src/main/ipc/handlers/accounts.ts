@@ -137,7 +137,12 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     }
   });
 
-  const refresher = new AccountUsageRefresher(service, { listAccounts: () => repository.list(), failureReporter: accountsReporter });
+  const refresher = new AccountUsageRefresher(service, {
+    listAccounts: () => repository.list(),
+    failureReporter: accountsReporter,
+    // Registration reads no database. The startup pass is the first read, and starts the watch.
+    onStartup: () => syncLoginWatch?.(),
+  });
   refresher.start();
   usageRefresher = refresher;
 
@@ -170,7 +175,6 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
         .map((filePath) => ({ accountId: account.id, filePath }));
     }));
   };
-  syncLoginWatch();
   context.sessionManager.on('turn-ended', (payload: { sessionId: string }) => {
     checkHome(context.sessionManager.getSessionHomeAccountId(payload.sessionId));
   });

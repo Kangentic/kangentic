@@ -46,6 +46,12 @@ export interface AccountUsageRefresherOptions {
   startupDelayMs?: number;
   /** Reports a read that failed in a way the service did not handle. Absent: nothing is sent. */
   failureReporter?: Pick<ChokepointReporter, 'report'>;
+  /**
+   * Called at the start of the startup pass, before it reads any account. The login file watch
+   * starts here rather than at registration: registration reads no database, and this pass is the
+   * first thing that does.
+   */
+  onStartup?: () => void;
 }
 
 /** Which accounts a pass reads, and whose sign-in it reads first. */
@@ -180,6 +186,7 @@ export class AccountUsageRefresher {
    */
   async refreshAll(scope: UsageRefreshScope): Promise<void> {
     if (this.disposed) return;
+    if (scope === 'startup') this.options.onStartup?.();
     const accounts = this.options.listAccounts();
     const multiAccount = multiAccountAgents(accounts);
     for (const account of accounts) {

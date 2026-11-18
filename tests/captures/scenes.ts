@@ -1166,17 +1166,20 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
   },
   // The tool groups folded up one by one, which brings the closed Diagnostics group into view, and
   // that one opened and read. Then the cut, and the groups put back as the tab opened them. Their
-  // open state is the tab's own.
+  // open state is the tab's own. Sessions folds too: with it open, one more tool in any group
+  // pushed the Diagnostics header below the frame, where the click could not land.
   mcpServer: {
     ready: '[data-testid="setting-row-mcpServer.enabled"]',
     alt: 'Settings on the MCP Server tab: one card with the server switch and, inside it, a Documentation row and the available tools in collapsible groups by area: tasks, board, sessions, and more.',
     choreography: [
       { click: mcpGroupToggle('tasks'), waitFor: `${mcpGroupToggle('tasks')}[aria-expanded="false"]`, ms: 600 },
       { click: mcpGroupToggle('board'), waitFor: `${mcpGroupToggle('board')}[aria-expanded="false"]`, ms: 600 },
-      { click: mcpGroupToggle('workflows'), waitFor: `${mcpGroupToggle('workflows')}[aria-expanded="false"]`, ms: 900 },
+      { click: mcpGroupToggle('workflows'), waitFor: `${mcpGroupToggle('workflows')}[aria-expanded="false"]`, ms: 600 },
+      { click: mcpGroupToggle('sessions'), waitFor: `${mcpGroupToggle('sessions')}[aria-expanded="false"]`, ms: 900 },
       { click: mcpGroupToggle('diagnostics'), waitFor: `${mcpGroupToggle('diagnostics')}[aria-expanded="true"]`, ms: 2600 },
       { cut: true },
       { click: mcpGroupToggle('diagnostics'), waitFor: `${mcpGroupToggle('diagnostics')}[aria-expanded="false"]` },
+      { click: mcpGroupToggle('sessions'), waitFor: `${mcpGroupToggle('sessions')}[aria-expanded="true"]` },
       { click: mcpGroupToggle('workflows'), waitFor: `${mcpGroupToggle('workflows')}[aria-expanded="true"]` },
       { click: mcpGroupToggle('board'), waitFor: `${mcpGroupToggle('board')}[aria-expanded="true"]` },
       { click: mcpGroupToggle('tasks'), waitFor: `${mcpGroupToggle('tasks')}[aria-expanded="true"]` },
