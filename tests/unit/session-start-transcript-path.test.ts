@@ -69,6 +69,26 @@ import { SessionRepository } from '../../src/main/db/repositories/session-reposi
 import { persistHookTranscriptPath } from '../../src/main/ipc/handlers/session-transcript-path';
 import { assessResumeConversationWithEvidence } from '../../src/main/transition-engine/resume-conversation-guard';
 import { claudeSessionStartContext, claudeSessionStartLine } from './helpers/claude-session-start';
+import type { SessionUsage, StoredCliTarget } from '../../src/shared/types';
+
+/** A CLI in a WSL distro, as a session row records it. */
+const WSL_TARGET: StoredCliTarget = {
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  homeLinux: '/home/dev',
+  homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+  uncRoot: '\\\\wsl.localhost\\Ubuntu',
+};
+
+/** A status report that names a transcript file. */
+function usageReporting(transcriptPath: string): SessionUsage {
+  return {
+    contextWindow: { usedPercentage: 0, usedTokens: 0, cacheTokens: 0, totalInputTokens: 0, totalOutputTokens: 0, contextWindowSize: 200_000 },
+    cost: { totalCostUsd: 0, totalDurationMs: 0 },
+    model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    transcriptPath,
+  };
+}
 
 const PROJECT_ID = 'project-1';
 const TASK_ID = 'task-1';
@@ -92,7 +112,10 @@ function sessionStartLine(agentSessionId: string, transcriptPath: string): strin
 /** The session manager's privates a test drives or reads directly. */
 interface ManagerInternals {
   statusFileReader: { handleEventsChange(sessionId: string): void };
-  telemetry: { noteSessionStartHooks(sessionId: string, rawLines: string[]): void };
+  telemetry: {
+    noteSessionStartHooks(sessionId: string, rawLines: string[]): void;
+    processStatusUpdate(sessionId: string, usage: SessionUsage): void;
+  };
   registry: SessionRegistry;
   hiddenUntilAdopted: Set<string>;
 }
@@ -294,6 +317,45 @@ describe('a Claude session whose status line never ran', () => {
     row.agentSessionId = SPARE_SESSION_ID;
 
     expect(manager.getAgentReportedTranscriptPath(session.id)).toBeNull();
+  });
+
+  it('maps the hook\'s Linux path onto the distro share for a WSL session, so the record names a file Kangentic can open', async () => {
+    const { session, eventsOutputPath } = await spawnClaudeSession();
+    const row = internals.registry.get(session.id);
+    if (!row) throw new Error('the spawned session has no registry row');
+    row.cliTarget = WSL_TARGET;
+    const linuxPath = `/home/dev/.claude/projects/-home-dev-app/${AGENT_SESSION_ID}.jsonl`;
+    const sharePath = `\\\\wsl.localhost\\Ubuntu\\home\\dev\\.claude\\projects\\-home-dev-app\\${AGENT_SESSION_ID}.jsonl`;
+
+    await deliverSessionStart(session.id, eventsOutputPath, sessionStartLine(AGENT_SESSION_ID, linuxPath));
+
+    expect(announcedPaths).toEqual([[session.id, sharePath]]);
+    expect(manager.getAgentReportedTranscriptPath(session.id)).toBe(sharePath);
+  });
+
+  it('answers with the status line\'s path when the hook named another for the same conversation', async () => {
+    const { session, eventsOutputPath } = await spawnClaudeSession();
+    const hookPath = path.join(temporaryDirectory, 'hook-named', `${AGENT_SESSION_ID}.jsonl`);
+    const statusLinePath = path.join(temporaryDirectory, 'status-line-named', `${AGENT_SESSION_ID}.jsonl`);
+    await deliverSessionStart(session.id, eventsOutputPath, sessionStartLine(AGENT_SESSION_ID, hookPath));
+    expect(manager.getAgentReportedTranscriptPath(session.id)).toBe(hookPath);
+
+    internals.telemetry.processStatusUpdate(session.id, usageReporting(statusLinePath));
+
+    expect(manager.getAgentReportedTranscriptPath(session.id)).toBe(statusLinePath);
+  });
+
+  it('maps the status line\'s Linux path for a WSL session, as it maps the hook\'s', async () => {
+    const { session } = await spawnClaudeSession();
+    const row = internals.registry.get(session.id);
+    if (!row) throw new Error('the spawned session has no registry row');
+    row.cliTarget = WSL_TARGET;
+
+    internals.telemetry.processStatusUpdate(session.id, usageReporting(`/home/dev/.claude/projects/-home-dev-app/${AGENT_SESSION_ID}.jsonl`));
+
+    expect(manager.getAgentReportedTranscriptPath(session.id)).toBe(
+      `\\\\wsl.localhost\\Ubuntu\\home\\dev\\.claude\\projects\\-home-dev-app\\${AGENT_SESSION_ID}.jsonl`,
+    );
   });
 
   it('keeps nothing for a Command Terminal, which has no record', async () => {

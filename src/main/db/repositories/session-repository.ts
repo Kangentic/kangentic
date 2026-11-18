@@ -9,14 +9,14 @@ import { writeTransaction } from '../transaction';
  * to unify the DB record key with the SessionManager/TranscriptWriter key.
  * Excludes metric columns (set via updateMetrics), the applied model/effort
  * (set via updateAppliedSettings, mirroring how metrics are maintained), and
- * the PTY grid (set via updatePtyGrid from the session manager's grid events),
- * and the reported transcript path (set via setTranscriptPath from the status
- * line's usage updates, filled via fillTranscriptPath from the SessionStart
- * hook, and inherited by insert() for a resumed conversation).
+ * the PTY grid (set via updatePtyGrid from the session manager's grid events).
  * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
  * `transcript_path` is optional: the path the session's agent had already
  * reported when its record is written, which only a record written after the
- * agent started can have (an adopted early agent).
+ * agent started can have (an adopted early agent). A record that passes none
+ * inherits its conversation's last reported path in insert(). After the
+ * insert, setTranscriptPath writes the status line's path and
+ * fillTranscriptPath the SessionStart hook's.
  */
 type SessionInsertInput = Omit<SessionRecord,
   'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'used_percentage' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'

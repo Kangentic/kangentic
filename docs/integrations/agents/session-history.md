@@ -335,7 +335,7 @@ readonly runtime: AdapterRuntimeStrategy = {
 | `parseEvent(line)` | Decode a single appended line from `events.jsonl` into a `SessionEvent`. Returns null for blank/invalid lines. |
 | `isFullRewrite` | True for `status.json` (whole-file rewrite on every update). The events file is always append-only, tracked by a separate byte cursor regardless of this flag. |
 | `parseStatusEvents?(raw, previousRaw, now)` | Optional. Activity events a status write reports that no hook does, read against the session's previous readable write. Returns null for an unreadable write, so the reader keeps its last readable baseline. Antigravity's approval wait and plan mode. |
-| `parseSessionStart?(hookContext)` | Optional. Reads a SessionStart hook's payload: the id it names and whether it moved the conversation (see [Mid-session fork reconcile](#mid-session-fork-reconcile-clear-moves-the-conversation-to-a-new-id)). |
+| `parseSessionStart?(hookContext)` | Optional. Reads a SessionStart hook's payload: the id it names, whether it moved the conversation (see [Mid-session fork reconcile](#mid-session-fork-reconcile-clear-moves-the-conversation-to-a-new-id)), and the transcript file it names when the adapter reports one (`transcriptPath`, Claude only, from a payload read whole). |
 | `confirmsBackgroundMove?(options)` | Optional. Whether a SessionStart into the CLI's own background session moved the terminal's conversation there (Claude's `/bg`). |
 
 **File paths** (`status.json`, `events.jsonl` under `.kangentic/sessions/<sessionId>/`) are caller-supplied at spawn time on `SpawnSessionInput.statusOutputPath` / `eventsOutputPath`. They are runtime values, not static adapter metadata.
