@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, the daily check that the shipped Trello, Jira and Linear sign-ins still work, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -10,6 +10,8 @@ sources:
     title: ExternalSource, FileAttachmentRef
   - resource: src/main/boards/adapters/
   - resource: src/renderer/utils/external-issue-link.ts
+  - resource: scripts/check-integrations.mjs
+  - resource: .github/workflows/integrations.yml
 ---
 # Board integration
 
@@ -273,7 +275,58 @@ kangentic.com repo) and serves Trello's return page, and both hand the token bac
   the callback answers `error=server_error`), and the client id committed in `jira/constants.ts`;
   and for Trello, the app with `https://kangentic.com` as an allowed origin, `TRELLO_API_KEY` filled,
   and the return page (kangentic.com #143) deployed. Before the page is live, a Trello sign-in times
-  out and goes back to the choices.
+  out and goes back to the choices. The [daily sign-in check](#daily-sign-in-check) reports each
+  sign-in as `pending` until its id is committed.
+
+## Daily sign-in check
+
+The three browser sign-ins can break with no code change. Someone deletes or regenerates the Trello
+key, drops `https://kangentic.com` from its allowed origins, revokes the Atlassian or Linear app, or
+the kangentic.com pages stop serving. `.github/workflows/integrations.yml` runs
+`scripts/check-integrations.mjs` every day, on demand, and on a pull request that changes a file
+the script reads, the script itself or the workflow. `npm run check:integrations` runs it by hand. The script holds no secret and
+needs no install. Every probe is a request a stranger could make, and none signs anyone in.
+
+| Check | What it asks | Passes on | Fails on |
+|-------|--------------|-----------|----------|
+| Trello API key | `GET api.trello.com/1/members/me?key=<TRELLO_API_KEY>` with no token | 400 `invalid token`, which only a live key gets | 401 `invalid key` |
+| Trello allowed origin | Trello's approval page, signed out, with the `return_url` the desktop sends | 200 | 400 `Invalid return_url` (the key does not list kangentic.com), 404 (a key Trello does not know) |
+| Trello return page | `kangentic.com/oauth/trello/return` with a valid state, then a bad one | The served `<script>` and `<style>` hash to the values in the page's own `Content-Security-Policy`, and the bad state gets a 400 | A hash that no longer matches. Browsers then run nothing and the sign-in waits until it times out |
+| Jira callback | `kangentic.com/oauth/jira/callback` with a bad state, then a valid state and no code | A 400, then a 302 to `http://127.0.0.1:<port>/jira/callback?error=invalid_request&nonce=<nonce>`, with the port and nonce the probe's own state carried | A bad state that is not refused, or a redirect anywhere else |
+| Jira token service | A made-up refresh token posted to `kangentic.com/oauth/jira/refresh` | `invalid_grant`, which means Atlassian accepted the client | 500 `server_error` (the Pages secrets are unset), `unauthorized_client`, `invalid_client`, `access_denied` |
+| Linear client | A made-up authorization code exchanged at `api.linear.app/oauth/token` for `LINEAR_OAUTH_CLIENT_ID`, with the first registered redirect URI | `invalid_grant`, which means Linear knows the client | `invalid_client` |
+
+The Fails on column names the answers the check knows the cause of. Any other answer fails its
+check too, and so does no answer at all.
+
+- **Pending.** An empty `TRELLO_API_KEY`, `JIRA_OAUTH_CLIENT_ID` or `LINEAR_OAUTH_CLIENT_ID` means
+  that sign-in is not shipped. Its checks report `pending` and do not fail the run, so the run's
+  summary is also the list of owner steps left. The Jira token service still gets its request while
+  the id is empty, and a service that is not ready is `pending` only until the id ships. An answer
+  the check does not know fails even while the id is empty. A non-empty id that fails is a red run.
+  The return page and the callback are checked on every run.
+- **Values.** The script reads the ids, the site (`DOCS_BASE_URL`), the page paths and Linear's
+  redirect URI from the source text of the checkout, so a pull request checks its own values. It
+  cannot import them, because it runs before any install. A constant that is gone or written another
+  way fails the run. `tests/unit/check-integrations.test.ts` holds every value it reads equal to the
+  real export, its approval URL equal to `buildAuthorizeUrl`'s, and each answer to its verdict. It
+  replays the answers a stranger can get today from
+  `tests/fixtures/sign-in-check-live-answers.json`, which was recorded from the live services.
+- **Overrides.** An environment variable named `TRELLO_API_KEY`, `JIRA_OAUTH_CLIENT_ID`,
+  `LINEAR_OAUTH_CLIENT_ID` or `DOCS_BASE_URL` replaces the shipped value. That checks a new key
+  before it is committed, or points the page checks at a preview deployment. An empty variable counts
+  as unset, so it cannot turn a shipped id's checks into pending ones.
+- **Answers not yet seen.** Two passing answers have never been seen with a real client: Atlassian's
+  `invalid_grant`, which its docs give for a refresh token it will not take, and Linear's
+  `invalid_grant` for a client it knows. The pull request that commits each id runs this check, so
+  that run confirms the answer or shows the real one. The check never uses Linear's refresh grant,
+  which answers `invalid_grant` for a made-up client too.
+- **Who hears.** A run writes the table to its summary, one error annotation per failure and one
+  notice per pending check. A failed scheduled run emails the person who last changed the
+  workflow's schedule (its `cron` line), or who re-enabled the workflow after that, under that
+  person's own GitHub Actions notification settings. `/release` reads the last scheduled run
+  before a tag and stops on a failed, stale or missing one. It is not a required check, because an
+  outage at Trello, Linear or kangentic.com must not block an unrelated merge.
 
 ## GitLab
 

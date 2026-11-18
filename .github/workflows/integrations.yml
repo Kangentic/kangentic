@@ -1,0 +1,64 @@
+name: Sign-in integrations
+
+# What only this catches: a browser sign-in that broke with no code change.
+# Sign in with Trello, Atlassian and Linear each depend on a registration and a
+# page outside this repo. Someone deletes or regenerates the Trello key, drops
+# https://kangentic.com from its allowed origins, revokes the Atlassian or Linear
+# app, or the kangentic.com pages stop serving. Every other tier fakes those
+# services, so all of them stay green and a user finds out first, in the Connect
+# dialog.
+#
+# scripts/check-integrations.mjs reads the ids this checkout ships and asks each
+# service about them. It holds no secret and installs nothing. Every probe is a
+# request a stranger could make. A sign-in whose id is still empty reports as
+# pending and does not fail the run, so the summary is also the list of owner
+# steps left. docs/integrations/boards.md, "Daily sign-in check", has each probe.
+#
+# Runs daily, on demand, and on a pull request that changes a file the check
+# reads, so the PR that commits a new key or client id has it checked before it
+# merges. A failed scheduled run emails the person who last changed the cron line
+# below, and /release reads the last scheduled run before a tag
+# (.claude/skills/release/SKILL.md, Pre-flight step 8).
+#
+# Costs one ubuntu-24.04 job of about 20 seconds. Deliberately NOT a required
+# check. It asks three outside services, so one of them being down must not
+# block an unrelated merge.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/check-integrations.mjs'
+      - 'src/main/boards/adapters/trello/constants.ts'
+      - 'src/main/boards/adapters/jira/constants.ts'
+      - 'src/main/boards/adapters/linear/constants.ts'
+      - 'src/main/boards/shared/loopback-sign-in.ts'
+      - 'src/shared/docs-links.ts'
+      - '.github/workflows/integrations.yml'
+  schedule:
+    # 04:43 UTC. Off the hour so it does not land in the cron rush.
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integrations-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sign-ins:
+    name: Shipped sign-ins (Trello, Jira, Linear)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # No npm ci, because the script uses only Node's own modules. It exits non-zero when any check fails.
+      - name: Check the shipped sign-ins
+        run: node scripts/check-integrations.mjs
