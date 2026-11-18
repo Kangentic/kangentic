@@ -425,9 +425,11 @@ export function PendingFooter({ state, divider, testId, sessionId, startBlockedR
     return (
       <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
         <CirclePause size={12} className="shrink-0" />
-        {suspendedBy === 'auto'
-          ? <span className="truncate"><Trans context="Agent status">Paused while idle</Trans></span>
-          : <Trans context="Agent status">Paused</Trans>}
+        <span className="truncate">
+          {suspendedBy === 'auto'
+            ? <Trans context="Agent status">Paused while idle</Trans>
+            : <Trans context="Agent status">Paused</Trans>}
+        </span>
       </CardStatusBar>
     );
   }

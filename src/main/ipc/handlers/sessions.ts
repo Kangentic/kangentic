@@ -728,9 +728,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       }
     };
     // A task session with no project cannot be recorded, so it is suspended
-    // as it always was.
+    // as it always was. Its row still says it was an idle pause.
     if (!projectId) {
-      void context.sessionManager.suspend(sessionId);
+      void context.sessionManager.suspend(sessionId, { suspendedBy: 'auto' });
       announce();
       return;
     }

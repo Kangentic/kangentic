@@ -116,6 +116,25 @@ describe('SessionManager suspend logic', () => {
     expect(manager.getSession(plainSession.id)?.suspendedBy).toBeUndefined();
   });
 
+  // A relocate queued behind an idle pause suspends a row already paused, naming
+  // nobody. Red-green: assign `options.suspendedBy ?? null` unconditionally in
+  // suspend() and the second step reads null.
+  it('a second suspend that names nobody keeps who paused the row first; one that names someone overwrites', async () => {
+    const { session } = await spawnSession('task-second-suspend');
+
+    await manager.suspend(session.id, { suspendedBy: 'auto' });
+    await manager.suspend(session.id);
+    expect(manager.getSession(session.id)?.suspendedBy).toBe('auto');
+
+    await manager.suspend(session.id, { suspendedBy: 'user' });
+    expect(manager.getSession(session.id)?.suspendedBy).toBe('user');
+
+    // A first suspend with no option sets null (not left undefined from a stale value).
+    const { session: plainSession } = await spawnSession('task-first-plain');
+    await manager.suspend(plainSession.id);
+    expect(manager.getSession(plainSession.id)?.suspendedBy ?? null).toBeNull();
+  });
+
   it('onExit preserves suspended status', async () => {
     const { session, triggerExit } = await spawnSession();
 
@@ -154,7 +173,6 @@ describe('SessionManager suspend logic', () => {
     // Capture the order: paths should be null when kill is called
     let pathsWereNullAtKill = false;
     mock.mockPty.kill.mockImplementation(() => {
-      const s = manager.getSession(session.id);
       // Can't directly check internal paths via getSession, but we verify
       // the kill was called (paths are nulled in the suspend flow before kill)
       pathsWereNullAtKill = true;
@@ -183,11 +201,11 @@ describe('SessionManager suspend logic', () => {
     manager.setMaxConcurrent(1);
 
     const mock1 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock1.mockPty as any);
+    vi.mocked(pty.spawn).mockReturnValue(mock1.mockPty as unknown as pty.IPty);
     await manager.spawn({ taskId: 'task-a', command: '', cwd: '/tmp' });
 
     const mock2 = createMockPty();
-    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as any);
+    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
     const queued = await manager.spawn({ taskId: 'task-b', command: '', cwd: '/tmp' });
 
     expect(manager.queuedCount).toBe(1);

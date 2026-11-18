@@ -527,6 +527,18 @@ test.describe('agent monitor', () => {
       await expect(parked.getByLabel('Paused', { exact: true })).toHaveCount(0);
       await expect(parked.locator('[data-testid="monitor-card-usage"]')).toHaveCount(0);
 
+      // The idle timeout's pause reads "Paused while idle" here as on the board
+      // card (#1104); a user's pause keeps "Paused". Red-green: drop
+      // `suspendedBy={row.suspendedBy}` in MonitorCard and the first reads "Paused".
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-paused' ? Object.assign({}, row, { suspendedBy: 'auto' }) : row
+      ))));
+      await expect(parked.locator('[data-testid="monitor-card-status"]')).toHaveText('Paused while idle');
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-paused' ? Object.assign({}, row, { suspendedBy: 'user' }) : row
+      ))));
+      await expect(parked.locator('[data-testid="monitor-card-status"]')).toHaveText('Paused');
+
       // A start that never reached an agent says so here as on the board card.
       await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
         row.sessionId === 'sess-paused' ? Object.assign({}, row, { startBlockedReason: 'never-started' }) : row

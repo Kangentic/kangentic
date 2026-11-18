@@ -2771,6 +2771,8 @@
         var session = sessions.find(function (s) { return s.taskId === taskId; });
         if (session) {
           session.status = 'suspended';
+          // Main records the Pause button's pause as the user's.
+          session.suspendedBy = 'user';
         }
         var task = tasks.find(function (t) { return t.id === taskId; });
         if (task) {

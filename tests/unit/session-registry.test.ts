@@ -414,6 +414,35 @@ describe('SessionRegistry.registerSuspendedPlaceholder', () => {
   });
 });
 
+/**
+ * Who paused a row rides the registry summary the Agent Monitor and the
+ * renderer sync read (#1104). Red-green: drop `suspendedBy` from
+ * `listManagedSummaries` and the 'auto' row lists null.
+ */
+describe('SessionRegistry.listManagedSummaries suspendedBy', () => {
+  it('lists who paused a suspended row, and null for a row nobody paused', () => {
+    const registry = new SessionRegistry();
+    registry.set('sess-idle', makeManagedSession({ id: 'sess-idle', taskId: 'task-idle', status: 'suspended', suspendedBy: 'auto' }));
+    registry.set('sess-plain', makeManagedSession({ id: 'sess-plain', taskId: 'task-plain' }));
+
+    const summaries = registry.listManagedSummaries();
+
+    expect(summaries.find((summary) => summary.id === 'sess-idle')?.suspendedBy).toBe('auto');
+    expect(summaries.find((summary) => summary.id === 'sess-plain')?.suspendedBy).toBeNull();
+  });
+
+  it('lists a placeholder registered with suspendedBy auto as auto, and one registered with none as null', () => {
+    const registry = new SessionRegistry();
+    registry.registerSuspendedPlaceholder({ taskId: 'task-a', projectId: 'project-001', cwd: '/home/dev/project', suspendedBy: 'auto' });
+    registry.registerSuspendedPlaceholder({ taskId: 'task-b', projectId: 'project-001', cwd: '/home/dev/project' });
+
+    const byTask = new Map(registry.listManagedSummaries().map((summary) => [summary.taskId, summary.suspendedBy]));
+
+    expect(byTask.get('task-a')).toBe('auto');
+    expect(byTask.get('task-b')).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // getSessionAgentName
 // ---------------------------------------------------------------------------

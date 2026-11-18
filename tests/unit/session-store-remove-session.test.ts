@@ -165,6 +165,55 @@ const NONE_HELD = {
   events: false, seenIdle: false, messageTrail: false,
 };
 
+// The task window's line under Resume reads this on its first paused paint
+// (#1104), so the optimistic write carries it, not only the push that follows.
+// Red-green: drop `suspendedBy: 'user'` from suspendSession's set() and it reads undefined.
+describe('suspendSession optimistic write', () => {
+  beforeEach(seedLiveAgent);
+
+  it('marks the row suspended by the user before the IPC promise resolves', async () => {
+    const electronAPI = (globalThis as unknown as { window: { electronAPI: { sessions: { suspend: unknown } } } }).window.electronAPI;
+    const originalSuspend = electronAPI.sessions.suspend;
+    let resolveSuspend: () => void = () => undefined;
+    electronAPI.sessions.suspend = () => new Promise<void>((resolve) => { resolveSuspend = resolve; });
+    try {
+      const pending = useSessionStore.getState().suspendSession(TASK_ID, PROJECT_ID);
+
+      const row = useSessionStore.getState().sessions.find((session) => session.id === SESSION_ID);
+      expect(row?.status).toBe('suspended');
+      expect(row?.suspendedBy).toBe('user');
+      // The unrelated task's session is untouched.
+      expect(useSessionStore.getState().sessions.find((session) => session.id === OTHER_SESSION_ID)?.status).toBe('running');
+
+      resolveSuspend();
+      await pending;
+    } finally {
+      electronAPI.sessions.suspend = originalSuspend;
+    }
+  });
+
+  // A Pause from a stale card menu on a row the idle timeout already paused:
+  // main answers it with no push, so a 'user' stamp here would never be corrected.
+  it('keeps who paused a row that is already suspended', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => (
+        session.id === SESSION_ID ? { ...session, status: 'suspended' as const, suspendedBy: 'auto' as const } : session
+      )),
+    }));
+    const electronAPI = (globalThis as unknown as { window: { electronAPI: { sessions: { suspend: unknown } } } }).window.electronAPI;
+    const originalSuspend = electronAPI.sessions.suspend;
+    electronAPI.sessions.suspend = () => Promise.resolve();
+    try {
+      await useSessionStore.getState().suspendSession(TASK_ID, PROJECT_ID);
+      const row = useSessionStore.getState().sessions.find((session) => session.id === SESSION_ID);
+      expect(row?.status).toBe('suspended');
+      expect(row?.suspendedBy).toBe('auto');
+    } finally {
+      electronAPI.sessions.suspend = originalSuspend;
+    }
+  });
+});
+
 describe('removeSession after the todo-move eviction (the measured #661 ordering)', () => {
   beforeEach(seedLiveAgent);
 

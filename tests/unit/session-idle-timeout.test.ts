@@ -1479,7 +1479,7 @@ describe('idle-timeout listener - early exit when projectId is missing', () => {
     expect(mockGetProjectRepos).not.toHaveBeenCalled();
 
     // A task session that cannot be recorded is still stopped, as it always was.
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-orphan');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-orphan', { suspendedBy: 'auto' });
   });
 
   it('drops a Command Terminal: no announce, no suspend, no task record', async () => {

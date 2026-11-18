@@ -625,13 +625,12 @@ export function TaskDetailBody({
     // screen shows one that opening did not resume (its window was already
     // open, a restart restored it, or the resume was skipped), so it must not
     // promise a resume. A failed resume and a blocked start keep their own words.
-    const pauseNote = toggling || resumeFailed || startBlockedReason
-      ? null
-      : suspendedBy === 'user'
-        ? t`Stays paused until resumed.`
-        : suspendedBy === 'auto'
-          ? t`Paused while idle.`
-          : null;
+    let pauseNote: string | null = null;
+    if (!toggling && !resumeFailed && !startBlockedReason) {
+      // A low-memory pause only an earlier version wrote is held like the user's.
+      if (suspendedBy === 'user' || suspendedBy === 'low_memory') pauseNote = t`Stays paused until resumed.`;
+      else if (suspendedBy === 'auto') pauseNote = t`Paused while idle.`;
+    }
     return (
       <>
         <div className="flex-1 min-h-0 flex">
