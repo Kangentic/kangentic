@@ -1,5 +1,17 @@
 # Log
 
+## 2026-11-17
+
+**New concept:** `releases/scheduled-checks.md`, the workflows that run on a schedule to catch what
+breaks with no commit: the signing credentials nightly (`.github/workflows/signing-credentials.yml`),
+the agent CLI nightly (`.github/workflows/agent-clis.yml`), what `/release` reads, and what is
+deliberately not checked.
+
+**Changed:** `integrations/boards.md` gains "Owner steps for the browser sign-ins", the one list of
+what Jira, Trello, Linear and GitLab each need registered, and the decision that Asana gets no
+browser sign-in. `releases/deployment.md` lists the eight signing secrets `preflight-signing` now
+requires and the two new workflows.
+
 ## 2026-11-05
 
 **New audit:** `audits/ssh-transcript-exports-audit.md`, what real Kimi Code, Goose and OpenCode do on a

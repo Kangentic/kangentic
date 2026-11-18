@@ -270,13 +270,46 @@ kangentic.com repo) and serves Trello's return page, and both hand the token bac
   shown as "Kangentic's sign-in page failed."). A user signed out of Trello who clicks Deny never
   comes back to the page, so the waiting screen's Back and Cancel and the five-minute timeout are
   the way out. The user's own key stays paste-only: its allowed origins are not kangentic.com.
-- **Owner steps.** The live flow needs the Atlassian 3LO app registered with the scopes above, the
-  `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET` Pages secrets on kangentic.com (until then
-  the callback answers `error=server_error`), and the client id committed in `jira/constants.ts`;
-  and for Trello, the app with `https://kangentic.com` as an allowed origin, `TRELLO_API_KEY` filled,
-  and the return page (kangentic.com #143) deployed. Before the page is live, a Trello sign-in times
-  out and goes back to the choices. The [daily sign-in check](#daily-sign-in-check) reports each
-  sign-in as `pending` until its id is committed.
+- **Owner steps.** Both need an app registered before they work. The whole list, for all four
+  browser sign-ins, is in [Owner steps for the browser sign-ins](#owner-steps-for-the-browser-sign-ins).
+  The [daily sign-in check](#daily-sign-in-check) reports each sign-in as `pending` until its id
+  is committed.
+
+## Owner steps for the browser sign-ins
+
+Four sign-ins ship switched off. Jira, Trello, Linear and GitLab each have an empty client id or key
+(`JIRA_OAUTH_CLIENT_ID`, `TRELLO_API_KEY`, `LINEAR_OAUTH_CLIENT_ID`, `GITLAB_COM_OAUTH_CLIENT_ID`), and
+an empty value hides that sign-in and leaves the token or key as the way in. Each needs an app
+registered under an account the team owns, and then its id committed. This is the whole list. As of
+2026-11-17 none is registered.
+
+| Sign-in | Register | With | Then |
+|---|---|---|---|
+| Trello | A Power-Up in the Power-Up admin portal (`trello.com/power-ups/admin`), then its API key | Allowed origins: `https://kangentic.com`. With no allowed origin Trello refuses every `return_url` | `TRELLO_API_KEY` in `trello/constants.ts` |
+| Linear | An OAuth application (Settings, API) | Callback URLs `http://127.0.0.1:37421/callback`, `http://127.0.0.1:37422/callback` and `http://127.0.0.1:37423/callback`, which Linear matches exactly. Public on, or only the workspace that made it can sign in | `LINEAR_OAUTH_CLIENT_ID` in `linear/constants.ts`. Linear also shows a client secret, which nothing uses: the exchange is PKCE |
+| GitLab | An application on gitlab.com, a group's or a user's | Redirect URI `http://127.0.0.1/callback`, Confidential off, scope `read_api` | `GITLAB_COM_OAUTH_CLIENT_ID` in `gitlab/constants.ts`. Its secret is not used either |
+| Jira | An OAuth 2.0 integration in the Atlassian developer console | The Jira API scopes `read:jira-work`, `read:jira-user`, `read:board-scope:jira-software` and `read:board-scope.admin:jira-software`. Callback URL `https://kangentic.com/oauth/jira/callback`. Distribution set to Sharing, because a new app is private and only its owner can sign in | The client id and secret as the `JIRA_OAUTH_CLIENT_ID` and `JIRA_OAUTH_CLIENT_SECRET` Pages secrets on kangentic.com, then a redeploy of the site, then `JIRA_OAUTH_CLIENT_ID` in `jira/constants.ts`. Until the secrets are live the callback answers `error=server_error` |
+
+After each registration, run one real sign-in in the system browser. That is the only run of the hop
+from the public site to `127.0.0.1`, which no test reaches. Where the token expires (Jira, Linear,
+GitLab), also see one refresh save a new pair.
+
+Three answers are read from documentation or source and not yet seen from a real client:
+
+- **Atlassian, for a refresh token it does not know.** Its guide gives 403 `invalid_grant`. Forum
+  reports show 403 `unauthorized_client` with "refresh_token is invalid" for the same case. The
+  desktop is right either way, since it reads any 4xx but 408 and 429 as a refusal. A check that
+  tells a refused client from a refused token has to know which one a healthy client gets.
+- **Linear, for a made-up code and a client it knows.** `invalid_grant` is expected. `invalid_client`
+  for a client it does not know was seen on 2026-11-17.
+- **gitlab.com, for a loopback redirect on a port that was never registered.** See
+  [GitLab](#gitlab). If gitlab.com refuses it, GitLab moves to three registered ports, as Linear has.
+
+**Asana has no browser sign-in, by decision (2026-11-17).** Asana's OAuth documentation describes
+the code exchange with the app's client secret, and PKCE as an addition to it. It documents no
+exchange without the secret. A sign-in would need a third kangentic.com Function holding that
+secret, as Jira's does. A personal access token is one paste and does not expire, so that cost buys
+little. Revisit it if Asana documents a public client.
 
 ## Daily sign-in check
 
