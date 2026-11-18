@@ -12,7 +12,7 @@ import type {
   StreamOutputParser,
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
-import type { LaunchStartPath, OpeningPromptDelivery, ResumeEvidenceSummary, SessionIdCreationOutcome, StartBlockedReason } from '../../shared/types';
+import type { LaunchStartPath, OpeningPromptDelivery, ResumeEvidenceSummary, SessionIdCreationOutcome, StartBlockedReason, SuspendedBy } from '../../shared/types';
 import type { LaunchOutputClass } from './launch-output-class';
 import type { AgentProcessPresence } from './host/agent-process-presence';
 
@@ -23,6 +23,8 @@ export interface SuspendedPlaceholderInput {
   cwd: string;
   /** Why the task is not running, when that is more than a plain pause. */
   startBlockedReason?: StartBlockedReason | null;
+  /** Who paused the record this placeholder stands for (`Session.suspendedBy`). */
+  suspendedBy?: SuspendedBy | null;
 }
 
 /**
@@ -105,6 +107,8 @@ export interface ManagedSession {
   commandTerminalNamedByUser?: boolean;
   /** Why this row's start never reached an agent (`Session.startBlockedReason`). */
   startBlockedReason?: StartBlockedReason | null;
+  /** Who paused this row (`Session.suspendedBy`). Set by `suspend()` and a placeholder. */
+  suspendedBy?: SuspendedBy | null;
   /**
    * Someone typed, pasted or sent something into this session (see
    * `Session.hasUserInput`). Set once by `SessionManager.markUserInput`, or at
@@ -355,6 +359,7 @@ export interface ManagedSessionSummary {
   startedAt: string;
   exitCode: number | null;
   startBlockedReason: StartBlockedReason | null;
+  suspendedBy: SuspendedBy | null;
   agentName: string | null;
   isolatedSwimlaneId: string | null;
   transient: boolean;
@@ -403,6 +408,7 @@ export function toSession(session: ManagedSession): Session {
     commandTerminalNamedByUser: session.commandTerminalNamedByUser || undefined,
     hasUserInput: session.hasUserInput || undefined,
     startBlockedReason: session.startBlockedReason ?? undefined,
+    suspendedBy: session.suspendedBy ?? undefined,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,
     // The account it runs on (task #1057), so its context bar draws that account's limits.
@@ -660,6 +666,7 @@ export class SessionRegistry {
       startedAt: session.startedAt,
       exitCode: session.exitCode,
       startBlockedReason: session.startBlockedReason ?? null,
+      suspendedBy: session.suspendedBy ?? null,
       agentName: session.agentName ?? null,
       isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
       transient: session.transient,
@@ -748,6 +755,7 @@ export class SessionRegistry {
       // A placeholder spawned nothing, so it runs under no mode.
       permissionMode: null,
       startBlockedReason: input.startBlockedReason ?? null,
+      suspendedBy: input.suspendedBy ?? null,
     };
     this.sessions.set(id, session);
     return toSession(session);

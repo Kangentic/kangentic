@@ -2415,6 +2415,10 @@ msgid "Pause session"
 msgstr "Pozastavit relaci"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Paused while idle."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
 msgid "Pausing agent..."
 msgstr "Pozastavování agenta..."
@@ -3089,6 +3093,10 @@ msgstr ""
 msgctxt "column header"
 msgid "Status"
 msgstr "Stav"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Stays paused until resumed."
+msgstr ""
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy

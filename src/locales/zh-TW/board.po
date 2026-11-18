@@ -336,6 +336,11 @@ msgid "Paused"
 msgstr "已暫停"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgctxt "Agent status"
+msgid "Paused while idle"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
 msgstr "排入佇列中..."
 

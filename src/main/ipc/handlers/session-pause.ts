@@ -92,7 +92,8 @@ export function pauseTaskSession(
     // also fine, but doing it first matches task-move's order. Writing the
     // record first is also what makes a pause survive a quit that lands
     // during the shutdown: the next launch reads it as paused.
-    applySuspendDbWrites(context, resolvedProjectId, taskId, options.suspendedBy ?? 'user');
+    const suspendedBy = options.suspendedBy ?? 'user';
+    applySuspendDbWrites(context, resolvedProjectId, taskId, suspendedBy);
 
     // A throwing hook must not leave the record paused over a running PTY.
     try {
@@ -101,7 +102,9 @@ export function pauseTaskSession(
       console.warn('[SESSION_SUSPEND] onAccepted hook threw:', hookError);
     }
 
-    await context.sessionManager.suspend(liveSession.id);
+    // The registry row carries the same value, so the card can tell an idle
+    // pause from a held one.
+    await context.sessionManager.suspend(liveSession.id, { suspendedBy });
     return 'paused';
   });
 }

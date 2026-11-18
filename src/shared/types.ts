@@ -1667,6 +1667,13 @@ export interface Session {
    * a suspended or exited row, and gone with the row on the next start.
    */
   startBlockedReason?: StartBlockedReason | null;
+  /**
+   * Who paused this row, as its record's `suspended_by` says, so the card can
+   * tell an idle pause from a held one. Set on a suspended row, and gone with the
+   * row on the next start. It decides only the card's words: whether opening the
+   * task resumes it is main's call (`resumeTaskOnOpen`).
+   */
+  suspendedBy?: SuspendedBy | null;
   /** True for ephemeral command terminal sessions (no task association, no DB persistence). */
   transient?: boolean;
   /**
@@ -3460,7 +3467,7 @@ export type SessionDisplayState =
   | { kind: 'initializing'; label: string }
   | { kind: 'queued' }
   | { kind: 'running'; activity: ActivityState; usage: SessionUsage | null }
-  | { kind: 'suspended'; startBlockedReason?: StartBlockedReason }
+  | { kind: 'suspended'; startBlockedReason?: StartBlockedReason; suspendedBy?: SuspendedBy }
   | { kind: 'exited'; exitCode: number; startBlockedReason?: StartBlockedReason };
 
 // === Bottom Panel Constants ===
@@ -4470,6 +4477,8 @@ export interface MonitorSessionRow {
   modelReported: boolean;
   /** Why this row's start never reached an agent, for the card's footer. */
   startBlockedReason: StartBlockedReason | null;
+  /** Who paused this row (`Session.suspendedBy`), for the card's footer. */
+  suspendedBy: SuspendedBy | null;
   /** A browser is running for this task in any state (showing, hidden, parked, popped out, or offscreen), for the card's globe. */
   browserRunning: boolean;
   /** Index into the project's priority scale; 0 (the bottom entry) draws no pill. Always 0 for a Command Terminal. */

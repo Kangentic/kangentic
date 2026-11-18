@@ -9,7 +9,7 @@ import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { ConfigManager } from '../../config/config-manager';
-import type { BoardProfile, ConversationExpiredNotice, SessionRecord, StartBlockedReason, Task } from '../../../shared/types';
+import type { BoardProfile, ConversationExpiredNotice, SessionRecord, StartBlockedReason, SuspendedBy, Task } from '../../../shared/types';
 import { createExpiredRecapSources } from '../expired-recap-sources';
 import { markRecapSession } from '../../automations/turn-end/recap-turns';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
@@ -228,6 +228,14 @@ export async function resumeSuspendedSessions(
   );
 
   /**
+   * Who paused the record, for the card's words. An orphaned or exited record
+   * `keepResumable` marks suspended is the system's, whatever its stale field says.
+   */
+  const placeholderSuspendedBy = (record: SessionRecord): SuspendedBy => (
+    record.status === 'suspended' && record.suspended_by ? record.suspended_by : 'system'
+  );
+
+  /**
    * Keep a record this pass will not resume resumable: 'suspended' (system),
    * shown as a paused card with Resume, and gathered again by the next launch.
    * Never retired, so no fresh agent takes its task over: the auto-spawn pass
@@ -245,6 +253,7 @@ export async function resumeSuspendedSessions(
       projectId,
       cwd: record.cwd,
       startBlockedReason: placeholderReason(record, task),
+      suspendedBy: placeholderSuspendedBy(record),
     });
     if (task.session_id) taskRepo.update({ id: task.id, session_id: null });
     return true;
@@ -409,6 +418,7 @@ export async function resumeSuspendedSessions(
           projectId,
           cwd: record.cwd,
           startBlockedReason: placeholderReason(record, task),
+          suspendedBy: placeholderSuspendedBy(record),
         });
         // Same precondition the two branches below satisfy: SESSION_RESUME needs
         // task.session_id clear to spawn rather than hand back a stale ref.
@@ -448,6 +458,7 @@ export async function resumeSuspendedSessions(
         projectId,
         cwd: record.cwd,
         startBlockedReason: placeholderReason(record, task),
+        suspendedBy: placeholderSuspendedBy(record),
       });
       if (task.session_id) {
         taskRepo.update({ id: task.id, session_id: null });

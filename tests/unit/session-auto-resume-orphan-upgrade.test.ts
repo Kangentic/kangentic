@@ -242,6 +242,8 @@ describe('resumeSuspendedSessions: auto-resume-disabled branch (autoResumeSessio
       taskId: 'task-1',
       projectId: 'proj-1',
       cwd: '/project/cwd',
+      // The CAS just marked the orphaned record the system's.
+      suspendedBy: 'system',
     });
 
     // Assert: no spawn was attempted

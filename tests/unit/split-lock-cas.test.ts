@@ -1275,7 +1275,7 @@ describe('SESSION_SUSPEND reconciles task.session_id before suspending', () => {
 
     await handler(null, 'task-pause');
 
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer', { suspendedBy: 'user' });
   });
 
   it('resolves undefined for a task with no live session, without leaking the not-live outcome', async () => {
@@ -1309,7 +1309,7 @@ describe('SESSION_SUSPEND reconciles task.session_id before suspending', () => {
     expect(mockGetProjectRepos).not.toHaveBeenCalledWith(context, 'proj-1');
     const lookedUpProjectIds = mockGetProjectRepos.mock.calls.map((callArguments: unknown[]) => callArguments[1]);
     expect(new Set(lookedUpProjectIds)).toEqual(new Set(['proj-explicit']));
-    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-pointer', { suspendedBy: 'user' });
   });
 
   it('rejects when no project is open and touches nothing', async () => {

@@ -214,9 +214,11 @@ function makeManagedSummary(overrides: {
   commandTerminalBranch?: string | null;
   commandTerminalLabel?: string | null;
   startBlockedReason?: ManagedSessionSummary['startBlockedReason'];
+  suspendedBy?: ManagedSessionSummary['suspendedBy'];
 }): ManagedSessionSummary {
   return {
     startBlockedReason: overrides.startBlockedReason ?? null,
+    suspendedBy: overrides.suspendedBy ?? null,
     id: overrides.id,
     projectId: overrides.projectId,
     taskId: overrides.taskId,
@@ -967,6 +969,22 @@ describe('buildMonitorSnapshot', () => {
       expect(rowsById.get('session-1')?.startBlockedReason).toBe('never-started');
       expect(rowsById.get('session-2')?.startBlockedReason).toBeNull();
       expect(rowsById.get('session-3')?.startBlockedReason).toBeNull();
+    });
+
+    it('carries who paused a session onto its row, so the Monitor card says "Paused while idle"', async () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1')], ['task-2', makeTask('task-2')]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1', status: 'suspended', suspendedBy: 'auto' }),
+        makeManagedSummary({ id: 'session-2', projectId: 'project-a', taskId: 'task-2' }),
+      ]);
+
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
+
+      const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
+      expect(rowsById.get('session-1')?.suspendedBy).toBe('auto');
+      expect(rowsById.get('session-2')?.suspendedBy).toBeNull();
     });
 
     it('leaves commandTerminalBranch null for a task agent', async () => {

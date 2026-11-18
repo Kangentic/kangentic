@@ -115,6 +115,15 @@ describe('getTaskProgress', () => {
       .toEqual({ kind: 'suspended' });
   });
 
+  // The card says "Paused while idle" for the idle timeout's pause and the
+  // window says who paused it, so the display state has to carry the row's value.
+  it('carries who paused a suspended row', () => {
+    expect(getTaskProgress({ session: makeSession({ status: 'suspended', suspendedBy: 'auto' }) }))
+      .toEqual({ kind: 'suspended', suspendedBy: 'auto' });
+    expect(getTaskProgress({ session: makeSession({ status: 'suspended', suspendedBy: 'user' }) }))
+      .toEqual({ kind: 'suspended', suspendedBy: 'user' });
+  });
+
   it('returns { kind: "queued" }', () => {
     const session = makeSession({ status: 'queued' });
     expect(getTaskProgress({ session }))

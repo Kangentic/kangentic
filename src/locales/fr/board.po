@@ -404,6 +404,11 @@ msgid "Paused"
 msgstr "En pause"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgctxt "Agent status"
+msgid "Paused while idle"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
 msgid "Queued..."
 msgstr "En file d'attente..."

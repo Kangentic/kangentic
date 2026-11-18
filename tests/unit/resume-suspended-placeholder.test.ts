@@ -259,6 +259,7 @@ describe('resumeSuspendedSessions: a suspended record in a non-auto-spawn column
       taskId: 'task-1',
       projectId: 'proj-1',
       cwd: '/project/cwd',
+      suspendedBy: 'system',
     });
     // Never a fresh spawn: this column does not want agents, it just must not
     // hide the session that is already there.
@@ -283,6 +284,8 @@ describe('resumeSuspendedSessions: a suspended record in a non-auto-spawn column
     await runResume(sessionManager);
 
     expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    // Carried so the restored card and window say which pause it is (#1104).
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({ suspendedBy: 'user' }));
   });
 
   it('registers nothing in To Do', async () => {
@@ -438,7 +441,7 @@ describe('resumeSuspendedSessions: a resume whose preparation fails', () => {
     await runResume(sessionManager);
 
     expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-1', 'system');
-    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-1', projectId: 'proj-1', cwd: '/project/cwd' });
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-1', projectId: 'proj-1', cwd: '/project/cwd', suspendedBy: 'system' });
     expect(retireRecordMock).not.toHaveBeenCalled();
     expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
@@ -681,7 +684,7 @@ describe('resumeSuspendedSessions: a failed preparation settles against what cha
     });
 
     expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-1', 'system');
-    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-1', projectId: 'proj-1', cwd: '/project/cwd' });
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({ taskId: 'task-1', projectId: 'proj-1', cwd: '/project/cwd', suspendedBy: 'system' });
     expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-1', session_id: null });
     expect(retireRecordMock).not.toHaveBeenCalled();
     expect(sessionManager.spawn).not.toHaveBeenCalled();

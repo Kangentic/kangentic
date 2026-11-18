@@ -21,7 +21,7 @@ import { PrLink } from '../PrLink';
 import { ArtifactsChip } from '../artifacts/ArtifactsChip';
 import { openArtifactsEditor } from '../artifacts/artifacts-focus';
 import type {
-  ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, StartBlockedReason, Task,
+  ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, StartBlockedReason, SuspendedBy, Task,
 } from '../../../shared/types';
 import { activityReasonIcon } from './ActivityReasonTooltip';
 import { formatActivityReasonText } from './activity-reason-text';
@@ -405,7 +405,7 @@ export type PendingFooterState = 'starting' | 'resuming' | 'queued' | 'paused';
  * (spinning), queued (a still clock and its place in line), or paused. One home for
  * the words, shared by the board card and the Agent Monitor's card.
  */
-export function PendingFooter({ state, divider, testId, sessionId, startBlockedReason }: {
+export function PendingFooter({ state, divider, testId, sessionId, startBlockedReason, suspendedBy }: {
   state: PendingFooterState;
   divider: boolean;
   testId?: string;
@@ -413,13 +413,21 @@ export function PendingFooter({ state, divider, testId, sessionId, startBlockedR
   sessionId?: string;
   /** Why a paused row's start never reached an agent, which replaces "Paused". */
   startBlockedReason?: StartBlockedReason | null;
+  /**
+   * Who paused it. Only the idle timeout's pause (`'auto'`) changes the words,
+   * and they say what happened, never that opening resumes it: an idle pause
+   * can still skip that (`resumeTaskOnOpen`). A held pause keeps "Paused".
+   */
+  suspendedBy?: SuspendedBy | null;
 }) {
   if (state === 'paused') {
     if (startBlockedReason) return <StartBlockedFooter reason={startBlockedReason} divider={divider} testId={testId} />;
     return (
       <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
         <CirclePause size={12} className="shrink-0" />
-        <Trans context="Agent status">Paused</Trans>
+        {suspendedBy === 'auto'
+          ? <span className="truncate"><Trans context="Agent status">Paused while idle</Trans></span>
+          : <Trans context="Agent status">Paused</Trans>}
       </CardStatusBar>
     );
   }
@@ -714,7 +722,14 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
     case 'queued':
       return <PendingFooter state="queued" divider={divider} sessionId={view.sessionId} />;
     case 'suspended':
-      return <PendingFooter state="paused" divider={divider} startBlockedReason={displayState.startBlockedReason} />;
+      return (
+        <PendingFooter
+          state="paused"
+          divider={divider}
+          startBlockedReason={displayState.startBlockedReason}
+          suspendedBy={displayState.suspendedBy}
+        />
+      );
     case 'exited':
       if (displayState.startBlockedReason) return <StartBlockedFooter reason={displayState.startBlockedReason} divider={divider} />;
       return idleFooter ? <>{idleFooter}</> : null;

@@ -9,6 +9,12 @@
  *
  * Red-green: drop the `startBlockedReason` pass in `PendingFooter` and every
  * reason reads "Paused".
+ *
+ * The same board also tells an idle pause from a held one (#1104): the idle
+ * timeout's pause reads "Paused while idle", a held pause keeps "Paused", and
+ * the task window says which under its Resume button. A blocked start keeps its
+ * own words even when the idle timeout paused it. Red-green: drop the `'auto'`
+ * branch in `PendingFooter` and the idle card reads "Paused".
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -21,12 +27,13 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 const PROJECT_ID = 'proj-start-blocked';
 
 const ROWS = [
-  { taskId: 'task-worktree', status: 'suspended', reason: 'worktree-missing', exitCode: null },
-  { taskId: 'task-folder', status: 'suspended', reason: 'folder-missing', exitCode: null },
-  { taskId: 'task-never', status: 'suspended', reason: 'never-started', exitCode: null },
-  { taskId: 'task-spawn', status: 'exited', reason: 'spawn-failed', exitCode: -1 },
-  { taskId: 'task-prompt', status: 'suspended', reason: 'prompt-too-long', exitCode: null },
-  { taskId: 'task-paused', status: 'suspended', reason: undefined, exitCode: null },
+  { taskId: 'task-worktree', status: 'suspended', reason: 'worktree-missing', exitCode: null, pausedBy: 'auto' },
+  { taskId: 'task-folder', status: 'suspended', reason: 'folder-missing', exitCode: null, pausedBy: null },
+  { taskId: 'task-never', status: 'suspended', reason: 'never-started', exitCode: null, pausedBy: null },
+  { taskId: 'task-spawn', status: 'exited', reason: 'spawn-failed', exitCode: -1, pausedBy: null },
+  { taskId: 'task-prompt', status: 'suspended', reason: 'prompt-too-long', exitCode: null, pausedBy: null },
+  { taskId: 'task-paused', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'user' },
+  { taskId: 'task-idle', status: 'suspended', reason: undefined, exitCode: null, pausedBy: 'auto' },
 ];
 
 const preConfig = (cardDensity: string) => `
@@ -53,7 +60,7 @@ const preConfig = (cardDensity: string) => `
       state.sessions.push({
         id: 'session-' + row.taskId, taskId: row.taskId, projectId: '${PROJECT_ID}', pid: null, status: row.status, shell: 'bash',
         cwd: '/mock/start-blocked', startedAt: timestamp, exitCode: row.exitCode, resuming: false, agentSessionId: null,
-        startBlockedReason: row.reason,
+        startBlockedReason: row.reason, suspendedBy: row.pausedBy,
       });
     });
     return { currentProjectId: '${PROJECT_ID}' };
@@ -73,6 +80,32 @@ async function launch(cardDensity = 'default'): Promise<{ browser: Browser; page
 
 function footerOf(page: Page, taskId: string) {
   return page.locator(`[data-task-id="${taskId}"]`).locator('[data-testid="status-bar"]');
+}
+
+interface StoreWindow {
+  __zustandStores: {
+    session: { getState(): { setDetailTaskId(taskId: string): void } };
+    window: { getState(): { windows: Record<string, { id: string; anchor: string }> } };
+  };
+}
+
+/** Open a task's window the way a card click does, and return its frame. */
+async function openTaskWindow(page: Page, taskId: string) {
+  await page.evaluate((id) => {
+    (window as unknown as StoreWindow).__zustandStores.session.getState().setDetailTaskId(id);
+  }, taskId);
+  let windowId: string | null = null;
+  await expect.poll(async () => {
+    windowId = await page.evaluate((anchorId) => {
+      const windows = (window as unknown as StoreWindow).__zustandStores.window.getState().windows;
+      return Object.values(windows).find((candidate) => candidate.anchor === anchorId)?.id ?? null;
+    }, taskId);
+    return windowId;
+  }, { timeout: 5000 }).not.toBeNull();
+  const frame = page.locator(`[data-testid="window-frame-${windowId}"]`);
+  await frame.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+  await expect(frame.locator('button:has-text("Resume session")')).toBeVisible();
+  return frame;
 }
 
 test.describe('A start that never reached an agent', () => {
@@ -101,6 +134,24 @@ test.describe('A start that never reached an agent', () => {
         await expect(paused).toHaveText('Paused');
         await expect(paused.locator('span.text-fg-faint')).toHaveCount(1);
         await expect(footerOf(page, 'task-never').locator('span.text-warning')).toHaveCount(1);
+      });
+
+      await test.step('an idle pause says so, in the same quiet tone', async () => {
+        const idle = footerOf(page, 'task-idle');
+        await expect(idle).toHaveText('Paused while idle');
+        await expect(idle.locator('span.text-fg-faint')).toHaveCount(1);
+      });
+
+      await test.step('the task window says who paused it under Resume', async () => {
+        const held = await openTaskWindow(page, 'task-paused');
+        await expect(held.getByTestId('task-detail-pause-note')).toHaveText('Stays paused until resumed.');
+        const idle = await openTaskWindow(page, 'task-idle');
+        await expect(idle.getByTestId('task-detail-pause-note')).toHaveText('Paused while idle.');
+      });
+
+      await test.step('a blocked start keeps its own words, even when the idle timeout paused it', async () => {
+        const blocked = await openTaskWindow(page, 'task-worktree');
+        await expect(blocked.getByTestId('task-detail-pause-note')).toHaveCount(0);
       });
     } finally {
       await browser.close();
