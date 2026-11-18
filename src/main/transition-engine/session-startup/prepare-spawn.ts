@@ -296,7 +296,7 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       retiringRecordId: resume.recordId ?? null,
       resumedAgentSessionId,
     });
-    const { verdict, evidence } = await assessResumeConversationWithEvidence({
+    const { verdict, evidence, promptOwed } = await assessResumeConversationWithEvidence({
       adapter,
       agentSessionId: resumedAgentSessionId,
       records: lineage,
@@ -314,9 +314,11 @@ async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
       canResume = false;
       startOver = 'never-started';
       // The prompt of a launch that never ran is still owed, and this path types
-      // nothing, so a CLI that takes no starting prompt opens idle.
+      // nothing, so a CLI that takes no starting prompt opens idle. A launch never
+      // ran when a launch check marked it, or when the check proved it from the
+      // row alone because a quit deleted its report (`promptOwed`).
       const failedLaunch = lineage.find(Boolean);
-      const owedPrompt = failedLaunch?.launch_failed_at ? owedPromptOf(lineage) : null;
+      const owedPrompt = (failedLaunch?.launch_failed_at || promptOwed) ? owedPromptOf(lineage) : null;
       if (owedPrompt && adapter.freshPromptDelivery !== 'typed') prompt = owedPrompt;
     } else if (verdict === 'expired') {
       canResume = false;

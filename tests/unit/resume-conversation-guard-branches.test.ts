@@ -266,6 +266,8 @@ describe('assessResumeConversationWithEvidence - the summary', () => {
 
     expect(result.verdict).toBe('never-started');
     expect(result.evidence).toEqual({ turns: 'no', agentReport: 'status', transcript: 'missing', cwd: 'unknown' });
+    // The agent booted and reported, so this start-over replays no owed prompt.
+    expect(result.promptOwed).toBeUndefined();
   });
 
   it('turns, and the transcript the agent reported is on disk', async () => {
@@ -299,6 +301,75 @@ describe('assessResumeConversationWithEvidence - the summary', () => {
     const result = await assessWithEvidence(adapterWithProof(neverAsked()), [rowWithoutTurns()]);
 
     expect(result.evidence).toMatchObject({ turns: 'no', agentReport: 'session_start', transcript: 'missing' });
+  });
+
+  /**
+   * A restart after a quit (DESKTOP-2M): the quit deleted the session folder, so
+   * the agent's own report is gone and only the path the row kept is left. The
+   * stub proofs answer true where a skipped guard would show.
+   */
+  describe('no turns and no agent report, only the row\'s reported path', () => {
+    it('is never-started when the row\'s path is missing and the adapter proves the conversation gone', async () => {
+      const proveConversationGone = vi.fn<ProveConversationGone>().mockResolvedValue(true);
+      expect(fs.existsSync(path.join(projectPath, '.kangentic', 'sessions', RECORD_ID))).toBe(false);
+
+      const result = await assessWithEvidence(adapterWithProof(proveConversationGone), [rowWithoutTurns({ transcript_path: transcriptPath })]);
+
+      expect(result.verdict).toBe('never-started');
+      expect(result.evidence).toEqual({ turns: 'no', agentReport: 'none', transcript: 'missing', cwd: 'unknown' });
+      // Nothing shows the agent ever ran, so its prompt is still owed, as after a marked launch.
+      expect(result.promptOwed).toBe(true);
+      expect(proveConversationGone).toHaveBeenCalledTimes(1);
+      expect(proveConversationGone).toHaveBeenCalledWith({
+        agentSessionId: AGENT_SESSION_ID,
+        reportedPaths: [transcriptPath],
+        cwd,
+        place: null,
+      });
+    });
+
+    it('is unknown when the adapter cannot prove the conversation gone', async () => {
+      const proveConversationGone = vi.fn<ProveConversationGone>().mockResolvedValue(false);
+
+      const result = await assessWithEvidence(adapterWithProof(proveConversationGone), [rowWithoutTurns({ transcript_path: transcriptPath })]);
+
+      expect(result.verdict).toBe('unknown');
+      expect(proveConversationGone).toHaveBeenCalledTimes(1);
+    });
+
+    it('is unknown, and never asks the adapter, when no record names a path', async () => {
+      const proveConversationGone = vi.fn<ProveConversationGone>().mockResolvedValue(true);
+
+      const result = await assessWithEvidence(adapterWithProof(proveConversationGone), [rowWithoutTurns()]);
+
+      expect(result.verdict).toBe('unknown');
+      expect(result.evidence).toMatchObject({ agentReport: 'none', transcript: 'not_reported' });
+      expect(proveConversationGone).not.toHaveBeenCalled();
+    });
+
+    it('is unknown, and never asks the adapter, when the row\'s path is on disk', async () => {
+      writeTranscript();
+      const proveConversationGone = vi.fn<ProveConversationGone>().mockResolvedValue(true);
+
+      const result = await assessWithEvidence(adapterWithProof(proveConversationGone), [rowWithoutTurns({ transcript_path: transcriptPath })]);
+
+      expect(result.verdict).toBe('unknown');
+      expect(result.evidence?.transcript).toBe('on_disk');
+      expect(proveConversationGone).not.toHaveBeenCalled();
+    });
+
+    it('is unknown, and the failure does not escape, when the proof rejects', async () => {
+      const failure = new Error('proof exploded');
+      const proveConversationGone = vi.fn<ProveConversationGone>().mockRejectedValue(failure);
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const result = await assessWithEvidence(adapterWithProof(proveConversationGone), [rowWithoutTurns({ transcript_path: transcriptPath })]);
+
+      expect(result.verdict).toBe('unknown');
+      expect(proveConversationGone).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(String(warnSpy.mock.calls[0][0])).toContain('Conversation-gone probe failed');
+    });
   });
 
   it('carries the summary on the branch where the CLI moved place, and reads no transcript there', async () => {

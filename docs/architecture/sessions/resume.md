@@ -195,11 +195,28 @@ The row exists because a quit or a removal deletes the session folder (`detachAn
 left most old conversations with no evidence at all. The SessionStart hook exists because the
 status line only runs once the TUI is up, so a CLI killed in its first second leaves no status.
 
-- **`never-started`** needs no turns anywhere in the lineage, the agent's own report (status or
-  hook, never the row alone) saying so, and the path it names failing with ENOENT. The spawn is
-  re-resolved `forceFresh` exactly as before: the task's own prompt, no recap, no notice. A column
-  message the resume carried goes out after the spawn, as on any fresh spawn, since the task
-  template took its place in the prompt. The spawn hands that message back in
+- **`never-started`** needs no turns anywhere in the lineage and one of three things:
+  - The agent's own report (status or hook) says nothing happened, and the path it names fails
+    with ENOENT.
+  - A launch check marked the record (`launch_failed_at`).
+  - No report is left, the path a row kept fails with ENOENT, and the adapter's
+    `proveConversationGone` proves the conversation gone.
+
+  The third is the restart case (Sentry DESKTOP-2M). A quit deletes the session folder, so every
+  never-turned session that startup recovery restored used to resume into "No conversation found".
+  The row's path is still the agent's own, copied from its status line, and the proof is the
+  adapter's, so a moved project still resumes. A row with no path proves nothing and still
+  resumes, and the post-failure heal is its only way out.
+
+  At startup the third case ends where `markResumeMiss` and its retry used to end, without the
+  dead launch. The verdict carries `promptOwed`, so startup recovery replays the lineage's prompt
+  (`owedPromptOf`), as it does for a marked launch. Both rest on the same rows-only turn evidence.
+  A board start, the Resume button included, re-resolves the task template instead, as for any
+  `never-started`.
+
+  The spawn is re-resolved `forceFresh` exactly as before: the task's own prompt, no recap, no
+  notice. A column message the resume carried goes out after the spawn, as on any fresh spawn,
+  since the task template took its place in the prompt. The spawn hands that message back in
   `SpawnOutcome.unsentPrompt` for the caller to type in.
 - **`expired`** needs turns and the adapter's proof that the file is gone
   (`AgentAdapter.proveConversationGone`). Claude's (`adapters/claude/conversation-gone.ts`) wants an

@@ -553,6 +553,12 @@ oldest record of the lineage, the fresh launch, so `owedPromptOf` reads it from 
 record's own prompt stays out, because a failed resume's held messages went back on hold at its
 pause, and the next start claims them again.
 
+Startup recovery usually reaches that verdict before the launch now. A quit deletes the session
+folder, so a restored never-turned session has no agent report left, only the path its row kept. When
+that path fails with ENOENT and the adapter proves the conversation gone, the check answers
+`never-started` with `promptOwed`, and the prompt is replayed with no dead launch first (Sentry
+DESKTOP-2M, [Resume](resume.md)). A row with no path still goes through the launch and this heal.
+
 Three things keep this safe:
 
 - **The no-turns check gates the write, not only the verdict.** A moved project prints the same

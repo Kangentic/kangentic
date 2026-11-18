@@ -241,8 +241,9 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   made this way keeps the interactive session across a Pause has not been run live yet.
 - A task that leaves its column before that chat's first turn lands (a confirm-changes start
   still at Cursor's workspace prompt, say) resumes the empty chat, and the task prompt is not sent
-  again. The resume guard starts over only on the agent's own report that nothing happened, and
-  Cursor reports nothing, so its verdict stays `unknown`. Reading the derived `agent-transcripts`
+  again. The resume guard starts over only on the agent's own report that nothing happened, or on a
+  path the agent reported that its adapter proves gone. Cursor reports nothing and has no proof, so
+  its verdict stays `unknown`. Reading the derived `agent-transcripts`
   path as that report is the guard that #255 reverted.
 - The `create-chat` wait runs inside the task lock, so it races the spawn's abort signal: a move
   that aborts the spawn stops waiting at once, and the CLI run ends on its own 20 s timeout.
