@@ -160,6 +160,16 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    exists. `gh workflow run package-smoke.yml --ref main` gets a fresh answer, but it reports under
    `--event workflow_dispatch`, so read that run instead.
 
+   Then check the daily sign-in check, which a pull request runs only when it changes a sign-in
+   value: `gh run list --repo Kangentic/kangentic --workflow=integrations.yml --event schedule
+   --limit 1 --json conclusion,createdAt`. Require `conclusion: success` and a `createdAt` within
+   the last 48 hours. On a `failure`, stop and read that run's summary. A `fail` row names the
+   Trello key, the Atlassian or Linear client, or the kangentic.com page that stopped answering.
+   That sign-in is broken in every installed version, so tell the owner which one before any tag.
+   On an older run or an empty list, stop too, because the schedule itself may have stopped
+   running. `gh workflow run integrations.yml --ref main` gets a fresh answer, under `--event
+   workflow_dispatch`. Each probe is in `docs/integrations/boards.md`, "Daily sign-in check".
+
    A green conclusion already rules out a flaky test. CI runs the UI, E2E and web demo tiers with
    `retries: 1` and `--fail-on-flaky-tests`, so a test that passes only on its retry fails its
    shard and the run's conclusion is `failure` (`tests/unit/ci-workflow-hygiene.test.ts` pins the
