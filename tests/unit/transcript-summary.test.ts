@@ -59,9 +59,17 @@ describe('the agent CLI rig summary', () => {
 
   it('fails a run whose tests were all skipped, which vitest itself exits 0 on', () => {
     const skipped = ALL_PASSED.map((test) => ({ ...test, status: 'skipped' }));
-    const { problems } = summarize({ versionsText: VERSIONS, report: reportOf(skipped) });
+    const { rows, problems } = summarize({ versionsText: VERSIONS, report: reportOf(skipped) });
+    // One line says it, and the rows still show each CLI as skipped.
+    expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('All 4 tests were skipped');
-    expect(problems).toHaveLength(5);
+    expect(rows.map((row) => row.result)).toEqual(['skipped', 'skipped', 'skipped', 'skipped']);
+  });
+
+  it('names one skipped test among tests that ran', () => {
+    const tests = ALL_PASSED.map((test) => (test.title.startsWith('Kimi:') ? { ...test, status: 'skipped' } : test));
+    const { problems } = summarize({ versionsText: VERSIONS, report: reportOf(tests) });
+    expect(problems).toEqual(['Kimi kimi-code 2.5.1: skipped, its test did not run']);
   });
 
   it('names the CLI and the version a failed test ran against, with the first line of the failure', () => {
