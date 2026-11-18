@@ -210,8 +210,8 @@ session manager announces it (`'transcript-path'`) and `persistHookTranscriptPat
 (`handlers/session-transcript-path.ts`) fills the row:
 
 - It only fills an empty path (`SessionRepository.fillTranscriptPath`). The status line stays the
-  authority and overwrites. A resumed row starts with the path that line last reported, which can
-  sit outside the folder the new cwd maps to, and the hook never replaces it.
+  authority and overwrites. A resumed row starts with the path its conversation's newest row
+  holds, which can sit outside the folder the new cwd maps to, and the hook never replaces it.
 - A hook that names another conversation is ignored. Every process started with the session's
   `--settings` fires SessionStart, and Claude Code's background daemon runs an empty spare.
 - A Command Terminal and a workflow's own agent have no row. A session on an SSH host keeps none
@@ -245,7 +245,8 @@ session manager announces it (`'transcript-path'`) and `persistHookTranscriptPat
     with no task template. `resumeTaskSession` composes that opening as it does for a
     `launch_failed_at` record: a command the person chose leads, else the owed prompt, then any
     held messages. A lineage that owes nothing (a launch that carried no prompt, such as a
-    recovery move out of Done) starts with no prompt.
+    recovery move out of Done) opens on any held messages alone, and with no prompt when none are
+    held. It never gets the task template.
 
   A move into a column passes no such callback and re-resolves its column's prompt, as for any
   `never-started`. So does a Resume after the task entered its column while paused, which goes

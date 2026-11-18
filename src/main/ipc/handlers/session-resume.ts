@@ -415,9 +415,10 @@ export function resumeTaskSession(
                 // before any launch, and then asks for the opening here with the
                 // prompt its lineage owes: the same message a marked launch gets
                 // above, a command the person chose still first. A lineage that
-                // owes nothing opens with no prompt, as a marked one does, never
-                // with the task template: its first launch sent none. Filled once
-                // the engine has asked, which it does only when it starts on it.
+                // owes nothing opens on held messages alone, or with no prompt
+                // when none are held, as a marked one does. It never gets the
+                // task template: its first launch sent none. Filled once the
+                // engine has asked, which it does only when it starts on it.
                 const owedReplay: { opening: OpeningMessage | null } = { opening: null };
                 const engineOverrides: SpawnOverrides = options.plainResume ? overrides : {
                   ...overrides,
