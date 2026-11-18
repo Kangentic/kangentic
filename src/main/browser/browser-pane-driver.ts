@@ -13,6 +13,7 @@ import {
   waitForDialogInterception,
   type CaptureHoldDiagnostics,
 } from './cdp/cdp';
+import type { CaptureEmulation, CaptureRefusalDiagnostics } from './cdp/screenshot';
 import { KeyboardFocusNotInGuestError } from './cdp/keyboard-focus';
 import { AmbiguousSelectorError, ambiguousSelectorDetail, type SelectorCandidate } from './cdp/ambiguous-selector';
 import { beginAgentInput, endAgentInput } from './agent-input-signal';
@@ -50,8 +51,8 @@ export type BrowserCapability = 'observe' | 'interact' | 'navigate' | 'eval';
  * (`cdp/cdp.ts`). Everything else a `driver-error` carries is the page, a
  * selector or the agent's own mistake, so only these and the runtime's own
  * classes (`TypeError`, `RangeError`, `ReferenceError`) report. `detail` is never
- * sent: it holds page content, selectors and URLs. A capture that got no frame also
- * carries `captureFailureTags`.
+ * sent: it holds page content, selectors and URLs. A capture that got no frame, and
+ * one refused as larger than its pane, also carry `captureFailureTags`.
  */
 const REPORTED_DRIVER_ERROR_NAMES: ReadonlySet<string> = new Set([
   'CaptureExceedsSurface',
@@ -87,28 +88,78 @@ function isScreenshotTimeout(error: unknown): error is ScreenshotTimeoutShape {
   return typeof fields.hold === 'string' && typeof fields.hostState === 'string';
 }
 
+type CaptureRefusalShape = { name: 'CaptureExceedsSurface' } & CaptureRefusalDiagnostics;
+
+const EMULATED_TAG: Record<CaptureEmulation, string> = { on: 'yes', off: 'no', unknown: 'unknown' };
+/** Every value a refusal's `target` and `widgetSource` may hold. Keyed records, so a new value fails typecheck until it is listed. */
+const REFUSAL_TARGETS: Record<CaptureRefusalDiagnostics['target'], true> = { viewport: true, full_page: true, element: true };
+const REFUSAL_WIDGET_SOURCES: Record<CaptureRefusalDiagnostics['widgetSource'], true> = { reported: true, fallback: true };
+
+function isOwnKey<Key extends string>(allowed: Record<Key, unknown>, value: unknown): value is Key {
+  return typeof value === 'string' && Object.hasOwn(allowed, value);
+}
+
 /**
- * The tags a capture that timed out adds to its report (DESKTOP-46): which surface,
- * the host window and the hold as the capture found them, and how long since the
- * machine last woke. Fixed enums only, so nothing a page or a user wrote rides along.
- * Every other error adds none.
+ * Read structurally, for the same reason as `isScreenshotTimeout`. Each field is
+ * held to its own values and not only to its type, because three of them become
+ * report tags and a structural read would otherwise pass any string through.
+ */
+function isCaptureRefusal(error: unknown): error is CaptureRefusalShape {
+  if (!(error instanceof Error) || error.name !== 'CaptureExceedsSurface') return false;
+  const fields = error as Partial<Record<keyof CaptureRefusalDiagnostics, unknown>>;
+  return isOwnKey(REFUSAL_TARGETS, fields.target)
+    && typeof fields.clipped === 'boolean'
+    && isOwnKey(EMULATED_TAG, fields.emulation)
+    && isOwnKey(REFUSAL_WIDGET_SOURCES, fields.widgetSource);
+}
+
+/**
+ * The tags a failed capture adds to its report. Fixed enums only, so nothing a page
+ * or a user wrote rides along. Every other error adds none.
+ *
+ * A capture that timed out (DESKTOP-46) says which surface, the host window and the
+ * hold as the capture found them, and how long since the machine last woke.
+ *
+ * A capture refused as larger than its pane (DESKTOP-48) says what its request
+ * looked like: which surface, the target (`viewport`, `full_page`, `element`),
+ * whether it carried a clip, whether a viewport override was active (`unknown` when
+ * no CDP session was attached to say), and whether the pane's size was the
+ * renderer's report or the host-window fallback. A refusal is only ever of a request
+ * that carried a size or whose override could not be ruled out, so `clipped: no`
+ * comes with `emulated: no` for one request only: a full page the planner could not
+ * plan, which goes out with no clip and which Chromium clips to the whole page.
  *
  * The reporter latches on its tags, so each distinct combination sends once per run
- * rather than one timeout per run. That is the point: `since_wake` in the key is what
+ * rather than one failure per run. That is the point: `since_wake` in the key is what
  * lets a timeout right after an unlock report after an earlier one latched. The hold
  * follows from the host window, so the two make 5 pairs, and 5 surfaces x 5 pairs x 5
- * wake buckets is the bound in principle, a handful in practice. Every key counts
- * toward the chokepoint's 25-key cap, so a run that spends it on timeouts sends no
- * later driver report with a new key.
+ * wake buckets is the bound in principle for a timeout, a handful in practice. A
+ * refusal has 4 surfaces (a lane has no bound) and 14 request shapes x 2 size
+ * sources, again a handful in practice. The 14 are 9 with a clip (3 targets x 3
+ * override states) and 5 without: a viewport or a full page with the override on or
+ * unknown, and the unplanned full page with it off. Every key counts toward the chokepoint's
+ * 25-key cap, so a run that spends it on captures sends no later driver report with a
+ * new key.
  */
 function captureFailureTags(error: unknown, entry: BrowserPaneEntry): Record<string, string> {
-  if (!isScreenshotTimeout(error)) return {};
-  return {
-    surface: captureSurfaceTag(entry),
-    host_window: error.hostState,
-    hold: error.hold,
-    since_wake: sinceWakeBucket(),
-  };
+  if (isScreenshotTimeout(error)) {
+    return {
+      surface: captureSurfaceTag(entry),
+      host_window: error.hostState,
+      hold: error.hold,
+      since_wake: sinceWakeBucket(),
+    };
+  }
+  if (isCaptureRefusal(error)) {
+    return {
+      surface: captureSurfaceTag(entry),
+      target: error.target,
+      clipped: error.clipped ? 'yes' : 'no',
+      emulated: EMULATED_TAG[error.emulation],
+      widget_size: error.widgetSource,
+    };
+  }
+  return {};
 }
 
 /** A fixed error for a debugger that would not attach, which `attachDebugger` reports as `false`. */

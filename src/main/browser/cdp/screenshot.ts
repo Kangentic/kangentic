@@ -10,12 +10,15 @@ import {
   getBoundingBox,
   getDeviceMetrics,
   getLayoutMetrics,
+  isDebuggerAttached,
   runtimeEvaluate,
   type ScreenshotOptions,
 } from './cdp';
 import {
   BELOW_ONE_TO_ONE,
+  SURFACE_BOUND_TOLERANCE_PX,
   planCapture,
+  plannedPixelBound,
   surfacePixelBound,
   type CapturePlan,
   type CaptureTarget,
@@ -36,8 +39,11 @@ export type { GuestCaptureSurface } from './capture-bounds';
  *      image-space coords back to viewport-space without guessing.
  *   2. Never ask a `<webview>` guest for more pixels than its pane holds, which
  *      is what makes Chromium tile the image (see `capture-bounds.ts`). Every
- *      capture is planned first; a guest capture that still comes back larger
- *      than its pane is refused rather than returned.
+ *      capture is planned first. A guest capture whose request carried a size
+ *      (a clip, a full page, or a viewport override) and still comes back
+ *      larger than its pane is refused rather than returned. One whose request
+ *      carried none is returned. Nothing can have tiled it, so the recorded
+ *      pane size was the thing that was wrong.
  *   3. Fit-to-budget: when `maxBytes` is provided, retry with progressively
  *      smaller jpeg quality / density until the decoded image fits, or give up
  *      and persist to disk.
@@ -64,13 +70,6 @@ const MIN_RETRY_QUALITY = 35;
 const MIN_RETRY_SCALE = 0.5;
 const ROLLING_FILE_CAP = 100;
 const MAX_FILE_AGE_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Pixels a guest capture may exceed its pane by before it counts as tiled.
- * The pane is measured with `getBoundingClientRect`, so its edge can land
- * either side of a physical pixel.
- */
-const SURFACE_BOUND_TOLERANCE_PX = 2;
 
 /**
  * Element-clip metadata returned alongside element captures so the agent
@@ -158,22 +157,80 @@ export function configureScreenshotProjectRoot(resolver: ProjectRootResolver): v
   resolveProjectRoot = resolver;
 }
 
+/** Whether a device-metrics override was active when a capture was asked for. */
+export type CaptureEmulation = 'on' | 'off' | 'unknown';
+
 /**
- * A guest capture came back larger than its pane can render.
- *
- * The source bitmap of a guest capture is pane-sized, so anything larger was
- * filled in by Chromium repeating it: a tiled image an agent would read as a
- * broken page. Refused rather than returned. The planner exists so this never
- * fires; it is the backstop for the day Chromium's sizing rule changes under
- * it.
+ * What a refused capture's request looked like, for the driver's report. Fixed
+ * enums only. Nothing here is a size, a selector or anything a page wrote.
  */
-export class CaptureExceedsSurface extends Error {
-  constructor(image: Size, bound: Size) {
+export interface CaptureRefusalDiagnostics {
+  target: 'viewport' | 'full_page' | 'element';
+  /**
+   * The plan carried a clip of its own, one of the three things that give a
+   * request a size. The other two are a viewport override and a full page
+   * with no clip, which Chromium clips to the whole page itself.
+   */
+  clipped: boolean;
+  emulation: CaptureEmulation;
+  widgetSource: GuestCaptureSurface['widgetSource'];
+}
+
+/**
+ * A guest capture came back larger than its recorded pane, from a request
+ * that carried a size.
+ *
+ * The source bitmap of a guest capture is pane-sized, so when a request asks
+ * for more, Chromium fills the difference by repeating the bitmap. The result
+ * is a tiled image an agent would read as a broken page. Refused rather than
+ * returned. The planner sizes every request it plans inside the bound, so this
+ * is the backstop for a request it could not plan (the page could not describe
+ * itself) and for the day Chromium's sizing rule changes under it.
+ *
+ * It does not fire for a viewport request with no clip and no override.
+ * Chromium asks for no size there and returns the surface as it is, so an
+ * image past the bound means the recorded pane size was wrong, not that the
+ * image tiled (Sentry DESKTOP-48). `captureWithPlan` returns that image.
+ *
+ * A full page with no clip is not that request. Chromium measures the page
+ * and builds a clip of all of it (`CaptureFullPageScreenshot` in
+ * `page_handler.cc`), and a guest tiles that clip like any other. The planner
+ * never asks a guest for one. Only a page that could not describe itself
+ * does, through `unplannedCapture`, and the refusal covers it.
+ *
+ * The fields say what the request looked like. The message carries the sizes,
+ * and the message is never sent.
+ */
+export class CaptureExceedsSurface extends Error implements CaptureRefusalDiagnostics {
+  readonly target: CaptureRefusalDiagnostics['target'];
+  readonly clipped: boolean;
+  readonly emulation: CaptureEmulation;
+  readonly widgetSource: GuestCaptureSurface['widgetSource'];
+
+  constructor(image: Size, bound: Size, diagnostics: CaptureRefusalDiagnostics) {
     super(
       `The screenshot came back ${image.width}x${image.height}, larger than the ${bound.width}x${bound.height} pixels this pane can render, so Chromium tiled it and nothing was returned. Retry; if it happens again, kangentic_browser_set_viewport { reset: true } clears any viewport override, and kangentic_browser_pop_out gives the page a real window.`,
     );
     this.name = 'CaptureExceedsSurface';
+    this.target = diagnostics.target;
+    this.clipped = diagnostics.clipped;
+    this.emulation = diagnostics.emulation;
+    this.widgetSource = diagnostics.widgetSource;
   }
+}
+
+/**
+ * Whether a device-metrics override is active, as far as this process can say.
+ *
+ * `off` is positive knowledge. A CDP session is attached and records no
+ * override. With no session attached the record is empty either way, so the
+ * answer is `unknown`, never `off`. Read from the session's own record rather
+ * than `PageCaptureState.emulated`, which does not exist when the page could
+ * not describe itself.
+ */
+function emulationState(webContents: WebContents): CaptureEmulation {
+  if (getDeviceMetrics(webContents) !== null) return 'on';
+  return isDebuggerAttached(webContents) ? 'off' : 'unknown';
 }
 
 /**
@@ -181,8 +238,8 @@ export class CaptureExceedsSurface extends Error {
  *
  * Null when the page cannot answer (a blocked renderer, a detached debugger).
  * The capture then falls back to asking Chromium for exactly what it asked for
- * before any planning existed, and the surface bound still refuses a tiled
- * result.
+ * before any planning existed, and the surface bound still refuses an image
+ * past the pane from any such request that carried a size.
  */
 export async function readPageCaptureState(webContents: WebContents): Promise<PageCaptureState | null> {
   const evaluated = await runtimeEvaluate<{
@@ -313,9 +370,17 @@ async function captureWithPlan(
     pageState
       ? planCapture(pageState, target, surface, { densityScale: scale })
       : unplannedCapture(target, scale, layout.deviceScaleFactor);
-  const bound = surface ? surfacePixelBound(surface) : null;
+  // The RECORDED bound, not the one the planner may have lowered to the page's
+  // own pixels. The refusal asks whether the image is past what the pane was
+  // recorded to hold, and a lower bound here would only add refusals.
+  const pane = surface ? { surface, bound: surfacePixelBound(surface) } : null;
 
   const attemptWith = async (plan: CapturePlan): Promise<CaptureAttempt | null> => {
+    // Read before the capture, not after. Every path that turns an override ON
+    // runs inside this guest's drive lock, so it cannot change under the
+    // capture. The pane's own clear button can turn one OFF mid-capture, and a
+    // read taken afterwards would then call a sized request unsized.
+    const emulation: CaptureEmulation = pane ? emulationState(webContents) : 'unknown';
     const attempt = await captureOnce(webContents, {
       format,
       quality,
@@ -324,11 +389,24 @@ async function captureWithPlan(
     });
     if (
       attempt &&
-      bound &&
-      (attempt.width > bound.width + SURFACE_BOUND_TOLERANCE_PX ||
-        attempt.height > bound.height + SURFACE_BOUND_TOLERANCE_PX)
+      pane &&
+      (attempt.width > pane.bound.width + SURFACE_BOUND_TOLERANCE_PX ||
+        attempt.height > pane.bound.height + SURFACE_BOUND_TOLERANCE_PX)
     ) {
-      throw new CaptureExceedsSurface({ width: attempt.width, height: attempt.height }, bound);
+      // A request with no clip, no full page and no override asks Chromium for
+      // no size. The surface came back as it is, so nothing can have tiled
+      // this image, and the bound trailed the pane. A full page with no clip
+      // does carry a size, because Chromium builds a clip of the whole page
+      // for it, so it is refused like any other clip. Keyed on the plan's own
+      // request and the session's own record, never on the planner's inputs,
+      // which are missing when the page could not describe itself.
+      if (plan.clip === null && !plan.captureBeyondViewport && emulation === 'off') return attempt;
+      throw new CaptureExceedsSurface({ width: attempt.width, height: attempt.height }, pane.bound, {
+        target: target.kind === 'fullPage' ? 'full_page' : target.kind,
+        clipped: plan.clip !== null,
+        emulation,
+        widgetSource: pane.surface.widgetSource,
+      });
     }
     return attempt;
   };
@@ -409,8 +487,10 @@ async function captureWithPlan(
 
 /**
  * What to ask for when the page could not describe itself: exactly the
- * request every capture made before planning existed. A guest capture is
- * still covered by the surface bound, which refuses a tiled result.
+ * request every capture made before planning existed. A guest capture whose
+ * request carries a size (an element's clip, a full page, or anything under a
+ * viewport override) is still covered by the surface bound, which refuses an
+ * image past the pane.
  */
 function unplannedCapture(target: CaptureTarget, densityScale: number, devicePixelRatio: number): CapturePlan {
   if (target.kind === 'element') {
@@ -453,7 +533,7 @@ function captureNote(
       : plan.limitedByPane;
   if (!explain) return null;
   const density = plan.pixelsPerCssPixel.toFixed(2);
-  const pane = `${Math.round(surface.widget.width)}x${Math.round(surface.widget.height)}`;
+  const pane = plannedPaneSize(surface, state);
   if (target.kind === 'element') {
     // The density the planner aimed for: 1:1, or the page's own ratio above it.
     const wanted = Math.max(1, state.devicePixelRatio);
@@ -475,6 +555,26 @@ function captureNote(
     `viewport came back at ${image.width}x${image.height}, ${density} image px per CSS px. kangentic_browser_screenshot_element captures ` +
     'a region at up to 1:1, and kangentic_browser_pop_out gives a real window for 1:1 captures.'
   );
+}
+
+/**
+ * The pane's size in DIP, as the plan believed it, for a note to name.
+ *
+ * The recorded widget, except on an axis where the planner lowered its bound
+ * to the page's own pixel count. There the page's viewport times its zoom is
+ * the pane in DIP as the page sees it. Naming the recorded size there told an
+ * agent "this 2000x2000 pane" beside an image planned for a 740x749 one (seen
+ * in a live capture with the recorded size forced stale).
+ */
+function plannedPaneSize(surface: GuestCaptureSurface, state: PageCaptureState): string {
+  const recorded = surfacePixelBound(surface);
+  const planned = plannedPixelBound(surface, state);
+  const zoom = state.zoom > 0 ? state.zoom : 1;
+  const axis = (plannedPixels: number, recordedPixels: number, widgetDip: number, viewportCss: number): number =>
+    Math.round(plannedPixels < recordedPixels ? viewportCss * zoom : widgetDip);
+  const width = axis(planned.width, recorded.width, surface.widget.width, state.viewport.width);
+  const height = axis(planned.height, recorded.height, surface.widget.height, state.viewport.height);
+  return `${width}x${height}`;
 }
 
 interface CaptureAttempt {

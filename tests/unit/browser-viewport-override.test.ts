@@ -1326,7 +1326,7 @@ describe('the pane a screenshot is bounded by', () => {
 
     const surface = guestCaptureSurface(guestOf(), entryOf());
 
-    expect(surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1.5 });
+    expect(surface).toEqual({ widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1.5 });
   });
 
   it('converts the host document\'s CSS pixels to DIP through the host\'s zoom', () => {
@@ -1342,12 +1342,15 @@ describe('the pane a screenshot is bounded by', () => {
     expect(guestCaptureSurface(guestOf(), entryOf({ kind: 'lane' }))).toBeNull();
   });
 
-  it('falls back to the host window before the pane has reported, and says so by being larger', () => {
-    // An overestimate, which is why screenshot.ts also refuses an image larger
-    // than the bound rather than trusting the plan alone.
+  it('falls back to the host window before the pane has reported, and says which it used', () => {
+    // An overestimate. With no viewport override the planner caps it at the
+    // page's own pixels; under one, nothing does. The source is stamped here,
+    // when the capture is planned, so a refused capture's report can say
+    // whether the pane had reported by then.
     const surface = guestCaptureSurface(guestOf(), entryOf({ widgetSize: null }));
 
     expect(surface?.widget).toEqual({ width: 2545, height: 1272 });
+    expect(surface?.widgetSource).toBe('fallback');
   });
 
   it('falls back to the restored size on a minimized host, whose content size is meaningless', () => {

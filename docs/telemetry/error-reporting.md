@@ -440,7 +440,15 @@ in one Sentry org, one triage surface.
     when the capture started, and `since_wake` (`none`, `under_30s`, `under_2m`, `under_10m`,
     `over_10m`), the time since the last `unlock-screen` or `resume` (`src/main/browser/wake-clock.ts`).
     None is a new data class: the `electron` breadcrumbs already carry power events and window
-    focus with their timestamps. The error's `detail` is never sent. The latch keys on tags, so
+    focus with their timestamps. A `CaptureExceedsSurface` report carries five, so it can say what
+    the refused request looked like (Sentry DESKTOP-48, a refusal that could not say which of the
+    bound's inputs was wrong): `surface` as above, `target` (`viewport`, `full_page`, `element`),
+    `clipped` (`yes`, `no`), `emulated` (`yes`, `no`, and `unknown` when no CDP session was
+    attached to say) and `widget_size` (`reported`, or `fallback` when the host window stood in
+    for a pane that had not reported its size). They describe Kangentic's own request and hold no
+    size, selector or page content, so they are not a new data class either. A plain viewport
+    capture with no override that comes back larger than the recorded pane is returned, not
+    refused, and reports nothing. The error's `detail` is never sent. The latch keys on tags, so
     each combination reports once per run, and those reports count toward the source's 25-key
     cap.
   - `task_move` (a rollback that failed), `project_recovery` (tag `pass`: `resource_cleanup`,

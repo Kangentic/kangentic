@@ -9,7 +9,9 @@
  *
  *   - no clip, device-metrics override active: `emulatedView x widgetDSF x dpfactor`
  *   - a clip: `clip x widgetDSF x dpfactor x clip.scale`
- *   - no clip, no override: nothing; the surface comes back as it is
+ *   - no clip, `captureBeyondViewport`: a clip of the whole page, which
+ *     Chromium builds itself (`CaptureFullPageScreenshot`), then the clip rule
+ *   - none of those: nothing; the surface comes back as it is
  *
  * where `dpfactor` is the emulated scale factor over the widget's, or 1 when
  * the override leaves it at 0. On a normal tab the view grows. A guest's view
@@ -25,6 +27,30 @@
  * 400x600 to 1200x800: every request inside the bound came back clean, every
  * one past it came back tiled, and the formula above predicted the decoded size
  * to within the clip's own rounding.
+ *
+ * ## What the bound is made of, and what it can answer for
+ *
+ * The bound is `widget x displayScale`, and neither input is read from
+ * Chromium when the capture is taken. The widget is the renderer's report of
+ * the pane's size. It rides a `ResizeObserver` behind a debounce, so it trails
+ * a pane that just changed, and a host window that draws no frame delivers no
+ * report at all. The display scale is looked up from the host window's bounds.
+ * Either can be wrong, in either direction (Sentry DESKTOP-48). Two things
+ * follow, and both are acted on:
+ *
+ *   - A viewport request with no clip and no override carries no size, so
+ *     nothing can tile it. An image past the bound there means the bound
+ *     trailed the pane, and `screenshot.ts` returns it. Its refusal covers
+ *     only a request that did carry a size.
+ *   - With no override the page reports the pane itself. `innerWidth` is the
+ *     widget over the zoom and `devicePixelRatio` is the display scale times
+ *     the zoom, so their product is the widget's pixel count, to within two
+ *     pixels. Where the recorded bound is past that by more than a CSS pixel
+ *     and the tolerance, the planner believes the page (`withinPagePixels`).
+ *     A record inside that margin stands. Under an override the page's
+ *     viewport is the emulated one and says nothing about the pane, so the
+ *     recorded bound stands alone there, and a recorded pane larger than the
+ *     real one can still come back tiled.
  *
  * ## Units, all measured
  *
@@ -63,6 +89,12 @@ export interface CssRect {
 export interface GuestCaptureSurface {
   /** The `<webview>` element's size in DIP. */
   widget: Size;
+  /**
+   * Where `widget` came from: the renderer's own report of the pane, or the
+   * host window's size before the pane has reported, which overestimates.
+   * Carried for the report a refused capture sends. The planner never reads it.
+   */
+  widgetSource: 'reported' | 'fallback';
   /** Scale factor of the display the pane is on, which Chromium uses for the widget. */
   displayScale: number;
 }
@@ -115,7 +147,15 @@ export interface CapturePlan {
  */
 export const BELOW_ONE_TO_ONE = 0.995;
 
-/** The most pixels a guest capture can hold on each axis. */
+/**
+ * Pixels two measurements of one pane may differ by before they count as
+ * disagreeing. The pane is measured with `getBoundingClientRect`, so its edge
+ * can land either side of a physical pixel, and the page's `innerWidth` is a
+ * whole number of CSS pixels.
+ */
+export const SURFACE_BOUND_TOLERANCE_PX = 2;
+
+/** The most pixels a guest capture can hold on each axis, as recorded. */
 export function surfacePixelBound(surface: GuestCaptureSurface): Size {
   // Floor, not round: the widget is measured with getBoundingClientRect and can
   // be fractional, and a bound one pixel past the real surface tiles a
@@ -128,6 +168,60 @@ export function surfacePixelBound(surface: GuestCaptureSurface): Size {
 
 function positiveOr(value: number, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * The recorded bound, lowered to the page's own pixel count on any axis where
+ * the page says the pane is smaller.
+ *
+ * Only ever lowered. Asking for fewer pixels than the pane holds costs
+ * resolution. Asking for more tiles the image, and a tiled image that fits a
+ * stale bound is one nothing downstream can catch.
+ *
+ * The page's count is close, not exact. Measured on Electron 45 against a live
+ * 740x749 guest, at display scales 1, 1.25, 1.5, 1.75 and 2 and zooms from 0.3
+ * to 3, against the size a clip-free capture returned: `innerWidth x
+ * devicePixelRatio` landed within 2 px of the surface, on either side. At
+ * scale 1.25 it read 937.5 for a surface 936 rows tall. The page counts whole
+ * CSS pixels and the surface is whole device pixels, and the two round
+ * separately.
+ *
+ * So both readings of the page are used. The record stands unless it is past
+ * even the generous one (a CSS pixel more than the page says, plus the
+ * tolerance), which keeps a bound that agrees with the page exactly as
+ * recorded. Where it is past that, the bound becomes the cautious one, a CSS
+ * pixel and a device pixel less than the page says.
+ *
+ * The margin is also the limit of the check. A record past the page's count
+ * by no more than it (3 px at a ratio of 1, 4 px at 2) reads as agreeing and
+ * stands. If that record is stale, a clip sized from it can still tile a
+ * strip that thin along one edge. Closing that would lower a correct record
+ * whenever `innerWidth` rounds down.
+ *
+ * Not under an override, where the page's viewport is the emulated one.
+ */
+function withinPagePixels(recorded: Size, state: PageCaptureState): Size {
+  if (state.emulated) return recorded;
+  const ratio = positiveOr(state.devicePixelRatio, 1);
+  const cap = (recordedPixels: number, cssPixels: number): number => {
+    if (!Number.isFinite(cssPixels) || cssPixels <= 0) return recordedPixels;
+    const atMost = Math.ceil((cssPixels + 1) * ratio);
+    if (atMost + SURFACE_BOUND_TOLERANCE_PX >= recordedPixels) return recordedPixels;
+    return Math.max(1, Math.floor((cssPixels - 1) * ratio) - 1);
+  };
+  return {
+    width: cap(recorded.width, state.viewport.width),
+    height: cap(recorded.height, state.viewport.height),
+  };
+}
+
+/**
+ * The bound a capture of this page is planned inside: the recorded one, or
+ * the page's own pixel count on an axis where the page says the pane is
+ * smaller. Exported so a note about the pane can name the size the plan used.
+ */
+export function plannedPixelBound(surface: GuestCaptureSurface, state: PageCaptureState): Size {
+  return withinPagePixels(surfacePixelBound(surface), state);
 }
 
 /** The density at which `region` fills the surface's pixels on its tighter axis. */
@@ -180,7 +274,7 @@ export function planCapture(
 ): CapturePlan {
   const densityScale = Math.min(1, positiveOr(options.densityScale ?? 1, 1));
   const naturalDensity = positiveOr(state.devicePixelRatio, 1);
-  const bound = surface ? surfacePixelBound(surface) : null;
+  const bound = surface ? plannedPixelBound(surface, state) : null;
   const viewportDocument: CssRect = {
     x: state.scroll.x,
     y: state.scroll.y,

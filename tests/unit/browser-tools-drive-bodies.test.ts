@@ -349,7 +349,7 @@ describe('kangentic_browser_screenshot: dev-server-error short-circuit', () => {
     // The pane's widget reaches the capture, so it is planned to fit the pane
     // instead of being tiled by Chromium.
     const [, options] = captureScreenshotWithBudget.mock.calls[0] as [unknown, { surface: unknown }];
-    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1 });
     expect(result.isError).toBeUndefined();
     expect(result.content).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'image', mimeType: 'image/jpeg' })]),
@@ -439,7 +439,7 @@ describe('kangentic_browser_screenshot_element: pane surface passthrough', () =>
     ];
     expect(webContentsArg).toBe(fakeGuest);
     expect(selectorArg).toBe('.thing');
-    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1 });
     // The real captureElementClip response reaches the tool's metadata too.
     expect(result.structuredContent).toMatchObject({
       pixelsPerCssPixel: 1,
@@ -539,7 +539,7 @@ describe('saveToFile: a capture written to the caller\'s folder instead of inlin
     expect(result.isError).toBeUndefined();
     // Still planned to the pane's own pixels; only the inline byte budget is lifted.
     const options = captureScreenshotWithBudget.mock.calls[0][1] as { surface: unknown; maxBytes?: number; inlineCeiling?: number };
-    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1 });
     expect(options.maxBytes).toBeUndefined();
     expect(options.inlineCeiling).toBe(Number.MAX_SAFE_INTEGER);
     const meta = result.structuredContent as { mode: string; reason: string; filePath: string };
@@ -752,6 +752,7 @@ describe('kangentic_browser_click: image-space coordinate mapping', () => {
     // guards against one layer up.
     expect(describeViewportCapture).toHaveBeenCalledWith(fakeGuest, {
       widget: { width: 740, height: 749 },
+      widgetSource: 'reported',
       displayScale: 1,
     });
     // The page's deviceScaleFactor is a fallback, not a second source to

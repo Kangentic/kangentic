@@ -43,6 +43,7 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   decodeImageDimensions: vi.fn(),
   getBoundingBox: vi.fn(),
   getDeviceMetrics: vi.fn(() => null),
+  isDebuggerAttached: vi.fn(() => true),
   runtimeEvaluate: vi.fn(),
 }));
 
@@ -59,6 +60,8 @@ import {
   getLayoutMetrics as mockGetLayoutMetrics,
   decodeImageDimensions as mockDecodeImageDimensions,
   getBoundingBox as mockGetBoundingBox,
+  getDeviceMetrics as mockGetDeviceMetrics,
+  isDebuggerAttached as mockIsDebuggerAttached,
   runtimeEvaluate as mockRuntimeEvaluate,
 } from '../../src/main/browser/cdp/cdp';
 
@@ -117,11 +120,16 @@ beforeEach(() => {
   vi.mocked(mockDecodeImageDimensions).mockReset();
   vi.mocked(mockGetBoundingBox).mockReset();
   vi.mocked(mockRuntimeEvaluate).mockReset();
+  vi.mocked(mockGetDeviceMetrics).mockReset();
+  vi.mocked(mockIsDebuggerAttached).mockReset();
 
   // Establish sensible defaults. Individual tests override as needed.
   vi.mocked(mockGetLayoutMetrics).mockResolvedValue(FAKE_LAYOUT);
   vi.mocked(mockDecodeImageDimensions).mockReturnValue(FAKE_DIMS);
   vi.mocked(mockRuntimeEvaluate).mockResolvedValue({ value: FAKE_PAGE, error: null });
+  // A CDP session is attached and holds no viewport override.
+  vi.mocked(mockGetDeviceMetrics).mockReturnValue(null);
+  vi.mocked(mockIsDebuggerAttached).mockReturnValue(true);
 
   configureScreenshotProjectRoot(() => tempDirectory);
 });
@@ -504,7 +512,7 @@ describe('captureScreenshotWithBudget - metadata fields', () => {
 describe('captureScreenshotWithBudget - a pane capture', () => {
   // A 740x749 pane at display scale 1, holding a 1600x1001 layout fitted at
   // zoom 0.4625: the reported repro.
-  const PANE = { surface: { widget: { width: 740, height: 749 }, displayScale: 1 } } as const;
+  const PANE = { surface: { widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1 } } as const;
   const FITTED_PAGE = {
     width: 1600,
     height: 1001,
@@ -514,21 +522,143 @@ describe('captureScreenshotWithBudget - a pane capture', () => {
     contentWidth: 3894,
     contentHeight: 3001,
   };
+  const OVERRIDE = { width: 740, height: 463, deviceScaleFactor: 0 };
+  /** Larger than the pane on both axes. */
+  const PAST_THE_PANE = { width: 1600, height: 1001 };
 
-  it('refuses a capture that came back larger than the pane, instead of returning the tiles', async () => {
-    // Whatever asked for it, an image larger than the pane was filled in by
-    // Chromium repeating the pane. Returning it would hand the agent a grid.
+  function firstCaptureClip(): unknown {
+    return (vi.mocked(mockCaptureScreenshot).mock.calls[0][1] as { clip?: unknown }).clip;
+  }
+
+  it('returns a capture nothing sized, even past the recorded pane, since nothing can have tiled it', async () => {
+    // Sentry DESKTOP-48. A viewport shot with no clip and no override asks
+    // Chromium for no size, so the surface comes back as it is. An image past
+    // the bound there means the recorded pane size trailed the real one, and
+    // refusing it threw away a good screenshot.
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
-    vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 1600, height: 1001 });
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue(PAST_THE_PANE);
 
-    await expect(captureScreenshotWithBudget(fakeWebContents, { ...PANE })).rejects.toBeInstanceOf(CaptureExceedsSurface);
+    const result = await captureScreenshotWithBudget(fakeWebContents, { ...PANE });
+
+    expect(firstCaptureClip()).toBeUndefined();
+    expect(result).toMatchObject({ mode: 'inline', ...PAST_THE_PANE });
+  });
+
+  it('refuses a clipped capture that came back larger than the pane, instead of returning the tiles', async () => {
+    // A clip carries a size, and the planner sized this one from the bound. An
+    // image past the pane was filled in by Chromium repeating the pane.
+    // Returning it would hand the agent a grid.
+    vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue(PAST_THE_PANE);
+
+    const capture = captureScreenshotWithBudget(fakeWebContents, { ...PANE, fullPage: true });
+
+    await expect(capture).rejects.toBeInstanceOf(CaptureExceedsSurface);
+    expect(firstCaptureClip()).toBeDefined();
+    await expect(capture).rejects.toMatchObject({
+      target: 'full_page',
+      clipped: true,
+      emulation: 'off',
+      widgetSource: 'reported',
+    });
+  });
+
+  it('refuses an element capture that came back larger than the pane', async () => {
+    vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue(PAST_THE_PANE);
+    vi.mocked(mockGetBoundingBox).mockResolvedValue({
+      content: [0, 0, 2000, 0, 2000, 3000, 0, 3000],
+    } as never);
+
+    await expect(captureElementClip(fakeWebContents, '.huge-panel', { ...PANE })).rejects.toMatchObject({
+      name: 'CaptureExceedsSurface',
+      target: 'element',
+      clipped: true,
+    });
+  });
+
+  it('refuses a clip-free capture under a viewport override, which asks Chromium for a size', async () => {
+    // No clip, but an override: Chromium asks for the emulated view times the
+    // page ratio, and that request can tile.
+    vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue(PAST_THE_PANE);
+    vi.mocked(mockRuntimeEvaluate).mockResolvedValue({ value: FITTED_PAGE, error: null });
+    vi.mocked(mockGetDeviceMetrics).mockReturnValue(OVERRIDE);
+
+    const capture = captureScreenshotWithBudget(fakeWebContents, { ...PANE });
+
+    await expect(capture).rejects.toMatchObject({ target: 'viewport', clipped: false, emulation: 'on' });
+    expect(firstCaptureClip()).toBeUndefined();
   });
 
   it('names the pane size in the refusal, so the agent knows what it hit', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
-    vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 1600, height: 1001 });
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue(PAST_THE_PANE);
 
-    await expect(captureScreenshotWithBudget(fakeWebContents, { ...PANE })).rejects.toThrow(/740x749 pixels this pane can render/);
+    await expect(captureScreenshotWithBudget(fakeWebContents, { ...PANE, fullPage: true })).rejects.toThrow(/740x749 pixels this pane can render/);
+  });
+
+  describe('when the page cannot describe itself', () => {
+    // No page state means no `emulated` reading from the page, so whether the
+    // request carried a size has to come from the CDP session's own record.
+    beforeEach(() => {
+      vi.mocked(mockRuntimeEvaluate).mockResolvedValue({ value: null, error: 'renderer blocked' });
+      vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
+      vi.mocked(mockDecodeImageDimensions).mockReturnValue(PAST_THE_PANE);
+    });
+
+    it('returns the image when a session is attached and holds no override', async () => {
+      const result = await captureScreenshotWithBudget(fakeWebContents, { ...PANE });
+
+      expect(result).toMatchObject(PAST_THE_PANE);
+    });
+
+    it('refuses a full page that went out with no clip, since Chromium builds a clip of the whole page for it', async () => {
+      const capture = captureScreenshotWithBudget(fakeWebContents, { ...PANE, fullPage: true });
+
+      await expect(capture).rejects.toBeInstanceOf(CaptureExceedsSurface);
+      await expect(capture).rejects.toMatchObject({ target: 'full_page', clipped: false, emulation: 'off' });
+      // The request really carried no clip and asked to go past the viewport, so
+      // this cannot pass through a clipped plan.
+      expect(firstCaptureClip()).toBeUndefined();
+      expect(vi.mocked(mockCaptureScreenshot).mock.calls[0][1]).toMatchObject({ captureBeyondViewport: true });
+    });
+
+    it('reads the override before the capture, so one cleared mid-capture still counts as on', async () => {
+      // The pane's own clear button can turn an override off while the capture
+      // is in flight. A read taken afterwards would call this sized request
+      // unsized and return the image.
+      vi.mocked(mockGetDeviceMetrics).mockReturnValue(OVERRIDE);
+      vi.mocked(mockCaptureScreenshot).mockImplementation(async () => {
+        vi.mocked(mockGetDeviceMetrics).mockReturnValue(null);
+        return base64OfSize(100);
+      });
+
+      const capture = captureScreenshotWithBudget(fakeWebContents, { ...PANE });
+
+      await expect(capture).rejects.toMatchObject({ name: 'CaptureExceedsSurface', clipped: false, emulation: 'on' });
+      expect(firstCaptureClip()).toBeUndefined();
+    });
+
+    it('refuses when the session holds an override', async () => {
+      vi.mocked(mockGetDeviceMetrics).mockReturnValue(OVERRIDE);
+
+      await expect(captureScreenshotWithBudget(fakeWebContents, { ...PANE })).rejects.toMatchObject({
+        name: 'CaptureExceedsSurface',
+        clipped: false,
+        emulation: 'on',
+      });
+    });
+
+    it('refuses when no session is attached to say there is no override', async () => {
+      vi.mocked(mockIsDebuggerAttached).mockReturnValue(false);
+
+      await expect(captureScreenshotWithBudget(fakeWebContents, { ...PANE })).rejects.toMatchObject({
+        name: 'CaptureExceedsSurface',
+        clipped: false,
+        emulation: 'unknown',
+      });
+    });
   });
 
   it('accepts an image within a couple of pixels of the pane, since the pane edge can land between pixels', async () => {
@@ -558,8 +688,7 @@ describe('captureScreenshotWithBudget - a pane capture', () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
     vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 740, height: 463 });
     vi.mocked(mockRuntimeEvaluate).mockResolvedValue({ value: FITTED_PAGE, error: null });
-    const { getDeviceMetrics } = await import('../../src/main/browser/cdp/cdp');
-    vi.mocked(getDeviceMetrics).mockReturnValueOnce({ width: 740, height: 463, deviceScaleFactor: 0 });
+    vi.mocked(mockGetDeviceMetrics).mockReturnValue(OVERRIDE);
 
     const result = await captureScreenshotWithBudget(fakeWebContents, { ...PANE });
     expect(result!.pixelsPerCssPixel).toBeCloseTo(0.4625, 4);
@@ -587,7 +716,14 @@ describe('captureScreenshotWithBudget - a pane capture', () => {
 // captureNote: the element branch, driven through captureElementClip
 // ---------------------------------------------------------------------------
 describe('captureScreenshotWithBudget - captureNote for an element capture', () => {
-  const PANE = { surface: { widget: { width: 740, height: 749 }, displayScale: 1 } } as const;
+  const PANE = { surface: { widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1 } } as const;
+
+  beforeEach(() => {
+    // What a 740x749 pane's own page reports with no override: its viewport is
+    // the pane. A page claiming another size would have the planner believe
+    // the page over the recorded pane.
+    vi.mocked(mockRuntimeEvaluate).mockResolvedValue({ value: { ...FAKE_PAGE, width: 740, height: 749 }, error: null });
+  });
 
   it('says an oversized element is larger than the pane, naming the pane and the returned image size', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
@@ -629,7 +765,7 @@ describe('captureScreenshotWithBudget - captureNote for an element capture', () 
 // captureNote: the fullPage branch
 // ---------------------------------------------------------------------------
 describe('captureScreenshotWithBudget - captureNote for a full-page capture', () => {
-  const PANE = { surface: { widget: { width: 740, height: 749 }, displayScale: 1 } } as const;
+  const PANE = { surface: { widget: { width: 740, height: 749 }, widgetSource: 'reported', displayScale: 1 } } as const;
 
   it('says the page came back smaller than its content, naming the content and image size', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
@@ -639,8 +775,8 @@ describe('captureScreenshotWithBudget - captureNote for a full-page capture', ()
     vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 320, height: 749 });
     vi.mocked(mockRuntimeEvaluate).mockResolvedValue({
       value: {
-        width: 1280,
-        height: 720,
+        width: 740,
+        height: 749,
         devicePixelRatio: 1,
         scrollX: 0,
         scrollY: 0,
@@ -658,18 +794,86 @@ describe('captureScreenshotWithBudget - captureNote for a full-page capture', ()
     expect(result!.note).toContain('320x749');
   });
 
-  it('says nothing about a page whose content already fits the pane', async () => {
+  it('names the pane the page reports when the recorded size is larger than it', async () => {
+    // The recorded size trails the pane, and the planner caps its bound at the
+    // page's own pixels. The note has to name the pane that plan used: seen
+    // live, it told the agent about "this 2000x2000 pane" beside a 172x749
+    // image planned for a 740x749 one.
+    const STALE_PANE = { surface: { widget: { width: 2000, height: 2000 }, widgetSource: 'reported', displayScale: 1 } } as const;
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
-    vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 700, height: 700 });
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 172, height: 749 });
     vi.mocked(mockRuntimeEvaluate).mockResolvedValue({
       value: {
-        width: 700,
-        height: 700,
+        width: 740,
+        height: 749,
         devicePixelRatio: 1,
         scrollX: 0,
         scrollY: 0,
-        contentWidth: 700,
-        contentHeight: 700,
+        contentWidth: 740,
+        contentHeight: 3219,
+      },
+      error: null,
+    });
+
+    const result = await captureScreenshotWithBudget(fakeWebContents, { ...STALE_PANE, fullPage: true });
+
+    expect(result!.note).toContain('this 740x749 pane');
+    expect(result!.note).not.toContain('2000x2000');
+    // Planned a pixel or two inside the pane the page reports, never past it.
+    expect(result!.pixelsPerCssPixel).toBeLessThanOrEqual(749 / 3219);
+    expect(result!.pixelsPerCssPixel).toBeGreaterThanOrEqual(746 / 3219);
+  });
+
+  it('names the pane in DIP under zoom, not the page viewport in CSS pixels', async () => {
+    // A 740x749 DIP pane at zoom 0.5 reports a 1480x1498 viewport at a ratio of
+    // 0.5. The recorded size is forced stale and too large, so both axes are
+    // lowered and the note names the page's viewport times its zoom.
+    const STALE_PANE = { surface: { widget: { width: 2000, height: 2000 }, widgetSource: 'reported', displayScale: 1 } } as const;
+    const zoomedWebContents = { getZoomFactor: () => 0.5 } as unknown as import('electron').WebContents;
+    vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 184, height: 747 });
+    vi.mocked(mockRuntimeEvaluate).mockResolvedValue({
+      value: { width: 1480, height: 1498, devicePixelRatio: 0.5, scrollX: 0, scrollY: 0, contentWidth: 1480, contentHeight: 6000 },
+      error: null,
+    });
+
+    const result = await captureScreenshotWithBudget(zoomedWebContents, { ...STALE_PANE, fullPage: true });
+
+    expect(result!.note).toContain('this 740x749 pane');
+    expect(result!.note).not.toContain('1480x1498');
+    expect(result!.note).not.toContain('2000x2000');
+  });
+
+  it('names a lowered axis from the page and an axis that agrees from the recorded widget', async () => {
+    // Width recorded too large (lowered, named 1480 x 0.5 = 740). Height
+    // recorded 748 against a page that says 749: inside the margin, so it
+    // stands and the note names the recorded 748, not the page's 749.
+    const MIXED_PANE = { surface: { widget: { width: 2000, height: 748 }, widgetSource: 'reported', displayScale: 1 } } as const;
+    const zoomedWebContents = { getZoomFactor: () => 0.5 } as unknown as import('electron').WebContents;
+    vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 184, height: 748 });
+    vi.mocked(mockRuntimeEvaluate).mockResolvedValue({
+      value: { width: 1480, height: 1498, devicePixelRatio: 0.5, scrollX: 0, scrollY: 0, contentWidth: 1480, contentHeight: 6000 },
+      error: null,
+    });
+
+    const result = await captureScreenshotWithBudget(zoomedWebContents, { ...MIXED_PANE, fullPage: true });
+
+    expect(result!.note).toContain('this 740x748 pane');
+  });
+
+  it('says nothing about a page whose content already fits the pane', async () => {
+    vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
+    vi.mocked(mockDecodeImageDimensions).mockReturnValue({ width: 740, height: 749 });
+    vi.mocked(mockRuntimeEvaluate).mockResolvedValue({
+      value: {
+        width: 740,
+        height: 749,
+        devicePixelRatio: 1,
+        scrollX: 0,
+        scrollY: 0,
+        contentWidth: 740,
+        contentHeight: 749,
       },
       error: null,
     });
