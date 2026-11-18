@@ -18,7 +18,7 @@
  * capture registered handlers, then invoke them directly. Spy on
  * applyRuntimeConfig to confirm it is called with the right arguments.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks - must be declared before any imports that trigger them
@@ -137,6 +137,7 @@ vi.mock('../../src/main/notifications/custom-sound', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
+import { setAccountsConfigListener } from '../../src/main/accounts/accounts-config-changed';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
 import { IPC } from '../../src/shared/ipc-channels';
 
@@ -280,6 +281,35 @@ describe('CONFIG_SET IPC handler - broadcasts config:changed even when the write
     invokeHandler('config:set', { theme: 'dark' });
 
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.CONFIG_CHANGED);
+  });
+});
+
+describe('CONFIG_SET IPC handler - accounts settings wiring', () => {
+  // A saved Order mode changes the order main lists. Without this push the Accounts tab kept a
+  // Manual-era list on screen after Order went back to Automatic.
+  const accountsListener = vi.fn();
+
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    accountsListener.mockClear();
+    setAccountsConfigListener(accountsListener);
+  });
+
+  afterEach(() => {
+    setAccountsConfigListener(null);
+  });
+
+  it('tells the accounts handlers when agent.accounts was saved', () => {
+    registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
+    invokeHandler('config:set', { agent: { accounts: { orderMode: 'automatic' } } });
+    expect(accountsListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays quiet for an agent setting that is not the accounts settings', () => {
+    registerSystemHandlers(makeContext() as Parameters<typeof registerSystemHandlers>[0]);
+    invokeHandler('config:set', { agent: { maxConcurrentSessions: 3 } });
+    expect(accountsListener).not.toHaveBeenCalled();
   });
 });
 

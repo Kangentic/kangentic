@@ -33,6 +33,7 @@ const hoisted = vi.hoisted(() => ({
   taskSessionIds: {} as Record<string, string>,
   accountsConfig: { orderMode: 'manual', autoSwitchAtLimit: true } as { orderMode: string; autoSwitchAtLimit: boolean },
   report: vi.fn(),
+  defectReport: vi.fn(),
   restart: vi.fn(),
   runner: {
     start: vi.fn(),
@@ -47,6 +48,7 @@ const hoisted = vi.hoisted(() => ({
     dispose: vi.fn(),
     refreshAccount: vi.fn(async () => undefined),
     refreshAll: vi.fn(async () => undefined),
+    readBeforeRanking: vi.fn(async () => undefined),
   },
 }));
 
@@ -61,6 +63,7 @@ vi.mock('../../src/main/db/database', () => ({ getGlobalDb: () => hoisted.databa
 vi.mock('../../src/main/config/paths', () => ({ PATHS: { get configDir() { return hoisted.configDir; } } }));
 vi.mock('../../src/main/accounts/account-report', () => ({
   reportAccountProblem: hoisted.report,
+  accountsReporter: { report: hoisted.defectReport, reset: vi.fn() },
   scrubFailureDetail: (detail: string) => detail,
 }));
 vi.mock('../../src/main/accounts/account-login', () => ({ AccountLoginRunner: vi.fn(function () { return hoisted.runner; }) }));
@@ -83,6 +86,8 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 }));
 
 const { registerAccountHandlers, stopAccounts } = await import('../../src/main/ipc/handlers/accounts');
+const { noteAccountsConfigChanged } = await import('../../src/main/accounts/accounts-config-changed');
+const { sendToRenderer } = await import('../../src/main/ipc/send-to-renderer');
 const { setAccountService } = await import('../../src/main/accounts/account-service');
 const { AgentAccountRepository } = await import('../../src/main/db/repositories/agent-account-repository');
 const { runGlobalMigrations } = await import('../../src/main/db/migrations/global-schema');
@@ -384,5 +389,80 @@ describe('the continuation at a usage limit', () => {
 
     expect(hoisted.refresher.refreshAccount.mock.calls.map((call) => (call as unknown[])[0])).toEqual([move.own.id]);
     expect(hoisted.restart).not.toHaveBeenCalled();
+  });
+});
+
+describe('keeping Automatic and the tab current', () => {
+  beforeEach(() => {
+    vi.mocked(sendToRenderer).mockClear();
+    hoisted.refresher.refreshAll.mockClear();
+    hoisted.refresher.readBeforeRanking.mockClear();
+  });
+
+  it('pushes accounts:changed when the accounts settings are saved, and stops after quit', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    register();
+    noteAccountsConfigChanged();
+    expect(vi.mocked(sendToRenderer).mock.calls.map((call) => call[1])).toEqual([IPC.ACCOUNTS_CHANGED]);
+    stopAccounts();
+    noteAccountsConfigChanged();
+    expect(sendToRenderer).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one refresh between two that overlap, so a double mount runs each CLI once', async () => {
+    let identifyCount = 0;
+    hoisted.adapters = {
+      'move-agent': adapterFor('move-agent', {
+        identify: async () => {
+          identifyCount += 1;
+          return { signedIn: true, email: null, plan: null, hasSubscription: null };
+        },
+      }),
+    };
+    seedAccounts('move-agent');
+    register();
+    await Promise.all([invoke(IPC.ACCOUNTS_REFRESH_USAGE), invoke(IPC.ACCOUNTS_REFRESH_USAGE)]);
+    expect(identifyCount).toBe(2);
+    expect(hoisted.refresher.refreshAll).toHaveBeenCalledTimes(1);
+    await invoke(IPC.ACCOUNTS_REFRESH_USAGE);
+    expect(hoisted.refresher.refreshAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('clears the shared refresh after it rejects, so a later one starts again', async () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    seedAccounts('move-agent');
+    register();
+    hoisted.refresher.refreshAll.mockRejectedValueOnce(new Error('refresh defect'));
+    await expect(invoke(IPC.ACCOUNTS_REFRESH_USAGE)).rejects.toThrow('refresh defect');
+    expect(hoisted.refresher.refreshAll).toHaveBeenCalledTimes(1);
+    await expect(invoke(IPC.ACCOUNTS_REFRESH_USAGE)).resolves.toBeUndefined();
+    expect(hoisted.refresher.refreshAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a sign-in read that throws a plain TypeError, and still reads the usage', async () => {
+    hoisted.defectReport.mockClear();
+    hoisted.adapters = {
+      'move-agent': adapterFor('move-agent', { identify: async () => { throw new TypeError('identify defect'); } }),
+    };
+    seedAccounts('move-agent');
+    register();
+    await expect(invoke(IPC.ACCOUNTS_REFRESH_USAGE)).resolves.toBeUndefined();
+    expect(hoisted.defectReport).toHaveBeenCalled();
+    for (const call of hoisted.defectReport.mock.calls) {
+      expect(call[0]).toBeInstanceOf(TypeError);
+      expect(call[1]).toEqual({ tags: { stage: 'sign_in_read' } });
+    }
+    expect(hoisted.refresher.refreshAll).toHaveBeenCalledWith('requested');
+  });
+
+  it('reads the stale accounts before Automatic ranks them for a spawn', async () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent', { readIdleUsage: async () => null }) };
+    hoisted.accountsConfig = { orderMode: 'automatic', autoSwitchAtLimit: true };
+    const { own, second } = seedAccounts('move-agent');
+    register();
+    const { resolveSpawnAccount } = await import('../../src/main/accounts/account-service');
+    await resolveSpawnAccount('move-agent');
+    const asked = hoisted.refresher.readBeforeRanking.mock.calls.map((call) => ((call as unknown[])[0] as AgentAccount[]).map((account) => account.id));
+    expect(asked).toEqual([[own.id, second.id]]);
   });
 });

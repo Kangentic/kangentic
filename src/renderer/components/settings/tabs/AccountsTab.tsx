@@ -164,11 +164,9 @@ export function AccountsTab({ globalConfig }: { globalConfig: AppConfig }) {
             inlineDescription
             options={orderOptions}
             value={orderMode}
-            onChange={(nextOrderMode) => {
-              void Promise.resolve(updateGlobal({ agent: { accounts: { orderMode: nextOrderMode } } }))
-                .then(() => useAccountsStore.getState().loadAccounts())
-                .catch((error: unknown) => console.warn('[accounts] Could not save the account order:', error));
-            }}
+            // Main pushes accounts:changed once the write lands, and the store lists again from
+            // that push, so the order on screen is the one the saved mode gives.
+            onChange={(nextOrderMode) => updateGlobal({ agent: { accounts: { orderMode: nextOrderMode } } })}
             testId="accounts-order-mode"
           />
           <CardToggleRow

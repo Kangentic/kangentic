@@ -28,7 +28,11 @@ export type AccountProblem =
   /** The provider refused a conversation on this account (the adapter knows its words). */
   | 'conversation-refused'
   /** The CLI answered a usage read with something the adapter could not read. */
-  | 'usage-read-unreadable';
+  | 'usage-read-unreadable'
+  /** A usage read gave no windows (the run failed, or its cache was missing or old), so the account kept its last values. */
+  | 'usage-read-empty'
+  /** The CLI gave no answer about an account's login, so the account kept its last status. */
+  | 'identity-read-failed';
 
 export type AccountProblemFacts = Record<string, string | number | boolean | null>;
 

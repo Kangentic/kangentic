@@ -1,10 +1,17 @@
 import type { AgentAccount } from '../../shared/agent-accounts';
+import type { ChokepointReporter } from '../analytics/handled-report';
 import type { AccountService } from './account-service';
 
 /** How often idle accounts are read while the app runs. */
 export const USAGE_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 /** A reading this recent is not read again: a live session reported it, or a read just ran. */
 export const USAGE_FRESH_MS = 60 * 1000;
+/** Past this age a reading is stale for ranking: a scheduled pass should have replaced it. */
+export const USAGE_STALE_FOR_RANKING_MS = USAGE_REFRESH_INTERVAL_MS + 5 * 60 * 1000;
+/** How long a spawn waits for the reads it asked for before it ranks on the stored readings. */
+export const READ_BEFORE_RANKING_TIMEOUT_MS = 10 * 1000;
+/** A read a spawn asked for is not asked again this soon, so a read that keeps failing costs one run. */
+const READ_BEFORE_RANKING_RETRY_MS = 60 * 1000;
 /** How long after a window's reset its account is read, so the CLI's servers have rolled it over. */
 const AFTER_RESET_MS = 30 * 1000;
 /** The first read after the app opens, once startup's own work is out of the way. */
@@ -17,32 +24,68 @@ function multiAccountAgents(accounts: readonly AgentAccount[]): Set<string> {
   return new Set([...perAgent].filter(([, count]) => count >= 2).map(([agent]) => agent));
 }
 
+/**
+ * True when the account's reading is no older than `maxAgeMs` and no window in it has reset since.
+ * A window whose reset has passed is stale however recent the reading is.
+ */
+function readingIsCurrent(account: AgentAccount, nowMs: number, maxAgeMs: number): boolean {
+  if (!account.lastUsageAt) return false;
+  const readAt = Date.parse(account.lastUsageAt);
+  if (!Number.isFinite(readAt) || nowMs - readAt > maxAgeMs) return false;
+  return !(account.lastUsage ?? []).some((window) => window.resetsAt > 0 && window.resetsAt * 1000 <= nowMs);
+}
+
+/**
+ * True when Automatic must read the account before it ranks it: it can run, and it has no reading,
+ * a reading older than a scheduled pass should leave, or a window whose reset has passed since.
+ * Ranking on such a reading puts the account after every account with a live one.
+ */
+export function needsReadBeforeRanking(account: AgentAccount, nowMs: number): boolean {
+  if (account.kind === 'key-file' || account.status !== 'ok') return false;
+  return !readingIsCurrent(account, nowMs, USAGE_STALE_FOR_RANKING_MS);
+}
+
 export interface AccountUsageRefresherOptions {
   listAccounts: () => AgentAccount[];
   now?: () => number;
   intervalMs?: number;
   startupDelayMs?: number;
+  /** Reports a read that failed in a way the service did not handle. Absent: nothing is sent. */
+  failureReporter?: Pick<ChokepointReporter, 'report'>;
 }
+
+/** Which accounts a pass reads, and whose sign-in it reads first. */
+export type UsageRefreshScope = 'startup' | 'scheduled' | 'requested';
 
 /**
  * Keeps every account's usage current with no session running on it and no input from the user:
  * when the app opens, when the Accounts tab opens, when a window's reset passes, every 15
- * minutes, and before a switch. One read at a time (each is one short CLI run in the pty host), a
- * failed read keeps the last values, and nothing runs for an agent with a single account except
- * when the tab asks, so a one-account user's machine does nothing new.
+ * minutes, before a switch, and before Automatic ranks an account whose reading ran out. One CLI
+ * run at a time, a failed read keeps the last values, and nothing runs for an agent with a single
+ * account except when the tab asks, so a one-account user's machine does nothing new.
+ *
+ * A sign-in read runs before the usage read where the status may be wrong: on the startup pass for
+ * every account of an agent with two or more (a login can change while the app is closed), and on
+ * each scheduled pass for such an account that is not `ok`. Without that, an account a failed
+ * sign-in read marked signed out was never read again until the tab opened.
  */
 export class AccountUsageRefresher {
   private queue: Promise<void> = Promise.resolve();
   private readonly queued = new Set<string>();
+  private readonly identityQueued = new Set<string>();
   /** Queued accounts whose read must run even when their reading is fresh. */
   private readonly forced = new Set<string>();
+  /** Each account's latest usage read, queued or running, until it settles. */
+  private readonly pendingReads = new Map<string, Promise<void>>();
+  /** When a spawn last asked for each account's read. */
+  private readonly rankingReadAt = new Map<string, number>();
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private resetTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
   constructor(
-    private readonly service: Pick<AccountService, 'refreshUsage'>,
+    private readonly service: Pick<AccountService, 'refreshUsage' | 'refreshIdentity'>,
     private readonly options: AccountUsageRefresherOptions,
   ) {}
 
@@ -52,7 +95,7 @@ export class AccountUsageRefresher {
 
   start(): void {
     if (this.interval || this.disposed) return;
-    this.startupTimer = setTimeout(() => void this.refreshAll('scheduled'), this.options.startupDelayMs ?? STARTUP_DELAY_MS);
+    this.startupTimer = setTimeout(() => void this.refreshAll('startup'), this.options.startupDelayMs ?? STARTUP_DELAY_MS);
     this.startupTimer.unref?.();
     this.interval = setInterval(() => void this.refreshAll('scheduled'), this.options.intervalMs ?? USAGE_REFRESH_INTERVAL_MS);
     this.interval.unref?.();
@@ -69,53 +112,113 @@ export class AccountUsageRefresher {
     this.resetTimer = null;
   }
 
-  private isFresh(account: AgentAccount): boolean {
-    if (!account.lastUsageAt) return false;
-    const readAt = Date.parse(account.lastUsageAt);
-    if (!Number.isFinite(readAt) || this.now() - readAt > USAGE_FRESH_MS) return false;
-    // A window whose reset has passed since the reading is stale however recent the reading is.
-    return !(account.lastUsage ?? []).some((window) => window.resetsAt > 0 && window.resetsAt * 1000 <= this.now());
-  }
-
-  /**
-   * Reads one account, behind any read already queued. Resolves once it has been read or skipped.
-   * `force` reads even a fresh reading, and holds when the account is already queued unforced: the
-   * queued read becomes a forced one.
-   */
-  refreshAccount(accountId: string, force = false): Promise<void> {
-    if (this.disposed) return this.queue;
-    if (force) this.forced.add(accountId);
-    if (this.queued.has(accountId)) return this.queue;
-    this.queued.add(accountId);
+  /** Reads who is signed in to one account, behind any read already queued. */
+  private identifyAccount(accountId: string): Promise<void> {
+    if (this.disposed || this.identityQueued.has(accountId)) return this.queue;
+    this.identityQueued.add(accountId);
     this.queue = this.queue.then(async () => {
-      this.queued.delete(accountId);
-      const forced = this.forced.delete(accountId);
+      this.identityQueued.delete(accountId);
       if (this.disposed) return;
-      const account = this.options.listAccounts().find((candidate) => candidate.id === accountId);
-      if (!account || (!forced && this.isFresh(account))) return;
       try {
-        await this.service.refreshUsage(accountId);
+        await this.service.refreshIdentity(accountId);
       } catch (error) {
-        console.warn('[ACCOUNTS] A usage read failed:', error);
+        // The service handles a sign-in read that gave no answer, so what reaches here is a defect.
+        // The account keeps its status, and the next pass asks again.
+        console.warn('[ACCOUNTS] A sign-in read failed:', error instanceof Error ? error.name : 'unknown');
+        this.options.failureReporter?.report(error, { tags: { stage: 'sign_in_read' } });
       }
     });
     return this.queue;
   }
 
   /**
-   * Reads every account that is due. `scheduled` reads only agents with two or more accounts;
-   * `requested` (the Accounts tab opening, a switch about to be chosen) reads them all.
+   * Reads one account, behind any read already queued. Resolves once it has been read or skipped.
+   * `force` reads even a fresh reading, and holds when the account is already queued unforced: the
+   * queued read becomes a forced one. Never rejects, so the queue behind it keeps running.
    */
-  async refreshAll(scope: 'scheduled' | 'requested'): Promise<void> {
+  refreshAccount(accountId: string, force = false): Promise<void> {
+    if (this.disposed) return this.queue;
+    if (force) this.forced.add(accountId);
+    const queuedRead = this.queued.has(accountId) ? this.pendingReads.get(accountId) : undefined;
+    if (queuedRead) return queuedRead;
+    this.queued.add(accountId);
+    const read: Promise<void> = this.queue.then(async () => {
+      this.queued.delete(accountId);
+      const forced = this.forced.delete(accountId);
+      if (this.disposed) return;
+      try {
+        const account = this.options.listAccounts().find((candidate) => candidate.id === accountId);
+        if (!account || (!forced && readingIsCurrent(account, this.now(), USAGE_FRESH_MS))) return;
+        await this.service.refreshUsage(accountId);
+      } catch (error) {
+        // The service handles a read that gave no windows, so what reaches here is a defect. The
+        // account keeps its last values, and the next pass asks again.
+        console.warn('[ACCOUNTS] A usage read failed:', error instanceof Error ? error.name : 'unknown');
+        this.options.failureReporter?.report(error, { tags: { stage: 'usage_read' } });
+      }
+    }).finally(() => {
+      // A read queued behind this one while it ran holds the entry now; leave that one.
+      if (this.pendingReads.get(accountId) === read) this.pendingReads.delete(accountId);
+    });
+    this.pendingReads.set(accountId, read);
+    this.queue = read;
+    return read;
+  }
+
+  /**
+   * Reads every account that is due. `scheduled` reads only agents with two or more accounts, and
+   * reads the sign-in of any account that is not `ok` first. `startup` does the same with every
+   * account's sign-in. `requested` (the Accounts tab opening, a switch about to be chosen) reads
+   * every agent's usage; its caller reads the sign-ins itself.
+   */
+  async refreshAll(scope: UsageRefreshScope): Promise<void> {
     if (this.disposed) return;
     const accounts = this.options.listAccounts();
     const multiAccount = multiAccountAgents(accounts);
     for (const account of accounts) {
-      if (scope === 'scheduled' && !multiAccount.has(account.agent)) continue;
+      if (scope !== 'requested' && !multiAccount.has(account.agent)) continue;
+      const readsSignIn = account.kind !== 'key-file' && (scope === 'startup' || (scope === 'scheduled' && account.status !== 'ok'));
+      if (readsSignIn) void this.identifyAccount(account.id);
       void this.refreshAccount(account.id);
     }
     await this.queue;
     this.armResetTimer();
+  }
+
+  /**
+   * Before Automatic ranks `accounts` for a spawn: reads each one whose reading is missing or
+   * stale, then resolves. Resolves at `timeoutMs` either way, so a slow CLI delays a spawn by that
+   * much at most, and the spawn then ranks on the stored readings. Never rejects.
+   */
+  async readBeforeRanking(accounts: readonly AgentAccount[], timeoutMs: number = READ_BEFORE_RANKING_TIMEOUT_MS): Promise<void> {
+    if (this.disposed) return;
+    const nowMs = this.now();
+    const stale = accounts.filter((account) => needsReadBeforeRanking(account, nowMs));
+    if (stale.length === 0) return;
+    for (const account of stale) {
+      const askedAt = this.rankingReadAt.get(account.id);
+      // Asked within the minute: the read is queued already, or it ran and gave nothing.
+      if (askedAt !== undefined && nowMs - askedAt < READ_BEFORE_RANKING_RETRY_MS) continue;
+      this.rankingReadAt.set(account.id, nowMs);
+      void this.refreshAccount(account.id, true);
+    }
+    // A spawn waits on these accounts' reads, whoever queued them: spawns at boot arrive together,
+    // and a second one must not rank while the first one's read is still running. It never waits
+    // on reads of other accounts, and a read that already ran costs nothing.
+    const reads = stale.flatMap((account) => {
+      const pending = this.pendingReads.get(account.id);
+      return pending ? [pending] : [];
+    });
+    if (reads.length === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutSignal = new Promise<'timed-out'>((resolve) => {
+      timer = setTimeout(() => resolve('timed-out'), timeoutMs);
+      timer.unref?.();
+    });
+    const finished = Promise.all(reads).then(() => 'read' as const, () => 'read' as const);
+    const result = await Promise.race([finished, timeoutSignal]);
+    if (timer) clearTimeout(timer);
+    if (result === 'timed-out') console.warn(`[ACCOUNTS] Usage reads before ranking ran past ${timeoutMs} ms; ranking on the stored readings`);
   }
 
   /** One timer for the soonest window reset among multi-account agents, re-armed after each pass. */

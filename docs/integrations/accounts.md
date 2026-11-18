@@ -180,6 +180,9 @@ is `ok`, and Switch to refuses an account that is not.
 
 Automatic order sorts by the longest window each account reports, soonest reset first, so an
 allowance is used before it resets. A drag or Switch to sets Manual, which keeps the saved order.
+Saving the accounts settings (Order or the auto-switch switch) pushes `accounts:changed` from
+`CONFIG_SET` (`accounts-config-changed.ts`), so the tab lists again once the write has landed. Lists overlap, because each one detects every
+agent's CLI, so the store applies only the answer to its latest request.
 That holds for an agent that reports usage. One that reports none has no reset to sort by, so its
 list is always the saved order (`followsOrderMode` in `account-service.ts`), and a drag or Switch
 to on it leaves the order mode alone.
@@ -192,6 +195,18 @@ and the renderer raises one toast from it (`describeAccountSwitchResult`): how m
 sessions moved, that new sessions start on the account when none was running, or that some
 could not be moved and stay on their accounts.
 An account that is signed out, has no plan, or has a window at 100% is skipped.
+
+Automatic never ranks from a reading that has run out. Before a spawn that is not named to an
+account, for an agent with two or more accounts whose usage can be read idle (`readIdleUsage`),
+`resolveForSpawn` asks the refresher to read every `ok` account with no reading, a reading older
+than a scheduled pass should leave (`USAGE_STALE_FOR_RANKING_MS`, 20 minutes), or a window whose
+reset has passed since (`needsReadBeforeRanking`). The spawn waits up to 10 seconds for those
+accounts' reads, never for reads of other accounts, then ranks on whatever is stored, and logs
+when the wait ran out. An account is asked this way at most once a minute, so a read that keeps
+failing costs one CLI run, not one per spawn, and a spawn that finds the read already queued or
+running waits on it too. This also covers sessions spawned at boot, before the first scheduled
+read. A ranking on an expired reading put the account last: an account with no live window sorts
+after every account with one.
 
 A resume follows the list like any other spawn. The shared folders, and the carry of what each home
 keeps on its own (Claude's plan file, `carryConversation`), let any account resume any
@@ -211,8 +226,29 @@ An account with no session running is read through the CLI (`readIdleUsage`). Fo
 Measured: about 1.2 seconds, no model turn, no cost, and nothing added to the shared prompt history
 or the conversations. Typing `/usage` into a hidden terminal added both, so that route was dropped.
 `AccountUsageRefresher` reads one account at a time: when the app opens, when the tab opens, when a
-window's reset passes, every 15 minutes, and before a switch. A failed read keeps the last values.
-Nothing is read on a schedule for an agent with one account.
+window's reset passes, every 15 minutes, before a switch, and before Automatic ranks an account
+whose reading ran out. Nothing is read on a schedule for an agent with one account.
+
+A read that gives no windows keeps the last values and its read time, and is logged and reported
+(`usage-read-empty`) with why: the run failed, the state file or its cache was missing, the cache
+was older than 10 minutes, it held no window, or the adapter returned no answer at all
+(`no-answer`). An empty list counts too, since storing it would wipe the windows and still mark
+the reading fresh. The local log says it again only when the reason changes.
+
+Two calls to `accounts:refreshUsage` that overlap, as a tab that mounts twice sends, share one
+in-flight batch of sign-in and usage reads instead of running each CLI twice.
+
+Who is signed in is read by `refreshIdentity`, which sets an account's status. The tab reads every
+account's sign-in when it opens. For an agent with two or more accounts, the startup pass reads
+every account's sign-in, and each scheduled pass reads the sign-in of any account that is not `ok`
+before its usage. `refreshUsage` skips an account that is signed out, so without those passes
+nothing but the tab set one back. A sign-in read that gives no answer (a timeout, a CLI
+mid-update, JSON with no `loggedIn`) throws `IdentityReadError` from the adapter: the account keeps
+the status it had, and `identity-read-failed` is reported. Only the CLI's own signed-out answer
+marks an account signed out. Before this, a failed or unreadable sign-in read marked a working
+account signed out, its usage was never read again, and Automatic put it last until the Accounts
+tab was opened. Any other failure of a sign-in or usage read is a defect, reported through the
+`accounts` reporter (stage `sign_in_read` or `usage_read`).
 
 Codex reports its plan's windows in its own session files: each rollout `token_count` record
 carries a `rate_limits` snapshot (`primary` and `secondary`, each `used_percent`,
@@ -366,6 +402,8 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `turn-failed-after-move` | A turn failed within ten minutes of its session being moved to another account. |
 | `conversation-refused` | A turn failed with the adapter's words for a conversation tied to another account (`isConversationRefusal`). |
 | `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know. |
+| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `cache-missing`, `cache-stale`, `no-windows`, `no-answer`). |
+| `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. |
 
 Only fixed facts are sent: the agent, the problem, an entry's name, a count. Never a folder path,
 an email or a key. A provider's own error text is never sent, because its words can name the

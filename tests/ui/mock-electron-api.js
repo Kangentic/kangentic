@@ -4002,6 +4002,10 @@
         if (partial && partial.terminal && Object.prototype.hasOwnProperty.call(partial.terminal, 'colors')) {
           config.terminal.colors = Object.assign({}, partial.terminal.colors);
         }
+        // Main's CONFIG_SET pushes accounts:changed once a save carrying agent.accounts has landed.
+        if (partial && partial.agent && partial.agent.accounts && window.__mockAccountsConfigSaved) {
+          window.__mockAccountsConfigSaved();
+        }
         return configSetResult();
       },
       // Synchronous sibling of set() for the quit/unload flush. Mirrors the real
@@ -4101,6 +4105,9 @@
         var args = Array.prototype.slice.call(arguments, 1);
         listeners[kind].slice().forEach(function (listener) { listener.apply(null, args); });
       }
+      // config.set calls this when it saves agent.accounts, as main's CONFIG_SET pushes
+      // accounts:changed so the tab lists again after an Order change.
+      if (typeof window !== 'undefined') window.__mockAccountsConfigSaved = function () { fire('changed'); };
       function subscribe(kind, callback) {
         listeners[kind].push(callback);
         return function () {

@@ -1,4 +1,4 @@
-import { reportAccountProblem, scrubFailureDetail } from '../../accounts/account-report';
+import { accountsReporter, reportAccountProblem, scrubFailureDetail } from '../../accounts/account-report';
 import { dialog, ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import {
@@ -19,6 +19,7 @@ import { AccountLoginRunner } from '../../accounts/account-login';
 import { moveRunningSessions } from '../../accounts/account-session-move';
 import { AccountService, setAccountService } from '../../accounts/account-service';
 import { AccountUsageRefresher } from '../../accounts/account-usage';
+import { setAccountsConfigListener } from '../../accounts/accounts-config-changed';
 import { agentRegistry } from '../../agent/agent-registry';
 import { resolveCliTarget } from '../../agent/shared/cli-target';
 import { PATHS } from '../../config/paths';
@@ -38,6 +39,7 @@ export function stopAccounts(): void {
   loginRunner?.dispose();
   usageRefresher = null;
   loginRunner = null;
+  setAccountsConfigListener(null);
 }
 
 /** How long after an account move a failed turn still counts as the move's. */
@@ -90,8 +92,14 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     },
     onChanged: notifyChanged,
     reportProblem: reportAccountProblem,
+    // The refresher is made below; a spawn only asks once registration is done.
+    readBeforeRanking: async (accounts) => {
+      await usageRefresher?.readBeforeRanking(accounts);
+    },
   });
   setAccountService(service);
+  // A saved Order mode changes the order main lists: the tab lists again once the write landed.
+  setAccountsConfigListener(notifyChanged);
 
   // Each account keeps its latest windows, so its usage shows with no session running on it.
   context.sessionManager.on('usage', (_sessionId: string, usage: SessionUsage) => {
@@ -102,7 +110,7 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     }
   });
 
-  const refresher = new AccountUsageRefresher(service, { listAccounts: () => repository.list() });
+  const refresher = new AccountUsageRefresher(service, { listAccounts: () => repository.list(), failureReporter: accountsReporter });
   refresher.start();
   usageRefresher = refresher;
 
@@ -337,13 +345,26 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       ...outcome,
     };
   });
-  ipcMain.handle(IPC.ACCOUNTS_REFRESH_USAGE, async (): Promise<void> => {
-    // Who is signed in first (a login can expire while the app is closed), then the usage. Each
-    // account is its own CLI run against its own home, so they are asked together.
-    await Promise.all(repository.list()
-      .filter((account) => account.kind !== 'key-file')
-      .map((account) => service.refreshIdentity(account.id).catch(() => null)));
-    await refresher.refreshAll('requested');
+  // One refresh at a time: a tab that mounts twice, or two windows, share the one in flight
+  // rather than doubling the CLI runs on a machine that is already busy.
+  let refreshInFlight: Promise<void> | null = null;
+  ipcMain.handle(IPC.ACCOUNTS_REFRESH_USAGE, (): Promise<void> => {
+    refreshInFlight ??= (async () => {
+      // Who is signed in first (a login can expire while the app is closed), then the usage. Each
+      // account is its own CLI run against its own home, so they are asked together.
+      await Promise.all(repository.list()
+        .filter((account) => account.kind !== 'key-file')
+        // The service handles a sign-in read with no answer, so what reaches here is a defect. The
+        // account keeps its status, and its usage is still read below.
+        .map((account) => service.refreshIdentity(account.id).catch((error: unknown) => {
+          accountsReporter.report(error, { tags: { stage: 'sign_in_read' } });
+          return null;
+        })));
+      await refresher.refreshAll('requested');
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+    return refreshInFlight;
   });
 
   return service;

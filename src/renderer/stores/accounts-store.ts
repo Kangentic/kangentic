@@ -1,5 +1,5 @@
 import { create, type StateCreator } from 'zustand';
-import { refreshPinnedStore } from './hmr-store-pin';
+import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
 import { useToastStore } from './toast-store';
 import { describeAccountSwitchResult } from '../lib/account-toasts';
 import {
@@ -63,6 +63,25 @@ export function accountNameFor(cards: readonly AgentAccountsCard[], accountId: s
   return null;
 }
 
+/**
+ * This module's mutable state, one object every evaluation of the module shares
+ * (`sharedModuleState`), so an action still in flight across a refresh (Pattern E) and its
+ * replacement count lists the same way.
+ */
+interface AccountsModuleState {
+  /** Bumped per list request. */
+  listOrdinal: number;
+  /** The request whose answer is on screen; an answer to an older one is dropped. */
+  appliedOrdinal: number;
+}
+
+const accountsModuleState = sharedModuleState<AccountsModuleState>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'accountsModuleState',
+  () => ({ listOrdinal: 0, appliedOrdinal: 0 }),
+);
+
 const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
   /** Starts a sign-in and opens its dialog. False when it did not start, whatever the reason. */
   const beginLogin = async (request: AgentAccountLoginRequest, agent: string): Promise<boolean> => {
@@ -84,10 +103,20 @@ const accountsStoreInitializer: StateCreator<AccountsState> = (set, get) => {
   loginEnded: null,
 
   loadAccounts: async () => {
+    // Main lists slowly (it detects each agent's CLI), so lists overlap: a drag's, the push after
+    // it, an Order change's. An answer is applied unless a newer request's answer already is: an
+    // older one landing last put a Manual order back on screen after Order went back to
+    // Automatic. An older answer that lands first still shows, so a newer request that fails
+    // leaves the newest answer that arrived.
+    accountsModuleState.listOrdinal += 1;
+    const ordinal = accountsModuleState.listOrdinal;
     try {
       // Optional chaining: during a Vite full reload the preload bridge may predate this namespace.
       const cards = await window.electronAPI.accounts?.list();
-      if (cards) set({ cards, loaded: true });
+      if (cards && ordinal > accountsModuleState.appliedOrdinal) {
+        accountsModuleState.appliedOrdinal = ordinal;
+        set({ cards, loaded: true });
+      }
     } catch (error) {
       // The cards on screen stay; the next push or the tab's next open lists again. Callers reach
       // this from push handlers, where a rejection has nobody to catch it.

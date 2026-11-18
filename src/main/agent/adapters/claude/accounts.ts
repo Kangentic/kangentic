@@ -1,6 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AccountIdentity, FolderAccountSupport, SharedEntry } from '../../../accounts/account-support';
+import {
+  EmptyUsageReadError,
+  IdentityReadError,
+  type AccountIdentity,
+  type EmptyUsageReadReason,
+  type FolderAccountSupport,
+  type SharedEntry,
+} from '../../../accounts/account-support';
 import type { RateLimitWindow } from '../../../../shared/types';
 import { isPlainRecord } from '../../shared/plain-record';
 import { claudeHomeDir, claudeStatePathForHome, isDefaultClaudeHome, withClaudeJsonFileLock } from './claude-json-lock';
@@ -140,8 +147,13 @@ const SHARED_ENTRIES: readonly SharedEntry[] = [
   },
 ];
 
-/** Reads `claude auth status` (JSON, never a token). A signed-out folder exits non-zero. */
-export function parseClaudeAuthStatus(output: string): AccountIdentity {
+/**
+ * Reads `claude auth status` (JSON, never a token). A signed-out folder exits non-zero and still
+ * prints `{"loggedIn": false}` (measured on 2.1.327). Null for output that is not that JSON, or JSON
+ * with no `loggedIn` answer: the CLI gave no answer, which is not the same as an answer that says
+ * signed out.
+ */
+export function parseClaudeAuthStatus(output: string): AccountIdentity | null {
   let parsed: Record<string, unknown> | null;
   try {
     const value: unknown = JSON.parse(output);
@@ -149,8 +161,8 @@ export function parseClaudeAuthStatus(output: string): AccountIdentity {
   } catch {
     parsed = null;
   }
-  if (!parsed) return { signedIn: false, email: null, plan: null, hasSubscription: null };
-  const signedIn = parsed.loggedIn === true;
+  if (!parsed || typeof parsed.loggedIn !== 'boolean') return null;
+  const signedIn = parsed.loggedIn;
   const email = typeof parsed.email === 'string' ? parsed.email : null;
   const planSource = typeof parsed.planTier === 'string' && parsed.planTier
     ? parsed.planTier
@@ -181,15 +193,20 @@ const IDLE_USAGE_MAX_AGE_MS = 10 * 60 * 1000;
  * The windows in Claude's own cached usage (`cachedUsageUtilization` in the account's state
  * file), in the shape the status line's `rate_limits` parse to. Measured on 2.1.319: each window
  * is null when it does not apply (Ultra has no 5h window), `utilization` is a percentage (99 where
- * `/usage` printed "99% used"), and `resets_at` is an ISO time. Null when the cache is missing,
- * older than `maxAgeMs`, or not in that shape.
+ * `/usage` printed "99% used"), and `resets_at` is an ISO time. Otherwise why it gives no current
+ * windows: the cache is missing, older than `maxAgeMs`, or holds no window.
  */
-export function parseClaudeCachedUsage(state: unknown, nowMs: number, maxAgeMs: number = IDLE_USAGE_MAX_AGE_MS): RateLimitWindow[] | null {
-  if (!isPlainRecord(state)) return null;
+export function readClaudeCachedUsage(
+  state: unknown,
+  nowMs: number,
+  maxAgeMs: number = IDLE_USAGE_MAX_AGE_MS,
+): { windows: RateLimitWindow[] } | { empty: EmptyUsageReadReason } {
+  if (!isPlainRecord(state)) return { empty: 'cache-missing' };
   const cache = state.cachedUsageUtilization;
-  if (!isPlainRecord(cache) || typeof cache.fetchedAtMs !== 'number' || nowMs - cache.fetchedAtMs > maxAgeMs) return null;
+  if (!isPlainRecord(cache) || typeof cache.fetchedAtMs !== 'number') return { empty: 'cache-missing' };
+  if (nowMs - cache.fetchedAtMs > maxAgeMs) return { empty: 'cache-stale' };
   const utilization = cache.utilization;
-  if (!isPlainRecord(utilization)) return null;
+  if (!isPlainRecord(utilization)) return { empty: 'no-windows' };
   const windows: RateLimitWindow[] = [];
   for (const { key, ...windowShape } of RATE_LIMIT_WINDOWS) {
     const windowRaw = utilization[key];
@@ -201,7 +218,7 @@ export function parseClaudeCachedUsage(state: unknown, nowMs: number, maxAgeMs: 
       resetsAt: Number.isFinite(resetsAtMs) ? Math.floor(resetsAtMs / 1000) : 0,
     });
   }
-  return windows;
+  return windows.length > 0 ? { windows } : { empty: 'no-windows' };
 }
 
 /**
@@ -210,18 +227,28 @@ export function parseClaudeCachedUsage(state: unknown, nowMs: number, maxAgeMs: 
  * adds no line to the shared `history.jsonl` and no transcript. Typing `/usage` into a hidden
  * terminal added both, and `--safe-mode` there runs no status line, so that route was dropped.
  * The run refreshes the account's cached usage once it is stale, and the cache is what is read:
- * the printed text carries the same numbers as prose in the machine's time zone.
+ * the printed text carries the same numbers as prose in the machine's time zone. Throws
+ * `EmptyUsageReadError` naming why when the read gives no current windows.
  */
-async function readClaudeIdleUsage(cliPath: string, home: string | null): Promise<RateLimitWindow[] | null> {
+async function readClaudeIdleUsage(cliPath: string, home: string | null): Promise<RateLimitWindow[]> {
   try {
     await runClaudeCli(cliPath, ['-p', '/usage', '--no-session-persistence', '--safe-mode'], 30_000, homeEnv(home));
-    const statePath = claudeStatePathForHome(home ?? claudeHomeDir());
-    const state: unknown = JSON.parse(await fs.promises.readFile(statePath, 'utf8'));
-    return parseClaudeCachedUsage(state, Date.now());
   } catch (error) {
-    console.warn('[ACCOUNTS] Could not read Claude usage:', error instanceof Error ? error.message.split('\n')[0] : String(error));
-    return null;
+    // The run's own text can name a folder, so only its first line stays here, in the local log.
+    console.warn('[ACCOUNTS] Claude usage run failed:', error instanceof Error ? error.message.split('\n')[0] : String(error));
+    throw new EmptyUsageReadError('run-failed');
   }
+  let state: unknown;
+  try {
+    state = JSON.parse(await fs.promises.readFile(claudeStatePathForHome(home ?? claudeHomeDir()), 'utf8'));
+  } catch {
+    // report-ok: a state file that is missing or mid-write is what this error names, and the
+    // account service reports it.
+    throw new EmptyUsageReadError('cache-missing');
+  }
+  const reading = readClaudeCachedUsage(state, Date.now());
+  if ('empty' in reading) throw new EmptyUsageReadError(reading.empty);
+  return reading.windows;
 }
 
 /**
@@ -244,14 +271,26 @@ async function readClaudePlanDisplayName(home: string | null): Promise<string | 
   }
 }
 
+/**
+ * Who is signed in to a Claude home. A signed-out home exits non-zero and prints its JSON, which
+ * is read as signed out. A run that printed no JSON (a timeout, a CLI mid-update) throws
+ * `IdentityReadError`, so a busy machine never marks an account signed out. A run stopped at its
+ * timeout is no answer whatever it printed.
+ */
 async function identifyClaudeAccount(cliPath: string, home: string | null): Promise<AccountIdentity> {
-  let identity: AccountIdentity;
+  let output: string;
+  let runFailed = false;
   try {
-    identity = parseClaudeAuthStatus(await runClaudeCli(cliPath, ['auth', 'status'], 30_000, homeEnv(home)));
+    output = await runClaudeCli(cliPath, ['auth', 'status'], 30_000, homeEnv(home));
   } catch (error) {
-    const stdout = (error as { stdout?: unknown }).stdout;
-    identity = parseClaudeAuthStatus(typeof stdout === 'string' ? stdout : '');
+    // report-ok: a signed-out home exits non-zero, so its printed answer is read below, and a run
+    // with no answer throws `IdentityReadError`, which the account service reports.
+    const failure = error as { stdout?: unknown; killed?: unknown };
+    output = failure.killed !== true && typeof failure.stdout === 'string' ? failure.stdout : '';
+    runFailed = true;
   }
+  const identity = parseClaudeAuthStatus(output);
+  if (!identity) throw new IdentityReadError(runFailed ? 'run-failed' : 'unreadable');
   if (!identity.signedIn) return identity;
   // The name the user knows their plan by, when Claude has recorded one; the tier otherwise.
   const displayName = await readClaudePlanDisplayName(home);

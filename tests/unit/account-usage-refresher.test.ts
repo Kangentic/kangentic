@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountUsageRefresher, USAGE_FRESH_MS } from '../../src/main/accounts/account-usage';
+import {
+  AccountUsageRefresher,
+  type AccountUsageRefresherOptions,
+  USAGE_FRESH_MS,
+  USAGE_STALE_FOR_RANKING_MS,
+  needsReadBeforeRanking,
+} from '../../src/main/accounts/account-usage';
 import type { AgentAccount } from '../../src/shared/agent-accounts';
 import type { RateLimitWindow } from '../../src/shared/types';
 
@@ -20,13 +26,23 @@ function account(id: string, agent: string, readAgoMs: number | null, lastUsage:
   };
 }
 
-function rig(accounts: AgentAccount[]) {
-  const refreshUsage = vi.fn(async (_accountId: string) => undefined);
-  const refresher = new AccountUsageRefresher({ refreshUsage } as never, {
+function rig(accounts: AgentAccount[], optionOverrides: Partial<AccountUsageRefresherOptions> = {}) {
+  /** Every read in the order it ran: `usage:<id>` or `identity:<id>`. */
+  const reads: string[] = [];
+  const refreshUsage = vi.fn(async (accountId: string) => {
+    reads.push(`usage:${accountId}`);
+    return true;
+  });
+  const refreshIdentity = vi.fn(async (accountId: string) => {
+    reads.push(`identity:${accountId}`);
+    return null;
+  });
+  const refresher = new AccountUsageRefresher({ refreshUsage, refreshIdentity }, {
     listAccounts: () => accounts,
     now: () => NOW_MS,
+    ...optionOverrides,
   });
-  return { refresher, refreshUsage };
+  return { refresher, refreshUsage, refreshIdentity, reads };
 }
 
 beforeEach(() => {
@@ -94,6 +110,37 @@ describe('AccountUsageRefresher.refreshAll', () => {
     expect(requested.refreshUsage.mock.calls.map(([accountId]) => accountId)).toEqual(['a1', 'a2', 'solo']);
   });
 
+  // The incident: the own login was signed out by a failed sign-in read, and two days of
+  // scheduled passes skipped it because only the Accounts tab read sign-ins.
+  it('reads the sign-in of an account that is not ok before its usage on a scheduled pass', async () => {
+    const parked = { ...account('own', 'multi', null), kind: 'default' as const, status: 'signed-out' as const };
+    const { refresher, reads } = rig([parked, account('other', 'multi', null)]);
+    await refresher.refreshAll('scheduled');
+    expect(reads).toEqual(['identity:own', 'usage:own', 'usage:other']);
+  });
+
+  it('reads every sign-in at startup, and no key file', async () => {
+    const keyFile = { ...account('key', 'multi', null), kind: 'key-file' as const };
+    const { refresher, reads } = rig([account('one', 'multi', null), keyFile, account('solo', 'single', null)]);
+    await refresher.refreshAll('startup');
+    expect(reads).toEqual(['identity:one', 'usage:one', 'usage:key']);
+  });
+
+  it('reads no sign-in on a requested pass, whose caller reads them', async () => {
+    const parked = { ...account('own', 'multi', null), status: 'signed-out' as const };
+    const { refresher, refreshIdentity } = rig([parked, account('other', 'multi', null)]);
+    await refresher.refreshAll('requested');
+    expect(refreshIdentity).not.toHaveBeenCalled();
+  });
+
+  it('runs the first pass after start as the startup pass', async () => {
+    const { refresher, refreshIdentity } = rig([account('one', 'multi', null), account('two', 'multi', null)]);
+    refresher.start();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(refreshIdentity.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
+    refresher.dispose();
+  });
+
   it('arms the reset timer when the soonest reset falls within one interval, and reads again when it fires', async () => {
     const resetInSeconds = 5 * 60;
     const accounts = [
@@ -125,6 +172,173 @@ describe('AccountUsageRefresher.refreshAll', () => {
     const { refresher } = rig([account('solo', 'single', null, [window(NOW_SECONDS + 300)])]);
     await refresher.refreshAll('requested');
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('needsReadBeforeRanking', () => {
+  it.each<[string, AgentAccount, boolean]>([
+    ['no reading', account('none', 'a', null), true],
+    ['a reading from this pass', account('recent', 'a', 60_000, [window(NOW_SECONDS + 3600)]), false],
+    ['a reading older than a pass should leave', account('old', 'a', USAGE_STALE_FOR_RANKING_MS + 1, [window(NOW_SECONDS + 3600)]), true],
+    ['a recent reading whose window has reset', account('lapsed', 'a', 60_000, [window(NOW_SECONDS - 1)]), true],
+    ['an account that cannot run', { ...account('out', 'a', null), status: 'signed-out' }, false],
+    ['a key file', { ...account('key', 'a', null), kind: 'key-file' }, false],
+  ])('%s: %s', (_name, candidate, expected) => {
+    expect(needsReadBeforeRanking(candidate, NOW_MS)).toBe(expected);
+  });
+});
+
+describe('AccountUsageRefresher.readBeforeRanking', () => {
+  it('force-reads only the accounts whose reading ran out, then resolves', async () => {
+    const accounts = [account('stale', 'a', null), account('recent', 'a', 1000, [window(NOW_SECONDS + 3600)])];
+    const { refresher, reads } = rig(accounts);
+    await refresher.readBeforeRanking(accounts);
+    expect(reads).toEqual(['usage:stale']);
+  });
+
+  it('asks an account once a minute, so a read that keeps failing costs one run', async () => {
+    const accounts = [account('stale', 'a', null)];
+    const { refresher, refreshUsage } = rig(accounts);
+    await refresher.readBeforeRanking(accounts);
+    await refresher.readBeforeRanking(accounts);
+    expect(refreshUsage).toHaveBeenCalledTimes(1);
+  });
+
+  // Spawns at boot arrive together. The second must wait for the read the first queued, or it
+  // ranks on the expired reading the read is about to replace.
+  it('holds a second caller until the read the first one queued has finished', async () => {
+    const accounts = [account('stale', 'a', null)];
+    const { refresher, refreshUsage } = rig(accounts);
+    let finishRead: () => void = () => undefined;
+    refreshUsage.mockImplementation(() => new Promise((resolve) => { finishRead = () => resolve(true); }));
+    let firstDone = false;
+    let secondDone = false;
+    void refresher.readBeforeRanking(accounts).then(() => { firstDone = true; });
+    void refresher.readBeforeRanking(accounts).then(() => { secondDone = true; });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(firstDone).toBe(false);
+    expect(secondDone).toBe(false);
+    finishRead();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(firstDone && secondDone).toBe(true);
+    expect(refreshUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves at its bound when the read hangs, and warns', async () => {
+    const accounts = [account('stale', 'a', null)];
+    const { refresher, refreshUsage } = rig(accounts);
+    refreshUsage.mockImplementation(() => new Promise(() => undefined));
+    let resolved = false;
+    void refresher.readBeforeRanking(accounts, 5000).then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(resolved).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(resolved).toBe(true);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('ranking on the stored readings'));
+  });
+
+  it('asks an account again once the minute has passed, and not before', async () => {
+    const accounts = [account('stale', 'a', null)];
+    let clockMs = NOW_MS;
+    const { refresher, refreshUsage } = rig(accounts, { now: () => clockMs });
+    await refresher.readBeforeRanking(accounts);
+    expect(refreshUsage).toHaveBeenCalledTimes(1);
+
+    clockMs = NOW_MS + 59_000;
+    await refresher.readBeforeRanking(accounts);
+    expect(refreshUsage).toHaveBeenCalledTimes(1);
+
+    clockMs = NOW_MS + 61_000;
+    await refresher.readBeforeRanking(accounts);
+    expect(refreshUsage).toHaveBeenCalledTimes(2);
+  });
+
+  // The serial queue runs Y's read first here, with the unrelated read of X queued behind it. A
+  // wait on the whole queue would hold this spawn until X finished.
+  it('waits only on the reads of the stale accounts it was given, not on unrelated queued work', async () => {
+    const stale = account('stale', 'a', null);
+    const unrelated = account('unrelated', 'b', null);
+    const { refresher, refreshUsage } = rig([stale, unrelated]);
+    let releaseUnrelated: () => void = () => undefined;
+    refreshUsage.mockImplementation(async (accountId: string) => {
+      if (accountId === 'unrelated') await new Promise<void>((resolve) => { releaseUnrelated = resolve; });
+      return true;
+    });
+    let ranked = false;
+    void refresher.readBeforeRanking([stale]).then(() => { ranked = true; });
+    void refresher.refreshAccount('unrelated');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshUsage.mock.calls.map(([accountId]) => accountId)).toEqual(['stale', 'unrelated']);
+    expect(ranked).toBe(true);
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining('ranking on the stored readings'));
+    releaseUnrelated();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('resolves at once when every stale account was asked within the minute and its read is done, even with other reads queued', async () => {
+    const stale = account('stale', 'a', null);
+    const unrelated = account('unrelated', 'b', null);
+    const { refresher, refreshUsage } = rig([stale, unrelated]);
+    await refresher.readBeforeRanking([stale]);
+    let releaseUnrelated: () => void = () => undefined;
+    refreshUsage.mockImplementation(async (accountId: string) => {
+      if (accountId === 'unrelated') await new Promise<void>((resolve) => { releaseUnrelated = resolve; });
+      return true;
+    });
+    void refresher.refreshAccount('unrelated');
+    let ranked = false;
+    void refresher.readBeforeRanking([stale]).then(() => { ranked = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ranked).toBe(true);
+    releaseUnrelated();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  it('never rejects and keeps the queue alive when the account list throws inside a queued read', async () => {
+    const stale = account('stale', 'a', null);
+    const other = account('other', 'a', null);
+    const failureReporter = { report: vi.fn() };
+    const listAccounts = vi.fn(() => [stale, other]);
+    listAccounts.mockImplementationOnce(() => { throw new Error('database closed'); });
+    const { refresher, refreshUsage } = rig([stale, other], { listAccounts, failureReporter });
+
+    await expect(refresher.readBeforeRanking([stale])).resolves.toBeUndefined();
+    expect(refreshUsage).not.toHaveBeenCalled();
+    expect(failureReporter.report).toHaveBeenCalledWith(expect.any(Error), { tags: { stage: 'usage_read' } });
+
+    await refresher.refreshAccount('other', true);
+    expect(refreshUsage).toHaveBeenCalledWith('other');
+  });
+});
+
+describe('AccountUsageRefresher failure reports', () => {
+  it('reports a sign-in read that rejects, and still reads that account usage', async () => {
+    const failureReporter = { report: vi.fn() };
+    const { refresher, refreshIdentity, refreshUsage } = rig(
+      [account('one', 'multi', null), account('two', 'multi', null)],
+      { failureReporter },
+    );
+    refreshIdentity.mockRejectedValueOnce(new Error('identify defect'));
+    await expect(refresher.refreshAll('startup')).resolves.toBeUndefined();
+    expect(failureReporter.report).toHaveBeenCalledTimes(1);
+    expect(failureReporter.report).toHaveBeenCalledWith(expect.any(Error), { tags: { stage: 'sign_in_read' } });
+    expect(refreshUsage.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
+  });
+
+  it('reads each sign-in once when two startup passes overlap', async () => {
+    const { refresher, refreshIdentity } = rig([account('one', 'multi', null), account('two', 'multi', null)]);
+    await Promise.all([refresher.refreshAll('startup'), refresher.refreshAll('startup')]);
+    expect(refreshIdentity.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
+  });
+
+  it('reports a usage read that throws a plain Error, and runs the next queued read', async () => {
+    const failureReporter = { report: vi.fn() };
+    const { refresher, refreshUsage } = rig([account('one', 'a', null), account('two', 'a', null)], { failureReporter });
+    refreshUsage.mockRejectedValueOnce(new Error('usage defect'));
+    await Promise.all([refresher.refreshAccount('one'), refresher.refreshAccount('two')]);
+    expect(failureReporter.report).toHaveBeenCalledTimes(1);
+    expect(failureReporter.report).toHaveBeenCalledWith(expect.any(Error), { tags: { stage: 'usage_read' } });
+    expect(refreshUsage.mock.calls.map(([accountId]) => accountId)).toEqual(['one', 'two']);
   });
 });
 

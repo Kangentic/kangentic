@@ -107,6 +107,35 @@ export class UnreadableUsageError extends Error {
   }
 }
 
+/** Why a usage read gave no windows. A fixed word: the account service logs and reports it. */
+export type EmptyUsageReadReason = 'run-failed' | 'cache-missing' | 'cache-stale' | 'no-windows' | 'no-answer';
+
+/**
+ * Thrown by `readIdleUsage` when the read gave no windows: the CLI run failed, or what it left
+ * behind holds no current reading. The account keeps its last values, and the service says so.
+ */
+export class EmptyUsageReadError extends Error {
+  constructor(readonly reason: EmptyUsageReadReason) {
+    super(`A usage read gave no windows (${reason})`);
+    this.name = 'EmptyUsageReadError';
+  }
+}
+
+/** Why a sign-in read gave no answer. A fixed word: the account service logs and reports it. */
+export type IdentityReadReason = 'run-failed' | 'unreadable';
+
+/**
+ * Thrown by `identify` when the CLI gave no answer about the login: the run failed and printed
+ * nothing the adapter can read. Different from an answer that says signed out, which `identify`
+ * returns: an account is marked signed out only on the CLI's word, never because a run failed.
+ */
+export class IdentityReadError extends Error {
+  constructor(readonly reason: IdentityReadReason) {
+    super(`The CLI gave no answer about the login (${reason})`);
+    this.name = 'IdentityReadError';
+  }
+}
+
 /** What the CLI says about the login in a home. */
 export interface AccountIdentity {
   signedIn: boolean;
@@ -190,13 +219,15 @@ export interface FolderAccountSupport extends AccountSupportBase {
   /**
    * Reads who is signed in to `home`, or to the agent's own login when `home` is null (the run
    * then sets no home variable, so the CLI reads exactly what the user's own terminal does).
-   * Must not print or return a token.
+   * Must not print or return a token. Throws `IdentityReadError` when the CLI gave no answer, so
+   * a failed run never marks an account signed out.
    */
   identify(cliPath: string, home: string | null): Promise<AccountIdentity>;
   /**
    * Reads the account's usage windows with no session running on it: no model turn, no cost, and
-   * nothing written to the shared history or conversations. Null when it cannot be read; the
-   * account then keeps its last values. Throws `UnreadableUsageError` for an answer in a shape
+   * nothing written to the shared history or conversations. Null, an empty list, or a thrown
+   * `EmptyUsageReadError` (which names why) when it gives no windows; the account then keeps its
+   * last values and the service logs it. Throws `UnreadableUsageError` for an answer in a shape
    * it does not know. Absent for a CLI with no such read.
    */
   readIdleUsage?(cliPath: string, home: string | null): Promise<RateLimitWindow[] | null>;
