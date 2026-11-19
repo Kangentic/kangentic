@@ -530,7 +530,7 @@ describe('spawn entry-point parity: resumesEntry belongs to the Resume path', ()
       `resumesEntry referenced outside its two classified files:\n`
         + `${outsideReferences.join('\n')}\n\n`
         + `The option bypasses the held-pause guard, so only the user's Resume may pass it. `
-        + `A move never starts a paused agent. See ${RULE_FILE}.`,
+        + `A move starts no agent the user paused. See ${RULE_FILE}.`,
     ).toEqual([]);
   });
 
@@ -538,6 +538,42 @@ describe('spawn entry-point parity: resumesEntry belongs to the Resume path', ()
     expect(fileHasNonCommentCall('src/main/ipc/handlers/session-resume.ts', 'spawnAgent')).toBe(true);
     const callerReferences = collectSinkCalls(/resumesEntry:\s*true/)
       .filter((reference) => reference.relativePath === 'src/main/ipc/handlers/session-resume.ts');
+    expect(callerReferences.length).toBeGreaterThan(0);
+  });
+});
+
+describe('spawn entry-point parity: liftsIdlePause belongs to the move path', () => {
+  /**
+   * `liftsIdlePause` lifts spawnAgent's held-pause guard for an idle pause
+   * (`'auto'`) when the owner moved the task: a drag, a phone move, an agent's
+   * move in a turn the owner started, or a Command Terminal's move. The
+   * declaration and the gate live in agent-spawn.ts; the one caller is
+   * `handleTaskMove`'s Phase 3. A startup, reconcile, create or Resume path
+   * growing it would start an idle-paused agent nobody moved, which a restart
+   * must never do.
+   */
+  const LIFTS_IDLE_PAUSE_FILES = new Set([
+    'src/main/ipc/helpers/agent-spawn.ts',
+    'src/main/ipc/handlers/task-move.ts',
+  ]);
+
+  it('liftsIdlePause is referenced only by agent-spawn.ts and the move path', () => {
+    const outsideReferences = collectSinkCalls(/\bliftsIdlePause\b/)
+      .filter((reference) => !LIFTS_IDLE_PAUSE_FILES.has(reference.relativePath))
+      .map((reference) => reference.location);
+    expect(
+      outsideReferences,
+      `liftsIdlePause referenced outside its two classified files:\n`
+        + `${outsideReferences.join('\n')}\n\n`
+        + `The option bypasses the held-pause guard for an idle pause, so only the owner's move may pass it. `
+        + `See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+
+  it('the one caller still passes it, so the scan is not vacuous', () => {
+    expect(fileHasNonCommentCall('src/main/ipc/handlers/task-move.ts', 'spawnAgent')).toBe(true);
+    const callerReferences = collectSinkCalls(/liftsIdlePause:\s*true/)
+      .filter((reference) => reference.relativePath === 'src/main/ipc/handlers/task-move.ts');
     expect(callerReferences.length).toBeGreaterThan(0);
   });
 });

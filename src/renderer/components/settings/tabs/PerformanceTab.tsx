@@ -107,7 +107,7 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
       </SettingsCard>
 
       {/* The pause holds: a paused agent stays paused, across a restart too,
-          until the user resumes it. The minutes are When idle's own value, so
+          until the user opens, moves or resumes its task. The minutes are When idle's own value, so
           they share its tile on a second line rather than a row of their own,
           and show only while it is on. */}
       <SettingsCard

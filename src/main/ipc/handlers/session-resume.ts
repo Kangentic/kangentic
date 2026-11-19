@@ -13,8 +13,9 @@
  * a phone.
  *
  * A task that ENTERED its column after its agent was paused is the exception.
- * A move never starts a paused agent, so that entry ran only its rows that
- * need no agent (`agentPaused` on the move). The Resume then goes through
+ * A move starts no paused agent, so that entry ran only its rows that need no
+ * agent (`agentPaused` on the move). The one exception is the owner's move of
+ * an idle-paused task (`liftsIdlePause`), which starts the agent itself. The Resume then goes through
  * `spawnAgent` with `resumesEntry` and does the rest of what the entry would
  * have done: the column's own session strategy (a fresh conversation in Code
  * Review, the main conversation resumed in Executing) and its rows that need
@@ -339,7 +340,7 @@ export function resumeTaskSession(
                 : null;
               if (currentRow && entryWhilePaused) {
                 // The task entered this column after its agent was paused, and
-                // a move never starts a paused agent. This Resume does what that
+                // that move did not start it. This Resume does what that
                 // entry would have: the column's own session strategy (a fresh
                 // conversation in a column that always starts new), then its
                 // enter rows that need the agent. The other rows ran at the entry.

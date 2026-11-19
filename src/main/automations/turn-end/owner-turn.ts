@@ -56,7 +56,9 @@ function readWithinBudget(read: Promise<UserMessageRead>, budgetMs: number): Pro
  * records nothing it types into a session with no task (`recordKangenticTyped`),
  * and another agent can message one with `kangentic_send_session_message`, so
  * no read could tell those texts from the owner's. Its session has no
- * `sessions` row, so the read answers false on its own.
+ * `sessions` row, so the read answers false on its own. Whether a move ends an
+ * idle pause counts a Command Terminal's move as the owner's anyway, by its own
+ * check (`moverIsCommandTerminal`), and leaves this answer alone.
  *
  * Never rejects. `handleTaskMove` waits on this answer before it commits, and
  * `kangentic_move_task` fires that move without awaiting it, so a throw here

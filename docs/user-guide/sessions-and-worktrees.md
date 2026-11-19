@@ -74,7 +74,7 @@ A Claude Code session resumed in the column it was paused in comes back in the p
 
 ### User-Paused Sessions
 
-Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you on the idle timer (see [Pausing agents](#pausing-agents)) stays paused across a restart too, until you open its task. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you on the idle timer (see [Pausing agents](#pausing-agents)) stays paused across a restart too, until you open its task or move it into a column that starts agents. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Pausing agents
 
@@ -87,18 +87,23 @@ the agent started is still open. It never pauses a Command Terminal: a pause wou
 and its conversation with it. It also leaves alone an agent that cannot resume, such as Warp or
 Ollama, for the same reason.
 
-The agent stays paused until you come back to it: a restart does not bring it back, and neither does
-a move into a column that starts agents. Open the task and it resumes at once, from its card, a
-toast, search, or anywhere else that opens it. The conversation picks up where it stopped, and
-opening sends the agent nothing, so it costs no tokens. Pausing frees a slot, so a queued task can
-start in it. If the column is full when you open the task, it queues, and its window says why.
+The agent stays paused until you come back to it, and a restart does not bring it back. Open the
+task and it resumes at once, from its card, a toast, search, or anywhere else that opens it. The
+conversation picks up where it stopped, and opening sends the agent nothing, so it costs no tokens.
+Pausing frees a slot, so a queued task can start in it. If the column is full when you open the
+task, it queues, and its window says why.
+
+Moving the task into a column that starts agents brings it back too, the way that move starts a
+running agent: the column's message goes out, which is a paid turn. Any move you make counts: a
+drag, a move from your phone, an agent's move you asked it for, or a move from a Command Terminal.
 
 A paused task keeps its Resume button, and opening it does not resume it, in these cases:
 
-- You paused it yourself.
+- You paused it yourself. A move does not start it either.
 - Its workflow is paused.
-- You moved it to another column while it was paused. Resume runs that column's message, which is a
-  paid turn, so it waits for your click.
+- The board moved it to another column while it was paused: an automation, a plan approval, a
+  workflow step, or an agent working on its own. Resume runs that column's message, which is a paid
+  turn, so it waits for your click.
 - Its conversation cannot be resumed as it stands, so a resume would start a new one.
 
 A window that was already open when the pause landed keeps its Resume button too. Click the button,

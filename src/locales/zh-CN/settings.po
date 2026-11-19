@@ -2082,9 +2082,8 @@ msgid "Path to the private key"
 msgstr "私钥路径"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Pause an agent waiting on you this long until you open its task."
-msgstr "暂停等待你达到此时长的智能体，直到你打开其任务。"
+msgid "Pause an agent waiting on you this long until you open or move its task."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

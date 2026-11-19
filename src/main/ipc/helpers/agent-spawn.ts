@@ -23,6 +23,7 @@ import { reportAutomationFailures } from './automation-failures';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { isHeldPause } from '../../../shared/held-pause';
+import { idlePauseLiftReporter, isLiftableIdlePause } from './idle-pause-lift';
 import { runSpawnPreamble, previewSpawnPreamble, projectModelDefaultsApply } from '../../transition-engine/spawn-preamble';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
@@ -290,7 +291,8 @@ export interface AgentSpawnOptions {
   explicitStart?: boolean;
   /**
    * The user's Resume of an agent that was paused when its task entered this
-   * column (`resumeTaskSession`). A move never starts a paused agent, so the
+   * column (`resumeTaskSession`). A move starts no agent the user paused (nor
+   * an idle-paused one, unless the owner made the move: `liftsIdlePause`), so the
    * entry ran only its rows that need no agent; this start does the rest of
    * what the entry would have: the column's own session strategy (a fresh
    * conversation in a column that always starts new, the conversation resumed
@@ -302,6 +304,21 @@ export interface AgentSpawnOptions {
    * Passed only by `resumeTaskSession`.
    */
   resumesEntry?: boolean;
+  /**
+   * The owner moved a task the idle timeout paused (`handleTaskMove`, Priority
+   * 4): a drag, a phone move, an agent's move in a turn the owner started, or a
+   * Command Terminal's move. The idle pause was Kangentic freeing memory, not the
+   * user's choice, so the move starts the agent as it would a running task's:
+   * the column's session strategy, its message and its WHOLE enter group (unlike
+   * `resumesEntry`, the entry ran none of it).
+   *
+   * It lifts the held-pause check only for a pause `isLiftableIdlePause` lifts,
+   * asked again here under the task lock: a user's Pause, a paused workflow, a
+   * workflow recovery or a failed launch made during the move's unlocked worktree
+   * phase still holds. The column's `auto_spawn` and the To Do / Done role gate
+   * still apply. Passed only by the move path.
+   */
+  liftsIdlePause?: boolean;
   /**
    * The agent the caller launched while the task's new worktree ran its setup
    * script (`createEarlyAgentLauncher`). The spawn adopts it in place of a
@@ -506,6 +523,34 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     textReachedAgent: false,
   });
 
+  /**
+   * The enter group of a move whose idle-pause lift this spawn declined under
+   * the lock, run as the move's held branch runs it (`agentPaused`): rows that
+   * need the agent skip with that reason, so nothing is delivered and no agent
+   * starts. A drag carries its source lane as `settingsSourceLane`, which is
+   * the only caller here, so `{{fromColumn}}` resolves as it would on a spawn.
+   */
+  const runEnterRowsWithAgentPaused = async (): Promise<void> => {
+    try {
+      const enterSummary = await engine.executeTransition(task, toLane, 'enter', {
+        signal: signal ?? new AbortController().signal,
+        agentPaused: true,
+        // Every row that would deliver is skipped while the agent is paused.
+        deliverToAgent: async () => {},
+        showNotification: (input) => showAutomationNotification(context, input),
+        onProgress: createProgressCallback(context.mainWindow, task.id),
+        fromColumn: options.settingsSourceLane ?? null,
+        toColumn: toLane,
+      });
+      reportAutomationFailures(context, enterSummary, task, options.projectId, 'enter');
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      // The runner isolates each row, so this is the list itself failing to run.
+      console.error('[spawnAgent] Enter automations failed after a declined idle-pause lift:', error);
+      idlePauseLiftReporter.report(error);
+    }
+  };
+
   const run = async (): Promise<void> => {
   // Guard: if the target column doesn't want agents, no-op. An explicit user
   // Start overrides the column's default, as the desktop's Resume button does.
@@ -518,13 +563,23 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   if (!laneStartsAgent(toLane, options.explicitStart)) return;
 
   // Guard: if the task is held paused (the user paused it, or Kangentic did
-  // while it waited on the user), don't auto-resume. Only an explicit user
-  // gesture restarts it: the desktop's Resume button (SESSION_RESUME, which
-  // reaches here with `resumesEntry` after the task changed column) or a
-  // caller passing `explicitStart` (the phone's start-session verb).
+  // while it waited on the user), don't auto-resume. Only the owner restarts
+  // it: the desktop's Resume button (SESSION_RESUME, which reaches here with
+  // `resumesEntry` after the task changed column), a caller passing
+  // `explicitStart` (the phone's start-session verb), or, for an idle pause
+  // only, the owner's move (`liftsIdlePause`, re-asked here under the lock).
   const latestSession = sessionRepo.getLatestForTask(task.id);
-  if (isHeldPause(latestSession) && !options.explicitStart && !options.resumesEntry) {
+  const ownerMoveLiftsPause = options.liftsIdlePause === true
+    && options.projectId !== undefined
+    && isLiftableIdlePause(task, options.projectId, latestSession);
+  if (isHeldPause(latestSession) && !options.explicitStart && !options.resumesEntry && !ownerMoveLiftsPause) {
     console.log(`[spawnAgent] Skipping auto-spawn for task ${task.id.slice(0, 8)} (paused until the user resumes it)`);
+    // The move kept its spawn plan because the pause read as liftable then, so
+    // it armed no enter rows of its own. Something held the pause again during
+    // the unlocked worktree phase (a paused workflow, a workflow recovery). Run
+    // the rows as the move's held branch would have: every row that needs no
+    // agent, with the rest skipped until a Resume in this column.
+    if (options.liftsIdlePause === true) await runEnterRowsWithAgentPaused();
     return;
   }
 
@@ -1433,7 +1488,9 @@ export function createEarlyAgentLauncher(input: {
       const sessionRepo = new SessionRepository(getProjectDb(input.projectId));
       const latestSession = sessionRepo.getLatestForTask(task.id);
       // spawnAgent's held-pause check. Its `resumesEntry` lift is a Resume's,
-      // which never comes through a launcher (a move and an auto-spawn do).
+      // which never comes through a launcher (a move and an auto-spawn do). Its
+      // `liftsIdlePause` lift is not asked here: an owner's move of an idle-paused
+      // task only skips the early launch, and `spawnAgent` starts the agent.
       if (isHeldPause(latestSession) && !input.explicitStart) return null;
       const engine = createTransitionEngine(
         context, input.automations, input.automationRuns, tasks, sessionRepo, input.attachments, input.projectId, input.projectPath,

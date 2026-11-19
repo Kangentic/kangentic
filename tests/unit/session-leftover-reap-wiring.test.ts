@@ -73,6 +73,48 @@ const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, mockListForT
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 
+// A paused workflow, for the idle-pause cases. Off by default: every other test
+// runs its tasks in no workflow, and the real reads answer that.
+const workflowHome = vi.hoisted(() => ({ pausedWorkflow: false }));
+vi.mock('../../src/main/workflows/workflow-home', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-home')>();
+  const pausedWorkflow = { id: 'workflow-1', title: 'Paused workflow', state: 'paused' };
+  return {
+    ...actual,
+    workflowOfTask: (...args: Parameters<typeof actual.workflowOfTask>) => (
+      workflowHome.pausedWorkflow ? pausedWorkflow : actual.workflowOfTask(...args)
+    ),
+    taskWorkflowState: (...args: Parameters<typeof actual.taskWorkflowState>) => (
+      workflowHome.pausedWorkflow ? 'paused' : actual.taskWorkflowState(...args)
+    ),
+    isTaskWorkflowPaused: (...args: Parameters<typeof actual.isTaskWorkflowPaused>) => (
+      workflowHome.pausedWorkflow || actual.isTaskWorkflowPaused(...args)
+    ),
+  };
+});
+// A workflow recovery armed for the task, for the idle-pause cases. Off by
+// default, so every other test reads the real state (nothing armed).
+const workflowRecovery = vi.hoisted(() => ({ underRecovery: false }));
+vi.mock('../../src/main/workflows/workflow-recovery-state', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-recovery-state')>();
+  return {
+    ...actual,
+    isUnderWorkflowRecovery: (taskId: string) => workflowRecovery.underRecovery || actual.isUnderWorkflowRecovery(taskId),
+  };
+});
+// A paused workflow lets a person's move through (`workflowMoveRefusal`). The
+// real check reads the columns through a repository this harness stubs, so it
+// answers that here; every other test runs the real check on a task in no workflow.
+vi.mock('../../src/main/workflows/workflow-lock-check', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-lock-check')>();
+  return {
+    ...actual,
+    checkWorkflowMove: (...args: Parameters<typeof actual.checkWorkflowMove>) => (
+      workflowHome.pausedWorkflow ? null : actual.checkWorkflowMove(...args)
+    ),
+  };
+});
+
 vi.mock('../../src/main/git/spawn-with-abort', () => ({
   spawnWithAbort: (target: unknown, options: unknown) => {
     callOrder.push('stopScript');
@@ -1530,10 +1572,11 @@ describe('handleTaskMove: auto_spawn=false negative (Priority 2.5)', () => {
   });
 });
 
-// #929. A move never starts a paused agent: only the user's Resume does. The
+// #929. A move starts no paused agent: only the user's Resume does. The
 // destination's enter rows still run, with the agent paused, so a row that
 // needs no agent runs and one that needs the agent waits for a Resume there.
-// The same shape as Priority 2.5: no worktree work and no spawn.
+// The same shape as Priority 2.5: no worktree work and no spawn. The one
+// exception is the owner's move of an idle-paused task, which starts it.
 describe('handleTaskMove: a task whose agent is paused (Priority 4)', () => {
   const REVIEW_LANE_ID = 'lane-review';
   const HELD_PAUSE_RECORD = { id: 'rec-paused', status: 'suspended', suspended_by: 'user' };
@@ -1561,6 +1604,9 @@ describe('handleTaskMove: a task whose agent is paused (Priority 4)', () => {
     sourceLane?: Swimlane;
     taskOverrides?: Partial<Task>;
     destinationOverrides?: Partial<Swimlane>;
+    /** Who moved it. Defaults to the phone, a person. */
+    origin?: Parameters<typeof handleTaskMove>[2];
+    moveOptions?: Parameters<typeof handleTaskMove>[5];
   }
 
   async function movePausedTask(record: unknown, scenario: PausedMoveScenario = {}) {
@@ -1586,14 +1632,18 @@ describe('handleTaskMove: a task whose agent is paused (Priority 4)', () => {
     await handleTaskMove(
       context as never,
       { taskId: task.id, targetSwimlaneId: REVIEW_LANE_ID, targetPosition: 0 },
-      'mobile',
+      scenario.origin ?? 'mobile',
+      undefined,
+      undefined,
+      scenario.moveOptions,
     );
     return { task, reviewLane, taskRepo, context };
   }
 
-  it.each([['user'], ['auto']])('starts no agent for a %s pause and runs the enter rows with the agent paused', async (suspendedBy) => {
-    const { task, reviewLane } = await movePausedTask({ id: 'rec-paused', status: 'suspended', suspended_by: suspendedBy });
+  const IDLE_PAUSE_RECORD = { id: 'rec-idle', status: 'suspended', suspended_by: 'auto' };
 
+  /** The move held the pause: no worktree, no spawn, the enter rows run with the agent paused. */
+  function expectHeld(task: Task, reviewLane: Swimlane): void {
     expect(mockSpawnAgent).not.toHaveBeenCalled();
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
     expect(executeTransition).toHaveBeenCalledWith(
@@ -1602,6 +1652,110 @@ describe('handleTaskMove: a task whose agent is paused (Priority 4)', () => {
       'enter',
       expect.objectContaining({ agentPaused: true }),
     );
+  }
+
+  /** The move ended the idle pause: the spawn plan ran and `spawnAgent` was told to lift it. */
+  function expectStarted(task: Task): void {
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      task: expect.objectContaining({ id: task.id }),
+      liftsIdlePause: true,
+    }));
+    expect(executeTransition).not.toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), 'enter', expect.objectContaining({ agentPaused: true }),
+    );
+  }
+
+  it.each([['user'], ['low_memory']])('starts no agent for a %s pause and runs the enter rows with the agent paused', async (suspendedBy) => {
+    const { task, reviewLane } = await movePausedTask({ id: 'rec-paused', status: 'suspended', suspended_by: suspendedBy });
+
+    expectHeld(task, reviewLane);
+  });
+
+  it.each([['mobile'], ['renderer']] as const)('starts the agent of an idle-paused task a person moved (%s)', async (origin) => {
+    const { task } = await movePausedTask(IDLE_PAUSE_RECORD, { origin });
+
+    expectStarted(task);
+  });
+
+  it('starts the agent of an idle-paused task an agent moved in a turn the owner started', async () => {
+    const { task } = await movePausedTask(IDLE_PAUSE_RECORD, {
+      origin: 'agent',
+      moveOptions: { ownerRequested: Promise.resolve(true) },
+    });
+
+    expectStarted(task);
+  });
+
+  it('starts the agent of an idle-paused task a Command Terminal moved', async () => {
+    const { task } = await movePausedTask(IDLE_PAUSE_RECORD, {
+      origin: 'agent',
+      moveOptions: { ownerRequested: Promise.resolve(false), moverIsCommandTerminal: true },
+    });
+
+    expectStarted(task);
+  });
+
+  it('keeps the idle pause for an agent\'s move in a turn the board started', async () => {
+    const { task, reviewLane } = await movePausedTask(IDLE_PAUSE_RECORD, {
+      origin: 'agent',
+      moveOptions: { ownerRequested: Promise.resolve(false) },
+    });
+
+    expectHeld(task, reviewLane);
+  });
+
+  it.each([['automation'], ['auto-move'], ['workflow']] as const)('keeps the idle pause for a move the board made (%s)', async (origin) => {
+    const { task, reviewLane } = await movePausedTask(IDLE_PAUSE_RECORD, { origin });
+
+    expectHeld(task, reviewLane);
+  });
+
+  it('keeps the idle pause of a task whose last start never reached an agent', async () => {
+    const { task, reviewLane } = await movePausedTask({ ...IDLE_PAUSE_RECORD, launch_failed_at: '2026-11-19T00:00:00.000Z' });
+
+    expectHeld(task, reviewLane);
+  });
+
+  it('keeps the idle pause of a card in a paused workflow, even for a person\'s move', async () => {
+    workflowHome.pausedWorkflow = true;
+    try {
+      const { task, reviewLane } = await movePausedTask(IDLE_PAUSE_RECORD, {
+        taskOverrides: { workflow_id: 'workflow-1' } as Partial<Task>,
+      });
+
+      expectHeld(task, reviewLane);
+    } finally {
+      workflowHome.pausedWorkflow = false;
+    }
+  });
+
+  it('keeps the idle pause of a card a workflow recovery owns, even for a person\'s move', async () => {
+    workflowRecovery.underRecovery = true;
+    try {
+      const { task, reviewLane } = await movePausedTask(IDLE_PAUSE_RECORD);
+
+      expectHeld(task, reviewLane);
+    } finally {
+      workflowRecovery.underRecovery = false;
+    }
+  });
+
+  it('never lifts an idle pause on a recovery move out of Done', async () => {
+    // A move out of Done is a recovery move (`suppressAutoCommand`), so the
+    // pause does not hold it and the owner's lift is not asked for.
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const { task } = await movePausedTask(IDLE_PAUSE_RECORD, {
+      sourceLane: doneLane,
+      taskOverrides: { worktree_path: null, archived_at: '2025-01-02T00:00:00.000Z' },
+    });
+
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      task: expect.objectContaining({ id: task.id }),
+      suppressAutoCommand: true,
+    }));
+    expect(mockSpawnAgent).not.toHaveBeenCalledWith(expect.objectContaining({ liftsIdlePause: true }));
   });
 
   it('takes the spawn path as before when the last suspend holds nothing (a system suspend)', async () => {

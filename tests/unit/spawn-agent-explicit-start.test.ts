@@ -33,7 +33,29 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
 }));
 
+// The two holds `isLiftableIdlePause` reads besides the record: a paused
+// workflow and a workflow recovery. Real by default (the task is in no
+// workflow), switched on per test.
+const idlePauseHolds = vi.hoisted(() => ({ workflowPaused: false, underRecovery: false }));
+vi.mock('../../src/main/workflows/workflow-home', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-home')>();
+  return {
+    ...actual,
+    workflowOfTask: (...args: Parameters<typeof actual.workflowOfTask>) => (
+      idlePauseHolds.workflowPaused ? { state: 'paused' } : actual.workflowOfTask(...args)
+    ),
+  };
+});
+vi.mock('../../src/main/workflows/workflow-recovery-state', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-recovery-state')>();
+  return {
+    ...actual,
+    isUnderWorkflowRecovery: (taskId: string) => idlePauseHolds.underRecovery || actual.isUnderWorkflowRecovery(taskId),
+  };
+});
+
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
+import { idlePauseLiftReporter } from '../../src/main/ipc/helpers/idle-pause-lift';
 
 const TASK_ID = 'task-explicit-001';
 const TO_LANE_ID = 'lane-quiet';
@@ -134,7 +156,7 @@ async function runSpawn(
   task: Task,
   toLane: Swimlane,
   deps: ReturnType<typeof makeDeps>,
-  extraOptions: { explicitStart?: boolean; resumesEntry?: boolean } = {},
+  extraOptions: { explicitStart?: boolean; resumesEntry?: boolean; liftsIdlePause?: boolean; projectId?: string | undefined } = {},
 ) {
   await spawnAgent({
     context: deps.context as never,
@@ -281,6 +303,135 @@ describe('spawnAgent resumesEntry: a Resume after the task entered its column pa
     expect(deps.engine.executeTransition).toHaveBeenCalledWith(
       task, expect.anything(), 'enter', expect.not.objectContaining({ onlyRowsNeedingAgent: true }),
     );
+  });
+});
+
+// The owner's move of an idle-paused task (`handleTaskMove`, Priority 4) starts
+// its agent as a move starts a running task's: the whole enter group, and only
+// for an idle pause nothing else holds, asked again here under the task lock.
+describe('spawnAgent liftsIdlePause: the owner moved an idle-paused task', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    idlePauseHolds.workflowPaused = false;
+    idlePauseHolds.underRecovery = false;
+  });
+
+  it('starts the agent and runs the whole enter group for an idle pause', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: AUTO_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { liftsIdlePause: true });
+
+    // Red before the option: the held-pause guard returned first.
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+    expect(deps.engine.executeTransition).toHaveBeenCalledWith(
+      task, expect.anything(), 'enter', expect.not.objectContaining({ onlyRowsNeedingAgent: true }),
+    );
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The lift was declined under the lock. The move armed no enter rows of its
+   * own, so spawnAgent runs the group once with the agent paused, as the move's
+   * held branch would have, and starts nothing.
+   */
+  function expectHeldWithEnterRowsRun(deps: ReturnType<typeof makeDeps>, task: Task): void {
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+    expect(deps.engine.executeTransition).toHaveBeenCalledWith(
+      task, expect.anything(), 'enter', expect.objectContaining({ agentPaused: true }),
+    );
+    expect(deps.engine.executeTransition).not.toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), 'enter', expect.objectContaining({ startAgent: expect.anything() }),
+    );
+    expect(deps.engine.resumeSuspendedSession).not.toHaveBeenCalled();
+  }
+
+  it.each([
+    ['the user\'s Pause', USER_PAUSED_RECORD],
+    ['an earlier version\'s low-memory pause', { ...AUTO_PAUSED_RECORD, suspended_by: 'low_memory' }],
+    ['an idle pause whose start never reached an agent', { ...AUTO_PAUSED_RECORD, launch_failed_at: '2026-11-19T00:00:00.000Z' }],
+  ])('keeps %s held', async (_label, record) => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: record, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { liftsIdlePause: true });
+
+    expectHeldWithEnterRowsRun(deps, task);
+  });
+
+  it('keeps an idle pause held in a paused workflow', async () => {
+    idlePauseHolds.workflowPaused = true;
+    const task = makeTask({ workflow_id: 'workflow-1' } as Partial<Task>);
+    const deps = makeDeps({ latestSession: AUTO_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { liftsIdlePause: true });
+
+    expectHeldWithEnterRowsRun(deps, task);
+  });
+
+  it('keeps an idle pause held while a workflow recovery owns the next start', async () => {
+    idlePauseHolds.underRecovery = true;
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: AUTO_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { liftsIdlePause: true });
+
+    expectHeldWithEnterRowsRun(deps, task);
+  });
+
+  it('keeps an idle pause held when no projectId was given to re-ask the lift with', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: AUTO_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { liftsIdlePause: true, projectId: undefined });
+
+    expect(deps.engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    expect(deps.engine.executeTransition).not.toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), 'enter', expect.objectContaining({ startAgent: expect.anything() }),
+    );
+  });
+
+  it('resolves, and reports the failure, when the enter rows of a declined lift fail', async () => {
+    idlePauseLiftReporter.reset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: USER_PAUSED_RECORD, task });
+    deps.engine.executeTransition.mockRejectedValueOnce(new RangeError('enter list failed'));
+
+    await expect(
+      runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { liftsIdlePause: true }),
+    ).resolves.toBeUndefined();
+
+    expect(deps.engine.resumeSuspendedSession).not.toHaveBeenCalled();
+    expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+    const [reportedError, reportedTags] = mockReportHandledError.mock.calls[0] as [Error, Record<string, string>];
+    expect(reportedError.message).toBe('Handled idle_pause_lift failure: RangeError');
+    expect(reportedTags).toMatchObject({ source: 'idle_pause_lift' });
+  });
+
+  it('rejects when the enter rows of a declined lift are aborted, and reports nothing', async () => {
+    idlePauseLiftReporter.reset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: USER_PAUSED_RECORD, task });
+    const abortError = new DOMException('The move was superseded', 'AbortError');
+    deps.engine.executeTransition.mockRejectedValueOnce(abortError);
+
+    await expect(
+      runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { liftsIdlePause: true }),
+    ).rejects.toBe(abortError);
+
+    expect(mockReportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('runs no enter rows for a held pause when the move did not ask to lift it', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: AUTO_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps);
+
+    // The move's own held branch ran them; a second run here would double them.
+    expect(deps.engine.executeTransition).not.toHaveBeenCalled();
   });
 });
 

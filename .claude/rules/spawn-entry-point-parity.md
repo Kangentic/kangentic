@@ -61,13 +61,24 @@ contract was kept in sync across three files by prose comments alone.
   in `handlers/session-start.ts`), and must send the agent nothing: it claims no held messages,
   and `resumeOnly` makes the engine decline a start that would go fresh. A start that needs a
   message keeps its Resume button. A phone's open never reaches the Start or Resume path.
-- **A Resume after an entry goes through `spawnAgent`.** A move never starts a paused agent: it
-  runs the destination's enter rows that need no agent and skips the rest (`agentPaused`). When
+- **A Resume after an entry goes through `spawnAgent`.** A move starts no paused agent, and the
+  next bullet is the one exception. It runs the destination's enter rows that need no agent and
+  skips the rest (`agentPaused`). When
   the task entered its column after the pause, `resumeTaskSession` calls `spawnAgent` with
   `resumesEntry: true` instead of its direct engine call, so the Resume does what the entry
   would have done: the column's own session strategy and its enter rows that need the agent.
   An entry out of Done is a recovery move, so that start also passes `suppressAutoCommand`.
   `resumesEntry` lifts only the held-pause check, and `resumeTaskSession` is its one caller.
+- **The owner's move ends an idle pause, through `spawnAgent`.** The one exception to the bullet
+  above: when the owner moves a task the idle timeout paused (`'auto'`) into a column that starts
+  an agent, Priority 4 of `handleTaskMove` keeps its spawn plan and Phase 3 calls `spawnAgent`
+  with `liftsIdlePause: true`. The owner's move is a person's (`isMoveByAPerson`), an agent's
+  made in a turn the owner started (`ownerRequested`), or a Command Terminal's
+  (`moverIsCommandTerminal`, which marks nothing on the move row). `spawnAgent` re-asks
+  `isLiftableIdlePause` (`helpers/idle-pause-lift.ts`) under the task lock, so a user's Pause, a
+  paused workflow, a workflow recovery and a failed launch still hold. It runs the whole enter
+  group, unlike `resumesEntry`. When the re-check declines, `spawnAgent` runs the enter group
+  with `agentPaused`, as the move's held branch would have. `task-move.ts` is its one caller.
 - A **user-initiated start in place** (the phone's `start-session` verb, via `startTaskSession` in
   `handlers/session-start.ts`) is NOT a third direct engine call. For a paused task it calls
   `resumeTaskSession`, the Resume button's own path, which runs no enter automations unless the
@@ -176,7 +187,9 @@ contract was kept in sync across three files by prose comments alone.
   `browserAutomationEnabled` property in the same span whose value is
   `resolveBrowserAutomationConfig(...)` or the engine's `appConfig.browserAutomationEnabled`, and (j) any
   `claimHeldMessages(` call outside `agent-spawn.ts`, `session-resume.ts` and the held-messages
-  module, with a companion assertion that both builders still claim. That
+  module, with a companion assertion that both builders still claim, and (k) any `liftsIdlePause`
+  reference outside `helpers/agent-spawn.ts` and `handlers/task-move.ts`, with a companion
+  assertion that the move path still passes it. That
   scan proves line order, not control flow; the runtime ordering
   on the Command Terminal path is pinned separately by
   `tests/unit/transient-session-spawn-ensure-trust.test.ts`, which drives the handler and fails
