@@ -420,12 +420,17 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    - Rewrite terse commit subjects into clear, user-friendly descriptions
    - Merge related commits into single bullet points where appropriate (e.g., three commits that all improve the same feature become one bullet)
    Then collect the notes authors wrote themselves. Run
-   `git log <previousTag>..HEAD --format="%(trailers:key=Release-Note,valueonly)"` (no tag: drop the
-   range). Each non-empty line is a user-facing sentence a commit carried in a `Release-Note:`
-   trailer, for a change its subject undersells, such as something that switches off for some users.
+   `git log <previousTag>..HEAD --grep="^Release-Note:" --format="----%n%h %s%n%b"` (no tag: drop the
+   range), and take every body line that starts with `Release-Note:`. Each is a user-facing
+   sentence for a change its subject undersells, such as something that switches off for some users.
    Put each in its section with its meaning kept, and fold it into the bullet for the same change
-   rather than listing the change twice. The trailer is the only way such a note reaches this file,
+   rather than listing the change twice. The line is the only way such a note reaches this file,
    since the entry Step 3 printed is built from subjects only.
+
+   Read the bodies, never `%(trailers:key=Release-Note)`. Git parses trailers from the last
+   paragraph only, and an author who puts the note above a blank line and the `Co-Authored-By`
+   line has written a paragraph git does not read as a trailer. v0.60.0's one note (`9098fbab`,
+   the Windows signature timestamp) had that shape, and the trailer query returned nothing.
 2. **Group into sections:**
    - **What's New** -- features and enhancements
    - **Bug Fixes** -- fixes
