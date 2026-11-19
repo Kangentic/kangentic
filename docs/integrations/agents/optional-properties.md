@@ -6,12 +6,20 @@ tags: [agents, adapters]
 sources:
   - resource: src/main/agent/agent-adapter.ts
     title: AgentAdapter optional members
+  - resource: src/shared/types.ts
+    title: AgentParser, which declares the remote session, transcript and resume-seed members
   - resource: src/main/agent/shared/tool-call-cursor.ts
     title: The resumable tool-call cursor behind transcriptToolCounts and transcriptToolResultTokens (Claude, Qwen)
   - resource: src/renderer/utils/rate-limit-window.ts
     title: mergeRateLimitSnapshot, isRateLimitWindowExpired, liveRateLimitWindows, rateLimitWindowsForAgent (the reportsRateLimits snapshot, its expiry, and each agent's share of it)
 ---
 # Optional adapter properties
+
+Every row is an optional member of `AgentAdapter` (`src/main/agent/agent-adapter.ts`) except five.
+`remoteSessionFiles?()`, `remoteTranscriptFiles?()`, `remoteResumeSeed?()`,
+`remoteTranscriptIndex?()` and `remoteTranscriptSnapshot?()` are declared on `AgentParser`
+(`src/shared/types.ts`), the view of an adapter that the session and PTY layers read. An adapter
+implements them on its own class, and the session layer reaches them through that view.
 
 | Property | Type | Purpose |
 |----------|------|---------|

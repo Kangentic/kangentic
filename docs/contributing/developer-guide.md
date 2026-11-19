@@ -364,7 +364,10 @@ build time to embed a scene by name. `--base=<path>` on the CLI
 moves the base path; the GitHub Pages deploy (`.github/workflows/deploy-demo.yml`, called from
 the release graph after `publish-release`) builds with `--base=/kangentic/`. `demo/README.md`
 documents the URL contract, the scenes, the numbers, and the Electron-only surfaces that stay
-inert in a browser. `npm run demo:serve` serves the build for a manual look (open
+inert in a browser. A scene's scripted pointer is the dot kangentic.com's hero draws, read from
+`@kangentic/branding` (`assets/pointer/`) by `demo/pointer.ts`, and `demo/README.md` also documents
+the `kangentic-demo-scale` message a host posts so the dot keeps its size in a scaled frame.
+`npm run demo:serve` serves the build for a manual look (open
 `/demo/stage.html`), and `npm run demo:measure` reports its weight, its boot timings, the cost of
 hosting 1, 4 and 8 frames on one page, and the JS heap after a forced GC (`node demo/measure.mjs
 --heap` narrows that to the cases the site budgets). Both run `demo/measure.mjs`.
