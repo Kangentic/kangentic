@@ -97,6 +97,8 @@ vi.mock('../../src/main/pty/session-manager', () => {
       // re-points the sessions of a home whose login changed.
       getSessionHomeAccountId = vi.fn((_sessionId: string): string | null => null);
       repointAccount = vi.fn((_homeAccountId: string, _toAccountId: string) => [] as Array<{ sessionId: string; projectId: string; transient: boolean }>);
+      // It also tells the manager where an account keeps its login, for the session-id report.
+      setAccountHomeResolver = vi.fn();
       // The Stop registerAllIpc hands the worktree reaper, by pid and creation time.
       stopProcessByCreationTime = vi.fn(async (_pid: number, _startedAtMs: number) => 'stopped' as const);
       // registerAllIpc applies the configured session cap before anything spawns.

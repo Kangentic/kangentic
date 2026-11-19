@@ -111,6 +111,8 @@ vi.mock('../../src/main/pty/session-manager', async () => {
       setRemoteSessionRelay = vi.fn();
       remoteHostRequest = vi.fn();
       setEarlierRunsSource = vi.fn();
+      // The accounts handler tells the manager where an account keeps its login.
+      setAccountHomeResolver = vi.fn();
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
       setMaxConcurrent = vi.fn();
       setQueueGate = vi.fn();
