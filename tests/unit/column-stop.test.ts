@@ -189,14 +189,14 @@ describe('judgeColumnStop', () => {
     it('records the spent-row stop when the user\'s message matches', async () => {
       const spent = userRow();
       spend(spent);
-      await judgeWithUserReader([spent], async () => ({ readable: true, message: 'Signed off.' }));
+      await judgeWithUserReader([spent], async () => ({ readable: true, messages: ['Signed off.'] }));
       expect(stop()).toMatchObject({ cause: 'spent-row' });
     });
 
     it('records no stop from the row when the user\'s message does not match', async () => {
       const spent = userRow();
       spend(spent);
-      await judgeWithUserReader([spent], async () => ({ readable: true, message: 'Not yet' }));
+      await judgeWithUserReader([spent], async () => ({ readable: true, messages: ['Not yet'] }));
       expect(stop()).toBeNull();
     });
 
@@ -217,12 +217,12 @@ describe('judgeColumnStop', () => {
     it('does not stop on an agent line that names the phrase', async () => {
       const spent = userRow();
       spend(spent);
-      await judgeWithUserReader([spent], async () => ({ readable: true, message: null }), 'signed off');
+      await judgeWithUserReader([spent], async () => ({ readable: true, messages: [] }), 'signed off');
       expect(stop()).toBeNull();
     });
 
     it('does not read the user\'s message when no spent row is on it', async () => {
-      const readUserMessage = vi.fn(async (): Promise<UserMessageRead> => ({ readable: true, message: 'Signed off.' }));
+      const readUserMessage = vi.fn(async (): Promise<UserMessageRead> => ({ readable: true, messages: ['Signed off.'] }));
       const agentRow = row({ final_line: 'Status: more work' });
       spend(agentRow);
       // An unspent user row never reads either: it was not going to stop the card.
@@ -232,7 +232,7 @@ describe('judgeColumnStop', () => {
     });
 
     it('reads it once when a spent user row is present', async () => {
-      const readUserMessage = vi.fn(async (): Promise<UserMessageRead> => ({ readable: true, message: 'Signed off.' }));
+      const readUserMessage = vi.fn(async (): Promise<UserMessageRead> => ({ readable: true, messages: ['Signed off.'] }));
       const spent = userRow();
       spend(spent);
       await judgeWithUserReader([spent], readUserMessage);

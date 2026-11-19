@@ -338,19 +338,19 @@ describe('Text match', () => {
     };
 
     it('runs when the user\'s message matches', async () => {
-      const { executed, rows } = await runUserRow({ readable: true, message: 'Design is signed off' });
+      const { executed, rows } = await runUserRow({ readable: true, messages: ['Design is signed off'] });
       expect(executed).toHaveBeenCalledTimes(1);
       expect(rows[0]).toMatchObject({ status: 'succeeded', finalLine: { met: true } });
       expect(JSON.stringify(rows[0])).not.toContain('Design is signed off');
     });
 
     it('never runs on the agent\'s line alone', async () => {
-      const { executed } = await runUserRow({ readable: true, message: null });
+      const { executed } = await runUserRow({ readable: true, messages: [] });
       expect(executed).not.toHaveBeenCalled();
     });
 
     it('skips, not met, when the user\'s message rules it out', async () => {
-      const { executed, rows } = await runUserRow({ readable: true, message: 'not signed off yet' });
+      const { executed, rows } = await runUserRow({ readable: true, messages: ['not signed off yet'] });
       expect(executed).not.toHaveBeenCalled();
       expect(rows[0]).toMatchObject({ status: 'skipped' });
     });
@@ -493,7 +493,7 @@ describe('Text match on the user\'s message: reportsUserMessages', () => {
   it('skips a user-source row with the unreported-messages reason when the agent cannot report them', async () => {
     const { executed, rows } = await runRow(USER_ROW, {
       reportsUserMessages: false,
-      userMessage: { readable: true, message: 'Signed off.' },
+      userMessage: { readable: true, messages: ['Signed off.'] },
     });
     expect(executed).not.toHaveBeenCalled();
     expect(rows).toHaveLength(1);
@@ -519,7 +519,7 @@ describe('Text match on the user\'s message: reportsUserMessages', () => {
 
   it('runs a user-source row on a matching, readable user message', async () => {
     const { executed, rows } = await runRow(USER_ROW, {
-      userMessage: { readable: true, message: 'Signed off.' },
+      userMessage: { readable: true, messages: ['Signed off.'] },
     });
     expect(executed).toHaveBeenCalledTimes(1);
     expect(rows[0]).toMatchObject({ status: 'succeeded', finalLine: { met: true } });

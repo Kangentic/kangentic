@@ -105,13 +105,16 @@ it is checked:
   line and none of the `!` lines, in any order; with only `!` lines it runs on any line but those.
   A turn that ends with no message runs no Text match, with or without `!`. Hover the info icon
   after its hint for the rules and examples.
-- **Your message** is the same Text match, against your last message in the turn instead,
-  including one you typed while the agent was working. A message Kangentic typed (a column message,
-  a nudge) never counts as yours. Neither does one you sent while no agent was running, from your
-  phone or the desktop: Kangentic holds it and hands it to the next agent itself, often inside the
-  column's own message. It is how a column lets you move a card on by saying so: the
+- **Your message** is the same Text match, against the messages you sent in the turn instead,
+  including ones you typed while the agent was working. Each is judged on its own, and the newest
+  one that matches a pattern decides: "signed off" followed by a question still moves the card,
+  and "signed off" followed by "not signed off" does not. A message Kangentic typed (a column
+  message, a nudge) never counts as yours. Neither does one you sent while no agent was running,
+  from your phone or the desktop: Kangentic holds it and hands it to the next agent itself, often
+  inside the column's own message. It is how a column lets you move a card on by saying so: the
   Design column's **On to Planning** row moves a card when you type "signed off". The run log says
-  whether your message matched, never what it said. When Kangentic cannot read the turn exactly (an
+  whether your message matched and, when you sent several, which one decided. It never says what
+  any of them said. When Kangentic cannot read the turn exactly (an
   agent's first turn, a very large turn, Run again), the row does not run. It needs an agent that
   reports the messages you send (Claude Code today); for another agent the tab is disabled with the
   reason, and a saved row is shown off.

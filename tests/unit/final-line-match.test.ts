@@ -14,6 +14,11 @@ import {
   TEXT_MATCH_NO_REPLY_REASON,
   TEXT_MATCH_PLACEHOLDER,
   TEXT_MATCH_EXAMPLES,
+  USER_TEXT_MATCH_MET_REASON,
+  USER_TEXT_MATCH_NO_MESSAGE_REASON,
+  USER_TEXT_MATCH_NOT_MET_REASON,
+  USER_TEXT_MATCH_RULED_OUT_REASON,
+  textMatchVerdict,
   conditionKindsAsStored,
   finalMatchLine,
   legacyTextMatch,
@@ -410,18 +415,80 @@ describe('conditionKindsAsStored', () => {
   });
 });
 
+/** A sign-off row's patterns, the shape the Design columns use. */
+const SIGN_OFF = '*signed off*\n!*not signed off*';
+
 describe('matchUserMessage', () => {
   // The reasons are stored on the run and read by agents, and never quote the user's text.
   it('says whether the user\'s message matched, never what it said', () => {
-    const met = matchUserMessage('*signed off*', { readable: true, message: 'Design is signed off' });
+    const met = matchUserMessage('*signed off*', { readable: true, messages: ['Design is signed off'] });
     expect(met.met).toBe(true);
     expect(met.reason).not.toContain('Design is signed off');
-    expect(matchUserMessage('*signed off*', { readable: true, message: 'the rest look good' }).met).toBe(false);
+    expect(matchUserMessage('*signed off*', { readable: true, messages: ['the rest look good'] }).met).toBe(false);
   });
 
   it('fails closed on an unreadable turn and on a turn with no message from the user', () => {
     expect(matchUserMessage('*', { readable: false }).met).toBe(false);
-    expect(matchUserMessage('*', { readable: true, message: null }).met).toBe(false);
-    expect(matchUserMessage('!*not*', { readable: true, message: '   ' }).met).toBe(false);
+    expect(matchUserMessage('*', { readable: true, messages: [] })).toEqual({ met: false, reason: USER_TEXT_MATCH_NO_MESSAGE_REASON });
+    expect(matchUserMessage('!*not*', { readable: true, messages: ['   ', '...'] })).toEqual({ met: false, reason: USER_TEXT_MATCH_NO_MESSAGE_REASON });
+  });
+
+  // One message keeps the reasons a single read always gave, so most run rows read as before.
+  it('keeps the single-message reasons for a turn with one message', () => {
+    expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['signed off'] })).toEqual({ met: true, reason: USER_TEXT_MATCH_MET_REASON });
+    expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['not signed off'] })).toEqual({ met: false, reason: USER_TEXT_MATCH_RULED_OUT_REASON });
+    expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['looks good'] })).toEqual({ met: false, reason: USER_TEXT_MATCH_NOT_MET_REASON });
+  });
+
+  describe('several messages: the newest one that matches a pattern decides', () => {
+    // kangentic.com #145: a question sent while the agent worked came after the sign-off.
+    it('runs on a sign-off followed by a message that matches nothing', () => {
+      expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['signed off', 'Does the scene need its own task?'] }))
+        .toEqual({ met: true, reason: 'Your message 1 of 2 in this turn matched.' });
+    });
+
+    it('skips on a later refusal, naming the message that ruled it out', () => {
+      expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['signed off', 'wait, not signed off', 'one more thing'] }))
+        .toEqual({ met: false, reason: 'Your message 2 of 3 in this turn matched a ! pattern.' });
+    });
+
+    it('runs on a sign-off after an earlier refusal', () => {
+      expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['not signed off', 'ok, signed off'] }))
+        .toEqual({ met: true, reason: 'Your message 2 of 2 in this turn matched.' });
+    });
+
+    it('rules out a message that matches both a plain and a ! pattern', () => {
+      expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['signed off', 'not signed off'] }).met).toBe(false);
+    });
+
+    it('names how many it read when none matched', () => {
+      expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['looks good', 'one question'] }))
+        .toEqual({ met: false, reason: 'None of your 2 messages in this turn matched a pattern.' });
+    });
+
+    // With only ! patterns every message matches something, so the newest one decides.
+    it('lets the newest message decide a Text match of only ! patterns', () => {
+      expect(matchUserMessage('!*wait*', { readable: true, messages: ['wait', 'go ahead'] }).met).toBe(true);
+      expect(matchUserMessage('!*wait*', { readable: true, messages: ['go ahead', 'wait'] }).met).toBe(false);
+    });
+
+    it('never runs a Text match that can never match', () => {
+      expect(matchUserMessage('!---', { readable: true, messages: ['signed off', 'go ahead'] }).met).toBe(false);
+    });
+
+    it('counts only messages with words', () => {
+      expect(matchUserMessage(SIGN_OFF, { readable: true, messages: ['signed off', '...', 'a question'] }))
+        .toEqual({ met: true, reason: 'Your message 1 of 2 in this turn matched.' });
+    });
+  });
+});
+
+describe('textMatchVerdict', () => {
+  it('reads each verdict, a ! pattern winning within one text', () => {
+    expect(textMatchVerdict(SIGN_OFF, 'Design is signed off')).toBe('matched');
+    expect(textMatchVerdict(SIGN_OFF, 'not signed off')).toBe('ruled-out');
+    expect(textMatchVerdict(SIGN_OFF, 'looks good')).toBe('silent');
+    expect(textMatchVerdict('!*wait*', 'go ahead')).toBe('matched');
+    expect(textMatchVerdict('!---', 'go ahead')).toBe('silent');
   });
 });

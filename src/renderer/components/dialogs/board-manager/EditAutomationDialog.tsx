@@ -584,7 +584,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               <span className={`flex min-h-7 items-center gap-1.5 ${SETTING_DESCRIPTION_CLASS} ${conditionOn ? '' : 'opacity-50'}`}>
                 <span data-testid="edit-automation-final-line-hint">
                   {conditionKind === 'user-message'
-                    ? t`Matches your last message in the turn, with * and ! supported.`
+                    ? t`Matches your messages in the turn, with * and ! supported.`
                     : t`Matches the last line the agent writes when its turn ends, with * and ! supported.`}
                 </span>
                 <TextMatchPatternsTip />

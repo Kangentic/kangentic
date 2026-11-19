@@ -5,7 +5,7 @@ import type { UserMessageRead } from '../../../shared/final-line-match';
 
 /**
  * The record of what Kangentic itself typed into a session, and the read of
- * the user's last message in a turn that leaves those out (#1078).
+ * the user's messages in a turn that leaves those out (#1078).
  *
  * The agent's transcript cannot tell Kangentic's text from a person's, so a
  * Text match on the user's message drops every transcript message whose text
@@ -72,14 +72,15 @@ export function recordKangenticTypedInProject(projectId: string, sessionId: stri
 }
 
 /**
- * The user's last message among a turn's user messages, leaving out every
- * text Kangentic recorded typing into the session.
+ * The messages a person sent among a turn's user messages, oldest first,
+ * leaving out every text Kangentic recorded typing into the session and every
+ * message with no words.
  *
  * `userMessages` is null when the transcript read failed or the agent has no
  * reader: unreadable. A session whose record is incomplete is unreadable too.
  * Fails closed on any error.
  */
-export function lastUserMessage(
+export function personMessagesInTurn(
   projectDb: Database.Database | null,
   sessionId: string,
   userMessages: readonly string[] | null,
@@ -87,13 +88,11 @@ export function lastUserMessage(
   if (userMessages === null || projectDb === null || unreliableSessions.has(sessionId)) return { readable: false };
   try {
     const typedKeys = new SessionTypedMessageRepository(projectDb).keysForSession(sessionId);
-    for (let index = userMessages.length - 1; index >= 0; index -= 1) {
-      const key = typedMessageKey(userMessages[index]);
-      if (key === null) continue;
-      if (typedKeys.has(key)) continue;
-      return { readable: true, message: userMessages[index] };
-    }
-    return { readable: true, message: null };
+    const messages = userMessages.filter((message) => {
+      const key = typedMessageKey(message);
+      return key !== null && !typedKeys.has(key);
+    });
+    return { readable: true, messages };
   } catch (error) {
     console.warn(`[typed-message-ledger] could not read the typed record for session ${sessionId.slice(0, 8)}:`, error);
     return { readable: false };

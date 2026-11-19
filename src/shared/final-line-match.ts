@@ -142,8 +142,25 @@ export const TEXT_MATCH_NO_REPLY_REASON = 'The turn ended without a message Kang
  */
 export const USER_TEXT_MATCH_MET_REASON = 'Your message matched.';
 export const USER_TEXT_MATCH_NOT_MET_REASON = 'Your message matched no pattern.';
+export const USER_TEXT_MATCH_RULED_OUT_REASON = 'Your message matched a ! pattern.';
 export const USER_TEXT_MATCH_NO_MESSAGE_REASON = 'No message from you in this turn.';
 export const USER_TEXT_MATCH_UNREADABLE_REASON = "Kangentic couldn't read your messages for this turn, so the row did not run.";
+
+/**
+ * The reasons for a turn with several messages from the user, naming the one
+ * that decided by its place among them, oldest first. Never its words.
+ */
+export function userTextMatchMetAtReason(position: number, count: number): string {
+  return `Your message ${position} of ${count} in this turn matched.`;
+}
+
+export function userTextMatchRuledOutAtReason(position: number, count: number): string {
+  return `Your message ${position} of ${count} in this turn matched a ! pattern.`;
+}
+
+export function userTextMatchNoneOfReason(count: number): string {
+  return `None of your ${count} messages in this turn matched a pattern.`;
+}
 
 /** How much of the final line a reason quotes. */
 const REASON_LINE_MAX = 120;
@@ -289,18 +306,36 @@ export function unmatchablePattern(value: string | null | undefined): string | n
 }
 
 /**
- * Whether a line meets a Text match: it matches a plain pattern (or there are
- * none) and no `!` pattern. A Text match that can never run
+ * Whether a line meets a Text match: its `textMatchVerdict` is `matched`,
+ * which holds the rule. A Text match that can never run
  * (`textMatchCanMatch`) never matches, so a stored `!` alone still runs
  * nothing rather than everything.
  */
 export function textMatchMatches(value: string | null | undefined, line: string): boolean {
+  return textMatchVerdict(value, line) === 'matched';
+}
+
+/**
+ * What a Text match makes of one line or message:
+ *
+ *  - `ruled-out`: it matches a `!` pattern. A `!` wins within one text, so
+ *    "not signed off" is ruled out by `!*not signed off*` even though it also
+ *    matches `*signed off*`.
+ *  - `matched`: no `!` pattern, and a plain pattern matches (or there are
+ *    none, and some `!` pattern can rule a text out at all).
+ *  - `silent`: neither. Only a Text match with plain patterns, or one that can
+ *    never run (`textMatchCanMatch`), leaves a text silent.
+ */
+export type TextMatchVerdict = 'matched' | 'ruled-out' | 'silent';
+
+export function textMatchVerdict(value: string | null | undefined, line: string): TextMatchVerdict {
   const { plain, negated } = parseTextMatch(value);
   const text = normalizeForMatch(line);
+  if (negated.some((pattern) => normalizedLineMatchesPattern(pattern, text))) return 'ruled-out';
   const included = plain.length > 0
     ? plain.some((pattern) => normalizedLineMatchesPattern(pattern, text))
     : negated.some(patternCanMatch);
-  return included && !negated.some((pattern) => normalizedLineMatchesPattern(pattern, text));
+  return included ? 'matched' : 'silent';
 }
 
 /**
@@ -380,28 +415,50 @@ export function matchFinalLine(value: string, reply: string | null | undefined):
 }
 
 /**
- * What the turn-end read found of the user's messages: their last message in
- * the turn (null when they sent none Kangentic did not type itself), or
- * `unreadable` when the read failed or the agent cannot report them.
+ * What the turn-end read found of the user's messages: every message they sent
+ * in the turn, oldest first, less what Kangentic typed itself (empty when
+ * they sent none), or `unreadable` when the read failed or the agent cannot
+ * report them.
  */
-export type UserMessageRead = { readable: true; message: string | null } | { readable: false };
+export type UserMessageRead = { readable: true; messages: readonly string[] } | { readable: false };
 
 /**
- * Match a Text match against the user's last message in the turn, the WHOLE
- * message, with the same forgiveness as a final line (case, punctuation,
- * markdown, runs of spaces and line breaks).
+ * Match a Text match against the user's messages in the turn, each one WHOLE,
+ * with the same forgiveness as a final line (case, punctuation, markdown, runs
+ * of spaces and line breaks).
+ *
+ * Each message is judged on its own (`textMatchVerdict`), and the newest one
+ * that matches any pattern decides: a plain match runs the row, a `!` match
+ * rules it out, and a message that matches nothing leaves the decision to the
+ * ones before it. So a sign-off followed by a question still runs the row (a
+ * person who asks something while the agent works, kangentic.com #145), and a sign-off
+ * followed by "not signed off" does not. With only `!` patterns every message
+ * matches something, so the newest one decides.
  *
  * Fails closed: a read that failed, and a turn with no message from the user,
- * meet nothing, `!` patterns included. The reasons never quote the message:
- * the user's words are read for the match and never stored.
+ * meet nothing, `!` patterns included. The reasons never quote a message: the
+ * user's words are read for the match and never stored. With several
+ * messages, a reason names the one that decided by its place.
  */
 export function matchUserMessage(value: string, read: UserMessageRead): FinalLineMatch {
   if (!read.readable) return { met: false, reason: USER_TEXT_MATCH_UNREADABLE_REASON };
-  if (read.message === null || normalizeForMatch(read.message) === '') {
-    return { met: false, reason: USER_TEXT_MATCH_NO_MESSAGE_REASON };
+  // The ledger's read already drops a message with no words (`typedMessageKey`
+  // is null exactly when this is empty). The same rule runs here for a read
+  // built without it, so the positions a reason names count the same messages.
+  const messages = read.messages.filter((message) => normalizeForMatch(message) !== '');
+  if (messages.length === 0) return { met: false, reason: USER_TEXT_MATCH_NO_MESSAGE_REASON };
+  const count = messages.length;
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const verdict = textMatchVerdict(value, messages[index]);
+    if (verdict === 'silent') continue;
+    const met = verdict === 'matched';
+    if (count === 1) return { met, reason: met ? USER_TEXT_MATCH_MET_REASON : USER_TEXT_MATCH_RULED_OUT_REASON };
+    return {
+      met,
+      reason: met ? userTextMatchMetAtReason(index + 1, count) : userTextMatchRuledOutAtReason(index + 1, count),
+    };
   }
-  const met = textMatchMatches(value, read.message);
-  return { met, reason: met ? USER_TEXT_MATCH_MET_REASON : USER_TEXT_MATCH_NOT_MET_REASON };
+  return { met: false, reason: count === 1 ? USER_TEXT_MATCH_NOT_MET_REASON : userTextMatchNoneOfReason(count) };
 }
 
 /** A final line as a reason quotes it: cut after `REASON_LINE_MAX` characters. */

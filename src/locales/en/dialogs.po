@@ -1537,8 +1537,8 @@ msgid "Matches the last line the agent writes when its turn ends, with * and ! s
 msgstr "Matches the last line the agent writes when its turn ends, with * and ! supported."
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches your last message in the turn, with * and ! supported."
-msgstr "Matches your last message in the turn, with * and ! supported."
+msgid "Matches your messages in the turn, with * and ! supported."
+msgstr "Matches your messages in the turn, with * and ! supported."
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"

@@ -518,7 +518,7 @@ export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown,
           return { error: `condition.text has an unknown key "${extra}"; its long form is { "from": "agent" | "user", "patterns": pattern or [patterns] }.` };
         }
         if (longForm.from !== 'agent' && longForm.from !== 'user') {
-          return { error: 'condition.text.from must be "agent" (the agent\'s last line) or "user" (your last message in the turn).' };
+          return { error: 'condition.text.from must be "agent" (the agent\'s last line) or "user" (your messages in the turn).' };
         }
         source = longForm.from;
         patternValue = longForm.patterns;

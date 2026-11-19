@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AgentReply } from '../../agent/shared/agent-reply';
 import type { UserMessageRead } from '../../../shared/final-line-match';
-import { lastUserMessage } from './typed-message-ledger';
+import { personMessagesInTurn } from './typed-message-ledger';
 import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import { retrievalClient, RetrievalUnavailableError } from '../../retrieval/retrieval-client';
@@ -109,7 +109,7 @@ export function sessionReportsUserMessages(sessionId: string, sessionRepo: Sessi
 }
 
 /**
- * The user's last message in the turn that began at `transcriptAnchor`, for a
+ * The user's messages in the turn that began at `transcriptAnchor`, for a
  * Text match on the user's message (#1078): the turn's user messages read in
  * the retrieval worker, less every text Kangentic recorded typing into the
  * session (`typed-message-ledger.ts`).
@@ -120,7 +120,7 @@ export function sessionReportsUserMessages(sessionId: string, sessionRepo: Sessi
  * The row then does not run. The typed record is read under the record's own
  * id, the id Kangentic recorded under, even when the lookup matched the agent's.
  */
-export async function readTurnUserMessage(
+export async function readUserMessagesInTurn(
   session: SessionReadInput,
   sessionRepo: SessionRepository,
   projectDb: Database.Database | null,
@@ -130,7 +130,7 @@ export async function readTurnUserMessage(
   try {
     const read = await callSessionTranscript('transcript.turnUserMessages', session, sessionRepo, timeoutMs);
     if (read === null) return { readable: false };
-    return lastUserMessage(projectDb, read.recordId, read.result ?? null);
+    return personMessagesInTurn(projectDb, read.recordId, read.result ?? null);
   } catch (error) {
     console.warn(`[automations] Could not read the user's messages for ${session.sessionId.slice(0, 8)}:`, error);
     return { readable: false };

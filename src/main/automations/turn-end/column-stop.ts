@@ -74,7 +74,7 @@ export interface JudgeColumnStopInput {
   visitStartedAt: string | null;
   readReply: () => Promise<string | null>;
   /**
-   * The user's last message in the turn, for a spent row whose Text match is
+   * The user's messages in the turn, for a spent row whose Text match is
    * on it (#1078). Absent, such a row reads as not met (fail closed).
    */
   readUserMessage?: () => Promise<UserMessageRead>;

@@ -4,11 +4,11 @@ import { getOpenProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
 import type { UserMessageRead } from '../../../shared/final-line-match';
-import { readTurnUserMessage } from './final-reply-reader';
+import { readUserMessagesInTurn } from './final-reply-reader';
 
 /**
  * How long the read may take in all, the worker's one retry included
- * (`readTurnUserMessage` retries 1.5 s later when the worker is restarting).
+ * (`readUserMessagesInTurn` retries 1.5 s later when the worker is restarting).
  * The move waits on it before it commits, and the agent's turn usually ends a
  * few seconds after its call. A read that outlasted that turn end would let
  * the column's turn-end rows judge a turn whose task is leaving, so a read
@@ -75,7 +75,7 @@ export async function turnStartedByOwner(
     const projectDb = openProjectDb(session.projectId);
     if (projectDb === null) return false;
     const read = await readWithinBudget(
-      readTurnUserMessage(
+      readUserMessagesInTurn(
         { sessionId, transcriptAnchor },
         new SessionRepository(projectDb),
         projectDb,
@@ -83,7 +83,7 @@ export async function turnStartedByOwner(
       ),
       OWNER_TURN_READ_TIMEOUT_MS,
     );
-    return read !== null && read.readable && read.message !== null;
+    return read !== null && read.readable && read.messages.length > 0;
   } catch (error) {
     ownerTurnReporter.report(error);
     return false;

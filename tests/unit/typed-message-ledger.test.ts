@@ -20,7 +20,7 @@ vi.mock('../../src/main/db/database', () => ({
 
 import {
   forgetTypedMessageSession,
-  lastUserMessage,
+  personMessagesInTurn,
   recordKangenticTyped,
   recordKangenticTypedInProject,
   resetTypedMessageLedgerForTest,
@@ -70,14 +70,14 @@ describe('the Design board rows this test reads', () => {
 describe('a turn whose only user text is Kangentic\'s', () => {
   it('does not run On to Planning on the Design contract Kangentic typed', () => {
     recordKangenticTyped(lookup, SESSION_ID, designContract);
-    const read = lastUserMessage(hoisted.database, SESSION_ID, [designContract]);
-    expect(read).toEqual({ readable: true, message: null });
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, [designContract]);
+    expect(read).toEqual({ readable: true, messages: [] });
     expect(matchUserMessage(onToPlanningPatterns, read).met).toBe(false);
   });
 
   it('does not run it on the contract a resume put on the command line', () => {
     recordKangenticTypedInProject(PROJECT_ID, SESSION_ID, designContract);
-    expect(matchUserMessage(onToPlanningPatterns, lastUserMessage(hoisted.database, SESSION_ID, [designContract])).met).toBe(false);
+    expect(matchUserMessage(onToPlanningPatterns, personMessagesInTurn(hoisted.database, SESSION_ID, [designContract])).met).toBe(false);
   });
 
   // The record forgives what delivery changes: keystroke delivery turns line breaks into spaces,
@@ -85,55 +85,80 @@ describe('a turn whose only user text is Kangentic\'s', () => {
   it('drops the contract however its line breaks and case reached the transcript', () => {
     recordKangenticTyped(lookup, SESSION_ID, designContract.replace(/\. /g, '.\n'));
     const asDelivered = designContract.replace(/\s+/g, ' ').toUpperCase();
-    expect(lastUserMessage(hoisted.database, SESSION_ID, [asDelivered])).toEqual({ readable: true, message: null });
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID, [asDelivered])).toEqual({ readable: true, messages: [] });
   });
 
   // Defense in depth: even with no record, the contract's own words rule the row out.
   it('does not run On to Planning on the contract\'s words even unrecorded', () => {
-    expect(matchUserMessage(onToPlanningPatterns, { readable: true, message: designContract }).met).toBe(false);
+    expect(matchUserMessage(onToPlanningPatterns, { readable: true, messages: [designContract] }).met).toBe(false);
+  });
+
+  // Every message counts now, so an unrecorded contract earlier in the turn is read too. A
+  // question after it matches nothing, which leaves the contract to decide, and it rules itself out.
+  it('does not run it on an unrecorded contract followed by a question', () => {
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, [designContract, 'Does this need a follow-up task?']);
+    expect(read).toEqual({ readable: true, messages: [designContract, 'Does this need a follow-up task?'] });
+    expect(matchUserMessage(onToPlanningPatterns, read).met).toBe(false);
   });
 });
 
-describe('the user\'s own message', () => {
+describe('the user\'s own messages', () => {
   it('reads the owner\'s sign-off after Kangentic\'s message, and it runs the row', () => {
     recordKangenticTyped(lookup, SESSION_ID, designContract);
-    const read = lastUserMessage(hoisted.database, SESSION_ID, [designContract, 'Looks great, design is signed off']);
-    expect(read).toEqual({ readable: true, message: 'Looks great, design is signed off' });
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, [designContract, 'Looks great, design is signed off']);
+    expect(read).toEqual({ readable: true, messages: ['Looks great, design is signed off'] });
     expect(matchUserMessage(onToPlanningPatterns, read).met).toBe(true);
   });
 
-  // The last message wins: a later "not signed off" overrules an earlier sign-off.
-  it('reads the newest of the user\'s messages, and a later refusal stops the row', () => {
-    const read = lastUserMessage(hoisted.database, SESSION_ID, ['signed off', 'wait, this is not signed off yet']);
-    expect(read).toEqual({ readable: true, message: 'wait, this is not signed off yet' });
-    expect(matchUserMessage(onToPlanningPatterns, read).met).toBe(false);
+  // kangentic.com #145: the owner signed off, then asked a question while the agent worked. The
+  // question matches no pattern, so the sign-off before it still moves the card.
+  it('runs the row on a sign-off followed by a question sent mid-turn', () => {
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, ['signed off', 'Should the SSH scene be its own task?']);
+    expect(read).toEqual({ readable: true, messages: ['signed off', 'Should the SSH scene be its own task?'] });
+    expect(matchUserMessage(onToPlanningPatterns, read)).toEqual({ met: true, reason: 'Your message 1 of 2 in this turn matched.' });
+  });
+
+  // The newest message that matches a pattern decides: a later "not signed off" overrules an
+  // earlier sign-off.
+  it('stops the row on a later refusal', () => {
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, ['signed off', 'wait, this is not signed off yet']);
+    expect(read).toEqual({ readable: true, messages: ['signed off', 'wait, this is not signed off yet'] });
+    expect(matchUserMessage(onToPlanningPatterns, read)).toEqual({
+      met: false,
+      reason: 'Your message 2 of 2 in this turn matched a ! pattern.',
+    });
+  });
+
+  it('runs the row on a sign-off after an earlier refusal', () => {
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, ['not signed off', 'ok, signed off']);
+    expect(matchUserMessage(onToPlanningPatterns, read).met).toBe(true);
   });
 
   it('skips a Kangentic message typed after the owner\'s', () => {
     recordKangenticTyped(lookup, SESSION_ID, 'Continue with the canvas.');
-    const read = lastUserMessage(hoisted.database, SESSION_ID, ['signed off', 'Continue with the canvas.']);
-    expect(read).toEqual({ readable: true, message: 'signed off' });
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, ['signed off', 'Continue with the canvas.']);
+    expect(read).toEqual({ readable: true, messages: ['signed off'] });
   });
 
   it('keeps other feedback from moving the card', () => {
-    expect(matchUserMessage(onToPlanningPatterns, lastUserMessage(hoisted.database, SESSION_ID, ['the rest look good'])).met).toBe(false);
+    expect(matchUserMessage(onToPlanningPatterns, personMessagesInTurn(hoisted.database, SESSION_ID, ['the rest look good'])).met).toBe(false);
   });
 });
 
 describe('fails closed', () => {
   it('is unreadable when the transcript read failed', () => {
-    expect(lastUserMessage(hoisted.database, SESSION_ID, null)).toEqual({ readable: false });
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID, null)).toEqual({ readable: false });
   });
 
   it('is unreadable with no database', () => {
-    expect(lastUserMessage(null, SESSION_ID, ['signed off'])).toEqual({ readable: false });
+    expect(personMessagesInTurn(null, SESSION_ID, ['signed off'])).toEqual({ readable: false });
   });
 
   // A record that could not be written leaves Kangentic's text unaccounted for, so the session's
   // reads stop: reading on would hand the contract to the matcher as the user's words.
   it('marks a session whose record had no row, and reads it as unreadable from then on', () => {
     recordKangenticTyped(lookup, 'session-with-no-row', designContract);
-    expect(lastUserMessage(hoisted.database, 'session-with-no-row', ['signed off'])).toEqual({ readable: false });
+    expect(personMessagesInTurn(hoisted.database, 'session-with-no-row', ['signed off'])).toEqual({ readable: false });
   });
 
   it('marks a session whose project had no open database', () => {
@@ -141,56 +166,56 @@ describe('fails closed', () => {
     hoisted.database = null;
     recordKangenticTyped(lookup, SESSION_ID, designContract);
     hoisted.database = database;
-    expect(lastUserMessage(hoisted.database, SESSION_ID, ['signed off'])).toEqual({ readable: false });
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID, ['signed off'])).toEqual({ readable: false });
   });
 
   // A removed session never ends another turn, so its mark is dropped. A session that is reused
   // (the same id) after that starts with a clean record.
   it('reads again after the session\'s unreliable mark is forgotten and its record is set up', () => {
     recordKangenticTyped(lookup, SESSION_ID + '-gone', designContract);
-    expect(lastUserMessage(hoisted.database, SESSION_ID + '-gone', ['signed off'])).toEqual({ readable: false });
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID + '-gone', ['signed off'])).toEqual({ readable: false });
 
     forgetTypedMessageSession(SESSION_ID + '-gone');
     insertSession(hoisted.database!, SESSION_ID + '-gone');
     recordKangenticTyped(lookup, SESSION_ID + '-gone', designContract);
 
-    expect(lastUserMessage(hoisted.database, SESSION_ID + '-gone', [designContract, 'signed off'])).toEqual({ readable: true, message: 'signed off' });
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID + '-gone', [designContract, 'signed off'])).toEqual({ readable: true, messages: ['signed off'] });
   });
 
   it('forgets only the session named, so another session stays unreadable', () => {
     recordKangenticTyped(lookup, 'session-no-row-a', designContract);
     recordKangenticTyped(lookup, 'session-no-row-b', designContract);
     forgetTypedMessageSession('session-no-row-a');
-    expect(lastUserMessage(hoisted.database, 'session-no-row-a', ['signed off'])).toEqual({ readable: true, message: 'signed off' });
-    expect(lastUserMessage(hoisted.database, 'session-no-row-b', ['signed off'])).toEqual({ readable: false });
+    expect(personMessagesInTurn(hoisted.database, 'session-no-row-a', ['signed off'])).toEqual({ readable: true, messages: ['signed off'] });
+    expect(personMessagesInTurn(hoisted.database, 'session-no-row-b', ['signed off'])).toEqual({ readable: false });
   });
 
   it('forgetting a session that was never marked changes nothing', () => {
     forgetTypedMessageSession('session-never-marked');
-    expect(lastUserMessage(hoisted.database, SESSION_ID, ['signed off'])).toEqual({ readable: true, message: 'signed off' });
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID, ['signed off'])).toEqual({ readable: true, messages: ['signed off'] });
   });
 
   // The transcript holds the text as the agent saw it, so the record matches on normalized words.
-  it('drops a recorded message however it is cased or spaced, and returns the latest one that was not recorded', () => {
+  it('drops a recorded message however it is cased or spaced, and a message with no words, and keeps the rest in order', () => {
     recordKangenticTyped(lookup, SESSION_ID, 'Please   continue\nwith the CANVAS.');
-    const read = lastUserMessage(hoisted.database, SESSION_ID, [
+    const read = personMessagesInTurn(hoisted.database, SESSION_ID, [
       'first thoughts',
       'the owner said: signed off',
       'please continue with the canvas',
       '...',
     ]);
-    expect(read).toEqual({ readable: true, message: 'the owner said: signed off' });
+    expect(read).toEqual({ readable: true, messages: ['first thoughts', 'the owner said: signed off'] });
   });
 
   it('returns no message when every one was recorded', () => {
     recordKangenticTyped(lookup, SESSION_ID, 'one');
     recordKangenticTyped(lookup, SESSION_ID, 'two');
-    expect(lastUserMessage(hoisted.database, SESSION_ID, ['one', 'two'])).toEqual({ readable: true, message: null });
+    expect(personMessagesInTurn(hoisted.database, SESSION_ID, ['one', 'two'])).toEqual({ readable: true, messages: [] });
   });
 
   it('never reads a message that matches no pattern as met, nor an unreadable one', () => {
     expect(matchUserMessage(onToPlanningPatterns, { readable: false }).met).toBe(false);
-    expect(matchUserMessage(onToPlanningPatterns, { readable: true, message: null }).met).toBe(false);
+    expect(matchUserMessage(onToPlanningPatterns, { readable: true, messages: [] }).met).toBe(false);
   });
 });
 

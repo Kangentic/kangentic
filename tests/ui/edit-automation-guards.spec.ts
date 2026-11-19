@@ -969,7 +969,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await conditionKind('user').click();
     await expect(conditionKind('user')).toHaveAttribute('aria-checked', 'true');
     await expect(finalLine).toHaveValue('*signed off*');
-    await expect(hint).toHaveText('Matches your last message in the turn, with * and ! supported.');
+    await expect(hint).toHaveText('Matches your messages in the turn, with * and ! supported.');
     await finalLine.fill('');
     await expect(finalLine).toHaveAttribute('placeholder', 'Signed off');
     await finalLine.fill('*signed off*');
