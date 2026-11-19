@@ -74,6 +74,23 @@ describe('what the account service reports', () => {
     expect(JSON.stringify(reports)).not.toContain(root);
   });
 
+  // The only way anyone hears that a setting changed from an account session did not last.
+  it('says a change made on an account was replaced, by the entry\'s name and never a path', async () => {
+    const accountService = service(folderSupport({ sharedEntries: [{ name: 'settings.json', how: 'copy-file', reportReplaced: true }] }));
+    accountService.ensureDefaultAccount('test-agent');
+    const folder = accountService.nextFolderPath('test-agent');
+    fs.writeFileSync(path.join(home, 'settings.json'), '{"theme":"dark"}');
+    const account = repository.insert({ agent: 'test-agent', kind: 'folder', folderPath: folder });
+    expect(await accountService.refreshFolder(account)).toBe(true);
+    expect(reports).toEqual([]);
+    fs.writeFileSync(path.join(folder, 'settings.json'), '{"theme":"light"}');
+
+    expect(await accountService.refreshFolder(account)).toBe(true);
+
+    expect(reports).toEqual([{ problem: 'folder-change-replaced', agent: 'test-agent', facts: { entry: 'settings.json', blocksAccount: false } }]);
+    expect(JSON.stringify(reports)).not.toContain(root);
+  });
+
   it('says when a spawn had accounts and none could be prepared', async () => {
     const accountService = service(folderSupport());
     accountService.ensureDefaultAccount('test-agent');

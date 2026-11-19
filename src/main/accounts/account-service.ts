@@ -22,6 +22,7 @@ const REPORTABLE_FOLDER_PROBLEM: Partial<Record<AccountFolderProblemCode, Accoun
   'link-failed': 'folder-link-failed',
   'user-owned': 'folder-entry-user-owned',
   'kept-aside': 'folder-entries-kept-aside',
+  'change-replaced': 'folder-change-replaced',
 };
 
 /** True when `filePath` is a file this process can read. */

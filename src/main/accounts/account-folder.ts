@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { safeWriteJson } from '../safe-write';
-import type { SharedEntry } from './account-support';
+import type { DeriveContext, SharedEntry } from './account-support';
+import { countReplaced, fileParts, hashParts, loadHomeRecord, type HomeRecord } from './home-record';
 
 /**
  * An account folder holds one account's login and, for an `own-dir` entry, a folder the CLI will
@@ -21,9 +22,12 @@ import type { SharedEntry } from './account-support';
  * - A conversation-bearing link that cannot be made is reported, and the caller blocks the account.
  * - Nothing here deletes a folder's contents. What it removes is an empty folder a link replaces,
  *   and an old link into the default home where an `own-dir` entry goes.
+ * - Nothing made from an account session is copied back into the default home. A copy or a
+ *   derived file still replaces a change made on the account, and says so (`change-replaced`).
+ *   Text a person wrote in the account's own file is moved aside first, never written over.
  */
 
-export type AccountFolderProblemCode = 'link-failed' | 'user-owned' | 'kept-aside' | 'history-private';
+export type AccountFolderProblemCode = 'link-failed' | 'user-owned' | 'kept-aside' | 'history-private' | 'change-replaced';
 
 export interface AccountFolderProblem {
   entry: string;
@@ -190,7 +194,9 @@ function linkDirectory(
     }
   };
   if (!lstatIfPresent(source)) {
-    if (!entry.conversationBearing) return;
+    // Made empty in the default home whatever the folder holds. Skipping a setup folder the home
+    // lacked left the account a real one, and an agent or command made there reached nobody else.
+    // A `../` name is made the same way, beside the home, for the same reason.
     try {
       fs.mkdirSync(source, { recursive: true });
     } catch (error) {
@@ -379,15 +385,31 @@ function writeIfChanged(target: string, content: string): boolean {
   }
 }
 
+/** The text of a regular file, or null for anything else: missing, a folder, a link, unreadable. */
+function readRegularFile(filePath: string): string | null {
+  try {
+    return fs.lstatSync(filePath).isFile() ? fs.readFileSync(filePath, 'utf8') : null;
+  } catch {
+    // report-ok: a file that is missing or cannot be read holds nothing this refresh can judge.
+    return null;
+  }
+}
+
 function copyFile(
   entry: Extract<SharedEntry, { how: 'copy-file' }>,
   homeRoot: string,
   accountRoot: string,
   report: AccountFolderReport,
+  record: HomeRecord,
 ): void {
   const source = entryPath(homeRoot, entry.name);
   const target = entryPath(accountRoot, entry.name);
-  if (!fs.existsSync(source)) return;
+  if (!fs.existsSync(source)) {
+    // Said once: the home holds no such file, so one the account makes is known as its own on
+    // the day the home gains one. What the home once held is never forgotten here.
+    if (entry.reportReplaced && record.get(entry.name) === undefined) record.set(entry.name, null);
+    return;
+  }
   const fail = (code: AccountFolderProblemCode, detail: string): void => {
     report.problems.push({ entry: entry.name, code, detail });
     if (entry.required) report.conversationLinkFailed = true;
@@ -403,7 +425,64 @@ function copyFile(
     if (entry.required) fail('link-failed', `Could not read ${source}: ${String(error)}`);
     return;
   }
-  if (!writeIfChanged(target, entry.transform ? entry.transform(content) : content) && entry.required) fail('link-failed', `Could not copy ${source}`);
+  const next = entry.transform ? entry.transform(content) : content;
+  // Parsed once: the same parts are judged against and then recorded.
+  const nextParts = entry.reportReplaced ? fileParts(next) : null;
+  const held = nextParts ? readRegularFile(target) : null;
+  // A copy the account still holds as it was written replaces nothing, so it is not parsed.
+  const replaced = nextParts && held !== null && held !== next ? countReplaced(record.get(entry.name), fileParts(held), nextParts) : 0;
+  if (!writeIfChanged(target, next)) {
+    if (entry.required) fail('link-failed', `Could not copy ${source}`);
+    return;
+  }
+  if (!nextParts) return;
+  // Said and recorded only now: a copy that did not land replaced nothing.
+  if (replaced > 0) {
+    report.problems.push({ entry: entry.name, code: 'change-replaced', detail: `A change made in ${target} was replaced by the default home's copy` });
+  }
+  record.set(entry.name, hashParts(nextParts));
+}
+
+/**
+ * A file whose content is built from the default home (Claude's `CLAUDE.md` import line). While
+ * the home has no such file, a user-memory edit from an account session makes one in the account
+ * folder that only it reads. That text is a person's, so it is moved aside before the content is
+ * written, never written over. With nothing recorded the home is taken to have held nothing, so
+ * any text that is not the content is kept.
+ */
+function writeText(
+  entry: Extract<SharedEntry, { how: 'text' }>,
+  homeRoot: string,
+  accountRoot: string,
+  report: AccountFolderReport,
+  record: HomeRecord,
+): void {
+  const content = entry.text(homeRoot);
+  if (content === null || !fs.existsSync(entryPath(homeRoot, entry.name))) return;
+  const target = entryPath(accountRoot, entry.name);
+  const contentParts = fileParts(content);
+  try {
+    // Inside the try: a file that cannot be looked at is reported like one that cannot be moved,
+    // and the entries after this one still run.
+    const current = lstatIfPresent(target);
+    if (current && !current.isFile()) {
+      report.problems.push({ entry: entry.name, code: 'user-owned', detail: `${target} is a link or a folder` });
+      return;
+    }
+    if (current) {
+      const held = fs.readFileSync(target, 'utf8');
+      if (held !== content && countReplaced(record.get(entry.name) ?? null, fileParts(held), contentParts) > 0) {
+        const aside = setAside(target);
+        report.problems.push({ entry: entry.name, code: 'kept-aside', detail: `The account's own ${entry.name} was kept at ${aside}` });
+      }
+    }
+  } catch (error) {
+    // report-ok: pushed onto the folder report, which the account service reports. The file
+    // is left as it is, and the next spawn tries again.
+    report.problems.push({ entry: entry.name, code: 'link-failed', detail: `Could not keep ${target} aside: ${String(error)}` });
+    return;
+  }
+  if (writeIfChanged(target, content)) record.set(entry.name, hashParts(contentParts));
 }
 
 function parseStrictJsonObject(text: string): Record<string, unknown> | null {
@@ -417,21 +496,81 @@ function parseStrictJsonObject(text: string): Record<string, unknown> | null {
 
 /**
  * A JSON file as an object. `unreadable` is a file that exists, holds text, and is not an object
- * the reader understands; a missing or empty file is an empty object.
+ * the reader understands; a missing or empty file is an empty object. `answered` is a file that
+ * was read and holds something. A missing file, an empty one and `{}` all come back as the same
+ * empty object, and only an answer says what the file's home holds.
  */
 function readJsonObject(
   filePath: string,
   parse: (text: string) => Record<string, unknown> | null = parseStrictJsonObject,
-): { value: Record<string, unknown>; unreadable: boolean } {
+): { value: Record<string, unknown>; unreadable: boolean; answered: boolean } {
   let text: string;
   try {
     text = fs.readFileSync(filePath, 'utf8');
   } catch (error) {
-    return { value: {}, unreadable: (error as NodeJS.ErrnoException).code !== 'ENOENT' };
+    return { value: {}, unreadable: (error as NodeJS.ErrnoException).code !== 'ENOENT', answered: false };
   }
-  if (text.trim() === '') return { value: {}, unreadable: false };
+  if (text.trim() === '') return { value: {}, unreadable: false, answered: false };
   const parsed = parse(text);
-  return parsed ? { value: parsed, unreadable: false } : { value: {}, unreadable: true };
+  return parsed
+    ? { value: parsed, unreadable: false, answered: Object.keys(parsed).length > 0 }
+    : { value: {}, unreadable: true, answered: false };
+}
+
+/**
+ * Builds the account's copy of a JSON file from the default home's. The read and the write run
+ * inside the CLI's own lock on that file when it has one, so a refresh never straddles the CLI's
+ * own read-modify-write.
+ */
+async function deriveJson(
+  entry: Extract<SharedEntry, { how: 'derive-json' }>,
+  input: ProvisionAccountFolderInput,
+  homeRoot: string,
+  accountRoot: string,
+  report: AccountFolderReport,
+  record: HomeRecord,
+): Promise<void> {
+  const source = entry.sourcePath ? entry.sourcePath(input.defaultHome) : entryPath(homeRoot, entry.name);
+  const target = entry.targetPath ? entry.targetPath(input.accountFolder) : entryPath(accountRoot, entry.name);
+  const write = (): void => {
+    const sourceState = readJsonObject(source, entry.parse);
+    if (sourceState.unreadable && entry.required) {
+      // Running on defaults in place of the user's own settings is the one thing a
+      // required file forbids, so the account waits until the file reads again.
+      report.conversationLinkFailed = true;
+      report.problems.push({ entry: entry.name, code: 'link-failed', detail: `Could not read ${source}` });
+      return;
+    }
+    const accountState = readJsonObject(target, entry.parse);
+    const current = accountState.value;
+    const userParts = entry.userParts;
+    const recorded = userParts ? record.get(entry.name) : undefined;
+    // A home file caught missing, empty or half written says nothing about what the home holds:
+    // it removes nothing from the account, and the record stays as it was.
+    const homeParts = userParts && sourceState.answered ? userParts(sourceState.value) : null;
+    const removedFromHome = recorded && homeParts ? Object.keys(recorded).filter((part) => !Object.hasOwn(homeParts, part)) : [];
+    const context: DeriveContext = { removedFromHome: new Set(removedFromHome) };
+    const next = entry.derive(sourceState.value, current, context);
+    let replaced = 0;
+    if (JSON.stringify(next) !== JSON.stringify(current)) {
+      // Judged only for a write, which is the only thing that replaces anything, and only against
+      // an account file that held something. One that is missing, empty or unreadable holds no
+      // change of the account's, and every part the home held would read as one it removed.
+      if (userParts && accountState.answered) replaced = countReplaced(recorded, userParts(current), userParts(next));
+      ensureParent(target);
+      // A write that did not land replaced nothing, and the record must not say it did.
+      if (!safeWriteJson(target, next, 'agent_account_state', { mode: 0o600 })) return;
+    }
+    if (replaced > 0) {
+      report.problems.push({ entry: entry.name, code: 'change-replaced', detail: `${replaced} parts changed in ${target} were replaced by the default home's` });
+    }
+    if (homeParts) record.set(entry.name, hashParts(homeParts));
+  };
+  if (entry.lock) {
+    await entry.lock(target, write);
+  } else {
+    write();
+  }
 }
 
 /**
@@ -455,56 +594,34 @@ export async function provisionAccountFolder(input: ProvisionAccountFolderInput)
     report.problems.push({ entry: '.', code: 'link-failed', detail: String(error) });
     return report;
   }
-  for (const entry of input.entries) {
-    switch (entry.how) {
-      case 'link-dir':
-        linkDirectory(entry, homeRoot, accountRoot, platform, report);
-        break;
-      case 'own-dir':
-        ownDirectory(entry, homeRoot, accountRoot, platform, report);
-        break;
-      case 'hardlink-file':
-        linkFile(entry, homeRoot, accountRoot, report);
-        break;
-      case 'copy-file':
-        copyFile(entry, homeRoot, accountRoot, report);
-        break;
-      case 'text': {
-        const content = entry.text(input.defaultHome);
-        if (content !== null && fs.existsSync(entryPath(homeRoot, entry.name))) {
-          writeIfChanged(entryPath(accountRoot, entry.name), content);
-        }
-        break;
-      }
-      case 'derive-json': {
-        const source = entry.sourcePath ? entry.sourcePath(input.defaultHome) : entryPath(homeRoot, entry.name);
-        const target = entry.targetPath ? entry.targetPath(input.accountFolder) : entryPath(accountRoot, entry.name);
-        // Read and write inside the CLI's own lock on that file when it has one, so a refresh
-        // never straddles the CLI's own read-modify-write.
-        const write = (): void => {
-          const sourceState = readJsonObject(source, entry.parse);
-          if (sourceState.unreadable && entry.required) {
-            // Running on defaults in place of the user's own settings is the one thing a
-            // required file forbids, so the account waits until the file reads again.
-            report.conversationLinkFailed = true;
-            report.problems.push({ entry: entry.name, code: 'link-failed', detail: `Could not read ${source}` });
-            return;
-          }
-          const current = readJsonObject(target, entry.parse).value;
-          const next = entry.derive(sourceState.value, current);
-          if (JSON.stringify(next) !== JSON.stringify(current)) {
-            ensureParent(target);
-            safeWriteJson(target, next, 'agent_account_state', { mode: 0o600 });
-          }
-        };
-        if (entry.lock) {
-          await entry.lock(target, write);
-        } else {
-          write();
-        }
-        break;
+  // Kept in the account folder itself, the one path checked above against the default home.
+  const record = loadHomeRecord(input.accountFolder);
+  try {
+    for (const entry of input.entries) {
+      switch (entry.how) {
+        case 'link-dir':
+          linkDirectory(entry, homeRoot, accountRoot, platform, report);
+          break;
+        case 'own-dir':
+          ownDirectory(entry, homeRoot, accountRoot, platform, report);
+          break;
+        case 'hardlink-file':
+          linkFile(entry, homeRoot, accountRoot, report);
+          break;
+        case 'copy-file':
+          copyFile(entry, homeRoot, accountRoot, report, record);
+          break;
+        case 'text':
+          writeText(entry, homeRoot, accountRoot, report, record);
+          break;
+        case 'derive-json':
+          await deriveJson(entry, input, homeRoot, accountRoot, report, record);
+          break;
       }
     }
+  } finally {
+    // Also when a derive throws at its lock, so the entries written before it stay recorded.
+    record.save();
   }
   return report;
 }
