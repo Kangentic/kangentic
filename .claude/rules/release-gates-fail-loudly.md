@@ -44,15 +44,21 @@ Any step in the release path that exists to guarantee something must fail when i
   replaces it, so a `needs:` entry missing from the condition lets the job run when its dependency
   FAILED. This is the specific shape that let three matrix legs race past a broken barrier. It is
   not only `always()`: `!cancelled()` reads like a cancellation guard and does the same thing, and
-  both publish jobs, the demo deploy, and the poster job (`demo-posters`) use it.
+  both publish jobs, the demo deploy, the poster job (`demo-posters`) and the poster gate use it.
+- **A job downstream of a conditional job carries a status function of its own.** The implied
+  `success()` reads every job upstream, not only the direct `needs:`, and a skipped ancestor skips
+  the job. `create-tag` runs only on a manual dispatch, so on every tag push it is skipped, and a
+  job below it with no status function is skipped too while the run reads green. `poster-gate` ran
+  on no release through v0.60.0 for exactly this reason.
 
 ## Enforcement (self-maintaining)
 
 - **Test (mechanical, CI):** `tests/unit/release-workflow-gates.test.ts` parses
   `.github/workflows/release.yml` and fails when any job whose `if:` carries a status-check
   function (`always()`, `cancelled()`, `failure()`) has a `needs:` entry its `if:` does not
-  reference, when the set of such jobs stops matching the seven that exist (an empty filter would
-  otherwise reduce that check to zero test cases and pass), when the draft release stops depending
+  reference, when the set of such jobs stops matching the eight that exist (an empty filter would
+  otherwise reduce that check to zero test cases and pass), when a job downstream of `create-tag`
+  has no status function of its own, when the draft release stops depending
   on `preflight-symbols`, when that preflight stops being able to fail (`exit 1`) or acquires an
   `environment:` approval gate, or when `release` loses the clause it inherits the gate through.
   It also pins the poster job (`demo-posters`): that it checks out the same ref `publish-release`
@@ -61,8 +67,8 @@ Any step in the release path that exists to guarantee something must fail when i
   `scripts/release-assets.js` (one more expected asset would fail the verify that runs before
   the job). The job installs no font, since the demo ships its own faces, and no renderer
   stylesheet may override the font stack the demo's override decides. The poster gate is
-  pinned too: `poster-gate` needs `demo-posters`, carries no status function (so a failed shoot
-  skips it rather than gating nothing), checks out the ref the set was shot from, downloads the
+  pinned too: `poster-gate` needs `demo-posters`, runs only when that shoot succeeded (so a failed
+  shoot skips it rather than gating nothing), checks out the ref the set was shot from, downloads the
   artifact `demo-posters` uploaded, and runs every shard on all three OSes with `fail-fast: false`.
   It also pins the two shapes v0.39.0 and v0.40.0 broke:
   `create-draft-release` must be able to FAIL on a release that is already published and

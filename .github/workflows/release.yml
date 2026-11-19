@@ -1130,10 +1130,13 @@ jobs:
   # from the artifact above and fails on a wrap, a moved line, a terminal on another
   # grid, or a pixel that differs beyond antialiasing. After the attach on purpose:
   # the release and its zip stand, and a mismatch turns the run red, naming the
-  # scene, the scale and the OS. No status function, so the implied success() keeps
-  # it from running when demo-posters failed.
+  # scene, the scale and the OS. It needs its own status function: the implied
+  # success() reads every job upstream, and create-tag is skipped on every tag push,
+  # so without one this job was skipped on every release through v0.60.0. Naming
+  # demo-posters keeps it from running when the shoot failed.
   poster-gate:
     needs: [demo-posters]
+    if: ${{ !cancelled() && needs.demo-posters.result == 'success' }}
     uses: ./.github/workflows/demo-poster-gate.yml
     with:
       artifact: demo-poster-set
