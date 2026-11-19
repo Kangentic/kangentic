@@ -385,6 +385,18 @@ export class ConfigManager {
       }
     }
 
+    // One-time migration: adopt Auto-apply board config changes' `on` default, for
+    // the same reason: a saved `false` beats the new default on every install that
+    // ran under the old one, and it cannot be told from a deliberate off. The marker
+    // bounds this to one rewrite, so turning it off afterwards sticks.
+    if (!this.config.hasMigratedSkipBoardConfigConfirmDefault) {
+      this.config.hasMigratedSkipBoardConfigConfirmDefault = true;
+      this.config.skipBoardConfigConfirm = true;
+      if (!configFileUnreadable) {
+        this.save(this.config);
+      }
+    }
+
     // One-time purge: clear `discoveredModelsByAgent`. `loadAgentList` used to seed
     // that cache from each adapter's `capabilities.models` with a union that only
     // ever grew, so any model an adapter ever reported became permanent - including

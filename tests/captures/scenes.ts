@@ -1572,6 +1572,8 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'state',
     description: 'The board config reconciliation dialog, raised the way the desktop raises it: the seeded kangentic.json watch push, which App.tsx turns into a pending config change. Nothing in the demo draws the dialog itself.',
     alt: 'A dialog over the board headed Board configuration changed: it reports changes detected in kangentic.json and asks whether to apply the updated board configuration, with a checkbox to always apply automatically and Dismiss and Apply buttons.',
+    // Auto-apply is on by default, which applies the change with no dialog.
+    config: { skipBoardConfigConfirm: false },
     seeds: { __mockBoardConfigChanged: PROJECT_CONTOSO },
     ready: '[data-testid="config-change-dialog"]',
     focus: '[data-testid="config-change-dialog"]',
