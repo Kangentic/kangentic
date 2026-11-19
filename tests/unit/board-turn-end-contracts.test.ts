@@ -4,7 +4,7 @@
  *
  * A Text match row on the agent's line (`condition.text`, or the legacy `finalLine` this file still
  * carries) moves a card only when the WHOLE last line of the agent's final message matches it. A
- * row on the user's message (`condition.text.from: "user"`) reads the owner's last message instead. When a row and its producer drift apart (a reworded skill, a renamed row, the
+ * row on the user's message (`condition.text.from: "user"`) reads the owner's messages in the turn instead. When a row and its producer drift apart (a reworded skill, a renamed row, the
  * verdict printed above its steps again), nothing errors anywhere: the card just waits in its
  * column. So each row is held to the thing that prints its line:
  *

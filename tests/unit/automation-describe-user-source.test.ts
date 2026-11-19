@@ -1,5 +1,5 @@
 /**
- * A Text match that reads the USER's last message (`text_match_source: 'user'`,
+ * A Text match that reads the USER's messages (`text_match_source: 'user'`,
  * #1078) is worded as the user's message everywhere a person or an agent reads
  * a row: the sentence, the guards line, the marks, and the column detail an
  * agent gets from kangentic_get_column. The agent default keeps its wording.
