@@ -416,7 +416,7 @@ const MAX_DIFF_FILE_BYTES = 200 * 1024;
  * there, whose index and line endings this computer's git would read differently. The files
  * themselves are read through `cwd`, which reaches either.
  */
-function collectChanges(cwd, sanitizer, runGit = (args) => require('node:child_process').execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })) {
+function collectChanges(cwd, sanitizer, runGit = localGitIn(cwd)) {
   const git = (args, allowFailure = false) => {
     try {
       return runGit(args);
@@ -465,6 +465,12 @@ function collectChanges(cwd, sanitizer, runGit = (args) => require('node:child_p
   }
 }
 
+/** This computer's git, run in `cwd`: the runner `collectChanges` uses for a capture outside a distro. */
+function localGitIn(cwd) {
+  const { execFileSync } = require('node:child_process');
+  return (args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
 // ---------------------------------------------------------------- serialization
 // Physical rows with an absolute cursor (scripts/lib/demo-frame-serializer.js), the shape the
 // web demo fits to any grid; the backfill script produces the same bytes from a stream on disk.
@@ -489,9 +495,9 @@ const { serializePhysicalRows } = require('./lib/demo-frame-serializer');
  * a CLI in a distro (`WslCliPlace`), with the drive mounts off its PATH; the folder and the scratch
  * clone as the distro sees them; the distro's user and host names for the sanitizer; and the
  * runners for git and for the leftover check. Refuses a folder outside the distro's share. The
- * agent's transcript is stamped by the distro's clock and the recording by this one, and a WSL2
- * distro's clock was measured a steady 1.19 s ahead of Windows on the recording machine, so the
- * skew is measured here and taken off every trail line rather than left to move each one.
+ * agent's transcript is stamped by the distro's clock and the recording by this one. A WSL2
+ * distro's clock was measured 0.7 to 1.3 s ahead of Windows on the recording machine, a different
+ * amount each capture, so the skew is measured here before each one and taken off every trail line.
  */
 async function resolveWslLaunch(options) {
   const { execFileSync } = require('node:child_process');
@@ -548,14 +554,25 @@ async function resolveWslLaunch(options) {
 /**
  * Wait for what the exit sequence left in the agent's folder to end by itself, then hang it up,
  * the graceful exit measured for Claude on Linux (pty-teardown-grace.md). Reported either way.
+ * A look into the distro that fails is reported and ends the wait: the recording is already made,
+ * and it is written whatever this finds.
  */
 async function settleWslLeftovers(wsl, sleep) {
+  const look = () => {
+    try {
+      return wsl.leftoverProcesses();
+    } catch (error) {
+      console.error(`[capture] could not list what is still running in ${wsl.linuxCwd} (${error.message}); end any leftover before the next capture`);
+      return null;
+    }
+  };
   for (let waited = 0; waited < 5000; waited += 500) {
-    if (wsl.leftoverProcesses().length === 0) return;
+    const running = look();
+    if (running === null || running.length === 0) return;
     await sleep(500);
   }
-  const leftovers = wsl.leftoverProcesses();
-  if (leftovers.length === 0) return;
+  const leftovers = look();
+  if (leftovers === null || leftovers.length === 0) return;
   console.error(`[capture] still running in ${wsl.linuxCwd} after the exit sequence: ${leftovers.join(', ')}; hanging them up`);
   try {
     wsl.hangUp(leftovers.map((line) => line.split(' ')[0]));
@@ -801,7 +818,7 @@ async function main() {
   console.error(`[capture] peek timeline: ${peekTimeline.length} change(s) across ${recordedSeconds}s`);
   console.error(`[capture] frame timeline: ${frameTimeline.length} frame(s) across ${recordedSeconds}s`);
 
-  const changes = wsl ? collectChanges(options.cwd, sanitizer, wsl.runGit) : collectChanges(options.cwd, sanitizer);
+  const changes = collectChanges(options.cwd, sanitizer, wsl?.runGit);
   for (const file of changes.files) {
     sanitizer.assertClean(file.original, `changes ${file.path} (original)`);
     sanitizer.assertClean(file.modified, `changes ${file.path} (modified)`);
@@ -959,4 +976,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, serializeThroughXterm, wslSpawnArgs, withoutDriveMounts, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS, WSL_AGENT_ENV };
+module.exports = { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, serializeThroughXterm, wslSpawnArgs, withoutDriveMounts, settleWslLeftovers, collectChanges, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS, WSL_AGENT_ENV };

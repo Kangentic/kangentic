@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
+import { DEMO_SCENE_PROJECTS, DEMO_SSH_HOSTS } from '../captures/helpers/demo-dataset';
 
 interface DistroIdentity {
   user: string;
@@ -19,9 +20,10 @@ interface DistroIdentity {
 }
 
 const require = createRequire(import.meta.url);
-const { sanitizeDeep, stripAccountLinks, buildSanitizer } = require('../../scripts/lib/demo-sanitizer.js') as {
+const { sanitizeDeep, stripAccountLinks, buildSanitizer, HOST_IDENTITY } = require('../../scripts/lib/demo-sanitizer.js') as {
   sanitizeDeep: (value: unknown, sanitizer: { apply: (text: string) => string }) => unknown;
   stripAccountLinks: (text: string) => string;
+  HOST_IDENTITY: { user: string; host: string; home: string };
   buildSanitizer: (options: { project: string; cwd: string; wsl?: DistroIdentity | null; demoPath?: string | null }) => { apply: (text: string) => string; assertClean: (text: string, label: string) => void };
 };
 
@@ -144,5 +146,78 @@ describe('sanitizeDeep', () => {
     expect(sanitizeDeep(['MARKER', 1], rewriter)).toEqual(['dev', 1]);
     expect(sanitizeDeep(42, rewriter)).toBe(42);
     expect(sanitizeDeep(undefined, rewriter)).toBeUndefined();
+  });
+});
+
+describe('a WSL capture\'s share paths', () => {
+  // The clone as Windows reaches it, built as a string only. Windows UNC paths are never touched
+  // through node's path module here, so this holds on the Linux runner too.
+  const shareHome = '\\\\wsl.localhost\\Distro\\home\\someone';
+  const identity: DistroIdentity = {
+    user: 'someone',
+    host: 'DISTRO-PC',
+    home: '/home/someone',
+    homeUnc: shareHome,
+    linuxCwd: '/home/someone/scratch/redis',
+  };
+  const shareCwd = `${shareHome}\\scratch\\redis`;
+  const sanitizer = buildSanitizer({ project: 'redis', cwd: shareCwd, wsl: identity, demoPath: '/home/dev/redis' });
+
+  it('maps the clone, in its backslash form, to the host folder', () => {
+    expect(sanitizer.apply(`cwd=${shareCwd}\\src`)).toContain('cwd=/home/dev/redis');
+    expect(sanitizer.apply(`cwd=${shareCwd}\\src`)).not.toContain('wsl.localhost');
+  });
+
+  // The share forms are replaced before the distro's own path, which the forward-slash share form
+  // holds inside it. In the other order the share's prefix was left ahead of the host folder.
+  it('maps the clone, in its forward-slash form, to the host folder', () => {
+    expect(sanitizer.apply('open //wsl.localhost/Distro/home/someone/scratch/redis/src/t.c')).toBe('open /home/dev/redis/src/t.c');
+  });
+
+  it('maps the distro home, in both slash forms, to the host home', () => {
+    expect(sanitizer.apply(`ls ${shareHome}`)).toBe('ls /home/dev');
+    expect(sanitizer.apply('ls //wsl.localhost/Distro/home/someone')).toBe('ls /home/dev');
+  });
+
+  it('maps the home-relative form of the clone to the host folder\'s', () => {
+    expect(sanitizer.apply('someone@DISTRO-PC:~/scratch/redis$ ls')).toBe('dev@build-box:~/redis$ ls');
+  });
+
+  it('refuses text that still holds a share', () => {
+    expect(() => sanitizer.assertClean('\\\\wsl.localhost\\Distro\\tmp\\x', 'frame')).toThrow(/Windows Subsystem for Linux/);
+    expect(() => sanitizer.assertClean(sanitizer.apply(`cwd=${shareCwd}`), 'frame')).not.toThrow();
+  });
+});
+
+describe('a distro that already carries the host\'s names', () => {
+  const identity: DistroIdentity = {
+    user: HOST_IDENTITY.user,
+    host: HOST_IDENTITY.host,
+    home: HOST_IDENTITY.home,
+    homeUnc: '\\\\wsl.localhost\\Distro\\home\\dev',
+    linuxCwd: '/home/dev/scratch/redis',
+  };
+  const sanitizer = buildSanitizer({ project: 'redis', cwd: '\\\\wsl.localhost\\Distro\\home\\dev\\scratch\\redis', wsl: identity, demoPath: '/home/dev/redis' });
+
+  it('does not refuse every capture for carrying the names the sanitizer writes', () => {
+    const text = sanitizer.apply('dev@build-box:/home/dev/scratch/redis$ ls\r\n/home/dev/redis\r\ndev@build-box:~/redis$ ');
+    expect(text).toContain('/home/dev/redis');
+    expect(text).toContain('dev@build-box:~/redis$');
+    expect(() => sanitizer.assertClean(text, 'frame')).not.toThrow();
+  });
+});
+
+describe('HOST_IDENTITY', () => {
+  it('matches the host and the project folder the dataset lists', () => {
+    const remoteProjects = DEMO_SCENE_PROJECTS.filter((project) => project.remote !== undefined);
+    // Vacuity guard: without a remote project there is nothing to compare.
+    expect(remoteProjects.length).toBeGreaterThan(0);
+    for (const project of remoteProjects) {
+      const remote = project.remote as { hostId: string; path: string };
+      const host = DEMO_SSH_HOSTS.find((candidate) => candidate.id === remote.hostId);
+      expect(host, `${project.id} lives on ${remote.hostId}, which no dataset host is`).toBeDefined();
+      expect(host?.destination).toBe(`${HOST_IDENTITY.user}@${HOST_IDENTITY.host}`);
+      expect(remote.path.startsWith(`${HOST_IDENTITY.home}/`), `${project.id} lives at ${remote.path}`).toBe(true);
+    }
   });
 });

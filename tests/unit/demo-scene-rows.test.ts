@@ -504,3 +504,197 @@ describe('a scene-only row\'s recorded sessions, apart from the seed', () => {
       .toBe(`No recorded sessions for the scene-only task "${TASK_VALIDATE}": its scene-rows script did not run before the seed`);
   });
 });
+
+/** A host's status as the mock's SSH bridge answers it. */
+interface HostStatus {
+  host: { id: string; name: string; destination: string };
+  state: string;
+  projectCount: number;
+}
+
+/** What the mock's SSH bridge offers, as far as these tests drive it. */
+interface SshBridge {
+  listHosts: () => Promise<HostStatus[]>;
+  updateHost: (hostId: string, input: { name: string; destination: string }) => Promise<HostStatus>;
+  reconnectHost: (hostId: string) => Promise<HostStatus>;
+  trustNewKey: (hostId: string, fingerprint: string) => Promise<HostStatus>;
+  addHost: (input: { name: string; destination: string; signIn: { method: string } }) => Promise<HostStatus>;
+  removeHost: (hostId: string) => Promise<void>;
+  clearHostData: (hostId: string) => Promise<void>;
+  hostProgram: (hostId: string) => Promise<{ version: string; appVersion: string; installedVersions: string[]; liveSessions: number }>;
+}
+
+interface UsageRow {
+  projectId: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  sessionCount: number;
+}
+
+interface UsagePayload {
+  kpis: { totalCostUsd: number; totalInputTokens: number; totalOutputTokens: number; sessionCount: number };
+  perProject: UsageRow[];
+}
+
+interface BridgePage {
+  __mockSeedSshHosts: (statuses: unknown[]) => void;
+  electronAPI: {
+    ssh: SshBridge;
+    usage: { __dashboardStatsFixture: (scope: { kind: 'all' }, period: string, drill: null, customWindow: null) => UsagePayload };
+  };
+}
+
+/**
+ * The page after the seed has run as far as a bridge method it installs late. The hostProgram
+ * wrapper and the usage fixture are assigned after the seed's `__mockPreConfigure` call, behind the
+ * session clocks, so `runSeedOnPage` never reaches them. The assignment is caught by an accessor
+ * on the mock's own object, which keeps the assigned function and ends the script right there.
+ */
+function runSeedUntilAssigned(namespace: 'ssh' | 'usage', property: string, publication: ScenePublication, options: SeedOptions): BridgePage {
+  const windowObject: Record<string, unknown> = {};
+  windowObject.window = windowObject;
+  vm.runInNewContext(
+    MOCK_SOURCE,
+    { window: windowObject, document: undefined, crypto: webcrypto, setTimeout, clearTimeout, console },
+    { timeout: 5000 },
+  );
+  if (publication.sceneRows) windowObject.__demoSceneRows = publication.sceneRows;
+  const owner = (windowObject.electronAPI as Record<string, Record<string, unknown>>)[namespace];
+  // The mock's own answer stays readable until the seed replaces it, since the seed's wrapper calls it.
+  let current: unknown = owner[property];
+  let assigned = false;
+  Object.defineProperty(owner, property, {
+    configurable: true,
+    get: () => current,
+    set: (value: unknown) => { current = value; assigned = true; throw SEED_RAN; },
+  });
+  try {
+    new Function('window', buildDemoPreConfig(options))(windowObject);
+  } catch (error) {
+    if (error !== SEED_RAN) throw error;
+  }
+  if (!assigned) throw new Error(`the dataset seed never assigned ${namespace}.${property}`);
+  return windowObject as unknown as BridgePage;
+}
+
+const REDIS_RUNNING_SESSIONS = DEMO_ALL_SESSIONS.filter((session) => session.projectId === PROJECT_REDIS && session.status === 'running').length;
+
+describe('the usage dashboard\'s per-project rows', () => {
+  const baseOptions: SeedOptions = { scrollback: recordingsFor(ALL_SESSION_IDS), knowledgeGraph: 'fetched' };
+  const readAll = (page: BridgePage): UsagePayload => page.electronAPI.usage.__dashboardStatsFixture({ kind: 'all' }, 'month', null, null);
+
+  it('add up to the all-projects totals once a fourth project is in the frame', () => {
+    const payload = readAll(runSeedUntilAssigned('usage', '__dashboardStatsFixture', { sceneRows: DEMO_REDIS_ROWS }, baseOptions));
+    // Vacuity guard: the redis project is one of the rows, so there are four to add up.
+    expect(payload.perProject.map((row) => row.projectId)).toContain(PROJECT_REDIS);
+    expect(payload.perProject).toHaveLength(DEMO_PROJECTS.length + 1);
+    const sumOf = (pick: (row: UsageRow) => number): number => payload.perProject.reduce((total, row) => total + pick(row), 0);
+    expect(sumOf((row) => row.costUsd)).toBeCloseTo(payload.kpis.totalCostUsd, 6);
+    // Each row is rounded on its own, so the sum may be off by half a unit per row.
+    const roundingSlack = payload.perProject.length;
+    expect(Math.abs(sumOf((row) => row.inputTokens) - payload.kpis.totalInputTokens)).toBeLessThanOrEqual(roundingSlack);
+    expect(Math.abs(sumOf((row) => row.outputTokens) - payload.kpis.totalOutputTokens)).toBeLessThanOrEqual(roundingSlack);
+    expect(Math.abs(sumOf((row) => row.sessionCount) - payload.kpis.sessionCount)).toBeLessThanOrEqual(roundingSlack);
+  });
+
+  it('keep the install\'s 0.55 / 0.27 / 0.18 split in a three-project frame', () => {
+    const payload = readAll(runSeedUntilAssigned('usage', '__dashboardStatsFixture', {}, baseOptions));
+    expect(payload.perProject).toHaveLength(3);
+    expect(payload.perProject.map((row) => row.costUsd / payload.kpis.totalCostUsd)).toEqual([
+      expect.closeTo(0.55, 9), expect.closeTo(0.27, 9), expect.closeTo(0.18, 9),
+    ]);
+  });
+});
+
+describe('the mock\'s SSH hosts seeded by the seed\'s own bridge', () => {
+  const seededHost = {
+    id: HOST_BUILD_SERVER, name: 'Seeded host', destination: 'dev@seeded.example.test', key_path: null, key_created: false,
+    created_at: '2026-01-01T00:00:00.000Z', removed_at: null, reveal_pending: false,
+  };
+  /** A seeded status whose stored count is deliberately wrong, so only a live count can read right. */
+  const seededStatus = () => ({ host: { ...seededHost }, state: 'connected', detail: null, since: '2026-01-01T00:00:00.000Z', projectCount: 0 });
+
+  /** The redis frame, which has one project on HOST_BUILD_SERVER, with the host list replaced by the stale seeded one. */
+  function redisFrame(): { page: BridgePage; input: ReturnType<typeof seededStatus> } {
+    const page = runSeedOnPage({ sceneRows: DEMO_REDIS_ROWS }).page as unknown as BridgePage;
+    const input = seededStatus();
+    page.__mockSeedSshHosts([input]);
+    return { page, input };
+  }
+
+  it('copies each status and its host, so editing a seeded host leaves the caller\'s objects alone', async () => {
+    const { page, input } = redisFrame();
+    const before = JSON.parse(JSON.stringify(input));
+    await page.electronAPI.ssh.updateHost(HOST_BUILD_SERVER, { name: 'Renamed host', destination: seededHost.destination });
+    expect(input).toEqual(before);
+    expect(input.host.name).toBe('Seeded host');
+  });
+
+  it('keeps its own copy, so the caller editing its objects afterwards does not reach the list', async () => {
+    const { page, input } = redisFrame();
+    input.host.name = 'Edited by the caller';
+    input.state = 'unreachable';
+    const [listed] = await page.electronAPI.ssh.listHosts();
+    expect(listed.host.name).toBe('Seeded host');
+    expect(listed.state).toBe('connected');
+  });
+
+  it('edits and removes a seeded host like one that was added', async () => {
+    const { page } = redisFrame();
+    expect((await page.electronAPI.ssh.listHosts()).map((status) => status.host.name)).toEqual(['Seeded host']);
+    await page.electronAPI.ssh.updateHost(HOST_BUILD_SERVER, { name: 'Renamed host', destination: seededHost.destination });
+    expect((await page.electronAPI.ssh.listHosts()).map((status) => status.host.name)).toEqual(['Renamed host']);
+    await page.electronAPI.ssh.removeHost(HOST_BUILD_SERVER);
+    expect(await page.electronAPI.ssh.listHosts()).toEqual([]);
+  });
+
+  it('answers a change with the live project count, not the stored one', async () => {
+    const { page } = redisFrame();
+    const { ssh } = page.electronAPI;
+    expect((await ssh.updateHost(HOST_BUILD_SERVER, { name: 'Renamed host', destination: seededHost.destination })).projectCount, 'updateHost').toBe(1);
+    expect((await ssh.reconnectHost(HOST_BUILD_SERVER)).projectCount, 'reconnectHost').toBe(1);
+    expect((await ssh.trustNewKey(HOST_BUILD_SERVER, 'SHA256:shown')).projectCount, 'trustNewKey').toBe(1);
+  });
+
+  it('answers addHost of a removed host\'s address with the projects that come back', async () => {
+    const { page } = redisFrame();
+    const { ssh } = page.electronAPI;
+    await ssh.removeHost(HOST_BUILD_SERVER);
+    const returned = await ssh.addHost({ name: 'Back again', destination: seededHost.destination, signIn: { method: 'config' } });
+    expect(returned.host.id).toBe(HOST_BUILD_SERVER);
+    expect(returned.projectCount).toBe(1);
+    // A new address has no projects, so the live count is not simply 1 for every host.
+    const fresh = await ssh.addHost({ name: 'Fresh', destination: 'dev@fresh.example.test', signIn: { method: 'config' } });
+    expect(fresh.projectCount).toBe(0);
+  });
+});
+
+describe('the seed\'s host program answer', () => {
+  const APP_VERSION = '9.8.7';
+  const options: SeedOptions = { scrollback: recordingsFor(ALL_SESSION_IDS), knowledgeGraph: 'fetched', appVersion: APP_VERSION };
+  const redisFrame = (): BridgePage => runSeedUntilAssigned('ssh', 'hostProgram', { sceneRows: DEMO_REDIS_ROWS }, options);
+
+  it('counts the running sessions of the projects on that host, and is this app\'s own version', async () => {
+    // Vacuity guard: the redis project has running sessions to count.
+    expect(REDIS_RUNNING_SESSIONS).toBeGreaterThan(0);
+    const { ssh } = redisFrame().electronAPI;
+    const program = await ssh.hostProgram(HOST_BUILD_SERVER);
+    expect(program.liveSessions).toBe(REDIS_RUNNING_SESSIONS);
+    expect(program.version).toBe(APP_VERSION);
+    expect(program.appVersion).toBe(APP_VERSION);
+    expect(program.installedVersions).toEqual([APP_VERSION]);
+    // Another host has none of those projects.
+    expect((await ssh.hostProgram('host-other')).liveSessions).toBe(0);
+  });
+
+  it('stops counting a host\'s sessions once the host is removed or its data cleared', async () => {
+    const removed = redisFrame().electronAPI.ssh;
+    await removed.removeHost(HOST_BUILD_SERVER);
+    expect((await removed.hostProgram(HOST_BUILD_SERVER)).liveSessions).toBe(0);
+
+    const cleared = redisFrame().electronAPI.ssh;
+    await cleared.clearHostData(HOST_BUILD_SERVER);
+    expect((await cleared.hostProgram(HOST_BUILD_SERVER)).liveSessions).toBe(0);
+  });
+});

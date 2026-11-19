@@ -6208,6 +6208,13 @@
         };
       }
       function win() { return typeof window !== 'undefined' ? window : {}; }
+      // Main counts the projects on each host from the project table on every answer it gives,
+      // a list or a change's return, so a status the mock hands out does too.
+      function withProjectCount(status) {
+        if (!status) return status;
+        var count = projects.filter(function (project) { return project.remote && project.remote.hostId === status.host.id; }).length;
+        return Object.assign({}, status, { projectCount: count });
+      }
       return {
         detectClient: async function () {
           return win().__mockSshClient || { found: true, version: 'OpenSSH_9.6p1', error: null };
@@ -6215,11 +6222,7 @@
         listHosts: async function () {
           if (win().__mockSshListError) throw new Error(win().__mockSshListError);
           if (win().__mockSshHosts) return win().__mockSshHosts;
-          // Main counts the projects on each host from the project table; so does the mock.
-          return hosts.map(function (status) {
-            var count = projects.filter(function (project) { return project.remote && project.remote.hostId === status.host.id; }).length;
-            return Object.assign({}, status, { projectCount: count });
-          });
+          return hosts.map(withProjectCount);
         },
         // window.__mockSshConfigHosts: the named hosts in the user's ~/.ssh/config, [{ alias, hostName, user }].
         listConfigHosts: async function () {
@@ -6269,7 +6272,8 @@
           };
           hosts = hosts.concat([status]);
           fire();
-          return status;
+          // A host that comes back brings its projects with it, so its count is theirs.
+          return withProjectCount(status);
         },
         removeHost: async function (hostId) {
           var gone = hosts.filter(function (status) { return status.host.id === hostId; })[0];
@@ -6303,14 +6307,14 @@
             return Object.assign({}, status, { host: Object.assign({}, status.host, changed) });
           });
           fire();
-          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+          return withProjectCount(hosts.filter(function (status) { return status.host.id === hostId; })[0]);
         },
         reconnectHost: async function (hostId) {
           hosts = hosts.map(function (status) {
             return status.host.id === hostId ? Object.assign({}, status, { state: 'connected', detail: null, since: new Date().toISOString() }) : status;
           });
           fire();
-          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+          return withProjectCount(hosts.filter(function (status) { return status.host.id === hostId; })[0]);
         },
         // window.__mockSshKeyFileError: a string that makes checkKeyFile() reject with it (a passphrase, not a key).
         checkKeyFile: async function () {
@@ -6335,7 +6339,7 @@
             return status.host.id === hostId ? Object.assign({}, status, { state: 'connected', detail: null, since: new Date().toISOString() }) : status;
           });
           fire();
-          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+          return withProjectCount(hosts.filter(function (status) { return status.host.id === hostId; })[0]);
         },
         // window.__mockSshHostProgram: overrides the answer; window.__mockSshHostProgramError: a string that rejects it.
         hostProgram: async function () {

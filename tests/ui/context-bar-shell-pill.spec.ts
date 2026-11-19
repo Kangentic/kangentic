@@ -25,7 +25,12 @@ const TASK_ID = 'task-context-bar-shell';
 const SESSION_ID = 'sess-context-bar-shell';
 const SWIMLANE_ID = 'lane-context-bar-shell-todo';
 
-async function launchWithRemoteSession(): Promise<{ browser: Browser; page: Page }> {
+/** The viewport width at which the shell pill folds out of the bar into its +N list. */
+const FOLDED_VIEWPORT_WIDTH = 760;
+
+async function launchWithRemoteSession(
+  options: { remote: boolean } = { remote: true },
+): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -37,7 +42,7 @@ async function launchWithRemoteSession(): Promise<{ browser: Browser; page: Page
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(`
     window.__mockPreConfigure(function (state) {
-      var ts = new Date().toISOString();
+      var timestamp = new Date().toISOString();
 
       state.projects.push({
         id: '${PROJECT_ID}',
@@ -45,24 +50,24 @@ async function launchWithRemoteSession(): Promise<{ browser: Browser; page: Page
         path: '/mock/remote-projects/${PROJECT_ID}',
         github_url: null,
         default_agent: 'claude',
-        remote: { hostId: 'host-context-bar-shell', path: '/home/dev/api' },
-        last_opened: ts,
-        created_at: ts,
+        remote: ${options.remote ? "{ hostId: 'host-context-bar-shell', path: '/home/dev/api' }" : 'null'},
+        last_opened: timestamp,
+        created_at: timestamp,
       });
 
-      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
-        var id = i === 0 ? '${SWIMLANE_ID}' : state.uuid();
+      state.DEFAULT_SWIMLANES.forEach(function (lane, index) {
+        var id = index === 0 ? '${SWIMLANE_ID}' : state.uuid();
         state.swimlanes.push({
           id: id,
-          name: s.name,
-          role: s.role,
-          color: s.color,
-          icon: s.icon,
-          is_archived: s.is_archived,
-          permission_strategy: s.permission_strategy ?? null,
-          auto_spawn: s.auto_spawn ?? false,
-          position: i,
-          created_at: ts,
+          name: lane.name,
+          role: lane.role,
+          color: lane.color,
+          icon: lane.icon,
+          is_archived: lane.is_archived,
+          permission_strategy: lane.permission_strategy ?? null,
+          auto_spawn: lane.auto_spawn ?? false,
+          position: index,
+          created_at: timestamp,
         });
       });
 
@@ -76,7 +81,7 @@ async function launchWithRemoteSession(): Promise<{ browser: Browser; page: Page
         status: 'running',
         shell: 'bash',
         cwd: '/home/dev/api',
-        startedAt: ts,
+        startedAt: timestamp,
         exitCode: null,
         resuming: false,
       });
@@ -95,8 +100,8 @@ async function launchWithRemoteSession(): Promise<{ browser: Browser; page: Page
         pr_url: null,
         base_branch: null,
         archived_at: null,
-        created_at: ts,
-        updated_at: ts,
+        created_at: timestamp,
+        updated_at: timestamp,
       });
 
       return { currentProjectId: '${PROJECT_ID}' };
@@ -110,46 +115,87 @@ async function launchWithRemoteSession(): Promise<{ browser: Browser; page: Page
   return { browser, page };
 }
 
-test.describe('ContextBar shell pill for a session on a host', () => {
-  test('a host\'s bash reads bash on a Windows desktop, never Git Bash', async () => {
-    const { browser, page } = await launchWithRemoteSession();
-    try {
-      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-      // Vacuity guard: the desktop reads as Windows, where a local bash is named Git Bash.
-      expect(await page.evaluate(() => navigator.platform)).toBe('Win32');
+/**
+ * Reads the three places a session's shell is named, in the order a user meets them: the bottom
+ * panel's session tab (its tip), the bar's inline pill, and the pill's copy in the +N list once
+ * the bar folds it away. Each site passes `onHost` to `shellDisplayName` itself, so each is
+ * checked on its own.
+ */
+async function expectShellNamedEverywhere(page: Page, expectedName: string): Promise<void> {
+  await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  // Vacuity guard: the desktop reads as Windows, where a local bash is named Git Bash.
+  expect(await page.evaluate(() => navigator.platform)).toBe('Win32');
 
-      // The bottom panel's bar, as the other ContextBar specs find it.
-      const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
-      await expect(contextBar).toBeVisible({ timeout: 10000 });
+  await test.step('the session tab\'s tip names the shell', async () => {
+    const sessionTab = page.locator(`[data-testid="terminal-session-tab"][data-session-id="${SESSION_ID}"]`);
+    await expect(sessionTab).toBeVisible({ timeout: 10000 });
+    await expect(sessionTab).toHaveAccessibleDescription(expectedName);
+  });
 
-      await page.evaluate(
-        (sessionId: string) => {
-          const stores = (window as unknown as {
-            __zustandStores?: {
-              session: { getState: () => { updateUsage: (id: string, data: unknown) => void } };
-            };
-          }).__zustandStores;
-          stores?.session.getState().updateUsage(sessionId, {
-            model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
-            contextWindow: {
-              usedPercentage: 5,
-              usedTokens: 200,
-              cacheTokens: 0,
-              totalInputTokens: 150,
-              totalOutputTokens: 50,
-              contextWindowSize: 200000,
-            },
-            cost: { totalCostUsd: 0.001, totalDurationMs: 500 },
-          });
+  // The bottom panel's bar, as the other ContextBar specs find it.
+  const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+  await expect(contextBar).toBeVisible({ timeout: 10000 });
+  await page.evaluate(
+    (sessionId: string) => {
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          session: { getState: () => { updateUsage: (id: string, data: unknown) => void } };
+        };
+      }).__zustandStores;
+      stores?.session.getState().updateUsage(sessionId, {
+        model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' },
+        contextWindow: {
+          usedPercentage: 5,
+          usedTokens: 200,
+          cacheTokens: 0,
+          totalInputTokens: 150,
+          totalOutputTokens: 50,
+          contextWindowSize: 200000,
         },
-        SESSION_ID,
-      );
+        cost: { totalCostUsd: 0.001, totalDurationMs: 500 },
+        toolCallCount: 42,
+      });
+    },
+    SESSION_ID,
+  );
 
-      // A folded pill stays mounted, so the shell's own cell is read, not the bar's text.
-      const shellPill = contextBar.locator('[data-fold-id="shell"]');
-      await expect(shellPill).toHaveText('bash', { timeout: 5000 });
+  await test.step('the bar\'s inline pill names the shell', async () => {
+    // A folded pill stays mounted, so the shell's own cell is read, not the bar's text.
+    const shellPill = contextBar.locator('[data-fold-id="shell"]');
+    await expect(shellPill).toHaveText(expectedName, { timeout: 5000 });
+  });
+
+  await test.step('the +N list\'s copy of the pill names the shell', async () => {
+    await page.setViewportSize({ width: FOLDED_VIEWPORT_WIDTH, height: 700 });
+    await expect(contextBar.locator('[data-fold-id="shell"][data-folded]')).toHaveCount(1, { timeout: 5000 });
+    await contextBar.getByTestId('context-bar-overflow').click();
+    const overflowList = page.getByTestId('context-bar-overflow-list');
+    await expect(overflowList).toBeVisible();
+    // An exact match: a regex on /bash/ would pass for "Git Bash" too.
+    await expect(overflowList.locator('[data-overflow-item="shell"]')).toHaveText(expectedName);
+  });
+}
+
+test.describe('Shell naming on a Windows desktop', () => {
+  test('a host\'s bash reads bash on every surface, never Git Bash', async () => {
+    const { browser, page } = await launchWithRemoteSession({ remote: true });
+    try {
+      await expectShellNamedEverywhere(page, 'bash');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The control. It needs its own boot because the project is the seed: it proves the forced
+  // Win32 platform really turns a local bash into Git Bash at all three sites, so the test
+  // above cannot pass only because nothing ever said Git Bash.
+  test('a local project\'s bash still reads Git Bash on every surface', async () => {
+    const { browser, page } = await launchWithRemoteSession({ remote: false });
+    try {
+      await expectShellNamedEverywhere(page, 'Git Bash');
     } finally {
       await browser.close();
     }
   });
 });
+

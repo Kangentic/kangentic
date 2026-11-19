@@ -34,7 +34,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   // (filtered below), so this only ever serves task-bound sessions.
   const projectDefaultAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
   // The panel's sessions are the open project's, so a project on a host names its shells as the host does.
-  const projectOnHost = useProjectStore((s) => s.currentProject?.remote != null);
+  const projectOnHost = useProjectStore((state) => state.currentProject?.remote != null);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const selectActiveSession = useSessionStore((s) => s.selectActiveSession);
