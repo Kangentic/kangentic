@@ -504,7 +504,8 @@ in one Sentry org, one triage surface.
     sends `AgentSessionIdNotCapturedError` with `settled_by` (`removed`, `ceiling`),
     `session_status` and `agent_ran_for_s`: a seconds bucket from the first sign the agent ran to
     the session's end, `not_run` when it never showed it ran, `running` when the session is still
-    up at the ceiling, and `unknown` for a row that ended with no exit recorded. An agent that
+    up at the ceiling, and `unknown` when the ceiling finds it no longer running with no exit
+    recorded. A removed session whose agent ran always gets a bucket. An agent that
     exited seconds after it started had no conversation to capture, and one still running had one
     the capture missed (the DESKTOP-36 recurrence on 0.60.0 could not say which). The end is the
     PTY's exit, or the removal when that came first, so the bucket is an upper bound on the
