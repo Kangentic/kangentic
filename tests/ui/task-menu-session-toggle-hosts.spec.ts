@@ -61,6 +61,7 @@ import {
   switchToProject,
   visitOtherBoardAndBack,
 } from './monitor-writes-seed';
+import { openContextMenuOn } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -441,6 +442,103 @@ test.describe('Task detail session writes in the Agent Monitor for a task of ano
       expect(await page.evaluate(() => (
         window as unknown as { __mockResumeOnOpenCalls?: unknown[] }
       ).__mockResumeOnOpenCalls ?? [])).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: `requestMonitorDetail` stops raising the store's edit request, or stops
+  // dropping its own one-shot flag when main answers that the detail is already
+  // open or rejects the ask, or the open handler takes the flag only after its
+  // existing-window check. That flag reaches a detail the ask creates. A detail
+  // that is already open is focused instead, so the Edit did nothing there and
+  // left the flag behind, and the next plain open of the same task came up on
+  // the edit form.
+  test('Edit from the row menu reaches a detail that is already open, and only that once', async () => {
+    const taskId = 'task-hosts-edit-open';
+    const { browser, page } = await launch({
+      tasks: [{ id: taskId, displayId: 94, title: 'Running task edited from the monitor', lane: 'Executing', session: true }],
+    });
+    try {
+      const rowTitle = byTestId(page, 'monitor-page')
+        .locator(`[data-session-id="${sessionIdOf(taskId)}"] [data-testid="monitor-card-title"]`);
+      // Closes through the store, which asks nothing about unsaved edits.
+      const closeEveryMonitorWindow = () => page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores: { monitorWindows: { getState: () => { windows: Record<string, unknown>; closeWindow: (id: string) => void } } };
+        }).__zustandStores;
+        const monitorWindows = stores.monitorWindows.getState();
+        for (const windowId of Object.keys(monitorWindows.windows)) monitorWindows.closeWindow(windowId);
+      });
+      const editFromRowMenu = async () => {
+        // Opened on the row itself, since the open detail can sit over it.
+        await openContextMenuOn(rowTitle);
+        await byTestId(page, 'context-edit-task').click();
+      };
+      const detail = await openMonitorDetail(page, taskId);
+      const viewBody = detail.locator('[data-testid="task-detail-dialog"]');
+      const editForm = detail.locator('[data-testid="task-detail-edit-scroll"]');
+      const bodySlot = detail.locator('[data-testid="task-detail-body-slot"]');
+      await expect(viewBody).toBeVisible();
+      await expect(editForm).toHaveCount(0);
+
+      await test.step('main answers that the detail is already open', async () => {
+        await editFromRowMenu();
+        await expect.soft(editForm).toBeVisible();
+        // No Browser pane here, so the form replaces the body rather than hiding it.
+        await expect(bodySlot).toHaveCount(0);
+
+        await closeEveryMonitorWindow();
+        await expect(detail).toHaveCount(0);
+        await rowTitle.click();
+        await expect(viewBody).toBeVisible();
+        await expect(editForm).toHaveCount(0);
+        await expect(bodySlot).toHaveCount(1);
+      });
+
+      // The real app's two quick Edit requests: main has not yet heard the first
+      // window's ownership report, so it answers `open-here` for a detail the
+      // Monitor already holds. Forgetting main's record models that gap. The
+      // handler only focuses the window, and must not keep the edit flag.
+      await test.step('main answers open-here for a detail the Monitor already holds', async () => {
+        await page.evaluate((suffix: string) => {
+          const owners = (window as unknown as {
+            electronAPI: { taskDetailOwnership: { __owners: Record<string, unknown> } };
+          }).electronAPI.taskDetailOwnership.__owners;
+          for (const key of Object.keys(owners)) if (key.endsWith(suffix)) delete owners[key];
+        }, `:${taskId}`);
+        await editFromRowMenu();
+        await expect(editForm).toBeVisible();
+
+        await closeEveryMonitorWindow();
+        await expect(detail).toHaveCount(0);
+        await rowTitle.click();
+        await expect(viewBody).toBeVisible();
+        await expect(editForm).toHaveCount(0);
+      });
+
+      // An Edit whose ask is rejected opens nothing, so nothing takes the flag.
+      // The rejection is logged with console.error, which this spec ignores.
+      await test.step('main rejects the ask', async () => {
+        await closeEveryMonitorWindow();
+        await expect(detail).toHaveCount(0);
+        await page.evaluate(() => {
+          const ownership = (window as unknown as {
+            electronAPI: { taskDetailOwnership: { requestOpen: (...args: unknown[]) => Promise<unknown> } };
+          }).electronAPI.taskDetailOwnership;
+          const realRequestOpen = ownership.requestOpen;
+          ownership.requestOpen = () => {
+            ownership.requestOpen = realRequestOpen;
+            return Promise.reject(new Error('main refused the open'));
+          };
+        });
+        await editFromRowMenu();
+        await expect(detail).toHaveCount(0);
+
+        await rowTitle.click();
+        await expect(viewBody).toBeVisible();
+        await expect(editForm).toHaveCount(0);
+      });
     } finally {
       await browser.close();
     }

@@ -22,7 +22,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, openContextMenuOn } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -198,6 +198,15 @@ async function closeWindowAndWaitForPark(page: Page): Promise<string> {
   return parked.id;
 }
 
+/**
+ * Open the fixture card's menu and choose Edit. The menu is opened on the card
+ * itself, because the task's own window can sit over the card.
+ */
+async function editFromCardMenu(page: Page): Promise<void> {
+  await openContextMenuOn(page.locator('[data-swimlane-name="Code Review"]').locator('text=Browser Park Task').first());
+  await page.locator('[data-testid="context-edit-task"]').click();
+}
+
 async function showBacklog(page: Page): Promise<void> {
   await page.evaluate(() => {
     const stores = (window as unknown as {
@@ -259,6 +268,111 @@ test.describe('park on close', () => {
     expect(await registersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(1);
     expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
     await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
+  });
+
+  // The card menu's Edit asks to open the task on its edit form. A window that
+  // request creates starts there, but a task that already has a window gets it
+  // focused or un-parked instead, and the Edit used to be dropped on the way:
+  // nothing happened with the window open, and a parked one came back showing
+  // its terminal. A window closed with its pane live is always parked, so with
+  // a Browser pane open Edit never worked. Both cases read red with
+  // TaskDetailWindow's `taskEditRequest` subscription doing nothing.
+  test('Edit from the card menu shows the edit form in a window that is already open', async () => {
+    await openRegisteredPane(sharedPage);
+    const editForm = sharedPage.locator('[data-testid="task-detail-edit-scroll"]');
+    await expect(editForm).toHaveCount(0);
+
+    await editFromCardMenu(sharedPage);
+    await expect(editForm).toBeVisible({ timeout: 5000 });
+
+    // A second Edit is a new request, not the same state set twice.
+    await sharedPage.locator('[data-testid="task-detail-dialog"]').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(editForm).toHaveCount(0);
+    await editFromCardMenu(sharedPage);
+    await expect(editForm).toBeVisible({ timeout: 5000 });
+  });
+
+  test('Edit from the card menu brings a parked window back on its edit form', async () => {
+    await openRegisteredPane(sharedPage);
+    await closeWindowAndWaitForPark(sharedPage);
+
+    await editFromCardMenu(sharedPage);
+
+    // Read from the store: a parked frame is still "visible" to Playwright.
+    await expect.poll(async () => (await taskWindow(sharedPage))?.parked ?? true, { timeout: 5000 }).toBe(false);
+    await expect(sharedPage.locator('[data-testid="task-detail-edit-scroll"]')).toBeVisible({ timeout: 5000 });
+  });
+
+  // The edit form used to replace the window's body, so opening it unmounted a
+  // live pane and destroyed its guest, and closing it built a fresh one: the
+  // loss parking exists to prevent, by another door. The body now stays mounted
+  // under the form while a guest is registered. Both cases read red with
+  // TaskDetailWindow's `bodyConcealed` forced false: the guest is unregistered
+  // the moment the form opens.
+  test('the edit form keeps a live pane mounted: the same guest going in and coming back', async () => {
+    await openRegisteredPane(sharedPage);
+    const editForm = sharedPage.locator('[data-testid="task-detail-edit-scroll"]');
+    const bodySlot = sharedPage.locator('[data-testid="task-detail-body-slot"]');
+    const bodyTerminal = bodySlot.locator('[data-testid="terminal-tab-container"]');
+    const lastReportedVisibility = (): Promise<string | null> => sharedPage.evaluate((webContentsId: number) => {
+      const calls = window.__mockBrowser?.getPaneCalls() ?? [];
+      // The registration carries the visibility current at that moment, and a
+      // `visibility` call reports every change after it.
+      let latest: string | null = null;
+      for (const call of calls) {
+        if (call.type === 'register' && call.input.webContentsId === webContentsId) latest = String(call.input.visibility);
+        if (call.type === 'visibility' && call.webContentsId === webContentsId) latest = String(call.visibility);
+      }
+      return latest;
+    }, MOCK_WEB_CONTENTS_ID);
+
+    // Before the form: the body's terminal is up and the pane reports showing.
+    await expect(bodyTerminal).toHaveCount(1);
+    await expect.poll(lastReportedVisibility, { timeout: 5000 }).toBe('showing');
+
+    await editFromCardMenu(sharedPage);
+    await expect(editForm).toBeVisible({ timeout: 5000 });
+    await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
+    // Under the form the pane tells main it is hidden, and the body's terminal is down.
+    await expect.poll(lastReportedVisibility, { timeout: 5000 }).toBe('hidden');
+    await expect(bodyTerminal).toHaveCount(0);
+    expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
+    // Hidden the retained way, at its full size, so the guest keeps compositing.
+    await expect(bodySlot).toHaveAttribute('inert', '');
+    expect(await bodySlot.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+    await expectGuestComposites(sharedPage);
+    const hiddenBox = await sharedPage.locator('[data-testid="browser-webview"]').boundingBox();
+    expect(hiddenBox?.width ?? 0).toBeGreaterThan(0);
+    expect(hiddenBox?.height ?? 0).toBeGreaterThan(0);
+
+    await sharedPage.locator('[data-testid="task-detail-dialog"]').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(editForm).toHaveCount(0);
+    await expect(bodySlot).not.toHaveAttribute('inert', '');
+    await expect.poll(lastReportedVisibility, { timeout: 5000 }).toBe('showing');
+    await expect(bodyTerminal).toHaveCount(1);
+    expect(await registersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(1);
+    expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
+  });
+
+  // With the pane kept under the form, closing from the form parks the window,
+  // and its edit state would ride along. The next plain open has to show the
+  // terminal view, not the form the user closed. Red with the window's
+  // leave-the-form-on-park step removed: the reopened window is still editing.
+  test('a window closed from its edit form reopens on its view, with the same guest', async () => {
+    await openRegisteredPane(sharedPage);
+    await editFromCardMenu(sharedPage);
+    const editForm = sharedPage.locator('[data-testid="task-detail-edit-scroll"]');
+    await expect(editForm).toBeVisible({ timeout: 5000 });
+
+    await sharedPage.locator('[data-testid="task-detail-close"]').click();
+    await expect.poll(async () => (await taskWindow(sharedPage))?.parked ?? false, { timeout: 5000 }).toBe(true);
+
+    await sharedPage.locator('[data-swimlane-name="Code Review"]').locator('text=Browser Park Task').first().click();
+    await expect.poll(async () => (await taskWindow(sharedPage))?.parked ?? true, { timeout: 5000 }).toBe(false);
+    await expect(editForm).toHaveCount(0);
+    await expect(sharedPage.locator('[data-testid="task-detail-body-slot"]')).not.toHaveAttribute('inert', '');
+    expect(await registersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(1);
+    expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
   });
 
   // The Backlog view hides the board's overlay. `visibility: hidden` stops a guest

@@ -46,6 +46,13 @@ export interface CoreSessionSlice {
    *  in edit mode. Set alongside `detailTaskId` by `setDetailTaskId`; read once
    *  by the window-manager bridge when it opens the window. */
   detailTaskInitialEdit: boolean;
+  /** The latest request to show a task's edit form, for a window that is already
+   *  mounted. `detailTaskInitialEdit` and the Monitor's own flag reach only a
+   *  window the request creates, and a task whose window is open, or parked
+   *  behind a live Browser pane, never gets a new one. An event, not a value:
+   *  every request writes a new object, and TaskDetailWindow subscribes and
+   *  acts on the change, so a second Edit on the same task still arrives. */
+  taskEditRequest: { taskId: string } | null;
   /** Sessions currently owned by an open task-detail window. Each window claims
    *  its own session; the bottom panel renders no terminal while this is
    *  non-empty (the panel and the windows are mutually exclusive terminal
@@ -182,6 +189,8 @@ export interface CoreSessionSlice {
     id: string | null,
     options?: { initialEdit?: boolean },
   ) => void;
+  /** Ask the window that already hosts this task, if any, to show its edit form. */
+  requestTaskEdit: (taskId: string) => void;
   spawnSession: (input: Omit<SpawnSessionInput, 'startPath' | 'openingPrompt' | 'sessionIdCreation'>) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
   // `projectId` on the four task-session mutations below is the task's own

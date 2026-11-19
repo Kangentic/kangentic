@@ -283,6 +283,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   activeSessionId: null,
   detailTaskId: null,
   detailTaskInitialEdit: false,
+  taskEditRequest: null,
   dialogSessionIds: [],
   remoteDetailTaskIds: [],
   mobileTerminalStreamedSessionIds: [],
@@ -713,13 +714,23 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   // rebuilt without it, and an agent's `open_pane` never reaches it (see
   // `.claude/rules/agent-driven-focus.md`). So this is where an open resumes a
   // task the idle timeout paused. An edit open is the form, not the agent.
+  //
+  // An edit open also raises `taskEditRequest`, in the same write. The flag
+  // above reaches only a window this open creates. A task whose window is
+  // already open, or was closed while its Browser pane was live and so is only
+  // parked, gets focused or un-parked instead, and without the request its
+  // Edit did nothing.
   setDetailTaskId: (id, options) => {
-    set({
+    const editRequested = id !== null && !!options?.initialEdit;
+    set((state) => ({
       detailTaskId: id,
-      detailTaskInitialEdit: id ? !!options?.initialEdit : false,
-    });
+      detailTaskInitialEdit: editRequested,
+      taskEditRequest: editRequested ? { taskId: id } : state.taskEditRequest,
+    }));
     if (id && !options?.initialEdit) get().resumeOnOpen(id);
   },
+  // A new object every time, which is what makes a repeat request a change.
+  requestTaskEdit: (taskId) => set({ taskEditRequest: { taskId } }),
   claimDialogSession: (sessionId) =>
     set((state) =>
       state.dialogSessionIds.includes(sessionId)

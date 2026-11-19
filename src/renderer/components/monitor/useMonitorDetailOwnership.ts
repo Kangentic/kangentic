@@ -53,13 +53,28 @@ export function requestMonitorDetail(
   taskId: string,
   options?: { initialEdit?: boolean },
 ): void {
-  if (options?.initialEdit) pendingInitialEdit.add(monitorDetailAnchor(projectId, taskId));
-  // The Monitor's own open, which never passes `setDetailTaskId`. Only a person
-  // reaches this function: an agent's open_pane opens no window at all.
-  else useSessionStore.getState().resumeOnOpen(taskId, projectId);
+  const anchor = monitorDetailAnchor(projectId, taskId);
+  if (options?.initialEdit) {
+    pendingInitialEdit.add(anchor);
+    // The flag above reaches only a window this request creates. A detail that
+    // is already open here is focused instead, and takes the edit from this.
+    useSessionStore.getState().requestTaskEdit(taskId);
+  } else {
+    // The Monitor's own open, which never passes `setDetailTaskId`. Only a person
+    // reaches this function: an agent's open_pane opens no window at all.
+    useSessionStore.getState().resumeOnOpen(taskId, projectId);
+  }
   void window.electronAPI?.taskDetailOwnership
     ?.requestOpen(projectId, taskId, 'monitor')
+    .then((destination) => {
+      // Main focused a detail that is already open and sends no open for it, so
+      // no window will mount to take the flag. Left behind, it turned the next
+      // plain open of the same task into an edit.
+      if (destination.kind === 'focused-existing') pendingInitialEdit.delete(anchor);
+    })
     .catch((error) => {
+      // Nothing opens, so nothing will take the flag either.
+      pendingInitialEdit.delete(anchor);
       console.error('[monitor] Failed to open task detail:', error);
     });
 }
@@ -76,13 +91,15 @@ export function useMonitorDetailOwnership(): void {
       // agent-focus-ok: this push is only ever a user's request. An agent's
       // kangentic_browser_open_pane never asks main to open a detail; its pane
       // mounts through useBrowserPaneRequestBridge, in a window born parked.
+      // Consumed once: a later open of the same task is a normal view. Taken
+      // before the existing-window check, so an open that only focuses a window
+      // already in this store does not leave its flag behind either.
+      const initialEdit = pendingInitialEdit.delete(anchor);
       const existing = Object.values(store.windows).find((candidate) => candidate.anchor === anchor);
       if (existing) {
         store.focusWindow(existing.id);
         return;
       }
-      // Consumed once: a later open of the same task is a normal view.
-      const initialEdit = pendingInitialEdit.delete(anchor);
       store.openWindow({
         kind: 'task-detail',
         anchor,
