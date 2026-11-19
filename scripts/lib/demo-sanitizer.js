@@ -64,6 +64,13 @@ const WSL_MARKERS = [
   ['the name of the Windows Subsystem for Linux', /\bWSL2?\b|microsoft-standard|wsl\.localhost|\\\\wsl\$/],
 ];
 
+/**
+ * Who a recording made in a WSL distro says it ran as: the sample install's Linux host. The
+ * distro's user, home and host name are rewritten to these, so they have to match the host the
+ * dataset lists and the folder its project names there (tests/unit/demo-sanitizer-deep.test.ts).
+ */
+const HOST_IDENTITY = Object.freeze({ user: 'dev', host: 'build-box', home: '/home/dev' });
+
 /** Text as a terminal shows it, with every space and escape sequence removed. */
 function compactText(text) {
   return text
@@ -111,18 +118,20 @@ function buildSanitizer(options) {
   const scratchParent = path.basename(path.dirname(options.cwd));
   // The distro's own identity, ahead of the Windows one: a distro takes this computer's host name
   // by default, and on a Linux host that name is build-box, not the Windows install's DEV-PC.
-  const posixDemoHome = '/home/dev';
+  const posixDemoHome = HOST_IDENTITY.home;
+  // The share forms go first: the forward-slash share path holds the distro's own path inside it,
+  // which would otherwise be rewritten in place and leave the share's prefix in front of it.
   const distroReplacements = wsl ? [
-    [wsl.linuxCwd, demoPath],
-    [`~/${path.posix.relative(wsl.home, wsl.linuxCwd)}`, `~/${path.posix.relative(posixDemoHome, demoPath)}`],
     [options.cwd, demoPath],
     [forwardSlash(options.cwd), demoPath],
+    [wsl.linuxCwd, demoPath],
+    [`~/${path.posix.relative(wsl.home, wsl.linuxCwd)}`, `~/${path.posix.relative(posixDemoHome, demoPath)}`],
     [wsl.homeUnc, posixDemoHome],
     [forwardSlash(wsl.homeUnc), posixDemoHome],
     [wsl.home, posixDemoHome],
     [`/home/${wsl.user}`, posixDemoHome],
-    [wsl.host, 'build-box'],
-    [wsl.user, 'dev'],
+    [wsl.host, HOST_IDENTITY.host],
+    [wsl.user, HOST_IDENTITY.user],
   ] : [];
   const replacements = [
     ...distroReplacements,
@@ -182,11 +191,11 @@ function buildSanitizer(options) {
     [`the user name "${user}"`, new RegExp(`\\b${escape(user)}\\b`, 'i')],
     [`the host name "${host}"`, new RegExp(`\\b${escape(host)}\\b`, 'i')],
     ['an email address', FIXTURE_EMAIL_PATTERN],
-    ...(wsl ? [
-      [`the distro's user name "${wsl.user}"`, new RegExp(`\\b${escape(wsl.user)}\\b`, 'i')],
-      [`the distro's host name "${wsl.host}"`, new RegExp(`\\b${escape(wsl.host)}\\b`, 'i')],
-      ...WSL_MARKERS,
-    ] : []),
+    // A distro name that already is the host's has nothing to leak, and checking for it would
+    // refuse every capture, since the rewritten text carries that name.
+    ...(wsl && wsl.user.toLowerCase() !== HOST_IDENTITY.user ? [[`the distro's user name "${wsl.user}"`, new RegExp(`\\b${escape(wsl.user)}\\b`, 'i')]] : []),
+    ...(wsl && wsl.host.toLowerCase() !== HOST_IDENTITY.host ? [[`the distro's host name "${wsl.host}"`, new RegExp(`\\b${escape(wsl.host)}\\b`, 'i')]] : []),
+    ...(wsl ? WSL_MARKERS : []),
   ];
   return {
     apply(text) {
@@ -241,4 +250,4 @@ function sanitizeDeep(value, sanitizer) {
   return value;
 }
 
-module.exports = { buildSanitizer, forwardSlash, sanitizeDeep, stripAccountLinks, FIXTURE_EMAIL_PATTERN, MACHINE_NOTICES, WSL_MARKERS };
+module.exports = { buildSanitizer, forwardSlash, sanitizeDeep, stripAccountLinks, FIXTURE_EMAIL_PATTERN, HOST_IDENTITY, MACHINE_NOTICES, WSL_MARKERS };

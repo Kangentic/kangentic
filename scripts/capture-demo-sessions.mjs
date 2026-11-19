@@ -70,6 +70,7 @@ import { importTsModule } from './lib/bundle-ts-module.mjs';
 import { buildScaffoldRepo, stageScaffoldRefresh } from './lib/demo-scaffold-repo.mjs';
 import { prepareMcpCapture, prepareWorkflowAgentCapture } from './lib/demo-mcp-capture.mjs';
 import { applyRecordedChanges, excludeFromGit } from './lib/demo-browser-send.mjs';
+import { HOST_IDENTITY } from './lib/demo-sanitizer.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.join(repoRoot, 'tests', 'captures', 'fixtures', 'demo');
@@ -373,11 +374,11 @@ function distroFacts() {
 async function prepareLinuxRepo(project, spec) {
   if (!spec.git || !spec.commit || !spec.branch) throw new Error(`[matrix] the linux repo ${project.name} needs git, commit and branch`);
   const facts = await distroFacts();
-  const relative = path.posix.relative('/home/dev', project.remote.path);
-  if (relative.startsWith('..')) throw new Error(`[matrix] ${project.name}'s host folder ${project.remote.path} is not under /home/dev`);
+  const relative = path.posix.relative(HOST_IDENTITY.home, project.remote.path);
+  if (relative.startsWith('..')) throw new Error(`[matrix] ${project.name}'s host folder ${project.remote.path} is not under ${HOST_IDENTITY.home}`);
   const root = path.posix.join(facts.homeLinux, relative);
   const share = path.win32.join(facts.homeUnc, ...relative.split('/'));
-  if (!fs.existsSync(path.join(share, '.git'))) {
+  if (!fs.existsSync(path.win32.join(share, '.git'))) {
     console.error(`[matrix] ${project.name}: cloning ${spec.git} into the ${wslDistro} distro`);
     inDistro(['git', 'clone', '-q', '--depth', '1', '--no-checkout', spec.git, root], { inherit: true });
   }
@@ -391,10 +392,10 @@ async function prepareLinuxRepo(project, spec) {
   for (const remote of inDistro(['git', '-C', root, 'remote']).split('\n').map((line) => line.trim()).filter(Boolean)) {
     inDistro(['git', '-C', root, 'remote', 'remove', remote]);
   }
-  const excludePath = path.join(share, '.git', 'info', 'exclude');
+  const excludePath = path.win32.join(share, '.git', 'info', 'exclude');
   const excluded = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf-8') : '';
   if (!excluded.split(/\r?\n/).includes('.kangentic/')) {
-    fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+    fs.mkdirSync(path.win32.dirname(excludePath), { recursive: true });
     fs.writeFileSync(excludePath, `${excluded.trimEnd()}\n.kangentic/\n`.replace(/^\n/, ''));
   }
   console.error(`[matrix] ${project.name}: ${root} in ${wslDistro} at ${spec.branch} ${spec.commit.slice(0, 12)}`);

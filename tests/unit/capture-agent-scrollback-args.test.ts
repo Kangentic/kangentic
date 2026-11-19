@@ -21,7 +21,7 @@
  * parseArgs only resolves strings and never touches the disk, so every path here is a string built
  * under os.tmpdir() and nothing is created.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -88,7 +88,25 @@ interface WslLaunchHelpers {
   WSL_AGENT_ENV: Record<string, string>;
 }
 
+interface DistroFacts {
+  linuxCwd: string;
+  leftoverProcesses: () => string[];
+  hangUp: (pids: string[]) => void;
+}
+
+interface CollectedChanges {
+  files: Array<{ path: string; status: string; binary: boolean; insertions: number; deletions: number; original: string; modified: string; language: string | null }>;
+  totalInsertions: number;
+  totalDeletions: number;
+}
+
+interface WslTeardownHelpers {
+  settleWslLeftovers: (wsl: DistroFacts, sleep: (milliseconds: number) => Promise<void>) => Promise<void>;
+  collectChanges: (cwd: string, sanitizer: { apply: (text: string) => string }, runGit: (args: string[]) => string) => CollectedChanges;
+}
+
 const require = createRequire(import.meta.url);
+const { settleWslLeftovers, collectChanges } = require('../../scripts/capture-agent-scrollback.js') as WslTeardownHelpers;
 const { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS, wslSpawnArgs, withoutDriveMounts, WSL_AGENT_ENV } = require('../../scripts/capture-agent-scrollback.js') as CaptureScrollbackModule & WslLaunchHelpers;
 
 describe('a capture in a WSL distro', () => {
@@ -434,5 +452,146 @@ describe('parseArgs: path options resolve to absolute paths', () => {
     expect(options.mcpConfig).toBeNull();
     expect(options.settings).toBeNull();
     expect(options.scratchRoot).toBeNull();
+  });
+});
+
+describe('settleWslLeftovers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function distro(overrides: Partial<DistroFacts>): { wsl: DistroFacts; hangUps: string[][] } {
+    const hangUps: string[][] = [];
+    const wsl: DistroFacts = {
+      linuxCwd: '/home/someone/redis',
+      leftoverProcesses: () => [],
+      hangUp: (pids) => { hangUps.push(pids); },
+      ...overrides,
+    };
+    return { wsl, hangUps };
+  }
+
+  function countingSleep(): { sleep: (milliseconds: number) => Promise<void>; calls: number[] } {
+    const calls: number[] = [];
+    return { sleep: async (milliseconds) => { calls.push(milliseconds); }, calls };
+  }
+
+  it('returns at once, with no hangup, when nothing is left', async () => {
+    const { wsl, hangUps } = distro({});
+    const { sleep, calls } = countingSleep();
+    await settleWslLeftovers(wsl, sleep);
+    expect(calls).toEqual([]);
+    expect(hangUps).toEqual([]);
+  });
+
+  it('polls while processes remain and returns once they end', async () => {
+    let looks = 0;
+    const { wsl, hangUps } = distro({ leftoverProcesses: () => { looks += 1; return looks <= 3 ? ['602 sleep'] : []; } });
+    const { sleep, calls } = countingSleep();
+    await settleWslLeftovers(wsl, sleep);
+    expect(calls).toEqual([500, 500, 500]);
+    expect(hangUps).toEqual([]);
+  });
+
+  it('hangs up the pids of what outlasts about 5 seconds of polling', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { wsl, hangUps } = distro({ leftoverProcesses: () => ['602 sleep', '911 node'] });
+    const { sleep, calls } = countingSleep();
+    await settleWslLeftovers(wsl, sleep);
+    expect(calls).toHaveLength(10);
+    expect(calls.every((milliseconds) => milliseconds === 500)).toBe(true);
+    expect(hangUps).toEqual([['602', '911']]);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('602 sleep, 911 node'));
+  });
+
+  it('reports a hangup that throws and does not throw itself', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { wsl } = distro({
+      leftoverProcesses: () => ['602 sleep'],
+      hangUp: () => { throw new Error('kill refused'); },
+    });
+    await expect(settleWslLeftovers(wsl, countingSleep().sleep)).resolves.toBeUndefined();
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('the hangup failed (kill refused)'));
+  });
+
+  it('reports a look that throws, ends the wait, and does not throw', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { wsl, hangUps } = distro({ leftoverProcesses: () => { throw new Error('wsl.exe failed'); } });
+    const { sleep, calls } = countingSleep();
+    await expect(settleWslLeftovers(wsl, sleep)).resolves.toBeUndefined();
+    expect(calls).toEqual([]);
+    expect(hangUps).toEqual([]);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('wsl.exe failed'));
+  });
+});
+
+describe('collectChanges', () => {
+  const cleanup: string[] = [];
+  afterEach(() => {
+    for (const directory of cleanup.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  const sanitizer = { apply: (text: string) => `S(${text})` };
+
+  function folderWith(files: Record<string, string>): string {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'collect-changes-'));
+    cleanup.push(directory);
+    for (const [relative, content] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(directory, relative)), { recursive: true });
+      fs.writeFileSync(path.join(directory, relative), content);
+    }
+    return directory;
+  }
+
+  const NAME_STATUS = ['M\tsrc/expire.c', 'A\tsrc/new.c', 'D\tsrc/gone.c', 'M\tnode_modules/pkg/index.js'].join('\n');
+  const NUMSTAT = ['3\t1\tsrc/expire.c', '5\t0\tsrc/new.c', '0\t7\tsrc/gone.c', '1\t1\tnode_modules/pkg/index.js'].join('\n');
+
+  function fakeGit(failOn?: string): { runGit: (args: string[]) => string; calls: string[][] } {
+    const calls: string[][] = [];
+    const runGit = (args: string[]): string => {
+      calls.push(args);
+      const joined = args.join(' ');
+      if (failOn && joined === failOn) throw new Error(`git ${joined} failed`);
+      if (joined === 'diff --name-status HEAD') return NAME_STATUS;
+      if (joined === 'diff --numstat HEAD') return NUMSTAT;
+      if (joined === 'show HEAD:src/expire.c') return 'old expire';
+      if (joined === 'show HEAD:src/gone.c') return 'old gone';
+      return '';
+    };
+    return { runGit, calls };
+  }
+
+  const folder = () => folderWith({ 'src/expire.c': 'new expire', 'src/new.c': 'brand new', 'node_modules/pkg/index.js': 'skipped' });
+
+  it('stages intent-to-add, reads both diffs, shows the originals, and resets the index last', () => {
+    const { runGit, calls } = fakeGit();
+    collectChanges(folder(), sanitizer, runGit);
+    expect(calls.map((args) => args.join(' '))).toEqual([
+      'add --intent-to-add --all',
+      'diff --name-status HEAD',
+      'diff --numstat HEAD',
+      'show HEAD:src/expire.c',
+      'show HEAD:src/gone.c',
+      'reset -q',
+    ]);
+  });
+
+  it('gives each file the status of name-status, the counts of numstat, and the sanitized text', () => {
+    const { runGit } = fakeGit();
+    const changes = collectChanges(folder(), sanitizer, runGit);
+    expect(changes.files.map((file) => file.path)).toEqual(['src/expire.c', 'src/new.c', 'src/gone.c']);
+    const [modified, added, deleted] = changes.files;
+    expect(modified).toMatchObject({ status: 'M', insertions: 3, deletions: 1, binary: false, original: 'S(old expire)', modified: 'S(new expire)', language: 'c' });
+    // An added file has no original to show, and a deleted one has no modified text.
+    expect(added).toMatchObject({ status: 'A', insertions: 5, deletions: 0, original: 'S()', modified: 'S(brand new)' });
+    expect(deleted).toMatchObject({ status: 'D', insertions: 0, deletions: 7, original: 'S(old gone)', modified: 'S()' });
+    expect(changes.totalInsertions).toBe(8);
+    expect(changes.totalDeletions).toBe(8);
+  });
+
+  it('resets the index even when a step throws', () => {
+    const { runGit, calls } = fakeGit('diff --numstat HEAD');
+    expect(() => collectChanges(folder(), sanitizer, runGit)).toThrow(/numstat/);
+    expect(calls[calls.length - 1]).toEqual(['reset', '-q']);
   });
 });

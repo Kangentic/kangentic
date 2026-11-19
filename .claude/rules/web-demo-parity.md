@@ -338,11 +338,10 @@ three things staying in step, and each is enforced rather than remembered.
   one or a `setting-row-<id>` marker names a row that is not on that tab, when a `fitToRecording`
   names a session the recordings index does not carry, when a scene's `rows` names a task that is
   not a scene-only row, when a scene-only task is also a dataset row, names a session it does not
-  carry, or shares a ticket on its board, or its MCP recording does not take the next free ticket
-  or never prints it, when a scene-only project lives on a host the dataset does not list or lacks
-  a boot a visitor can start there, when a scene restores windows on a project its frame does not
-  open on,
-  when a `__mockTaskReports` key is not an archived task of the open project or the scenes seed
+  carry, or shares a ticket on its board, when a scene-only task's MCP recording does not take the
+  next free ticket or never prints it, when a scene-only project lives on a host the dataset does
+  not list or lacks a boot a visitor can start there, when a scene restores windows on a project
+  its frame does not open on, when a `__mockTaskReports` key is not an archived task of the open project or the scenes seed
   reports for more than one task, when `boot.js`'s `STATE_KEYS` or `demo/vite.config.mts`'s
   `scenes.json` fields drift from the type, and when
   `boot.js` reads `settle` or a `settle` selector names a testid no renderer file stamps. It also

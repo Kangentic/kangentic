@@ -287,6 +287,8 @@ export const TASK_REDIS_SLOWLOG = 'task-rd-slowlog';
 export const TASK_REDIS_EXPIRE = 'task-rd-expire';
 export const SESSION_REDIS_SLOWLOG = 'sess-rd-slowlog';
 export const SESSION_REDIS_EXPIRE = 'sess-rd-expire';
+// A To Do card on the redis board, which a visitor's drag starts from the host's recorded boots.
+export const TASK_REDIS_OBJECT_FREQ = 'task-rd-object-freq';
 
 // The sample install is a Windows machine, as the recording machine and the mock's platform are.
 const HOME = 'C:\\Users\\dev';
@@ -681,26 +683,27 @@ export const DEMO_SCENE_TASKS: DemoTask[] = [
   { id: TASK_REDIS_EXPIRE, projectId: PROJECT_REDIS, display_id: 7, title: 'Pin EXPIRE with a negative TTL', description: 'Add a test to tests/unit/expire.tcl that pins what EXPIRE does when the TTL is negative', lane: 'executing', position: 0, agent: 'claude', session_id: SESSION_REDIS_EXPIRE, worktree_folder: 'pin-expire-negative-ttl-4c1a9e', branch_name: 'pin-expire-negative-ttl', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'unstable', labels: ['tests'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 1 },
   { id: 'task-rd-replication-flake', projectId: PROJECT_REDIS, display_id: 8, title: 'Fix flaky replication test on slow disks', description: 'Find which full sync case in tests/integration/replication.tcl flakes when the disk is slow, and make it wait for the replica rather than for a fixed time', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['bug', 'tests'], priority: 3, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 310 },
   { id: 'task-rd-resp3-map', projectId: PROJECT_REDIS, display_id: 9, title: 'Trim allocations in the RESP3 map reply', description: 'Check what building the RESP3 map reply for HGETALL on a large hash allocates in src/networking.c, and cut any allocation made per field and value pair', lane: 'todo', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 5, updatedMinutesAgo: 2600 },
-  { id: 'task-rd-object-freq', projectId: PROJECT_REDIS, display_id: 10, title: 'Document OBJECT FREQ decay', description: 'Say in the OBJECT FREQ help how the LFU counter decays with lfu-decay-time, and that the command errors unless maxmemory-policy is an LFU policy', lane: 'todo', position: 2, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['docs'], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 7100 },
+  { id: TASK_REDIS_OBJECT_FREQ, projectId: PROJECT_REDIS, display_id: 10, title: 'Document OBJECT FREQ decay', description: 'Say in the OBJECT FREQ help how the LFU counter decays with lfu-decay-time, and that the command errors unless maxmemory-policy is an LFU policy', lane: 'todo', position: 2, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['docs'], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 7100 },
 ];
 
 /**
- * The scene-only task's session, on the model its recording ran on (the CLI's header reads Opus
- * 5.5 at high effort, and its transcript names claude-opus-5-5). Its `liveTailMs` is cut to this
- * recording: the live frame opens the moment the first three `kangentic_*` calls have printed their
- * results (kangentic_get_current_task, kangentic_list_columns, kangentic_list_automations), which is
- * what a still paints, and plays the column check and the move from there. The two minutes before
- * that are the review itself, the verbose diff and file reads, which would bury the tool calls a
- * figure of this scene is about. The open frame was cut from the stream at this tail by
- * scripts/backfill-demo-timelines.mjs, so a re-record has to choose the tail again.
- */
-/*
+ * The scene-only rows' sessions.
+ *
  * The redis sessions run Claude Code 2.1.328 on Linux in their tasks' worktrees on the host
  * (scripts/capture-agent-scrollback.js --wsl), on Opus 5.5 with its 200K window, as the banner
  * prints. The plan session ends on its plan waiting for approval. The Executing session was cut as
  * its edit to tests/unit/expire.tcl landed, 19 s in, so it opens 10 s before that (its liveTailMs):
  * a still paints its git log call and the reads in flight, and the live frame plays the reads, its
  * one line of prose and the edit. Its open frame was cut at that tail by
+ * scripts/backfill-demo-timelines.mjs, so a re-record has to choose the tail again.
+ *
+ * Validate's session runs on the model its recording ran on (the CLI's header reads Opus 5.5 at
+ * high effort, and its transcript names claude-opus-5-5). Its `liveTailMs` is cut to this
+ * recording: the live frame opens the moment the first three `kangentic_*` calls have printed their
+ * results (kangentic_get_current_task, kangentic_list_columns, kangentic_list_automations), which is
+ * what a still paints, and plays the column check and the move from there. The two minutes before
+ * that are the review itself, the verbose diff and file reads, which would bury the tool calls a
+ * figure of this scene is about. The open frame was cut from the stream at this tail by
  * scripts/backfill-demo-timelines.mjs, so a re-record has to choose the tail again.
  */
 export const DEMO_SCENE_SESSIONS: DemoSession[] = [

@@ -36,7 +36,7 @@ import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_DICTATION_RECORDING, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
   SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
   DEMO_SCENE_TASKS, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET,
-  DEMO_HOST_AGENT_MODELS, DEMO_HOST_AGENT_VERSIONS, DEMO_SCENE_PROJECTS, DEMO_SSH_HOSTS, PROJECT_REDIS, SESSION_REDIS_EXPIRE, TASK_REDIS_EXPIRE, TASK_REDIS_SLOWLOG,
+  DEMO_HOST_AGENT_MODELS, DEMO_HOST_AGENT_VERSIONS, DEMO_SSH_HOSTS, PROJECT_REDIS, SESSION_REDIS_EXPIRE, TASK_REDIS_EXPIRE, TASK_REDIS_OBJECT_FREQ, TASK_REDIS_SLOWLOG,
 } from '../captures/helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY } from '../captures/helpers/demo-task-report';
 import { readAppVersion } from '../captures/helpers/demo-scrollback';
@@ -375,7 +375,6 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   'ssh-remote-project': async (page) => {
     // The frame opens on redis, a project on a host: one host chip, connected, on its sidebar row,
     // and its own board, the plan waiting in Planning and the window's card in Executing.
-    const redis = DEMO_SCENE_PROJECTS.find((project) => project.id === PROJECT_REDIS);
     await expect(page.locator('[data-testid="project-host-chip"]')).toHaveCount(1);
     await expect(page.locator('[data-testid="project-host-chip"]')).toHaveAttribute('data-host-state', 'connected');
     await expect(page.locator(`[data-swimlane-name="Planning"] [data-task-id="${TASK_REDIS_SLOWLOG}"]`)).toBeAttached();
@@ -397,7 +396,6 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     const contextBar = page.locator('[data-testid="task-detail-dialog"] [data-testid="usage-bar"]');
     await expect(contextBar.locator('[data-fold-id="shell"]')).toHaveText('bash');
     await expect(contextBar).toContainText(`v${DEMO_HOST_AGENT_VERSIONS.claude}`);
-    expect(redis?.remote?.path).toBe('/home/dev/redis');
   },
   'ssh-remote-host': async (page) => {
     // The host row as the scene seeds it: Build server at dev@build-box, connected, one project,
@@ -4763,7 +4761,7 @@ test('dragging a card on a host project\'s board starts the host\'s recorded boo
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   await gotoScene(page, { view: 'ssh-remote-project' });
   const getRecordingRequests = recordingRequests(page);
-  const objectFreq = DEMO_SCENE_TASKS.find((task) => task.id === 'task-rd-object-freq');
+  const objectFreq = DEMO_SCENE_TASKS.find((task) => task.id === TASK_REDIS_OBJECT_FREQ);
   await dragCardToColumn(page, objectFreq?.title ?? '', 'Planning');
 
   const runningSessionOf = (taskId: string): Promise<string | null> => page.evaluate(async (id) => {
@@ -4772,11 +4770,37 @@ test('dragging a card on a host project\'s board starts the host\'s recorded boo
     const session = task?.session_id ? (await api.sessions.list()).find((row) => row.id === task.session_id) : undefined;
     return session?.status === 'running' ? session.id : null;
   }, taskId);
-  await expect.poll(() => runningSessionOf('task-rd-object-freq'), { timeout: 10_000 }).not.toBeNull();
-  const sessionId = await runningSessionOf('task-rd-object-freq');
-  await expect.poll(() => getRecordingRequests().some((url) => url.includes('/recordings/spawn-task-rd-object-freq-plan-')), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => runningSessionOf(TASK_REDIS_OBJECT_FREQ), { timeout: 10_000 }).not.toBeNull();
+  const sessionId = await runningSessionOf(TASK_REDIS_OBJECT_FREQ);
+  await expect.poll(() => getRecordingRequests().some((url) => url.includes(`/recordings/spawn-${TASK_REDIS_OBJECT_FREQ}-plan-`)), { timeout: 15_000 }).toBe(true);
   expect((await monitorFields(page, sessionId as string))?.modelDisplayName).toBe(DEMO_HOST_AGENT_MODELS.claude.model.displayName);
-  await expect(page.locator(`[data-task-id="task-rd-object-freq"]`).first()).toContainText(DEMO_HOST_AGENT_MODELS.claude.model.displayName, { timeout: 15_000 });
+  await expect(page.locator(`[data-task-id="${TASK_REDIS_OBJECT_FREQ}"]`).first()).toContainText(DEMO_HOST_AGENT_MODELS.claude.model.displayName, { timeout: 15_000 });
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('a new Command Terminal on a host project reports the host\'s model, not the sample install\'s', async ({ page }) => {
+  // The seed's spawnTransient passes the project to seedUsage, so a terminal started on redis
+  // (which lives on a host) takes the host's Opus 5.5 rather than the install's own Claude model.
+  // A Command Terminal is the only start a visitor has on redis besides a drag: a resume needs a
+  // paused session, and redis's boards hold none. The call goes through the bridge the "New
+  // terminal" button calls, since the redis frame has no terminal to tile beside.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'ssh-remote-project' });
+  // The Monitor row takes its model from the row's own project, so it cannot tell the seed's usage
+  // call apart; the usage the status line would push (getUsage) is what seedUsage fills.
+  const reported = await page.evaluate(async (projectId) => {
+    const api = (window as unknown as { electronAPI: { sessions: {
+      spawnTransient: (input: { projectId: string }) => Promise<{ session: { id: string } }>;
+      getUsage: () => Promise<Record<string, { model: { displayName: string } | null; contextWindow: { contextWindowSize: number } }>>;
+    } } }).electronAPI;
+    const sessionId = (await api.sessions.spawnTransient({ projectId })).session.id;
+    const usage = (await api.sessions.getUsage())[sessionId];
+    return { model: usage?.model?.displayName ?? null, contextWindowSize: usage?.contextWindow.contextWindowSize ?? null };
+  }, PROJECT_REDIS);
+  expect(reported).toEqual({
+    model: DEMO_HOST_AGENT_MODELS.claude.model.displayName,
+    contextWindowSize: DEMO_HOST_AGENT_MODELS.claude.contextWindowSize,
+  });
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
