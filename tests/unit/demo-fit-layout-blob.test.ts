@@ -18,7 +18,7 @@ import { buildCellWidthTable, loadDemoScrollback } from '../captures/helpers/dem
 import { savedRailWidth } from '../../src/shared/command-terminal-rail';
 
 interface Geometry { x?: number; w?: number; h?: number; y?: number }
-interface ManagedWindow { id: string; fitToRecording?: string; geometry?: Geometry }
+interface ManagedWindow { id: string; fitToRecording?: string; fitAnchor?: string; geometry?: Geometry }
 interface LayoutBlob { windows: ManagedWindow[] }
 /** The cell, the scrollbar gutter, and the terminal's own horizontal padding (index.css pads .xterm). */
 interface DeviceCell { width: number; gutter: number; padding: number }
@@ -197,6 +197,38 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
     const snapshot = structuredClone(original);
     fitLayoutBlob(original, measure);
     expect(original).toEqual(snapshot);
+  });
+
+  it('keeps the right edge its geometry gives a window anchored right, and strips the anchor with the marker', () => {
+    // The SSH project scene's window sits at the right beside the board's first columns, so a
+    // centred fit would cover the Planning card the scene is about.
+    const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 110 } } };
+    const fitLayoutBlob = lift(recordings, 1024);
+    const measure: Measure = () => ({ width: 8, gutter: 15, padding: 8 });
+    const geometry = { x: 0.4, y: 0.1, w: 0.58, h: 0.8 };
+    const original: LayoutBlob = { windows: [{ id: 'w1', fitToRecording: 'sess-1', fitAnchor: 'right', geometry }] };
+    const result = fitLayoutBlob(original, measure);
+    const frameWidth = Math.max(1024, FIT_REFERENCE_FRAME_WIDTH);
+    const expectedWidth = (WINDOW_FRAME_BORDER_PX + 15 + 8 + (110 + 0.5) * 8) / frameWidth;
+    const fitted = result?.windows[0];
+    expect(fitted).not.toHaveProperty('fitToRecording');
+    expect(fitted).not.toHaveProperty('fitAnchor');
+    expect(fitted?.geometry?.w).toBeCloseTo(expectedWidth, 10);
+    expect((fitted?.geometry?.x ?? 0) + (fitted?.geometry?.w ?? 0)).toBeCloseTo(geometry.x + geometry.w, 10);
+    // Control: the same window unanchored is centred, so the anchor is what moved it.
+    const centred = fitLayoutBlob({ windows: [{ id: 'w1', fitToRecording: 'sess-1', geometry }] }, measure)?.windows[0];
+    expect(centred?.geometry?.x).toBeCloseTo((1 - expectedWidth) / 2, 10);
+    expect(centred?.geometry?.x).not.toBeCloseTo(fitted?.geometry?.x ?? 0, 3);
+    // The registry's own object keeps both markers.
+    expect(original.windows[0]).toMatchObject({ fitToRecording: 'sess-1', fitAnchor: 'right' });
+  });
+
+  it('never places a right-anchored window past the frame\'s left edge when the fit is wider than its right edge', () => {
+    const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 200 } } };
+    const fitLayoutBlob = lift(recordings, 1024);
+    const blob: LayoutBlob = { windows: [{ id: 'w1', fitToRecording: 'sess-1', fitAnchor: 'right', geometry: { x: 0.05, w: 0.3 } }] };
+    const result = fitLayoutBlob(blob, () => ({ width: 8, gutter: 15, padding: 8 }));
+    expect(result?.windows[0].geometry?.x).toBe(0);
   });
 
   it('returns a NEW blob object (a copy), never the same reference, once a window is marked', () => {

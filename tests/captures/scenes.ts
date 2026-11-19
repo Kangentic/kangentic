@@ -271,6 +271,11 @@ interface TaskWindowPlacement {
   geometry: { x: number; y: number; w: number; h: number };
   restoreGeometry: { x: number; y: number; w: number; h: number } | null;
   fitToRecording?: string;
+  /**
+   * Which edge a fitted window keeps: centred by default, or 'right' to keep the right edge its
+   * geometry gives it, for a window beside the cards it would otherwise cover.
+   */
+  fitAnchor?: 'right';
 }
 
 /**

@@ -21,7 +21,7 @@ import { selectEngine } from '../../../src/main/transcription/engines/engine-sel
 import { DEFAULT_CONFIG } from '../../../src/shared/types';
 import type {
   KnowledgeGraphClustering, KnowledgeGraphCoverageSummary, KnowledgeGraphEdge, KnowledgeGraphGranularity,
-  KnowledgeGraphIndexSummary, KnowledgeGraphStatus, MonitorRowTrack, PerToolStat,
+  KnowledgeGraphIndexSummary, KnowledgeGraphStatus, MonitorRowTrack, PerToolStat, ProjectRemote, SshHostConnectionState,
 } from '../../../src/shared/types';
 import { boardEnds, routeSteps, taskPlace, type StepColumn } from '../../../src/shared/workflow-route';
 import { resolveEmbeddingModel } from '../../../src/shared/embedding-models';
@@ -116,6 +116,28 @@ interface DemoProject {
    *  build's iframe stand-in of the desktop's webview (demo/webview-shim.js). Its data is the
    *  project's and its presentation is authored (demo/README.md, Browser guest). */
   guest_page?: string;
+  /**
+   * Where a project on a remote host lives (#913): the host's id and the folder there. `path` is then
+   * the empty stand-in folder this computer keeps for it, under the config folder's remote-projects.
+   */
+  remote?: ProjectRemote;
+}
+
+/**
+ * A host the sample install is connected to, in the SSH tab's shape (`SshHostStatus`), with its times
+ * as offsets from boot like every other row.
+ */
+interface DemoSshHost {
+  id: string;
+  name: string;
+  destination: string;
+  /** Null for My SSH config: the user's own SSH setup, with no key file of Kangentic's. */
+  key_path: string | null;
+  key_created: boolean;
+  createdDaysAgo: number;
+  state: SshHostConnectionState;
+  /** When the connection last changed state, which the row prints as "since". */
+  stateChangedMinutesAgo: number;
 }
 
 interface DemoLane {
@@ -219,6 +241,9 @@ export const SAMPLE_INSTALL_RAIL_WIDTH_PX = 248;
 export const PROJECT_CONTOSO = 'proj-contoso-web';
 export const PROJECT_PETCLINIC = 'proj-spring-petclinic';
 export const PROJECT_BOUTIQUE = 'proj-online-boutique';
+// The project on a remote host, which only the SSH scenes add (DEMO_SCENE_PROJECTS below).
+export const PROJECT_REDIS = 'proj-redis';
+export const HOST_BUILD_SERVER = 'host-build-server';
 export const GROUP_CONTOSO = 'group-contoso';
 export const GROUP_OSS = 'group-open-source';
 
@@ -279,6 +304,41 @@ export const DEMO_PROJECTS: DemoProject[] = [
   { id: PROJECT_BOUTIQUE, name: 'online-boutique', path: `${HOME}\\oss\\online-boutique`, github_url: 'https://github.com/GoogleCloudPlatform/microservices-demo', default_agent: 'codex', group_id: GROUP_OSS, position: 2, lastOpenedMinutesAgo: 90, createdDaysAgo: 24 },
 ];
 
+/**
+ * Projects only a scene adds, never the sample install, for the reason scene-only rows exist
+ * (DEMO_SCENE_TASKS): a fourth project would change every sidebar, Monitor and usage figure already
+ * placed, and the Knowledge Graph, the archived history and the capture matrix's history all
+ * iterate DEMO_PROJECTS. The seed adds one when a scene's `rows` name a task on it, and opens the
+ * frame on it.
+ *
+ * redis lives on a Linux host the install reaches over SSH: its agents run there, in the host's
+ * folder, and this computer keeps an empty stand-in folder where main keeps one
+ * (PATHS.remoteProjectShell, `<configDir>/remote-projects/<projectId>`).
+ */
+export const DEMO_SCENE_PROJECTS: DemoProject[] = [
+  {
+    id: PROJECT_REDIS, name: 'redis', path: `${HOME}\\AppData\\Roaming\\kangentic\\remote-projects\\${PROJECT_REDIS}`,
+    github_url: 'https://github.com/redis/redis', default_agent: 'claude', group_id: GROUP_OSS, position: 3,
+    lastOpenedMinutesAgo: 1, createdDaysAgo: 12, remote: { hostId: HOST_BUILD_SERVER, path: '/home/dev/redis' },
+  },
+];
+
+/**
+ * The hosts the sample install has added, seeded only alongside a scene-only project on one, so a
+ * frame without one (settings-ssh among them) keeps an empty Hosts card. Build server is the Add
+ * host form's own example name, signed in with My SSH config.
+ */
+export const DEMO_SSH_HOSTS: DemoSshHost[] = [
+  { id: HOST_BUILD_SERVER, name: 'Build server', destination: 'dev@build-box', key_path: null, key_created: false, createdDaysAgo: 12, state: 'connected', stateChangedMinutesAgo: 190 },
+];
+
+/**
+ * The version each agent's CLI answers with on a host, which the context bar of a session there
+ * prints (the mock's `__mockHostAgentVersions`). It is the version the host's recordings ran on,
+ * so the bar and the terminal's own banner agree.
+ */
+export const DEMO_HOST_AGENT_VERSIONS: Record<string, string> = {};
+
 /** The seven default lanes, mirroring src/main/db/migrations/default-data.ts. */
 const DEFAULT_LANES: DemoLane[] = [
   { slug: 'todo', name: 'To Do', role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, auto_spawn: false, permission_mode: null, agent: null },
@@ -300,6 +360,7 @@ export const DEMO_LANES_BY_PROJECT: Record<string, DemoLane[]> = {
   [PROJECT_CONTOSO]: CONTOSO_LANES,
   [PROJECT_PETCLINIC]: DEFAULT_LANES,
   [PROJECT_BOUTIQUE]: DEFAULT_LANES,
+  [PROJECT_REDIS]: DEFAULT_LANES,
 };
 
 /**
@@ -583,16 +644,26 @@ export const DEMO_SESSIONS: DemoSession[] = [
  * install's tasks, so a dataset row would also need that graph rebuilt from conversations the
  * recording machine no longer keeps.
  *
- * Its terminal is a recording like any other (the manifest lists it), made against a preview whose
- * MCP server answers from this board with the task in place, so every ticket number, column and
- * path its `kangentic_*` calls print is this row's. It takes the next free contoso ticket after the
- * archived history, which the preview's allocator hands it when the capture seeds the board
+ * Validate's terminal is a recording like any other (the manifest lists it), made against a preview
+ * whose MCP server answers from this board with the task in place, so every ticket number, column
+ * and path its `kangentic_*` calls print is this row's. It takes the next free contoso ticket after
+ * the archived history, which the preview's allocator hands it when the capture seeds the board
  * (scripts/capture-demo-sessions.mjs, a manifest entry marked `mcp`). The number is a literal, not
  * computed: the recording prints it, so a dataset change that moves the next free ticket has to
  * fail (tests/unit/scene-registry.test.ts) rather than renumber the card away from its terminal.
+ *
+ * The redis rows are the board of a project on a remote host (DEMO_SCENE_PROJECTS), which a scene
+ * naming any of them opens on. Its first five tickets went to work that is not on the board, so
+ * its cards start at #6. The To Do cards have no agent yet; a visitor's drag starts one from the
+ * boots the matrix recorded on the host.
  */
 export const DEMO_SCENE_TASKS: DemoTask[] = [
   { id: TASK_VALIDATE, projectId: PROJECT_CONTOSO, display_id: 68, title: 'Validate request bodies', description: 'Reject malformed request bodies on the API routes with a 400 that names the fields that failed', lane: 'review', position: 1, agent: 'claude', session_id: SESSION_VALIDATE, worktree_folder: 'validate-requests-yza567', branch_name: 'validate-request-bodies', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 2 },
+
+  // redis, on the Build server host
+  { id: 'task-rd-replication-flake', projectId: PROJECT_REDIS, display_id: 8, title: 'Fix flaky replication test on slow disks', description: 'A full sync case in tests/integration/replication.tcl times out when the disk is slow; wait for the replica to report the link up instead of sleeping a fixed time', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['bug', 'tests'], priority: 3, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 310 },
+  { id: 'task-rd-resp3-map', projectId: PROJECT_REDIS, display_id: 9, title: 'Trim allocations in the RESP3 map reply', description: 'HGETALL on a large hash under RESP3 spends its time building the map reply; find what src/networking.c allocates per field and value pair and cut it', lane: 'todo', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 5, updatedMinutesAgo: 2600 },
+  { id: 'task-rd-object-freq', projectId: PROJECT_REDIS, display_id: 10, title: 'Document OBJECT FREQ decay', description: 'Say in the OBJECT FREQ help how the LFU counter decays with lfu-decay-time, and that the command errors unless maxmemory-policy is an LFU policy', lane: 'todo', position: 2, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['docs'], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 7100 },
 ];
 
 /**
@@ -1248,6 +1319,10 @@ export function buildDemoPreConfig(options: {
     // Added only when a scene names them (`rows`), folded in below before anything is derived.
     sceneTasks: DEMO_SCENE_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
     sceneSessions: DEMO_SCENE_SESSIONS,
+    // A scene-only row's project when it is not the install's, and the host that project lives on.
+    sceneProjects: DEMO_SCENE_PROJECTS,
+    sshHosts: DEMO_SSH_HOSTS,
+    hostAgentVersions: DEMO_HOST_AGENT_VERSIONS,
     archivedSummaries: DEMO_ARCHIVED_SUMMARIES,
     // One rule for an archived task's session id, read by its summary and its graph node alike.
     archivedSessionIds: Object.fromEntries(DEMO_ARCHIVED_SUMMARIES.map((summary) => [summary.taskId, archivedSessionIdOf(summary.taskId)])),
@@ -1342,9 +1417,25 @@ export function buildDemoPreConfig(options: {
       // of everything derived from a row, so a scene can patch one and the Monitor, the usage and
       // the clock describe it like any other. boot.js has already refused an id the build does not
       // carry. The captures seed publishes none.
+      //
+      // A row on a project the install does not have brings that project with it, ahead of every
+      // row, and the frame opens on it: the scene is about that board. A frame shows one project,
+      // so rows naming two such projects are refused.
+      var sceneProjectId = null;
       (window.__demoSceneRows || []).forEach(function (taskId) {
         var sceneTask = data.sceneTasks.find(function (task) { return task.id === taskId; });
         if (!sceneTask) throw new Error('No scene-only task "' + taskId + '" in the sample install\\'s scene rows');
+        var installed = data.projects.some(function (project) { return project.id === sceneTask.projectId; });
+        if (!installed) {
+          var sceneProject = data.sceneProjects.find(function (project) { return project.id === sceneTask.projectId; });
+          if (!sceneProject) throw new Error('No project "' + sceneTask.projectId + '" for the scene-only task "' + taskId + '"');
+          if (sceneProjectId !== null) {
+            throw new Error('A frame opens on one project, and its scene-only rows name two: "' + sceneProjectId + '" and "' + sceneProject.id + '"');
+          }
+          data.projects.push(sceneProject);
+          sceneProjectId = sceneProject.id;
+          data.currentProjectId = sceneProject.id;
+        }
         // The row's frames, diff, peeks, trail and blame join the maps the install's sessions are
         // read from, so nothing below can tell a scene-only session from any other.
         var sceneRecorded = sceneRowData[taskId];
@@ -1355,6 +1446,11 @@ export function buildDemoPreConfig(options: {
         });
         data.tasks.push(sceneTask);
         data.sceneSessions.forEach(function (session) { if (session.taskId === taskId) data.sessions.push(session); });
+      });
+      // The hosts the frame's projects live on, and only those: a frame with no project on a host
+      // keeps an empty Hosts card.
+      var seededHosts = data.sshHosts.filter(function (host) {
+        return data.projects.some(function (project) { return project.remote && project.remote.hostId === host.id; });
       });
       // A scene's session patches (demo/boot.js publishes them before calling this) are folded
       // into the sessions HERE, before anything is derived from one, so the row, the Monitor row,
@@ -1382,6 +1478,13 @@ export function buildDemoPreConfig(options: {
       function archivedExitedAtMs(task) { return now - task.archivedDaysAgo * 1440 * 60000 - 10 * 60000; }
       var projectsById = {};
       data.projects.forEach(function (project) { projectsById[project.id] = project; });
+      // Where a session's agent runs, as main reports it in the session's cwd: this computer's folder
+      // for a local project, and for a project on a host the host's own folder, which the stand-in
+      // folder under the config folder maps to (remote-worktrees.ts, hostWorktreePathFor).
+      function sessionCwdOf(project, localPath) {
+        if (!project.remote || localPath.indexOf(project.path) !== 0) return localPath;
+        return project.remote.path.replace(/\\/+$/, '') + localPath.slice(project.path.length).replace(/\\\\/g, '/');
+      }
       var tasksById = {};
       data.tasks.forEach(function (task) { tasksById[task.id] = task; });
       function laneName(projectId, slug) {
@@ -1597,11 +1700,13 @@ export function buildDemoPreConfig(options: {
           state.projectGroups.push({ id: group.id, name: group.name, position: group.position, is_collapsed: group.is_collapsed });
         });
         data.projects.forEach(function (project) {
-          state.projects.push({
+          var projectRow = {
             id: project.id, name: project.name, path: project.path, github_url: project.github_url,
             default_agent: project.default_agent, group_id: project.group_id, position: project.position,
             last_opened: minutesAgo(project.lastOpenedMinutesAgo), created_at: daysAgo(project.createdDaysAgo),
-          });
+          };
+          if (project.remote) projectRow.remote = { hostId: project.remote.hostId, path: project.remote.path };
+          state.projects.push(projectRow);
           // The project's Browser default URL, which every task's Browser pane opens on unless
           // the task pins its own (Settings, Browser, Default URL).
           if (project.dev_url) {
@@ -1664,7 +1769,7 @@ export function buildDemoPreConfig(options: {
           state.sessions.push({
             id: session.id, taskId: session.taskId, projectId: session.projectId, pid: 20000 + index,
             status: session.status, shell: 'bash',
-            cwd: task && task.worktree_folder ? project.path + worktreeSubpath + task.worktree_folder : project.path,
+            cwd: sessionCwdOf(project, task && task.worktree_folder ? project.path + worktreeSubpath + task.worktree_folder : project.path),
             startedAt: minutesAgo(session.startedMinutesAgo), exitCode: null, resuming: !!session.resuming,
             transient: session.transient || false, branch: session.commandTerminalBranch || null,
           });
@@ -1705,6 +1810,21 @@ export function buildDemoPreConfig(options: {
         // The Command Terminal rail at the width its recordings were measured beside
         // (SAMPLE_INSTALL_RAIL_WIDTH_PX says why).
         state.config.commandTerminalRail = { width: ${SAMPLE_INSTALL_RAIL_WIDTH_PX}, collapsed: false };
+        // The hosts this frame's projects live on go into the mock's own list, so the SSH tab edits,
+        // reconnects and removes them as it would a host the visitor added, and counts their
+        // projects from the project table. The agents' versions there are the recordings'.
+        if (seededHosts.length > 0) {
+          window.__mockSeedSshHosts(seededHosts.map(function (host) {
+            return {
+              host: {
+                id: host.id, name: host.name, destination: host.destination, key_path: host.key_path, key_created: host.key_created,
+                created_at: daysAgo(host.createdDaysAgo), removed_at: null, reveal_pending: false,
+              },
+              state: host.state, detail: null, since: minutesAgo(host.stateChangedMinutesAgo), projectCount: 0,
+            };
+          }));
+          window.__mockHostAgentVersions = data.hostAgentVersions;
+        }
         mockState = state;
         // The maps themselves are answered by the Knowledge Graph section below, when asked.
         return {
@@ -1717,6 +1837,24 @@ export function buildDemoPreConfig(options: {
         window.electronAPI.app.getVersion = function () { return Promise.resolve(data.appVersion); };
       }
       window.__mockAgentListOverrides = data.agentOverrides;
+      // A host's Kangentic program is this app's own version, the one a connection installs, and it
+      // holds the terminals running for the host's projects. The mock's fixed answer would print an
+      // older program and a count no board in the frame matches.
+      var originalHostProgram = window.electronAPI.ssh.hostProgram;
+      window.electronAPI.ssh.hostProgram = function (hostId) {
+        return originalHostProgram.apply(this, arguments).then(function (program) {
+          if (!mockState) return program;
+          var onHost = {};
+          mockState.projects.forEach(function (project) {
+            if (project.remote && project.remote.hostId === hostId) onHost[project.id] = true;
+          });
+          var liveSessions = mockState.sessions.filter(function (session) {
+            return session.status === 'running' && onHost[session.projectId] === true;
+          }).length;
+          var version = data.appVersion ? { version: data.appVersion, appVersion: data.appVersion, installedVersions: [data.appVersion] } : {};
+          return Object.assign({}, program, version, { liveSessions: liveSessions });
+        });
+      };
       // The Changes panel's Pull request section, for the PRs whose rows read failing.
       window.__mockPrChecks = data.prChecks;
 
@@ -2130,7 +2268,9 @@ export function buildDemoPreConfig(options: {
         query.addEventListener('change', onChange);
       }
       // One layout blob's windows, with each marked window's width set and its marker removed.
-      // The blob is copied, not edited, because it is the scene registry's own object.
+      // The blob is copied, not edited, because it is the scene registry's own object. A fitted
+      // window is centred, or with fitAnchor 'right' keeps the right edge its geometry gives it,
+      // for a window that sits beside the cards rather than over them.
       function fitLayoutBlob(blob, measure) {
         if (!blob || !Array.isArray(blob.windows)) return blob;
         var marked = false;
@@ -2139,7 +2279,9 @@ export function buildDemoPreConfig(options: {
           marked = true;
           var fitted = Object.assign({}, managedWindow);
           var sessionId = fitted.fitToRecording;
+          var anchorRight = fitted.fitAnchor === 'right';
           delete fitted.fitToRecording;
+          delete fitted.fitAnchor;
           var indexed = recordings && recordings.sessions ? recordings.sessions[sessionId] : null;
           if (!indexed) {
             // A data error, not a browser limitation: say so, or the band comes back with nothing
@@ -2152,7 +2294,10 @@ export function buildDemoPreConfig(options: {
           var frameWidth = Math.max(document.documentElement.clientWidth || 0, FIT_REFERENCE_FRAME_WIDTH);
           // Half a cell of slack, so the parent's rounded width still floors to the recording's columns.
           var width = Math.min(1, (WINDOW_FRAME_BORDER_PX + cell.gutter + cell.padding + (indexed.cols + 0.5) * cell.width) / frameWidth);
-          fitted.geometry = Object.assign({}, fitted.geometry, { x: (1 - width) / 2, w: width });
+          var geometry = fitted.geometry || {};
+          var rightEdge = typeof geometry.x === 'number' && typeof geometry.w === 'number' ? geometry.x + geometry.w : 1;
+          var left = anchorRight ? Math.max(0, rightEdge - width) : (1 - width) / 2;
+          fitted.geometry = Object.assign({}, fitted.geometry, { x: left, w: width });
           return fitted;
         });
         return marked ? Object.assign({}, blob, { windows: windows }) : blob;
@@ -3776,7 +3921,7 @@ export function buildDemoPreConfig(options: {
         var id = 'sess-' + mockTask.id.replace(/^task-/, '') + '-' + Date.now().toString(36);
         var row = {
           id: id, taskId: mockTask.id, projectId: mockTask.projectId, pid: 30000 + mockState.sessions.length,
-          status: 'running', shell: 'bash', cwd: mockTask.worktree_path || project.path, startedAt: isoNow(), exitCode: null,
+          status: 'running', shell: 'bash', cwd: sessionCwdOf(project, mockTask.worktree_path || project.path), startedAt: isoNow(), exitCode: null,
           resuming: false, transient: false, branch: null, isolatedSwimlaneId: null, agentSessionId: null,
         };
         mockState.sessions.push(row);
@@ -3870,7 +4015,7 @@ export function buildDemoPreConfig(options: {
         var id = 'sess-' + mockTask.id.replace(/^task-/, '') + '-resumed-' + Date.now().toString(36);
         var row = {
           id: id, taskId: mockTask.id, projectId: mockTask.projectId, pid: 30000 + mockState.sessions.length,
-          status: 'running', shell: 'bash', cwd: mockTask.worktree_path || project.path, startedAt: isoNow(), exitCode: null,
+          status: 'running', shell: 'bash', cwd: sessionCwdOf(project, mockTask.worktree_path || project.path), startedAt: isoNow(), exitCode: null,
           resuming: true, transient: false, branch: null, isolatedSwimlaneId: null, agentSessionId: null,
         };
         // Main's respawn drops the task's old rows from its registry (session-spawn-flow.ts), so
@@ -4979,7 +5124,12 @@ export function buildDemoPreConfig(options: {
           }),
           perProject: scope.kind === 'all'
             ? data.projects.map(function (project, index) {
-                var share = [0.55, 0.27, 0.18][index] || 0.1;
+                // The install's three projects split the totals whole. A frame that adds a project
+                // gives it a tenth and scales every share back to a whole, so the rows still add
+                // up to the totals; the three-project frames keep their numbers exactly.
+                var shares = data.projects.map(function (unused, position) { return [0.55, 0.27, 0.18][position] || 0.1; });
+                var shareTotal = shares.reduce(function (sum, value) { return sum + value; }, 0);
+                var share = shareTotal > 1 + 1e-9 ? shares[index] / shareTotal : shares[index];
                 return {
                   projectId: project.id, projectName: project.name, inputTokens: Math.round(totalInput * share), outputTokens: Math.round(totalOutput * share),
                   cacheReadTokens: Math.round(kpis.cacheReadTokens * share),

@@ -20,6 +20,11 @@
  * nowhere else, a seed with the script in place seeds what the inline seed does, and a seed told
  * the row without its script refuses it.
  *
+ * A row can sit on a project the install does not have (DEMO_SCENE_PROJECTS: redis, on a remote
+ * host). The seed then brings that project in ahead of the row, seeds the host it lives on into the
+ * mock's own host list, and opens the frame on it; a frame with no such row keeps the install's
+ * three projects and an empty Hosts card, and rows on two such projects are refused.
+ *
  * The seed is evaluated as the page evaluates it (the generated script over the real mock, as
  * demo-archived-summaries.test.ts does), and what is read back is what it hands the mock's
  * `__mockPreConfigure`: the task rows, the session rows, and the lanes.
@@ -30,8 +35,8 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import {
-  DEMO_ALL_SESSIONS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
-  SESSION_VALIDATE, TASK_VALIDATE, buildDemoPreConfig, buildDemoSceneRowScripts,
+  DEMO_ALL_SESSIONS, DEMO_PROJECTS, DEMO_SCENE_PROJECTS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_SSH_HOSTS, DEMO_TASKS,
+  HOST_BUILD_SERVER, PROJECT_CONTOSO, PROJECT_REDIS, SESSION_VALIDATE, TASK_VALIDATE, buildDemoPreConfig, buildDemoSceneRowScripts,
 } from '../../tests/captures/helpers/demo-dataset';
 import type { DemoHistory } from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoEnds, loadDemoMessageTrails } from '../../tests/captures/helpers/demo-scrollback';
@@ -41,6 +46,7 @@ const MOCK_SOURCE = fs.readFileSync(path.join(REPO_ROOT, 'tests/ui/mock-electron
 
 /** The rows of the mock's state that the seed fills and these tests read back. */
 interface SeededState {
+  projects: Array<{ id: string; remote?: { hostId: string; path: string } }>;
   tasks: Array<{ id: string; projectId: string; display_id: number; swimlane_id: string }>;
   archivedTasks: Array<{ id: string }>;
   sessions: Array<{ id: string; taskId: string | null; projectId: string; cwd: string }>;
@@ -58,6 +64,18 @@ interface SeedBuild {
 }
 
 type PreConfigure = (configure: (state: SeededState) => unknown) => void;
+
+/** The mock's SSH bridge, as far as these tests read it back. */
+interface SeededPage {
+  electronAPI: { ssh: { listHosts: () => Promise<Array<{ host: { id: string; name: string; destination: string }; state: string; projectCount: number }>> } };
+}
+
+/** A seed run: the mock's state, the project the seed opens the frame on, and the page it ran in. */
+interface SeedRun {
+  state: SeededState;
+  currentProjectId: string | null;
+  page: SeededPage;
+}
 
 /** What a scene publishes to the seed before it runs (demo/boot.js). */
 interface ScenePublication {
@@ -93,6 +111,11 @@ function thrownMessage(action: () => unknown): string {
  * depend on.
  */
 function runSeed(publication: ScenePublication = {}, build: SeedBuild = {}): SeededState {
+  return runSeedOnPage(publication, build).state;
+}
+
+/** `runSeed`, keeping what the seed told the mock to open and the page it ran in, for the bridge reads. */
+function runSeedOnPage(publication: ScenePublication = {}, build: SeedBuild = {}): SeedRun {
   const windowObject: Record<string, unknown> = {};
   windowObject.window = windowObject;
   vm.runInNewContext(
@@ -104,9 +127,13 @@ function runSeed(publication: ScenePublication = {}, build: SeedBuild = {}): See
   if (publication.sessionPatches) windowObject.__demoSessionPatches = publication.sessionPatches;
 
   const preConfigure = windowObject.__mockPreConfigure as PreConfigure;
-  const seeded: { state: SeededState | null } = { state: null };
+  const seeded: { state: SeededState | null; currentProjectId: string | null } = { state: null, currentProjectId: null };
   windowObject.__mockPreConfigure = (configure: (state: SeededState) => unknown) => {
-    preConfigure(configure);
+    preConfigure((state) => {
+      const answer = configure(state) as { currentProjectId?: string | null } | undefined;
+      seeded.currentProjectId = answer?.currentProjectId ?? null;
+      return answer;
+    });
     preConfigure((state) => { seeded.state = state; });
     throw SEED_RAN;
   };
@@ -119,7 +146,7 @@ function runSeed(publication: ScenePublication = {}, build: SeedBuild = {}): See
     if (error !== SEED_RAN) throw error;
   }
   if (!seeded.state) throw new Error('the dataset seed never called __mockPreConfigure');
-  return seeded.state;
+  return { state: seeded.state, currentProjectId: seeded.currentProjectId, page: windowObject as unknown as SeededPage };
 }
 
 function taskIdsOf(state: SeededState): string[] {
@@ -130,9 +157,9 @@ describe('the scene-only row in the dataset', () => {
   it('is a row of its own: in neither the sample install\'s tasks nor its sessions', () => {
     // Vacuity guards for everything below: the row exists, belongs to contoso-web, and is carried
     // apart from the install, so "the seed leaves it out" and "the seed adds it" both say something.
-    expect(DEMO_SCENE_TASKS.map((task) => task.id)).toEqual([TASK_VALIDATE]);
-    expect(DEMO_SCENE_SESSIONS.map((session) => session.id)).toEqual([SESSION_VALIDATE]);
-    expect(DEMO_SCENE_TASKS[0].projectId).toBe(PROJECT_CONTOSO);
+    expect(DEMO_SCENE_TASKS.map((task) => task.id)).toContain(TASK_VALIDATE);
+    expect(DEMO_SCENE_SESSIONS.map((session) => session.id)).toContain(SESSION_VALIDATE);
+    expect(DEMO_SCENE_TASKS.find((task) => task.id === TASK_VALIDATE)?.projectId).toBe(PROJECT_CONTOSO);
     expect(DEMO_TASKS.map((task) => task.id)).not.toContain(TASK_VALIDATE);
     expect(DEMO_SESSIONS.map((session) => session.id)).not.toContain(SESSION_VALIDATE);
   });
@@ -185,14 +212,15 @@ describe('the seed\'s scene rows', () => {
   it('adds the row before anything is derived from a task, so its session runs in the task\'s worktree', () => {
     const state = runSeed({ sceneRows: [TASK_VALIDATE] });
     const session = state.sessions.find((candidate) => candidate.id === SESSION_VALIDATE);
-    const worktreeFolder = DEMO_SCENE_TASKS[0].worktree_folder;
+    const worktreeFolder = DEMO_SCENE_TASKS.find((task) => task.id === TASK_VALIDATE)?.worktree_folder;
     expect(worktreeFolder).toBeTruthy();
     // A task found by id only after the fold would leave the session in the project directory.
     expect(session?.cwd.endsWith(worktreeFolder ?? '')).toBe(true);
   });
 
   it('adds the row before the session patches fold in, so a scene can patch the scene-only session', () => {
-    const [sceneSession] = DEMO_SCENE_SESSIONS;
+    const sceneSession = DEMO_SCENE_SESSIONS.find((session) => session.id === SESSION_VALIDATE);
+    if (!sceneSession) throw new Error(`no scene-only session ${SESSION_VALIDATE}`);
     const patchedActivity = sceneSession.activity === 'idle' ? 'thinking' : 'idle';
     const sessionPatches = { [SESSION_VALIDATE]: { activity: patchedActivity } };
 
@@ -222,15 +250,70 @@ describe('the seed\'s scene rows', () => {
   });
 });
 
+describe('a scene-only row on a project the install does not have', () => {
+  const redisRow = DEMO_SCENE_TASKS.find((task) => task.projectId === PROJECT_REDIS);
+  const redisProject = DEMO_SCENE_PROJECTS.find((project) => project.id === PROJECT_REDIS);
+  const installProjectIds = DEMO_PROJECTS.map((project) => project.id);
+
+  it('brings its project in, with the host it lives on, and opens the frame on it', async () => {
+    // Vacuity guards: the row is on redis, which the install does not carry and which lives on a host.
+    expect(redisRow).toBeDefined();
+    expect(installProjectIds).not.toContain(PROJECT_REDIS);
+    expect(redisProject?.remote?.hostId).toBe(HOST_BUILD_SERVER);
+
+    const run = runSeedOnPage({ sceneRows: [redisRow?.id ?? ''] });
+    const project = run.state.projects.find((candidate) => candidate.id === PROJECT_REDIS);
+    expect(project?.remote).toEqual(redisProject?.remote);
+    expect(run.currentProjectId).toBe(PROJECT_REDIS);
+    // Its columns come with it, and the card sits in its own board's To Do.
+    const toDo = run.state.swimlanes.filter((lane) => lane.projectId === PROJECT_REDIS && lane.name === 'To Do');
+    expect(toDo).toHaveLength(1);
+    expect(run.state.tasks.find((task) => task.id === redisRow?.id)?.swimlane_id).toBe(toDo[0].id);
+    // The install's own projects are all still there, ahead of it.
+    expect(run.state.projects.map((candidate) => candidate.id)).toEqual([...installProjectIds, PROJECT_REDIS]);
+
+    const hosts = await run.page.electronAPI.ssh.listHosts();
+    const dataset = DEMO_SSH_HOSTS.find((host) => host.id === HOST_BUILD_SERVER);
+    expect(hosts.map((status) => status.host.id)).toEqual([HOST_BUILD_SERVER]);
+    expect(hosts[0]).toMatchObject({ state: 'connected', projectCount: 1, host: { name: dataset?.name, destination: dataset?.destination } });
+  });
+
+  it('adds no project and no host for rows on the install\'s own projects, and opens on contoso-web', async () => {
+    for (const publication of [{}, { sceneRows: [TASK_VALIDATE] }] satisfies ScenePublication[]) {
+      const label = JSON.stringify(publication);
+      const run = runSeedOnPage(publication);
+      expect(run.state.projects.map((project) => project.id), label).toEqual(installProjectIds);
+      expect(run.currentProjectId, label).toBe(PROJECT_CONTOSO);
+      // An empty Hosts card, which settings-ssh shows.
+      expect(await run.page.electronAPI.ssh.listHosts(), label).toEqual([]);
+    }
+  });
+
+  it('refuses rows on two projects the install does not have, naming both', () => {
+    // A second scene-only project for the length of this test, put back whatever happens.
+    const otherProject = { ...DEMO_SCENE_PROJECTS[0], id: 'proj-other', name: 'other', remote: undefined };
+    const otherTask = { ...DEMO_SCENE_TASKS[DEMO_SCENE_TASKS.length - 1], id: 'task-other-card', projectId: otherProject.id };
+    DEMO_SCENE_PROJECTS.push(otherProject);
+    DEMO_SCENE_TASKS.push(otherTask);
+    try {
+      expect(thrownMessage(() => runSeed({ sceneRows: [redisRow?.id ?? '', otherTask.id] })))
+        .toBe(`A frame opens on one project, and its scene-only rows name two: "${PROJECT_REDIS}" and "proj-other"`);
+    } finally {
+      DEMO_SCENE_PROJECTS.splice(DEMO_SCENE_PROJECTS.indexOf(otherProject), 1);
+      DEMO_SCENE_TASKS.splice(DEMO_SCENE_TASKS.indexOf(otherTask), 1);
+    }
+  });
+});
+
 describe('the build\'s recordings check over the scene-only rows', () => {
   it('refuses to build without a recording for the scene-only session, naming it', () => {
     // Vacuity guard: the session is one the check could miss, and it is not a dataset session.
     expect(ALL_SESSION_IDS).toContain(SESSION_VALIDATE);
-    expect(DEMO_SCENE_SESSIONS[0].status).not.toBe('queued');
+    expect(DEMO_SCENE_SESSIONS.find((session) => session.id === SESSION_VALIDATE)?.status).not.toBe('queued');
 
     const otherSessionIds = ALL_SESSION_IDS.filter((sessionId) => sessionId !== SESSION_VALIDATE);
     // Every other session has its recording, so it is only this one the check can be naming.
-    expect(otherSessionIds.length).toBe(DEMO_SESSIONS.length);
+    expect(otherSessionIds.length).toBe(DEMO_ALL_SESSIONS.length - 1);
     const message = thrownMessage(() => buildDemoPreConfig({ scrollback: recordingsFor(otherSessionIds) }));
     expect(message).toContain('[demo] no terminal recording for sess-cw-validate:');
   });

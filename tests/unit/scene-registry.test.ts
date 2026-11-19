@@ -13,7 +13,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
 import { CHOREOGRAPHY_KEYS, SCENES, WORKFLOW_INVOICE_PDF, draftOfRecordedPlan, hasPose, playsCycle, type ChoreographyStep, type ChoreographyTarget, type DemoBootStep, type SceneDefinition } from '../../tests/captures/scenes';
-import { DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_LANES_BY_PROJECT, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneId, demoLaneIds } from '../../tests/captures/helpers/demo-dataset';
+import {
+  DEMO_AGENT_OVERRIDES, DEMO_ALL_SESSIONS, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SCENE_PROJECTS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS,
+  DEMO_SESSIONS, DEMO_SSH_HOSTS, DEMO_TASKS, PROJECT_CONTOSO, demoLaneId, demoLaneIds,
+} from '../../tests/captures/helpers/demo-dataset';
 import { loadDemoEnds, loadDemoRecordings } from '../../tests/captures/helpers/demo-scrollback';
 import { DEFAULT_CONFIG, type SerializedTileNode, type SerializedWorkspace } from '../../src/shared/types';
 import { nextOnRoute, startColumn, type RouteColumn, type RouteFields } from '../../src/shared/workflow-route';
@@ -28,6 +31,12 @@ const DEMO_BOOT_PATH = path.join(REPO_ROOT, 'demo/boot.js');
 const AGENT_ADAPTERS_ROOT = path.join(REPO_ROOT, 'src/main/agent/adapters');
 const DEMO_VITE_CONFIG_PATH = path.join(REPO_ROOT, 'demo/vite.config.mts');
 const SHARED_TYPES_PATH = path.join(REPO_ROOT, 'src/shared/types.ts');
+
+/** The recordings manifest's entries, as far as these checks read them. */
+interface DemoManifestCaptures {
+  captures: Array<{ sessionId: string; mcp?: boolean }>;
+}
+const DEMO_MANIFEST = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'tests/captures/fixtures/demo/manifest.json'), 'utf-8')) as DemoManifestCaptures;
 
 /**
  * Every top-level member `AppConfig` declares, OPTIONAL ones included.
@@ -468,11 +477,12 @@ describe('scene registry', () => {
     expect(restoredWindows).toBeGreaterThan(5);
   });
 
-  it('adds only scene-only rows the seed carries, each with a recorded session and the next free ticket', () => {
+  it('adds only scene-only rows the seed carries, each with its recorded session and a ticket of its own', () => {
     // The seed folds a scene's `rows` into the install by id (demo-dataset.ts); boot.js refuses an id
     // the build does not emit, so a typo here is an error card in the frame rather than a quiet gap.
     const carried = new Set(DEMO_SCENE_TASKS.map((task) => task.id));
     const recordings = loadDemoRecordings().sessions;
+    const mcpSessions = new Set(DEMO_MANIFEST.captures.filter((entry) => entry.mcp === true).map((entry) => entry.sessionId));
     let added = 0;
     for (const scene of scenes) {
       for (const taskId of scene.rows ?? []) {
@@ -480,26 +490,79 @@ describe('scene registry', () => {
         expect(carried.has(taskId), `${scene.name} adds ${taskId}, which is not a scene-only task`).toBe(true);
       }
     }
+    let mcpRows = 0;
     for (const task of DEMO_SCENE_TASKS) {
       expect(DEMO_TASKS.some((row) => row.id === task.id), `${task.id} is a scene-only row and a dataset row at once`).toBe(false);
+      // A card with no agent yet (a To Do card a visitor can start) has no session; a card with
+      // one names exactly the session the seed folds in with it.
       const sessions = DEMO_SCENE_SESSIONS.filter((session) => session.taskId === task.id);
-      expect(sessions.map((session) => session.id), `${task.id} names its session`).toEqual([task.session_id]);
-      // The ticket is a literal on the row and is held two ways. It is the next free one on the
-      // board, which is the number the preview's allocator handed the task when the capture seeded
-      // the board after the archived history (scripts/capture-demo-sessions.mjs). And the recording's
-      // own kangentic_* results print it, so a dataset change that moved the next free ticket fails
-      // here rather than leaving a card whose terminal names another number.
-      const projectTickets = DEMO_TASKS.filter((row) => row.projectId === task.projectId).map((row) => row.display_id);
-      expect(task.display_id, `${task.id} must take the next free ticket on its board`).toBe(Math.max(...projectTickets) + 1);
+      expect(sessions.map((session) => session.id), `${task.id} names its session`).toEqual(task.session_id === null ? [] : [task.session_id]);
+      // One card a ticket on its board, scene-only rows included, since one frame can add several.
+      const board = [...DEMO_TASKS, ...DEMO_SCENE_TASKS].filter((row) => row.projectId === task.projectId && row.id !== task.id);
+      expect(board.map((row) => row.display_id), `${task.id} reuses a ticket on its board`).not.toContain(task.display_id);
+      const installTickets = DEMO_TASKS.filter((row) => row.projectId === task.projectId).map((row) => row.display_id);
+      if (installTickets.length > 0) {
+        expect(task.display_id, `${task.id} must take a ticket after every card the install has on its board`).toBeGreaterThan(Math.max(...installTickets));
+      }
       for (const session of sessions) {
-        const recording = recordings[session.id];
-        expect(recording, `${session.id} has no recording; every terminal replays one`).toBeDefined();
-        const printed = (recording?.serialized ?? '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+        expect(recordings[session.id], `${session.id} has no recording; every terminal replays one`).toBeDefined();
+      }
+      // A recording whose agent calls Kangentic's own MCP tools holds the ticket two ways more. It
+      // is the next free one on the board, which is the number the preview's allocator handed the
+      // task when the capture seeded the board after the archived history
+      // (scripts/capture-demo-sessions.mjs). And the recording's own kangentic_* results print it,
+      // so a dataset change that moved the next free ticket fails here rather than leaving a card
+      // whose terminal names another number.
+      for (const session of sessions.filter((candidate) => mcpSessions.has(candidate.id))) {
+        mcpRows += 1;
+        expect(task.display_id, `${task.id} must take the next free ticket on its board`).toBe(Math.max(...installTickets) + 1);
+        const printed = (recordings[session.id]?.serialized ?? '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
         expect(printed, `${session.id}'s recording never prints #${task.display_id}`).toContain(`#${task.display_id}`);
       }
     }
-    // Vacuity guard: task-mcp adds the one scene-only row there is.
+    // Vacuity guards: task-mcp adds a scene-only row, and its recording is the MCP one these hold.
     expect(added).toBeGreaterThanOrEqual(1);
+    expect(mcpRows).toBeGreaterThanOrEqual(1);
+  });
+
+  it('adds a scene-only project only with a host the sample install has, and a ticket rule of its own', () => {
+    // The seed folds a scene-only row's project in when the install lacks it, and seeds the host it
+    // lives on from DEMO_SSH_HOSTS. A project naming another host would open with a chip for a
+    // host the SSH tab does not list.
+    const hostIds = new Set(DEMO_SSH_HOSTS.map((host) => host.id));
+    const installProjectIds = new Set(DEMO_PROJECTS.map((project) => project.id));
+    for (const project of DEMO_SCENE_PROJECTS) {
+      expect(installProjectIds.has(project.id), `${project.id} is a scene-only project and an install project at once`).toBe(false);
+      if (project.remote) expect(hostIds.has(project.remote.hostId), `${project.id} lives on ${project.remote.hostId}, which no dataset host is`).toBe(true);
+      expect(DEMO_LANES_BY_PROJECT[project.id], `${project.id} has no columns`).toBeDefined();
+    }
+    for (const task of DEMO_SCENE_TASKS) {
+      const known = installProjectIds.has(task.projectId) || DEMO_SCENE_PROJECTS.some((project) => project.id === task.projectId);
+      expect(known, `${task.id} is on ${task.projectId}, which neither the install nor a scene-only project is`).toBe(true);
+    }
+    // Vacuity guard: the SSH scenes' project is one of them, and it lives on a host.
+    expect(DEMO_SCENE_PROJECTS.some((project) => project.remote !== undefined)).toBe(true);
+  });
+
+  it('restores a scene\'s windows on the project its frame opens on', () => {
+    // A frame opens on the scene-only project its rows bring, or on contoso-web. A workspace keyed
+    // to any other project is never read, so its window would silently not open.
+    const sceneProjectIds = new Set(DEMO_SCENE_PROJECTS.map((project) => project.id));
+    let keyed = 0;
+    for (const scene of scenes) {
+      const rowProjects = new Set(DEMO_SCENE_TASKS
+        .filter((task) => (scene.rows ?? []).includes(task.id) && sceneProjectIds.has(task.projectId))
+        .map((task) => task.projectId));
+      expect(rowProjects.size, `${scene.name} names rows on ${[...rowProjects].join(' and ')}, and a frame opens on one project`).toBeLessThanOrEqual(1);
+      const opensOn = rowProjects.size === 1 ? [...rowProjects][0] : PROJECT_CONTOSO;
+      const workspaces = (scene.config?.workspaceByProject ?? {}) as Record<string, unknown>;
+      for (const projectId of Object.keys(workspaces)) {
+        keyed += 1;
+        expect(projectId, `${scene.name} restores windows on ${projectId}, and its frame opens on ${opensOn}`).toBe(opensOn);
+      }
+    }
+    // Vacuity guard: the floating, tiled and maximized scenes all key one.
+    expect(keyed).toBeGreaterThan(5);
   });
 
   it('fits a window only to a session the recordings index carries', () => {
