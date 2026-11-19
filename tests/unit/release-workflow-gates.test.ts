@@ -13,8 +13,8 @@ import { createRequire } from 'node:module';
 // `needs:` failed, but naming always(), cancelled(), or failure() in the `if:` replaces that
 // implied success() gate, so a job listed in `needs:` and NOT also named in the `if:` still runs
 // when its dependency FAILED. release.yml carries always() on two jobs to tolerate the conditional
-// create-tag and `!cancelled()` on the two publish jobs, the demo deploy, and the poster job, which
-// means every future `needs:` entry added to any of the six has to be repeated in the `if:` by
+// create-tag and `!cancelled()` on the two publish jobs, the demo deploy, the poster job and the
+// poster gate, which means every future `needs:` entry added to any of the seven has to be repeated in the `if:` by
 // hand. The comment above create-draft-release warns about this; this test is what makes the
 // warning binding.
 //
@@ -154,7 +154,7 @@ describe('release.yml job graph', () => {
   const selfGatedJobs = jobs.filter((job) => STATUS_FUNCTION_PATTERN.test(job.condition ?? ''));
 
   // An empty or shrunken filter would turn the it.each below into zero tests, which passes. The
-  // seven jobs that carry a status function are named here so dropping one from the workflow, or
+  // eight jobs that carry a status function are named here so dropping one from the workflow, or
   // a parse regression that stops recognizing one, fails rather than quietly reducing coverage.
   it('selects every job whose if: replaces the implied success() gate', () => {
     expect(selfGatedJobs.map((job) => job.name).sort()).toEqual([
@@ -162,6 +162,7 @@ describe('release.yml job graph', () => {
       'create-draft-release',
       'demo-posters',
       'deploy-demo',
+      'poster-gate',
       'publish-npm',
       'publish-release',
       'release',
@@ -186,6 +187,40 @@ describe('release.yml job graph', () => {
       }
     },
   );
+
+  // The implied success() reads every job upstream, not only the direct needs:, and a skipped
+  // ancestor skips the job. create-tag runs only on workflow_dispatch, so it is skipped on every tag
+  // push, and a job downstream of it with no status function of its own is skipped as well while
+  // the run still reads green. poster-gate shipped that way and ran on no release through v0.60.0.
+  it('gives every job downstream of the conditional create-tag a status function of its own', () => {
+    const createTag = jobs.find((job) => job.name === 'create-tag');
+    expect(createTag?.condition).toContain("github.event_name == 'workflow_dispatch'");
+
+    const jobsByName = new Map(jobs.map((job) => [job.name, job]));
+    const ancestorsOf = (jobName: string): Set<string> => {
+      const found = new Set<string>();
+      const pending = [...(jobsByName.get(jobName)?.needs ?? [])];
+      while (pending.length > 0) {
+        const dependency = pending.pop();
+        if (dependency === undefined || found.has(dependency)) continue;
+        found.add(dependency);
+        pending.push(...(jobsByName.get(dependency)?.needs ?? []));
+      }
+      return found;
+    };
+
+    const downstream = jobs.filter((job) => ancestorsOf(job.name).has('create-tag'));
+    // A parse that lost the needs: chain would leave nothing downstream and pass.
+    expect(downstream.map((job) => job.name)).toEqual(expect.arrayContaining(['create-draft-release', 'poster-gate']));
+    for (const job of downstream) {
+      expect(
+        job.condition ?? '',
+        `Job "${job.name}" sits downstream of create-tag, which is skipped on every tag push, and its if: `
+          + 'names no status function. The implied success() then skips it on every release. Add '
+          + "\"!cancelled() && needs.<dependency>.result == 'success'\" for each needs: entry.",
+      ).toMatch(STATUS_FUNCTION_PATTERN);
+    }
+  });
 
   it('gates the draft release on the symbol preflight, not just the build', () => {
     const draft = jobs.find((job) => job.name === 'create-draft-release');
@@ -373,8 +408,10 @@ describe('release.yml job graph', () => {
     const gate = jobs.find((job) => job.name === 'poster-gate');
     expect(gate).toBeDefined();
     expect(gate?.needs).toEqual(['demo-posters']);
-    // No status function: the implied success() keeps it from running after a failed shoot.
-    expect(gate?.condition ?? '').not.toMatch(/always\(\)|cancelled\(\)|failure\(\)/);
+    // Its own status function, or create-tag's skip skips it on every release (the check above),
+    // and the shoot named in it, so a failed shoot still skips the gate.
+    expect(gate?.condition).toContain('!cancelled()');
+    expect(gate?.condition).toContain("needs.demo-posters.result == 'success'");
     expect(gate?.body).toMatch(/^ {4}uses: \.\/\.github\/workflows\/demo-poster-gate\.yml$/m);
     const artifact = gate?.body.match(/^ {6}artifact: (.+)$/m)?.[1];
     expect(stepBody('demo-posters', 'Hand the set to the poster gate')).toContain(`name: ${artifact}`);
