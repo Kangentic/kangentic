@@ -66,6 +66,13 @@
  * construct (e.g. a mount that lands on a null-null project and stays
  * there, on a host other than the board's retained window). That gap is
  * unaddressed here and is a candidate for follow-up if such a path exists.
+ *
+ * The same boot ends on a second check, because this is the one rig that
+ * holds a retained window with a live guest: an edit request for the retained
+ * window's task must not reach it (TaskDetailWindow's `taskEditRequest`
+ * subscription). The Agent Monitor raises that request by task id for its own
+ * detail of the task, and a retained board window that took it too came back
+ * on its edit form when its project returned.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -164,7 +171,7 @@ const preConfig = `
   });
 `;
 
-/** Minimal typed view of the window-manager store surface this spec reads. */
+/** Minimal typed view of the store handles this spec reads and calls. */
 interface TestWindow {
   __zustandStores?: {
     window?: {
@@ -172,7 +179,20 @@ interface TestWindow {
         windows: Record<string, { anchor: string; retainedProjectId?: string }>;
       };
     };
+    session?: {
+      getState: () => { requestTaskEdit: (taskId: string) => void };
+    };
   };
+}
+
+/** The project the task's window is retained for, or null when it is not retained. */
+function readRetainedProjectId(page: Page): Promise<string | null> {
+  return page.evaluate((taskId: string) => {
+    const testWindow = window as unknown as TestWindow;
+    const windows = testWindow.__zustandStores?.window?.getState().windows ?? {};
+    const match = Object.values(windows).find((candidate) => candidate.anchor === taskId);
+    return match?.retainedProjectId ?? null;
+  }, TASK_ID);
 }
 
 async function launch(): Promise<{ browser: Browser; page: Page }> {
@@ -243,17 +263,7 @@ test.describe('useBrowserUrl refetch guard (retained-pane project switch)', () =
       // corrective re-fetch (both plain microtask-resolved mock promises)
       // have already run to completion, since a page.evaluate round trip
       // cannot observe state until the page's microtask queue has drained.
-      await expect
-        .poll(
-          () => page.evaluate((taskId: string) => {
-            const testWindow = window as unknown as TestWindow;
-            const windows = testWindow.__zustandStores?.window?.getState().windows ?? {};
-            const match = Object.values(windows).find((candidate) => candidate.anchor === taskId);
-            return match?.retainedProjectId ?? null;
-          }, TASK_ID),
-          { timeout: 5000 },
-        )
-        .toBe(PROJECT_A_ID);
+      await expect.poll(() => readRetainedProjectId(page), { timeout: 5000 }).toBe(PROJECT_A_ID);
 
       // The discriminator (see the file header for why "register count" and
       // "unregister count" are both wrong invariants here): the LAST
@@ -273,6 +283,27 @@ test.describe('useBrowserUrl refetch guard (retained-pane project switch)', () =
           { timeout: 5000 },
         )
         .toEqual({ projectId: PROJECT_A_ID, webContentsId: MOCK_WEB_CONTENTS_ID });
+
+      // Red: TaskDetailWindow's `taskEditRequest` subscription stops skipping a
+      // retained window. The window then comes back on its edit form, with its
+      // body hidden under it.
+      await test.step('a retained window ignores an edit request for its task', async () => {
+        await page.evaluate((taskId: string) => {
+          const sessionStore = (window as unknown as TestWindow).__zustandStores?.session;
+          if (!sessionStore) throw new Error('the session store handle must be on the page');
+          sessionStore.getState().requestTaskEdit(taskId);
+        }, TASK_ID);
+
+        await page.locator(`[role="button"]:has-text("${PROJECT_A_NAME}")`).click();
+        await expect.poll(() => readRetainedProjectId(page), { timeout: 5000 }).toBe(null);
+
+        // The window is back and showing its body, so the missing form below is
+        // a window that never took the request, not a window that is gone.
+        const bodySlot = page.locator('[data-testid="task-detail-body-slot"]');
+        await expect(bodySlot).toHaveCount(1);
+        await expect(bodySlot).not.toHaveAttribute('inert', '');
+        await expect(page.locator('[data-testid="task-detail-edit-scroll"]')).toHaveCount(0);
+      });
     } finally {
       await browser.close();
     }
