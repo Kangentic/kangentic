@@ -100,10 +100,33 @@ const warnedLaunches = new Set<string>();
  * on a posix host `path` would mangle a `C:\...` input, and the base name's
  * case must survive (`codex.CMD` -> `codex.ps1`).
  */
-export function shimSibling(agentPath: string, extension: '.ps1' | ''): string {
+export function shimSibling(agentPath: string, extension: '.ps1' | '' | '.cmd' | '.bat'): string {
   const match = /\.[^./\\]+$/.exec(agentPath);
   const stem = match ? agentPath.slice(0, match.index) : agentPath;
   return stem + extension;
+}
+
+/**
+ * The path a headless run can start for a CLI a session launched. A PowerShell
+ * or Git Bash launch runs the `.ps1` or `#!/bin/sh` sibling of a `.cmd` shim
+ * (`resolveShimLaunch`), and neither starts outside its shell: measured on
+ * Node 24, `spawn` of a `.ps1` throws `EFTYPE` and of the sh shim fails
+ * `ENOENT`, and `spawnCli` sends only a `.cmd` or `.bat` through cmd.exe. This
+ * gives back the batch shim beside a swapped path, and any other path as it is.
+ */
+export function headlessCliPath(
+  launchPath: string,
+  dependencies: Pick<ShimLaunchDependencies, 'platform' | 'fileExists'> = {},
+): string {
+  if ((dependencies.platform ?? process.platform) !== 'win32') return launchPath;
+  const extension = /\.[^./\\]+$/.exec(launchPath)?.[0].toLowerCase() ?? '';
+  if (extension !== '.ps1' && extension !== '') return launchPath;
+  const fileExists = dependencies.fileExists ?? fs.existsSync;
+  for (const batchExtension of ['.cmd', '.bat'] as const) {
+    const batchShim = shimSibling(launchPath, batchExtension);
+    if (fileExists(batchShim)) return batchShim;
+  }
+  return launchPath;
 }
 
 /** True when `Get-ExecutionPolicy` output names a policy that runs unsigned local scripts. */
