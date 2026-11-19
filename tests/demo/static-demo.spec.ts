@@ -36,8 +36,10 @@ import {
   DEMO_ARCHIVED_SUMMARIES, DEMO_DICTATION_RECORDING, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_PROJECTS, DEMO_SESSIONS, DEMO_TASKS, PROJECT_CONTOSO,
   SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET,
   DEMO_SCENE_TASKS, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET,
+  DEMO_HOST_AGENT_VERSIONS, DEMO_SCENE_PROJECTS, DEMO_SSH_HOSTS, PROJECT_REDIS, SESSION_REDIS_EXPIRE, TASK_REDIS_EXPIRE, TASK_REDIS_SLOWLOG,
 } from '../captures/helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY } from '../captures/helpers/demo-task-report';
+import { readAppVersion } from '../captures/helpers/demo-scrollback';
 import { DEMO_BROWSER_ANNOTATION_ELEMENTS } from '../captures/helpers/demo-browser-annotations';
 import { formatCost, formatSpan } from '../../src/renderer/utils/format-session';
 
@@ -369,6 +371,46 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     // The context bar names the Claude Code the recording ran on, which its header prints too.
     expect(painted).toContain('Claude Code v2.1.302');
     await expect(page.locator('[data-testid="task-detail-dialog"]')).toContainText('v2.1.302');
+  },
+  'ssh-remote-project': async (page) => {
+    // The frame opens on redis, a project on a host: one host chip, connected, on its sidebar row,
+    // and its own board, the plan waiting in Planning and the window's card in Executing.
+    const redis = DEMO_SCENE_PROJECTS.find((project) => project.id === PROJECT_REDIS);
+    await expect(page.locator('[data-testid="project-host-chip"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="project-host-chip"]')).toHaveAttribute('data-host-state', 'connected');
+    await expect(page.locator(`[data-swimlane-name="Planning"] [data-task-id="${TASK_REDIS_SLOWLOG}"]`)).toBeAttached();
+    await expect(page.locator(`[data-swimlane-name="Executing"] [data-task-id="${TASK_REDIS_EXPIRE}"]`)).toBeAttached();
+    await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Pin EXPIRE with a negative TTL');
+    // The window keeps the frame's right edge (fitAnchor), so the plan waiting in Planning, half of
+    // what the scene shows, is not under it. Read from live layout, with a pixel of rounding.
+    const planningCard = await page.locator(`[data-swimlane-name="Planning"] [data-task-id="${TASK_REDIS_SLOWLOG}"]`).first().boundingBox();
+    const windowFrame = await page.locator('[data-testid^="window-frame-"]').first().boundingBox();
+    expect(planningCard, 'the Planning card has a box').not.toBeNull();
+    expect(windowFrame, 'the task window has a box').not.toBeNull();
+    expect((planningCard?.x ?? 0) + (planningCard?.width ?? 0), 'the Planning card ends left of the window').toBeLessThanOrEqual((windowFrame?.x ?? 0) + 1);
+    // The terminal is the host session's: Claude Code on Linux in the task's worktree under the
+    // host folder, with nothing of the recording machine's Windows in it.
+    const painted = stripAnsi(await page.evaluate((sessionId) => (window as unknown as DemoElectronWindow).electronAPI.sessions.getScrollback(sessionId), SESSION_REDIS_EXPIRE));
+    expect(painted).toContain('~/redis/.kangentic/worktrees/pin-expire-negative-ttl');
+    expect(painted).not.toMatch(/C:\\|\/mnt\/[a-z]\//);
+    // The context bar names the host's shell and the version its recording ran on.
+    const contextBar = page.locator('[data-testid="task-detail-dialog"] [data-testid="usage-bar"]');
+    await expect(contextBar.locator('[data-fold-id="shell"]')).toHaveText('bash');
+    await expect(contextBar).toContainText(`v${DEMO_HOST_AGENT_VERSIONS.claude}`);
+    expect(redis?.remote?.path).toBe('/home/dev/redis');
+  },
+  'ssh-remote-host': async (page) => {
+    // The host row as the scene seeds it: Build server at dev@build-box, connected, one project,
+    // and the program at the app's own version with the two terminals redis runs there.
+    const host = DEMO_SSH_HOSTS[0];
+    await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="ssh-host-name"]')).toHaveText(host.name);
+    await expect(page.locator('[data-testid="ssh-host-destination"]')).toHaveText(host.destination);
+    await expect(page.locator('[data-testid="ssh-host-connection"]')).toContainText('Connected');
+    await expect(page.locator('[data-testid="ssh-host-project-count"]')).toContainText('1 project');
+    await expect(page.locator('[data-testid="ssh-host-program-sessions"]')).toContainText('2 terminals running');
+    // The version the build stamps into the frame, so the row reads no older program.
+    await expect(page.locator('[data-testid="ssh-host-program-version"]')).toContainText(readAppVersion());
   },
   workflows: async (page) => {
     const view = page.locator('[data-testid="workflows-view"]');
@@ -2125,9 +2167,11 @@ function naturalGrid(page: Page, sessionId: string): Promise<Grid | null> {
  * window must take: 154 columns and 37 rows, both Claude sessions recorded at the task window.
  */
 const FITTED_WINDOW_SCENES = [
-  { view: 'task', sessionId: SESSION_MIDDLEWARE, fileStem: 'contoso-web-claude-middleware' },
-  { view: 'command-terminal', sessionId: SESSION_CONTOSO_TERMINAL, fileStem: 'contoso-web-claude-terminal' },
-  { view: 'terminal-find', sessionId: SESSION_MIDDLEWARE, fileStem: 'contoso-web-claude-middleware' },
+  { view: 'task', sessionId: SESSION_MIDDLEWARE, fileStem: 'contoso-web-claude-middleware', grid: MIDDLEWARE_RECORDED_GRID },
+  { view: 'command-terminal', sessionId: SESSION_CONTOSO_TERMINAL, fileStem: 'contoso-web-claude-terminal', grid: MIDDLEWARE_RECORDED_GRID },
+  { view: 'terminal-find', sessionId: SESSION_MIDDLEWARE, fileStem: 'contoso-web-claude-middleware', grid: MIDDLEWARE_RECORDED_GRID },
+  // Recorded at 110 columns so the window, kept at the frame's right edge, clears the first two columns.
+  { view: 'ssh-remote-project', sessionId: SESSION_REDIS_EXPIRE, fileStem: 'redis-claude-pin-expire', grid: { cols: 110, rows: 37 } },
 ] as const;
 
 /**
@@ -2141,8 +2185,8 @@ async function expectFittedToRecording(page: Page, scene: typeof FITTED_WINDOW_S
   await page.goto(demoUrl({ view: scene.view, embed: '1' }));
   await waitForDemoReady(page);
   await expect.poll(async () => (await naturalGrid(page, scene.sessionId))?.cols, { timeout: 10_000, message: `${label}: the window's terminal columns` })
-    .toBe(MIDDLEWARE_RECORDED_GRID.cols);
-  expect((await naturalGrid(page, scene.sessionId))?.rows ?? 0, `${label}: the window's terminal rows`).toBeGreaterThanOrEqual(MIDDLEWARE_RECORDED_GRID.rows);
+    .toBe(scene.grid.cols);
+  expect((await naturalGrid(page, scene.sessionId))?.rows ?? 0, `${label}: the window's terminal rows`).toBeGreaterThanOrEqual(scene.grid.rows);
   await expect.poll(() => getRecordingRequests().some((url) => url.includes(`/recordings/${scene.fileStem}-`) && !url.includes('-tiled-')), { timeout: 15_000 }).toBe(true);
   await expectFaithfulReplay(page, scene.sessionId);
 }
@@ -2635,7 +2679,7 @@ for (const deviceScaleFactor of [1, 1.25, 2]) {
 // the Changes scene 300px below at 125. A still fills too, since the posters are stills, shot at
 // twice scale; this runner's Liberation Mono is the face whose heights round unevenly, the case
 // the renderer's conform used to stop short on.
-const TERMINAL_SCENES = ['task', 'windows-tiled', 'browser', 'browser-annotations', 'changes', 'command-terminal', 'command-terminal-tiled', 'board', 'task-mcp', 'terminal-find'] as const;
+const TERMINAL_SCENES = ['task', 'windows-tiled', 'browser', 'browser-annotations', 'changes', 'command-terminal', 'command-terminal-tiled', 'board', 'task-mcp', 'terminal-find', 'ssh-remote-project'] as const;
 for (const [deviceScaleFactor, still] of [[1, false], [1.25, false], [2, false], [2, true]] as const) {
   test(`every terminal scene fills its panes at device scale ${deviceScaleFactor}${still ? ', as a still' : ''}`, async ({ browser }) => {
     test.setTimeout(180_000);

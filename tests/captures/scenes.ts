@@ -30,7 +30,7 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_COMMAND_TERMINAL_EARLIER, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SAMPLE_INSTALL_RAIL_WIDTH_PX, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_INTEGRATION, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_COMMAND_TERMINAL_EARLIER, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, DEMO_REDIS_ROWS, PROJECT_CONTOSO, PROJECT_PETCLINIC, PROJECT_REDIS, SESSION_REDIS_EXPIRE, TASK_REDIS_EXPIRE, TASK_REDIS_SLOWLOG, SAMPLE_INSTALL_RAIL_WIDTH_PX, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_INTEGRATION, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_CHANGES, DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEMO_BROWSER_ANNOTATION_DRAFT } from './helpers/demo-browser-annotations';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
@@ -322,6 +322,26 @@ function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
  */
 function validateWindowWorkspace() {
   return taskWindowWorkspace(TASK_VALIDATE, 'Validate request bodies', 'maximized', MAXIMIZED_PLACEMENT);
+}
+
+/**
+ * The redis task window's rect in the SSH project scene. The window is fitted to its session's
+ * recording like the middleware window (FITTED_FLOATING_GEOMETRY), but kept at the frame's right
+ * edge (fitAnchor 'right') rather than centred: centred, it covered the Planning column whose
+ * waiting plan is half of the scene. The recording was made at 110 columns for the same reason, so
+ * the window clears the first two columns at the site frame's width. The width here is only the
+ * fallback, at the frame's 6px cell with the 16px of border, gutter and padding a fitted window
+ * measures; the seed sets the real one.
+ */
+const REDIS_WINDOW_RIGHT_EDGE = 1 - 4 / 1600;
+const REDIS_WINDOW_FALLBACK_WIDTH = ((110 + 0.5) * 6 + 16) / 1600;
+const REDIS_WINDOW_GEOMETRY = { x: REDIS_WINDOW_RIGHT_EDGE - REDIS_WINDOW_FALLBACK_WIDTH, y: FITTED_FLOATING_GEOMETRY.y, w: REDIS_WINDOW_FALLBACK_WIDTH, h: FITTED_FLOATING_GEOMETRY.h };
+
+/** The SSH project scene's window: the Executing card's task, its agent working on the host. */
+function redisWindowWorkspace() {
+  return taskWindowWorkspace(TASK_REDIS_EXPIRE, 'Pin EXPIRE with a negative TTL', 'floating', {
+    geometry: REDIS_WINDOW_GEOMETRY, restoreGeometry: null, fitToRecording: SESSION_REDIS_EXPIRE, fitAnchor: 'right',
+  });
 }
 
 const MCP_SCENE_AGENT_LIST = {
@@ -1751,6 +1771,49 @@ export const SCENES: Record<string, SceneDefinition> = {
     seeds: { __mockAgentListOverrides: MCP_SCENE_AGENT_LIST },
     ready: '[data-testid="task-title-text"]',
     timeline: [{ session: SESSION_VALIDATE, at: 'end', do: { move: { task: TASK_VALIDATE, to: demoLaneId(PROJECT_CONTOSO, 'testing'), origin: 'agent' } } }],
+  },
+
+  // ---------------------------------------------------------------- a project on an SSH host
+  // redis lives on a Linux host the install reaches over SSH (#913), a scene-only project
+  // (DEMO_SCENE_PROJECTS): its cards are scene-only rows, and naming them brings the project in,
+  // opens the frame on it, and seeds the Build server host as connected. Its terminals are Claude
+  // Code sessions recorded on Linux in the host's folders (scripts/capture-agent-scrollback.js
+  // --wsl), so the window shows a host session as the desktop does.
+  'ssh-remote-project': {
+    name: 'ssh-remote-project',
+    reach: 'state',
+    description: 'The board of redis, a project on the Build server host, opened on its own board: the sidebar puts a server icon after its name (the host chip, connected), a plan waits for approval in Planning, and the Executing card\'s task window floats at the right with its Claude Code session on the host, reading src/expire.c in the task\'s worktree under /home/dev/redis. The window is fitted to its 110-column recording and keeps the right edge (fitAnchor), so the first two columns stay clear. The context bar reads bash, the host\'s login shell.',
+    alt: 'The board for redis, a project on a remote host: a server icon follows its name in the sidebar, a plan waits for approval in Planning, and a task window shows Claude Code running shell commands in the project\'s folder on the host.',
+    rows: DEMO_REDIS_ROWS,
+    config: { workspaceByProject: { [PROJECT_REDIS]: redisWindowWorkspace() } },
+    // The window's title, on a frame whose sidebar shows the host connected: a :has() rather than a
+    // list, since a selector list is either one.
+    ready: `body:has([data-testid="project-host-chip"][data-host-state="connected"]) [data-testid="task-title-text"]`,
+    // The host's name and state in the chip's tip, then the plan waiting in Planning in its mark's.
+    choreography: [
+      { hover: '[data-testid="project-host-chip"]', ms: 1800 },
+      { hover: `[data-task-id="${TASK_REDIS_SLOWLOG}"] svg[data-mark]`, ms: 1800 },
+    ],
+  },
+  'ssh-remote-host': {
+    name: 'ssh-remote-host',
+    reach: 'boot',
+    description: 'Settings on the SSH tab once a host is in use: the Build server row connected at dev@build-box with My SSH config as its sign-in, its one project, and the Kangentic program on it at the app\'s own version with the two terminals redis runs there, above the SSH client card. It names the redis rows so the host and its project are seeded as the SSH project scene seeds them (the frame opens on redis, under the panel). The empty tab is settings-ssh.',
+    alt: 'Settings on the SSH tab with one host in the Hosts card: Build server at dev@build-box, Connected, with 1 project and 2 terminals running, above the SSH client card showing the ssh program Kangentic connects with.',
+    rows: DEMO_REDIS_ROWS,
+    ready: '[data-testid="ssh-host-program"]',
+    focus: SETTINGS_PANEL,
+    steps: [
+      { click: '[data-testid="settings-button"]', waitFor: SETTINGS_PANEL },
+      { click: '[data-testid="settings-tab-ssh"]', waitFor: '[data-testid="ssh-host-program"]' },
+    ],
+    // The row's Edit form opened, the key-file sign-in picked to show its path field, and Cancel,
+    // which leaves the host as it was. Saving would sign in to a machine a visitor cannot reach.
+    choreography: [
+      { click: '[data-testid="ssh-host-edit"]', waitFor: '[data-testid="ssh-edit-form"]', ms: 1400 },
+      { click: '[data-testid="ssh-edit-signin-key-file"]', waitFor: '[data-testid="ssh-edit-key-path"]', ms: 1600 },
+      { click: '[data-testid="ssh-edit-cancel"]', waitFor: gone('[data-testid="ssh-edit-form"]'), ms: 1200 },
+    ],
   },
 
   dictation: {
