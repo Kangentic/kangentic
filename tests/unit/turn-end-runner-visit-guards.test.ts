@@ -90,7 +90,7 @@ const hoisted = vi.hoisted(() => ({
   clearSpawnProgress: vi.fn(),
   findSession: vi.fn(),
   retrievalCall: vi.fn(),
-  readTurnUserMessage: vi.fn(),
+  readUserMessagesInTurn: vi.fn(),
   sessionReportsUserMessages: vi.fn(),
 }));
 
@@ -124,7 +124,7 @@ vi.mock('../../src/main/transition-engine/turn-completion', () => ({
 // The user-message read and the agent capability check are spied (#1078); the final-reply reads stay real.
 vi.mock('../../src/main/automations/turn-end/final-reply-reader', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/automations/turn-end/final-reply-reader')>()),
-  readTurnUserMessage: hoisted.readTurnUserMessage,
+  readUserMessagesInTurn: hoisted.readUserMessagesInTurn,
   sessionReportsUserMessages: hoisted.sessionReportsUserMessages,
 }));
 vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: hoisted.retrievalCall } }));
@@ -231,7 +231,7 @@ describe('a turn end and the rows it may run', () => {
     // No session record, so no reply is read, unless a test sets one up.
     hoisted.findSession.mockImplementation(() => null);
     hoisted.retrievalCall.mockImplementation(async () => null);
-    hoisted.readTurnUserMessage.mockImplementation(async () => ({ readable: false }));
+    hoisted.readUserMessagesInTurn.mockImplementation(async () => ({ readable: false }));
     hoisted.sessionReportsUserMessages.mockImplementation(() => undefined);
     hoisted.runWorkflowStep.mockImplementation(async () => undefined);
     // A workflow task, so a pass always reaches its `finally` unless the visit gate stops it.
@@ -823,7 +823,7 @@ describe('a turn end and the rows it may run', () => {
     });
   });
 
-  // #1078: a Text match on the user's message reads their last message in the turn,
+  // #1078: a Text match on the user's message reads their messages in the turn,
   // once, and only when a pending row is on it.
   describe('Text match rows on the user\'s message', () => {
     type UserOptions = { userMessage?: unknown; reportsUserMessages?: boolean };
@@ -835,16 +835,16 @@ describe('a turn end and the rows it may run', () => {
         row({ id: 'row-signed-off', final_line: 'signed off', text_match_source: 'user' }),
         row({ id: 'row-approved', name: 'Approved', position: 1, final_line: 'approved', text_match_source: 'user' }),
       ];
-      hoisted.readTurnUserMessage.mockImplementation(async () => ({ readable: true, message: 'Signed off.' }));
+      hoisted.readUserMessagesInTurn.mockImplementation(async () => ({ readable: true, messages: ['Signed off.'] }));
       hoisted.sessionReportsUserMessages.mockImplementation(() => true);
       enterColumnAt(secondsAgo(60));
 
       await endTurn();
 
-      expect(hoisted.readTurnUserMessage).toHaveBeenCalledTimes(1);
+      expect(hoisted.readUserMessagesInTurn).toHaveBeenCalledTimes(1);
       expect(hoisted.sessionReportsUserMessages).toHaveBeenCalledWith(SESSION_ID, expect.anything());
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
-      expect(transitionOptions().userMessage).toEqual({ readable: true, message: 'Signed off.' });
+      expect(transitionOptions().userMessage).toEqual({ readable: true, messages: ['Signed off.'] });
       expect(transitionOptions().reportsUserMessages).toBe(true);
     });
 
@@ -867,7 +867,7 @@ describe('a turn end and the rows it may run', () => {
 
       await endTurn();
 
-      expect(hoisted.readTurnUserMessage).not.toHaveBeenCalled();
+      expect(hoisted.readUserMessagesInTurn).not.toHaveBeenCalled();
       expect(hoisted.sessionReportsUserMessages).not.toHaveBeenCalled();
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
       expect(transitionOptions().userMessage).toBeUndefined();

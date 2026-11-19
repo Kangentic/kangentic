@@ -352,7 +352,7 @@ interface AutomationGroupOptions {
   groupBudgetMs?: number;
   /** Turn end only: the agent's final message of the turn, for `{{agentReply}}` and Conditions. */
   agentReply?: string | null;
-  /** Turn end only: the user's last message in the turn, for a Text match on it (see `RunAutomationsOptions`). */
+  /** Turn end only: the user's messages in the turn, for a Text match on it (see `RunAutomationsOptions`). */
   userMessage?: UserMessageRead;
   /** Turn end only: whether the turn's agent reports the user's messages (see `RunAutomationsOptions`). */
   reportsUserMessages?: boolean;

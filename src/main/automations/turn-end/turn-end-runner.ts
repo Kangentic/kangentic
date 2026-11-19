@@ -54,7 +54,7 @@ import { refreshStoppedMark } from '../stopped-mark';
 import { judgeColumnStop, NEEDS_A_PERSON_CHECK_ID, NEEDS_A_PERSON_CONDITION } from './column-stop';
 import { deliverMessageToSession } from './deliver-message';
 import { moveTaskFromRow } from './move-from-row';
-import { readSessionFinalReply, readTurnUserMessage, sessionReportsUserMessages, tryReadSessionFinalReply } from './final-reply-reader';
+import { readSessionFinalReply, readUserMessagesInTurn, sessionReportsUserMessages, tryReadSessionFinalReply } from './final-reply-reader';
 import { forgetTypedMessageSession } from './typed-message-ledger';
 import { trackTurnEndGroup } from './turn-end-passes';
 import { isSessionInOwnCall } from '../../ipc/handlers/own-call-turn-wait';
@@ -749,11 +749,11 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
       replyRead ??= readAgentReply(payload, sessionRepo);
       return replyRead;
     };
-    // The user's last message in the turn, read once and only when a row needs
+    // The user's messages in the turn, read once and only when a row needs
     // it (#1078). Fails closed: unreadable unless read exactly.
     let userMessageRead: Promise<UserMessageRead> | null = null;
     const readUserMessage = (): Promise<UserMessageRead> => {
-      userMessageRead ??= readTurnUserMessage(payload, sessionRepo, getOpenProjectDb(payload.projectId));
+      userMessageRead ??= readUserMessagesInTurn(payload, sessionRepo, getOpenProjectDb(payload.projectId));
       return userMessageRead;
     };
 
@@ -1058,7 +1058,7 @@ async function runRows(
     controller: AbortController;
     readReply: () => Promise<string | null>;
     /**
-     * The user's last message in the turn, for a Text match on it (#1078).
+     * The user's messages in the turn, for a Text match on it (#1078).
      * Read only when a pending row needs it. Unreadable fails the row closed.
      */
     readUserMessage: () => Promise<UserMessageRead>;
@@ -1090,7 +1090,7 @@ async function runRows(
 
   const needsReply = pending.some(needsAgentReply);
   const agentReply = needsReply ? await input.readReply() : null;
-  // A Text match on the user's message reads their last message instead. Left
+  // A Text match on the user's message reads their messages instead. Left
   // undefined when no pending row needs it; the runner then fails such a row
   // closed, which cannot happen here since none is pending.
   const readsUserMessage = pending.some(hasUserTextMatch);

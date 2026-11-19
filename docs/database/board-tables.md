@@ -307,8 +307,8 @@ is skipped with a warning, never read as `enter`.
 
 `condition` is the row's Condition in plain words, judged by the Automation agent before the row
 runs; NULL (or blank) means the row always runs. `final_line` is the other kind of Condition, a
-Text match: patterns checked in code against the agent's last line, or the user's last message
-when `text_match_source` is `'user'`, with no agent call
+Text match: patterns checked in code against the agent's last line, or the user's messages in
+the turn when `text_match_source` is `'user'`, with no agent call
 (`src/shared/final-line-match.ts`), one per line joined by a line break, each trimmed with blank
 lines dropped (`normalizeTextMatch`). A pattern that starts with `!` means not. A row holds one kind. `AutomationRepository.replaceForColumn`
 stores `final_line` only on a `turn_end` row and, when it is set, stores `condition` as NULL, so a
@@ -319,7 +319,8 @@ another column, or it last left Done; NULL means no limit. All three are nullabl
 before them still inserts into a database that has them.
 
 `text_match_source` says whose message the Text match reads (#1078): NULL for the agent's last
-line, `'user'` for the user's last message in the turn. It is stored only beside a `final_line`,
+line, `'user'` for the user's messages in the turn, the newest one that matches a pattern deciding
+([Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency)). It is stored only beside a `final_line`,
 and an unknown value reads as `'user'` with a warning, the side that can never be an agent exit.
 What Kangentic itself typed, which such a row must never read as the user's, is recorded in
 [`session_typed_messages`](session-tables.md#session_typed_messages-table).

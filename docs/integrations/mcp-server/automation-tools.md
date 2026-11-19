@@ -42,8 +42,9 @@ Every row also takes guards, a Condition of one kind or the other and a Frequenc
     patterns, on any line but those. `turn_end` rows only, up to 20 patterns of 500 characters.
     A turn with no message runs none, `!` included.
   - `{ "text": { "from": "user", "patterns": ["*signed off*", "!*not signed off*"] } }`: the same
-    Text match against the user's last message in the turn instead (#1078), queued messages
-    included and text Kangentic typed left out. It fails closed: a turn it cannot read exactly runs
+    Text match against the user's messages in the turn instead (#1078), queued messages
+    included and text Kangentic typed left out. Each message is judged on its own, and the newest
+    one that matches any pattern decides. It fails closed: a turn it cannot read exactly runs
     no such row. A forward row of this kind makes the column a person's gate for a workflow.
     `"from": "agent"` is the short form, and a row reads back in the short form for it. An unknown
     `from` or an extra key is refused, naming the long form.
@@ -220,10 +221,13 @@ the Automation agent found it met or not met, and the agent's one-line reason. A
 Text match shows `[text match met: ...]` or `[text match not met: ...]` with the line it read
 (`The final line reads "Verdict: Blocked".`), and no check line, since no agent was asked. For a
 Text match on the user's message the reason says whether it matched and never quotes the message:
-`Your message matched.`, `Your message matched no pattern.`, `No message from you in this turn.`, or
-the unreadable reason. The log denormalizes the automation's name and
-type and takes no foreign key to the automation, so renaming or deleting one does not empty its
-history.
+`Your message matched.`, `Your message matched a ! pattern.`, `Your message matched no pattern.`,
+`No message from you in this turn.`, or the unreadable reason. With several messages it names the
+one that decided by its place: `Your message 1 of 2 in this turn matched.`,
+`Your message 2 of 2 in this turn matched a ! pattern.`, or
+`None of your 2 messages in this turn matched a pattern.` The log denormalizes the automation's
+name and type and takes no foreign key to the automation, so renaming or deleting one does not
+empty its history.
 
 The log also holds rows the app writes for itself, listed with their type and no Condition line:
 a workflow's step, recovery, stall and wait rows (`workflow_step`, `workflow_recovery`,

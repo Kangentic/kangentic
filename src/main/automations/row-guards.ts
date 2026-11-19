@@ -56,7 +56,7 @@ export { textMatchSourceOf };
 
 /**
  * Whether a row has a Text match on the user's message (#1078), and so needs
- * their last message in the turn. Read only then, since the read is a
+ * their messages in the turn. Read only then, since the read is a
  * retrieval worker call.
  */
 export function hasUserTextMatch(

@@ -183,7 +183,7 @@ export interface RunAutomationsOptions {
    */
   agentReply?: string | null;
   /**
-   * Turn end only: the user's last message in the turn (#1078), read for the
+   * Turn end only: the user's messages in the turn (#1078), read for the
    * rows whose Text match is on it (`hasUserTextMatch`). Absent or unreadable,
    * such a row does not run: it fails closed.
    */
@@ -414,7 +414,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
         record('skipped', TEXT_MATCH_NO_TURN_REASON);
         continue;
       }
-      // A Text match on the user's message reads their last message in the
+      // A Text match on the user's message reads their messages in the
       // turn instead (#1078). A caller that did not read it gives nothing,
       // which fails closed: the row does not run.
       const match = textMatchSourceOf(automation) === 'user'

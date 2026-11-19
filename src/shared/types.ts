@@ -1440,9 +1440,9 @@ export interface ColumnAutomation {
   final_line: string | null;
   /**
    * Whose message the Text match reads: the agent's last line (`'agent'`, the
-   * only kind before #1078) or the user's last message in the turn
-   * (`'user'`). Always `'agent'` when the row has no Text match. A `'user'` row
-   * is never an agent exit (`workflow-step-condition.ts`): it is the user's way
+   * only kind before #1078) or the user's messages in the turn, the newest
+   * one that matches a pattern deciding (`'user'`). Always `'agent'` when the
+   * row has no Text match. A `'user'` row is never an agent exit (`workflow-step-condition.ts`): it is the user's way
    * on, so a forward one keeps the column a person's gate.
    */
   text_match_source: TextMatchSource;
