@@ -46,9 +46,6 @@ const EMPTY_TRAIL_REASONS: Readonly<Record<string, string>> = Object.freeze({
   'spring-petclinic-gemini-owner-search.json':
     'this capture put all 19 of its assistant blocks in thinking, which assistantMessagePreviews excludes; '
     + 'it has zero text blocks, so the desktop shows this session no trail either',
-  'spawn-task-rd-replication-flake-acceptEdits.json':
-    'the 25 s boot reaches a Bash permission prompt after tool calls alone, before the agent writes any prose, '
-    + 'so the desktop shows the card its description at that moment too',
   'spawn-task-rd-object-freq-acceptEdits.json':
     'the 25 s boot reaches a Bash permission prompt after tool calls and an edit, before the agent writes any '
     + 'prose, so the desktop shows the card its description at that moment too',

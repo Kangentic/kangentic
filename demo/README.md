@@ -1511,8 +1511,9 @@ repository uses, and each session runs in its task's worktree, made fresh the wa
 on a host. The rig starts the app's own distro launch (`cliInvocationForTarget`) in that folder,
 with the drive mounts off its PATH, trust in the distro's `~/.claude.json`, and git and the
 transcript read inside the distro. The sanitizer turns the clone into the host folder, and the
-distro's user and host names into `dev` and `build-box`. The distro's clock ran up to a second
-ahead of Windows, so the rig measures it and takes it off the trail. The clone keeps no remote:
+distro's user and host names into `dev` and `build-box`. The distro's clock ran 0.7 to 1.3 s
+ahead of Windows, a different amount each capture, so the rig measures it before each one and
+takes it off the trail. The clone keeps no remote:
 on a task branch Claude's footer looks the branch's pull request up on GitHub, and with no `gh`
 in the distro it says "install gh for PR status". Every capture refuses that hint, the other
 notices about the recording machine's install or account (a model launch announcement, a plan
