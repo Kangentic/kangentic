@@ -94,7 +94,9 @@ is slow: the same 5,848-byte line never reached a stub agent when typed during a
 in WSL, and ran when typed after the prompt.
 
 `buildTypedLaunch` (`src/main/pty/spawn/typed-launch.ts`) keeps the typed line under
-`TYPED_LINE_BYTE_BUDGET` (900 bytes, Enter and prelude included, for every shell but cmd on Windows, which has its own budget below). Past that, `performSpawn` writes
+`TYPED_LINE_BYTE_BUDGET` (900 bytes, Enter and prelude included) wherever the shell reads a POSIX
+tty: on macOS and Linux, and in WSL. cmd on Windows has its own budget, and PowerShell and Git Bash
+on Windows type the whole line (both below). Past that budget, `performSpawn` writes
 the output of `adaptCommandForShell` to a launcher file in the session's
 `.kangentic/sessions/<id>/` folder, owner-only since it holds the prompt, and types the clear
 prelude plus a statement that runs the file. The file runs in the same shell the typed line
@@ -169,7 +171,8 @@ a batch file does not read a line the way a prompt does:
   the `node.exe` beside the shim or `node`, as the shim does, or a binary target directly. A
   pnpm shim sets `NODE_PATH` whenever its install has node paths to add, and pnpm calls a target
   with no shebang directly, so an `.exe` target (Claude Code's npm bin is `bin/claude.exe`) runs
-  as an npm shim's does: only a Node script reads `NODE_PATH`. A target that is itself a `.cmd` or
+  as an npm shim's does: a native program never reads `NODE_PATH`, where a Node script may, and a
+  `.ps1` may start one. A target that is itself a `.cmd` or
   `.bat` shim is read through in turn, up to `MAX_SHIM_HOPS` shims, and the launch starts what the
   last one starts, with `node.exe` looked for beside that one (Sentry DESKTOP-3Y). A `.ps1` target
   starts the PowerShell the shim hands it to, with the shim's own flags, when the shim's text names
@@ -278,7 +281,8 @@ and before bash reads anything, arrived whole in 18 of 18, and so did one typed 
 appeared. Windows PowerShell lost nothing at any delay. A spawn types its one line 100 ms after
 its PTY starts, while a `--login` bash is still in its startup files, so no launch is known to
 lose text this way. The test used to type 1,500 ms after start, which could land in a prompt
-already waiting, and now types as the prompt appears, the shape that arrived whole.
+already waiting, and now types as the prompt appears, the shape that arrived whole, or after 5 s
+for a prompt it does not recognize.
 Anything that later types a long line into a Git Bash sitting at its prompt would meet this, and
 nothing does today: the launch line is the only command typed into a shell, and a project script
 runs as the shell's argument (`resolveScriptInvocation`).
