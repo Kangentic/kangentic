@@ -49,6 +49,12 @@ const hoisted = vi.hoisted(() => ({
   /** The per-row signal the stub runner hands an exit row, so a test can stop it. */
   exitRowController: null as AbortController | null,
   rowErrors: [] as string[],
+  /** What each exit row's delivery returned for its run's detail (undefined: the adapter's own word). */
+  exitDetails: [] as Array<string | void>,
+  /** Messages held for the task, in order, with what the harness's event log read at the time. */
+  holds: [] as Array<{ message: string; eventsBefore: string[] }>,
+  /** The harness's event log, shared so the held-messages mock can write to it. */
+  events: [] as string[],
   reports: [] as InjectionReport[],
 }));
 
@@ -144,6 +150,19 @@ vi.mock('../../src/main/ipc/helpers/auto-command-outcome', () => ({
     hoisted.reports.push(report);
   }),
 }));
+// The hold writes to the project database, which this harness does not have.
+// Recorded instead, with the moment it ran, so a case can pin it after the suspend.
+vi.mock('../../src/main/held-messages/held-messages', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/held-messages/held-messages')>();
+  return {
+    ...actual,
+    clearHeldMessages: vi.fn(),
+    holdTaskMessage: vi.fn((_context: unknown, input: { message: string }) => {
+      hoisted.holds.push({ message: input.message, eventsBefore: [...hoisted.events] });
+      return { status: 'held', displayId: 1, rowId: `held-${hoisted.holds.length}` };
+    }),
+  };
+});
 vi.mock('../../src/main/transition-engine/turn-completion', () => ({
   waitForTurnCompletion: vi.fn((
     _sessionManager: unknown,
@@ -170,7 +189,7 @@ function makeEngine() {
         signal: AbortSignal;
         alreadyDelivered?: Set<string>;
         agentEndingReason?: string;
-        deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
+        deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal, runId: string) => Promise<string | void>;
       },
     ) => {
       hoisted.engineRuns.push({
@@ -204,7 +223,8 @@ function makeEngine() {
           rowSignal = hoisted.exitRowController.signal;
         }
         try {
-          await runOptions.deliverToAgent(row.message, row.mode, rowSignal);
+          const detail = await runOptions.deliverToAgent(row.message, row.mode, rowSignal, `run-${row.id}`);
+          if (trigger === 'exit') hoisted.exitDetails.push(detail);
         } catch (error) {
           hoisted.rowErrors.push(error instanceof Error ? error.message : String(error));
         }
@@ -355,11 +375,11 @@ function makeHarness(
     swimlanes: swimlaneRepo,
     actions: { getTransitionsFor: vi.fn(() => []) },
     automations: { listForColumn: vi.fn(listForColumn), getForTrigger: vi.fn(() => []) },
-    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn() },
+    automationRuns: { start: vi.fn(), finish: vi.fn(), recordSkipped: vi.fn(), updateDetail: vi.fn() },
     attachments: { deleteByTaskId: vi.fn(), getPathsForTask: vi.fn(() => []) },
   });
 
-  const events: string[] = [];
+  const events = hoisted.events;
   const context = {
     currentProjectId: 'proj-test',
     currentProjectPath: '/mock/project',
@@ -373,7 +393,7 @@ function makeHarness(
       removeByTaskId: vi.fn(),
       killByTaskId: vi.fn(),
       listSessions: vi.fn(() => []),
-      suspend: vi.fn(async () => {}),
+      suspend: vi.fn(async () => { events.push('suspend'); }),
       getSession: vi.fn((id: string) => ({ id, status: 'running' })),
       awaitInputReady: vi.fn(async () => true),
       isAgentLaunching: vi.fn(() => false),
@@ -417,6 +437,15 @@ async function settle(): Promise<void> {
   for (let tick = 0; tick < 10; tick++) await Promise.resolve();
 }
 
+/**
+ * The message the warm move's injection plan was built with. Its last call: the
+ * move's first call is `readLiveSessionFate`'s, which asks only whether the
+ * session restarts and passes no message.
+ */
+function injectionAutoCommand(): string | undefined {
+  return vi.mocked(prepareInjectionPlan).mock.calls.at(-1)?.[0].autoCommand;
+}
+
 /** The enter group the move ran, with the skip list it was handed. */
 function enterRun() {
   return hoisted.engineRuns.find((run) => run.trigger === 'enter');
@@ -442,6 +471,9 @@ beforeEach(async () => {
   hoisted.runnerSkips.clear();
   hoisted.exitRowController = null;
   hoisted.rowErrors.length = 0;
+  hoisted.exitDetails.length = 0;
+  hoisted.holds.length = 0;
+  hoisted.events.length = 0;
   hoisted.reports.length = 0;
 });
 
@@ -561,6 +593,214 @@ describe('On task exit: a move that ends the agent sends it no message', () => {
   });
 });
 
+// kangentic.com #145: Design (opus, high) to Planning (opus, xhigh). The effort
+// change restarted the session, and Design's "Signed off" exit message, typed
+// into it first, was cut off a second later. The run still said "Delivered", and
+// Planning, with no enter message, resumed with no prompt. A move that resumes
+// the same conversation now holds the message for the resume, and one that ends
+// it for another conversation skips the row.
+describe('On task exit: a move that restarts the agent carries the message to its resume', () => {
+  const RESTART_DETAIL = `Held: moving to Lane ${LANE_B} restarts the agent to change its effort, so the message goes in its resume prompt.`;
+
+  it('an effort restart types and pastes nothing, and holds the message after the suspend', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [
+      { id: 'row-exit-line', message: 'Signed off', mode: 'immediate' },
+      { id: 'row-exit-paste', message: MULTI_LINE, mode: 'immediate' },
+    ]);
+    vi.mocked(prepareInjectionPlan).mockImplementationOnce(() => ({ sequence: [], verifier: null, restartReason: 'effort' }));
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith(SESSION_ID);
+    // Red: the exit row typed "Signed off" and pasted the second message into
+    // the session the restart then suspended.
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+    expect(hoisted.exitDetails).toEqual([RESTART_DETAIL, RESTART_DETAIL]);
+    // Held in row order, and only once the session is suspended: held while it
+    // was live, the hold would hand them straight to the session being cut off.
+    expect(hoisted.holds.map((hold) => hold.message)).toEqual(['Signed off', MULTI_LINE]);
+    for (const hold of hoisted.holds) expect(hold.eventsBefore).toContain('suspend');
+  });
+
+  it('a model restart says so in the run', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    vi.mocked(prepareInjectionPlan).mockImplementationOnce(() => ({ sequence: [], verifier: null, restartReason: 'model' }));
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(hoisted.exitDetails).toEqual([
+      `Held: moving to Lane ${LANE_B} restarts the agent to change its model, so the message goes in its resume prompt.`,
+    ]);
+    expect(hoisted.holds.map((hold) => hold.message)).toEqual(['Signed off']);
+  });
+
+  it('a full destination column holds the message for the queued resume', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+    context.sessionManager.columnBlocks.mockReturnValue(true);
+
+    await move(context, LANE_B);
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith(SESSION_ID);
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(hoisted.exitDetails).toEqual([
+      `Held: Lane ${LANE_B} is full, so the agent waits there, and the message goes in its resume prompt.`,
+    ]);
+    expect(hoisted.holds.map((hold) => hold.message)).toEqual(['Signed off']);
+  });
+
+  it('Priority 3 acts on the fate decided before the exit group, not a second read of the column gate', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+    // Room when the move reads the fate, full by the time Priority 3 runs.
+    context.sessionManager.columnBlocks.mockReturnValueOnce(false).mockReturnValue(true);
+    context.terminalSubmitScheduler.scheduleKeystrokes.mockImplementation((
+      _taskId: string,
+      _sessionId: string,
+      _commands: unknown,
+      options: { onOutcome?: (report: Partial<InjectionReport>) => void },
+    ) => options.onOutcome?.({ outcome: 'unconfirmed' }));
+
+    await move(context, LANE_B);
+
+    // Red: a Priority 3 that asks again sees a full column, suspends the
+    // session, and the message typed into it is the one cut off.
+    expect(context.sessionManager.columnBlocks).toHaveBeenCalledTimes(1);
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(scheduledBursts(context)).toEqual([['Signed off']]);
+    expect(hoisted.holds).toHaveLength(0);
+  });
+
+  it('a yield whose suspend rejects still holds the message, and the run says the restart did not finish', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+    context.sessionManager.columnBlocks.mockReturnValue(true);
+    context.sessionManager.suspend.mockRejectedValueOnce(new Error('The host did not answer.'));
+
+    await move(context, LANE_B).catch(() => undefined);
+
+    expect(hoisted.holds.map((hold) => hold.message)).toEqual(['Signed off']);
+    expect(mockGetProjectRepos().automationRuns.updateDetail).toHaveBeenCalledWith(
+      'run-row-exit',
+      `Held: the restart for Lane ${LANE_B} did not finish, so the message goes to the agent still running after its turn, or else to the task's next agent.`,
+    );
+  });
+
+  it('a message longer than a held message may be fails its row, and nothing is held', async () => {
+    const tooLong = 'x'.repeat(20_001);
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: tooLong, mode: 'immediate' }]);
+    vi.mocked(prepareInjectionPlan).mockImplementationOnce(() => ({ sequence: [], verifier: null, restartReason: 'effort' }));
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(hoisted.rowErrors).toEqual([
+      `Not delivered: moving to Lane ${LANE_B} restarts the agent, and a message carried to its resume can be at most 20000 characters. This one is 20001.`,
+    ]);
+    expect(hoisted.holds).toHaveLength(0);
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('a refused hold rewrites the run, so it never says the message waits', async () => {
+    const { holdTaskMessage } = await import('../../src/main/held-messages/held-messages');
+    vi.mocked(holdTaskMessage).mockReturnValueOnce({ status: 'refused', error: 'The task is gone.' });
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    vi.mocked(prepareInjectionPlan).mockImplementationOnce(() => ({ sequence: [], verifier: null, restartReason: 'effort' }));
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(mockGetProjectRepos().automationRuns.updateDetail).toHaveBeenCalledWith(
+      'run-row-exit',
+      `Not delivered: moving to Lane ${LANE_B} restarted the agent, and the message could not be held for it: The task is gone.`,
+    );
+  });
+
+  it('a suspend that throws still holds the message, and the run says the restart did not finish instead of naming a resume', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    vi.mocked(prepareInjectionPlan).mockImplementationOnce(() => ({ sequence: [], verifier: null, restartReason: 'effort' }));
+    const { context } = makeHarness(LANE_A);
+    context.sessionManager.suspend.mockRejectedValueOnce(new Error('The host did not answer.'));
+
+    await move(context, LANE_B).catch(() => undefined);
+
+    expect(hoisted.holds.map((hold) => hold.message)).toEqual(['Signed off']);
+    // Red: without `restartFailed` the run keeps "goes in its resume prompt"
+    // for a restart that never happened.
+    expect(mockGetProjectRepos().automationRuns.updateDetail).toHaveBeenCalledWith(
+      'run-row-exit',
+      `Held: the restart for Lane ${LANE_B} did not finish, so the message goes to the agent still running after its turn, or else to the task's next agent.`,
+    );
+  });
+
+  it('a successful restart leaves the run\'s held detail as it is', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    vi.mocked(prepareInjectionPlan).mockImplementationOnce(() => ({ sequence: [], verifier: null, restartReason: 'effort' }));
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(hoisted.holds).toHaveLength(1);
+    expect(mockGetProjectRepos().automationRuns.updateDetail).not.toHaveBeenCalled();
+  });
+
+  it('a session switch skips the row with a reason, and holds nothing', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+    // An isolated destination wants another track than the live main session.
+    const isolatedLane = { ...makeSwimlane(LANE_C), session_target: 'isolated' as const };
+    const repos = mockGetProjectRepos();
+    const lookUp = repos.swimlanes.getById.getMockImplementation();
+    repos.swimlanes.getById.mockImplementation((id: string) => (id === LANE_C ? isolatedLane : lookUp?.(id)));
+
+    await move(context, LANE_C);
+
+    // Red: no reason, and the message typed into the main session the switch suspended.
+    expect(hoisted.engineRuns.find((run) => run.trigger === 'exit')?.agentEndingReason).toBe(
+      `Not sent: moving to Lane ${LANE_C} starts a new session, so this one could not act on the message.`,
+    );
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith(SESSION_ID);
+    expect(hoisted.holds).toHaveLength(0);
+  });
+
+  it('a handoff to another agent skips the row with a reason, and holds nothing', async () => {
+    const { resolveTargetAgent } = await import('../../src/main/transition-engine/agent-resolver');
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+
+    await move(context, LANE_B);
+
+    expect(hoisted.engineRuns.find((run) => run.trigger === 'exit')?.agentEndingReason).toBe(
+      `Not sent: moving to Lane ${LANE_B} hands the task to another agent, so this one could not act on the message.`,
+    );
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith(SESSION_ID);
+    expect(hoisted.holds).toHaveLength(0);
+  });
+
+  it('a move that keeps the session types the message as before, with the adapter\'s own word', async () => {
+    hoisted.rows.set(`${LANE_A}:exit`, [{ id: 'row-exit', message: 'Signed off', mode: 'immediate' }]);
+    const { context } = makeHarness(LANE_A);
+    context.terminalSubmitScheduler.scheduleKeystrokes.mockImplementation((
+      _taskId: string,
+      _sessionId: string,
+      _commands: unknown,
+      options: { onOutcome?: (report: Partial<InjectionReport>) => void },
+    ) => options.onOutcome?.({ outcome: 'unconfirmed' }));
+
+    await move(context, LANE_B);
+
+    expect(scheduledBursts(context)).toEqual([['Signed off']]);
+    expect(hoisted.exitDetails).toEqual([undefined]);
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(hoisted.holds).toHaveLength(0);
+  });
+});
+
 describe('On task enter, warm move: the column message and the rows after it', () => {
   it('pastes a multi-line first message after the turn ends, and the group does not send it again', async () => {
     hoisted.rows.set(`${LANE_B}:enter`, [{ id: 'row-first', message: MULTI_LINE, mode: 'immediate' }]);
@@ -569,7 +809,7 @@ describe('On task enter, warm move: the column message and the rows after it', (
     await move(context, LANE_B);
 
     // Red: building the plan with the message puts it in a keystroke burst.
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(injectionAutoCommand()).toBe('');
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(hoisted.turnWaits).toHaveLength(1));
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
@@ -595,7 +835,7 @@ describe('On task enter, warm move: the column message and the rows after it', (
     expect(hoisted.turnWaits).toHaveLength(0);
     // The unguarded control for the describe below: the burst carries the
     // message, and the enter group is told to skip the row it carried.
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+    expect(injectionAutoCommand()).toBe('/code-review');
     expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
   });
 
@@ -699,7 +939,7 @@ describe('On task enter, warm move: a first message with a Condition or a Freque
 
     // Red before the fix: the plan was built with '/code-review', the burst typed
     // it into the live session, and the group was told to skip the row.
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(injectionAutoCommand()).toBe('');
     expect(enterRun()).toBeDefined();
     expect(enterRun()?.alreadyDelivered).toBeUndefined();
     // The runner skipped the row, so the message reached the agent by no path.
@@ -717,7 +957,7 @@ describe('On task enter, warm move: a first message with a Condition or a Freque
     await move(context, LANE_B);
     await settle();
 
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(injectionAutoCommand()).toBe('');
     expect(enterRun()?.alreadyDelivered).toBeUndefined();
     // Exactly one delivery, and it is the group's own, not the injection's.
     expect(scheduledBursts(context)).toEqual([['/code-review']]);
@@ -756,7 +996,7 @@ describe('On task enter, warm move: a first message with a Condition or a Freque
     await move(context, LANE_B);
     await settle();
 
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+    expect(injectionAutoCommand()).toBe('/code-review');
     expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
     // One burst, the injection's; the group skipped the row it carried.
     expect(scheduledBursts(context)).toEqual([['/code-review']]);
@@ -780,7 +1020,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
     await move(context, LANE_B);
     await settle();
 
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(injectionAutoCommand()).toBe('');
     expect(enterRun()).toBeDefined();
     expect(enterRun()?.alreadyDelivered).toBeUndefined();
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
@@ -794,7 +1034,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
     await move(context, LANE_B);
     await settle();
 
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+    expect(injectionAutoCommand()).toBe('/code-review');
     expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
     expect(scheduledBursts(context)).toEqual([['/code-review']]);
   });
@@ -806,7 +1046,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
     await move(context, LANE_B);
     await settle();
 
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+    expect(injectionAutoCommand()).toBe('');
     expect(hoisted.turnWaits).toHaveLength(0);
     expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
@@ -824,7 +1064,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
     await move(context, LANE_B);
     await settle();
 
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe(OWN_COMMAND);
+    expect(injectionAutoCommand()).toBe(OWN_COMMAND);
     // The burst carried the task's pin, not the column's row, so the group was
     // not told to skip it. It is recorded as skipped instead of sent.
     expect(enterRun()?.alreadyDelivered).toBeUndefined();
@@ -840,7 +1080,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
 
     // The task's pin outranks the column on the burst, so it is the same plan as
     // above; what the switch changes is that the group then delivers the row.
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe(OWN_COMMAND);
+    expect(injectionAutoCommand()).toBe(OWN_COMMAND);
     expect(scheduledBursts(context)).toEqual([[OWN_COMMAND], ['/code-review']]);
   });
 
@@ -850,7 +1090,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
     await move(context, LANE_B);
     await settle();
 
-    expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe(OWN_COMMAND);
+    expect(injectionAutoCommand()).toBe(OWN_COMMAND);
     expect(scheduledBursts(context)).toEqual([[OWN_COMMAND]]);
   });
 
@@ -871,7 +1111,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
 
       // Red: gating on the held task bundles '/code-review' into the burst and
       // names the row delivered.
-      expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('');
+      expect(injectionAutoCommand()).toBe('');
       expect(enterRun()).toBeDefined();
       expect(enterRun()?.alreadyDelivered).toBeUndefined();
       // The group's gate reads the stored row as well, so it types nothing either.
@@ -889,7 +1129,7 @@ describe('On task enter, warm move: a task with its automations disabled is sent
       // Red: gating on the held task leaves the plan empty, and the group (whose
       // gate reads the stored row) then sends the row itself, so the message is
       // typed by the group and not carried by the burst.
-      expect(vi.mocked(prepareInjectionPlan).mock.calls[0][0].autoCommand).toBe('/code-review');
+      expect(injectionAutoCommand()).toBe('/code-review');
       expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
       expect(scheduledBursts(context)).toEqual([['/code-review']]);
     });

@@ -25,6 +25,10 @@ sources:
     title: isExitAgentRow
   - resource: src/main/ipc/helpers/move-ends-agent.ts
     title: an exit message is skipped when the move ends the agent
+  - resource: src/main/ipc/helpers/live-session-fate.ts
+    title: the live session's fate, decided before the exit group
+  - resource: src/main/ipc/helpers/exit-message-carry.ts
+    title: an exit message carried to a restarted agent's resume
   - resource: src/main/ipc/helpers/automation-run-again.ts
     title: Run again refuses an exit message
   - resource: src/main/ipc/helpers/automation-failures.ts
@@ -248,9 +252,15 @@ Measured in a preview against a live session: the run row read `succeeded` / "De
 - **`unconfirmed` counts as delivered.** Eleven of twelve adapters have no submission verifier, so failing the row on "could not be checked" would fail it on every agent but Claude.
 - **The wait is bounded by the run's own signal**, which is this row's slice of the 60s exit budget. That cap is why holding the short lock is acceptable: the budget that bounds a hung exit script bounds a hung exit message too.
 
-Two more rules keep an exit message from being typed where it cannot land:
+Three more rules keep an exit message from being typed where it cannot land:
 
 - **A move that ends the agent sends it nothing.** When the task has a live session and the destination is To Do (which kills the session), Done, or a column with "Start an agent here" off (both suspend it), the exit group runs with `agentEndingReason` and every row that needs the agent is recorded `skipped` with that reason. A task with no session gets the runner's own "not running" skip instead, since there is no agent to end. The message could only land a moment before the agent stops, and waiting on its confirmation held the move: a To Do cleanup sat 13 s on one and left a failure toast. `moveEndsAgent` (`src/main/ipc/helpers/move-ends-agent.ts`) is the one test of those three destinations, read by the exit hook and the Priority 1, 2 and 2.5 branches alike.
+- **A move that restarts the agent carries the message to its resume.** Priority 3 suspends a live session four ways: a session switch (an isolated column, back to main, or a column that always starts fresh), a cross-agent handoff, a model or effort restart, and a full destination column. Each used to type the exit message first, and the suspend cut the turn off about a second later. Claude's transcript then shows "No response requested.", the run still read "Delivered", and a destination with no enter message resumed with no prompt (kangentic.com #145, Design at high effort into Planning at xhigh). `readLiveSessionFate` (`src/main/ipc/helpers/live-session-fate.ts`) now decides which of the four, or keep, before the exit group runs. Priority 3 acts on that answer rather than deciding again, because the exit group can run a minute and an exit row can type `/effort`.
+  - **A switch or a handoff** ends the conversation for another, so `exitAgentEndingReason` skips the row with a reason, as on Done.
+  - **A restart or a full column** resumes the same conversation. The exit hook types nothing and keeps the message back (`exit-message-carry.ts`), and the run reads "Held: ... the message goes in its resume prompt." Once the session is suspended, Priority 3 holds the message for the task. The resume claims it into its opening message, after the destination's own message (see [Held messages](../sessions/held-messages.md)). It is held only after the suspend, because a hold hands its message to a live agent at once.
+  - **A message over the held-message cap** fails its row up front. A hold that fails rewrites the run's detail.
+  - **Held messages follow the rules every held message does.** Behind a destination message that is not a slash command, a slash-command exit message arrives as text. A move that supersedes this one leaves the message held for the task's next agent, unless it goes to Done or To Do, which clear it. A resume that starts over on an expired conversation's recap sends nothing, so the message waits for the next start.
+  - **A suspend that throws** still holds the message. If the agent is still running, the hold pastes it once the turn settles. Otherwise it waits for the task's next agent. The run's detail is rewritten to say the restart did not finish.
 - **Run again never re-sends an exit message.** `runAutomationAgain` works on the task as it is now, which is past the column the message was for, and nothing records which session the failed run targeted. So it refuses an On task exit row that needs the agent, and the failure notice for one carries `runAgainOffered: false`, which the renderer turns into a timed toast with no Run again.
 
 ### A session that is still starting waits

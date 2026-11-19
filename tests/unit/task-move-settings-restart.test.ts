@@ -913,13 +913,14 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
       targetPosition: 0,
     }, 'renderer');
 
-    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
-    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as {
-      liveEffort?: string | null;
-      firstReportedEffort?: string | null;
-    };
-    expect(planArg.liveEffort).toBe('medium');
-    expect(planArg.firstReportedEffort).toBe('high');
+    // Two calls: the session's fate, decided before the exit group and the one
+    // that decides the restart (`readLiveSessionFate`), and the injection's own
+    // plan for the message. Both read the reported effort.
+    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(2);
+    for (const [planArg] of vi.mocked(prepareInjectionPlan).mock.calls) {
+      expect(planArg.liveEffort).toBe('medium');
+      expect(planArg.firstReportedEffort).toBe('high');
+    }
   });
 });
 
@@ -968,8 +969,9 @@ describe('handleTaskMove live-inject: template variable resolution ({{baseBranch
       targetPosition: 0,
     }, 'renderer');
 
-    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
-    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
+    // The fate asks first with no message; the injection plan is the last call.
+    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(2);
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls.at(-1)?.[0] as { autoCommand?: string };
     // Red: reverting to the old buildAutoCommandVars/interpolateTemplate shape
     // makes this '/merge-back ' (trailing space, no branch name), never
     // '/merge-back main'.
@@ -998,7 +1000,7 @@ describe('handleTaskMove live-inject: template variable resolution ({{baseBranch
     // resolved (rather than an empty array from a caller that forgot to pass
     // `attachments` through).
     expect(getPathsForTask).toHaveBeenCalledWith('task-aaa00001');
-    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls.at(-1)?.[0] as { autoCommand?: string };
     expect(planArg.autoCommand).toContain('/mock/project/screenshot.png');
   });
 
@@ -1029,8 +1031,9 @@ describe('handleTaskMove live-inject: template variable resolution ({{baseBranch
       targetPosition: 0,
     }, 'renderer', undefined, '/mock/explicit-project');
 
-    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(1);
-    const planArg = vi.mocked(prepareInjectionPlan).mock.calls[0][0] as { autoCommand?: string };
+    // The fate asks first with no message; the injection plan is the last call.
+    expect(vi.mocked(prepareInjectionPlan)).toHaveBeenCalledTimes(2);
+    const planArg = vi.mocked(prepareInjectionPlan).mock.calls.at(-1)?.[0] as { autoCommand?: string };
     // Red: swapping `projectPath: resolvedProjectPath` for
     // `context.currentProjectPath` makes this '/code-review /mock/project';
     // for `task.worktree_path` it makes

@@ -65,6 +65,39 @@ describe('send_message adapter', () => {
     expect(result.detail).toBe('No message to send.');
   });
 
+  // kangentic.com #145: a move that restarts the agent holds an exit message for its resume
+  // instead of typing it, and the run must say so rather than "Delivered".
+  it('records the detail a delivery returns, and hands the delivery its run id', async () => {
+    const runIds: string[] = [];
+    const context = {
+      ...makeContext('exit', []),
+      deliverToAgent: async (_message: string, _mode: unknown, _signal: AbortSignal, runId: string) => {
+        runIds.push(runId);
+        return 'Held: moving to Planning restarts the agent to change its effort, so the message goes in its resume prompt.';
+      },
+    } as AutomationContext;
+
+    const result = await sendMessageAdapter.execute({ message: 'Signed off' }, context);
+
+    expect(result.detail).toBe('Held: moving to Planning restarts the agent to change its effort, so the message goes in its resume prompt.');
+    expect(runIds).toEqual(['run-1']);
+  });
+
+  // An empty string is no detail: the adapter's own word stands, per trigger.
+  it.each([
+    ['exit', 'Delivered'],
+    ['enter', 'Sent'],
+  ] as const)('a delivery that returns an empty string leaves the adapter\'s own word on %s', async (trigger, expectedWord) => {
+    const context = {
+      ...makeContext(trigger, []),
+      deliverToAgent: async () => '',
+    } as AutomationContext;
+
+    const result = await sendMessageAdapter.execute({ message: 'Signed off' }, context);
+
+    expect(result.detail).toBe(expectedWord);
+  });
+
   it('reads the legacy send_command payload key', async () => {
     const delivered: string[] = [];
     await sendMessageAdapter.execute({ command: '/legacy' }, makeContext('exit', delivered));
