@@ -56,7 +56,7 @@ Any step in the release path that exists to guarantee something must fail when i
 - **Test (mechanical, CI):** `tests/unit/release-workflow-gates.test.ts` parses
   `.github/workflows/release.yml` and fails when any job whose `if:` carries a status-check
   function (`always()`, `cancelled()`, `failure()`) has a `needs:` entry its `if:` does not
-  reference, when the set of such jobs stops matching the eight that exist (an empty filter would
+  reference, when the set of such jobs stops matching the list the test names (an empty filter would
   otherwise reduce that check to zero test cases and pass), when a job downstream of `create-tag`
   has no status function of its own, when the draft release stops depending
   on `preflight-symbols`, when that preflight stops being able to fail (`exit 1`) or acquires an
