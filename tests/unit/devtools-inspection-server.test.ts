@@ -405,6 +405,120 @@ describe('inspection-server handler behaviors', () => {
   });
 
   // -------------------------------------------------------------------------
+  // 1b. Input on a hidden page
+  //
+  // Chromium delivers no mouse or keyboard input to a page whose
+  // `document.visibilityState` is `hidden` (a preview window that is minimized
+  // or fully covered). The input routes used to answer `ok: true` for input
+  // that never arrived. They now refuse, and the refusal is the only thing the
+  // calling agent reads, so its content is pinned: that nothing was sent, a
+  // next step that works, and a way to stop. A page that is visible, or whose
+  // state cannot be read, is sent input as before.
+  // -------------------------------------------------------------------------
+
+  describe('input on a hidden page', () => {
+    interface RefusalBody { ok: boolean; error: { kind: string; detail: string } }
+    const inputCalls = () => stubDebugger.calls.filter((call) => call.method.startsWith('Input.'));
+    const reportVisibility = (visibility: 'hidden' | 'visible') => {
+      stubDebugger.responses.set('Runtime.evaluate', { result: { value: visibility } });
+    };
+
+    it('POST /click is refused as window-hidden, and the refusal says nothing was sent, what works, and when to stop', async () => {
+      reportVisibility('hidden');
+      const response = await httpRequest(serverPort, { method: 'POST', path: '/click', body: { x: 10, y: 10 } });
+
+      expect(response.status).toBe(409);
+      const refusal = response.body as RefusalBody;
+      expect(refusal.ok).toBe(false);
+      expect(refusal.error.kind).toBe('window-hidden');
+      expect(refusal.error.detail).toContain('minimized, or fully covered by another window');
+      expect(refusal.error.detail).toContain('Nothing was sent.');
+      expect(refusal.error.detail).toContain('kangentic_devtools_eval');
+      expect(refusal.error.detail).toContain('stop and ask the user to bring the preview window to the front');
+      expect(inputCalls()).toEqual([]);
+    });
+
+    it('POST /keypress on a visible page is sent', async () => {
+      reportVisibility('visible');
+      const response = await httpRequest(serverPort, { method: 'POST', path: '/keypress', body: { keys: 'Enter' } });
+
+      expect(response.status).toBe(200);
+      expect(inputCalls().length).toBeGreaterThan(0);
+    });
+
+    it('a page whose visibility cannot be read is sent input as before', async () => {
+      // No canned Runtime.evaluate answer: the stub returns `{}`, which
+      // runtimeEvaluate reports as an error.
+      const response = await httpRequest(serverPort, { method: 'POST', path: '/keypress', body: { keys: 'Enter' } });
+
+      expect(response.status).toBe(200);
+      expect(inputCalls().length).toBeGreaterThan(0);
+    });
+
+    it('a script refuses its input steps and still runs the ones that send none', async () => {
+      reportVisibility('hidden');
+      const response = await httpRequest(serverPort, {
+        method: 'POST',
+        path: '/script',
+        body: { steps: [{ type: 'wait', ms: 1 }, { type: 'click', selector: '#anything' }] },
+      });
+
+      expect(response.status).toBe(200);
+      const script = response.body as { trace: Array<{ ok: boolean; error?: string; type: string }> };
+      expect(script.trace[0]).toMatchObject({ type: 'wait', ok: true });
+      expect(script.trace[1]).toMatchObject({ type: 'click', ok: false });
+      expect(script.trace[1].error).toContain('Nothing was sent.');
+      expect(inputCalls()).toEqual([]);
+    });
+
+    // The route and the script step both derive from one set of input kinds, so
+    // each kind is checked on both, and dropping a kind from the set fails here.
+    const inputKinds = [
+      { kind: 'click', routeBody: { x: 10, y: 10 }, step: { type: 'click', selector: '#anything' } },
+      { kind: 'type', routeBody: { text: 'hello' }, step: { type: 'type', text: 'hello' } },
+      { kind: 'keypress', routeBody: { keys: 'Enter' }, step: { type: 'keypress', keys: 'Enter' } },
+      {
+        kind: 'drag',
+        routeBody: { fromSelector: '#from', toSelector: '#to' },
+        step: { type: 'drag', fromSelector: '#from', toSelector: '#to' },
+      },
+    ];
+
+    it.each(inputKinds)('POST /$kind on a hidden page is refused as window-hidden and sends no input', async ({ kind, routeBody }) => {
+      reportVisibility('hidden');
+      const response = await httpRequest(serverPort, { method: 'POST', path: `/${kind}`, body: routeBody });
+
+      expect(response.status).toBe(409);
+      expect((response.body as RefusalBody).error.kind).toBe('window-hidden');
+      expect(inputCalls()).toEqual([]);
+    });
+
+    it.each(inputKinds)('a script $kind step on a hidden page fails with the refusal and sends no input', async ({ kind, step }) => {
+      reportVisibility('hidden');
+      const response = await httpRequest(serverPort, { method: 'POST', path: '/script', body: { steps: [step] } });
+
+      expect(response.status).toBe(200);
+      const script = response.body as { trace: Array<{ ok: boolean; error?: string; type: string }> };
+      expect(script.trace).toHaveLength(1);
+      expect(script.trace[0]).toMatchObject({ type: kind, ok: false });
+      expect(script.trace[0].error).toContain('Nothing was sent.');
+      expect(inputCalls()).toEqual([]);
+    });
+
+    it('a POST route that sends no input is not refused on a hidden page', async () => {
+      reportVisibility('hidden');
+      // Each answers its own request-shape error, not the window-hidden refusal.
+      const wait = await httpRequest(serverPort, { method: 'POST', path: '/wait', body: {} });
+      const dropFiles = await httpRequest(serverPort, { method: 'POST', path: '/drop-files', body: {} });
+
+      expect(wait.status).toBe(400);
+      expect((wait.body as RefusalBody).error.kind).toBe('missing-condition');
+      expect(dropFiles.status).toBe(400);
+      expect((dropFiles.body as RefusalBody).error.kind).toBe('missing-selector');
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // 2. respondQueryAll / respondBoundingBoxAll - missing-selector 400 guard
   // -------------------------------------------------------------------------
 
