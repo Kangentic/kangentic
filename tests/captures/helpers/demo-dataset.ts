@@ -345,6 +345,16 @@ export const DEMO_SSH_HOSTS: DemoSshHost[] = [
  */
 export const DEMO_HOST_AGENT_VERSIONS: Record<string, string> = { claude: '2.1.328' };
 
+/**
+ * The model each agent runs on a host, with its context window, as the host's recordings print
+ * it (Opus 5.5 on its 200K window, where the sample install's own Claude recordings ran on Opus 5
+ * with 1M). The host's sessions use it, and so does a session a visitor starts on a host project,
+ * whose boot is one of those recordings.
+ */
+export const DEMO_HOST_AGENT_MODELS: Record<string, { model: { id: string; displayName: string }; contextWindowSize: number }> = {
+  claude: { model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, contextWindowSize: 200000 },
+};
+
 /** The seven default lanes, mirroring src/main/db/migrations/default-data.ts. */
 const DEFAULT_LANES: DemoLane[] = [
   { slug: 'todo', name: 'To Do', role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, auto_spawn: false, permission_mode: null, agent: null },
@@ -669,8 +679,8 @@ export const DEMO_SCENE_TASKS: DemoTask[] = [
   // redis, on the Build server host
   { id: TASK_REDIS_SLOWLOG, projectId: PROJECT_REDIS, display_id: 6, title: 'Per-command slowlog threshold', description: 'Let one command have its own slowlog threshold, so a command that is slow by design, such as KEYS, is logged above a higher threshold than slowlog-log-slower-than', lane: 'planning', position: 0, agent: 'claude', session_id: SESSION_REDIS_SLOWLOG, worktree_folder: 'per-command-slowlog-7be2d0', branch_name: 'per-command-slowlog', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'unstable', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 3 },
   { id: TASK_REDIS_EXPIRE, projectId: PROJECT_REDIS, display_id: 7, title: 'Pin EXPIRE with a negative TTL', description: 'Add a test to tests/unit/expire.tcl that pins what EXPIRE does when the TTL is negative', lane: 'executing', position: 0, agent: 'claude', session_id: SESSION_REDIS_EXPIRE, worktree_folder: 'pin-expire-negative-ttl-4c1a9e', branch_name: 'pin-expire-negative-ttl', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'unstable', labels: ['tests'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 1 },
-  { id: 'task-rd-replication-flake', projectId: PROJECT_REDIS, display_id: 8, title: 'Fix flaky replication test on slow disks', description: 'A full sync case in tests/integration/replication.tcl times out when the disk is slow; wait for the replica to report the link up instead of sleeping a fixed time', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['bug', 'tests'], priority: 3, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 310 },
-  { id: 'task-rd-resp3-map', projectId: PROJECT_REDIS, display_id: 9, title: 'Trim allocations in the RESP3 map reply', description: 'HGETALL on a large hash under RESP3 spends its time building the map reply; find what src/networking.c allocates per field and value pair and cut it', lane: 'todo', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 5, updatedMinutesAgo: 2600 },
+  { id: 'task-rd-replication-flake', projectId: PROJECT_REDIS, display_id: 8, title: 'Fix flaky replication test on slow disks', description: 'Find which full sync case in tests/integration/replication.tcl flakes when the disk is slow, and make it wait for the replica rather than for a fixed time', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['bug', 'tests'], priority: 3, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 310 },
+  { id: 'task-rd-resp3-map', projectId: PROJECT_REDIS, display_id: 9, title: 'Trim allocations in the RESP3 map reply', description: 'Check what building the RESP3 map reply for HGETALL on a large hash allocates in src/networking.c, and cut any allocation made per field and value pair', lane: 'todo', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 5, updatedMinutesAgo: 2600 },
   { id: 'task-rd-object-freq', projectId: PROJECT_REDIS, display_id: 10, title: 'Document OBJECT FREQ decay', description: 'Say in the OBJECT FREQ help how the LFU counter decays with lfu-decay-time, and that the command errors unless maxmemory-policy is an LFU policy', lane: 'todo', position: 2, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['docs'], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 7100 },
 ];
 
@@ -694,8 +704,8 @@ export const DEMO_SCENE_TASKS: DemoTask[] = [
  * scripts/backfill-demo-timelines.mjs, so a re-record has to choose the tail again.
  */
 export const DEMO_SCENE_SESSIONS: DemoSession[] = [
-  { id: SESSION_REDIS_SLOWLOG, taskId: TASK_REDIS_SLOWLOG, projectId: PROJECT_REDIS, agent: 'claude', status: 'running', activity: 'permission', waitKind: 'approval', startedMinutesAgo: 5, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'medium', permissionMode: 'plan', contextPercent: 24, contextWindowSize: 200000, costUsd: 0.74, durationMinutes: 2, peek: ['Read src/slowlog.c', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 4.6, tool: 'Read', detail: 'src/slowlog.c' }, { minutesAgo: 4.2, tool: 'Bash', detail: 'grep -rn slowlogWouldLog src/' }, { minutesAgo: 3.4, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }] },
-  { id: SESSION_REDIS_EXPIRE, taskId: TASK_REDIS_EXPIRE, projectId: PROJECT_REDIS, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 10000, startedMinutesAgo: 1, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 8, contextWindowSize: 200000, costUsd: 0.18, durationMinutes: 1, peek: ['Bash git log --oneline -15 -- src/expire.c', 'Read src/expire.c'], events: [{ minutesAgo: 0.2, tool: 'Bash', detail: 'git log --oneline -15 -- src/expire.c' }, { minutesAgo: 0.1, tool: 'Read', detail: 'src/expire.c' }] },
+  { id: SESSION_REDIS_SLOWLOG, taskId: TASK_REDIS_SLOWLOG, projectId: PROJECT_REDIS, agent: 'claude', status: 'running', activity: 'permission', waitKind: 'approval', startedMinutesAgo: 5, model: DEMO_HOST_AGENT_MODELS.claude.model, effort: 'medium', permissionMode: 'plan', contextPercent: 24, contextWindowSize: DEMO_HOST_AGENT_MODELS.claude.contextWindowSize, costUsd: 0.74, durationMinutes: 2, peek: ['Read src/slowlog.c', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 4.6, tool: 'Read', detail: 'src/slowlog.c' }, { minutesAgo: 4.2, tool: 'Bash', detail: 'grep -rn slowlogWouldLog src/' }, { minutesAgo: 3.4, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }] },
+  { id: SESSION_REDIS_EXPIRE, taskId: TASK_REDIS_EXPIRE, projectId: PROJECT_REDIS, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 10000, startedMinutesAgo: 1, model: DEMO_HOST_AGENT_MODELS.claude.model, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 8, contextWindowSize: DEMO_HOST_AGENT_MODELS.claude.contextWindowSize, costUsd: 0.18, durationMinutes: 1, peek: ['Bash git log --oneline -15 -- src/expire.c', 'Read src/expire.c'], events: [{ minutesAgo: 0.2, tool: 'Bash', detail: 'git log --oneline -15 -- src/expire.c' }, { minutesAgo: 0.1, tool: 'Read', detail: 'src/expire.c' }] },
   { id: SESSION_VALIDATE, taskId: TASK_VALIDATE, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 11438, startedMinutesAgo: 3, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5 (1M)' }, effort: 'high', permissionMode: 'acceptEdits', contextPercent: 7, contextWindowSize: 1000000, costUsd: 0.64, durationMinutes: 3, peek: ['Merge: no automations.'], events: [{ minutesAgo: 1.4, tool: 'Bash', detail: 'npm test' }, { minutesAgo: 0.1, tool: 'kangentic_get_current_task', detail: '#68' }, { minutesAgo: 0.1, tool: 'kangentic_list_columns', detail: 'contoso-web' }], rateLimits: true },
 ];
 
@@ -1363,6 +1373,7 @@ export function buildDemoPreConfig(options: {
     dictationInfo: DEMO_DICTATION_INFO,
     dictationRecording: DEMO_DICTATION_RECORDING,
     modelByAgent: MODEL_BY_AGENT,
+    hostAgentModels: DEMO_HOST_AGENT_MODELS,
     defaultPermissionMode: DEFAULT_PERMISSION_MODE,
     currentProjectId: options.currentProjectId ?? PROJECT_CONTOSO,
     // The real app version, so the status bar and the What's New gate agree with the build
@@ -1862,12 +1873,17 @@ export function buildDemoPreConfig(options: {
       // A host's Kangentic program is this app's own version, the one a connection installs, and it
       // holds the terminals running for the host's projects. The mock's fixed answer would print an
       // older program and a count no board in the frame matches.
+      // The projects are read through the bridge, as the mock holds them now: Remove and Clear data
+      // replace its list, and main stops a cleared project's agents, so they count no more.
       var originalHostProgram = window.electronAPI.ssh.hostProgram;
       window.electronAPI.ssh.hostProgram = function (hostId) {
-        return originalHostProgram.apply(this, arguments).then(function (program) {
+        var receiver = this;
+        var args = arguments;
+        return Promise.all([originalHostProgram.apply(receiver, args), window.electronAPI.projects.list()]).then(function (answers) {
+          var program = answers[0];
           if (!mockState) return program;
           var onHost = {};
-          mockState.projects.forEach(function (project) {
+          answers[1].forEach(function (project) {
             if (project.remote && project.remote.hostId === hostId) onHost[project.id] = true;
           });
           var liveSessions = mockState.sessions.filter(function (session) {
@@ -3795,9 +3811,19 @@ export function buildDemoPreConfig(options: {
       function sessionById(sessionId) {
         return mockState.sessions.find(function (session) { return session.id === sessionId; }) || null;
       }
-      function seedUsage(sessionId, agent) {
+      // The model a session the visitor starts runs on: the one its boot recording ran on, which
+      // for an agent on a host is the host's (DEMO_HOST_AGENT_MODELS), not the sample install's.
+      function startModelOf(projectId, agent) {
+        var project = projectsById[projectId];
+        var onHost = project && project.remote ? data.hostAgentModels[agent] : null;
+        if (onHost) return onHost;
         var model = data.modelByAgent[agent] || null;
-        var contextWindowSize = model && model.id.indexOf('opus') !== -1 ? 1000000 : 200000;
+        return { model: model, contextWindowSize: model && model.id.indexOf('opus') !== -1 ? 1000000 : 200000 };
+      }
+      function seedUsage(sessionId, agent, projectId) {
+        var started = startModelOf(projectId, agent);
+        var model = started.model;
+        var contextWindowSize = started.contextWindowSize;
         usageBySession[sessionId] = {
           model: model,
           contextWindow: { usedPercentage: 1, usedTokens: Math.round(contextWindowSize / 100), cacheTokens: 0, totalInputTokens: Math.round(contextWindowSize / 140), totalOutputTokens: Math.round(contextWindowSize / 350), contextWindowSize: contextWindowSize },
@@ -3916,7 +3942,7 @@ export function buildDemoPreConfig(options: {
       function announceMonitorRow(row, mockTask, agent, permissionMode) {
         var project = projectsById[row.projectId];
         var lane = mockTask ? laneById(mockTask.swimlane_id) : null;
-        var model = data.modelByAgent[agent] || null;
+        var model = startModelOf(row.projectId, agent).model;
         var rows = (window.__mockMonitorRows || []).concat([{
           sessionId: row.id, projectId: row.projectId, projectName: project.name,
           taskId: mockTask ? mockTask.id : row.id, taskTitle: mockTask ? mockTask.title : 'Command Terminal',
@@ -3949,7 +3975,7 @@ export function buildDemoPreConfig(options: {
         mockState.sessions.push(row);
         mockTask.session_id = id;
         mockTask.updated_at = isoNow();
-        seedUsage(id, agent);
+        seedUsage(id, agent, mockTask.projectId);
         // The boot recorded for this task in this mode. A task the visitor created has none and
         // gets the project's Command Terminal boot: the agent starting with nothing to do yet.
         var indexed = recordings ? (recordings.spawns[mockTask.id + ':' + permissionMode] || recordings.terminals[mockTask.projectId] || null) : null;
@@ -4084,7 +4110,7 @@ export function buildDemoPreConfig(options: {
         // session's usage is held back until the resumed agent's first output.
         var previousUsage = usageBySession[suspended.id] || heldUsageBySession[suspended.id];
         if (!previousUsage) {
-          seedUsage(id, agent);
+          seedUsage(id, agent, mockTask.projectId);
           previousUsage = usageBySession[id];
           delete usageBySession[id];
         }
@@ -4270,7 +4296,7 @@ export function buildDemoPreConfig(options: {
           var tiledIndexed = recordings ? recordings.terminals[input.projectId + '-tiled'] || null : null;
           var indexed = (tiled && tiledIndexed) || single;
           if (indexed) replays[result.session.id] = { file: indexed.file, grid: gridOf(indexed), startedAt: Date.now(), tail: 0, projectId: input.projectId, layouts: single && tiledIndexed ? { single: single, tiled: tiledIndexed } : null };
-          seedUsage(result.session.id, agent);
+          seedUsage(result.session.id, agent, input.projectId);
           announceSession(result.session, 'idle');
           announceMonitorRow(result.session, null, agent, data.defaultPermissionMode);
           return result;
