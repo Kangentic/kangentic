@@ -39,6 +39,15 @@ same name) call `setBrowserOpen(taskId, false)` without `hold` and DISCARD. A us
 (`closePaneByUser`, reason `user-closed`) so the hand-off stands no lane up for it. A held pane counts as mounted for
 parking and retention, and the park reaper releases the hold when the session stops.
 
+A fourth case hides the whole BODY inside a visible window: the task's edit form. The form used to
+replace `TaskDetailBody`, which unmounted a live pane and destroyed its guest, once on opening the
+form and again on leaving it. While a guest is registered for the task (`browserGuestTasks`),
+`TaskDetailWindow` now keeps the body mounted under the form (`bodyConcealed`), in a wrapper that is
+`display: contents` while the body shows and `absolute`, `opacity: 0` and inert under the form. The
+terminal comes down as it does in a dormant window, the pane reports `hidden`, and a window closed
+from its form leaves the form as it parks, so the next plain open shows its terminal. With no guest
+registered the body unmounts for the form as before.
+
 The failure mode is silent. A remounted pane looks identical on screen and in the DOM: same
 element, same URL, same everything. What is gone is the guest's identity, and with it the agent's
 CDP session.
@@ -122,7 +131,9 @@ Two more causes were found by live testing, neither visible to any DOM-presence 
   broadcast and a session rotation), and `tests/ui/browser-pane-park-on-close.spec.ts` asserts
   the same across a close and reopen: the parked window keeps its id, its webview element, and
   its guest, and un-parks in place. It also pins that a guest computes `visible` under the Backlog
-  view, parked or in a window left open. `tests/ui/browser-pane-hold-on-hide.spec.ts` asserts it
+  view, parked or in a window left open, and that the edit form keeps a live pane's guest: no
+  unregister going into the form or coming back, a full-size hidden slot, and a window closed from
+  its form reopening on its view with the same guest. `tests/ui/browser-pane-hold-on-hide.spec.ts` asserts it
   across a pill hide and show, across Changes opening over the pane, and that the hold parks on
   close, ends when the session stops, and yields to an agent's `close_pane`. These are the only
   assertions that separate "survived" from "silently replaced"; a DOM-presence check passes

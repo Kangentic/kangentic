@@ -96,6 +96,10 @@ interface TaskDetailBodyProps {
    *  Only used to tell the pane, and through it the agent, that it is `parked`
    *  rather than merely hidden. */
   parked?: boolean;
+  /** The window's edit form is showing over this body, which stays mounted only
+   *  so its Browser pane's guest survives the edit (see TaskDetailWindow). Only
+   *  used to tell the pane, and through it the agent, that the page is hidden. */
+  concealed?: boolean;
   /** The Kangentic browser the terminal opens a link in, or null where this
    *  window cannot show one. Absent from a host that has no pane to offer. */
   linkBrowser?: TerminalLinkBrowser | null;
@@ -131,6 +135,7 @@ export function TaskDetailBody({
   retainedProjectId,
   dormant: dormantProp,
   parked = false,
+  concealed = false,
   linkBrowser = null,
 }: TaskDetailBodyProps) {
   const { t } = useLingui();
@@ -424,7 +429,8 @@ export function TaskDetailBody({
             projectId={paneProjectId}
             // What the agent is told about where its pane is. A retained window
             // keeps reporting showing / hidden: the user sees it again on return.
-            visibility={parked ? 'parked' : showBrowser ? 'showing' : 'hidden'}
+            // Under the window's edit form the page is hidden like a held one.
+            visibility={parked ? 'parked' : showBrowser && !concealed ? 'showing' : 'hidden'}
           />
         </div>
       </div>

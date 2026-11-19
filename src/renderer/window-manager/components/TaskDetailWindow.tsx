@@ -205,6 +205,26 @@ export function TaskDetailWindow({
   const [profileId, setProfileId] = useState<string | null>(task.profile_id ?? null);
   const [runMode, setRunMode] = useState<TaskRunMode>(task.run_mode);
   const [isEditing, setIsEditing] = useState(!!initialEdit);
+  // An Edit asked for while this window is already mounted: a board card's menu
+  // or the Monitor's row menu, on a task whose window is open, or was closed
+  // with its Browser pane live and so is only parked. `initialEdit` is read
+  // once, at mount, and those requests focus or un-park this window instead of
+  // making one, so they arrive through the store. A subscription, not a
+  // selector, because a request is an event: only one raised while this window
+  // is mounted counts. The one that created this window is `initialEdit`, and
+  // an older one for the same task was for a window that is gone.
+  //
+  // A retained window never takes one. Its project is in the background, where
+  // no card menu reaches it, so a request that names its task came from the
+  // Agent Monitor and is for the Monitor's own detail of that task. Taking it
+  // here left this window on its edit form when its project came back.
+  const retained = retainedProjectId !== undefined;
+  useEffect(() => useSessionStore.subscribe((state, previousState) => {
+    const request = state.taskEditRequest;
+    if (request === previousState.taskEditRequest || request?.taskId !== task.id) return;
+    if (retained) return;
+    setIsEditing(true);
+  }), [task.id, retained]);
   const [descriptionPeekOpen, setDescriptionPeekOpen] = useState(false);
   // The workflow panel (#732 board 9), for a task in a workflow. It sits beside
   // the whole body, so it is there in the edit form too (a To Do task opens in
@@ -223,6 +243,17 @@ export function TaskDetailWindow({
   const browserAlive = useSessionStore(
     (s) => s.browserGuestTasks.has(task.id) || s.browserOffscreenTasks.has(task.id),
   );
+  // The edit form used to replace the body outright, which unmounted a live
+  // Browser pane and destroyed its guest: the page's `sessionStorage` and
+  // in-memory state went, and an agent driving it lost its place, once on
+  // entering the form and again on leaving it. That is the loss parking a
+  // closed window exists to prevent (retained-pane-never-remounts.md). So
+  // while a guest is registered for this task, the body stays mounted under
+  // the form instead: hidden the retained way, its terminal down as it always
+  // was while editing. With no guest there is nothing to keep, and the body
+  // unmounts as before.
+  const paneGuestLive = useSessionStore((state) => state.browserGuestTasks.has(task.id));
+  const bodyConcealed = isEditing && paneGuestLive;
   const browserSessionId = useSessionStore((s) => s._sessionByTaskId.get(task.id)?.id ?? null);
   const browserDriving = useIsAgentDrivingSession(browserSessionId);
   // The TASK's project, not the open board's, for the same reason
@@ -366,6 +397,22 @@ export function TaskDetailWindow({
     skipDeleteConfirm,
     updateConfig,
   });
+  // A window closed from its edit form while its pane's guest was live is
+  // parked, not removed, so this component and its `isEditing` outlive the
+  // close. Leave the form as the park lands, or the next plain open would
+  // un-park the window still editing. Keyed on the transition INTO parked, so
+  // an Edit asked for while it is parked (the subscription above) is not
+  // undone, and so it happens after the exit fade and the closing window keeps
+  // the face it had. Unsaved edits were already saved or discarded by the close
+  // prompt, and Cancel's revert drops whatever a Discard left in the fields.
+  const [wasParked, setWasParked] = useState(parked === true);
+  if ((parked === true) !== wasParked) {
+    setWasParked(parked === true);
+    if (parked === true && isEditing) {
+      if (sessionState.session) actions.handleCancel();
+      else setIsEditing(false);
+    }
+  }
   // `pendingSaveRef` is pulled out by name so the compiler rules can see it is a
   // ref (the `Ref` suffix) rather than a field of the hook's return value, which
   // they would treat as immutable when the worktree confirm below writes to it.
@@ -991,8 +1038,61 @@ export function TaskDetailWindow({
             sibling AFTER the body: nothing above a retained Browser pane changes
             shape (retained-pane-never-remounts.md). */}
         <div className="flex-1 min-h-0 flex overflow-hidden">
-        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
-          {isEditing ? (
+        <div className={`flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden${bodyConcealed ? ' relative' : ''}`}>
+          {/* The body, then the edit form: two fixed children, so the body keeps
+              its place whether or not the form is up and a live pane inside it
+              never remounts. Its wrapper is `contents` while the body shows, so
+              the body lays out as a direct child, exactly as it did unwrapped.
+              Under the form it is hidden the way a held pane is: `opacity: 0`
+              and inert at full size, never `visibility: hidden` or a zero size,
+              which stop the guest compositing. */}
+          {(!isEditing || bodyConcealed) && (
+            <div
+              className={bodyConcealed ? 'absolute inset-0 flex flex-col opacity-0 pointer-events-none' : 'contents'}
+              aria-hidden={bodyConcealed ? true : undefined}
+              inert={bodyConcealed ? true : undefined}
+              data-testid="task-detail-body-slot"
+            >
+              <TaskDetailBody
+                task={task}
+                // Not focused while concealed, so the body's own shortcuts
+                // (change navigation, terminal find) leave the form's keys alone.
+                isFocused={isFocused && !bodyConcealed}
+                isArchived={isArchived}
+                isInTodo={isInTodo}
+                isInDone={sessionState.isInDone}
+                laneRole={laneRole}
+                hasSessionContext={hasSessionContext}
+                sessionId={bodySessionView.sessionId}
+                displayKind={bodySessionView.displayKind}
+                isSuspended={bodySessionView.isSuspended}
+                suspendedBy={pausedDisplayState?.suspendedBy}
+                startBlockedReason={pausedDisplayState?.startBlockedReason}
+                toggling={bodySessionView.toggling}
+                pendingAction={actions.pendingAction}
+                pendingCommandLabel={pendingCommandLabel}
+                savedAttachments={attachments.savedAttachments}
+                handlePreview={attachments.handlePreview}
+                handleOpenExternal={attachments.handleOpenExternal}
+                handleToggle={actions.handleToggle}
+                changesOpen={changesOpen}
+                projectPath={projectPath ?? ''}
+                resumeFailed={actions.resumeFailed}
+                resumeError={actions.resumeError}
+                onResetSession={actions.handleResetSession}
+                browserOpen={browserOpen}
+                descriptionPeekOpen={descriptionPeekOpen}
+                retainedProjectId={retainedProjectId}
+                // The terminal comes down under the form, as it does in a
+                // dormant window: nobody can see it.
+                dormant={dormant || bodyConcealed}
+                parked={parked === true}
+                concealed={bodyConcealed}
+                linkBrowser={linkBrowser}
+              />
+            </div>
+          )}
+          {isEditing && (
             <>
               <div
                 className="px-4 py-4 flex-1 flex flex-col min-h-0 overflow-y-auto"
@@ -1054,39 +1154,6 @@ export function TaskDetailWindow({
                 />
               </div>
             </>
-          ) : (
-            <TaskDetailBody
-              task={task}
-              isFocused={isFocused}
-              isArchived={isArchived}
-              isInTodo={isInTodo}
-              isInDone={sessionState.isInDone}
-              laneRole={laneRole}
-              hasSessionContext={hasSessionContext}
-              sessionId={bodySessionView.sessionId}
-              displayKind={bodySessionView.displayKind}
-              isSuspended={bodySessionView.isSuspended}
-              suspendedBy={pausedDisplayState?.suspendedBy}
-              startBlockedReason={pausedDisplayState?.startBlockedReason}
-              toggling={bodySessionView.toggling}
-              pendingAction={actions.pendingAction}
-              pendingCommandLabel={pendingCommandLabel}
-              savedAttachments={attachments.savedAttachments}
-              handlePreview={attachments.handlePreview}
-              handleOpenExternal={attachments.handleOpenExternal}
-              handleToggle={actions.handleToggle}
-              changesOpen={changesOpen}
-              projectPath={projectPath ?? ''}
-              resumeFailed={actions.resumeFailed}
-              resumeError={actions.resumeError}
-              onResetSession={actions.handleResetSession}
-              browserOpen={browserOpen}
-              descriptionPeekOpen={descriptionPeekOpen}
-              retainedProjectId={retainedProjectId}
-              dormant={dormant}
-              parked={parked === true}
-              linkBrowser={linkBrowser}
-            />
           )}
         </div>
         {workflowPanelOpen && canShowWorkflow && !dormant && (
