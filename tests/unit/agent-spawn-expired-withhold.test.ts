@@ -99,6 +99,7 @@ import type { SpawnOutcome } from '../../src/main/transition-engine/transition-e
 import type { AutoCommandMode, AutomationConfig, AutomationRunStatus, ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
 import type { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 import type { AutomationAdapter } from '../../src/main/automations/shared/automation-adapter';
+import { AutomationPermanentError } from '../../src/main/automations/shared/automation-errors';
 import { AUTOMATION_MANIFEST } from '../../src/shared/automation-manifest';
 
 const mockTaskGetById = vi.fn();
@@ -1006,7 +1007,7 @@ function failingScriptAdapter(beforeFailing: () => void = () => undefined): Auto
     describe: () => 'Run script',
     execute: async () => {
       beforeFailing();
-      throw new Error('Script exited with code 1.');
+      throw new AutomationPermanentError('Script exited with code 1.');
     },
   };
 }

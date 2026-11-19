@@ -10,6 +10,7 @@ import {
   type SharedEntry,
 } from '../../../accounts/account-support';
 import type { RateLimitWindow } from '../../../../shared/types';
+import { execRunFailureOf } from '../../../utility-process/off-main-exec';
 import { isPlainRecord } from '../../shared/plain-record';
 import { claudeHomeDir, claudeStatePathForHome, isDefaultClaudeHome, withClaudeJsonFileLock } from './claude-json-lock';
 import { runClaudeCli } from './cli-run';
@@ -382,7 +383,9 @@ export function readClaudeCachedUsage(
  * terminal added both, and `--safe-mode` there runs no status line, so that route was dropped.
  * The run refreshes the account's cached usage once it is stale, and the cache is what is read:
  * the printed text carries the same numbers as prose in the machine's time zone. Throws
- * `EmptyUsageReadError` naming why when the read gives no current windows.
+ * `EmptyUsageReadError` naming why when the read gives no current windows. `--safe-mode` was
+ * measured on 2.1.319 only: a CLI too old to know it fails every run, which is why a failed run
+ * carries its exit kind and the service reports one that repeats.
  */
 async function readClaudeIdleUsage(cliPath: string, home: string | null): Promise<RateLimitWindow[]> {
   try {
@@ -390,7 +393,9 @@ async function readClaudeIdleUsage(cliPath: string, home: string | null): Promis
   } catch (error) {
     // The run's own text can name a folder, so only its first line stays here, in the local log.
     console.warn('[ACCOUNTS] Claude usage run failed:', error instanceof Error ? error.message.split('\n')[0] : String(error));
-    throw new EmptyUsageReadError('run-failed');
+    // The error and how the run ended go on with it: a timeout, an exit and a CLI that would
+    // not start all read `run-failed`, and the service's report could not tell them apart.
+    throw new EmptyUsageReadError('run-failed', { cause: error, runFailure: execRunFailureOf(error) });
   }
   let state: unknown;
   try {

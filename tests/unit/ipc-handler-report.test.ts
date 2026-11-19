@@ -15,6 +15,7 @@ const { installIpcHandlerReporting, resetIpcHandlerReportingForTests, IPC_HANDLE
 const { markReported } = await import('../../src/main/analytics/handled-report');
 const { RefusalError } = await import('../../src/shared/refusal');
 const { IPC_REJECTION_DUPLICATE_PATTERN } = await import('../../src/shared/ipc-rejection');
+const { GitCommandError } = await import('../../src/main/git/git-command-error');
 
 type Listener = (event: unknown, ...args: unknown[]) => unknown;
 
@@ -50,6 +51,28 @@ describe('installIpcHandlerReporting', () => {
     target.handle('session:resume', async () => { throw new Error('Session resume failed - session not in manager'); });
     await expect(target.registered.get('session:resume')?.({})).rejects.toThrow('session not in manager');
     expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  // Sentry DESKTOP-4A: `git:diffFiles` failed, and the event said only `Error`.
+  // Every git failure throws from one line, so only the cause tells two apart.
+  it('names what git refused on, once per cause, and sends nothing git wrote', async () => {
+    const target = fakeIpcMain();
+    installIpcHandlerReporting(target as never);
+    const refusal = (stderr: string): Error => new GitCommandError({ stdout: '', stderr, exitCode: 128 });
+    const unbornHead = "fatal: ambiguous argument 'fix-acme-billing': unknown revision or path not in the working tree.\n";
+    const failures = [refusal(unbornHead), refusal(unbornHead), refusal('fatal: bad object deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n')];
+    target.handle('git:diffFiles', () => { throw failures.shift(); });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(target.registered.get('git:diffFiles')?.({})).rejects.toBeInstanceOf(GitCommandError);
+    }
+
+    expect(reportHandledError).toHaveBeenCalledTimes(2);
+    const calls = reportHandledError.mock.calls as Array<[Error, Record<string, string>]>;
+    expect(calls[0][0].message).toBe('Handled ipc_handler failure: GitCommandError');
+    expect(calls[0][1]).toMatchObject({ source: 'ipc_handler', channel: 'git:diffFiles', error_name: 'GitCommandError', git_cause: 'unknown_revision' });
+    expect(calls[1][1]).toMatchObject({ git_cause: 'missing_object' });
+    expect(JSON.stringify(calls.map(([sent, tags]) => [sent.message, sent.stack, tags]))).not.toMatch(/acme|deadbeef|fatal/);
   });
 
   it('skips a refusal, an abort, the network and an error another reporter sent', async () => {

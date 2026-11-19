@@ -52,10 +52,12 @@ describe('run_script', () => {
     expect(Date.now() - startedAt).toBeLessThan(10_000);
   });
 
+  // The classified error, never a plain one: the runner's reporter skips it, so
+  // a user's failing script is a failed run and not a defect (Sentry DESKTOP-49).
   it('reports a non-zero exit as a failure, with the code', async () => {
     await expect(
       runScriptAdapter.execute({ script: 'exit 3', timeoutMinutes: 1 }, makeContext()),
-    ).rejects.toThrow('Script exited with code 3.');
+    ).rejects.toMatchObject({ name: 'AutomationPermanentError', message: 'Script exited with code 3.' });
   });
 
   it('rejects with a typed timeout when the script outlives its budget', async () => {

@@ -83,14 +83,23 @@ export interface SessionIdManagerCallbacks {
 type FilesystemScanOutcome = 'none' | 'pending' | 'found' | 'empty' | 'dropped' | 'failed';
 
 /**
+ * How long after its spawn a session may take to give its id before the miss is
+ * noted. The report reads it too: a session started with no prompt gets the same
+ * allowance counted from its first prompt (`reportSessionIdCaptureOutcome`).
+ */
+export const SESSION_ID_CAPTURE_WINDOW_MS = 30_000;
+
+/**
  * The end of a session whose id the diagnostic window did not see. Sentry
  * DESKTOP-36 reported at the window whether or not an id arrived after it, so it
  * could not tell late from never; this is reported once the answer is known.
+ * Each carries the moment it was decided (`capturedAt`, `settledAt`, epoch ms),
+ * so the report measures against the session's own timestamps without a clock.
  */
 export type SessionIdCaptureOutcome =
-  | { kind: 'late'; capturedAfterMs: number; filesystemScan: FilesystemScanOutcome }
+  | { kind: 'late'; capturedAfterMs: number; capturedAt: number; filesystemScan: FilesystemScanOutcome }
   /** `removed`: the row went with no id. `ceiling`: still none `CAPTURE_CEILING_MS` after the spawn. */
-  | { kind: 'never'; settledBy: 'removed' | 'ceiling'; filesystemScan: FilesystemScanOutcome };
+  | { kind: 'never'; settledBy: 'removed' | 'ceiling'; settledAt: number; filesystemScan: FilesystemScanOutcome };
 
 /** A folder, compared the way the file system compares it. */
 function folderKey(cwd: string): string {
@@ -144,7 +153,7 @@ export class SessionIdManager {
    *  after slicing. Windows ConPTY flushes at 4KB, so 8KB gives a safe margin. */
   private static readonly BUFFER_MAX = 8192;
   /** Warn if capture hasn't fired by this timeout. */
-  private static readonly DIAGNOSTIC_TIMEOUT_MS = 30_000;
+  private static readonly DIAGNOSTIC_TIMEOUT_MS = SESSION_ID_CAPTURE_WINDOW_MS;
   /** Two sessions of one agent started this close in one folder make a folder
    *  match ambiguous. Wider than any adapter's own match window (OpenCode's is
    *  5 s before to 30 s after the spawn). */
@@ -257,9 +266,11 @@ export class SessionIdManager {
     const pending = this.pastWindow.get(sessionId);
     if (!pending) return;
     this.settlePastWindow(sessionId);
+    const capturedAt = Date.now();
     this.callbacks.onCaptureOutcome?.(sessionId, {
       kind: 'late',
-      capturedAfterMs: Date.now() - pending.spawnedAt,
+      capturedAfterMs: capturedAt - pending.spawnedAt,
+      capturedAt,
       filesystemScan: this.filesystemScanOf(sessionId),
     });
   }
@@ -307,7 +318,12 @@ export class SessionIdManager {
   /** Stop holding a session past the window and report it never captured. */
   private reportNever(sessionId: string, settledBy: 'removed' | 'ceiling'): void {
     this.settlePastWindow(sessionId);
-    this.callbacks.onCaptureOutcome?.(sessionId, { kind: 'never', settledBy, filesystemScan: this.filesystemScanOf(sessionId) });
+    this.callbacks.onCaptureOutcome?.(sessionId, {
+      kind: 'never',
+      settledBy,
+      settledAt: Date.now(),
+      filesystemScan: this.filesystemScanOf(sessionId),
+    });
   }
 
   /**

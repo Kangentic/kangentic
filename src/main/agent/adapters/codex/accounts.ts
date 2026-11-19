@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { IdentityReadError, type AccountIdentity, type FolderAccountSupport, type SharedEntry } from '../../../accounts/account-support';
+import type { SessionIdLoginEvidence, StoredCliTarget } from '../../../../shared/types';
 import { spawnCli, stopCli } from '../../shared/cli-print';
 import { isPlainRecord } from '../../shared/plain-record';
 import { codexHomeDir } from './config-toml';
@@ -157,6 +158,25 @@ async function identifyCodexAccount(cliPath: string, home: string | null): Promi
   const signedIn = await codexLoginStatus(cliPath, home);
   if (signedIn === null) throw new IdentityReadError('run-failed');
   return { signedIn, email: null, plan: null, hasSubscription: null };
+}
+
+/**
+ * Whether Codex holds a login in the home a session ran in, for the session-id
+ * reports (`sessionId.loginEvidence`): the session's account folder, or Codex's
+ * own home when it has none. The same read `identify` makes: `auth.json`, and
+ * `codex login status` only when there is none. Measured signed out on 0.163.0:
+ * no `auth.json`, exit 1, and the TUI opens on its sign-in screen, which draws a
+ * frame and makes no conversation. `unknown` for a CLI in a distro or on a host,
+ * whose home this computer does not hold, and when the CLI gave no answer.
+ */
+export async function codexLoginEvidence(options: { cliPath: string | null; cliTarget?: StoredCliTarget | null; accountHome?: string | null }): Promise<SessionIdLoginEvidence> {
+  if (!options.cliPath || options.cliTarget) return 'unknown';
+  try {
+    return (await identifyCodexAccount(options.cliPath, options.accountHome ?? null)).signedIn ? 'signed_in' : 'signed_out';
+  } catch {
+    // report-ok: no answer is the fixed value `unknown`, which the report sends.
+    return 'unknown';
+  }
 }
 
 export const CODEX_ACCOUNT_SUPPORT: FolderAccountSupport = {

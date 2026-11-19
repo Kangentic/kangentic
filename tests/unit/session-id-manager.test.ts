@@ -315,7 +315,8 @@ describe('SessionIdManager', () => {
       await vi.advanceTimersByTimeAsync(31_000);
       outcomeManager.removeSession('s1');
 
-      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'dropped' });
+      // The outcome carries when it was settled, so the report needs no clock of its own.
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', settledAt: Date.now(), filesystemScan: 'dropped' });
     });
 
     it('names a scan that failed, and one still polling', async () => {
@@ -350,7 +351,7 @@ describe('SessionIdManager', () => {
 
       flagOnlyManager.removeSession('s1');
       expect(outcomes).toHaveBeenCalledTimes(1);
-      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'none' });
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', settledAt: Date.now(), filesystemScan: 'none' });
     });
 
     it('records an empty folder scan on the never outcome', async () => {
@@ -360,7 +361,7 @@ describe('SessionIdManager', () => {
       await vi.advanceTimersByTimeAsync(31_000);
       outcomeManager.removeSession('s1');
 
-      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'empty' });
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', settledAt: Date.now(), filesystemScan: 'empty' });
     });
 
     it('records a found folder scan on the never outcome when the id was not accepted', async () => {
@@ -378,7 +379,7 @@ describe('SessionIdManager', () => {
       await vi.advanceTimersByTimeAsync(31_000);
       refusingManager.removeSession('s1');
 
-      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'found' });
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', settledAt: Date.now(), filesystemScan: 'found' });
     });
 
     it('records a found folder scan on a late outcome', async () => {
@@ -394,7 +395,8 @@ describe('SessionIdManager', () => {
       outcomeManager.noteCaptured('s1');
 
       expect(outcomes).toHaveBeenCalledTimes(1);
-      expect(outcomes.mock.calls[0][1]).toMatchObject({ kind: 'late', filesystemScan: 'found' });
+      // When it was captured, and how long after the spawn: the report counts from the first prompt with the one, and buckets the other.
+      expect(outcomes.mock.calls[0][1]).toEqual({ kind: 'late', capturedAfterMs: 31_000, capturedAt: Date.now(), filesystemScan: 'found' });
     });
 
     it('settles an earlier spawn under the same id on init, so its ceiling never fires for the new spawn', async () => {
@@ -408,7 +410,7 @@ describe('SessionIdManager', () => {
       // Respawn under the same id with no removeSession in between.
       outcomeManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
       expect(outcomes).toHaveBeenCalledTimes(1);
-      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', filesystemScan: 'none' });
+      expect(outcomes).toHaveBeenCalledWith('s1', { kind: 'never', settledBy: 'removed', settledAt: Date.now(), filesystemScan: 'none' });
 
       // The second spawn started 31 s after the first, so its own ceiling lands
       // 31 s after the first spawn's. Step across the first spawn's ceiling: any

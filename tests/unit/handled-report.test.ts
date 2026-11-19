@@ -142,6 +142,24 @@ describe('sendHandledFailure', () => {
     expect(isReported(original)).toBe(true);
   });
 
+  // A failed git command carries what git refused on as one fixed word
+  // (`GitCommandError.gitCause`). It is read by shape, off the error or the one
+  // it wraps, and anything that is not a short word is left out.
+  it('adds the git cause an error or its cause carries, and never text in its place', () => {
+    const gitFailure = Object.assign(new Error("fatal: bad object in 'fix-acme-billing'"), { gitCause: 'missing_object' });
+    sendHandledFailure('task_move', gitFailure);
+    sendHandledFailure('task_move', new Error('Worktree setup failed: fix-acme-billing', { cause: gitFailure }));
+    sendHandledFailure('task_move', Object.assign(new Error('x'), { gitCause: "fatal: bad object 'fix-acme-billing'" }));
+    sendHandledFailure('task_move', new TypeError('no git here'));
+
+    const tagsOf = (call: number): Record<string, string> => reportHandledError.mock.calls[call][1] as Record<string, string>;
+    expect(tagsOf(0).git_cause).toBe('missing_object');
+    expect(tagsOf(1).git_cause).toBe('missing_object');
+    expect(tagsOf(2)).not.toHaveProperty('git_cause');
+    expect(tagsOf(3)).not.toHaveProperty('git_cause');
+    expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('acme');
+  });
+
   it.each([
     ['a V8 TypeError naming the property it read', new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')")],
     ['a Node ERR_INVALID_ARG_TYPE quoting its value', Object.assign(

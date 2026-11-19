@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { execFileAsync } from '../utility-process/off-main-exec';
+import { GitCommandError } from './git-command-error';
 import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
 
 /**
@@ -19,7 +20,9 @@ import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
  *   an empty stderr resolves with stdout (an unset `config --get`, a
  *   `rev-parse --verify --quiet` miss, a `merge-base` with no common commit).
  * - A failure's message is stdout followed by stderr, untrimmed: "Worktree
- *   setup failed: <first line>" and the path-length hint read it.
+ *   setup failed: <first line>" and the path-length hint read it. The error is
+ *   a `GitCommandError`, which also names what git refused on as a fixed word
+ *   for a report, since that message never leaves main.
  * - `raw` is untrimmed and `revparse` is trimmed.
  * - The directory is checked when the client is made, and a missing one
  *   throws then, with simple-git's message.
@@ -112,7 +115,7 @@ export async function runGitCommand(directory: string, args: readonly string[]):
     const stderr = failure.stderr ?? '';
     if (typeof failure.code === 'number') {
       if (stderr.length === 0) return stdout;
-      throw new Error(`${stdout}${stderr}`, { cause: error });
+      throw new GitCommandError({ stdout, stderr, exitCode: failure.code }, { cause: error });
     }
     // Killed by a signal: no exit code, which simple-git never counted as a failure.
     if (failure.code == null && typeof failure.signal === 'string') return stdout;
@@ -125,7 +128,7 @@ export async function runRemoteGitCommand(remote: RemoteGitRunner, args: readonl
   const result = await remote.run(args);
   const stdout = result.stdout.toString('utf8');
   if (result.code === 0 || result.stderr.length === 0) return stdout;
-  throw new Error(`${stdout}${result.stderr}`);
+  throw new GitCommandError({ stdout, stderr: result.stderr, exitCode: result.code });
 }
 
 function directoryExists(directory: string): boolean {

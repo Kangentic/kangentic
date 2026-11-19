@@ -36,6 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(accountFolder, { recursive: true, force: true });
 });
 
@@ -175,6 +176,25 @@ describe('CLAUDE_ACCOUNT_SUPPORT.readIdleUsage', () => {
     runClaudeCli.mockRejectedValue(new Error('timed out'));
     writeState(cachedUsage(Date.now(), { seven_day: SEVEN_DAY }));
     expect(await emptyReason()).toBe('run-failed');
+  });
+
+  // Sentry DESKTOP-4E: the run's own failure was dropped here, so the report could not tell a
+  // timeout from an exit or a CLI that would not start.
+  it.each([
+    ['a run stopped at its timeout', { killed: true, signal: 'SIGTERM' }, { kind: 'timeout', exitCode: null }],
+    ['a run that exited non-zero', { code: 1, killed: false, signal: null }, { kind: 'exit_code', exitCode: 1 }],
+    ['a CLI that would not start', { code: 'ENOENT' }, { kind: 'spawn_error', exitCode: null }],
+  ])('hands on %s with how it ended and the error it caught', async (_label, shape, runFailure) => {
+    const rejection = Object.assign(new Error('Command failed: claude -p /usage'), shape);
+    runClaudeCli.mockRejectedValue(rejection);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const failure = await CLAUDE_ACCOUNT_SUPPORT.readIdleUsage!('claude', accountFolder).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(EmptyUsageReadError);
+    expect((failure as EmptyUsageReadError).reason).toBe('run-failed');
+    expect((failure as EmptyUsageReadError).runFailure).toEqual(runFailure);
+    expect((failure as EmptyUsageReadError).cause).toBe(rejection);
   });
 
   it('names a missing state file and one with no cache', async () => {
