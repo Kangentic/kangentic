@@ -113,15 +113,27 @@ describe('provisionAccountFolder links', () => {
     expect(fs.lstatSync(path.join(account, 'agents')).isSymbolicLink()).toBe(true);
   });
 
+  // The failure is forced on the one mkdir, not built from a file where a folder goes: a path
+  // under a file reads as missing on Windows and throws ENOTDIR from lstat on Linux and macOS.
   it('reports a setup folder it cannot make in the home, and does not block the account', async () => {
-    write(path.join(home, 'nested'), 'a file where a folder goes');
-    const entries: SharedEntry[] = [{ name: 'nested/agents', how: 'link-dir', conversationBearing: false }];
-
-    const report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries });
+    const entries: SharedEntry[] = [{ name: 'agents', how: 'link-dir', conversationBearing: false }];
+    const realMkdir = fs.mkdirSync;
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation((target, options) => {
+      if (String(target) === path.join(home, 'agents')) throw denied;
+      return realMkdir(target, options);
+    });
+    let report: Awaited<ReturnType<typeof provisionAccountFolder>>;
+    try {
+      report = await provisionAccountFolder({ accountFolder: account, defaultHome: home, entries });
+    } finally {
+      mkdirSpy.mockRestore();
+    }
 
     expect(report.problems.map((problem) => problem.code)).toEqual(['link-failed']);
     expect(report.conversationLinkFailed).toBe(false);
-    expect(fs.readFileSync(path.join(home, 'nested'), 'utf8')).toBe('a file where a folder goes');
+    expect(fs.existsSync(path.join(home, 'agents'))).toBe(false);
+    expect(fs.existsSync(path.join(account, 'agents'))).toBe(false);
   });
 
   it('keeps a directory aside when the default home has a file of that name, never merging over it', async () => {
