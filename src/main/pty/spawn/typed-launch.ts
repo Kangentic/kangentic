@@ -261,9 +261,21 @@ function splitHead(command: string): { head: string; rest: string } {
   return match ? { head: match[1], rest: match[2] } : { head: '', rest: command };
 }
 
-/** The words a shim would have started, in the order a command names them. */
-function shimTargetWords(direct: BatchShimLaunch): string[] {
-  return [direct.program, direct.script].filter((word) => word !== null);
+/**
+ * The words a shim would have started, in the order a command names them: the
+ * program, its own flags, then the script. `quote` is the shell's quoting for
+ * the program and the script. The flags go in bare, which is how the shim wrote
+ * them: `directLaunchOfBatchShim` keeps only flags that need no quoting anywhere.
+ */
+function shimTargetWords(direct: BatchShimLaunch, quote: (word: string) => string): string[] {
+  const words = [quote(direct.program), ...(direct.programArguments ?? [])];
+  if (direct.script !== null) words.push(quote(direct.script));
+  return words;
+}
+
+/** Whether cmd finds a program by name, through the working folder and then PATH, rather than at a path. */
+function isBareProgramName(program: string): boolean {
+  return !/[\\/]/.test(program);
 }
 
 /** A quoted word on a batch line, where cmd's percent expansion runs first. */
@@ -303,10 +315,13 @@ function batchArguments(text: string): string {
  * session's alone and ends with it, and a Node CLI writes to it as UTF-16.
  *
  * A `.cmd` or `.bat` head never runs from here. Its `%*` line fails past cmd's
- * limit with no error at all, so the file starts what the shim would have, and a
- * shim that cannot be read gets null. With a bare `node` the file takes `.JS` off
- * PATHEXT as npm's shim does, so a `node.js` in the task's folder cannot run. That
- * line outlives the file as the code page does, in the same console.
+ * limit with no error at all, so the file starts what the shim would have: node
+ * and a script, a binary, or the PowerShell a shim hands a `.ps1` to, with the
+ * flags the shim gives it. A shim that cannot be read gets null. With a program
+ * named bare (`node`, `pwsh`) the file takes `.JS` off PATHEXT as npm's and pnpm's
+ * shims do, so a `node.js` or `pwsh.js` in the task's folder cannot run. A
+ * hand-written shim with no such line gets it too. That line outlives the file as
+ * the code page does, in the same console.
  *
  * A bare `cliPath` override has no extension to read, and cmd resolves it through
  * PATHEXT, so a shim found that way still runs its `%*` line. The launch then ends
@@ -319,8 +334,8 @@ function cmdLauncherContents(adapted: string, batchShimLaunch: TypedLaunchInput[
   if (isWindowsBatchShim(head)) {
     const direct = batchShimLaunch(head);
     if (direct === null) return null;
-    if (direct.program === 'node') statements.push('@set "PATHEXT=%PATHEXT:;.JS;=;%"');
-    program = shimTargetWords(direct).map(quotedForBatch).join(' ');
+    if (isBareProgramName(direct.program)) statements.push('@set "PATHEXT=%PATHEXT:;.JS;=;%"');
+    program = shimTargetWords(direct, quotedForBatch).join(' ');
   }
   statements.push(`@${program}${batchArguments(rest)}`);
   return `${statements.join('\r\n')}\r\n`;
@@ -351,7 +366,9 @@ function cmdLaunch(sessionDirectory: string, input: TypedLaunchInput, prelude: s
  * 8100 cmd printed "The command line is too long." So past the budget the line
  * starts what the shim would have, which these shells can do with no launcher. The
  * head's words are quoted for the shell, and it adapts them as it did the shim. A
- * bare `node` needs no PATHEXT line here: neither shell looks in the working folder.
+ * shim that runs a `.ps1` starts its PowerShell here too, with the shim's flags. A
+ * bare `node` or `pwsh` needs no PATHEXT line here: neither shell looks in the
+ * working folder.
  *
  * A shim that cannot be read gets the same named refusal as under cmd, from the same
  * budget. Its text is unknown, so the limit is too: a line of 7000 to 8000 bytes that
@@ -365,7 +382,7 @@ function typedPastBatchShim(input: TypedLaunchInput, shellName: string, prelude:
   if (!isWindowsBatchShim(head)) return fullLaunch;
   const direct = input.batchShimLaunch(head);
   if (direct === null) return typedLaunchOf(`${prelude}echo ${quoteArg(CMD_LINE_REFUSAL, shellName)}`, null, head);
-  const words = shimTargetWords(direct).map((word) => quoteArg(word, shellName, { multiline: true }));
+  const words = shimTargetWords(direct, (word) => quoteArg(word, shellName, { multiline: true }));
   return typedLaunchOf(prelude + adaptCommandForShell(`${words.join(' ')}${rest}`, shellName, input.platform), null);
 }
 

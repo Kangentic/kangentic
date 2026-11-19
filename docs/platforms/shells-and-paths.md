@@ -171,17 +171,59 @@ a batch file does not read a line the way a prompt does:
   with no shebang directly, so an `.exe` target (Claude Code's npm bin is `bin/claude.exe`) runs
   as an npm shim's does: only a Node script reads `NODE_PATH`. A target that is itself a `.cmd` or
   `.bat` shim is read through in turn, up to `MAX_SHIM_HOPS` shims, and the launch starts what the
-  last one starts, with `node.exe` looked for beside that one (Sentry DESKTOP-3Y). A shim it cannot
-  read past (one it cannot read or parse, a target that is gone or not a program or Node script, a
-  chain past the bound, or a Node script whose chain sets `NODE_PATH`) is never run past the
-  budget. An agent's start is refused before its PTY (`launchRefusal`, `AgentBatchShimUnresolvedError`) with the card reason a command too
+  last one starts, with `node.exe` looked for beside that one (Sentry DESKTOP-3Y). A `.ps1` target
+  starts the PowerShell the shim hands it to, with the shim's own flags, when the shim's text names
+  one such start (below). A shim it cannot read past is never run past the budget: one it cannot
+  read or parse, a target that is gone, a target that is not a program, a Node script or a `.ps1`,
+  a `.ps1` the shim does not hand to one PowerShell this can start, a chain past the bound, or a
+  Node script or `.ps1` whose chain sets `NODE_PATH`. An agent's start is refused before its PTY (`launchRefusal`, `AgentBatchShimUnresolvedError`) with the card reason a command too
   long for its shell gets, and the report names why the shim gave up (`batch_shim`). Sentry
   DESKTOP-3Q and DESKTOP-3R were such starts, which used to type the refusal below and show a
   working agent for 30 to 60 s. A raw command still types `echo The command line is too long.`,
   which reports like cmd's own refusal.
   The launcher does not use a `.ps1` sibling, because `call` keeps the tree as cmd then agent, the
-  shape the absence sweep and `exited-root-wait` were measured on. With a bare `node`, the file's
-  `PATHEXT` line outlives it as the code page does.
+  shape the absence sweep and `exited-root-wait` were measured on. When the file starts a shim's
+  program and that program is named bare (`node`, `pwsh`), it takes `.JS` off `PATHEXT` as npm's
+  and pnpm's shims do, and that line outlives it as the code page does. A hand-written shim with no
+  such line gets it too, so a `pwsh.js` in the task's folder cannot run in the program's place. A
+  launch whose head is not a shim gets no such line.
+
+  **A shim whose own target is a `.ps1`** is a different case from that sibling. The DESKTOP-3Y
+  recurrence on 0.60.0 was a `claude.cmd` that runs a `.ps1`, and every launch past the budget was
+  refused with `batch_shim=target_ps1`, again on each restart. The report carries that word and
+  never the shim's text, so which of the shapes below the install had is not known.
+  `powerShellLaunchOf` now reads the shim's own invocation line and the launch starts that: the
+  program the shim names (`pwsh` or `powershell`), every flag the shim writes between it and the
+  script, then the script and the agent's arguments. Nothing is added, so an execution policy is
+  passed only where the shim passes one. The tree is cmd, PowerShell, agent, which is what the shim
+  itself makes for a short launch, and `exited-root-wait` looks through both PowerShells. Two
+  generators write such a shim, and both name `pwsh` and add only the flags a shebang line holds:
+  pnpm's `@zkochan/cmd-shim` for any `.ps1` bin, and npm's `cmd-shim` for a `.ps1` whose first line
+  is a `pwsh` shebang. Each runs the `pwsh.exe` beside the shim under `IF EXIST` and a bare `pwsh`
+  otherwise, which is the rule here, as it is for `node.exe`. The test fixtures for both are byte
+  for byte what pnpm 10.5.0 and npm's bundled cmd-shim 8.0.0 wrote. The pnpm shims captured for
+  that carried the `NODE_PATH` block, and a shim that does still gives up: as `node_path` once its
+  PowerShell is read, and as `target_ps1` when it cannot be, which is checked first. The third
+  shape is a hand-written trampoline such as
+  `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0claude.ps1" %*`. A trampoline may
+  also name its PowerShell by a full path, literal or through a variable
+  (`"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"`): each `%NAME%` is read from
+  the app's environment as cmd would read it, and the file has to be on disk. A shim this cannot
+  repeat exactly keeps `target_ps1`:
+  - one that calls the script with no program, as npm's does for a `.ps1` with no shebang (cmd
+    hands that to the `.ps1` file association, which is not a PowerShell this can name),
+  - one that hands it to another program, or whose lines name two starts (Scoop's picks `pwsh` or
+    `powershell` when it runs, and quotes an absolute path, so it reads as `unparsed` first),
+  - a flag that would need quoting or that holds a `/` (Git Bash rewrites a word that starts with
+    one, such as `/NoProfile`, into a path), an argument or a second command of the shim's own
+    after the script, a script inside a longer quoted string (`-Command "& ... %*"`), or a program
+    path that is relative, names no drive, is not on disk, or holds a name that is not set,
+  - a shim that sets a variable of its own, or one reached through a shim that does. A wrapper's
+    `set` (an endpoint, a config folder, pnpm's `PATH` prepend) is meant for what it starts, and a
+    direct start would run without it.
+
+  **Known gap.** That last check covers a `.ps1` target only. A Node script or binary behind a shim
+  that sets a variable other than `NODE_PATH` still starts without it.
 - `call` parses its line twice and doubles each caret, so it cannot find a folder holding `^`.
   That one path is typed bare, which runs the same file in the same cmd.
 
@@ -206,7 +248,8 @@ no sibling shim or the execution policy blocks one, and those shells then hand t
 Measured with a shell metacharacter in the prompt's tail, up to 8,000 characters ran exact, about
 8,050 ran nothing and printed nothing, and from 8,100 cmd printed "The command line is too long."
 So past `CMD_TYPED_LINE_BYTE_BUDGET` the spawn types what the shim would have started, read by
-`directLaunchOfBatchShim`. Those shells can start it directly, so there is no launcher file. A shim
+`directLaunchOfBatchShim`: node and a script, a binary, or the PowerShell a shim hands its `.ps1`
+to, with that shim's flags. Those shells can start it directly, so there is no launcher file. A shim
 it cannot read past gets the same refusal as under cmd, from the same budget: before the PTY for an
 agent, typed for a raw command. Its text is unknown, so a line of 7,000 to 8,000 bytes that might
 have run is refused rather than left to fail with no error.
@@ -224,8 +267,21 @@ A raw command has no such refusal and types the named one instead.
 startup delay and asserts what a stub agent received, never the scrollback, since a shell's echo of
 a command is not the agent getting it. `tests/unit/cmd-launcher-round-trip.test.ts` does the same for
 `launch.cmd` through a real ConPTY in `shell-quoting-windows.yml`, with the real Claude builder's
-output, to an `.exe` and past an npm shim, from folders holding `%`, `^`, a run of spaces and
-non-ASCII text.
+output, to an `.exe`, past an npm shim and past a shim that runs a `.ps1` through Windows
+PowerShell, from folders holding `%`, `^`, a run of spaces and non-ASCII text.
+
+**Git Bash loses part of a long line typed into an idle prompt.** Measured on Git for Windows on
+a busy machine while this test was extended: a 9,000 character line typed into a bash already
+waiting at its prompt arrived 1,088 characters short in 4 of 15 tries, always that count, with
+nothing printed. The same line typed 100 ms after the shell started, which is when a spawn types
+and before bash reads anything, arrived whole in 18 of 18, and so did one typed as the prompt
+appeared. Windows PowerShell lost nothing at any delay. A spawn types its one line 100 ms after
+its PTY starts, while a `--login` bash is still in its startup files, so no launch is known to
+lose text this way. The test used to type 1,500 ms after start, which could land in a prompt
+already waiting, and now types as the prompt appears, the shape that arrived whole.
+Anything that later types a long line into a Git Bash sitting at its prompt would meet this, and
+nothing does today: the launch line is the only command typed into a shell, and a project script
+runs as the shell's argument (`resolveScriptInvocation`).
 
 ### npm `.cmd` shims under PowerShell and Git Bash
 

@@ -448,6 +448,44 @@ describe('buildTypedLaunch', () => {
         expect(launcherLines(launch)[2].startsWith('@"node" ')).toBe(true);
       });
 
+      // Sentry DESKTOP-3Y: a shim that runs a `.ps1` starts the PowerShell it names.
+      describe('whose target is a .ps1', () => {
+        const script = 'C:\\tools\\npm\\claude.ps1';
+        const barePwsh = () => ({ program: 'pwsh', programArguments: ['-NoProfile', '-File'], script });
+
+        it('runs the shim\'s PowerShell with its flags bare, then the script, with .JS off PATHEXT for a bare name', () => {
+          expect(launcherLines(cmdLaunch(command, { batchShimLaunch: barePwsh }))).toEqual([
+            '@chcp 65001 >nul',
+            '@set "PATHEXT=%PATHEXT:;.JS;=;%"',
+            `@"pwsh" -NoProfile -File "${script}" ${escapedTail}`,
+            '',
+          ]);
+        });
+
+        it('leaves PATHEXT alone for a pwsh.exe named by its path, and puts the script straight after a program given no flags', () => {
+          const launch = cmdLaunch(command, { batchShimLaunch: () => ({ program: 'C:\\tools\\npm\\pwsh.exe', script }) });
+          expect(launcherLines(launch)).toEqual(['@chcp 65001 >nul', `@"C:\\tools\\npm\\pwsh.exe" "${script}" ${escapedTail}`, '']);
+        });
+
+        it('reads a program path written with forward slashes as a path too, so it gets no PATHEXT line', () => {
+          const launch = cmdLaunch(command, { batchShimLaunch: () => ({ program: 'C:/tools/npm/pwsh.exe', script }) });
+          expect(launcherLines(launch)).toEqual(['@chcp 65001 >nul', `@"C:/tools/npm/pwsh.exe" "${script}" ${escapedTail}`, '']);
+        });
+
+        it('fits a process at the longest command a .cmd head may have', () => {
+          const head = `"${shim}" `;
+          const longest = `${head}${'x'.repeat(CMD_COMMAND_LINE_LIMIT - head.length)}`;
+          expect(longest.length).toBe(CMD_COMMAND_LINE_LIMIT);
+          const launch = cmdLaunch(longest, { batchShimLaunch: barePwsh });
+          expect(launchRefusal({ command: longest, shell: CMD_SHELL, platform: 'win32', typedLaunch: launch, shimGaveUp: () => 'target_ps1' })).toBeNull();
+          // The batch line is never shorter than what the process receives: cmd
+          // only takes carets and doubled percents away.
+          const line = launcherLines(launch)[2];
+          expect(line.startsWith(`@"pwsh" -NoProfile -File "${script}" `)).toBe(true);
+          expect(line.length).toBeLessThanOrEqual(WINDOWS_COMMAND_LINE_LIMIT);
+        });
+      });
+
       it('finds a shim whose folder holds a percent, and doubles it in what it starts', () => {
         const percentHead = `"C:\\tools\\"^%"X"^%"\\claude.cmd"`;
         const seen: string[] = [];
@@ -540,6 +578,24 @@ describe('buildTypedLaunch', () => {
           batchShimLaunch: () => ({ program: 'C:\\tools\\claude.exe', script: null }),
         });
         expect(binary.typedLine.startsWith('Clear-Host; & "C:\\tools\\claude.exe" --session-id ')).toBe(true);
+      });
+
+      it('starts a .ps1 target through the PowerShell its shim names, under both shells', () => {
+        const viaPowerShell = () => ({
+          program: 'powershell',
+          programArguments: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File'],
+          script: 'C:\\tools\\npm\\claude.ps1',
+        });
+        const underPowerShell = cmdLaunch(`"${shim}" ${longArguments}`, { shell: POWERSHELL, batchShimLaunch: viaPowerShell });
+        expect(underPowerShell.launcher).toBeNull();
+        expect(underPowerShell.typedLine)
+          .toBe(`Clear-Host; & powershell -NoProfile -ExecutionPolicy Bypass -File "C:\\tools\\npm\\claude.ps1" ${longArguments}`);
+        expect(underPowerShell.typedLine.length).toBeLessThanOrEqual(WINDOWS_COMMAND_LINE_LIMIT);
+
+        const underGitBash = cmdLaunch(`'${shim}' ${longArguments}`, { shell: GIT_BASH, batchShimLaunch: viaPowerShell });
+        expect(underGitBash.launcher).toBeNull();
+        expect(underGitBash.typedLine)
+          .toBe(`clear; powershell -NoProfile -ExecutionPolicy Bypass -File 'C:\\tools\\npm\\claude.ps1' ${longArguments}`);
       });
 
       it('names a shim it cannot get past, as a line each shell prints as one sentence', () => {

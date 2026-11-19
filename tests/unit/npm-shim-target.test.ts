@@ -7,7 +7,7 @@
  * from os.tmpdir() only so path.dirname / path.join behave the same on the
  * Windows dev machine and the Linux CI runner.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -19,7 +19,17 @@ import {
   batchShimGiveUpOf,
   MAX_SHIM_HOPS,
 } from '../../src/main/agent/shared/npm-shim-target';
-import { npmCmdShim, npmDirectCmdShim, legacyNpmCmdShim, minimalCmdShim, npmPs1Shim, npmShShim, pnpmCmdShim } from '../fixtures/npm-shim-fixtures';
+import {
+  npmCmdShim,
+  npmDirectCmdShim,
+  legacyNpmCmdShim,
+  minimalCmdShim,
+  npmPs1Shim,
+  npmShShim,
+  pnpmCmdShim,
+  pnpmPs1CmdShim,
+  powerShellTrampolineCmdShim,
+} from '../fixtures/npm-shim-fixtures';
 
 const CMD_TARGET = 'node_modules\\@google\\gemini-cli\\bundle\\gemini.js';
 const PS1_TARGET = 'node_modules/@google/gemini-cli/bundle/gemini.js';
@@ -29,6 +39,21 @@ describe('directLaunchOfBatchShim', () => {
   const shimPath = path.join(directory, 'gemini.cmd');
   const target = path.join(directory, 'node_modules', '@google', 'gemini-cli', 'bundle', 'gemini.js');
   const siblingNode = path.join(directory, 'node.exe');
+
+  /** A fake disk: the files named are the only ones on it, with any path in `alsoOnDisk`. */
+  function fakeDisk(
+    files: Record<string, string>,
+    alsoOnDisk: string[] = [],
+  ): { readFile: (candidate: string) => string; fileExists: (candidate: string) => boolean } {
+    return {
+      readFile: (candidate) => {
+        const content = files[candidate];
+        if (content === undefined) throw new Error('ENOENT');
+        return content;
+      },
+      fileExists: (candidate) => candidate in files || alsoOnDisk.includes(candidate),
+    };
+  }
 
   it('runs a Node script with the bare node the shim falls back to', () => {
     const launch = directLaunchOfBatchShim(shimPath, {
@@ -74,7 +99,7 @@ describe('directLaunchOfBatchShim', () => {
   // Sentry DESKTOP-3Y gave up with one word for every such target, so the
   // report could not say which layout its user had. Each shape has its own.
   it.each([
-    ['a PowerShell script', 'bin\\tool.ps1', 'target_ps1'],
+    ['a PowerShell script the shim hands to node', 'bin\\tool.ps1', 'target_ps1'],
     ['the extensionless sh script cmd-shim hands to sh', 'node_modules\\.bin\\claude', 'target_extensionless'],
     ['a shell script', 'bin\\tool.sh', 'target_other'],
     ['a Python script', 'bin\\tool.py', 'target_other'],
@@ -84,6 +109,335 @@ describe('directLaunchOfBatchShim', () => {
     expect(batchShimGiveUpOf(shimPath, dependencies)).toBe(expected);
   });
 
+  // Sentry DESKTOP-3Y again, on 0.60.0: `target_ps1` refused every launch past
+  // cmd's typed budget on an install whose `claude.cmd` runs a `.ps1`.
+  describe('a shim whose target is a PowerShell script', () => {
+    const ps1Target = 'node_modules\\some-pkg\\bin\\tool.ps1';
+    const scriptPath = path.join(directory, 'node_modules', 'some-pkg', 'bin', 'tool.ps1');
+    const siblingPwsh = path.join(directory, 'pwsh.exe');
+    const everythingBut = (missing: string) => (candidate: string): boolean => candidate !== missing;
+
+    it.each([
+      ['pnpm', pnpmPs1CmdShim(ps1Target)],
+      ['npm (cmd-shim 8.0.0) for a pwsh shebang', npmCmdShim(ps1Target, { program: 'pwsh' })],
+      ['npm (cmd-shim 9.0.2) for a pwsh shebang', npmCmdShim(ps1Target, { program: 'pwsh', cmdShimVersion: '9.0.2' })],
+    ])('starts the pwsh that %s names, beside the shim when it is there', (_generator, shim) => {
+      const noSibling = { readFile: () => shim, fileExists: everythingBut(siblingPwsh) };
+      expect(directLaunchOfBatchShim(shimPath, noSibling)).toEqual({ program: 'pwsh', script: scriptPath });
+      expect(batchShimGiveUpOf(shimPath, noSibling)).toBeNull();
+
+      const withSibling = { readFile: () => shim, fileExists: () => true };
+      expect(directLaunchOfBatchShim(shimPath, withSibling)).toEqual({ program: siblingPwsh, script: scriptPath });
+    });
+
+    it('carries the flags a shebang gave the program, which both generators write ahead of the script', () => {
+      const shims = [
+        pnpmPs1CmdShim(ps1Target, { programArguments: '-NoProfile' }),
+        npmCmdShim(ps1Target, { program: 'pwsh', programArguments: '-NoProfile' }),
+      ];
+      for (const shim of shims) {
+        expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: everythingBut(siblingPwsh) }))
+          .toEqual({ program: 'pwsh', programArguments: ['-NoProfile'], script: scriptPath });
+      }
+    });
+
+    it('carries a hand-written trampoline\'s flags in order, its execution policy included', () => {
+      const trampoline = powerShellTrampolineCmdShim('@powershell -NoProfile -ExecutionPolicy Bypass -File', 'claude.ps1');
+      // A powershell.exe beside the shim is not the one a bare name starts.
+      const launch = directLaunchOfBatchShim(shimPath, { readFile: () => trampoline, fileExists: () => true });
+      expect(launch).toEqual({
+        program: 'powershell',
+        programArguments: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File'],
+        script: path.join(directory, 'claude.ps1'),
+      });
+    });
+
+    describe('handed to a PowerShell named by its full path', () => {
+      const script = path.join(directory, 'claude.ps1');
+      const windowsPowerShell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+      const systemRootShim = powerShellTrampolineCmdShim(
+        '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -File',
+        'claude.ps1',
+      );
+
+      it('starts a path written out literally', () => {
+        const pwsh = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+        const shim = powerShellTrampolineCmdShim(`@"${pwsh}" -NoProfile -File`, 'claude.ps1');
+        expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: () => true }))
+          .toEqual({ program: pwsh, programArguments: ['-NoProfile', '-File'], script });
+      });
+
+      it('reads each %NAME% as cmd would, whatever the case of the name', () => {
+        const dependencies = { readFile: () => systemRootShim, fileExists: () => true, environment: { SYSTEMROOT: 'C:\\Windows' } };
+        expect(directLaunchOfBatchShim(shimPath, dependencies))
+          .toEqual({ program: windowsPowerShell, programArguments: ['-NoProfile', '-File'], script });
+      });
+
+      it('refuses a name that is not set, and a file that is not there', () => {
+        const unset = { readFile: () => systemRootShim, fileExists: () => true, environment: {} };
+        expect(directLaunchOfBatchShim(shimPath, unset)).toBeNull();
+        expect(batchShimGiveUpOf(shimPath, unset)).toBe('target_ps1');
+
+        const missing = {
+          readFile: () => systemRootShim,
+          fileExists: (candidate: string): boolean => candidate !== windowsPowerShell,
+          environment: { SystemRoot: 'C:\\Windows' },
+        };
+        expect(batchShimGiveUpOf(shimPath, missing)).toBe('target_ps1');
+      });
+
+      it('refuses a path relative to wherever the shim is run from', () => {
+        const shim = powerShellTrampolineCmdShim('"tools\\pwsh.exe" -File', 'claude.ps1');
+        expect(batchShimGiveUpOf(shimPath, { readFile: () => shim, fileExists: () => true })).toBe('target_ps1');
+      });
+
+      describe('with no environment passed', () => {
+        afterEach(() => {
+          vi.unstubAllEnvs();
+        });
+
+        it('reads a %NAME% in the program path from process.env', () => {
+          vi.stubEnv('KANGENTIC_TEST_POWERSHELL_HOME', 'C:\\Tools');
+          const shim = powerShellTrampolineCmdShim('"%KANGENTIC_TEST_POWERSHELL_HOME%\\pwsh.exe" -File', 'claude.ps1');
+          expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: () => true }))
+            .toEqual({ program: 'C:\\Tools\\pwsh.exe', programArguments: ['-File'], script });
+        });
+      });
+
+      it('refuses a program path that names no drive', () => {
+        const noDriveShims = [
+          systemRootShim,
+          powerShellTrampolineCmdShim('"\\tools\\pwsh.exe" -File', 'claude.ps1'),
+        ];
+        for (const shim of noDriveShims) {
+          const dependencies = { readFile: () => shim, fileExists: () => true, environment: { SystemRoot: '' } };
+          expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+          expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+        }
+      });
+
+      it('starts a program on a share, which is a full path', () => {
+        const shim = powerShellTrampolineCmdShim('"\\\\server\\share\\pwsh.exe" -File', 'claude.ps1');
+        expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: () => true }))
+          .toEqual({ program: '\\\\server\\share\\pwsh.exe', programArguments: ['-File'], script });
+      });
+    });
+
+    it('reads through an outer shim to it, and looks for pwsh.exe beside the inner one', () => {
+      const innerShimPath = path.join(directory, 'node_modules', '.bin', 'tool.cmd');
+      const innerPwsh = path.join(directory, 'node_modules', '.bin', 'pwsh.exe');
+      const dependencies = fakeDisk({
+        [shimPath]: npmDirectCmdShim('node_modules\\.bin\\tool.cmd'),
+        [innerShimPath]: pnpmPs1CmdShim('..\\some-pkg\\bin\\tool.ps1'),
+        [innerPwsh]: '',
+        [scriptPath]: '',
+      });
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toEqual({ program: innerPwsh, script: scriptPath });
+    });
+
+    describe('behind an outer shim of its own', () => {
+      const innerShimPath = path.join(directory, 'node_modules', '.bin', 'tool.cmd');
+
+      it('gives up as node_path when the outer shim sets NODE_PATH', () => {
+        const dependencies = fakeDisk({
+          [shimPath]: pnpmCmdShim('node_modules\\.bin\\tool.cmd', { nodeScript: false, nodePath: 'C:\\Users\\dev\\pnpm\\node_modules' }),
+          [innerShimPath]: pnpmPs1CmdShim('..\\some-pkg\\bin\\tool.ps1'),
+          [scriptPath]: '',
+        });
+        expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+        expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('node_path');
+      });
+
+      it('gives up as target_ps1 when the outer shim sets a variable of its own, which a direct start would drop', () => {
+        const outerShim = [
+          '@echo off',
+          'set ANTHROPIC_BASE_URL=https://proxy.invalid',
+          '"%~dp0node_modules\\.bin\\tool.cmd" %*',
+          '',
+        ].join('\r\n');
+        const dependencies = fakeDisk({
+          [shimPath]: outerShim,
+          [innerShimPath]: pnpmPs1CmdShim('..\\some-pkg\\bin\\tool.ps1'),
+          [scriptPath]: '',
+        });
+        expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+        expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+      });
+    });
+
+    it('names the shape of a script called with no program before it names NODE_PATH', () => {
+      const shim = '@SET "NODE_PATH=C:\\mock\\node_modules"\r\n' + npmDirectCmdShim(ps1Target);
+      expect(batchShimGiveUpOf(shimPath, { readFile: () => shim, fileExists: () => true })).toBe('target_ps1');
+    });
+
+    it('starts a target whose extension is upper case as any other', () => {
+      const shim = pnpmPs1CmdShim('node_modules\\some-pkg\\bin\\Tool.PS1');
+      const upperCaseScript = path.join(directory, 'node_modules', 'some-pkg', 'bin', 'Tool.PS1');
+      expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: everythingBut(siblingPwsh) }))
+        .toEqual({ program: 'pwsh', script: upperCaseScript });
+    });
+
+    it('carries a flag holding a dot or a colon as written', () => {
+      const shim = powerShellTrampolineCmdShim('@powershell -Version 5.1 -ExecutionPolicy:Bypass -File', 'claude.ps1');
+      expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: () => true })).toEqual({
+        program: 'powershell',
+        programArguments: ['-Version', '5.1', '-ExecutionPolicy:Bypass', '-File'],
+        script: path.join(directory, 'claude.ps1'),
+      });
+    });
+
+    it('skips a line that names the script without passing the arguments on, and starts the real one', () => {
+      const shim = [
+        '@echo off',
+        'if not exist "%~dp0claude.ps1" exit /b 1',
+        'powershell -NoProfile -File "%~dp0claude.ps1" %*',
+        '',
+      ].join('\r\n');
+      expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: () => true })).toEqual({
+        program: 'powershell',
+        programArguments: ['-NoProfile', '-File'],
+        script: path.join(directory, 'claude.ps1'),
+      });
+    });
+
+    it('lets a parenthesis end the command before the program, and reads %~dp0pwsh.exe as the one beside the shim', () => {
+      const shim = [
+        '@echo off',
+        'if exist "%~dp0pwsh.exe" ( "%~dp0pwsh.exe" -File "%~dp0claude.ps1" %*',
+        ') else ( pwsh -File "%~dp0claude.ps1" %*',
+        ')',
+        '',
+      ].join('\r\n');
+      const claudeScript = path.join(directory, 'claude.ps1');
+      expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: everythingBut(siblingPwsh) }))
+        .toEqual({ program: 'pwsh', programArguments: ['-File'], script: claudeScript });
+      expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: () => true }))
+        .toEqual({ program: siblingPwsh, programArguments: ['-File'], script: claudeScript });
+    });
+
+    describe('that names only the pwsh.exe beside it, with no separator after %~dp0', () => {
+      const shim = powerShellTrampolineCmdShim('@"%~dp0pwsh.exe" -NoProfile -File', 'claude.ps1');
+
+      it('starts it when it is there', () => {
+        expect(directLaunchOfBatchShim(shimPath, { readFile: () => shim, fileExists: () => true })).toEqual({
+          program: siblingPwsh,
+          programArguments: ['-NoProfile', '-File'],
+          script: path.join(directory, 'claude.ps1'),
+        });
+      });
+
+      it('refuses it when it is not, since the shim names no bare program to fall back to', () => {
+        const dependencies = { readFile: () => shim, fileExists: everythingBut(siblingPwsh) };
+        expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+        expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+      });
+    });
+
+    const trampolineLine = '@powershell -NoProfile -File "%~dp0claude.ps1"';
+    it.each([
+      ['calls the script with no program, as npm does for one with no shebang', npmDirectCmdShim(ps1Target)],
+      // Scoop's shim picks this way too, but around an absolute path, so it reads
+      // as `unparsed` before it gets here (the `parseNpmShimTarget` case below).
+      [
+        'picks pwsh or powershell when it runs',
+        [
+          '@echo off',
+          'where /q pwsh.exe',
+          'if %errorlevel% equ 0 (',
+          '    pwsh -noprofile -file "%~dp0claude.ps1" %*',
+          ') else (',
+          '    powershell -noprofile -file "%~dp0claude.ps1" %*',
+          ')',
+          '',
+        ].join('\r\n'),
+      ],
+      ['gives its PowerShell a flag that is not a plain word', powerShellTrampolineCmdShim('@powershell -WindowStyle "Hidden" -File', 'claude.ps1')],
+      ['adds an argument of its own after the script', ['@echo off', `${trampolineLine} --verbose %*`, ''].join('\r\n')],
+      [
+        'sets a variable of its own, which a direct start would lose',
+        ['@echo off', 'set ANTHROPIC_BASE_URL=https://proxy.invalid', `${trampolineLine} %*`, ''].join('\r\n'),
+      ],
+      ['gives its PowerShell a flag that starts with a slash, which Git Bash would rewrite into a path', powerShellTrampolineCmdShim('@powershell /NoProfile -File', 'claude.ps1')],
+      [
+        'starts the same program with different flags on two lines',
+        [
+          '@echo off',
+          'if defined CI (',
+          '  pwsh -NoProfile -File "%~dp0claude.ps1" %*',
+          ') else (',
+          '  pwsh -File "%~dp0claude.ps1" %*',
+          ')',
+          '',
+        ].join('\r\n'),
+      ],
+      [
+        'names different program paths on two lines',
+        [
+          '@echo off',
+          'if exist "C:\\a\\pwsh.exe" (',
+          '  "C:\\a\\pwsh.exe" -File "%~dp0claude.ps1" %*',
+          ') else (',
+          '  "C:\\b\\pwsh.exe" -File "%~dp0claude.ps1" %*',
+          ')',
+          '',
+        ].join('\r\n'),
+      ],
+      ['names the script only where it never passes the arguments on', ['@echo off', trampolineLine, ''].join('\r\n')],
+      [
+        'runs a second command after the arguments on one start line, beside a clean one',
+        [
+          '@echo off',
+          'if defined CI (',
+          '  powershell -NoProfile -File "%~dp0claude.ps1" %*',
+          ') else (',
+          '  powershell -NoProfile -File "%~dp0claude.ps1" %* & echo done',
+          ')',
+          '',
+        ].join('\r\n'),
+      ],
+      ['puts the script inside an open quote', powerShellTrampolineCmdShim('@powershell -Command "echo', 'claude.ps1')],
+      [
+        'holds its program in a variable it never sets, beside a clean start line',
+        [
+          '@echo off',
+          'if defined PWSH (',
+          '  "%PWSH%" -File "%~dp0claude.ps1" %*',
+          ') else (',
+          '  pwsh -File "%~dp0claude.ps1" %*',
+          ')',
+          '',
+        ].join('\r\n'),
+      ],
+    ])('still refuses a shim that %s', (_label, shim) => {
+      const dependencies = { readFile: () => shim, fileExists: () => true };
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+    });
+
+    it.each([
+      ['a quoted set behind an echo-off at sign', '@set "FOO=1"'],
+      ['a set after an ampersand', 'echo x & set FOO=1'],
+      ['a set /p prompt', 'set /p FOO=x'],
+      ['a set /a sum', 'set /a FOO=1'],
+      ['a set in upper case', 'SET foo=1'],
+      ['a set inside a parenthesized block', 'if defined CI (set FOO=1)'],
+      ['a name with a character outside letters, digits and underscore', 'set "MY-VAR=1"'],
+      ['a set straight after a pipe character', 'ver >nul ||set FOO=1'],
+    ])('refuses a shim with %s, as a variable of its own', (_label, setLine) => {
+      const shim = ['@echo off', setLine, `${trampolineLine} %*`, ''].join('\r\n');
+      const dependencies = { readFile: () => shim, fileExists: () => true };
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('target_ps1');
+    });
+
+    it('refuses one behind a shim that sets NODE_PATH, since the script may start node', () => {
+      const shim = pnpmPs1CmdShim(ps1Target, { nodePath: 'C:\\Users\\dev\\AppData\\Local\\pnpm\\global\\5\\node_modules\\.pnpm\\node_modules' });
+      const dependencies = { readFile: () => shim, fileExists: () => true };
+      expect(directLaunchOfBatchShim(shimPath, dependencies)).toBeNull();
+      expect(batchShimGiveUpOf(shimPath, dependencies)).toBe('node_path');
+    });
+  });
+
   describe('a shim whose target is another shim', () => {
     // A global bin that calls the package's `node_modules\.bin\<name>.cmd`.
     const innerShimPath = path.join(directory, 'node_modules', '.bin', 'claude.cmd');
@@ -91,15 +445,8 @@ describe('directLaunchOfBatchShim', () => {
     const scriptPath = path.join(directory, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
     const innerSiblingNode = path.join(directory, 'node_modules', '.bin', 'node.exe');
 
-    function filesOf(files: Record<string, string>): { readFile: (candidate: string) => string; fileExists: (candidate: string) => boolean } {
-      return {
-        readFile: (candidate) => {
-          const content = files[candidate];
-          if (content === undefined) throw new Error('ENOENT');
-          return content;
-        },
-        fileExists: (candidate) => candidate in files || candidate === scriptPath,
-      };
+    function filesOf(files: Record<string, string>): ReturnType<typeof fakeDisk> {
+      return fakeDisk(files, [scriptPath]);
     }
 
     it.each([

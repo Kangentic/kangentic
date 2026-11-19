@@ -11,8 +11,26 @@
  */
 export const CMD_SHIM_LINE_ENDING = '\r\n';
 
-/** The npm cmd-shim batch file as written in 2026 (`%dp0%` via the `:find_dp0` label). */
-export function npmCmdShim(relativeTarget: string): string {
+/**
+ * The npm cmd-shim batch file as written in 2026 (`%dp0%` via the `:find_dp0`
+ * label), for a target whose first line is a shebang. `writeShim_` in npm's
+ * `cmd-shim` (`lib/index.js`) takes the program from that line: `node` for
+ * `#!/usr/bin/env node`, `pwsh` for `#!/usr/bin/env pwsh`. Whatever follows
+ * the program on the shebang line is `programArguments`, written between
+ * `"%_prog%"` and the target.
+ *
+ * Checked line for line against two versions. 8.0.0, the copy npm 11 bundles,
+ * takes `.JS` off `PATHEXT` inside the `ELSE` block. 9.0.2 does it on the last
+ * line, ahead of the program. The 8.0.0 text for a `pwsh` shebang, with and
+ * without `-NoProfile` after `pwsh`, is also byte for byte the file a bundled
+ * 8.0.0 wrote for such a `.ps1`.
+ */
+export function npmCmdShim(
+  relativeTarget: string,
+  options: { program?: string; programArguments?: string; cmdShimVersion?: '8.0.0' | '9.0.2' } = {},
+): string {
+  const program = options.program ?? 'node';
+  const pathextOnLastLine = options.cmdShimVersion === '9.0.2';
   return [
     '@ECHO off',
     'GOTO start',
@@ -23,14 +41,16 @@ export function npmCmdShim(relativeTarget: string): string {
     'SETLOCAL',
     'CALL :find_dp0',
     '',
-    'IF EXIST "%dp0%\\node.exe" (',
-    '  SET "_prog=%dp0%\\node.exe"',
+    `IF EXIST "%dp0%\\${program}.exe" (`,
+    `  SET "_prog=%dp0%\\${program}.exe"`,
     ') ELSE (',
-    '  SET "_prog=node"',
-    '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+    `  SET "_prog=${program}"`,
+    ...(pathextOnLastLine ? [] : ['  SET PATHEXT=%PATHEXT:;.JS;=;%']),
     ')',
     '',
-    `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${relativeTarget}" %*`,
+    'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & '
+      + (pathextOnLastLine ? 'set PATHEXT=%PATHEXT:;.JS;=;% & ' : '')
+      + `"%_prog%" ${options.programArguments ?? ''} "%dp0%\\${relativeTarget}" %*`,
     '',
   ].join(CMD_SHIM_LINE_ENDING);
 }
@@ -59,24 +79,52 @@ export function legacyNpmCmdShim(relativeTarget: string): string {
  * them, is called directly as `@"%~dp0\<target>"   %*`.
  */
 export function pnpmCmdShim(relativeTarget: string, options: { nodeScript: boolean; nodePath?: string }): string {
+  return pnpmShimText(relativeTarget, options.nodeScript ? { program: 'node', shebangArguments: '' } : null, options.nodePath);
+}
+
+/**
+ * pnpm's `.cmd` shim for a `.ps1` target, from the same `generateCmdShim`
+ * (checked line for line against `src/index.ts` of `@zkochan/cmd-shim` 9.0.8
+ * on the pnpm/cmd-shim main branch, and byte for byte against the shims
+ * pnpm 10.5.0 wrote for three `.ps1` bins of a linked package: one with no
+ * shebang, one with a `pwsh` shebang, and one with `-NoProfile` after it).
+ * Those three carried the `NODE_PATH` block, as a default install's do. Its
+ * `extensionToProgramMap` maps `.ps1` to `pwsh`, so a `.ps1` bin runs through
+ * `pwsh.exe` beside the shim or `pwsh`, with no flags of pnpm's own: pwsh
+ * takes its first positional argument as the file. A `#!/usr/bin/env pwsh`
+ * first line writes the same text, and whatever follows `pwsh` on that line is
+ * `programArguments`, which pnpm writes after a second space.
+ */
+export function pnpmPs1CmdShim(relativeTarget: string, options: { nodePath?: string; programArguments?: string } = {}): string {
+  const shebangArguments = options.programArguments ? ` ${options.programArguments}` : '';
+  return pnpmShimText(relativeTarget, { program: 'pwsh', shebangArguments }, options.nodePath);
+}
+
+/** `generateCmdShim`'s text: `runtime` is the program pnpm found for the target, or null to call it directly. */
+function pnpmShimText(
+  relativeTarget: string,
+  runtime: { program: string; shebangArguments: string } | null,
+  nodePath: string | undefined,
+): string {
   const quotedTarget = `"%~dp0\\${relativeTarget}"`;
   const lines = ['@SETLOCAL'];
-  if (options.nodePath) {
+  if (nodePath) {
     lines.push(
       '@IF NOT DEFINED NODE_PATH (',
-      `  @SET "NODE_PATH=${options.nodePath}"`,
+      `  @SET "NODE_PATH=${nodePath}"`,
       ') ELSE (',
-      `  @SET "NODE_PATH=${options.nodePath};%NODE_PATH%"`,
+      `  @SET "NODE_PATH=${nodePath};%NODE_PATH%"`,
       ')',
     );
   }
-  if (options.nodeScript) {
+  if (runtime) {
+    const { program, shebangArguments } = runtime;
     lines.push(
-      '@IF EXIST "%~dp0\\node.exe" (',
-      `  "%~dp0\\node.exe"  ${quotedTarget} %*`,
+      `@IF EXIST "%~dp0\\${program}.exe" (`,
+      `  "%~dp0\\${program}.exe" ${shebangArguments} ${quotedTarget} %*`,
       ') ELSE (',
       '  @SET PATHEXT=%PATHEXT:;.JS;=;%',
-      `  node  ${quotedTarget} %*`,
+      `  ${program} ${shebangArguments} ${quotedTarget} %*`,
       ')',
     );
   } else {
@@ -84,6 +132,18 @@ export function pnpmCmdShim(relativeTarget: string, options: { nodeScript: boole
   }
   lines.push('');
   return lines.join(CMD_SHIM_LINE_ENDING);
+}
+
+/**
+ * A hand-written trampoline: one line that hands the `.ps1` beside it to
+ * PowerShell, with flags. No generator was found that writes this. pnpm and
+ * npm name `pwsh` and add only the flags a shebang line holds (above), and
+ * Scoop's `.cmd` quotes an absolute path. Built from the shapes the parser
+ * already reads: `minimalCmdShim`'s `%~dp0` with no separator, and
+ * `invocation` in place of `node`.
+ */
+export function powerShellTrampolineCmdShim(invocation: string, relativeTarget: string): string {
+  return ['@echo off', `${invocation} "%~dp0${relativeTarget}" %*`, ''].join(CMD_SHIM_LINE_ENDING);
 }
 
 /**
