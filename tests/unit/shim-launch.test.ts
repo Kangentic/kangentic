@@ -20,6 +20,7 @@ import {
   resetShimLaunchCacheForTests,
   isWindowsBatchShim,
   shimSibling,
+  headlessCliPath,
   executionPolicyAllowsScripts,
   probeExecutionPolicy,
   type ShimLaunchDependencies,
@@ -407,6 +408,71 @@ describe('shim-launch helpers', () => {
     expect(executionPolicyAllowsScripts('Undefined')).toBe(false);
     expect(executionPolicyAllowsScripts('')).toBe(false);
     expect(executionPolicyAllowsScripts(null)).toBe(false);
+  });
+});
+
+describe('headlessCliPath', () => {
+  const NPM_DIR = 'C:\\Users\\dev\\AppData\\Roaming\\npm';
+  const CMD_BESIDE = `${NPM_DIR}\\codex.cmd`;
+  const BAT_BESIDE = `${NPM_DIR}\\codex.bat`;
+
+  function presentFiles(...paths: string[]) {
+    return vi.fn((candidatePath: string) => paths.includes(candidatePath));
+  }
+
+  it('gives back the .cmd beside a .ps1 launch path', () => {
+    expect(headlessCliPath(PS1_SIBLING, { platform: 'win32', fileExists: presentFiles(CMD_BESIDE) })).toBe(CMD_BESIDE);
+  });
+
+  it('gives back the .cmd beside the extensionless sh shim', () => {
+    expect(headlessCliPath(SH_SIBLING, { platform: 'win32', fileExists: presentFiles(CMD_BESIDE) })).toBe(CMD_BESIDE);
+  });
+
+  it('falls back to a .bat when no .cmd exists, and prefers the .cmd when both do', () => {
+    expect(headlessCliPath(PS1_SIBLING, { platform: 'win32', fileExists: presentFiles(BAT_BESIDE) })).toBe(BAT_BESIDE);
+    expect(headlessCliPath(PS1_SIBLING, { platform: 'win32', fileExists: presentFiles(BAT_BESIDE, CMD_BESIDE) })).toBe(CMD_BESIDE);
+  });
+
+  it('leaves the path as it is when no batch shim sits beside it', () => {
+    expect(headlessCliPath(PS1_SIBLING, { platform: 'win32', fileExists: presentFiles() })).toBe(PS1_SIBLING);
+    expect(headlessCliPath(SH_SIBLING, { platform: 'win32', fileExists: presentFiles() })).toBe(SH_SIBLING);
+  });
+
+  it.each([NATIVE_EXE, CMD_HEAD, BAT_BESIDE])('leaves %s as it is and reads no disk', (launchPath) => {
+    const fileExists = presentFiles(CMD_BESIDE);
+
+    expect(headlessCliPath(launchPath, { platform: 'win32', fileExists })).toBe(launchPath);
+    expect(fileExists).not.toHaveBeenCalled();
+  });
+
+  it('reads the extension from the file name, not from a folder with a dot', () => {
+    const dottedFolderCmd = 'C:\\tools\\npm.d\\codex.cmd';
+    const fileExists = presentFiles(dottedFolderCmd);
+
+    expect(headlessCliPath('C:\\tools\\npm.d\\codex', { platform: 'win32', fileExists })).toBe(dottedFolderCmd);
+    expect(fileExists).toHaveBeenCalledWith(dottedFolderCmd);
+  });
+
+  it.each(['linux', 'darwin'] as const)('leaves a path alone on %s and reads no disk', (platform) => {
+    const fileExists = presentFiles('/usr/local/bin/codex.cmd');
+
+    expect(headlessCliPath('/usr/local/bin/codex', { platform, fileExists })).toBe('/usr/local/bin/codex');
+    expect(fileExists).not.toHaveBeenCalled();
+  });
+
+  it('undoes what resolveShimLaunch did: the PowerShell .ps1 and the Git Bash sh shim both give back the original .cmd', async () => {
+    const lowerCmd = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd';
+    const dependencies = makeDependencies({
+      fileExists: vi.fn((candidatePath: string) => [PS1_SIBLING, SH_SIBLING, lowerCmd].includes(candidatePath)),
+    });
+
+    const underPowerShell = await resolveShimLaunch({ agentPath: lowerCmd, shell: PWSH, prompt: undefined }, dependencies);
+    const underGitBash = await resolveShimLaunch({ agentPath: lowerCmd, shell: GIT_BASH, prompt: undefined }, dependencies);
+
+    expect(underPowerShell.agentPath).toBe(PS1_SIBLING);
+    expect(underGitBash.agentPath).toBe(SH_SIBLING);
+    expect(headlessCliPath(underPowerShell.agentPath, dependencies)).toBe(lowerCmd);
+    expect(headlessCliPath(underGitBash.agentPath, dependencies)).toBe(lowerCmd);
   });
 });
 

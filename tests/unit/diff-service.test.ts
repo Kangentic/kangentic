@@ -1630,4 +1630,74 @@ describe('DiffService', () => {
       expect(text.modified).toBe('text');
     });
   });
+
+  // A repository with no commits: the fork point is the empty tree, and the
+  // service remembers it so the next diff does not spawn the merge-base reads again.
+  describe('the fork point of a repository with no commits', () => {
+    const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    const HEAD_PROBE = 'rev-parse --verify --quiet HEAD';
+    const FIRST_COMMIT = 'a'.repeat(40);
+
+    /** What `git.raw` was asked, one joined command per call, in order. */
+    function askedCommands(): string[] {
+      return mockGit.raw.mock.calls.map(([args]) => (args as string[]).join(' '));
+    }
+
+    /**
+     * No ref resolves and no reflog exists, so the fork point falls back to HEAD.
+     * `headProbe` answers the HEAD read: a function that throws, '' for an unborn
+     * HEAD, or an object id.
+     */
+    function routeNoForkPoint(headProbe: () => string): void {
+      mockGit.raw.mockImplementation(async (args: string[]) => {
+        if (args.join(' ') === HEAD_PROBE) return headProbe();
+        throw new Error(`fatal: no route for git ${args.join(' ')}`);
+      });
+      mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+      mockGit.diff.mockResolvedValue('');
+    }
+
+    it('keeps HEAD, not the empty tree, when the git read of HEAD fails', async () => {
+      routeNoForkPoint(() => { throw new Error('spawn git ENOENT'); });
+
+      await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+      expect(mockGit.diffSummary).toHaveBeenCalledWith(['HEAD']);
+      expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', 'HEAD']);
+      expect(mockGit.diffSummary).not.toHaveBeenCalledWith([EMPTY_TREE]);
+    });
+
+    it('diffs against the empty tree when HEAD names no commit', async () => {
+      routeNoForkPoint(() => '');
+
+      await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+      expect(mockGit.diffSummary).toHaveBeenCalledWith([EMPTY_TREE]);
+      expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', EMPTY_TREE]);
+    });
+
+    it('asks only whether HEAD still names nothing on the next diff, then lets go at the first commit', async () => {
+      let headAnswer = '';
+      routeNoForkPoint(() => headAnswer);
+
+      await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+      const firstRun = askedCommands();
+      expect(firstRun.some((command) => command.startsWith('merge-base '))).toBe(true);
+      expect(firstRun.some((command) => command.startsWith('symbolic-ref '))).toBe(true);
+
+      mockGit.raw.mockClear();
+      await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+      expect(askedCommands()).toEqual([HEAD_PROBE]);
+      expect(mockGit.diffSummary).toHaveBeenLastCalledWith([EMPTY_TREE]);
+
+      // The first commit lands: HEAD answers an oid, so the full resolution runs again.
+      headAnswer = `${FIRST_COMMIT}\n`;
+      mockGit.raw.mockClear();
+      await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+      const afterCommit = askedCommands();
+      expect(afterCommit[0]).toBe(HEAD_PROBE);
+      expect(afterCommit.some((command) => command.startsWith('merge-base '))).toBe(true);
+      expect(mockGit.diffSummary).toHaveBeenLastCalledWith(['HEAD']);
+    });
+  });
 });

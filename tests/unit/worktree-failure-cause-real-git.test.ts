@@ -230,6 +230,11 @@ describe('a worktree failure that is not a git refusal', () => {
     expect(worktreeFailureCause(new Error("error: unable to write file README.md: No space left on device\nfatal: Could not reset index file to revision 'HEAD'."))).toBe('worktree_no_space');
   });
 
+  it('reads permission from git\'s own line and not from ssh\'s refused login', () => {
+    expect(worktreeFailureCause(new Error("Preparing worktree (new branch 'x')\nfatal: could not create leading directories of '/tmp/acme/.git': Permission denied\n"))).toBe('worktree_permission');
+    expect(worktreeFailureCause(new Error('git@example.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n'))).toBe('worktree_other');
+  });
+
   it('sends worktree_other for anything else', () => {
     expect(worktreeFailureCause(new Error('Cannot use simple-git on a directory that does not exist'))).toBe('worktree_other');
     expect(worktreeFailureCause('not an error')).toBe('worktree_other');
