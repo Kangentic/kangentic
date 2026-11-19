@@ -82,8 +82,72 @@ interface CaptureScrollbackModule {
   };
 }
 
+interface WslLaunchHelpers {
+  wslSpawnArgs: (invocationArgs: string[], linuxCwd: string) => string[];
+  withoutDriveMounts: (pathValue: string) => string;
+  WSL_AGENT_ENV: Record<string, string>;
+}
+
 const require = createRequire(import.meta.url);
-const { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS } = require('../../scripts/capture-agent-scrollback.js') as CaptureScrollbackModule;
+const { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS, wslSpawnArgs, withoutDriveMounts, WSL_AGENT_ENV } = require('../../scripts/capture-agent-scrollback.js') as CaptureScrollbackModule & WslLaunchHelpers;
+
+describe('a capture in a WSL distro', () => {
+  // A share path, built as a string only: parseArgs touches no disk.
+  const shareCwd = '\\\\wsl.localhost\\Distro\\home\\someone\\redis';
+  const base = ['--agent', 'claude', '--cwd', shareCwd, '--project', 'redis', '--out', path.join(os.tmpdir(), 'out.json')];
+
+  it('takes the distro and the host folder together, the folder kept as written', () => {
+    const parsed = parseArgs([...base, '--wsl', 'Distro', '--demo-path', '/home/dev/redis', '--prompt', 'Read src/expire.c']) as ParsedCaptureOptions & { wsl: string; demoPath: string };
+    expect(parsed.wsl).toBe('Distro');
+    // path.resolve would have made it C:\home\dev\redis on a Windows recording machine.
+    expect(parsed.demoPath).toBe('/home/dev/redis');
+  });
+
+  it('refuses one without the other, and a host folder that is not absolute', () => {
+    expect(() => parseArgs([...base, '--wsl', 'Distro'])).toThrow(/go together/);
+    expect(() => parseArgs([...base, '--demo-path', '/home/dev/redis'])).toThrow(/go together/);
+    expect(() => parseArgs([...base, '--wsl', 'Distro', '--demo-path', 'redis'])).toThrow(/absolute folder on the host/);
+  });
+
+  it('refuses every launch shape no distro run has measured', () => {
+    const inDistro = [...base, '--wsl', 'Distro', '--demo-path', '/home/dev/redis'];
+    expect(() => parseArgs(inDistro.map((value) => (value === 'claude' ? 'codex' : value)))).toThrow(/Claude Code only/);
+    expect(() => parseArgs([...inDistro, '--resume', 'session-1'])).toThrow(/plain launch/);
+    expect(() => parseArgs([...inDistro, '--follow-up', 'more'])).toThrow(/plain launch/);
+    expect(() => parseArgs([...inDistro, '--read-only'])).toThrow(/plain launch/);
+    expect(() => parseArgs([...inDistro, '--mcp-config', MCP_CONFIG])).toThrow(/plain launch/);
+  });
+
+  it('refuses a prompt that wsl.exe would parse again on its way in', () => {
+    const inDistro = [...base, '--wsl', 'Distro', '--demo-path', '/home/dev/redis'];
+    expect(() => parseArgs([...inDistro, '--prompt', 'Pin "EXPIRE" with a negative TTL'])).toThrow(/double quote or a backslash/);
+    expect(() => parseArgs([...inDistro, '--prompt', 'Read src\\expire.c'])).toThrow(/double quote or a backslash/);
+    // The same prompt is fine for a launch on this computer.
+    expect(() => parseArgs([...base, '--prompt', 'Pin "EXPIRE" with a negative TTL'])).not.toThrow();
+  });
+
+  it('starts the app\'s distro launch in the agent\'s folder', () => {
+    const invocationArgs = ['-d', 'Distro', '-e', 'env', 'PATH=/usr/bin', 'claude', '--permission-mode', 'plan', '--', 'Plan it'];
+    expect(wslSpawnArgs(invocationArgs, '/home/someone/redis/.kangentic/worktrees/one')).toEqual([
+      '-d', 'Distro', '--cd', '/home/someone/redis/.kangentic/worktrees/one', '-e', 'env', 'PATH=/usr/bin', 'claude', '--permission-mode', 'plan', '--', 'Plan it',
+    ]);
+    // A launch that is not the distro shape is refused rather than given a --cd in the wrong place.
+    expect(() => wslSpawnArgs(['-e', 'claude'], '/home/someone')).toThrow(/-d <distro>/);
+  });
+
+  it('leaves the Windows folders WSL appends off the agent\'s PATH', () => {
+    expect(withoutDriveMounts('/home/someone/.local/bin:/usr/bin:/mnt/c/Windows/system32:/mnt/d/tools:/bin'))
+      .toBe('/home/someone/.local/bin:/usr/bin:/bin');
+    // Only a drive mount: a folder that merely contains "mnt" stays.
+    expect(withoutDriveMounts('/opt/mnt/bin:/mnt/data2/bin')).toBe('/opt/mnt/bin:/mnt/data2/bin');
+  });
+
+  it('starts Claude on the classic renderer with no advisor notice, as a launch on this computer does', () => {
+    // These cross into the distro only through WSLENV, so a launch that dropped one would record
+    // the fullscreen renderer, which a replay cannot reproduce.
+    expect(WSL_AGENT_ENV).toMatchObject({ TERM: 'xterm-256color', CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1', CLAUDE_CODE_DISABLE_ADVISOR_TOOL: '1' });
+  });
+});
 
 describe('the browser note the capture pastes', () => {
   it('is the packet the paste engine writes for Send', () => {

@@ -110,6 +110,14 @@ for (const file of [...files].sort()) {
     continue;
   }
 
+  // A project on the sample install's Linux host was recorded in a WSL distro, whose history this
+  // computer's home does not hold. Its trail is derived at record time (capture-agent-scrollback.js
+  // --wsl), so it is re-recorded rather than rescued here.
+  if (dataset.DEMO_SCENE_PROJECTS.some((project) => project.name === record.project && project.remote)) {
+    console.error(`[trails] ${file}: recorded in a WSL distro, whose history this backfill does not read; re-record it to change its trail`);
+    skipped += 1;
+    continue;
+  }
   const cwd = captureCwd(record.project);
   let trail;
   try {
