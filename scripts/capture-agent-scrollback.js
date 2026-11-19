@@ -51,6 +51,16 @@
  *          --scratch-root <dir>     the scratch clone when --cwd is a worktree inside it, so the
  *                                   sanitizer rewrites the clone to the project's home and the
  *                                   worktree keeps its own path under it
+ *          --wsl <distro>           (claude only) run the agent inside that WSL distro, as a Linux
+ *          --demo-path <posix dir>  process, for a project on the sample install's Linux host:
+ *                                   --cwd is the folder through the distro's share
+ *                                   (\\wsl.localhost\<distro>\...), and --demo-path the host folder
+ *                                   the scratch clone stands for (/home/dev/redis). The launch is
+ *                                   the app's own for a CLI in a distro (cliInvocationForTarget),
+ *                                   started in the folder with --cd, with the drive mounts left off
+ *                                   its PATH, and the distro's user and host names become the
+ *                                   sample host's. The distro is a flag at run time, never a value
+ *                                   in the repo.
  *
  * The agent's own transcript is read once at the end for the board card's message trail, which the
  * terminal bytes cannot supply. A failure there is reported but never loses the recording; CI
@@ -72,7 +82,7 @@ const { buildSanitizer, forwardSlash, sanitizeDeep } = require('./lib/demo-sanit
 const { toSpawnable, childAgentEnv } = require('./lib/spawnable');
 
 function parseArgs(argv) {
-  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', followUp: null, pasteFile: null, messageTrail: true, transcriptOut: null, resume: null, mcpConfig: null, settings: null, readOnly: false, scratchRoot: null };
+  const options = { cols: 120, rows: 40, timeout: 240, idle: 25, min: 40, mode: null, model: null, trust: true, stopAfter: null, stopWhen: null, liveTail: 0, prompt: '', followUp: null, pasteFile: null, messageTrail: true, transcriptOut: null, resume: null, mcpConfig: null, settings: null, readOnly: false, scratchRoot: null, wsl: null, demoPath: null };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const next = () => argv[++index];
@@ -104,6 +114,10 @@ function parseArgs(argv) {
       case '--settings': options.settings = path.resolve(next()); break;
       case '--read-only': options.readOnly = true; break;
       case '--scratch-root': options.scratchRoot = path.resolve(next()); break;
+      case '--wsl': options.wsl = next(); break;
+      // A folder on the sample install's Linux host, kept as written: path.resolve would make it a
+      // Windows path on this computer.
+      case '--demo-path': options.demoPath = next(); break;
       default: throw new Error(`Unknown argument ${argument}`);
     }
   }
@@ -124,8 +138,68 @@ function parseArgs(argv) {
       throw new Error('--scratch-root must contain --cwd: it names the clone a worktree --cwd sits in');
     }
   }
+  if (options.wsl !== null || options.demoPath !== null) refuseUnmeasuredWslLaunch(options);
   return options;
 }
+
+/**
+ * What a capture in a WSL distro takes. Only the plain Claude launch has been run through a distro
+ * and read back, so every other shape is refused rather than recorded untried. wsl.exe parses its
+ * own command line again before the distro sees it, so a double quote or a backslash in the prompt
+ * would reach Claude changed; such a prompt is refused rather than escaped by guesswork.
+ */
+function refuseUnmeasuredWslLaunch(options) {
+  if (!options.wsl || !options.demoPath) {
+    throw new Error('--wsl and --demo-path go together: the distro the agent runs in, and the host folder its clone stands for');
+  }
+  if (!options.demoPath.startsWith('/')) throw new Error('--demo-path is an absolute folder on the host, such as /home/dev/redis');
+  if (options.agent !== 'claude') throw new Error(`--wsl records Claude Code only; no ${options.agent} launch through a distro has been measured`);
+  if (options.resume || options.pasteFile || options.followUp || options.mcpConfig || options.settings || options.readOnly) {
+    throw new Error('--wsl records a plain launch: a resume, a paste, a follow-up, the MCP server and the read-only launch are not measured through a distro');
+  }
+  if (/["\\]/.test(options.prompt)) {
+    throw new Error('--wsl refuses a prompt with a double quote or a backslash: wsl.exe parses its command line again, and either would reach Claude changed');
+  }
+}
+
+/** What the recorder's launch sets for Claude in a distro, each listed in WSLENV so it crosses (cliInvocationForTarget). */
+const WSL_AGENT_ENV = {
+  TERM: 'xterm-256color',
+  // As buildEnv sets them for a launch on this computer.
+  CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
+  CLAUDE_CODE_DISABLE_ADVISOR_TOOL: '1',
+  // The distro's Claude updated itself between two recordings once, which put an update notice in
+  // the next and a different version in each.
+  DISABLE_AUTOUPDATER: '1',
+};
+
+/**
+ * The PATH the agent runs with in the distro: the user's interactive PATH without the Windows
+ * folders WSL appends under /mnt/<drive>. A Windows program the agent could otherwise start (a
+ * VS Code launcher, a Windows git) would answer as this computer, not as the Linux host the
+ * recording stands for, and a PATH the agent prints would name this computer's folders.
+ */
+function withoutDriveMounts(pathValue) {
+  return pathValue.split(':').filter((entry) => entry.length > 0 && !/^\/mnt\/[a-z](\/|$)/i.test(entry)).join(':');
+}
+
+/**
+ * The app's distro launch (`wsl.exe -d <distro> -e env PATH=... claude ...`) started in the folder
+ * the agent works in. A terminal session's distro shell starts in its folder the same way; a run
+ * through `-e` alone would start in the Windows folder wsl.exe was started from.
+ */
+function wslSpawnArgs(invocationArgs, linuxCwd) {
+  if (invocationArgs[0] !== '-d' || typeof invocationArgs[1] !== 'string') {
+    throw new Error(`[capture] expected the distro launch to open with -d <distro>, got ${JSON.stringify(invocationArgs.slice(0, 2))}`);
+  }
+  return [invocationArgs[0], invocationArgs[1], '--cd', linuxCwd, ...invocationArgs.slice(2)];
+}
+
+/**
+ * The slowest clock reading a skew is measured from. The distro's time is taken as read at the
+ * middle of the call, so a slower call measures it less exactly than the card's trail needs.
+ */
+const MAX_CLOCK_READ_MS = 1000;
 
 /**
  * Whether the agent went quiet on a permission question (Claude's "Do you want to ...?" over a
@@ -252,15 +326,16 @@ function buildCommand(agent, cwd, prompt, mode, model, resume, mcp) {
 }
 
 // ---------------------------------------------------------------- trust pre-seeding
-async function seedTrust(agent, cwd) {
+async function seedTrust(agent, cwd, place = null) {
   const resolved = forwardSlash(path.resolve(cwd));
   if (agent === 'claude') {
     // The adapter's own writer, run before every desktop spawn: Claude's ~/.claude.json.lock with
     // its stale break, a temp-file rename, and a skip (one trust prompt) when the lock stays held.
+    // In a distro it writes the distro's own ~/.claude.json, keyed by the folder as Linux sees it.
     const { importTsModule } = await import('./lib/bundle-ts-module.mjs');
     const trust = await importTsModule(path.join(__dirname, '..', 'src', 'main', 'agent', 'adapters', 'claude', 'trust-manager.ts'));
-    await trust.ensureWorktreeTrust(cwd);
-    console.error('[capture] trusted the scratch repo in ~/.claude.json');
+    await trust.ensureWorktreeTrust(cwd, place);
+    console.error(`[capture] trusted the scratch repo in ${place ? `the ${place.distro} distro's` : ''} ~/.claude.json`);
   } else if (agent === 'codex') {
     const configPath = path.join(os.homedir(), '.codex', 'config.toml');
     let toml = '';
@@ -327,6 +402,7 @@ function buildEnv() {
 const LANGUAGE_BY_EXTENSION = {
   ts: 'typescript', tsx: 'typescript', mts: 'typescript', js: 'javascript', mjs: 'javascript', jsx: 'javascript',
   java: 'java', go: 'go', cs: 'csharp', py: 'python', rb: 'ruby', rs: 'rust', kt: 'kotlin',
+  c: 'c', h: 'c', tcl: 'tcl',
   json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml', html: 'html', css: 'css', scss: 'scss',
   md: 'markdown', sql: 'sql', sh: 'shell', ps1: 'powershell', dockerfile: 'dockerfile', properties: 'ini',
 };
@@ -336,12 +412,14 @@ const MAX_DIFF_FILE_BYTES = 200 * 1024;
  * What the agent changed, in the shape the mock's git.diffFiles returns, so the task's Changes
  * panel shows the real diff next to the real terminal. Untracked files enter the index as
  * intent-to-add so one `git diff HEAD` covers everything; the index is reset afterwards.
+ * `runGit` runs git in the agent's folder: this computer's git, or the distro's for a capture
+ * there, whose index and line endings this computer's git would read differently. The files
+ * themselves are read through `cwd`, which reaches either.
  */
-function collectChanges(cwd, sanitizer) {
-  const { execFileSync } = require('node:child_process');
+function collectChanges(cwd, sanitizer, runGit = (args) => require('node:child_process').execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })) {
   const git = (args, allowFailure = false) => {
     try {
-      return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+      return runGit(args);
     } catch (error) {
       if (allowFailure) return '';
       throw error;
@@ -405,6 +483,87 @@ async function serializeThroughXterm(raw, cols, rows) {
 const { peekFromTerminal, computeReplayTimelines, createReplayTerminal } = require('./lib/demo-replay-timelines');
 const { serializePhysicalRows } = require('./lib/demo-frame-serializer');
 
+// ---------------------------------------------------------------- a launch in a WSL distro
+/**
+ * Everything a capture in a distro needs before it starts the agent: the place, as the app models
+ * a CLI in a distro (`WslCliPlace`), with the drive mounts off its PATH; the folder and the scratch
+ * clone as the distro sees them; the distro's user and host names for the sanitizer; and the
+ * runners for git and for the leftover check. Refuses a folder outside the distro's share. The
+ * agent's transcript is stamped by the distro's clock and the recording by this one, and a WSL2
+ * distro's clock was measured a steady 1.19 s ahead of Windows on the recording machine, so the
+ * skew is measured here and taken off every trail line rather than left to move each one.
+ */
+async function resolveWslLaunch(options) {
+  const { execFileSync } = require('node:child_process');
+  const { importTsModule } = await import('./lib/bundle-ts-module.mjs');
+  const source = (...segments) => path.join(__dirname, '..', 'src', ...segments);
+  const paths = await importTsModule(source('shared', 'paths.ts'));
+  const distroFacts = await importTsModule(source('main', 'agent', 'shared', 'wsl-distro.ts'));
+  const cliTarget = await importTsModule(source('main', 'agent', 'shared', 'cli-target.ts'));
+  const inDistro = (folder, flag) => {
+    const parsed = paths.parseWslUncPath(folder);
+    if (!parsed || parsed.distro.toLowerCase() !== options.wsl.toLowerCase()) {
+      throw new Error(`[capture] ${flag} must be a folder in the ${options.wsl} distro's share (\\\\wsl.localhost\\${options.wsl}\\...)`);
+    }
+    return parsed.linuxPath;
+  };
+  const linuxCwd = inDistro(options.cwd, '--cwd');
+  const linuxScratch = options.scratchRoot ? inDistro(options.scratchRoot, '--scratch-root') : linuxCwd;
+  const facts = await distroFacts.resolveWslDistroFacts(options.wsl);
+  const place = { kind: 'wsl', distro: options.wsl, facts: { ...facts, interactivePath: withoutDriveMounts(facts.interactivePath) } };
+  const runInDistro = (args, timeout = 30000) => execFileSync(cliTarget.wslExecutablePath(), ['-d', options.wsl, '-e', ...args], {
+    encoding: 'utf-8', env: { ...childAgentEnv(), WSL_UTF8: '1' }, timeout, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const [user, host] = runInDistro(['sh', '-c', 'id -un; hostname']).trim().split(/\r?\n/).map((line) => line.trim());
+  if (!user || !host) throw new Error(`[capture] could not read the user and host names in the ${options.wsl} distro`);
+  const askedAt = Date.now();
+  const distroNowMs = Number(runInDistro(['date', '+%s%3N']).trim());
+  const answeredAt = Date.now();
+  if (!Number.isFinite(distroNowMs) || answeredAt - askedAt > MAX_CLOCK_READ_MS) {
+    throw new Error(`[capture] could not read the ${options.wsl} distro's clock within ${MAX_CLOCK_READ_MS} ms, so its transcript cannot be placed on the recording's clock`);
+  }
+  const clockSkewMs = Math.round(distroNowMs - (askedAt + answeredAt) / 2);
+  console.error(`[capture] ${options.wsl}: the agent runs in ${linuxCwd}; the distro's clock is ${clockSkewMs} ms off this computer's, taken off the trail`);
+  return {
+    place,
+    linuxCwd,
+    clockSkewMs,
+    // `claude` by name: `env` finds it on the interactive PATH it was just given, as a shell would.
+    invocation: (cliArgs) => cliTarget.cliInvocationForTarget({ ...place, linuxCliPath: 'claude' }, cliArgs, WSL_AGENT_ENV),
+    agentHome: { home: facts.homeUnc, cwd: linuxCwd },
+    identity: { user, host, home: facts.homeLinux, homeUnc: facts.homeUnc, linuxCwd: linuxScratch },
+    runGit: (args) => runInDistro(['git', '-C', linuxCwd, ...args]),
+    /**
+     * The processes still running in the agent's folder once its terminal is closed. The exit
+     * sequence ends Claude in a distro the way it ends a WSL session's (typed, never just closed:
+     * .claude/rules/pty-teardown-grace.md), so one left here is an agent that missed it, and it
+     * would go on editing the clone under the next capture.
+     */
+    leftoverProcesses: () => runInDistro(['sh', '-c', 'for entry in /proc/[0-9]*; do folder=$(readlink "$entry/cwd" 2>/dev/null) || continue; case "$folder" in "$1"|"$1"/*) echo "${entry#/proc/} $(cat "$entry/comm")";; esac; done', 'sh', linuxCwd])
+      .split('\n').map((line) => line.trim()).filter((line) => line.length > 0),
+    hangUp: (pids) => runInDistro(['kill', '-HUP', ...pids]),
+  };
+}
+
+/**
+ * Wait for what the exit sequence left in the agent's folder to end by itself, then hang it up,
+ * the graceful exit measured for Claude on Linux (pty-teardown-grace.md). Reported either way.
+ */
+async function settleWslLeftovers(wsl, sleep) {
+  for (let waited = 0; waited < 5000; waited += 500) {
+    if (wsl.leftoverProcesses().length === 0) return;
+    await sleep(500);
+  }
+  const leftovers = wsl.leftoverProcesses();
+  if (leftovers.length === 0) return;
+  console.error(`[capture] still running in ${wsl.linuxCwd} after the exit sequence: ${leftovers.join(', ')}; hanging them up`);
+  try {
+    wsl.hangUp(leftovers.map((line) => line.split(' ')[0]));
+  } catch (error) {
+    console.error(`[capture] the hangup failed (${error.message}); end them before the next capture`);
+  }
+}
+
 // ---------------------------------------------------------------- main
 /**
  * This script starts `kimi` with no arguments, and on the archived kimi-cli 1.52 that downloads
@@ -428,10 +587,12 @@ async function main() {
   }
   const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume, { mcpConfig: options.mcpConfig, settings: options.settings, readOnly: options.readOnly });
   if (options.agent === 'kimi') refuseArchivedKimi();
-  if (options.trust) await seedTrust(options.agent, options.cwd);
+  const wsl = options.wsl ? await resolveWslLaunch(options) : null;
+  if (options.trust) await seedTrust(options.agent, options.cwd, wsl ? wsl.place : null);
   // A worktree run rewrites the clone it sits in, so the worktree keeps its own path under the
-  // project's home (C:\Users\dev\work\contoso-web\.kangentic\worktrees\<folder>).
-  const sanitizer = buildSanitizer({ ...options, cwd: options.scratchRoot || options.cwd });
+  // project's home (C:\Users\dev\work\contoso-web\.kangentic\worktrees\<folder>). A distro run's
+  // clone becomes the host folder (--demo-path).
+  const sanitizer = buildSanitizer({ ...options, cwd: options.scratchRoot || options.cwd, wsl: wsl ? wsl.identity : null, demoPath: options.demoPath });
 
   console.error(`[capture] ${options.agent} in ${options.cwd} (${options.cols}x${options.rows})`);
   console.error(`[capture] ${command.exe} ${command.args.map((value) => (value.includes(' ') ? JSON.stringify(value) : value)).join(' ')}`);
@@ -450,14 +611,24 @@ async function main() {
   // /exit, "press Ctrl-C again", a resume hint) are not part of the session being shown.
   let recording = true;
 
-  const spawnable = toSpawnable(command.exe, command.args);
-  console.error(`[capture] spawning ${spawnable.file}`);
-  const child = pty.spawn(spawnable.file, spawnable.args, {
+  // In a distro the agent is wsl.exe's child, started in its folder by --cd; wsl.exe itself starts
+  // in this computer's home, since a share path is no folder a Windows process can start in.
+  const launch = wsl
+    ? (() => {
+      const invocation = wsl.invocation(command.args);
+      return { file: invocation.file, args: wslSpawnArgs(invocation.args, wsl.linuxCwd), cwd: os.homedir(), env: { ...buildEnv(), ...invocation.env } };
+    })()
+    : (() => {
+      const spawnable = toSpawnable(command.exe, command.args);
+      return { file: spawnable.file, args: spawnable.args, cwd: options.cwd, env: buildEnv() };
+    })();
+  console.error(`[capture] spawning ${launch.file}`);
+  const child = pty.spawn(launch.file, launch.args, {
     name: 'xterm-256color',
     cols: options.cols,
     rows: options.rows,
-    cwd: options.cwd,
-    env: buildEnv(),
+    cwd: launch.cwd,
+    env: launch.env,
   });
 
   child.onData((data) => {
@@ -576,6 +747,7 @@ async function main() {
       await Promise.race([exitPromise, sleep(1500)]);
     }
   }
+  if (wsl) await settleWslLeftovers(wsl, sleep);
   // Each stage announces itself: a capture that stalls after the recording ended (seen on long
   // Codex sessions) is then a named stage in the matrix log, not a silent watchdog kill.
   console.error(`[capture] exit sequence done (agent ${exited ? 'exited' : 'still running'})`);
@@ -629,7 +801,7 @@ async function main() {
   console.error(`[capture] peek timeline: ${peekTimeline.length} change(s) across ${recordedSeconds}s`);
   console.error(`[capture] frame timeline: ${frameTimeline.length} frame(s) across ${recordedSeconds}s`);
 
-  const changes = collectChanges(options.cwd, sanitizer);
+  const changes = wsl ? collectChanges(options.cwd, sanitizer, wsl.runGit) : collectChanges(options.cwd, sanitizer);
   for (const file of changes.files) {
     sanitizer.assertClean(file.original, `changes ${file.path} (original)`);
     sanitizer.assertClean(file.modified, `changes ${file.path} (modified)`);
@@ -639,8 +811,10 @@ async function main() {
   let agentVersion = null;
   try {
     const { execFileSync } = require('node:child_process');
-    const probe = toSpawnable(command.exe, ['--version']);
-    agentVersion = execFileSync(probe.file, probe.args, { encoding: 'utf-8', env: buildEnv(), timeout: 20000 }).trim().split('\n')[0];
+    const probe = wsl
+      ? (() => { const invocation = wsl.invocation(['--version']); return { file: invocation.file, args: invocation.args, env: { ...buildEnv(), ...invocation.env } }; })()
+      : { ...toSpawnable(command.exe, ['--version']), env: buildEnv() };
+    agentVersion = execFileSync(probe.file, probe.args, { encoding: 'utf-8', env: probe.env, timeout: 20000 }).trim().split('\n')[0];
   } catch { agentVersion = null; }
   console.error(`[capture] agent version: ${agentVersion || 'unknown'}`);
 
@@ -663,7 +837,10 @@ async function main() {
       transcript = await extract.extractTranscript(
         { agent: options.agent, prompt: options.prompt, capturedAt, durationMs },
         options.cwd,
+        wsl ? wsl.agentHome : undefined,
       );
+      // The recording's first millisecond on the distro's clock, which stamped the transcript.
+      if (transcript && wsl) transcript = { ...transcript, startMs: transcript.startMs + wsl.clockSkewMs };
       if (options.messageTrail) {
         const derived = transcript ? extract.buildMessageTrail(transcript.entries, transcript.startMs, durationMs) : [];
         // Validate into a local first, and adopt it only once every entry has passed. Assigning
@@ -782,4 +959,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, serializeThroughXterm, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS };
+module.exports = { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, serializeThroughXterm, wslSpawnArgs, withoutDriveMounts, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS, WSL_AGENT_ENV };

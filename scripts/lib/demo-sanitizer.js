@@ -33,15 +33,65 @@ function stripAccountLinks(text) {
 }
 
 /**
+ * An email address other than the placeholder domain. tests/unit/demo-fixtures-sanitized.test.ts
+ * scans every committed fixture with this same pattern, so a capture refuses at record time what CI
+ * would refuse at the push (an author line `git show` printed, for one).
+ */
+const FIXTURE_EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@(?!example\.com\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
+/**
+ * Notices a CLI prints about the recording machine's own install rather than the session: a
+ * launch announcement for a new model, the hint to install the GitHub CLI, and the notices after
+ * an update. None is part of the work a recording shows, and editing one out of a recorded
+ * stream would leave the rows around it wrong, so a capture that carries one is made again.
+ * Matched with every space and escape removed, because a full-screen CLI repaints a row as cell
+ * diffs whose words arrive with cursor moves between them.
+ */
+const MACHINE_NOTICES = [
+  ['a model launch announcement', /Switchwith\/model/i],
+  ['the hint to install the GitHub CLI', /installghfor/i],
+  ['an update notice', /Updateinstalled|Restarttoupdate|Updated:\d+features|changelogfordetails/i],
+];
+
+/**
+ * What says a recording was made in a WSL distro on Windows, which the sample install's Linux host
+ * is not: a Windows drive mounted into the distro, the subsystem's name, its kernel's release
+ * string, and the share Windows reaches a distro through.
+ */
+const WSL_MARKERS = [
+  ['a Windows drive mounted into the distro', /\/mnt\/[a-z]\//i],
+  ['the name of the Windows Subsystem for Linux', /\bWSL2?\b|microsoft-standard|wsl\.localhost|\\\\wsl\$/],
+];
+
+/** Text as a terminal shows it, with every space and escape sequence removed. */
+function compactText(text) {
+  return text
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\s+/g, '');
+}
+
+/**
  * Build the rewriter for one capture.
  *
  * `options.project` is the sample install's project name (contoso-web, spring-petclinic,
  * online-boutique) and `options.cwd` is the scratch directory the agent actually ran in.
+ *
+ * A capture in a WSL distro (`options.wsl`) records a project on the sample install's Linux host,
+ * so its target is the POSIX folder `options.demoPath` (/home/dev/redis), and the distro's own
+ * identity goes: its user becomes "dev", its home /home/dev, and its host name build-box, the
+ * host's address in the SSH tab. `options.wsl` carries `user`, `host`, `home` (the distro's
+ * $HOME), `homeUnc` (that home as Windows reaches it) and `linuxCwd` (the scratch clone as the
+ * distro sees it; `options.cwd` is the same folder as Windows reaches it).
  */
 function buildSanitizer(options) {
   const home = os.homedir();
   const user = os.userInfo().username;
   const host = os.hostname();
+  const wsl = options.wsl || null;
+  if (wsl && !(typeof options.demoPath === 'string' && options.demoPath.startsWith('/'))) {
+    throw new Error('[capture] a WSL capture needs the POSIX folder it stands for (demoPath)');
+  }
   // The sample install is a Windows machine, as the recording machine and the mock's platform
   // are, so every agent's PowerShell tool calls, backslash paths, and .bat scripts stay
   // consistent with the home directory they print. Only the identity changes: the user is
@@ -49,7 +99,7 @@ function buildSanitizer(options) {
   const demoGroup = options.project === 'contoso-web' ? 'work' : 'oss';
   const demoHome = 'C:\\Users\\dev';
   const demoHomeRelative = `${demoGroup}\\${options.project}`;
-  const demoPath = `${demoHome}\\${demoHomeRelative}`;
+  const demoPath = wsl ? options.demoPath : `${demoHome}\\${demoHomeRelative}`;
   const demoTemp = `${demoHome}\\AppData\\Local\\Temp`;
   // Agents print the cwd relative to the home directory too ("~\AppData\Local\Temp\...").
   const homeRelative = path.relative(home, options.cwd);
@@ -58,7 +108,23 @@ function buildSanitizer(options) {
   // the directory in its status box ("~\AppData\Local\...\kng-demo\<project>").
   const doubled = (value) => value.replace(/\\/g, '\\\\');
   const scratchParent = path.basename(path.dirname(options.cwd));
+  // The distro's own identity, ahead of the Windows one: a distro takes this computer's host name
+  // by default, and on a Linux host that name is build-box, not the Windows install's DEV-PC.
+  const posixDemoHome = '/home/dev';
+  const distroReplacements = wsl ? [
+    [wsl.linuxCwd, demoPath],
+    [`~/${path.posix.relative(wsl.home, wsl.linuxCwd)}`, `~/${path.posix.relative(posixDemoHome, demoPath)}`],
+    [options.cwd, demoPath],
+    [forwardSlash(options.cwd), demoPath],
+    [wsl.homeUnc, posixDemoHome],
+    [forwardSlash(wsl.homeUnc), posixDemoHome],
+    [wsl.home, posixDemoHome],
+    [`/home/${wsl.user}`, posixDemoHome],
+    [wsl.host, 'build-box'],
+    [wsl.user, 'dev'],
+  ] : [];
   const replacements = [
+    ...distroReplacements,
     [options.cwd, demoPath],
     [doubled(options.cwd), doubled(demoPath)],
     [forwardSlash(options.cwd), forwardSlash(demoPath)],
@@ -114,6 +180,12 @@ function buildSanitizer(options) {
     ['the capture scratch root', /kng-demo/],
     [`the user name "${user}"`, new RegExp(`\\b${escape(user)}\\b`, 'i')],
     [`the host name "${host}"`, new RegExp(`\\b${escape(host)}\\b`, 'i')],
+    ['an email address', FIXTURE_EMAIL_PATTERN],
+    ...(wsl ? [
+      [`the distro's user name "${wsl.user}"`, new RegExp(`\\b${escape(wsl.user)}\\b`, 'i')],
+      [`the distro's host name "${wsl.host}"`, new RegExp(`\\b${escape(wsl.host)}\\b`, 'i')],
+      ...WSL_MARKERS,
+    ] : []),
   ];
   return {
     apply(text) {
@@ -141,6 +213,12 @@ function buildSanitizer(options) {
           throw new Error(`[capture] ${label} still contains ${what} after sanitization; refusing to write. Context: ${context}`);
         }
       }
+      const compact = compactText(text);
+      for (const [what, pattern] of MACHINE_NOTICES) {
+        if (pattern.test(compact)) {
+          throw new Error(`[capture] ${label} carries ${what}, a notice about the recording machine's install; record it again without it`);
+        }
+      }
     },
   };
 }
@@ -162,4 +240,4 @@ function sanitizeDeep(value, sanitizer) {
   return value;
 }
 
-module.exports = { buildSanitizer, forwardSlash, sanitizeDeep, stripAccountLinks };
+module.exports = { buildSanitizer, forwardSlash, sanitizeDeep, stripAccountLinks, FIXTURE_EMAIL_PATTERN, MACHINE_NOTICES, WSL_MARKERS };

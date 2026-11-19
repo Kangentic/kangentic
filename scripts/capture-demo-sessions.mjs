@@ -44,12 +44,22 @@
  * for the scaffolded work project. Each run is independent: a failed capture is reported and the
  * next one starts.
  *
+ * A repo the manifest marks `linux` is a scene-only project on the sample install's Linux host
+ * (DEMO_SCENE_PROJECTS, redis). Its agent has to run as a Linux process, so its clone, its resets,
+ * its task worktrees and the agent itself all live in a WSL distro named on the command line with
+ * --wsl, never in the repo. The clone sits at the host folder's place under the distro's home
+ * (~/redis for /home/dev/redis), checked out at the commit the manifest pins on the repository's
+ * own default branch. A session whose task has a worktree runs in it, made fresh from that branch
+ * as main makes a task's worktree on a host, so its terminal shows the folder a host session does.
+ * Without --wsl, those entries are skipped and said so.
+ *
  *   node scripts/capture-demo-sessions.mjs                  every recording
  *   node scripts/capture-demo-sessions.mjs --only codex     recordings whose file name contains "codex"
  *                                                            (a comma-separated list matches any of them)
  *   node scripts/capture-demo-sessions.mjs --skip-existing  keep recordings that already exist
  *   node scripts/capture-demo-sessions.mjs --root <dir>     scratch root (default: the home directory;
  *                                                            the clones land at ~\work\... and ~\oss\...)
+ *   node scripts/capture-demo-sessions.mjs --wsl <distro>   the distro a `linux` repo records in
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -78,6 +88,18 @@ const skipExisting = argv.includes('--skip-existing');
 // truncated path can only be rewritten if the part that survives is already the final text; that
 // leaves the sanitizer one job, the home prefix. --root moves them, at the cost of that property.
 const scratchRoot = readFlag('--root') ?? os.homedir();
+// The WSL distro a `linux` repo records in: a fact of the recording machine, so a flag and never a
+// value in the manifest.
+const wslDistro = readFlag('--wsl');
+
+/** The install's projects and the scene-only ones, which the matrix records alike. */
+const ALL_PROJECTS = [...dataset.DEMO_PROJECTS, ...dataset.DEMO_SCENE_PROJECTS];
+
+function projectNamed(name) {
+  const project = ALL_PROJECTS.find((candidate) => candidate.name === name);
+  if (!project) throw new Error(`[matrix] ${name} is not a project in the dataset`);
+  return project;
+}
 
 /** The project's directory relative to the home directory, straight from the dataset's paths. */
 function homeRelativePath(project) {
@@ -105,14 +127,17 @@ function laneOf(task) {
   return (dataset.DEMO_LANES_BY_PROJECT[task.projectId] || []).find((lane) => lane.slug === task.lane) || null;
 }
 
-/** The spawn boots: one per task with no session, per mode it can be dragged into. */
+/**
+ * The spawn boots: one per task with no session, per mode it can be dragged into. A scene-only
+ * card a visitor can drag gets them too, on its own project.
+ */
 function derivedSpawnEntries() {
   const entries = [];
-  for (const task of dataset.DEMO_TASKS) {
+  for (const task of dataset.DEMO_ALL_TASKS) {
     if (task.session_id || task.archivedDaysAgo) continue;
     const lane = laneOf(task);
     if (!lane || lane.role === 'done') continue;
-    const project = dataset.DEMO_PROJECTS.find((candidate) => candidate.id === task.projectId);
+    const project = ALL_PROJECTS.find((candidate) => candidate.id === task.projectId);
     // A task pin wins, then the column's own agent, then the project default (the app's order).
     const agent = task.agent || lane.agent || project.default_agent;
     // The default spawn_agent template is {{title}}{{description}}{{attachments}}, and the
@@ -144,7 +169,7 @@ function derivedSpawnEntries() {
  * spawn time.
  */
 function derivedTerminalEntries() {
-  return dataset.DEMO_PROJECTS.flatMap((project) => ['single', 'tiled'].map((layout) => ({
+  return ALL_PROJECTS.flatMap((project) => ['single', 'tiled'].map((layout) => ({
     kind: 'terminal',
     layout,
     file: layout === 'single' ? `terminal-${project.id}.json` : `terminal-${project.id}-tiled.json`,
@@ -314,13 +339,89 @@ function withoutRigExit(historyText) {
   return lines.filter((_, index) => !drop.has(index)).join('\n');
 }
 
-function prepareRepo(name, spec) {
-  const project = dataset.DEMO_PROJECTS.find((candidate) => candidate.name === name);
-  if (!project) throw new Error(`[matrix] ${name} is not a project in the dataset`);
+/** Run a program in the `--wsl` distro, its output returned, or streamed when `inherit` is set. */
+function inDistro(args, { inherit = false } = {}) {
+  return execFileSync('wsl.exe', ['-d', wslDistro, '-e', ...args], {
+    encoding: 'utf-8',
+    env: { ...process.env, WSL_UTF8: '1' },
+    stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+let distroFactsReading = null;
+/** The `--wsl` distro's home, as it sees it and as Windows reaches it (the app's own read). */
+function distroFacts() {
+  if (!distroFactsReading) {
+    distroFactsReading = importTsModule(path.join(repoRoot, 'src', 'main', 'agent', 'shared', 'wsl-distro.ts'))
+      .then((module) => module.resolveWslDistroFacts(wslDistro));
+  }
+  return distroFactsReading;
+}
+
+/**
+ * A `linux` repo's clone in the distro, at the host folder's place under the distro's home, on the
+ * commit the manifest pins, under the branch name the repository itself uses. Its task worktrees
+ * live in .kangentic/, which git is told to ignore so a reset and a clean leave them be.
+ */
+async function prepareLinuxRepo(project, spec) {
+  if (!spec.git || !spec.commit || !spec.branch) throw new Error(`[matrix] the linux repo ${project.name} needs git, commit and branch`);
+  const facts = await distroFacts();
+  const relative = path.posix.relative('/home/dev', project.remote.path);
+  if (relative.startsWith('..')) throw new Error(`[matrix] ${project.name}'s host folder ${project.remote.path} is not under /home/dev`);
+  const root = path.posix.join(facts.homeLinux, relative);
+  const share = path.win32.join(facts.homeUnc, ...relative.split('/'));
+  if (!fs.existsSync(path.join(share, '.git'))) {
+    console.error(`[matrix] ${project.name}: cloning ${spec.git} into the ${wslDistro} distro`);
+    inDistro(['git', 'clone', '-q', '--depth', '1', '--no-checkout', spec.git, root], { inherit: true });
+  }
+  try {
+    inDistro(['git', '-C', root, 'cat-file', '-e', `${spec.commit}^{commit}`]);
+  } catch {
+    console.error(`[matrix] ${project.name}: fetching ${spec.commit}`);
+    inDistro(['git', '-C', root, 'fetch', '-q', '--depth', '1', 'origin', spec.commit], { inherit: true });
+  }
+  inDistro(['git', '-C', root, 'checkout', '-q', '-f', '-B', spec.branch, spec.commit]);
+  const excludePath = path.join(share, '.git', 'info', 'exclude');
+  const excluded = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf-8') : '';
+  if (!excluded.split(/\r?\n/).includes('.kangentic/')) {
+    fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+    fs.writeFileSync(excludePath, `${excluded.trimEnd()}\n.kangentic/\n`.replace(/^\n/, ''));
+  }
+  console.error(`[matrix] ${project.name}: ${root} in ${wslDistro} at ${spec.branch} ${spec.commit.slice(0, 12)}`);
+  return { cwd: share, linux: { root, project, branch: spec.branch } };
+}
+
+/**
+ * The worktree a session on a `linux` repo runs in, made fresh from the repo's branch as main makes
+ * a task's worktree on a host (.kangentic/worktrees/<folder>, the task's own branch). Null for a
+ * session whose task has none, and for every boot: a boot runs in the project's folder, as a new
+ * terminal does.
+ */
+function linuxSessionWorktree(entry, repo) {
+  if (entry.kind !== 'session') return null;
+  const session = dataset.findDemoSession(entry.sessionId);
+  const task = session && session.taskId ? dataset.DEMO_ALL_TASKS.find((candidate) => candidate.id === session.taskId) : null;
+  if (!task || !task.worktree_folder || !task.branch_name) return null;
+  const folder = `${repo.linux.root}/.kangentic/worktrees/${task.worktree_folder}`;
+  try {
+    inDistro(['git', '-C', repo.linux.root, 'worktree', 'remove', '--force', folder]);
+  } catch {
+    // Not there yet: the first run of this entry.
+  }
+  inDistro(['git', '-C', repo.linux.root, 'worktree', 'prune']);
+  inDistro(['git', '-C', repo.linux.root, 'worktree', 'add', '-q', '-f', '-B', task.branch_name, folder, task.base_branch || repo.linux.branch]);
+  return path.win32.join(repo.cwd, '.kangentic', 'worktrees', task.worktree_folder);
+}
+
+/** A scratch repo, and for a `linux` repo where it lives in the distro. */
+async function prepareRepo(name, spec) {
+  const project = projectNamed(name);
+  if (spec.linux) return prepareLinuxRepo(project, spec);
   const target = path.join(scratchRoot, homeRelativePath(project));
   if (fs.existsSync(path.join(target, '.git'))) {
     console.error(`[matrix] ${name}: scratch repo present at ${target}`);
-    return target;
+    return { cwd: target, linux: null };
   }
   fs.mkdirSync(path.dirname(target), { recursive: true });
   if (spec.git) {
@@ -339,7 +440,7 @@ function prepareRepo(name, spec) {
   } else {
     throw new Error(`[matrix] repo ${name} has neither git nor scaffold`);
   }
-  return target;
+  return { cwd: target, linux: null };
 }
 
 /**
@@ -363,14 +464,23 @@ function refreshScaffold(name, spec, target) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Every capture starts from the committed tree so one agent's edits never leak into the next. */
-async function resetRepo(target) {
+/**
+ * Every capture starts from the committed tree so one agent's edits never leak into the next. A
+ * `linux` repo is reset by the distro's own git, whose index this computer's git reads differently.
+ */
+async function resetRepo(repo) {
+  const target = repo.cwd;
   // A just-killed agent can still hold a file for a moment on Windows; retry before giving up,
   // and never let a reset failure take the whole matrix down.
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const lockPath = path.join(target, '.git', 'index.lock');
       if (fs.existsSync(lockPath)) fs.rmSync(lockPath, { force: true });
+      if (repo.linux) {
+        inDistro(['git', '-C', repo.linux.root, 'reset', '--hard', '-q']);
+        inDistro(['git', '-C', repo.linux.root, 'clean', '-fdq']);
+        return;
+      }
       execFileSync('git', ['reset', '--hard', '-q'], { cwd: target, stdio: 'ignore' });
       execFileSync('git', ['clean', '-fdq', '-e', 'node_modules'], { cwd: target, stdio: 'ignore' });
       return;
@@ -534,7 +644,18 @@ for (const entry of entries) {
     continue;
   }
   const spec = manifest.repos[entry.project];
-  const cwd = prepareRepo(entry.project, spec);
+  if (spec.linux && !wslDistro) {
+    console.error(`[matrix] ${entry.file}: ${entry.project} records in a WSL distro; name it with --wsl <distro>. Skipped`);
+    results.push({ file: entry.file, status: 'needs --wsl' });
+    continue;
+  }
+  if (spec.linux && (entry.mcp || entry.kind === 'resume' || entry.kind === 'send' || entry.kind === 'workflow')) {
+    console.error(`[matrix] ${entry.file}: a ${entry.kind}${entry.mcp ? ' with MCP' : ''} capture has no launch through a distro; skipped`);
+    results.push({ file: entry.file, status: 'failed (no distro launch)' });
+    continue;
+  }
+  const repo = await prepareRepo(entry.project, spec);
+  const cwd = repo.cwd;
   if (!refreshed.has(entry.project)) {
     refreshScaffold(entry.project, spec, cwd);
     refreshed.add(entry.project);
@@ -549,7 +670,7 @@ for (const entry of entries) {
     }
     entry.resume = history.sessionId;
   }
-  await resetRepo(cwd);
+  await resetRepo(repo);
   console.error(`\n[matrix] ${entry.file}: ${entry.agent} on ${entry.project}${entry.kind === 'session' ? '' : ` (${entry.kind} boot)`}`);
   // A resume records against the history file with the rig's /exit dropped, and the original goes
   // back byte for byte afterwards, which also undoes whatever the resume appended: the committed
@@ -585,6 +706,17 @@ for (const entry of entries) {
     }
     // A workflow agent's prompt is the first message the preview built for its workflow.
     if (mcp && mcp.prompt !== undefined) entry.prompt = mcp.prompt;
+    if (code === undefined && repo.linux) {
+      // In the distro, in the task's worktree where it has one; the clone stands for the host folder.
+      try {
+        const worktree = linuxSessionWorktree(entry, repo);
+        const distroArgs = ['--wsl', wslDistro, '--demo-path', repo.linux.project.remote.path, ...(worktree ? ['--scratch-root', cwd] : [])];
+        code = await runCapture(entry, worktree || cwd, distroArgs);
+      } catch (error) {
+        console.error(`[matrix] ${entry.file}: ${error.message ?? error}`);
+        code = 'prepare';
+      }
+    }
     if (code === undefined) {
       if (mcp) code = await runCapture(entry, mcp.cwd, mcp.args);
       else if (send) code = await runCapture(entry, cwd, ['--paste-file', send.payloadPath]);
@@ -613,7 +745,7 @@ for (const entry of entries) {
     }
   }
   results.push({ file: entry.file, status: code === 0 ? 'captured' : `failed (${code})` });
-  await resetRepo(cwd);
+  await resetRepo(repo);
 }
 
 console.error('\n[matrix] summary');

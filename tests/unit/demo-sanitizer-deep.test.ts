@@ -10,12 +10,72 @@
 import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 
+interface DistroIdentity {
+  user: string;
+  host: string;
+  home: string;
+  homeUnc: string;
+  linuxCwd: string;
+}
+
 const require = createRequire(import.meta.url);
 const { sanitizeDeep, stripAccountLinks, buildSanitizer } = require('../../scripts/lib/demo-sanitizer.js') as {
   sanitizeDeep: (value: unknown, sanitizer: { apply: (text: string) => string }) => unknown;
   stripAccountLinks: (text: string) => string;
-  buildSanitizer: (options: { project: string; cwd: string }) => { apply: (text: string) => string; assertClean: (text: string, label: string) => void };
+  buildSanitizer: (options: { project: string; cwd: string; wsl?: DistroIdentity | null; demoPath?: string | null }) => { apply: (text: string) => string; assertClean: (text: string, label: string) => void };
 };
+
+describe('a capture in a WSL distro', () => {
+  // A distro whose user and host are not the recording machine's, so what rewrites them is the
+  // distro identity and not the Windows one.
+  const identity: DistroIdentity = {
+    user: 'someone',
+    host: 'somebox',
+    home: '/home/someone',
+    homeUnc: '\\\\wsl.localhost\\Distro\\home\\someone',
+    linuxCwd: '/home/someone/redis',
+  };
+  const sanitizer = buildSanitizer({ project: 'redis', cwd: '\\\\wsl.localhost\\Distro\\home\\someone\\redis', wsl: identity, demoPath: '/home/dev/redis' });
+
+  it('turns the clone into the host folder and the distro into the sample host', () => {
+    expect(sanitizer.apply('cd /home/someone/redis/.kangentic/worktrees/one; git log')).toBe('cd /home/dev/redis/.kangentic/worktrees/one; git log');
+    expect(sanitizer.apply('someone@somebox:~/redis$ ls /home/someone/.claude')).toBe('dev@build-box:~/redis$ ls /home/dev/.claude');
+    // A path the terminal wrapped mid-word is one path again.
+    expect(sanitizer.apply('/home/some\x1b[1Cone/redis/src')).toBe('/home/dev/redis/src');
+    expect(() => sanitizer.assertClean(sanitizer.apply('/home/someone/redis on somebox'), 'frame')).not.toThrow();
+  });
+
+  it('needs the host folder it stands for', () => {
+    expect(() => buildSanitizer({ project: 'redis', cwd: '\\\\wsl.localhost\\Distro\\home\\someone\\redis', wsl: identity })).toThrow(/POSIX folder/);
+  });
+
+  it('refuses what says the recording was made in a distro on Windows', () => {
+    expect(() => sanitizer.assertClean('PATH=/usr/bin:/mnt/c/Windows/system32', 'stream')).toThrow(/Windows drive mounted/);
+    expect(() => sanitizer.assertClean('Linux 5.15.167.4-microsoft-standard-WSL2', 'stream')).toThrow(/Windows Subsystem for Linux/);
+    expect(() => sanitizer.assertClean('running under WSL', 'stream')).toThrow(/Windows Subsystem for Linux/);
+  });
+
+  it('refuses an email address with the pattern the fixture scan uses, and keeps the host address', () => {
+    expect(() => sanitizer.assertClean('Author: Some One <someone@mail.example.org>', 'changes')).toThrow(/an email address/);
+    expect(() => sanitizer.assertClean('ssh dev@build-box', 'stream')).not.toThrow();
+    expect(() => sanitizer.assertClean('Author: Dev <dev@example.com>', 'changes')).not.toThrow();
+  });
+});
+
+describe('notices about the recording machine\'s install', () => {
+  const sanitizer = buildSanitizer({ project: 'contoso-web', cwd: process.cwd() });
+
+  it('refuses each one, also when a repaint split its words with cursor moves', () => {
+    expect(() => sanitizer.assertClean('  Fable 5.2 is here for your longest tasks. Switch with /model.', 'stream')).toThrow(/model launch announcement/);
+    expect(() => sanitizer.assertClean('✻install\x1b[1Cgh\x1b[1Cfor PR status', 'stream')).toThrow(/install the GitHub CLI/);
+    expect(() => sanitizer.assertClean('Updated: 26 features, 422 fixes', 'stream')).toThrow(/update notice/);
+    expect(() => sanitizer.assertClean('Update installed · Restart to update', 'stream')).toThrow(/update notice/);
+  });
+
+  it('leaves an ordinary session alone', () => {
+    expect(() => sanitizer.assertClean('● Bash(gh pr view 42)\n  ⎿  Update the README', 'stream')).not.toThrow();
+  });
+});
 
 describe('stripAccountLinks', () => {
   // Claude's footer as a recording carries it: "/rc" linked to the account's own session.

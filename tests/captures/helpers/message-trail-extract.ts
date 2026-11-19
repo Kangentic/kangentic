@@ -62,6 +62,17 @@ export const AGENTS_WITHOUT_TRANSCRIPTS: Readonly<Record<string, string>> = Obje
 /** Thrown when a transcript cannot be identified. Never guessed at: the caller reports and stops. */
 export class TranscriptMatchError extends Error {}
 
+/**
+ * Where an agent that did not run as this computer's user kept its transcript: a CLI in a WSL
+ * distro, recorded for a project on a Linux host. `home` is the agent's home as this computer
+ * reaches it (the distro's share), and `cwd` the folder the agent ran in as it saw it, which names
+ * the history folder. Left out, both are this computer's.
+ */
+export interface AgentHome {
+  home: string;
+  cwd: string;
+}
+
 /** How far a transcript's start may sit from the recording's and still be the same run. */
 const START_TOLERANCE_MS = 120_000;
 /** How much of the prompt has to appear in the first user message for a match to count. */
@@ -146,8 +157,8 @@ function readDirSafely(directory: string): string[] {
   }
 }
 
-async function claudeCandidates(cwd: string): Promise<{ candidates: Candidate[]; where: string }> {
-  const directory = path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd));
+async function claudeCandidates(cwd: string, agentHome?: AgentHome): Promise<{ candidates: Candidate[]; where: string }> {
+  const directory = path.join(agentHome?.home ?? os.homedir(), '.claude', 'projects', claudeProjectSlug(agentHome?.cwd ?? cwd));
   const candidates: Candidate[] = [];
   for (const name of readDirSafely(directory)) {
     if (!name.endsWith('.jsonl')) continue;
@@ -252,19 +263,25 @@ export interface ExtractedTranscript {
  * The transcript behind one recording, or `null` when the agent has no transcript at all.
  *
  * `cwd` is the directory the agent ran in during the capture (`~/work/<repo>`, `~/oss/<repo>`).
+ * `agentHome` names the home and folder of an agent that ran in a WSL distro (Claude only).
  * Throws `TranscriptMatchError` when a trail-capable agent's transcript cannot be identified.
  * This is the whole run, every entry main's parser produces; the trail below is one derivation
  * of it, and the conversation viewer's seed is another (scripts/backfill-demo-transcripts.mjs).
  */
-export async function extractTranscript(facts: RecordingFacts, cwd: string): Promise<ExtractedTranscript | null> {
+export async function extractTranscript(facts: RecordingFacts, cwd: string, agentHome?: AgentHome): Promise<ExtractedTranscript | null> {
   if (facts.agent in AGENTS_WITHOUT_TRANSCRIPTS) return null;
   const capturedAtMs = Date.parse(facts.capturedAt);
   if (!Number.isFinite(capturedAtMs)) throw new TranscriptMatchError(`unparseable capturedAt ${facts.capturedAt}`);
   const startMs = capturedAtMs - facts.durationMs;
+  // Only Claude's history has been read from a distro; another agent's would be read from this
+  // computer's home and match nothing, which reads as a missing transcript rather than the reason.
+  if (agentHome && facts.agent !== 'claude') {
+    throw new TranscriptMatchError(`no transcript reader for a ${facts.agent} run in a WSL distro`);
+  }
 
   let found: { candidates: Candidate[]; where: string };
   switch (facts.agent) {
-    case 'claude': found = await claudeCandidates(cwd); break;
+    case 'claude': found = await claudeCandidates(cwd, agentHome); break;
     case 'codex': found = await codexCandidates(startMs); break;
     case 'gemini': found = await geminiCandidates(cwd); break;
     case 'opencode': found = await openCodeCandidates(cwd, startMs); break;
@@ -353,8 +370,9 @@ export function transcriptWithinRecording(entries: readonly TranscriptEntry[], s
 export async function extractMessageTrail(
   facts: RecordingFacts,
   cwd: string,
+  agentHome?: AgentHome,
 ): Promise<RecordedMessageTrailEntry[] | null> {
-  const transcript = await extractTranscript(facts, cwd);
+  const transcript = await extractTranscript(facts, cwd, agentHome);
   if (!transcript) return null;
   return buildMessageTrail(transcript.entries, transcript.startMs, facts.durationMs);
 }

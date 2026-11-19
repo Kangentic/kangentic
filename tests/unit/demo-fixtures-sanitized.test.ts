@@ -10,7 +10,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+
+// The capture refuses an email at record time with this same pattern (scripts/lib/demo-sanitizer.js).
+const { FIXTURE_EMAIL_PATTERN } = createRequire(import.meta.url)('../../scripts/lib/demo-sanitizer.js') as { FIXTURE_EMAIL_PATTERN: RegExp };
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FIXTURES_DIR = path.join(REPO_ROOT, 'tests', 'captures', 'fixtures', 'demo');
@@ -26,7 +30,7 @@ const FORBIDDEN_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: 'a Windows home directory', pattern: /C:[\\/]+Users[\\/]+(?!dev\b)[A-Za-z0-9._-]+/ },
   { label: 'a macOS home directory', pattern: /\/Users\/(?!dev\b)[A-Za-z0-9._-]+/ },
   { label: 'a Linux home directory other than /home/dev', pattern: /\/home\/(?!dev\b)[A-Za-z0-9._-]+/ },
-  { label: 'an email address', pattern: /[A-Za-z0-9._%+-]+@(?!example\.com\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/ },
+  { label: 'an email address', pattern: FIXTURE_EMAIL_PATTERN },
   // The sample install is a Windows machine whose user is "dev", so C:\Users\dev\AppData\Local\Temp
   // is a legitimate path; only the capture rig's scratch root under it may never appear.
   { label: 'the capture scratch directory', pattern: /kng-demo/ },
