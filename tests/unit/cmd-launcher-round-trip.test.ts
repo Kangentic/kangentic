@@ -30,6 +30,7 @@ import { CommandBuilder } from '../../src/main/agent/adapters/claude';
 import { directLaunchOfBatchShim } from '../../src/main/agent/shared/npm-shim-target';
 import { classifyLaunchOutput } from '../../src/main/pty/agent-launch-report';
 import { buildTypedLaunch, type TypedLaunch } from '../../src/main/pty/spawn/typed-launch';
+import { stripAnsiControlCodes } from '../../src/shared/ansi-strip';
 import { quoteArg } from '../../src/shared/paths';
 
 const CMD = 'cmd.exe';
@@ -62,10 +63,32 @@ const NPM_STYLE_SHIM = [
   '',
 ].join('\r\n');
 
+/**
+ * A hand-written trampoline: a `.cmd` that hands the `.ps1` beside it to Windows
+ * PowerShell, the one every Windows has. Its execution policy flag is the
+ * shim's own, so the launch that starts what it starts carries it too, and
+ * this runs under whatever policy the machine has.
+ */
+const PS1_TRAMPOLINE = ['@echo off', 'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0receiver.ps1" %*', ''].join('\r\n');
+
+/** The `.ps1` it runs, which passes its arguments on to node as npm's `.ps1` shim does. */
+const PS1_RECEIVER = ['& node "$PSScriptRoot/receiver.js" $args', 'exit $LASTEXITCODE', ''].join('\r\n');
+
 const RECEIVER = `const fs = require('node:fs');
 fs.writeFileSync(process.env.KANGENTIC_RECEIVER_OUT, JSON.stringify(process.argv.slice(2)), 'utf8');
 fs.writeFileSync(\`\${process.env.KANGENTIC_RECEIVER_OUT}.tty\`, JSON.stringify({ stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true }), 'utf8');
 `;
+
+/** How long a shell gets to print a prompt `endsAtPrompt` recognizes before its line is typed anyway. */
+const PROMPT_WAIT_MS = 5000;
+
+/**
+ * Whether a shell's output so far ends at a prompt: `PS C:\dir> ` or `bash-5.2$ `,
+ * once the escape sequences ConPTY and the shell wrap it in are taken off.
+ */
+function endsAtPrompt(output: string): boolean {
+  return /[$>] ?$/.test(stripAnsiControlCodes(output));
+}
 
 const AWKWARD = `Fix %PATH% at 100% with %KNG_PROBE% and %NOTSET% café 日本語 \u{1F389} a&b a|b a<b a>b a^b !bang! ; say "hi" C:\\dir\\%KNG_PROBE%\\x`;
 /** What a command in the tail would write, if cmd ever read the tail as a command. */
@@ -77,6 +100,7 @@ const PROMPT = `${AWKWARD} ${FILLER}${AWKWARD} ${INJECTION}<task> </task> END`;
 describe.runIf(process.platform === 'win32')('launch.cmd through a real cmd', () => {
   let root: string;
   const shells: IPty[] = [];
+  const promptPolls: NodeJS.Timeout[] = [];
 
   beforeAll(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cmd-launcher-'));
@@ -84,6 +108,7 @@ describe.runIf(process.platform === 'win32')('launch.cmd through a real cmd', ()
   });
 
   afterEach(() => {
+    for (const poll of promptPolls.splice(0)) clearInterval(poll);
     for (const shell of shells.splice(0)) {
       try {
         shell.kill();
@@ -137,11 +162,23 @@ describe.runIf(process.platform === 'win32')('launch.cmd through a real cmd', ()
     });
   }
 
-  /** Type a launch as `performSpawn` does, 100 ms after cmd starts. Other shells take longer to reach a prompt. */
+  /**
+   * Type a launch as `performSpawn` does, 100 ms after cmd starts. `atPrompt` types
+   * when the shell prints its prompt instead, for PowerShell and Git Bash, which take
+   * longer to reach one.
+   *
+   * At the prompt and not after a fixed wait, which is what this used to do (1500 ms).
+   * Measured on Git for Windows on a busy machine: a 9000 character line typed into a
+   * bash already idle at its prompt arrived 1088 characters short in 4 of 15 tries (at
+   * 400, 800 and 1500 ms), always that count, with nothing printed. Typed as the prompt
+   * appeared it arrived whole in 18 of 18, and at 100 ms, before bash reads anything,
+   * which is when a spawn types, in 18 of 18. Windows PowerShell lost nothing at any
+   * delay.
+   */
   function run(
     launch: TypedLaunch,
     resultFile: string,
-    { program = CMD, args = [] as string[], typeAfterMs = 100 } = {},
+    { program = CMD, args = [] as string[], atPrompt = false } = {},
   ): { output: () => string } {
     if (launch.launcher) {
       fs.mkdirSync(path.dirname(launch.launcher.filePath), { recursive: true });
@@ -162,7 +199,19 @@ describe.runIf(process.platform === 'win32')('launch.cmd through a real cmd', ()
     shells.push(shell);
     let output = '';
     shell.onData((chunk) => { output += chunk; });
-    setTimeout(() => shell.write(`${launch.typedLine}\r`), typeAfterMs);
+    const type = (): void => shell.write(`${launch.typedLine}\r`);
+    if (atPrompt) {
+      const startedAt = Date.now();
+      const poll = setInterval(() => {
+        // A prompt this does not recognize still gets its line, as the fixed wait gave it.
+        if (!endsAtPrompt(output) && Date.now() - startedAt < PROMPT_WAIT_MS) return;
+        clearInterval(poll);
+        type();
+      }, POLL_MS);
+      promptPolls.push(poll);
+    } else {
+      setTimeout(type, 100);
+    }
     return { output: () => output };
   }
 
@@ -239,6 +288,22 @@ describe.runIf(process.platform === 'win32')('launch.cmd through a real cmd', ()
     expect(fs.existsSync(path.join(directory, INJECTED_FILE))).toBe(false);
   }, 30_000);
 
+  // Sentry DESKTOP-3Y: a shim that runs a `.ps1` was refused past the budget.
+  it('delivers the whole prompt past a .cmd shim that runs a .ps1, through the PowerShell it names', async () => {
+    const { directory, resultFile } = folderNamed('ps1-shim');
+    const shimPath = path.join(directory, 'agent.cmd');
+    fs.writeFileSync(shimPath, PS1_TRAMPOLINE);
+    fs.writeFileSync(path.join(directory, 'receiver.ps1'), PS1_RECEIVER);
+    const launch = launchFor(builtCommand(shimPath), directory);
+    expect(launch.launcher?.contents).not.toContain('agent.cmd');
+    expect(launch.launcher?.contents).toContain('@"powershell" -NoProfile -ExecutionPolicy Bypass -File "');
+
+    const { output } = run(launch, resultFile);
+
+    expect((await argvReceived(resultFile, output)).at(-1)).toBe(delivered);
+    expect(fs.existsSync(path.join(directory, INJECTED_FILE))).toBe(false);
+  }, 30_000);
+
   it('still types a line cmd can take, and that line reaches the shim', async () => {
     const { directory, resultFile } = folderNamed('short-shim');
     const shimPath = path.join(directory, 'agent.cmd');
@@ -273,7 +338,30 @@ describe.runIf(process.platform === 'win32')('launch.cmd through a real cmd', ()
       });
       expect(launch.typedLine).not.toContain('agent.cmd');
 
-      const { output } = run(launch, resultFile, { program: shell, args, typeAfterMs: 1500 });
+      const { output } = run(launch, resultFile, { program: shell, args, atPrompt: true });
+
+      expect((await argvReceived(resultFile, output)).at(-1)).toBe(prompt);
+      expect(fs.existsSync(path.join(directory, INJECTED_FILE))).toBe(false);
+    }, 30_000);
+
+    it('delivers a prompt past a shim that runs a .ps1, with a command in the tail', async () => {
+      const { directory, resultFile } = folderNamed(`stayed-ps1-${path.basename(shell)}`);
+      const shimPath = path.join(directory, 'agent.cmd');
+      fs.writeFileSync(shimPath, PS1_TRAMPOLINE);
+      fs.writeFileSync(path.join(directory, 'receiver.ps1'), PS1_RECEIVER);
+      const tail = `x ${INJECTION}END`;
+      const prompt = `${'a'.repeat(9000 - tail.length)}${tail}`;
+      const launch = buildTypedLaunch({
+        command: builtCommand(shimPath, { prompt, shell }),
+        shell,
+        sessionDirectory: path.join(directory, 'session'),
+        platform: 'win32',
+        batchShimLaunch: directLaunchOfBatchShim,
+      });
+      expect(launch.typedLine).not.toContain('agent.cmd');
+      expect(launch.typedLine).toContain('powershell -NoProfile -ExecutionPolicy Bypass -File ');
+
+      const { output } = run(launch, resultFile, { program: shell, args, atPrompt: true });
 
       expect((await argvReceived(resultFile, output)).at(-1)).toBe(prompt);
       expect(fs.existsSync(path.join(directory, INJECTED_FILE))).toBe(false);
@@ -281,7 +369,7 @@ describe.runIf(process.platform === 'win32')('launch.cmd through a real cmd', ()
   });
 
   it('names a typed line past the limit, and starts nothing', async () => {
-    const { directory, receiver, resultFile } = folderNamed('refused');
+    const { receiver, resultFile } = folderNamed('refused');
     const launch = buildTypedLaunch({ command: exeCommand(receiver), shell: CMD, sessionDirectory: null, platform: 'win32', batchShimLaunch: directLaunchOfBatchShim });
     expect(launch.launcher).toBeNull();
     expect(launch.typedLineBytes).toBeGreaterThan(8191);
