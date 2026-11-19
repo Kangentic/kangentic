@@ -387,6 +387,16 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect(fs.readFileSync(configPath, 'utf-8')).toBe('{ not json');
   });
 
+  it('writes the Auto-apply marker for an install already saved on, so a later off sticks', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ skipBoardConfigConfirm: true }));
+
+    const configManager = await createConfigManager();
+    expect(configManager.load().skipBoardConfigConfirm).toBe(true);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.skipBoardConfigConfirm).toBe(true);
+    expect(raw.hasMigratedSkipBoardConfigConfirmDefault).toBe(true);
+  });
+
   it('loads a config saved by a version with the low-memory pause setting', async () => {
     fs.writeFileSync(configPath, JSON.stringify({
       agent: { pauseIdleAgentsOnLowMemory: false, idleTimeoutEnabled: true, idleTimeoutMinutes: 45 },
