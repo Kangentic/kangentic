@@ -421,8 +421,10 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    - Merge related commits into single bullet points where appropriate (e.g., three commits that all improve the same feature become one bullet)
    Then collect the notes authors wrote themselves. Run
    `git log <previousTag>..HEAD --grep="^Release-Note:" --format="----%n%h %s%n%b"` (no tag: drop the
-   range), and take every body line that starts with `Release-Note:`. Each is a user-facing
-   sentence for a change its subject undersells, such as something that switches off for some users.
+   range), and take every body line that starts with `Release-Note:`, plus any lines that follow it
+   up to the next blank line. The `----` and `<hash> <subject>` lines only say which commit a note
+   came from. Each note is a user-facing sentence for a change its subject undersells, such as
+   something that switches off for some users.
    Put each in its section with its meaning kept, and fold it into the bullet for the same change
    rather than listing the change twice. The line is the only way such a note reaches this file,
    since the entry Step 3 printed is built from subjects only.

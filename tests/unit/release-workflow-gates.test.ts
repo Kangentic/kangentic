@@ -12,11 +12,11 @@ import { createRequire } from 'node:module';
 // The subtle one is the status-check function. GitHub normally skips a job when anything in its
 // `needs:` failed, but naming always(), cancelled(), or failure() in the `if:` replaces that
 // implied success() gate, so a job listed in `needs:` and NOT also named in the `if:` still runs
-// when its dependency FAILED. release.yml carries always() on two jobs to tolerate the conditional
-// create-tag and `!cancelled()` on the two publish jobs, the demo deploy, the poster job and the
-// poster gate, which means every future `needs:` entry added to any of the seven has to be repeated in the `if:` by
-// hand. The comment above create-draft-release warns about this; this test is what makes the
-// warning binding.
+// when its dependency FAILED. release.yml carries always() on the three jobs that tolerate the
+// conditional create-tag, and `!cancelled()` on the jobs below them: the two publish jobs, the demo
+// deploy, the poster job and the poster gate. Every future `needs:` entry added to any of them has
+// to be repeated in the `if:` by hand. The comment above create-draft-release warns about this;
+// this test is what makes the warning binding.
 //
 // The blunt one is a gate simply going missing: preflight-symbols exists because v0.37.0 and
 // v0.38.0 both shipped with zero sourcemaps and zero native debug files, the KANGENTIC_SENTRY_TOKEN
@@ -154,7 +154,7 @@ describe('release.yml job graph', () => {
   const selfGatedJobs = jobs.filter((job) => STATUS_FUNCTION_PATTERN.test(job.condition ?? ''));
 
   // An empty or shrunken filter would turn the it.each below into zero tests, which passes. The
-  // eight jobs that carry a status function are named here so dropping one from the workflow, or
+  // jobs that carry a status function are named here so dropping one from the workflow, or
   // a parse regression that stops recognizing one, fails rather than quietly reducing coverage.
   it('selects every job whose if: replaces the implied success() gate', () => {
     expect(selfGatedJobs.map((job) => job.name).sort()).toEqual([
@@ -408,8 +408,8 @@ describe('release.yml job graph', () => {
     const gate = jobs.find((job) => job.name === 'poster-gate');
     expect(gate).toBeDefined();
     expect(gate?.needs).toEqual(['demo-posters']);
-    // Its own status function, or create-tag's skip skips it on every release (the check above),
-    // and the shoot named in it, so a failed shoot still skips the gate.
+    // It needs a status function of its own, or create-tag's skip removes it from every release.
+    // The condition also names the shoot, so a failed shoot still skips the gate.
     expect(gate?.condition).toContain('!cancelled()');
     expect(gate?.condition).toContain("needs.demo-posters.result == 'success'");
     expect(gate?.body).toMatch(/^ {4}uses: \.\/\.github\/workflows\/demo-poster-gate\.yml$/m);
