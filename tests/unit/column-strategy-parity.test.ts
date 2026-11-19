@@ -102,6 +102,10 @@ const ALLOWLIST: Record<string, string> = {
   'src/main/ipc/helpers/move-ends-agent.ts':
     'Pure helper. Its only caller, task-move.ts, passes the destination lane after folding the task\'s '
     + 'profile over it, so a task on a Board Profile is judged by its profile\'s Start an agent value.',
+  'src/main/ipc/helpers/live-session-fate.ts':
+    'Pure decision helper. Its only caller, task-move.ts, passes the destination lane after folding the '
+    + 'task\'s profile over it, so a task on a Board Profile is judged by its profile\'s agent, track and '
+    + 'session strategy.',
 };
 
 /**
