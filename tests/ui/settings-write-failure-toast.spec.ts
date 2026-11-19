@@ -231,7 +231,7 @@ test.describe('settings write failure toast', () => {
       // are the same observation until something proves the path ran.
       await expect
         .poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).skipBoardConfigConfirm))
-        .toBe(true);
+        .toBe(false);
 
       expect(await toastCountRightNow(page, FAILURE_TOAST)).toBe(0);
     } finally {

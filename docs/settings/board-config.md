@@ -144,8 +144,8 @@ occurs.
 1. **On project open**, if `kangentic.json` exists, Kangentic applies it to the database
    **before** the export above. On a conflict the file wins. There is no banner and no prompt on
    this path.
-2. **On an external edit to `kangentic.json` while the project is open**, the file watcher raises a
-   reconciliation banner (or applies silently when `skipBoardConfigConfirm` is set). An edit to
+2. **On an external edit to `kangentic.json` while the project is open**, the file watcher applies
+   the change at once, or raises a reconciliation banner when `skipBoardConfigConfirm` is off. An edit to
    `kangentic.local.json` applies at once, as File Watching and Reconciliation below describes.
 
 The open-time apply is why a hand-edited `kangentic.json` sticks: the app is not merely writing
@@ -189,9 +189,11 @@ its `profiles[].columns` entries in the same edit.
 Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes while the project is
 open, and treats them differently.
 
-- **`kangentic.json`.** A change from outside the app (a teammate's commit you pulled) raises a
-  reconciliation banner. You can apply the change or dismiss the banner. With
-  `skipBoardConfigConfirm` set, the change applies without the banner.
+- **`kangentic.json`.** A change from outside the app (a teammate's commit you pulled) applies at
+  once, because `skipBoardConfigConfirm` (Auto-apply board config changes) is on by default. With it
+  off, the change raises a reconciliation banner, and you can apply the change or dismiss the banner.
+  The switch is per machine, so a teammate who wants to review each change turns it off for
+  themselves.
 - **`kangentic.local.json`.** A change applies at once, with no banner, because the file is yours
   and gitignored, so there is no teammate's edit to review. If you remove a key from a column's
   entry, or delete the file, that field goes back to the team file's value, or to the default
@@ -497,7 +499,7 @@ The `stopScript` field names a project's Stop script: a shell command Kangentic 
 }
 ```
 
-It lives here, and only here, because how to stop a stack is a fact about the repository, and teammates want it without setting it on each machine. Settings > Git > Leftover processes writes it for the project the panel is editing, and an empty field removes the key. `CONFIG_GET` lays it on `AppConfig.git.stopScript` for that row, and nothing else reads that copy. It has no database representation, so `buildBoardConfigFromDb` carries it across a write-back. An individual can replace it in `kangentic.local.json`, or turn it off on one machine with `"stopScript": ""`. While that file holds the key, the row edits it there, since a change to the team's value would not reach this machine, and an empty field leaves `""`. A project with no `kangentic.json` still reads the script from `kangentic.local.json` alone. A script committed here runs on every teammate's machine with no prompt, as a committed Run script automation does when a project opens. There is no per-script trust record for either. The one difference is an edit that lands while the project is open: a Run script automation waits for the reconciliation banner, and `stopScript` is read straight from the file, so it takes effect at once.
+It lives here, and only here, because how to stop a stack is a fact about the repository, and teammates want it without setting it on each machine. Settings > Git > Leftover processes writes it for the project the panel is editing, and an empty field removes the key. `CONFIG_GET` lays it on `AppConfig.git.stopScript` for that row, and nothing else reads that copy. It has no database representation, so `buildBoardConfigFromDb` carries it across a write-back. An individual can replace it in `kangentic.local.json`, or turn it off on one machine with `"stopScript": ""`. While that file holds the key, the row edits it there, since a change to the team's value would not reach this machine, and an empty field leaves `""`. A project with no `kangentic.json` still reads the script from `kangentic.local.json` alone. A script committed here runs on every teammate's machine with no prompt, as a committed Run script automation does when a project opens. There is no per-script trust record for either. The one difference is an edit that lands while the project is open: a Run script automation waits for the reconciliation banner when `skipBoardConfigConfirm` is off, and `stopScript` is read straight from the file, so it takes effect at once.
 
 The `_modifiedBy` field is auto-set by Kangentic to record which device last wrote the file (last-writer provenance) and should not be edited manually.
 

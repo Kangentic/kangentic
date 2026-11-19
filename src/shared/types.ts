@@ -5375,6 +5375,13 @@ export interface AppConfig {
    *  turning it off afterwards sticks. Same unreadable-file deferral and retirement as
    *  `hasMigratedWindowLightDismissDefault`. */
   hasMigratedIdleTimeoutDefault: boolean;
+  /** One-shot marker for turning Auto-apply board config changes on by default. `save()`
+   *  writes the whole config, so every install that ran while the default was off carries a
+   *  saved `skipBoardConfigConfirm: false`, which cannot be told from a deliberate off. The
+   *  migration in `ConfigManager.load()` turns it on once; the marker bounds it to one rewrite,
+   *  so turning it off afterwards sticks. Same unreadable-file deferral and retirement as
+   *  `hasMigratedWindowLightDismissDefault`. */
+  hasMigratedSkipBoardConfigConfirmDefault: boolean;
   /** Task IDs the automatic rename has already run for. Persisted so a restart never
    *  renames a task twice. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -5715,7 +5722,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   lastWhatsNewShownVersion: '',
   dismissedAnnouncementIds: [],
   skipDeleteConfirm: false,
-  skipBoardConfigConfirm: false,
+  skipBoardConfigConfirm: true,
   autoFocusIdleSession: false,
   stopLeftoverProcesses: true,
   windowLightDismiss: 'focused',
@@ -5723,6 +5730,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   hasMigratedWindowLightDismissDefault: false,
   hasMigratedNativeTerminalDefaults: false,
   hasMigratedIdleTimeoutDefault: false,
+  hasMigratedSkipBoardConfigConfirmDefault: false,
   hasPurgedSeededDiscoveredModels: false,
   hasAnsweredLanguageSuggestion: false,
   autoNameAskedTaskIds: [],

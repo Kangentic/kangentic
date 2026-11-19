@@ -472,7 +472,9 @@
     // that wants the dialog seeds a different version via __mockPreConfigure.
     lastWhatsNewShownVersion: '0.1.0',
     skipDeleteConfirm: false,
-    skipBoardConfigConfirm: false,
+    // Mirrors DEFAULT_CONFIG.skipBoardConfigConfirm. The board-config-change demo
+    // scene overrides it to false so the confirm dialog it shows still opens.
+    skipBoardConfigConfirm: true,
     autoFocusIdleSession: false,
     stopLeftoverProcesses: true,
     // Mirrors DEFAULT_CONFIG.windowLightDismiss in src/shared/types.ts. This is an
@@ -483,6 +485,7 @@
     // above) that has already crossed the single -> focused default flip.
     hasMigratedWindowLightDismissDefault: true,
     hasMigratedIdleTimeoutDefault: true,
+    hasMigratedSkipBoardConfigConfirmDefault: true,
     // true for the same reason: an established install has already run the one-shot
     // purge of seeded entries out of discoveredModelsByAgent (ConfigManager.load).
     hasPurgedSeededDiscoveredModels: true,

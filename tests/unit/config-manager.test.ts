@@ -343,6 +343,42 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect((await createConfigManager()).load().agent.idleTimeoutEnabled).toBe(false);
   });
 
+  // Auto-apply board config changes moved from off to on, for the same reason as the
+  // idle timer above: an install saved under the old default carries a literal false.
+  it('gives a fresh install Auto-apply board config changes on', async () => {
+    expect((await createConfigManager()).load().skipBoardConfigConfirm).toBe(true);
+  });
+
+  // The migration forces the switch on whenever its marker is unset, so a fresh install
+  // passes whatever DEFAULT_CONFIG says. Only a migrated file with no saved value reads
+  // the default itself.
+  it('reads the on default for a migrated install that never saved the switch', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ hasMigratedSkipBoardConfigConfirmDefault: true }));
+
+    expect((await createConfigManager()).load().skipBoardConfigConfirm).toBe(true);
+  });
+
+  it('turns Auto-apply board config changes on once for an install saved under the old default', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ skipBoardConfigConfirm: false }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.skipBoardConfigConfirm).toBe(true);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.skipBoardConfigConfirm).toBe(true);
+    expect(raw.hasMigratedSkipBoardConfigConfirmDefault).toBe(true);
+  });
+
+  it('lets a user turn Auto-apply board config changes off afterwards, and it stays off across a restart', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ skipBoardConfigConfirm: false }));
+    const configManager = await createConfigManager();
+    configManager.load();
+
+    configManager.save({ skipBoardConfigConfirm: false });
+
+    expect((await createConfigManager()).load().skipBoardConfigConfirm).toBe(false);
+  });
+
   it('leaves an unreadable file on disk, as the other one-time migrations do', async () => {
     fs.writeFileSync(configPath, '{ not json');
 
@@ -489,6 +525,7 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
       theme: 'rust', themeLight: 'clay', themeDark: 'rust', themeFollowsSystem: true,
       hasMigratedWindowLightDismissDefault: true, hasPurgedSeededDiscoveredModels: true,
       hasMigratedNativeTerminalDefaults: true, hasMigratedIdleTimeoutDefault: true,
+      hasMigratedSkipBoardConfigConfirmDefault: true,
     }));
     // Backdate so a spurious write is unmissable rather than possibly landing in the same
     // millisecond as the fixture write above.
@@ -1320,6 +1357,7 @@ describe('Config Manager - platformDefaults() returns a fresh terminal object', 
       hasMigratedNativeTerminalDefaults: true, hasMigratedIdleTimeoutDefault: true,
       hasMigratedWindowLightDismissDefault: true,
       hasPurgedSeededDiscoveredModels: true,
+      hasMigratedSkipBoardConfigConfirmDefault: true,
     });
     fs.writeFileSync(configPath, settledConfig);
 

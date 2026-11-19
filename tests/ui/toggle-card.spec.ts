@@ -533,7 +533,7 @@ test.describe('Behavior/Board tab CardToggleRow persistence', () => {
   });
 
   test('clicking Auto-apply board config changes persists skipBoardConfigConfirm to global config', async () => {
-    // skipBoardConfigConfirm starts false (mock default). Lives in the Board
+    // skipBoardConfigConfirm is seeded off here (the default is on). Lives in the Board
     // tab's Config Sync section, not Behavior - it is board data reconciliation,
     // not session/window behavior.
     await setGlobalConfigAndSync({ skipBoardConfigConfirm: false });
