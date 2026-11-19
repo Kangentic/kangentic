@@ -52,6 +52,8 @@ sources:
   - resource: src/renderer/components/HostAddressInput.tsx
   - resource: src/renderer/components/host-address.ts
   - resource: src/renderer/utils/shell-display-name.ts
+  - resource: src/renderer/components/terminal/ContextBar.tsx
+  - resource: src/renderer/components/terminal/TerminalPanel.tsx
   - resource: .claude/rules/ssh-remote.md
 ---
 # SSH remote hosts
@@ -130,7 +132,7 @@ A remote project shows its host as a 20 by 20 square after its name in the proje
 Add project asks where first once a host exists: This computer, or a host. A host opens a form for the folder on it, which Kangentic checks on the host. The project is a local shell folder (under Kangentic's config folder) plus a host and a folder.
 
 - The board, tasks, history and settings are the local database as ever.
-- **The context bar names the host's shell.** A session on a host reports its login shell by program name (`bash`, `zsh`), and the bar and the panel tab's tip show that name as the host has it. This computer's platform does not rename it: on a Windows desktop a host's `bash` once read "Git Bash" (`shell-display-name.ts`, told by the session's project being remote).
+- **The context bar names the host's shell.** A session on a host reports its login shell by program name (`bash`, `zsh`), and the bar and the panel tab's tip show that name as the host has it. This computer's platform does not rename it: on a Windows desktop a host's `bash` once read "Git Bash". `shellDisplayName` takes an `onHost` option from its caller. The context bar sets it from the session's project and the tab's tip from the open project, the one whose sessions the panel lists.
 - **A task gets its own git worktree on the host** when the project's folder there is the top of a git repository with a commit, and worktrees are on for the project and the task (the same switches as a local project). See [Worktrees on a host](#worktrees-on-a-host). Any other folder is shared by every task, so run one agent in it at a time. PR linking and the branch switcher are still off for a remote project. The Changes panel and the branch header read the host, as [Git reads on a host](#git-reads-on-a-host) says.
 - Kangentic adds `.kangentic/` to the host repository's `.git/info/exclude`, so its runtime folder stays out of `git status` there.
 - **Remove hides, and deletes nothing.** Removing a host suspends its projects' agents, takes the key Kangentic made off the host and deletes it here, and hides the projects everywhere (sidebar, search, the MCP tools). When the open project was one of them, the most recently opened project that is left opens in its place, so the theme that applies is that project's own and not the app-wide default. The host row stays in the database, marked `removed_at`, with its projects' boards, tasks, shell folders and the copy of the host's transcripts. Nothing on the host is touched except that key.
