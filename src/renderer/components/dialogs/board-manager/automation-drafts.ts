@@ -57,7 +57,7 @@ export interface AutomationDraft {
   final_line: string | null;
   /**
    * Whose message the Text match reads (#1078): the agent's last line, or the
-   * user's last message in the turn. Meaningless without a Text match; the
+   * user's messages in the turn. Meaningless without a Text match; the
    * save forces it to `'agent'` then.
    */
   text_match_source: TextMatchSource;

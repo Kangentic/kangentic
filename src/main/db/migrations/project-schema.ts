@@ -1941,8 +1941,8 @@ export function runProjectMigrations(db: Database.Database): void {
   }
 
   // Migration: whose message a Text match reads (#1078). NULL is the agent's
-  // last line, every row written before; 'user' is the user's last message in
-  // the turn. No backfill: NULL already means what those rows always meant.
+  // last line, every row written before; 'user' is the user's messages in the
+  // turn. No backfill: NULL already means what those rows always meant.
   const automationColumnsWithSource = new Set(
     (db.pragma('table_info(column_automations)') as Array<{ name: string }>).map((column) => column.name),
   );
