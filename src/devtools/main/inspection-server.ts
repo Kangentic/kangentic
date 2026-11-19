@@ -382,6 +382,11 @@ async function handlePostRequest(
     return respondError(response, 400, 'invalid-json', 'Request body must be valid JSON.');
   }
 
+  if (INPUT_ROUTES.has(route)) {
+    const refusal = await hiddenPageRefusal(window);
+    if (refusal !== null) return respondError(response, 409, 'window-hidden', refusal);
+  }
+
   if (route === 'POST /click') {
     return respondClick(window, body, response);
   }
@@ -1412,6 +1417,39 @@ async function respondMutations(
 // Interaction (POST /click /type /keypress /drag /wait /script)
 // ---------------------------------------------------------------------------
 
+/**
+ * The script step types that send mouse or keyboard input, which a hidden page
+ * never receives. Each has a route of the same name, so the routes are built
+ * from this list and the two cannot drift apart.
+ */
+const INPUT_STEP_TYPES: ReadonlySet<string> = new Set(['click', 'type', 'keypress', 'drag']);
+
+/** The routes that send that input, one per input step type. */
+const INPUT_ROUTES: ReadonlySet<string> = new Set(Array.from(INPUT_STEP_TYPES, (stepType) => `POST /${stepType}`));
+
+/**
+ * Why input is not sent, when the window's page is hidden, or null when it can be.
+ *
+ * Chromium delivers no input to a page whose `document.visibilityState` is
+ * `hidden`, which is a preview window that is minimized or fully covered by
+ * another window. Measured on Windows with Electron 45: a CDP mouse click and a
+ * CDP keypress each returned normally, and no pointer, mouse or key event
+ * reached the page, while the same control's own `click()` through /eval
+ * worked. These routes used to answer `ok: true` for input that never arrived,
+ * which reads to the calling agent as a control that does nothing.
+ *
+ * A state that cannot be read sends the input as before. /drop-files is left
+ * out: its drag events were not measured, and it has no /eval equivalent to
+ * point the caller at.
+ */
+async function hiddenPageRefusal(window: BrowserWindow): Promise<string | null> {
+  const visibility = await runtimeEvaluate(window, 'document.visibilityState');
+  if (visibility.error !== null || visibility.value !== 'hidden') return null;
+  return 'The preview window is hidden (minimized, or fully covered by another window), and Chromium delivers no mouse or keyboard input to a hidden page. Nothing was sent. '
+    + 'To act on a control anyway, run its own handler with kangentic_devtools_eval, for example document.querySelector(selector).click(). '
+    + 'To send real input, stop and ask the user to bring the preview window to the front, then retry.';
+}
+
 interface ClickBody {
   selector?: string;
   x?: number;
@@ -1693,6 +1731,11 @@ async function runScriptStep(
   window: BrowserWindow,
   step: ScriptStep,
 ): Promise<ScriptStepOutput | void> {
+  // The same refusal the input routes give, for a step that sends input.
+  if (INPUT_STEP_TYPES.has(step.type)) {
+    const refusal = await hiddenPageRefusal(window);
+    if (refusal !== null) throw new Error(refusal);
+  }
   switch (step.type) {
     case 'click': {
       const selector = step.selector as string | undefined;

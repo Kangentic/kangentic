@@ -95,6 +95,15 @@ file-drop feature needs and no in-page `new File()` can fake. `POST /quit` runs 
 `worktree-preview.js --stop` no longer force-kills the app past its
 synchronous cleanup.
 
+`/click`, `/type`, `/keypress` and `/drag` answer `409 window-hidden` while the
+preview window is minimized or fully covered. A `/script` step of one of those
+types fails with the same text in its trace entry, and the script itself still
+answers `200`. Chromium delivers no mouse or keyboard input to a page whose
+`document.visibilityState` is `hidden`, and these routes used to answer
+`ok: true` for input that never arrived. The refusal says nothing was sent and
+points at `/eval` (a control's own `click()` works on a hidden page). A state
+that cannot be read sends the input as before.
+
 ### CDP wrapper (`main/cdp.ts`)
 
 Calls `webContents.debugger.attach('1.3')` on the main window and
