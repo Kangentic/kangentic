@@ -45,6 +45,21 @@ export function collectPageErrors(page: Page): () => string[] {
 }
 
 /**
+ * Open the context menu of the element `target` resolves to, by dispatching the
+ * event on that element. A positioned right-click lands on whatever is on top
+ * at that point, and an open task window can sit over the card or row it
+ * belongs to.
+ */
+export async function openContextMenuOn(target: Locator): Promise<void> {
+  await target.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    element.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, button: 2, clientX: box.left + 4, clientY: box.top + 4,
+    }));
+  });
+}
+
+/**
  * Count the toasts on screen RIGHT NOW, with no assertion retry.
  *
  * This is the only correct way to assert "no toast appeared", and the reason is
