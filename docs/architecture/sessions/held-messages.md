@@ -20,6 +20,8 @@ sources:
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
   - resource: src/main/ipc/handlers/task-move.ts
     title: a move to Done or To Do clears held messages
+  - resource: src/main/ipc/helpers/exit-message-carry.ts
+    title: an exit message held for a restarted agent's resume
   - resource: src/main/ipc/handlers/task-archive.ts
     title: an unarchive into To Do clears held messages
   - resource: src/main/db/repositories/task-repository.ts
@@ -37,7 +39,7 @@ shows the hold.
 
 ## What holds a message
 
-`holdTaskMessage` in `src/main/held-messages/held-messages.ts` is the one way in. Three producers
+`holdTaskMessage` in `src/main/held-messages/held-messages.ts` is the one way in. These producers
 call it.
 
 - **`kangentic_send_session_message`** to a task with no running agent: paused, exited, still
@@ -66,6 +68,15 @@ call it.
   so the phone names the paused session by its board row's `paused_session_id`, the registry id
   of the paused row. A restart re-registers that row under a new id, and the phone's next board
   snapshot carries it.
+- **An exit message on a move that restarts the agent** (kangentic.com #145). A move that changes
+  the model or effort, or finds its column full, suspends the live session and resumes the same
+  conversation. The exit row's message is not typed into the session the suspend would cut off.
+  The exit hook keeps it back, and once the session is suspended, `holdCarriedExitMessages`
+  (`src/main/ipc/helpers/exit-message-carry.ts`) holds it, so the resume's `spawnAgent` claims it
+  into its opening message. It is held only after the suspend, because a hold while the session
+  is live would paste the message into it once its turn settles. The run reads "Held: ... the message goes in its resume
+  prompt.", and a hold that fails rewrites that detail
+  ([Command injection](../automations/command-injection.md#the-exit-path-is-rung-2-only-and-it-is-awaited)).
 
 A task in Done (or archived) holds nothing and the hold is refused: the move into Done clears what
 is held, and the move out of Done is a recovery move that sends the agent no messages, so a message

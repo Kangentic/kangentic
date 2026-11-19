@@ -11,7 +11,6 @@ import type {
   Swimlane,
   AutomationConfig,
   AutomationTrigger,
-  AutoCommandMode,
   ColumnAutomation,
   ConversationExpiredNotice,
   LaunchStartPath,
@@ -334,8 +333,9 @@ interface AutomationGroupOptions {
   // `signal` is the automation run's own, so a caller that WAITS for
   // delivery (the exit hook does; see `deliverExitMessage`) is bounded by
   // the same budget that bounds every other row. A caller that only
-  // schedules delivery ignores it.
-  deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
+  // schedules delivery ignores it. A returned string is the run's detail
+  // (`AutomationContext.deliverToAgent`).
+  deliverToAgent: AutomationContext['deliverToAgent'];
   legacySpawnAgent?: (config: AutomationConfig) => Promise<void>;
   showNotification: (input: NotificationInput) => void;
   onProgress?: (phase: string) => void;
@@ -524,7 +524,7 @@ export class TransitionEngine {
     automation: ColumnAutomation,
     options: {
       signal: AbortSignal;
-      deliverToAgent: (message: string, mode: AutoCommandMode, signal: AbortSignal) => Promise<void>;
+      deliverToAgent: AutomationContext['deliverToAgent'];
       showNotification: (input: NotificationInput) => void;
       onProgress?: (phase: string) => void;
       /**

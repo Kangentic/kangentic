@@ -187,6 +187,13 @@ group is capped at 60 seconds in aggregate whatever the adapters declare, becaus
 short lock is what wedges that task's next move. Every row is isolated: a failure records its
 outcome in `automation_runs` and the next row still runs.
 
+On a move that keeps the agent, the live session's fate (switch, handoff, restart, yield or keep) is
+decided once in Phase 1, before this group runs, and the active-session step above acts on that answer. A session
+switch or a cross-agent handoff skips a row that needs the agent, with a reason. A model or effort
+restart, or a full destination column, carries the row's message to the resume prompt instead of
+typing it into a session about to be suspended, and the run reads "Held: ...". See
+[Held messages](sessions/held-messages.md).
+
 The column's On agent turn end group is not part of a move: `automations/turn-end/turn-end-runner.ts`
 runs it when the agent working a task finishes a turn there (`SessionManager`'s `'turn-ended'`, or
 `'turn-ended-held'` for a running workflow task whose Stop only background shells keep open),

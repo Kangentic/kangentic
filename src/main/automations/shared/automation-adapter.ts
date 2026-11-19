@@ -82,8 +82,14 @@ export interface AutomationContext {
    * burst in flight, so the exit caller awaits the outcome instead. `signal`
    * is what bounds that wait: it is this run's own, so the exit group's budget
    * caps it.
+   *
+   * A delivery that did something other than send may say so: a returned
+   * string is the run's detail, in place of the adapter's own word. The exit
+   * hook returns one when the move restarts the agent and the message is held
+   * for its resume instead of typed (`task-move.ts`). `runId` is this run's, so
+   * a caller that settles the message later can rewrite that detail.
    */
-  deliverToAgent(message: string, mode: AutoCommandMode, signal: AbortSignal): Promise<void>;
+  deliverToAgent(message: string, mode: AutoCommandMode, signal: AbortSignal, runId: string): Promise<string | void>;
   /**
    * Notify the user on the desktop and on every paired phone, outside the
    * notification settings. Every builder of this context wires it to

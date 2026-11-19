@@ -47,7 +47,6 @@ import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { keepNoticesForLiveTasks, takeConversationExpired } from '../helpers/pending-conversation-expired';
-import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
 import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
@@ -56,6 +55,8 @@ import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane }
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { exitAgentEndingReason, moveEndsAgent } from '../helpers/move-ends-agent';
+import { readLiveSessionFate, type LiveSessionFate } from '../helpers/live-session-fate';
+import { carryExitMessage, fateCarriesExitMessages, holdCarriedExitMessages, type CarriedExitMessage } from '../helpers/exit-message-carry';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { supersedeMessageDeliveries, supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
 import { refreshStoppedMark } from '../../automations/stopped-mark';
@@ -77,7 +78,7 @@ import type { EarlyAgentHandle } from '../../transition-engine/early-agent';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import { abortInFlightMove, registerMoveController, releaseMoveController } from './task-move-controllers';
 import { markOwnCallSession, waitForOwnAgentTurn } from './own-call-turn-wait';
-import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
+import type { AutoCommandMode, Project, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
 import { RefusalError } from '../../../shared/refusal';
 import { reportMoveSpawnFailure } from '../helpers/spawn-failure';
 import { createChokepointReporter } from '../../analytics/handled-report';
@@ -736,6 +737,36 @@ export async function handleTaskMove(
       // disagree about which moves stop the agent.
       const destinationEndsAgent = moveEndsAgent(toLane);
 
+      const db = getProjectDb(resolvedProjectId);
+      const sessionRepo = new SessionRepository(db);
+      const usageHistoryRepo = new UsageHistoryRepository(db);
+
+      // What Priority 3 does to the live session when the destination keeps an
+      // agent: switch it, hand it off, restart it, park it for a full column,
+      // or keep it. Decided here, once, for the same reason as
+      // `destinationEndsAgent`: the exit hook acts on it (a restart carries the
+      // exit message, a switch or handoff skips it) and Priority 3 then does
+      // exactly what the hook planned for. The exit group can run a minute,
+      // long enough for a recompute to disagree. See `LiveSessionFate`.
+      // The project row is read once here and reused by Priority 3.
+      let liveSessionFate: LiveSessionFate | null = null;
+      let liveSessionProject: Project | undefined;
+      if (task.session_id && destinationEndsAgent === null) {
+        liveSessionProject = context.projectRepo.getById(resolvedProjectId);
+        liveSessionFate = readLiveSessionFate({
+          context,
+          sessionRepo,
+          task,
+          liveSessionId: task.session_id,
+          toLane,
+          project: liveSessionProject,
+          projectId: resolvedProjectId,
+        });
+      }
+      // Exit messages kept back from a session this move restarts, held for its
+      // resume once it is suspended (`exit-message-carry.ts`).
+      const carriedExitMessages: CarriedExitMessage[] = [];
+
       // === Exit automations ===
       //
       // The SOURCE column's exit rows, here in Phase 1, inside the short lock,
@@ -751,6 +782,10 @@ export async function handleTaskMove(
       // starts no agent suspend it, each right after this group). The message
       // would land and the agent stop before it could act, and waiting on its
       // confirmation only held the move: a To Do cleanup sat 13 s on one.
+      // A session switch or a handoff skips such a row the same way, since the
+      // conversation ends for another. A restart or a full column resumes the
+      // same conversation, so its message is carried to the resume instead of
+      // typed (`liveSessionFate`, `carryExitMessage`).
       //
       // An exit row NEVER aborts the move. The rollback at the end of this
       // handler reverts Phase 2 and Phase 3 only, which is why the announce
@@ -769,13 +804,12 @@ export async function handleTaskMove(
       if (fromLane) {
         try {
           const exitRepos = getProjectRepos(context, resolvedProjectId);
-          const exitSessionRepo = new SessionRepository(getProjectDb(resolvedProjectId));
           const exitEngine = createTransitionEngine(
             context,
             exitRepos.automations,
             exitRepos.automationRuns,
             exitRepos.tasks,
-            exitSessionRepo,
+            sessionRepo,
             exitRepos.attachments,
             resolvedProjectId,
             resolvedProjectPath,
@@ -786,8 +820,9 @@ export async function handleTaskMove(
             // needs the agent and finds no session skips with that reason,
             // which the runner records.
             // Only with a live agent to end. Without one the runner already
-            // skips such a row as "not running", which is the true reason.
-            agentEndingReason: task.session_id ? exitAgentEndingReason(destinationEndsAgent, toLane) : undefined,
+            // skips such a row as "not running", which is the true reason. A
+            // session switch or handoff ends the conversation too, for another.
+            agentEndingReason: task.session_id ? exitAgentEndingReason(destinationEndsAgent, toLane, liveSessionFate) : undefined,
             // AWAITED, unlike the enter path's, and the Priority branches
             // below are the reason: each opens with
             // `terminalSubmitScheduler.cancel(task.id)` before it kills,
@@ -796,18 +831,25 @@ export async function handleTaskMove(
             // `deliverExitMessage` for what that looked like in a preview.
             // A message with line breaks is pasted instead, awaited the same
             // way and handed `runSignal`, so the exit budget bounds it too.
-            deliverToAgent: async (message, mode, runSignal) => {
+            deliverToAgent: async (message, mode, runSignal, runId) => {
               const liveSession = task.session_id;
               // The runner already skips an agent-needing row when the task
               // has no session, so reaching here without one means the row
               // does not need the agent. Nothing to deliver into.
               if (!liveSession) return;
+              // Priority 3 suspends this session right after the group and
+              // resumes the same conversation. Typed now, the message is cut
+              // off a second later (kangentic.com #145), so it is kept back and held for
+              // the resume once the session is suspended.
+              if (fateCarriesExitMessages(liveSessionFate) && toLane) {
+                return carryExitMessage(carriedExitMessages, { message, runId, fate: liveSessionFate, columnName: toLane.name });
+              }
               await deliverAgentMessageAndWait(context, {
                 taskId: task.id,
                 sessionId: liveSession,
                 message,
                 mode,
-                verifier: resolveInjectionVerifier(task.agent, exitSessionRepo, task.id),
+                verifier: resolveInjectionVerifier(task.agent, sessionRepo, task.id),
                 signal: runSignal,
                 turnWait: 'when-deferred',
               });
@@ -833,11 +875,6 @@ export async function handleTaskMove(
           clearSpawnProgress(context.mainWindow, task.id);
         }
       }
-
-
-      const db = getProjectDb(resolvedProjectId);
-      const sessionRepo = new SessionRepository(db);
-      const usageHistoryRepo = new UsageHistoryRepository(db);
 
       /**
        * Arm the DESTINATION column's enter rows for a move Phase 1 finishes.
@@ -1176,12 +1213,17 @@ export async function handleTaskMove(
       //   d) Same agent + column message only: inject it into the running session
       //   e) Same agent + permission-only or no delta: keep session alive
       //      (no-op; a permission delta never restarts)
-      if (task.session_id) {
+      // Which one was decided before the exit group (`liveSessionFate`, set
+      // whenever there is a session and the destination keeps an agent), and
+      // is not decided again here.
+      if (task.session_id && liveSessionFate) {
         context.terminalSubmitScheduler.cancel(task.id);
 
-        // The session record for the currently-live PTY. Read once here and
-        // reused by the agent-change / respawn suspend paths below (one read,
-        // not three).
+        // The session record for the currently-live PTY, read again after the
+        // exit group on purpose: the fate was decided from the record before
+        // it, but the suspend paths below act on the record as it is now (a
+        // queued session can start, or a running one exit, while the group
+        // runs). Read once here for all three suspend paths.
         const activeRecord = sessionRepo.getLatestForTask(task.id);
 
         // --- Session switch: suspend the live session and route to Phase 2/3,
@@ -1204,12 +1246,13 @@ export async function handleTaskMove(
         //     rollback machinery (a PTY spawned here in Phase 1 would bypass that
         //     and could leak on a mid-spawn abort). Entering with NO live session
         //     is handled by Priority 4 below; this branch only fires for a live one.
+        // Read for the log line below only: the switch itself was decided by
+        // `readLiveSessionFate`. `&& toLane` narrows the type; a switch
+        // already requires a destination.
         const targetIsolatedSwimlaneId = resolveIsolatedSwimlaneId(toLane);
         const activeIsolatedSwimlaneId = activeRecord?.isolated_swimlane_id ?? null;
         const targetForceFresh = resolveForceFresh(toLane);
-        const needsSessionSwitch = toLane !== undefined
-          && (activeIsolatedSwimlaneId !== targetIsolatedSwimlaneId || targetForceFresh);
-        if (needsSessionSwitch && toLane) {
+        if (liveSessionFate.kind === 'switch' && toLane) {
           await suspendLiveSessionForRespawn({
             context,
             tasks,
@@ -1251,15 +1294,10 @@ export async function handleTaskMove(
           };
         }
 
-        const project = context.projectRepo.getById(resolvedProjectId);
-        const { agent: effectiveTargetAgent, isHandoff: isAgentChange } = resolveTargetAgent({
-          taskAgentOverride: task.agent_override,
-          columnAgent: toLane?.agent_override ?? null,
-          taskAgent: task.agent,
-          projectDefaultAgent: project?.default_agent ?? null,
-        });
+        const project = liveSessionProject;
 
-        if (isAgentChange) {
+        if (liveSessionFate.kind === 'handoff') {
+          const effectiveTargetAgent = liveSessionFate.targetAgent;
           // (a) Cross-agent handoff: suspend and fall through to spawnAgent.
           // Cross-agent resume is impossible (agent_session_id is agent-specific).
           //
@@ -1320,9 +1358,81 @@ export async function handleTaskMove(
           //      recorded spawn-time permission mode is a stale signal that must
           //      not churn the PTY.
           //
-          // The model/effort/auto_command delta is translated by
-          // prepareInjectionPlan, so the restart policy stays in one place
+          // The model/effort delta is translated by prepareInjectionPlan (through
+          // `readLiveSessionFate`), so the restart policy stays in one place
           // (agent-agnostic here).
+
+          // 1. Model or effort change -> suspend + respawn. Checked BEFORE live
+          // injection so a settings change is never typed into the PTY. Phase 3
+          // re-applies the flags and delivers the auto_command / continuation
+          // via spawnAgent, which resolves the column's message itself, so none
+          // is resolved here.
+          //
+          // The same path for an agent arriving in a full column: it pauses here
+          // and Phase 3's spawn queues the resume, so it carries on in the same
+          // conversation on its turn, with the column's message as its prompt.
+          // Asked after `tasks.move`, so the gate reads the destination. A queued
+          // row holds no slot and stays queued, re-gated by its new column.
+          if (liveSessionFate.kind === 'restart' || liveSessionFate.kind === 'yield') {
+            const restartReason = liveSessionFate.kind === 'restart' ? liveSessionFate.reason : null;
+            let suspended = false;
+            try {
+              await suspendLiveSessionForRespawn({
+                context,
+                tasks,
+                sessionRepo,
+                usageHistoryRepo,
+                taskId: task.id,
+                liveSessionId: task.session_id,
+                record: activeRecord,
+                task,
+                projectPath: resolvedProjectPath,
+                defaultBaseBranch: effectiveDefaultBranch,
+                phase: restartReason ? restartPhaseFor(restartReason) : 'queuing-for-column',
+                ownAgentSessionId,
+                signal,
+              });
+              suspended = true;
+            } finally {
+              // The exit messages kept back from this session, held now that it
+              // is suspended, so the resume claims them into its opening
+              // message. In a `finally`: a suspend that threw may have left the
+              // agent live, and the hold then hands them to it after its turn,
+              // or to the task's next agent, with each run saying the restart
+              // did not finish (`restartFailed`). `toLane` is always set here
+              // (`tasks.swimlane_id` references `swimlanes`, so `tasks.move`
+              // throws on a missing lane); the check only narrows the type.
+              if (toLane) {
+                holdCarriedExitMessages(context, {
+                  projectId: resolvedProjectId,
+                  taskId: task.id,
+                  columnName: toLane.name,
+                  carried: carriedExitMessages,
+                  automationRuns: getProjectRepos(context, resolvedProjectId).automationRuns,
+                  restartFailed: !suspended,
+                });
+              }
+            }
+            console.log(
+              `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
+              + (restartReason
+                ? ` (${restartReason} change requires respawn). Will respawn with destination column flags.`
+                : ' (its column is full). Will resume in the same conversation on its turn.'),
+            );
+            return {
+              task,
+              fromSwimlaneId,
+              fromLane,
+              originalPosition,
+              toLane,
+              skipPromptTemplate,
+              resolvedProjectId,
+              resolvedProjectPath,
+              continuationPrompt: options?.continuationPrompt,
+              suppressAutoCommand,
+            };
+          }
+
           const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;
           // Resolve through the shared tier chain (task -> column) rather than
           // reading the lane directly. Reading `toLane.auto_command` alone
@@ -1391,6 +1501,10 @@ export async function handleTaskMove(
           // list (the row is still delivered here, not by the group).
           const trimmedAuto = interpolatedAuto.trim();
           const pastedMessage = trimmedAuto && shouldPaste(trimmedAuto) ? trimmedAuto : null;
+          // The fate already said there is no restart. A `restartReason` on this
+          // plan is a change that appeared during the exit group (an exit row
+          // that typed `/effort`), and the next move applies it: only the
+          // plan's message and verifier are read below.
           const plan = prepareInjectionPlan({
             adapter,
             sessionRepo,
@@ -1400,56 +1514,6 @@ export async function handleTaskMove(
             autoCommand: pastedMessage ? '' : interpolatedAuto,
             ...resolveReportedEffort(context.sessionManager, task.session_id),
           });
-
-          // 1. Model or effort change -> suspend + respawn. Checked BEFORE live
-          // injection so a settings change is never typed into the PTY. Phase 3
-          // re-applies the flags and delivers the auto_command / continuation
-          // via spawnAgent.
-          //
-          // The same path for an agent arriving in a full column: it pauses here
-          // and Phase 3's spawn queues the resume, so it carries on in the same
-          // conversation on its turn, with the column's message as its prompt.
-          // Asked after `tasks.move`, so the gate reads the destination. A queued
-          // row holds no slot and stays queued, re-gated by its new column.
-          const yieldsToColumn = !plan?.restartReason
-            && context.sessionManager.getSession(task.session_id)?.status === 'running'
-            && context.sessionManager.columnBlocks({ taskId: task.id, projectId: resolvedProjectId });
-          const restartReason = plan?.restartReason ?? null;
-          if (restartReason || yieldsToColumn) {
-            await suspendLiveSessionForRespawn({
-              context,
-              tasks,
-              sessionRepo,
-              usageHistoryRepo,
-              taskId: task.id,
-              liveSessionId: task.session_id,
-              record: activeRecord,
-              task,
-              projectPath: resolvedProjectPath,
-              defaultBaseBranch: effectiveDefaultBranch,
-              phase: restartReason ? restartPhaseFor(restartReason) : 'queuing-for-column',
-              ownAgentSessionId,
-              signal,
-            });
-            console.log(
-              `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
-              + (restartReason
-                ? ` (${restartReason} change requires respawn). Will respawn with destination column flags.`
-                : ' (its column is full). Will resume in the same conversation on its turn.'),
-            );
-            return {
-              task,
-              fromSwimlaneId,
-              fromLane,
-              originalPosition,
-              toLane,
-              skipPromptTemplate,
-              resolvedProjectId,
-              resolvedProjectPath,
-              continuationPrompt: options?.continuationPrompt,
-              suppressAutoCommand,
-            };
-          }
 
           // 2. No settings delta, but a column message (or the task's own
           // auto_command) -> deliver it to the running PTY: a one-line message as

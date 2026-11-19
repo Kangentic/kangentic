@@ -39,4 +39,25 @@ describe('exitAgentEndingReason', () => {
     expect(parked).toContain('Review starts no agent and stops this one');
     expect(new Set([todo, done, parked]).size).toBe(3);
   });
+
+  // A session switch and a handoff suspend the agent for another conversation,
+  // so an exit message typed into it is cut off unread (kangentic.com #145).
+  it('skips for a session switch and a handoff, which end the conversation for another', () => {
+    expect(exitAgentEndingReason(null, lane, { kind: 'switch' })).toBe(
+      'Not sent: moving to Review starts a new session, so this one could not act on the message.',
+    );
+    expect(exitAgentEndingReason(null, lane, { kind: 'handoff', targetAgent: 'codex' })).toBe(
+      'Not sent: moving to Review hands the task to another agent, so this one could not act on the message.',
+    );
+  });
+
+  it('gives no reason for a restart, a full column or a kept session, whose message is carried or typed', () => {
+    expect(exitAgentEndingReason(null, lane, { kind: 'restart', reason: 'effort' })).toBeUndefined();
+    expect(exitAgentEndingReason(null, lane, { kind: 'yield' })).toBeUndefined();
+    expect(exitAgentEndingReason(null, lane, { kind: 'keep' })).toBeUndefined();
+  });
+
+  it('lets an ending destination win over the fate', () => {
+    expect(exitAgentEndingReason('done', lane, { kind: 'switch' })).toContain('moving to Review stops the agent');
+  });
 });

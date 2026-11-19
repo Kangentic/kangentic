@@ -41,7 +41,11 @@ export const sendMessageAdapter: AutomationAdapter = {
     // before it has one, and a user can save a draft they came back to later.
     if (!message) return { detail: 'No message to send.' };
 
-    await context.deliverToAgent(message, config.mode ?? 'immediate', context.signal);
+    const deliveryDetail = await context.deliverToAgent(message, config.mode ?? 'immediate', context.signal, context.runId);
+    // A delivery that did something other than send says what: on exit, a move
+    // that restarts the agent holds the message for its resume instead of
+    // typing it into a session about to be cut off (kangentic.com #145).
+    if (deliveryDetail) return { detail: deliveryDetail };
     // Two words, because the two triggers earn different ones and the run log is
     // where someone checks whether a message actually landed.
     //
