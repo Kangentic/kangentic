@@ -5,6 +5,7 @@
  * agent tool call mutates the board.
  */
 import { IPC } from '../../shared/ipc-channels';
+import { isCommandTerminalSession } from '../../shared/session-owner';
 import { getProjectDb } from '../db/database';
 import { autoSpawnForTask, reapTaskLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
@@ -283,11 +284,19 @@ export function buildCommandContextForProject(
       const ownerRequested = options?.callerSessionId
         ? turnStartedByOwner(ipcContext.sessionManager, options.callerSessionId)
         : undefined;
+      // A Command Terminal's move counts as the owner's for whether it ends an
+      // idle pause, and only for that (`handleTaskMove`'s Priority 4). Read from
+      // the session the call came from, never from a tool parameter.
+      const callerSession = options?.callerSessionId
+        ? ipcContext.sessionManager.getSession(options.callerSessionId)
+        : undefined;
+      const moverIsCommandTerminal = callerSession !== undefined && isCommandTerminalSession(callerSession);
       const moveOptions = {
         ...(options?.moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
         ...(options?.moverSessionId ? { moverSessionId: options.moverSessionId } : {}),
         ...(message ? { carriesMessage: true } : {}),
         ...(ownerRequested ? { ownerRequested } : {}),
+        ...(moverIsCommandTerminal ? { moverIsCommandTerminal: true } : {}),
       };
       await handleTaskMove(
         ipcContext, input, 'agent', projectId, projectPath,

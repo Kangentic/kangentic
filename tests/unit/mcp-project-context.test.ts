@@ -212,7 +212,8 @@ function makeIpcContext(projectResult: Project | null): IpcContext {
       list: vi.fn(() => (projectResult ? [projectResult] : [])),
     },
     boardEvents: { emitBoardChanged: vi.fn() },
-    sessionManager: { drainQueue: vi.fn() },
+    // No live sessions unless a test adds one: a caller's session reads as gone.
+    sessionManager: { drainQueue: vi.fn(), getSession: vi.fn(() => undefined) },
   } as unknown as IpcContext;
 }
 
@@ -452,6 +453,60 @@ describe('buildCommandContextForProject - onTaskMove', () => {
       await context!.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-slow' });
 
       expect(handleTaskMove).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // A Command Terminal's move ends an idle pause as the owner's would
+  // (`handleTaskMove`, Priority 4). Main reads it from the calling session,
+  // and it is never the Frequency read: that stays false for a terminal.
+  describe('a move a Command Terminal made', () => {
+    function contextWithCaller(callerSession: Record<string, unknown>) {
+      const ipcContext = makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' }));
+      vi.mocked(ipcContext.sessionManager.getSession).mockImplementation(
+        (sessionId: string) => (sessionId === callerSession.id ? callerSession : undefined) as never,
+      );
+      return buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    }
+
+    function optionsHandedToTheMove(): Record<string, unknown> | undefined {
+      return vi.mocked(handleTaskMove).mock.calls[0][5] as Record<string, unknown> | undefined;
+    }
+
+    it('marks the move as a Command Terminal\'s and leaves the owner read as it was', async () => {
+      const context = contextWithCaller({ id: 'session-terminal', transient: true, workflowId: null });
+
+      await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-terminal' });
+
+      const options = optionsHandedToTheMove();
+      expect(options?.moverIsCommandTerminal).toBe(true);
+      // The same read every caller session gets, which answers false for a
+      // terminal by itself: no `owner_requested` mark comes from this.
+      expect(turnStartedByOwnerSpy).toHaveBeenCalledWith(expect.anything(), 'session-terminal');
+      expect(await options?.ownerRequested).toBe(false);
+    });
+
+    it('does not mark a task agent\'s move', async () => {
+      const context = contextWithCaller({ id: 'session-task', taskId: 'task-9' });
+
+      await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-task' });
+
+      expect(optionsHandedToTheMove()?.moverIsCommandTerminal).toBeUndefined();
+    });
+
+    it('does not mark a workflow agent\'s move, which is transient but no Command Terminal', async () => {
+      const context = contextWithCaller({ id: 'session-workflow', transient: true, workflowId: 'workflow-1' });
+
+      await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-workflow' });
+
+      expect(optionsHandedToTheMove()?.moverIsCommandTerminal).toBeUndefined();
+    });
+
+    it('does not mark a move whose caller session is gone', async () => {
+      const context = contextWithCaller({ id: 'session-other', transient: true });
+
+      await context.onTaskMove(MOVE_INPUT, { callerSessionId: 'session-gone' });
+
+      expect(optionsHandedToTheMove()?.moverIsCommandTerminal).toBeUndefined();
     });
   });
 

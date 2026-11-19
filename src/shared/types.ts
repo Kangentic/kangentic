@@ -1752,7 +1752,9 @@ export type SessionRecordStatus = 'running' | 'queued' | 'suspended' | 'exited' 
  * pause. `'system'`: a quit, a move or a settings restart. `'user'`, `'auto'`
  * and `'low_memory'` hold the task paused until the user resumes it
  * (`isHeldPause`, `src/shared/held-pause.ts`), except that a restart resumes a
- * `'low_memory'` row on a running workflow's task; `'system'` holds nothing.
+ * `'low_memory'` row on a running workflow's task, and the owner opening or
+ * moving the task ends an `'auto'` pause (`isLiftableIdlePause`); `'system'`
+ * holds nothing.
  */
 export type SuspendedBy = 'user' | 'system' | 'auto' | 'low_memory';
 

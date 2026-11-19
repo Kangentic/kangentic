@@ -2448,9 +2448,8 @@ msgid "Path to the private key"
 msgstr "Cesta k privátnímu klíči"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Pause an agent waiting on you this long until you open its task."
-msgstr "Pozastavit agenta, který na vás takto dlouho čeká, dokud neotevřete jeho úlohu."
+msgid "Pause an agent waiting on you this long until you open or move its task."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

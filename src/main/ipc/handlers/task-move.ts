@@ -73,6 +73,7 @@ import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import { isTaskWorkflowPaused, taskWorkflowState } from '../../workflows/workflow-home';
 import { isMoveByAPerson } from '../../../shared/task-move-origin';
 import { isHeldPause } from '../../../shared/held-pause';
+import { isLiftableIdlePause } from '../helpers/idle-pause-lift';
 import { createEarlyAgentLauncher, resolveInitScriptMode, resolveInjectionVerifier, setupStillRunningFor } from '../helpers/agent-spawn';
 import type { EarlyAgentHandle } from '../../transition-engine/early-agent';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
@@ -239,6 +240,12 @@ type MoveSpawnPlan = {
    * restore. See spawnAgent's `suppressAutoCommand`.
    */
   suppressAutoCommand: boolean;
+  /**
+   * The owner moved a task the idle timeout paused, so Phase 3 starts its agent
+   * (Priority 4). False on every plan that ends a live session. Required for the
+   * same reason as the two above. See spawnAgent's `liftsIdlePause`.
+   */
+  liftsIdlePause: boolean;
 };
 
 /**
@@ -380,6 +387,12 @@ export async function handleTaskMove(
   // starts a Frequency over as a person's move does. Only the MCP move path
   // passes it, started when the call came in. The move awaits it after it
   // registers, so a newer move of the task still supersedes this one.
+  //
+  // `moverIsCommandTerminal` says an `'agent'` move came from a Command
+  // Terminal. Its turn cannot be read for the owner (`turnStartedByOwner`), and
+  // asking one to move a task is the usual way the owner does it, so it counts
+  // as the owner's for one check only: whether the move ends an idle pause
+  // (Priority 4). It never marks the row `owner_requested`.
   options?: {
     continuationPrompt?: string;
     onCommitted?: () => void;
@@ -390,6 +403,7 @@ export async function handleTaskMove(
     expectedFromSwimlaneId?: string;
     carriesMessage?: boolean;
     ownerRequested?: Promise<boolean>;
+    moverIsCommandTerminal?: boolean;
   },
 ): Promise<void> {
   // A workflow task's lock, asked BEFORE anything below aborts work in flight:
@@ -1291,6 +1305,7 @@ export async function handleTaskMove(
             // become a brand-new session's only prompt.
             continuationPrompt: undefined,
             suppressAutoCommand,
+            liftsIdlePause: false,
           };
         }
 
@@ -1430,6 +1445,7 @@ export async function handleTaskMove(
               resolvedProjectPath,
               continuationPrompt: options?.continuationPrompt,
               suppressAutoCommand,
+              liftsIdlePause: false,
             };
           }
 
@@ -1638,19 +1654,37 @@ export async function handleTaskMove(
         }
       }
 
-      // A paused agent stays paused through any move: only the user's Resume
-      // starts it (`spawnAgent` refuses it too). The column's other enter rows
+      // A paused agent stays paused through a move, apart from the one exception
+      // below: only the user's Resume starts it (`spawnAgent` refuses it too). The column's other enter rows
       // still run, as they do on any entry, and the rows that need the agent
       // run at a Resume in this column (`resumeTaskSession`). The same shape as
       // Priority 2.5: no worktree work, no spawn. Below the cross-agent clear,
       // because that Resume starts this column's agent. A recovery move out of
       // Done keeps the plan instead: Done removed the worktree, so the move
       // restores it and `spawnAgent` starts nothing, as an unarchive does.
-      if (toLane && !suppressAutoCommand && isHeldPause(sessionRepo.getLatestForTask(task.id))) {
+      //
+      // One exception: the owner's move of a task the idle timeout paused. That
+      // pause was Kangentic freeing memory, not the user's choice, and the same
+      // move sends a running agent the same turn, so the plan goes on and Phase 3
+      // starts the agent (`spawnAgent`'s `liftsIdlePause`). The owner's move is a
+      // person's (a drag, the phone), an agent's made in a turn the owner started,
+      // or a Command Terminal's, which counts as the owner's for this check only.
+      // A row's, a plan approval's or a workflow's move keeps the pause, and so
+      // do a paused workflow, a workflow recovery and a failed launch.
+      const latestRecord = sessionRepo.getLatestForTask(task.id);
+      const pauseHoldsThisMove = Boolean(toLane) && !suppressAutoCommand && isHeldPause(latestRecord);
+      const ownerMove = isMoveByAPerson(origin)
+        || (origin === 'agent' && (ownerRequested || options?.moverIsCommandTerminal === true));
+      const liftsIdlePause = pauseHoldsThisMove && ownerMove
+        && isLiftableIdlePause(task, resolvedProjectId, latestRecord);
+      if (toLane && pauseHoldsThisMove && !liftsIdlePause) {
         clearSpawnProgress(context.mainWindow, task.id);
         console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} stays paused in ${toLane.name} until the user resumes it`);
         armEnterAutomations(null, true);
         return null;
+      }
+      if (toLane && liftsIdlePause) {
+        console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)}: the owner's move ends its idle pause in ${toLane.name}`);
       }
 
       return {
@@ -1664,6 +1698,7 @@ export async function handleTaskMove(
         resolvedProjectPath,
         continuationPrompt: options?.continuationPrompt,
         suppressAutoCommand,
+        liftsIdlePause,
       };
     }).finally(() => {
       releaseOwnMoveMark?.();
@@ -1682,7 +1717,7 @@ export async function handleTaskMove(
       return;
     }
 
-    const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand } = plan;
+    const { task, fromSwimlaneId, fromLane, originalPosition, toLane, skipPromptTemplate, resolvedProjectId, resolvedProjectPath, continuationPrompt, suppressAutoCommand, liftsIdlePause } = plan;
 
     // Shutdown started while Phase 1 ran. Skip Phase 2 git work and Phase 3
     // spawn so we don't write to a closed DB. autoSpawnTasks on next launch
@@ -1916,6 +1951,9 @@ export async function handleTaskMove(
               projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand,
               settingsSourceLane: fromLane ?? null, attachments: attachmentsPhase3, moveCarriesMessage: options?.carriesMessage === true,
               earlyAgent: earlyAgent ?? undefined, setupStillRunning,
+              // Written as the literal on purpose: the spawn parity test keys on
+              // `liftsIdlePause: true` to prove this caller still passes it.
+              ...(liftsIdlePause ? { liftsIdlePause: true } : {}),
             });
           }
         } finally {

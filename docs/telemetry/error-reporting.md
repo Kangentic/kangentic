@@ -471,7 +471,10 @@ in one Sentry org, one triage surface.
     that threw; tag `stage`: `status_line`, `session_start_hook`), `accounts`, `artifact_detection`, `metrics_snapshot`, `worktree_removal` (tags `profile`,
     `timed_out`, `holders`, `refused`, `platform`), `preload` (our own windows only),
     `pop_out_load` (tags `kind`, `error_code`), `dictation`, `owner_turn` (the read of whether an
-    agent's move came in a turn the owner started; the move still runs, as the agent's).
+    agent's move came in a turn the owner started; the move still runs, as the agent's),
+    `idle_pause_lift` (a workflow that could not be read while deciding whether an open or an
+    owner's move lifts an idle pause, and the pause stays held; or the enter rows that run with the
+    agent paused after `spawnAgent` declined that lift, which could not run at all).
   - `pty_host`: a fixed code the host relays as a `handledError` event (`root_pin`, `cli_pin`,
     `orphan_cleanup`, `pty_kill`, `transcript_flush`, `spawn_worker_fallback`, `uncaught`), and a
     heartbeat stall, once per run, fingerprinted `['pty-host', 'heartbeat-stall']`. The stall is

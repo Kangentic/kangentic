@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Resume
-description: Why Resume is refused for To Do, Done and archived tasks, resume on open for an idle-paused task, assessResumeConversation's never-started, expired and unknown verdicts with the expired-conversation recap, the return recap a main conversation gets after an isolated column's session, who resumed a session (resumedBy), fork id reconcile, plan-exit continuation, auto_command escalation, and restore progress labels.
+description: Why Resume is refused for To Do, Done and archived tasks, resume on open and on the owner's move for an idle-paused task, assessResumeConversation's never-started, expired and unknown verdicts with the expired-conversation recap, the return recap a main conversation gets after an isolated column's session, who resumed a session (resumedBy), fork id reconcile, plan-exit continuation, auto_command escalation, and restore progress labels.
 tags: [sessions, resume, expired-conversation, recap, return-recap]
 sources:
   - resource: src/main/transition-engine/resume-conversation-guard.ts
@@ -15,6 +15,8 @@ sources:
   - resource: src/main/ipc/handlers/session-transcript-path.ts
     title: the two writers of the row's transcript path
   - resource: src/main/ipc/handlers/session-resume-on-open.ts
+  - resource: src/main/ipc/helpers/idle-pause-lift.ts
+    title: whether the owner's open or move lifts an idle pause
   - resource: src/shared/session-resume-eligibility.ts
   - resource: src/main/ipc/handlers/session-reconcile.ts
   - resource: src/main/transition-engine/spawn-progress.ts
@@ -75,6 +77,24 @@ and again under the task lock in both of `resumeTaskSession`'s locked phases, th
   reached the workflow's Pause, so its record still reads `auto`.
 - No workflow recovery is armed or running, the same check the idle pause makes.
 
+The record, launch, workflow and recovery checks are `isLiftableIdlePause`
+(`helpers/idle-pause-lift.ts`), which the owner's move shares (below). The column check is the
+open's own, because a move IS the entry.
+
+**The owner's move resumes it too.** A move into a column that starts an agent ends an idle pause
+when the owner made it: a drag or a phone move (`isMoveByAPerson`), an agent's
+`kangentic_move_task` in a turn the owner started (`ownerRequested`), or any Command Terminal's move
+(`moverIsCommandTerminal`, counted for this check only and never written to `owner_requested`).
+Priority 4 of `handleTaskMove` keeps its spawn plan, and Phase 3 calls `spawnAgent` with
+`liftsIdlePause`, which asks `isLiftableIdlePause` again under the lock. The start is the move's:
+the column's session strategy, its message and its whole enter group, with held messages in the
+opening message. It costs the turn a running agent would get from the same move. When the re-check
+declines (a workflow paused or a recovery armed during the move's worktree phase), `spawnAgent`
+runs the enter group with `agentPaused`, as the move's held branch would have. A move the board
+made (a Move to column row, a plan approval's auto-move, a workflow step, an agent's move in a turn
+the board started) keeps the pause, and so does a restart, since `HELD_PAUSE_SOURCES` still lists
+`'auto'`.
+
 A resume already in flight wins (`isResumeInFlight`), since `resumeTaskSession` cancels whatever is
 in flight and that could be a Resume carrying a prompt, a workflow's Resume, or the launch retry.
 
@@ -120,9 +140,9 @@ task, so a phone Resume is the same resume: it cancels a resume already in fligh
 labels the task "Resuming session...", resumes the conversation idle, and runs no enter
 automations or column message. The exception is a task that entered its column after it was
 paused (its current visit's `task_moves.at` is later than the record's `suspended_at`) in a column
-that starts an agent. A move never starts a paused agent, so that entry ran only its rows that need
-no agent. The Resume then calls `spawnAgent` with `resumesEntry` instead of the engine: the column's
-own strategy (a fresh conversation in an always-new column) and its enter rows that need the agent.
+that starts an agent. A move starts no paused agent, so that entry ran only its rows that need no
+agent. The owner's move of an idle-paused task is the exception, described above. The Resume then
+calls `spawnAgent` with `resumesEntry` instead of the engine: the column's own strategy (a fresh conversation in an always-new column) and its enter rows that need the agent.
 An entry out of Done, a drag back or an unarchive, is a recovery move, which sends the agent
 nothing, so that start passes `suppressAutoCommand` too. A drag out of Done does not stop at the
 paused branch: Done removed the worktree, so the move restores it, as an unarchive does.

@@ -2448,9 +2448,8 @@ msgid "Path to the private key"
 msgstr "A privát kulcs elérési útja"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Pause an agent waiting on you this long until you open its task."
-msgstr "Az ügynök szüneteltetése, ha ennyi ideje Önre vár, amíg meg nem nyitja a feladatát."
+msgid "Pause an agent waiting on you this long until you open or move its task."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

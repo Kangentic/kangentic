@@ -134,12 +134,14 @@ export interface RunAutomationsOptions {
    */
   suppressAgentMessages?: boolean;
   /**
-   * The task's agent is paused, and a move never starts a paused agent: only
-   * the user's Resume does. Its rows that need the agent are skipped with that
-   * reason, and every other row runs as on any entry. Resume in this column
-   * then runs the skipped rows (`TransitionEngine.executeTransition`'s
-   * `onlyRowsNeedingAgent`). Passed by the move path for a task whose agent is
-   * held paused.
+   * The task's agent is paused, and this move does not start it: only the
+   * user's Resume does. The owner's move of an idle-paused task is the one
+   * exception, and starts it through `spawnAgent` without this flag. Rows that
+   * need the agent are skipped with that reason, and every other row runs as
+   * on any entry. Resume in this column then runs the skipped rows
+   * (`TransitionEngine.executeTransition`'s `onlyRowsNeedingAgent`). Passed by
+   * the move path for a task whose agent is held paused, and by `spawnAgent`
+   * when its locked re-check declines an owner's lift.
    */
   agentPaused?: boolean;
   /**

@@ -24,8 +24,7 @@
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
-import { workflowOfTask } from '../../workflows/workflow-home';
-import { isUnderWorkflowRecovery } from '../../workflows/workflow-recovery-state';
+import { isLiftableIdlePause } from '../helpers/idle-pause-lift';
 import { resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import { columnEnteredWhilePaused, resumeTaskSession } from './session-resume';
 import { isResumeInFlight } from './session-resume-controllers';
@@ -40,17 +39,13 @@ import type { IpcContext } from '../ipc-context';
  */
 const declinedRecordIds = new Set<string>();
 
-/** Whether a workflow's Pause holds this task. Unreadable reads as held: nobody asked for this start. */
-function isHeldByWorkflow(task: Task, projectId: string): boolean {
-  try {
-    return workflowOfTask(task, projectId)?.state === 'paused';
-  } catch (error) {
-    console.warn(`[SESSION_RESUME] Could not read the workflow of task ${task.id.slice(0, 8)}:`, error);
-    return true;
-  }
-}
-
-/** Whether opening this task resumes it. A read: most opens end here. */
+/**
+ * Whether opening this task resumes it. A read: most opens end here. The pause
+ * itself must be one an owner's gesture lifts (`isLiftableIdlePause`, shared
+ * with a move); the rest is the open's own: a column that may resume, no
+ * declined record, and no column entered since the pause, whose message would
+ * cost a turn.
+ */
 function isPlainIdleResume(context: IpcContext, projectId: string, task: Task): boolean {
   const { swimlanes } = getProjectRepos(context, projectId);
   const laneRole = swimlanes.getById(task.swimlane_id)?.role;
@@ -59,11 +54,9 @@ function isPlainIdleResume(context: IpcContext, projectId: string, task: Task): 
   const db = getProjectDb(projectId);
   const sessionRepo = new SessionRepository(db);
   const latest = sessionRepo.getLatestForTask(task.id);
-  if (latest?.status !== 'suspended' || latest.suspended_by !== 'auto') return false;
-  if (latest.launch_failed_at || declinedRecordIds.has(latest.id)) return false;
-  if (columnEnteredWhilePaused(db, sessionRepo, task)) return false;
-  if (isUnderWorkflowRecovery(task.id)) return false;
-  return !isHeldByWorkflow(task, projectId);
+  if (!latest || declinedRecordIds.has(latest.id)) return false;
+  if (!isLiftableIdlePause(task, projectId, latest)) return false;
+  return !columnEnteredWhilePaused(db, sessionRepo, task);
 }
 
 /**
