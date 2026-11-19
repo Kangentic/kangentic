@@ -136,7 +136,11 @@ three things staying in step, and each is enforced rather than remembered.
   already placed. Its session is recorded like any other, and the build refuses one without a
   recording too. Its recorded sessions ship as the row's own script, not in the eager seed, and
   `demo/boot.js` writes that script into the page, parser-inserted ahead of the seed, only on a
-  frame whose scene names the row.
+  frame whose scene names the row. A project only one scene needs is a scene-only project
+  (`DEMO_SCENE_PROJECTS`): the first row a scene names on it brings it in, opens the frame on it,
+  and seeds the host it lives on. A session on a Linux host is recorded on Linux
+  (`capture-agent-scrollback.js --wsl`, the distro named at run time), so its terminal is a host
+  session's, never a Windows recording relabelled.
 - **What an agent's `kangentic_*` call prints is real.** A recording whose agent calls
   Kangentic's own MCP tools (a manifest entry marked `mcp`) runs against a `/preview` the capture
   seeds with the board the scene paints, through the desktop's launch shape: an `--mcp-config`
@@ -333,8 +337,11 @@ three things staying in step, and each is enforced rather than remembered.
   and the renderer never reads it), when the settings scenes stop matching `SETTINGS_TABS` one to
   one or a `setting-row-<id>` marker names a row that is not on that tab, when a `fitToRecording`
   names a session the recordings index does not carry, when a scene's `rows` names a task that is
-  not a scene-only row, when a scene-only task is also a dataset row, has no recorded session, is
-  not the next free ticket on its board, or has a recording that never prints its ticket number,
+  not a scene-only row, when a scene-only task is also a dataset row, names a session it does not
+  carry, or shares a ticket on its board, or its MCP recording does not take the next free ticket
+  or never prints it, when a scene-only project lives on a host the dataset does not list or lacks
+  a boot a visitor can start there, when a scene restores windows on a project its frame does not
+  open on,
   when a `__mockTaskReports` key is not an archived task of the open project or the scenes seed
   reports for more than one task, when `boot.js`'s `STATE_KEYS` or `demo/vite.config.mts`'s
   `scenes.json` fields drift from the type, and when
