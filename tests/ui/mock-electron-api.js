@@ -4753,11 +4753,14 @@
         // name in place of a path, the host's version, and no capabilities (they come from running the
         // CLI). Claude is installed there unless a spec sets window.__mockHostAgents =
         // { codex: 'found', claude: 'missing' | 'unknown' | 'unsupported' }; any other agent is missing.
+        // window.__mockHostAgentVersions = { claude: '2.1.300' } is the version a found CLI answers
+        // with on the host, for a frame whose terminal prints one; the default is 2.1.80.
         var targetProject = _projectPath
           ? projects.find(function (project) { return project.path === _projectPath; })
           : projects.find(function (project) { return project.id === currentProjectId; });
         if (!targetProject || !targetProject.remote) return inventory;
         var hostStates = (typeof window !== 'undefined' && window.__mockHostAgents) || {};
+        var hostVersions = (typeof window !== 'undefined' && window.__mockHostAgentVersions) || {};
         return inventory.map(function (agent) {
           var status = hostStates[agent.name] || (agent.name === 'claude' ? 'found' : 'missing');
           // 'unsupported' is an agent with no CLI name on a host (main's buildHostAgentList): not found, no
@@ -4778,7 +4781,7 @@
             hostStatus: status,
             found: status === 'found',
             path: agent.name,
-            version: status === 'found' ? '2.1.80' : null,
+            version: status === 'found' ? (hostVersions[agent.name] || '2.1.80') : null,
             detectionError: status === 'unknown' ? 'ssh: connect to host lab port 22: Connection timed out' : undefined,
           });
           delete hostEntry.capabilities;
@@ -6180,6 +6183,10 @@
     //   - window.__mockSshProbeGate: a promise probeHostKey() awaits before it answers
     //   - window.__mockSshFolders: { [path]: { exists, isGitRepo } } consulted by probeRemoteFolder
     //   - window.__mockFireSshHostsChanged(): fires the push the main process sends on a state change
+    //   - window.__mockSeedSshHosts(statuses): starts the stateful list from hosts that already exist, each an
+    //     SshHostStatus. Unlike __mockSshHosts, which answers listHosts() verbatim and so ignores every later
+    //     edit, a seeded host is edited, reconnected and removed like one that was added, and its project
+    //     count is read from the project table.
     ssh: (function () {
       var hosts = [];
       // A removed host keeps its id and address, and its projects are hidden, not deleted (main's tombstone):
@@ -6192,6 +6199,14 @@
       if (typeof window !== 'undefined') window.__mockFireSshHostsChanged = fire;
       // Forget the removed hosts and their hidden projects, so a spec that adds an address again starts clean.
       if (typeof window !== 'undefined') window.__mockSshForgetRemoved = function () { removedHosts = []; hiddenProjects = []; };
+      // Hosts that exist before the app starts, copied so a caller's own objects are never edited in place.
+      if (typeof window !== 'undefined') {
+        window.__mockSeedSshHosts = function (statuses) {
+          hosts = statuses.map(function (status) {
+            return Object.assign({}, status, { host: Object.assign({}, status.host) });
+          });
+        };
+      }
       function win() { return typeof window !== 'undefined' ? window : {}; }
       return {
         detectClient: async function () {
