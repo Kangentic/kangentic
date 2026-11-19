@@ -30,13 +30,35 @@
  * internals, which only this test reads.
  *
  * Closing the task window is the other end of that ownership. monaco does not
- * dispose the view model it still holds when the editor goes either, so
- * DiffViewer disposes the one it owns when the modified editor disposes
- * (handleEditorMount). The close cases read a view model's token after the
- * editor is gone, once with a swap behind it and once without.
+ * dispose the view model it still holds when the editor goes either, so the
+ * last one attached is disposed with its editor (disposeViewModelWithEditor in
+ * src/renderer/monaco-diff-view-model.ts, which monacoConfig.ts registers on
+ * monaco's diff editor creation event). The close cases read a view model's
+ * token after the editor is gone, once with a swap behind it and once without.
  *
- * All four cases read red with DiffViewer's view model ownership removed. The
- * two close cases also read red with only that onDidDispose listener removed.
+ * Sentry DESKTOP-4D ("no diff result available" as an unhandled rejection) is
+ * why that starts when the editor is created and not at onMount.
+ * @monaco-editor/react creates the editor and attaches its own view model in
+ * one effect, and calls onMount from an effect one render later. A window that
+ * closes in between never reaches DiffViewer's handleEditorMount. That view
+ * model's first diff is still waiting on the worker's `$ping`, so the text
+ * models are gone by the time its request is posted, the worker answers null
+ * (editorWebWorker.js `$computeDiff`), and a view model nobody cancelled
+ * rejects (diffProviderFactoryService.js `computeDiff`). The last close case
+ * closes the window from a microtask queued the moment monaco creates the
+ * editor, which lands in that gap.
+ *
+ * That case also keeps one other text model registered. monaco stops its
+ * worker client when the last model goes (editorWorkerService.js
+ * `_checkStopEmptyWorker`). The request then never settles and nothing
+ * rejects, so the rejection needs another diff editor alive in the window: a
+ * second task window on Changes, or a parked one. The throwaway model stands
+ * in for it.
+ *
+ * The two swap cases and the close after a swap read red with DiffViewer's
+ * swap-time disposal removed. The three close cases read red with the creation
+ * hook removed. Without the throwaway model the build before that hook never
+ * answered the last case's request and rejected nothing.
  */
 import { test, expect, chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -149,6 +171,7 @@ const workerGate = `
     var gate = {
       holding: false,
       computeDiffPosts: 0,
+      computeDiffReplies: 0,
       postsWhenHoldStarted: 0,
       heldReplyCount: function () { return heldDeliveries.length; },
       hold: function () {
@@ -182,11 +205,15 @@ const workerGate = `
         super.onmessage = function (event) {
           var data = event.data;
           var isComputeDiffReply = !!data && data.type === 1 && computeDiffRequestIds.has(String(data.seq));
+          function deliver() {
+            handler.call(worker, event);
+            if (isComputeDiffReply) gate.computeDiffReplies += 1;
+          }
           if (gate.holding && isComputeDiffReply) {
-            heldDeliveries.push(function () { handler.call(worker, event); });
+            heldDeliveries.push(deliver);
             return;
           }
-          handler.call(worker, event);
+          deliver();
         };
       }
     }
@@ -203,6 +230,8 @@ const workerGate = `
 interface WorkerGateHandle {
   holding: boolean;
   computeDiffPosts: number;
+  /** `$computeDiff` replies handed to monaco so far. */
+  computeDiffReplies: number;
   postsWhenHoldStarted: number;
   heldReplyCount: () => number;
   hold: () => void;
@@ -221,10 +250,16 @@ interface DiffEditorHandle {
   _diffModel: { get: () => ViewModelHandle | undefined };
 }
 
+interface ThrowawayModelHandle {
+  dispose: () => void;
+}
+
 interface MonacoTestHandle {
   editor: {
     getDiffEditors: () => DiffEditorHandle[];
     onDidCreateDiffEditor: (listener: (diffEditor: DiffEditorHandle) => void) => { dispose: () => void };
+    createModel: (value: string) => ThrowawayModelHandle;
+    getModels: () => unknown[];
   };
 }
 
@@ -233,11 +268,29 @@ interface ViewModelRecord {
   viewModels: ViewModelHandle[];
 }
 
+interface ManagedWindowHandle {
+  id: string;
+  kind: string;
+  anchor: string;
+}
+
+interface WindowStoreHandle {
+  getState: () => {
+    windows: Record<string, ManagedWindowHandle>;
+    closeWindow: (id: string) => void;
+  };
+}
+
 interface TestWindow {
   __monaco: MonacoTestHandle;
+  __zustandStores: { window: WindowStoreHandle };
   __diffWorkerGate: WorkerGateHandle;
   __unhandledRejectionMessages: string[];
   __viewModelRecord?: ViewModelRecord;
+  /** The text model that stands in for another live diff editor. */
+  __otherEditorModel?: ThrowawayModelHandle;
+  /** Set once the creation hook has closed the task window. */
+  __closedBeforeMount?: boolean;
   __mockGitDiff: unknown;
   __mountOnLongFixture: unknown;
 }
@@ -506,5 +559,80 @@ test.describe('Diff view model when the task window closes', () => {
     const afterClose = await readRecordedViewModelsAfterClose();
     expect(afterClose.recorded, 'no swap ran, so the library view model is the only one recorded').toBe(1);
     expect(afterClose.liveIndexes, 'index 0 is the view model the library attached at mount').toEqual([]);
+  });
+
+  // Sentry DESKTOP-4D. The window closes after the library attached its view
+  // model and before it called onMount, so DiffViewer never saw the editor.
+  // The header says why another text model has to be registered meanwhile.
+  test('a close before the editor reports mounted cancels its view model, and its late diff rejects nothing', async () => {
+    const getPageErrors = collectPageErrors(page);
+    await openChangesPanel();
+    await page.locator('.view-line').first().waitFor({ state: 'visible', timeout: 10000 });
+    await waitForDiffToSettle(page);
+
+    // Registered while the first editor is still up, so the worker that editor
+    // started outlives the close below and answers the next editor's request.
+    await page.evaluate(() => {
+      const pageWindow = window as unknown as TestWindow;
+      pageWindow.__otherEditorModel = pageWindow.__monaco.editor.createModel('stands in for another live diff editor');
+    });
+    await closeTaskWindow();
+    const readModelCount = () => page.evaluate(() => (window as unknown as TestWindow).__monaco.editor.getModels().length);
+    expect(await readModelCount(), 'an ordinary close disposes both of its text models').toBe(1);
+
+    const repliesBeforeReopen = await page.evaluate((taskId) => {
+      const pageWindow = window as unknown as TestWindow;
+      const subscription = pageWindow.__monaco.editor.onDidCreateDiffEditor((diffEditor) => {
+        subscription.dispose();
+        const record: ViewModelRecord = { editor: diffEditor, viewModels: [] };
+        pageWindow.__viewModelRecord = record;
+        const createViewModel = diffEditor.createViewModel.bind(diffEditor);
+        diffEditor.createViewModel = (model: unknown) => {
+          const viewModel = createViewModel(model);
+          record.viewModels.push(viewModel);
+          return viewModel;
+        };
+        // A microtask runs once the effect that created the editor has
+        // returned, so the library has attached its view model by then. React
+        // renders the state update that leads to onMount in a later task.
+        queueMicrotask(() => {
+          const windowState = pageWindow.__zustandStores.window.getState();
+          const taskWindow = Object.values(windowState.windows).find(
+            (candidate) => candidate.kind === 'task-detail' && candidate.anchor === taskId,
+          );
+          if (!taskWindow) throw new Error('the task window must be open when its diff editor is created');
+          windowState.closeWindow(taskWindow.id);
+          pageWindow.__closedBeforeMount = true;
+        });
+      });
+      return pageWindow.__diffWorkerGate.computeDiffReplies;
+    }, TASK_ID);
+
+    // The Changes panel comes back open with the task, so the click alone
+    // builds the next editor.
+    await page.locator('[data-swimlane-name="Code Review"]').locator(`text=${TASK_TITLE}`).first().click();
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as TestWindow).__closedBeforeMount === true), {
+        message: 'the hook must close the window as soon as monaco creates its diff editor',
+        timeout: 15000,
+      })
+      .toBe(true);
+    await expect.poll(liveDiffEditorCount, { timeout: 8000 }).toBe(0);
+    await expect
+      .poll(
+        () => page.evaluate(() => (window as unknown as TestWindow).__diffWorkerGate.computeDiffReplies),
+        { message: "the closed editor's diff request must be answered before anything is asserted", timeout: 10000 },
+      )
+      .toBeGreaterThan(repliesBeforeReopen);
+    // A rejection from that reply is reported after the task that delivered
+    // it, so a timer queued now runs once it has been.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+    expect.soft(await readUnhandledRejectionMessages()).toEqual([]);
+    expect.soft(getPageErrors()).toEqual([]);
+    const afterClose = await readRecordedViewModelsAfterClose();
+    expect(afterClose.recorded, 'the window closed before any swap, so only the library view model exists').toBe(1);
+    expect(afterClose.liveIndexes, 'index 0 is the view model the library attached before onMount').toEqual([]);
+    expect(await readModelCount(), 'the close must dispose both text models and leave the stand-in').toBe(1);
   });
 });

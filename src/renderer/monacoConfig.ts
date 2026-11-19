@@ -9,6 +9,7 @@ import cssWorker from 'monaco-editor/language/css/css.worker?worker';
 import htmlWorker from 'monaco-editor/language/html/html.worker?worker';
 import tsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { createMonacoUnexpectedErrorHandler } from './monaco-error-funnel';
+import { disposeViewModelWithEditor } from './monaco-diff-view-model';
 import { reportHandledRendererError } from './error-reporting';
 
 self.MonacoEnvironment = {
@@ -39,24 +40,42 @@ loader.config({ monaco });
 //   Upstream: https://github.com/suren-atoyan/monaco-react/issues/647
 // - It reports Sentry DESKTOP-19 ("Illegal value for lineNumber") as a handled
 //   error with the live diff state, instead of letting it be re-thrown.
+
+// What an earlier evaluation of this module installed, in dev. Vite runs this
+// module again when it, or a module it imports such as the funnel, is edited,
+// on the way to the ChangesPanel.tsx refresh boundary. It does not run this
+// module's import.meta.hot.dispose on that path. Dispose runs only for the
+// module that accepts the update: measured in /preview, where a logged dispose
+// callback here never fired across two edits. import.meta.hot.data does
+// survive, so the previous evaluation's work is read from it and undone here.
+// Otherwise each edit would wrap the already-wrapped error handler again and
+// leave one more creation listener registered.
+interface MonacoConfigHotData {
+  defaultUnexpectedErrorHandler?: typeof errorHandler.unexpectedErrorHandler;
+  diffEditorCreationSubscription?: { dispose(): void };
+}
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const hotData: MonacoConfigHotData | undefined = import.meta.hot?.data;
+
 // This monaco build has no setUnexpectedErrorHandler export, so we reassign
 // the singleton's handler field directly.
-const defaultUnexpectedErrorHandler = errorHandler.unexpectedErrorHandler;
+const defaultUnexpectedErrorHandler = hotData?.defaultUnexpectedErrorHandler ?? errorHandler.unexpectedErrorHandler;
 errorHandler.unexpectedErrorHandler = createMonacoUnexpectedErrorHandler({
   defaultHandler: defaultUnexpectedErrorHandler,
   reportHandled: reportHandledRendererError,
 });
 
-// Restore the original handler on HMR dispose so re-executing this module (an
-// edit to monacoConfig.ts, or to a module it imports, such as the funnel)
-// rewraps the real default rather than stacking another layer on the already-
-// wrapped handler. Pattern D cleanup; see .claude/rules/hmr-patterns.md.
-// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
-if (import.meta.hot) {
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose(() => {
-    errorHandler.unexpectedErrorHandler = defaultUnexpectedErrorHandler;
-  });
+// Every diff editor disposes its view model when it is disposed (Sentry
+// DESKTOP-4D, see src/renderer/monaco-diff-view-model.ts). Registered on
+// monaco's own creation event because @monaco-editor/react attaches a view
+// model before it tells DiffViewer the editor exists, and a window that closes
+// in between would leave that one computing against disposed text models.
+hotData?.diffEditorCreationSubscription?.dispose();
+const diffEditorCreationSubscription = monaco.editor.onDidCreateDiffEditor(disposeViewModelWithEditor);
+
+if (hotData) {
+  hotData.defaultUnexpectedErrorHandler = defaultUnexpectedErrorHandler;
+  hotData.diffEditorCreationSubscription = diffEditorCreationSubscription;
 }
 
 // Dev-only: expose the monaco instance for UI test automation (Playwright

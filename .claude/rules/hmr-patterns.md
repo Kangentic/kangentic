@@ -108,6 +108,25 @@ once, the first store edit that re-ran its module removed it, and the dev restar
 showed (measured in `/preview`). `utils/dev-restart.ts` registers at module scope, so each
 evaluation registers its own, and gates on state in `sharedModuleState`.
 
+**`import.meta.hot.dispose` runs only for the module that accepts the update.** A module Vite
+re-evaluates on the way to an importer's Fast Refresh boundary gets no dispose call, so a cleanup
+registered there never runs. `monacoConfig.ts` re-evaluates through `ChangesPanel.tsx`, and a
+logged dispose callback in it never fired across two edits (measured in `/preview`, Vite 8.3). So
+the handler restore it registered there did not run, and an edit wrapped the already-wrapped error
+handler again. `import.meta.hot.data` does survive that re-evaluation. So a module that is
+neither a Fast Refresh boundary nor self-accepting keeps what its next evaluation must undo in
+`import.meta.hot.data` and undoes it at the top of that evaluation, as `monacoConfig.ts` does for
+its error handler and its diff editor listener.
+
+A dispose that saves state has the same limit. Vite's client calls a disposer only for the path an
+update accepts (`fetchUpdate` in `vite/dist/client/client.mjs`), so a Pattern A stash in a module
+that is not accepted is skipped on that path and the value starts again from its default. A new
+module of that kind keeps the value in `import.meta.hot.data` itself, written when it is made or
+changed. Where `hmr-resync.test.ts` flags that declaration for having no dispose, it carries
+`// hmr-safe:` with the reason. The Pattern A sites outside the self-accepting stores stash in a
+dispose and were not re-measured against this: `session-store.ts`, `useTerminal.ts` and
+`utils/diff-scroll-memory.ts` among them.
+
 **An object a factory built, held in a component's ref, outlives an edit of the factory's
 module.** Fast Refresh keeps the ref, so the live component goes on calling the old instance,
 whose methods the edit may have renamed or removed. None of A to E reaches it. Where a stale
@@ -156,7 +175,9 @@ comment-only edit still refreshes in place. Replay a commit's edit with
 - **Review:** the `hmr-parity` agent audits all five patterns; `hmr-integrity` is the narrow
   Pattern B store-registration check. A Vite custom-event listener registered in a React effect
   instead of at module scope is review-only: no test drives a Vite custom event, since the UI tier
-  runs a plain dev server with no `scripts/dev.js` behind it.
+  runs a plain dev server with no `scripts/dev.js` behind it. A cleanup or a stash registered in
+  the dispose of a module that is not accepted is review-only too: no test re-evaluates a module
+  through an importer's boundary.
 
 - **Test (hook signatures):** `tests/unit/vite-refresh-hook-signatures.test.ts` runs a `.ts` hook
   module, a hook-only `.tsx` module and a component module through a real dev server with and
