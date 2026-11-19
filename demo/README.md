@@ -402,6 +402,8 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `task`, `browser` | state | `workspaceByProject` (a floating window sized to its session's recording, a maximized one) and `detail_view_state.browserOpen`; the guest is the project's dev URL (Browser guest below). `browser` patches the middleware session idle, so its terminal rests on the frame its recorded Send starts from. Under `loop=1` it types that recording's note into the pane's own field and presses Send: the recording plays on (the payload pasted and echoed whole, the screenshot read, the agent working), and a few seconds in the frame cuts and the seed takes the Send back behind the veil (Live replay below) |
 | `browser-annotations` | state | the `browser` scene's window and pane, plus a `__mockBrowserAnnotationDrafts` seed that `browser.loadAnnotations` serves once for the middleware task: three element annotations on the contoso page (`tests/captures/helpers/demo-browser-annotations.ts`), each the fingerprint Inspect takes of that element, with a note. The badges are the renderer's own annotation layer, which `executeJavaScript` runs in the guest (Browser guest below). The session stays working, since an idle one would load `browser`'s send frame. Under `loop=1` the pointer goes over two rows, which shows each annotation's badge alone, makes the first active, switches Draw on and off, makes the third active again and clicks the page, which leaves no field focused. Send is never pressed: the one recorded Send carries a note and no annotations |
 | `task-mcp` | state | `rows` adds the scene-only Validate request bodies task (Scene-only rows below), and `workspaceByProject` restores its window maximized. Its session is the MCP recording (An agent calling Kangentic's MCP tools below), working, with a `liveTailMs` cut to that recording: a still paints the moment `kangentic_get_current_task`, `kangentic_list_columns` and `kangentic_list_automations` have printed their results, and live, the agent then reads Testing with `kangentic_get_column_detail` and moves the card with `kangentic_move_task`, about eleven seconds that `loop=1` replays. The whole `terminal` block is spelled out with a larger font, the one exception to the type rule above (One viewport, one scale). It also seeds `__mockAgentListOverrides` with the dataset's agent list and Claude Code at 2.1.302, the version the recording ran on, so the context bar and the terminal's header agree. Its `timeline` moves the card to Testing when the recording ends, which is where the move's result lands (the manifest's `stopWhen` cut it there), through the push main sends for an agent's move; `loop=1` puts the card back in Code Review as the stretch starts over. The session stays: on this board Testing names the same agent, changes no model or effort, and sends no column message, which is `handleTaskMove`'s keep-alive case for a live session (Priority 3 in `task-move.ts`). The capture's preview did spawn there, because the recorded agent ran in the rig's own terminal, so the preview's task had no live session to keep |
+| `ssh-remote-project` | state | `rows` names the redis board's five cards (`DEMO_REDIS_ROWS`), scene-only rows on a scene-only project (Scene-only rows below), so the seed brings redis in, opens the frame on it and seeds the Build server host as connected. `workspaceByProject` floats the Executing card's window, fitted to its 110-column recording with `fitAnchor: 'right'`: it keeps the frame's right edge, so the Planning column and its waiting plan stay clear. The terminals are Claude Code on Linux (A project on a Linux host below), and the context bar reads bash, the host's login shell. Under `loop=1` the pointer rests on the host chip, whose tip names the host and its state, and on the Planning card's mark, whose tip says the plan waits for approval |
+| `ssh-remote-host` | boot | the same `rows`, so the host and its one project are seeded, then the gear and the SSH tab. The host's program line reads the app's own version and the two terminals redis runs there, which the seed's wrap of `ssh.hostProgram` counts from the running sessions. Under `loop=1` it opens the row's Edit form, picks the key-file sign-in so its path field shows, and cancels. Save is never pressed: it would sign in to a machine a visitor cannot reach. The empty tab is `settings-ssh` |
 | `windows-tiled` | state | `workspaceByProject` with two `tiled` windows under one horizontal split, in the footprint a dock produces; both sessions have a recording at the tiled width (Terminal recordings below) |
 | `terminal-find` | boot | the `task` scene's fitted window and a choreography whose pose is the find bar opened from its header icon with `auth` typed in, which reads 1 of 3 at the opening frame. It searches the screen and the scrollback only: the whole-conversation view for an alternate-screen CLI needs a recorded transcript write-out (`__mockHistoryView`), and this recording is not on the alternate screen. Under `loop=1` it steps two matches older and two newer, clears the field and closes the bar, then opens it and types again. No wait names a count, which grows as the recording plays |
 | `conversation` | state | `workspaceByProject` with one `conversation` window anchored on the middleware session id; the transcript is the one recorded beside the session (Transcripts below). Under `loop=1` a search is typed and its matches stepped through, then the frame cuts, and behind it the search is cleared and the viewer's own Jump to latest brings the closing message back |
@@ -733,12 +735,31 @@ so a poster could be shot before the frame painted. A row script that does not l
 the error card naming the row, and the seed refuses a named row whose sessions are not on the page.
 The marketing captures write no row scripts, so their seed carries the rows inline.
 
-There is one: Validate request bodies, #68 in contoso-web's Code Review, whose Claude Code session
-is the MCP recording (An agent calling Kangentic's MCP tools, below). Its ticket is the next free one
-after the archived history, and it is a literal rather than computed: the recording prints it, so
+One is Validate request bodies, #68 in contoso-web's Code Review, whose Claude Code session is the
+MCP recording (An agent calling Kangentic's MCP tools, below). Its ticket is the next free one after
+the archived history, and it is a literal rather than computed: the recording prints it, so
 `tests/unit/scene-registry.test.ts` fails when a dataset change moves the next free ticket, and
 when the recording stops printing the row's number. The Knowledge Graph and its capture leave the
 session out, like every figure but its scene, and it has no resume boot.
+
+A row can sit on a project the sample install does not have. `DEMO_SCENE_PROJECTS` holds such
+projects, out of `DEMO_PROJECTS` for the reason rows are: the sidebar, the Monitor, the usage, the
+Knowledge Graph, the archived history and the capture matrix's history all read that list. The
+first row a scene names on one brings the project in ahead of every row, with its columns, and the
+frame opens on it. A project on a host brings the host too, into the mock's own list
+(`__mockSeedSshHosts`), so the SSH tab edits and removes it like one a visitor added, and a frame
+with no such row keeps an empty Hosts card. A frame shows one project, so rows on two such
+projects are refused. The usage dashboard gives the extra project a tenth and scales every share
+back to a whole, which leaves the three-project frames' numbers as they were.
+
+The other rows are redis's, on the Build server host at `dev@build-box`, cards #6 to #10. Its first
+five tickets went to work that is not on the board. A plan waits for approval in Planning, Claude
+Code works in Executing, and three To Do cards have no agent yet. A visitor can drag those, so each
+has both of its boots recorded, and the project both Command Terminal boots
+(`scene-registry.test.ts` fails without them). A card with no agent has no session, so the ticket
+rules above hold only for an MCP recording; any other scene-only row keeps a ticket of its own on
+its board, after every card the install puts there. Its terminals are Linux recordings (A project
+on a Linux host, below).
 
 ### Knowledge Graph
 
@@ -1474,6 +1495,29 @@ install gives them (`~\work\contoso-web`, `~\oss\spring-petclinic`, `~\oss\onlin
 on purpose: every CLI prints its working directory somewhere, the full-screen ones truncated to a
 status-bar column, and a truncated path can only survive sanitization when the part that
 survives is already the final text. `--root` moves them at the cost of that property.
+
+### A project on a Linux host
+
+redis lives on a Linux host, so its terminals are Claude Code running as a Linux process: in the
+recording machine's WSL distro, which is named on the command line and never in the repo.
+
+```
+node scripts/capture-demo-sessions.mjs --wsl <distro> --only redis-claude-,task-rd-,proj-redis
+```
+
+The manifest marks the repo `linux` and pins its commit. The clone sits in the distro at the host
+folder's place under its home (`~/redis` for `/home/dev/redis`), on `unstable`, the branch the
+repository uses, and each session runs in its task's worktree, made fresh the way main makes one
+on a host. The rig starts the app's own distro launch (`cliInvocationForTarget`) in that folder,
+with the drive mounts off its PATH, trust in the distro's `~/.claude.json`, and git and the
+transcript read inside the distro. The sanitizer turns the clone into the host folder, and the
+distro's user and host names into `dev` and `build-box`. The distro's clock ran up to a second
+ahead of Windows, so the rig measures it and takes it off the trail. The clone keeps no remote:
+on a task branch Claude's footer looks the branch's pull request up on GitHub, and with no `gh`
+in the distro it says "install gh for PR status". Every capture refuses that hint, the other
+notices about the recording machine's install or account (a model launch announcement, a plan
+offer, an update notice), and an email. A refused capture is made again; the announcement and the
+offer each stopped after a few launches.
 
 ### An agent calling Kangentic's MCP tools
 
