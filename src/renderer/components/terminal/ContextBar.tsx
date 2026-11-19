@@ -5,6 +5,7 @@ import type { RateLimitWindow } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
 import { accountNameFor, useAccountsStore } from '../../stores/accounts-store';
 import { getProgressColor } from '../../utils/progress-color';
 import { liveRateLimitWindows, rateLimitWindowsForAccount, rateLimitWindowsForAgent, rateLimitWindowsShortestFirst, sessionRateLimitAgent } from '../../utils/rate-limit-window';
@@ -218,6 +219,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const latestRateLimits = useSessionStore((s) => s.latestRateLimits);
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId));
   const sessionShell = session?.shell;
+  // A session of a remote project runs in the host's shell, which this computer's platform does not name.
+  const sessionProjectId = session?.projectId;
+  const sessionOnHost = useProjectStore(
+    (state) => state.projects.some((project) => project.id === sessionProjectId && project.remote != null),
+  );
   const isResuming = session?.resuming ?? false;
   const injectTransientSettings = useSessionStore((s) => s.injectTransientSettings);
   // Resolve via the session's own taskId, not the task's forward session_id: a
@@ -453,7 +459,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const overflowCopies: Partial<Record<ContextBarFoldId, React.ReactNode>> = {
     shell: showShell && (
       <Tooltip label={sessionShell as string}>
-        <span className={`${pill} text-fg-faint`}>{shellDisplayName(sessionShell as string)}</span>
+        <span className={`${pill} text-fg-faint`}>{shellDisplayName(sessionShell as string, { onHost: sessionOnHost })}</span>
       </Tooltip>
     ),
     // The version, or the agent's name with it once that folds too, under the floor.
@@ -571,7 +577,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       {showShell && (
         <Tooltip label={sessionShell as string}>
           <span className={`${pill} text-fg-faint${foldClass('shell')}`} {...foldAttributes('shell')}>
-            {shellDisplayName(sessionShell as string)}
+            {shellDisplayName(sessionShell as string, { onHost: sessionOnHost })}
           </span>
         </Tooltip>
       )}

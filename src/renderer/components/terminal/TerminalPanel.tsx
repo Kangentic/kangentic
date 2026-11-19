@@ -33,6 +33,8 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   // picker resolves capabilities. Bottom panel never shows transient sessions
   // (filtered below), so this only ever serves task-bound sessions.
   const projectDefaultAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
+  // The panel's sessions are the open project's, so a project on a host names its shells as the host does.
+  const projectOnHost = useProjectStore((s) => s.currentProject?.remote != null);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const selectActiveSession = useSessionStore((s) => s.selectActiveSession);
@@ -213,7 +215,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             // tip), so the tip is only the shell: the context bar names it for
             // the active tab alone.
             return (
-              <Tooltip key={session.id} label={shellDisplayName(session.shell)}>
+              <Tooltip key={session.id} label={shellDisplayName(session.shell, { onHost: projectOnHost })}>
                 <button
                   data-testid="terminal-session-tab"
                   data-session-id={session.id}
