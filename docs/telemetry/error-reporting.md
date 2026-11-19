@@ -462,7 +462,8 @@ in one Sentry org, one triage surface.
     refused, and reports nothing. The error's `detail` is never sent. The latch keys on tags, so
     each combination reports once per run, and those reports count toward the source's 25-key
     cap.
-  - `task_move` (a rollback that failed), `project_recovery` (tag `pass`: `resource_cleanup`,
+  - `task_move` (a rollback that failed), `exit_message_carry` (an exit message held for a
+    restarted agent whose hold or run-detail write threw; tag `stage`: `hold`, `record`), `project_recovery` (tag `pass`: `resource_cleanup`,
     `session_recovery`, `session_reconcile`, `host_connected`, `cold_open`,
     `deferred_board_config`, `pty_host_loss`, `activate_project`, `remote_projects`), `db_open` and
     `db_migration` (tags `database`, `stage`: `open`, `pragma`, `migrate`, `initialize`), `held_messages`, `session_handlers` (tag `stage`),
