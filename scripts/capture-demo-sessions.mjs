@@ -363,6 +363,12 @@ function distroFacts() {
  * A `linux` repo's clone in the distro, at the host folder's place under the distro's home, on the
  * commit the manifest pins, under the branch name the repository itself uses. Its task worktrees
  * live in .kangentic/, which git is told to ignore so a reset and a clean leave them be.
+ *
+ * The clone keeps no remote. On a task's branch Claude Code's footer looks the branch's pull
+ * request up on the remote's host, and with no GitHub CLI there it prints "install gh for PR
+ * status", a notice about the recording distro that the capture refuses. With no remote it shows
+ * no badge and no hint (code.claude.com/docs/en/interactive-mode, PR review status). The pinned
+ * commit is fetched from the repository's URL itself, so the clone needs none.
  */
 async function prepareLinuxRepo(project, spec) {
   if (!spec.git || !spec.commit || !spec.branch) throw new Error(`[matrix] the linux repo ${project.name} needs git, commit and branch`);
@@ -379,9 +385,12 @@ async function prepareLinuxRepo(project, spec) {
     inDistro(['git', '-C', root, 'cat-file', '-e', `${spec.commit}^{commit}`]);
   } catch {
     console.error(`[matrix] ${project.name}: fetching ${spec.commit}`);
-    inDistro(['git', '-C', root, 'fetch', '-q', '--depth', '1', 'origin', spec.commit], { inherit: true });
+    inDistro(['git', '-C', root, 'fetch', '-q', '--depth', '1', spec.git, spec.commit], { inherit: true });
   }
   inDistro(['git', '-C', root, 'checkout', '-q', '-f', '-B', spec.branch, spec.commit]);
+  for (const remote of inDistro(['git', '-C', root, 'remote']).split('\n').map((line) => line.trim()).filter(Boolean)) {
+    inDistro(['git', '-C', root, 'remote', 'remove', remote]);
+  }
   const excludePath = path.join(share, '.git', 'info', 'exclude');
   const excluded = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf-8') : '';
   if (!excluded.split(/\r?\n/).includes('.kangentic/')) {

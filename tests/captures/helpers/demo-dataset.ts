@@ -281,6 +281,12 @@ export const SESSION_PETCLINIC_BOOT35 = 'sess-pc-boot-35';
 // Kangentic's own MCP tools, which only the task-mcp scene seeds.
 export const TASK_VALIDATE = 'task-cw-validate';
 export const SESSION_VALIDATE = 'sess-cw-validate';
+// The redis board's two cards with an agent on the host: a plan waiting in Planning, and the
+// Executing card whose window the SSH project scene floats beside the board.
+export const TASK_REDIS_SLOWLOG = 'task-rd-slowlog';
+export const TASK_REDIS_EXPIRE = 'task-rd-expire';
+export const SESSION_REDIS_SLOWLOG = 'sess-rd-slowlog';
+export const SESSION_REDIS_EXPIRE = 'sess-rd-expire';
 
 // The sample install is a Windows machine, as the recording machine and the mock's platform are.
 const HOME = 'C:\\Users\\dev';
@@ -337,7 +343,7 @@ export const DEMO_SSH_HOSTS: DemoSshHost[] = [
  * prints (the mock's `__mockHostAgentVersions`). It is the version the host's recordings ran on,
  * so the bar and the terminal's own banner agree.
  */
-export const DEMO_HOST_AGENT_VERSIONS: Record<string, string> = {};
+export const DEMO_HOST_AGENT_VERSIONS: Record<string, string> = { claude: '2.1.328' };
 
 /** The seven default lanes, mirroring src/main/db/migrations/default-data.ts. */
 const DEFAULT_LANES: DemoLane[] = [
@@ -661,6 +667,8 @@ export const DEMO_SCENE_TASKS: DemoTask[] = [
   { id: TASK_VALIDATE, projectId: PROJECT_CONTOSO, display_id: 68, title: 'Validate request bodies', description: 'Reject malformed request bodies on the API routes with a 400 that names the fields that failed', lane: 'review', position: 1, agent: 'claude', session_id: SESSION_VALIDATE, worktree_folder: 'validate-requests-yza567', branch_name: 'validate-request-bodies', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'main', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 2 },
 
   // redis, on the Build server host
+  { id: TASK_REDIS_SLOWLOG, projectId: PROJECT_REDIS, display_id: 6, title: 'Per-command slowlog threshold', description: 'Let one command have its own slowlog threshold, so a command that is slow by design, such as KEYS, is logged above a higher threshold than slowlog-log-slower-than', lane: 'planning', position: 0, agent: 'claude', session_id: SESSION_REDIS_SLOWLOG, worktree_folder: 'per-command-slowlog-7be2d0', branch_name: 'per-command-slowlog', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'unstable', labels: ['feature'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 3 },
+  { id: TASK_REDIS_EXPIRE, projectId: PROJECT_REDIS, display_id: 7, title: 'Pin EXPIRE with a negative TTL', description: 'Add a test to tests/unit/expire.tcl that pins what EXPIRE does when the TTL is negative', lane: 'executing', position: 0, agent: 'claude', session_id: SESSION_REDIS_EXPIRE, worktree_folder: 'pin-expire-negative-ttl-4c1a9e', branch_name: 'pin-expire-negative-ttl', pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: 'unstable', labels: ['tests'], priority: 2, attachment_count: 0, createdDaysAgo: 1, updatedMinutesAgo: 1 },
   { id: 'task-rd-replication-flake', projectId: PROJECT_REDIS, display_id: 8, title: 'Fix flaky replication test on slow disks', description: 'A full sync case in tests/integration/replication.tcl times out when the disk is slow; wait for the replica to report the link up instead of sleeping a fixed time', lane: 'todo', position: 0, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['bug', 'tests'], priority: 3, attachment_count: 0, createdDaysAgo: 2, updatedMinutesAgo: 310 },
   { id: 'task-rd-resp3-map', projectId: PROJECT_REDIS, display_id: 9, title: 'Trim allocations in the RESP3 map reply', description: 'HGETALL on a large hash under RESP3 spends its time building the map reply; find what src/networking.c allocates per field and value pair and cut it', lane: 'todo', position: 1, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['perf'], priority: 1, attachment_count: 0, createdDaysAgo: 5, updatedMinutesAgo: 2600 },
   { id: 'task-rd-object-freq', projectId: PROJECT_REDIS, display_id: 10, title: 'Document OBJECT FREQ decay', description: 'Say in the OBJECT FREQ help how the LFU counter decays with lfu-decay-time, and that the command errors unless maxmemory-policy is an LFU policy', lane: 'todo', position: 2, agent: null, session_id: null, worktree_folder: null, branch_name: null, pr_number: null, pr_url: null, pr_state: null, pr_merge_readiness: null, base_branch: null, labels: ['docs'], priority: 0, attachment_count: 0, createdDaysAgo: 9, updatedMinutesAgo: 7100 },
@@ -676,12 +684,26 @@ export const DEMO_SCENE_TASKS: DemoTask[] = [
  * figure of this scene is about. The open frame was cut from the stream at this tail by
  * scripts/backfill-demo-timelines.mjs, so a re-record has to choose the tail again.
  */
+/*
+ * The redis sessions run Claude Code 2.1.328 on Linux in their tasks' worktrees on the host
+ * (scripts/capture-agent-scrollback.js --wsl), on Opus 5.5 with its 200K window, as the banner
+ * prints. The plan session ends on its plan waiting for approval. The Executing session was cut as
+ * its edit to tests/unit/expire.tcl landed, 19 s in, so it opens 10 s before that (its liveTailMs):
+ * a still paints its git log call and the reads in flight, and the live frame plays the reads, its
+ * one line of prose and the edit. Its open frame was cut at that tail by
+ * scripts/backfill-demo-timelines.mjs, so a re-record has to choose the tail again.
+ */
 export const DEMO_SCENE_SESSIONS: DemoSession[] = [
+  { id: SESSION_REDIS_SLOWLOG, taskId: TASK_REDIS_SLOWLOG, projectId: PROJECT_REDIS, agent: 'claude', status: 'running', activity: 'permission', waitKind: 'approval', startedMinutesAgo: 5, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'medium', permissionMode: 'plan', contextPercent: 24, contextWindowSize: 200000, costUsd: 0.74, durationMinutes: 2, peek: ['Read src/slowlog.c', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 4.6, tool: 'Read', detail: 'src/slowlog.c' }, { minutesAgo: 4.2, tool: 'Bash', detail: 'grep -rn slowlogWouldLog src/' }, { minutesAgo: 3.4, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }] },
+  { id: SESSION_REDIS_EXPIRE, taskId: TASK_REDIS_EXPIRE, projectId: PROJECT_REDIS, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 10000, startedMinutesAgo: 1, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5' }, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 8, contextWindowSize: 200000, costUsd: 0.18, durationMinutes: 1, peek: ['Bash git log --oneline -15 -- src/expire.c', 'Read src/expire.c'], events: [{ minutesAgo: 0.2, tool: 'Bash', detail: 'git log --oneline -15 -- src/expire.c' }, { minutesAgo: 0.1, tool: 'Read', detail: 'src/expire.c' }] },
   { id: SESSION_VALIDATE, taskId: TASK_VALIDATE, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', liveTailMs: 11438, startedMinutesAgo: 3, model: { id: 'claude-opus-5-5', displayName: 'Opus 5.5 (1M)' }, effort: 'high', permissionMode: 'acceptEdits', contextPercent: 7, contextWindowSize: 1000000, costUsd: 0.64, durationMinutes: 3, peek: ['Merge: no automations.'], events: [{ minutesAgo: 1.4, tool: 'Bash', detail: 'npm test' }, { minutesAgo: 0.1, tool: 'kangentic_get_current_task', detail: '#68' }, { minutesAgo: 0.1, tool: 'kangentic_list_columns', detail: 'contoso-web' }], rateLimits: true },
 ];
 
 /** Every task the build carries: the sample install's, then the scene-only rows. */
 export const DEMO_ALL_TASKS: DemoTask[] = [...DEMO_TASKS, ...DEMO_SCENE_TASKS];
+
+/** The redis board's cards, which both SSH scenes name in their `rows` so they open on the same board. */
+export const DEMO_REDIS_ROWS: string[] = DEMO_SCENE_TASKS.filter((task) => task.projectId === PROJECT_REDIS).map((task) => task.id);
 
 /** Every session the build carries, and so every one it needs a recording for: the sample install's, then the scene-only rows'. */
 export const DEMO_ALL_SESSIONS: DemoSession[] = [...DEMO_SESSIONS, ...DEMO_SCENE_SESSIONS];

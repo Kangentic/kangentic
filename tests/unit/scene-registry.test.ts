@@ -544,6 +544,27 @@ describe('scene registry', () => {
     expect(DEMO_SCENE_PROJECTS.some((project) => project.remote !== undefined)).toBe(true);
   });
 
+  it('gives a scene-only project the boots a visitor can start there', () => {
+    // A drag into an auto-spawn column and a new Command Terminal each replay a boot the matrix
+    // recorded (demo-dataset.ts, startTaskSession and spawnTransient). With none, the card goes on
+    // working over a blank terminal and nothing says why, so every card a visitor can drag needs
+    // both of its To Do boots, and every scene-only project both of its terminal boots.
+    const recordings = loadDemoRecordings();
+    let todoCards = 0;
+    for (const project of DEMO_SCENE_PROJECTS) {
+      expect(recordings.terminals[project.id], `${project.id} has no Command Terminal boot (terminal-${project.id}.json)`).toBeDefined();
+      expect(recordings.terminals[`${project.id}-tiled`], `${project.id} has no tiled Command Terminal boot (terminal-${project.id}-tiled.json)`).toBeDefined();
+      for (const task of DEMO_SCENE_TASKS.filter((row) => row.projectId === project.id && row.session_id === null && row.lane === 'todo')) {
+        todoCards += 1;
+        for (const mode of ['plan', 'acceptEdits']) {
+          expect(recordings.spawns[`${task.id}:${mode}`], `${task.id} has no ${mode} boot (spawn-${task.id}-${mode}.json)`).toBeDefined();
+        }
+      }
+    }
+    // Vacuity guard: redis has To Do cards a visitor can drag.
+    expect(todoCards).toBeGreaterThan(0);
+  });
+
   it('restores a scene\'s windows on the project its frame opens on', () => {
     // A frame opens on the scene-only project its rows bring, or on contoso-web. A workspace keyed
     // to any other project is never read, so its window would silently not open.

@@ -40,15 +40,16 @@ function stripAccountLinks(text) {
 const FIXTURE_EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@(?!example\.com\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 
 /**
- * Notices a CLI prints about the recording machine's own install rather than the session: a
- * launch announcement for a new model, the hint to install the GitHub CLI, and the notices after
- * an update. None is part of the work a recording shows, and editing one out of a recorded
- * stream would leave the rows around it wrong, so a capture that carries one is made again.
- * Matched with every space and escape removed, because a full-screen CLI repaints a row as cell
- * diffs whose words arrive with cursor moves between them.
+ * Notices a CLI prints about the recording machine's own install or account rather than the
+ * session: a launch announcement for a new model, an offer on the account's plan, the hint to
+ * install the GitHub CLI, and the notices after an update. None is part of the work a recording
+ * shows, and editing one out of a recorded stream would leave the rows around it wrong, so a
+ * capture that carries one is made again. Matched with every space and escape removed, because a
+ * full-screen CLI repaints a row as cell diffs whose words arrive with cursor moves between them.
  */
 const MACHINE_NOTICES = [
   ['a model launch announcement', /Switchwith\/model/i],
+  ['an offer on the recording account\'s plan', /Claimthemat|clau\.de\//i],
   ['the hint to install the GitHub CLI', /installghfor/i],
   ['an update notice', /Updateinstalled|Restarttoupdate|Updated:\d+features|changelogfordetails/i],
 ];

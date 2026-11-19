@@ -35,7 +35,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import {
-  DEMO_ALL_SESSIONS, DEMO_PROJECTS, DEMO_SCENE_PROJECTS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_SSH_HOSTS, DEMO_TASKS,
+  DEMO_ALL_SESSIONS, DEMO_PROJECTS, DEMO_REDIS_ROWS, DEMO_SCENE_PROJECTS, DEMO_SCENE_SESSIONS, DEMO_SCENE_TASKS, DEMO_SESSIONS, DEMO_SSH_HOSTS, DEMO_TASKS,
   HOST_BUILD_SERVER, PROJECT_CONTOSO, PROJECT_REDIS, SESSION_VALIDATE, TASK_VALIDATE, buildDemoPreConfig, buildDemoSceneRowScripts,
 } from '../../tests/captures/helpers/demo-dataset';
 import type { DemoHistory } from '../../tests/captures/helpers/demo-dataset';
@@ -251,7 +251,7 @@ describe('the seed\'s scene rows', () => {
 });
 
 describe('a scene-only row on a project the install does not have', () => {
-  const redisRow = DEMO_SCENE_TASKS.find((task) => task.projectId === PROJECT_REDIS);
+  const redisRow = DEMO_SCENE_TASKS.find((task) => task.projectId === PROJECT_REDIS && task.lane === 'todo');
   const redisProject = DEMO_SCENE_PROJECTS.find((project) => project.id === PROJECT_REDIS);
   const installProjectIds = DEMO_PROJECTS.map((project) => project.id);
 
@@ -276,6 +276,19 @@ describe('a scene-only row on a project the install does not have', () => {
     const dataset = DEMO_SSH_HOSTS.find((host) => host.id === HOST_BUILD_SERVER);
     expect(hosts.map((status) => status.host.id)).toEqual([HOST_BUILD_SERVER]);
     expect(hosts[0]).toMatchObject({ state: 'connected', projectCount: 1, host: { name: dataset?.name, destination: dataset?.destination } });
+  });
+
+  it('gives its sessions the host\'s folder as their cwd, as main reports a session on a host', () => {
+    // The task's worktree stand-in is under this computer's remote-projects folder; the agent works
+    // in the task's worktree under the project's folder on the host.
+    const run = runSeedOnPage({ sceneRows: DEMO_REDIS_ROWS });
+    const redisSessions = run.state.sessions.filter((session) => session.projectId === PROJECT_REDIS);
+    // Vacuity guard: redis has sessions, each in a task worktree.
+    expect(redisSessions.length).toBeGreaterThan(0);
+    for (const session of redisSessions) {
+      const task = DEMO_SCENE_TASKS.find((row) => row.id === session.taskId);
+      expect(session.cwd, session.id).toBe(`${redisProject?.remote?.path}/.kangentic/worktrees/${task?.worktree_folder}`);
+    }
   });
 
   it('adds no project and no host for rows on the install\'s own projects, and opens on contoso-web', async () => {

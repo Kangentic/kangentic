@@ -67,6 +67,7 @@ describe('notices about the recording machine\'s install', () => {
 
   it('refuses each one, also when a repaint split its words with cursor moves', () => {
     expect(() => sanitizer.assertClean('  Fable 5.2 is here for your longest tasks. Switch with /model.', 'stream')).toThrow(/model launch announcement/);
+    expect(() => sanitizer.assertClean('▎ Your plan includes API credits. Claim them at https://clau.de/api-credits', 'stream')).toThrow(/offer on the recording account's plan/);
     expect(() => sanitizer.assertClean('✻install\x1b[1Cgh\x1b[1Cfor PR status', 'stream')).toThrow(/install the GitHub CLI/);
     expect(() => sanitizer.assertClean('Updated: 26 features, 422 fixes', 'stream')).toThrow(/update notice/);
     expect(() => sanitizer.assertClean('Update installed · Restart to update', 'stream')).toThrow(/update notice/);
