@@ -60,6 +60,7 @@ A coding agent can carry a task on its own, and git worktrees let several run at
 - **One board, every agent.** Each card shows its model, how much of the context window is used, and what the agent last said, with a mark on the ones that need you.
 - **Kangentic Mobile.** Pair your phone once, then check on agents, answer the question one stopped on, and review its diff away from your desk. The connection is end-to-end encrypted, through Kangentic's relay or one you host. Get it on the [App Store](https://apps.apple.com/app/kangentic/id6794952339) or [Google Play](https://play.google.com/store/apps/details?id=com.kangentic.mobile).
 - **Fifteen agent CLIs.** Plan with Claude Code and build with Codex, or use one CLI everywhere. Kangentic runs the CLIs you already have with the credentials you already configured. No API key, no proxy, no Kangentic account.
+- **Agents on a remote host.** Put a project on a Linux machine you reach over SSH, and its repo, agents, builds, and tests run there. The board stays on your computer, and agents keep working through a dropped connection or after you quit the app. See [SSH remote hosts](https://www.kangentic.com/features/ssh-remote-hosts/) for setup and limits.
 - **Every project in one place.** Each repo gets its own board, and the Agent Monitor shows the agents running across all of them.
 - **Review on the board.** The Changes panel shows each task's diff and commit history. A linked pull request on GitHub or Azure DevOps shows its state and whether it is ready to merge.
 - **Free and open source.** AGPL-3.0, with every feature included and no paid tier.
@@ -87,7 +88,7 @@ A coding agent can carry a task on its own, and git worktrees let several run at
 - work in a single project and rarely switch.
 - don't use agent CLIs, or prefer apps like Cursor or Claude Desktop.
 - have no use for workflows or automations in how you develop.
-- want your agents to run in the cloud instead of on your machine.
+- want a hosted service to run your agents, with no app to install.
 
 If this looks useful, a ⭐ helps other developers find Kangentic.
 
@@ -101,11 +102,11 @@ This downloads the latest release for your platform from [GitHub Releases](https
 
 **Requirements**
 
-- Windows x64, macOS 13 or later on Apple Silicon or Intel, or Linux x64 or arm64 (`.deb` or `.rpm`). The Knowledge Graph is unavailable on Intel Macs.
+- Windows x64, macOS 13 or later on Apple Silicon or Intel, or Linux x64 or arm64 (`.deb` or `.rpm`).
 - Node.js 20 or later for `npx`, and Git 2.26 or later.
 - At least one [supported agent CLI](#supported-agents), installed and signed in.
 
-WSL users install the Windows version and can pick a WSL distro as the terminal shell. Agents run the Windows install of each CLI, so a CLI installed only inside the distro is not found. The [installation guide](https://www.kangentic.com/guide/installation/) covers each platform.
+WSL users install the Windows version and can pick a WSL distro as the terminal shell. An agent CLI installed inside a distro runs there when you set its path to the distro's copy. Keep the project itself on a Windows drive. The [installation guide](https://www.kangentic.com/guide/installation/) covers each platform.
 
 ## How it works
 
