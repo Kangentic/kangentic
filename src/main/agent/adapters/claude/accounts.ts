@@ -4,6 +4,7 @@ import {
   EmptyUsageReadError,
   IdentityReadError,
   type AccountIdentity,
+  type DeriveContext,
   type EmptyUsageReadReason,
   type FolderAccountSupport,
   type SharedEntry,
@@ -80,13 +81,104 @@ function isAccountBound(key: string): boolean {
 const MERGED_BY_ENTRY = new Set(['projects', 'mcpServers']);
 
 /**
+ * The keys Claude's settings reference lists with the scope "Global config": settings `/config`
+ * and its commands store in `.claude.json`, and ignore in `settings.json`
+ * (code.claude.com/docs/en/settings-reference, read 2026-11-19, with the two keys it marks as
+ * removed left out). Theme, model, effort and permission rules are not here: Claude keeps those
+ * in `settings.json`. This list only decides what a refresh reports as replaced, so a key missing
+ * from it costs a report and breaks nothing.
+ */
+const GLOBAL_CONFIG_KEYS = [
+  'autoConnectIde',
+  'autoInstallIdeExtension',
+  'claudeInChromeDefaultEnabled',
+  'copyFullResponse',
+  'copyOnSelect',
+  'defaultToAgentsView',
+  'diffTool',
+  'externalEditorContext',
+  'leftArrowOpensAgents',
+  'prStatusFooterEnabled',
+];
+
+/**
+ * What a user sets in a folder's entry: its local-scope MCP servers (`claude mcp add`, the
+ * default scope) and its approval lists. Every other field is Claude's own record of the last
+ * run there, and trust is kept by the derive itself.
+ */
+const PROJECT_USER_FIELDS = ['mcpServers', 'allowedTools', 'enabledMcpjsonServers', 'disabledMcpjsonServers', 'disabledMcpServers'];
+
+/**
+ * The server Kangentic's own trust step approves in every folder it spawns in
+ * (`applyMcpServerTrust` in `trust-manager.ts`). No user put it there, so it is no part of what
+ * one configures. Measured on the dogfooding machine: it was in 6,146 of 6,643 folders, and
+ * counting it made the record 1.4 MB.
+ */
+const KANGENTIC_MCP_SERVER = 'kangentic';
+
+function userServerPart(name: string): string {
+  return `mcpServers/${name}`;
+}
+
+/** A folder's approved `.mcp.json` servers, without the one Kangentic approves itself. */
+function userApprovedServers(value: unknown): unknown {
+  return Array.isArray(value) ? value.filter((name) => name !== KANGENTIC_MCP_SERVER) : value;
+}
+
+/** A field's value as a part: nothing for an empty list or map, a list of names in one order. */
+function userFieldValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return undefined;
+    return value.every((item) => typeof item === 'string') ? [...value].sort() : value;
+  }
+  if (isPlainRecord(value)) return Object.keys(value).length === 0 ? undefined : value;
+  return value ?? undefined;
+}
+
+/**
+ * What a user configures in a Claude state file, as the parts a refresh watches (`userParts`):
+ * each user-scope MCP server, each folder's local-scope servers and approval lists, and the
+ * global config keys. Measured on Claude Code 2.1.328: one session rewrote eight shared top-level
+ * keys of this file by itself (`numStartups`, `tipsHistory`, `lastReleaseNotesSeen`,
+ * `githubRepoPaths` and others) and each folder's `last*` fields, so nothing of that kind is a
+ * part, or every spawn would report a change nobody made.
+ *
+ * Empty lists and maps are left out, and so is the one server Kangentic approves by itself. A
+ * home's file holds thousands of folders nobody configured, and the record of it stays a handful
+ * of lines.
+ */
+export function claudeUserConfigParts(state: Record<string, unknown>): Record<string, unknown> {
+  const parts: Record<string, unknown> = {};
+  for (const key of GLOBAL_CONFIG_KEYS) {
+    if (state[key] !== undefined) parts[`config/${key}`] = state[key];
+  }
+  if (isPlainRecord(state.mcpServers)) {
+    for (const [name, server] of Object.entries(state.mcpServers)) parts[userServerPart(name)] = server;
+  }
+  if (isPlainRecord(state.projects)) {
+    for (const [folder, entry] of Object.entries(state.projects)) {
+      if (!isPlainRecord(entry)) continue;
+      for (const field of PROJECT_USER_FIELDS) {
+        const value = userFieldValue(field === 'enabledMcpjsonServers' ? userApprovedServers(entry[field]) : entry[field]);
+        if (value !== undefined) parts[`projects/${folder}/${field}`] = value;
+      }
+    }
+  }
+  return parts;
+}
+
+const NOTHING_REMOVED: DeriveContext = { removedFromHome: new Set() };
+
+/**
  * The account's `.claude.json`: every shared answer from the default home (onboarding, trusted
  * folders, MCP servers), and its own login fields and caches untouched. A folder trusted only in
- * this account stays trusted.
+ * this account stays trusted. A user-scope server the home held and removed goes from the
+ * account too; one added on the account stays there.
  */
 export function deriveClaudeAccountState(
   source: Record<string, unknown>,
   current: Record<string, unknown>,
+  context: DeriveContext = NOTHING_REMOVED,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...current };
   for (const [key, value] of Object.entries(source)) {
@@ -107,6 +199,13 @@ export function deriveClaudeAccountState(
       next[key] = value;
     }
   }
+  // Done after the loop, which visits only keys the home still has: when the home removes its
+  // last server its file has no `mcpServers` left, and the merge above never runs.
+  if (context.removedFromHome.size > 0 && isPlainRecord(next.mcpServers)) {
+    next.mcpServers = Object.fromEntries(
+      Object.entries(next.mcpServers).filter(([name]) => !context.removedFromHome.has(userServerPart(name))),
+    );
+  }
   return next;
 }
 
@@ -120,9 +219,11 @@ const SHARED_ENTRIES: readonly SharedEntry[] = [
   // one is never a link. A resume carries the conversation's plan file in (`carryConversation`).
   { name: 'plans', how: 'own-dir' },
   { name: 'history.jsonl', how: 'hardlink-file', conversationBearing: false },
-  // Claude saves these by replacing the file, which would break a link.
-  { name: 'settings.json', how: 'copy-file' },
-  { name: 'keybindings.json', how: 'copy-file' },
+  // Claude saves these by replacing the file, which would break a link. Both hold what a user
+  // sets (`/config` options, the model, enabled plugins, permission rules, a status line, key
+  // bindings), so a copy that replaces a change made from a session on the account is reported.
+  { name: 'settings.json', how: 'copy-file', reportReplaced: true },
+  { name: 'keybindings.json', how: 'copy-file', reportReplaced: true },
   {
     // An import, not a copy: Claude already loads ~/.claude/CLAUDE.md as a parent folder's memory
     // for projects under the home folder, so a copy would load it twice.
@@ -143,6 +244,7 @@ const SHARED_ENTRIES: readonly SharedEntry[] = [
     sourcePath: claudeStatePathForHome,
     targetPath: (accountFolder) => path.join(accountFolder, '.claude.json'),
     derive: deriveClaudeAccountState,
+    userParts: claudeUserConfigParts,
     lock: (targetPath, operation) => withClaudeJsonFileLock(targetPath, operation),
   },
 ];

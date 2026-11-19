@@ -1,8 +1,29 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { claudePlanDisplayName, deriveClaudeAccountState, parseClaudeAuthStatus } from '../../src/main/agent/adapters/claude/accounts';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  CLAUDE_ACCOUNT_SUPPORT,
+  claudePlanDisplayName,
+  claudeUserConfigParts,
+  deriveClaudeAccountState,
+  parseClaudeAuthStatus,
+} from '../../src/main/agent/adapters/claude/accounts';
+import { provisionAccountFolder } from '../../src/main/accounts/account-folder';
 import { parseKeyFileText } from '../../src/main/accounts/key-file';
+
+type ClaudeState = Record<string, unknown> & {
+  mcpServers: Record<string, Record<string, unknown>>;
+  projects: Record<string, Record<string, unknown> & { mcpServers: Record<string, unknown>; allowedTools: string[] }>;
+};
+
+/** A state file in the shape Claude writes, every personal value replaced. */
+function realisticState(): ClaudeState {
+  return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-json-realistic.json'), 'utf8')) as ClaudeState;
+}
+
+const SITE = 'C:/Users/dev/Documents/GitHub/site';
+const OTHER_APP = 'C:/Users/dev/Documents/GitHub/other-app';
 
 describe('deriveClaudeAccountState', () => {
   it('shares onboarding, trust and MCP servers but never the login, caches or the boot canary', () => {
@@ -40,6 +61,157 @@ describe('deriveClaudeAccountState', () => {
       { projects: { 'C:/repo': { hasTrustDialogAccepted: true } } },
     );
     expect(next.projects).toEqual({ 'C:/repo': { hasTrustDialogAccepted: true } });
+  });
+
+  // `{ ...own, ...home }` alone kept a server the home removed in every account for good.
+  it('drops a user-scope server the home removed, its last one included, and keeps the account\'s own', () => {
+    const current = { mcpServers: { shared: { command: 'npx' }, mine: { command: 'node' } } };
+    const removedFromHome = new Set(Object.keys(claudeUserConfigParts({ mcpServers: { shared: { command: 'npx' } } })));
+
+    const stillHasOthers = deriveClaudeAccountState({ mcpServers: { other: { command: 'uvx' } } }, current, { removedFromHome });
+    expect(stillHasOthers.mcpServers).toEqual({ mine: { command: 'node' }, other: { command: 'uvx' } });
+
+    // The home's last server: its file has no `mcpServers` left for the merge to visit.
+    const hasNoneLeft = deriveClaudeAccountState({ numStartups: 3 }, current, { removedFromHome });
+    expect(hasNoneLeft.mcpServers).toEqual({ mine: { command: 'node' } });
+    expect(current.mcpServers).toEqual({ shared: { command: 'npx' }, mine: { command: 'node' } });
+  });
+});
+
+// What decides whether a replaced change is reported. Too little and a lost `claude mcp add` goes
+// unsaid; too much and every spawn reports, since Claude rewrites this file on every run.
+describe('claudeUserConfigParts', () => {
+  const baseline = JSON.stringify(claudeUserConfigParts(realisticState()));
+
+  function changesParts(change: (state: ClaudeState) => void): boolean {
+    const state = realisticState();
+    change(state);
+    return JSON.stringify(claudeUserConfigParts(state)) !== baseline;
+  }
+
+  it('names what a user configures: servers at both scopes, each folder\'s approvals, the global config keys', () => {
+    expect(changesParts((state) => { state.mcpServers.context7.command = 'uvx'; })).toBe(true);
+    expect(changesParts((state) => { state.mcpServers.docs = { type: 'stdio', command: 'npx' }; })).toBe(true);
+    expect(changesParts((state) => { state.projects[SITE].mcpServers['e2e-browser'] = { type: 'stdio', command: 'bunx' }; })).toBe(true);
+    expect(changesParts((state) => { state.projects[OTHER_APP].mcpServers.docs = { type: 'stdio', command: 'npx' }; })).toBe(true);
+    expect(changesParts((state) => { state.projects[SITE].allowedTools.push('Bash(npm test)'); })).toBe(true);
+    expect(changesParts((state) => { state.projects[OTHER_APP].enabledMcpjsonServers = ['docs']; })).toBe(true);
+    expect(changesParts((state) => { state.projects[OTHER_APP].disabledMcpjsonServers = ['docs']; })).toBe(true);
+    expect(changesParts((state) => { state.projects[OTHER_APP].disabledMcpServers = ['docs']; })).toBe(true);
+    // Keys Claude's settings reference lists as stored in this file.
+    expect(changesParts((state) => { state.autoConnectIde = true; })).toBe(true);
+    expect(changesParts((state) => { state.diffTool = 'terminal'; })).toBe(true);
+  });
+
+  // Each of these differed between an account folder and the home after one session on
+  // Claude Code 2.1.328, with nothing changed by hand.
+  it('names nothing Claude writes by itself in a session', () => {
+    for (const key of ['numStartups', 'tipsHistory', 'tipLifetimeShownCounts', 'closedIssuesLastChecked', 'githubRepoPaths', 'lastReleaseNotesSeen', 'lastClawdEntranceVersion', 'groveChoiceSeenAt']) {
+      expect(changesParts((state) => { state[key] = 'changed in a session'; }), key).toBe(false);
+    }
+    expect(changesParts((state) => {
+      Object.assign(state.projects[SITE], { lastCost: 9.87, lastSessionId: 'another', lastGracefulShutdown: true, lastVersionBase: '2.1.328', history: [], projectOnboardingSeenCount: 2 });
+    })).toBe(false);
+    // Trust is merged by the derive itself, and a folder only the account has is never replaced.
+    expect(changesParts((state) => { state.projects[OTHER_APP].hasTrustDialogAccepted = false; })).toBe(false);
+  });
+
+  // Kangentic's trust step approves its own server in every folder it spawns in. On the machine
+  // this was measured on that was 6,146 of 6,643 folders, and it made the record 1.4 MB.
+  it('leaves out the server Kangentic itself approves in every folder, and keeps one a user approved beside it', () => {
+    expect(claudeUserConfigParts({ projects: { [SITE]: { enabledMcpjsonServers: ['kangentic'] } } })).toEqual({});
+    const withApproval = claudeUserConfigParts({ projects: { [SITE]: { enabledMcpjsonServers: ['kangentic', 'docs'] } } });
+    expect(Object.values(withApproval)).toEqual([['docs']]);
+    // Turning that server off in a folder is a person's choice, and stays a part.
+    expect(Object.values(claudeUserConfigParts({ projects: { [SITE]: { disabledMcpjsonServers: ['kangentic'] } } }))).toEqual([['kangentic']]);
+  });
+
+  it('reads a list in another order as the same list, and an empty list or map as nothing', () => {
+    const inOrder = claudeUserConfigParts({ projects: { [SITE]: { allowedTools: ['Bash(npm test)', 'Bash(npm run build)'] } } });
+    const reversed = claudeUserConfigParts({ projects: { [SITE]: { allowedTools: ['Bash(npm run build)', 'Bash(npm test)'] } } });
+    expect(reversed).toEqual(inOrder);
+    // Thousands of folders nobody configured cost the record nothing.
+    expect(claudeUserConfigParts({ mcpServers: {}, projects: { [SITE]: { allowedTools: [], mcpServers: {}, enabledMcpjsonServers: [], history: [{ display: 'x' }] } } })).toEqual({});
+  });
+});
+
+// The same rules through the real entries Claude declares, in a temp home.
+describe('a Claude account folder refreshed from the home', () => {
+  let root: string;
+  let home: string;
+  let account: string;
+
+  const provision = () => provisionAccountFolder({ accountFolder: account, defaultHome: home, entries: CLAUDE_ACCOUNT_SUPPORT.sharedEntries });
+  const readAccountState = (): ClaudeState => JSON.parse(fs.readFileSync(path.join(account, '.claude.json'), 'utf8')) as ClaudeState;
+  const writeAccountState = (state: ClaudeState): void => fs.writeFileSync(path.join(account, '.claude.json'), JSON.stringify(state, null, 2));
+  const writeHomeState = (state: Record<string, unknown>): void => fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify(state, null, 2));
+  const problemsOf = async (): Promise<Array<{ entry: string; code: string }>> => (await provision()).problems.map(({ entry, code }) => ({ entry, code }));
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-claude-account-'));
+    home = path.join(root, 'home');
+    account = path.join(root, 'accounts', 'claude', '2');
+    fs.mkdirSync(home, { recursive: true });
+    writeHomeState(realisticState());
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reports a local-scope server added from the account in a folder both files have, and not a session\'s own writes', async () => {
+    expect(await problemsOf()).toEqual([]);
+    // One session on the account: Claude bumps its counters and the folder's last-run numbers.
+    const afterSession = readAccountState();
+    Object.assign(afterSession, { numStartups: 213, lastReleaseNotesSeen: '2.1.328' });
+    Object.assign(afterSession.projects[SITE], { lastCost: 3.21, lastSessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' });
+    writeAccountState(afterSession);
+    expect(await problemsOf()).toEqual([]);
+
+    // `claude mcp add`, at its default local scope, from a session on the account.
+    const withServer = readAccountState();
+    withServer.projects[SITE].mcpServers.docs = { type: 'stdio', command: 'npx', args: ['docs-mcp'] };
+    writeAccountState(withServer);
+
+    expect(await problemsOf()).toEqual([{ entry: '.claude.json', code: 'change-replaced' }]);
+    expect(readAccountState().projects[SITE].mcpServers).toEqual(realisticState().projects[SITE].mcpServers);
+    expect(await problemsOf()).toEqual([]);
+  });
+
+  it('takes a user-scope server out of the account once the home removes it, and keeps one added on the account', async () => {
+    await provision();
+    const withOwn = readAccountState();
+    withOwn.mcpServers.mine = { type: 'stdio', command: 'node' };
+    writeAccountState(withOwn);
+    expect(readAccountState().mcpServers).toHaveProperty('context7');
+    const withoutServers: Record<string, unknown> = realisticState();
+    delete withoutServers.mcpServers;
+    writeHomeState(withoutServers);
+
+    expect(await problemsOf()).toEqual([]);
+    expect(readAccountState().mcpServers).toEqual({ mine: { type: 'stdio', command: 'node' } });
+  });
+
+  it('reports a setting changed on the account that the next copy replaces', async () => {
+    fs.writeFileSync(path.join(home, 'settings.json'), '{"theme":"dark"}\n');
+    await provision();
+    // A status line saved from a session on the account.
+    fs.writeFileSync(path.join(account, 'settings.json'), '{"theme":"dark","statusLine":{"type":"command","command":"status.sh"}}\n');
+
+    expect(await problemsOf()).toEqual([{ entry: 'settings.json', code: 'change-replaced' }]);
+    expect(fs.readFileSync(path.join(account, 'settings.json'), 'utf8')).toBe('{"theme":"dark"}\n');
+  });
+
+  it('keeps a CLAUDE.md the account wrote aside when the home gains one', async () => {
+    await provision();
+    fs.writeFileSync(path.join(account, 'CLAUDE.md'), 'a memory saved from the account\n');
+    expect(await problemsOf()).toEqual([]);
+    fs.writeFileSync(path.join(home, 'CLAUDE.md'), 'the memory in the home\n');
+
+    expect(await problemsOf()).toEqual([{ entry: 'CLAUDE.md', code: 'kept-aside' }]);
+    const aside = fs.readdirSync(account).filter((name) => name.startsWith('CLAUDE.md.kangentic-kept'));
+    expect(aside).toHaveLength(1);
+    expect(fs.readFileSync(path.join(account, aside[0]), 'utf8')).toBe('a memory saved from the account\n');
   });
 });
 

@@ -15,8 +15,17 @@ export type AccountProblem =
   | 'folder-link-failed'
   /** An entry in an account folder is not Kangentic's to replace (a file where a link goes). */
   | 'folder-entry-user-owned'
-  /** Entries an account folder held clashed with the default home's and were kept aside. */
+  /**
+   * What an account folder held was the account's own and was kept aside: entries that clashed
+   * with the default home's, or text a person wrote where an import line goes.
+   */
   | 'folder-entries-kept-aside'
+  /**
+   * A setting, server or approval changed from a session on an account was replaced by the
+   * default home's at that account's next spawn. Nothing is copied back, so this is the only
+   * word that it happened. Sent with the entry's name, never what changed.
+   */
+  | 'folder-change-replaced'
   /** No account could be prepared for a spawn, so it ran on the agent's own login. */
   | 'spawn-account-unresolved'
   /** A sign-in's terminal ended by itself and the login could not be read back. */

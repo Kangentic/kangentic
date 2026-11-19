@@ -58,11 +58,11 @@ a copy there (see below).
 | Conversation folders (`projects`, `file-history`, `session-env`, `shell-snapshots`, `todos`, `tasks`, `paste-cache`, `transcripts`) | A folder link: a junction on Windows, a directory symlink elsewhere. |
 | `plans` | The account's own folder. A resume carries the conversation's plan file into the home it runs on. |
 | Auto memory (`projects/<project>/memory/`) | The home's own folder, by its real path. An account session's `--settings` sets `autoMemoryDirectory` to it, so its Writes do not go through the `projects` link. |
-| Setup folders (`skills`, `agents`, `commands`, `plugins`, `rules`, `themes`, `workflows`, `output-styles`) | A folder link. |
+| Setup folders (`skills`, `agents`, `commands`, `plugins`, `rules`, `themes`, `workflows`, `output-styles`) | A folder link. One the home lacks is made empty there first. |
 | `history.jsonl` | A hard link, on the same drive only. |
-| `settings.json`, `keybindings.json` | A copy, refreshed before each spawn, since the CLI saves them by replacing the file. |
-| `CLAUDE.md` | One line importing the home's file. |
-| `.claude.json` | Rebuilt from the home's file with the login, the install ids and the caches left out, and each folder's trust merged. |
+| `settings.json`, `keybindings.json` | A copy, refreshed before each spawn, since the CLI saves them by replacing the file. A change made on the account is replaced, and reported. |
+| `CLAUDE.md` | One line importing the home's file. Text the account's own file held is moved aside first. |
+| `.claude.json` | Rebuilt from the home's file with the login, the install ids and the caches left out, and each folder's trust merged. A server or approval changed on the account is replaced, and reported. |
 | The login, `sessions/`, caches and logs | The account's own. Never shared. |
 
 `provisionAccountFolder` (`account-folder.ts`) makes and refreshes it, before every spawn on that
@@ -72,11 +72,79 @@ account. The rules it holds:
 - It never moves, renames or overwrites anything in the agent's home. Entries an account folder
   already holds merge into the home, and a name that exists in both is kept aside under
   `.kangentic-kept-<time>` rather than dropped.
+- A folder it links is made empty in the home when the home has none, a setup folder included.
+  A folder an agent keeps beside its home (`~/.agents`, which Gemini reads) is made the same way.
 - A conversation folder it cannot link sets the account `link-failed`, and the account takes no
   session until the link is made. A conversation never lands where Kangentic cannot read it.
 - A `history.jsonl` it cannot hard link (another drive) leaves that account's prompt history its
   own, and the row says so.
+- Nothing made from an account session is copied back into the home. See the next section.
 - Removing an account deletes its row and nothing on disk.
+
+### What a session on an account writes
+
+A link writes into the home, so a conversation, a skill or a plugin made from an account session
+is everyone's. A copy and the rebuilt state file run one way, home to account, so a change made
+there lasts until that account's next spawn. Kangentic does not copy it back: the home's files are
+the user's, and a write into them from another account's session is not Kangentic's to make. What
+it does instead is keep a person's text, and say when a change was replaced.
+
+| A session on an account | Lands in | At that account's next spawn |
+|---|---|---|
+| Makes an agent, command, rule, output style, theme or workflow | The home, through the link | Stays. Before task #1118 a folder the home lacked was not linked, so it stayed in that account alone. |
+| Edits user memory while the home has no `CLAUDE.md` | The account's own `CLAUDE.md` | Stays. Once the home has one, the account's file is moved aside as `CLAUDE.md.kangentic-kept-<time>` and the import line is written. |
+| Changes a `/config` option kept in user settings, `/model`, the effort or the theme | The account's `settings.json` | Replaced by the home's, and reported. |
+| Enables or disables a plugin at user scope (`enabledPlugins`) | The account's `settings.json` | Replaced, and reported. The plugin's files are in the linked `plugins` folder and stay. |
+| Saves a permission rule to user settings | The account's `settings.json` | Replaced, and reported. |
+| Runs `/statusline` | The setting in the account's `settings.json`. A longer command's script in `~/.claude`, the home. | The setting is replaced, and reported. The script stays. |
+| Edits key bindings | The account's `keybindings.json` | Stays while the home has none. Replaced, and reported, once it does. |
+| Runs `claude mcp add` at the default local scope | The folder's entry in the account's `.claude.json` | Replaced, and reported, when the home's file has that folder. Stays when only the account has it. |
+| Runs `claude mcp add --scope user` | `mcpServers` in the account's `.claude.json` | Stays, on that account only. Replaced, and reported, when the home has a server of that name. |
+| Sets a global config key (`autoConnectIde`, `diffTool`) | The account's `.claude.json` | Replaced, and reported, when the home's file has the key. |
+
+Where each lands is from Claude's docs (Settings, MCP, Plugins, Status line) and from the home's
+own `settings.json` on Claude Code 2.1.328, which holds the theme, the model, the effort and the
+permission rules. The `/statusline` row is from the instructions 2.1.328 gives its setup agent:
+update `settings.json` in the config folder the session runs on, and save a longer command as a
+script under `~/.claude`. None of the rows was run on a second account.
+
+A user-scope MCP server the home held and then removed goes from each account at its next spawn.
+One removed before the first spawn after task #1118 stays, since nothing recorded that the home
+ever held it.
+
+**How a refresh tells whose change it is.** The account's file is no baseline. Claude rewrites
+its state file between refreshes: measured on 2.1.328, one session changed eight shared top-level
+keys by itself (`numStartups`, `tipsHistory`, `lastReleaseNotesSeen`, `githubRepoPaths` and
+others) and each folder's `last*` fields. So each refresh records what the home held, as hashes,
+in `.kangentic-home-record.json` in the account folder (`home-record.ts`):
+
+- **The account's own**: a part the account holds differently from what the home held at the last
+  refresh.
+- **Replaced**: the account's own, and the refresh writes something else over it. Only this is
+  reported, as `folder-change-replaced`, once the write has landed.
+
+A copied file is one part, compared as parsed JSON, so a file the CLI wrote again in another
+layout is unchanged. The state file's parts are what a user configures in it
+(`claudeUserConfigParts`): each user-scope MCP server, each folder's local-scope servers and
+approval lists (`allowedTools`, `enabledMcpjsonServers`, `disabledMcpjsonServers`,
+`disabledMcpServers`), and the keys Claude's settings reference scopes to "Global config". That
+last list is copied from the reference, so a key Claude adds later is not watched until it is
+added here. The `kangentic` server is left out of `enabledMcpjsonServers`: Kangentic's own trust
+step approves it in every folder it spawns in, so no user put it there.
+
+Measured on copies of the dogfooding machine's files (a 1.4 MB home state file with 6,643
+folders): the record is 1.2 KB and holds seven parts for the state file, a refresh after one
+session's own writes reports nothing, a local-scope server added on the account is reported once,
+and the three passes that find the parts add about 5 ms to a 40 to 60 ms refresh. Counting
+Kangentic's own server, the record was 1.4 MB with 6,153 parts.
+
+A copied or rebuilt file with nothing recorded is recorded and not judged, which is each of them
+on the first refresh of a folder made before the record existed. `CLAUDE.md` is the exception:
+nothing is recorded for it while the home has none, so with nothing recorded the home is taken to
+have held nothing, and text that is not the import line is moved aside. A home file that is
+missing, empty or unreadable is no answer: it removes nothing and leaves the record as it was. An
+account's state file that is missing or empty holds no change to replace, so nothing is reported
+for it. The record is written only when it changed, and never into the home.
 
 Measured on Claude Code 2.1.319 with three real accounts: a second login in its own folder left the
 first signed in, a session wrote its transcript through the link into the home, a conversation with
@@ -151,6 +219,11 @@ nothing gets no card.
   with no second account to run it on, so its sign-in and session failures are reported) and
   `isConversationRefusal` (the provider's words for a conversation tied to another account).
   Claude Code declares it. Codex, Gemini CLI and Grok Build have one built and not enabled (see Per agent).
+  A shared entry says what a user configures in it when a replaced change should be reported:
+  `reportReplaced` on a copied file, `userParts` on a derived one, whose `derive` is also told
+  which parts the home dropped (`removedFromHome`). Claude's `settings.json`, `keybindings.json`
+  and `.claude.json` do. The copies Codex and Gemini declare do not: nobody has watched those CLIs
+  write them, and a file a CLI rewrites by itself would be reported at every spawn.
 - **Key file** (`KeyFileAccountSupport`): the variable names a key file may set (a name ending
   in `*` is a prefix). Aider, Cursor, Droid and Warp declare it. Their own login is one per
   machine and stays account #1. Qwen Code has one built and not enabled.
@@ -508,7 +581,8 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 
 | Problem | When |
 |---|---|
-| `folder-link-failed`, `folder-entry-user-owned`, `folder-entries-kept-aside` | An account folder's link or copy could not be made, or an entry there was not Kangentic's to replace. |
+| `folder-link-failed`, `folder-entry-user-owned`, `folder-entries-kept-aside` | An account folder's link or copy could not be made, an entry there was not Kangentic's to replace, or what the folder held was the account's own and was kept aside (a clashing entry, a `CLAUDE.md` a person wrote). |
+| `folder-change-replaced` | A setting, server or approval changed from a session on an account was replaced by the home's at that account's next spawn. With the entry's name (`settings.json`, `.claude.json`), never what changed. |
 | `spawn-account-unresolved` | An agent had accounts and none could be prepared, so the spawn ran on the agent's own login. |
 | `sign-in-not-recognized` | A sign-in's terminal ended by itself and no login read back. Unproven agents only. |
 | `session-not-signed-in` | A session on an account read as signed in started signed out. Unproven agents only. |
@@ -544,3 +618,12 @@ agent, so the next spawn passes over it and its row offers Sign in.
   spent plan has not been taken, so the read of the account's usage is what tells it from a
   momentary limit.
 - Non-task sessions are not continued at a limit.
+- A change made from a session on an account to a copied or rebuilt file is reported, not kept:
+  the home's copy replaces it at that account's next spawn. Copying it back into the home is not
+  built.
+- A folder an account filled before it was linked moves into the home by rename. With the account
+  folder on another drive, or a file in it held open on Windows, what cannot move is kept aside
+  under `.kangentic-kept-<time>` and reported, and the account reads the home's folder from then
+  on. Both folders sit under the user's profile unless the config folder was moved.
+- A lock on an account's `.claude.json` that outlasts its budget fails that refresh, and the spawn
+  passes the account over. Problems found earlier in that one refresh are not reported.
