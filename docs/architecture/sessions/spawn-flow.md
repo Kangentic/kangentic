@@ -225,8 +225,9 @@ blocks its `.ps1` or the sibling is missing. So:
    shim whose target is itself a `.cmd` or `.bat` shim (a global bin calling the package's
    `node_modules\.bin\<name>.cmd`) is read through, up to `MAX_SHIM_HOPS` shims, and the launch
    starts what the last one starts (Sentry DESKTOP-3Y). A shim whose target is a `.ps1` starts the
-   PowerShell the shim names, with the shim's own flags, when its text names one such start, and
-   any other `.ps1` shim is still refused (the same issue again, on 0.60.0; see
+   PowerShell the shim names, with the shim's own flags, when its text names one such start and no
+   shim of the chain sets `NODE_PATH` or a variable of its own. Any other `.ps1` shim is still
+   refused (the same issue again, on 0.60.0; see
    [Shells and paths](../../platforms/shells-and-paths.md)). The shim refusal is reported, unlike a
    prompt too long, because a shim the launcher cannot resolve is the launcher's gap; a queued
    promotion reports it too, since no caller does. A prompt too long is never reported, on any path:
