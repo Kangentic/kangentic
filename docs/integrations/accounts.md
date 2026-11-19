@@ -312,6 +312,14 @@ was older than 10 minutes, it held no window, or the adapter returned no answer 
 (`no-answer`). An empty list counts too, since storing it would wipe the windows and still mark
 the reading fresh. The local log says it again only when the reason changes.
 
+A failed run (`run-failed`) is reported from the second read in a row that fails for the same
+account. One failed run during a network drop is not a defect. A flag the CLI does not know
+(`--safe-mode` was measured on 2.1.319 only) fails every run, so it still reports, one read
+later. A good read, or any read whose run worked, starts the count again. The adapter hands on
+the error it caught and how the run ended (`EmptyUsageReadError`'s `cause` and `runFailure`, from
+`execRunFailureOf`), and the report carries that as tags with the CLI's version, so a timeout,
+an exit and a CLI that would not start no longer read the same.
+
 Two calls to `accounts:refreshUsage` that overlap, as a tab that mounts twice sends, share one
 in-flight batch of sign-in and usage reads instead of running each CLI twice.
 
@@ -589,7 +597,7 @@ run, tagged with the agent and the problem, and grouped as one issue per agent a
 | `turn-failed-after-move` | A turn failed within ten minutes of its session being moved to another account. |
 | `conversation-refused` | A turn failed with the adapter's words for a conversation tied to another account (`isConversationRefusal`). |
 | `usage-read-unreadable` | The CLI answered a usage read in a shape the adapter does not know. |
-| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `cache-missing`, `cache-stale`, `no-windows`, `no-answer`). |
+| `usage-read-empty` | A usage read gave no windows, with the account's kind and a fixed reason (`run-failed`, `cache-missing`, `cache-stale`, `no-windows`, `no-answer`). `run-failed` is sent from the second failed run in a row, with the tags `run_failure`, `run_exit` and `agent_cli_version`. |
 | `identity-read-failed` | A sign-in read gave no answer, with the account's kind and a fixed reason (`run-failed`, `unreadable`). The account kept its status. |
 | `identity-changed` | A home's login was replaced, with the account's kind and how it was reconciled (`to-listed`, `to-new`, `merged`, `already-listed`, `duplicate`), or `stage: repoint` when its sessions could not be moved. |
 
@@ -597,8 +605,10 @@ Only fixed facts are sent: the agent, the problem, an entry's name, a count. Nev
 an email or a key. A provider's own error text is never sent, because its words can name the
 user's organization: a `detail` fact goes as its class (`classifyFailureDetail`: `usage_limit`,
 `auth`, `network`, `server`, `refused`, `empty` or `other`) and its length. A caller's error goes
-as its class and errno only. Each problem reports once per agent per run, whatever its facts,
-fingerprinted `['agent-accounts', problem, agent]`. An adapter marks itself `unproven` while its declaration
+as its class and errno only. A caller's tag is kept only when its value is one short token (a
+fixed word, a number, a version), so no path or sentence can ride one. Each problem reports once
+per agent and fixed `reason` per run, whatever its other facts, fingerprinted
+`['agent-accounts', problem, agent]`. An adapter marks itself `unproven` while its declaration
 has not been run with real accounts: Codex, Gemini CLI and Grok Build do, so the two sign-in
 reports are in place for the day each is enabled.
 

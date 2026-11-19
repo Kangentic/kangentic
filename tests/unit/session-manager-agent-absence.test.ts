@@ -117,7 +117,7 @@ import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { AGENT_START_CEILING_MS } from '../../src/main/pty/lifecycle/agent-output-tracker';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/main/pty/host/pty-host-client';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
-import type { AgentParser } from '../../src/shared/types';
+import { PromptReason, type AgentParser } from '../../src/shared/types';
 import type { ProcessInfo } from '../../src/main/activity-engine/background-shell/process-tree';
 
 /** Mirrors AGENT_SPAWN_GRACE_MS in session-manager.ts (module-private). */
@@ -149,10 +149,10 @@ describe('SessionManager agent-absence wiring', () => {
     vi.useRealTimers();
   });
 
-  function sendAgentEvent(type: string, sessionId = 'session-1'): void {
+  function sendAgentEvent(type: string, sessionId = 'session-1', detail?: string): void {
     const callback = capturedCallbacks?.onEvent;
     if (!callback) throw new Error('onEvent was not captured');
-    callback(sessionId, { ts: Date.now(), type });
+    callback(sessionId, { ts: Date.now(), type, ...(detail === undefined ? {} : { detail }) });
   }
 
   /** A fake PTY handle: only `pid`, `kill` and `sealUserInput` are reached by kill(). */
@@ -808,6 +808,17 @@ describe('SessionManager agent-absence wiring', () => {
       expect(typeof first).toBe('number');
       sendAgentEvent('prompt');
       expect(session.promptObservedAt).toBe(first);
+    });
+
+    // The PTY tracker pushes a Prompt of its own for a session's first frame
+    // (`PromptReason.PtyActivity`). Stamped, it made a boot frame read as the
+    // first prompt, and a capture minutes later as late by it (Sentry DESKTOP-4C).
+    it('takes no PTY output standing in for a prompt, and still takes the real one after it', () => {
+      const session = seedSession({ reportsAgentStart: true });
+      sendAgentEvent('prompt', 'session-1', PromptReason.PtyActivity);
+      expect(session.promptObservedAt).toBeUndefined();
+      sendAgentEvent('prompt');
+      expect(typeof session.promptObservedAt).toBe('number');
     });
   });
 

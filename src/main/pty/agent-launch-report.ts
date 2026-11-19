@@ -31,9 +31,10 @@ import { isShuttingDown } from '../shutdown-state';
 import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
 import { shellProgramName } from '../../shared/shell-quote';
-import type { LaunchStartPath, OpeningPromptDelivery, SessionIdCreationOutcome, SessionIdStoreEvidence } from '../../shared/types';
-import type { SessionIdCaptureOutcome } from './lifecycle/session-id-manager';
+import type { LaunchStartPath, OpeningPromptDelivery, SessionIdCreationOutcome, SessionIdLoginEvidence, SessionIdStoreEvidence } from '../../shared/types';
+import { SESSION_ID_CAPTURE_WINDOW_MS, type SessionIdCaptureOutcome } from './lifecycle/session-id-manager';
 import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
+import { cliVersionTag } from '../agent/shared/cli-version-tag';
 import { WorktreeSetupScriptError } from '../git/worktree-errors';
 import type { AgentProcessPresence } from './host/agent-process-presence';
 import { classifyLaunchOutput, type LaunchOutputClass } from './launch-output-class';
@@ -97,18 +98,6 @@ const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 function agentTag(agentName: string | null | undefined): string {
   if (!agentName) return 'none';
   return AGENT_ID.test(agentName) ? agentName : 'other';
-}
-
-/** Starts with a digit, one token, no slash, backslash or space, so a path or a banner fails it. */
-const CLI_VERSION = /^v?\d[0-9A-Za-z._+-]{0,47}$/;
-
-/**
- * The CLI's version as a tag, or `unknown`. Detection keeps what the CLI printed,
- * and some parsers only trim it, so a banner or a path can sit in that string.
- */
-export function launchVersionTag(version: string | null | undefined): string {
-  const firstToken = version?.trim().split(/\s+/)[0] ?? '';
-  return CLI_VERSION.test(firstToken) ? firstToken : 'unknown';
 }
 
 const SECONDS_BUCKETS: ReadonlyArray<{ below: number; label: string }> = [
@@ -218,7 +207,7 @@ export function launchTagsOf(session: ManagedSession, now: number = Date.now()):
   return {
     ...resumeEvidenceTagsOf(session),
     agent: agentTag(session.agentName),
-    agent_cli_version: launchVersionTag(session.agentCliVersion),
+    agent_cli_version: cliVersionTag(session.agentCliVersion),
     start_path: session.startPath ?? 'board',
     shell: shellLabelOf(session.shell),
     attempt: attemptOf(session.startPath),
@@ -241,7 +230,7 @@ export function preflightTagsOf(input: {
 }): LaunchTags {
   return {
     agent: agentTag(input.agent),
-    agent_cli_version: launchVersionTag(input.agentCliVersion),
+    agent_cli_version: cliVersionTag(input.agentCliVersion),
     start_path: input.startPath,
     attempt: attemptOf(input.startPath),
   };
@@ -629,16 +618,27 @@ const SESSION_ID_OUTCOME_REPORTS = {
 
 /** The longest a session-id report waits on the agent's own store check. */
 const STORE_EVIDENCE_WAIT_MS = 2_000;
+/**
+ * The longest it waits on the agent's login check, which can run the CLI
+ * (`codex login status`, stopped by its adapter at 20 s). Counted from the
+ * window, where the check starts, so an outcome minutes later waits on nothing.
+ */
+const LOGIN_EVIDENCE_WAIT_MS = 25_000;
+
+const STORE_EVIDENCE_ANSWERS: ReadonlySet<SessionIdStoreEvidence> = new Set<SessionIdStoreEvidence>(['present', 'absent']);
+const LOGIN_EVIDENCE_ANSWERS: ReadonlySet<SessionIdLoginEvidence> = new Set<SessionIdLoginEvidence>(['signed_in', 'signed_out']);
 
 /**
- * A session past the capture window: its facts at the window, the store check
- * started then, and its row, for the facts read when the outcome is known.
+ * A session past the capture window: its facts at the window, the store and
+ * login checks started then, and its row, for the facts read when the outcome
+ * is known.
  */
 interface PendingSessionIdReport {
   agent: string;
   tags: Record<string, string>;
   storeEvidence: Promise<SessionIdStoreEvidence>;
-  /** Kept past a removal from the registry: `prompt_seen` is read off it at the outcome. */
+  loginEvidence: Promise<SessionIdLoginEvidence>;
+  /** Kept past a removal from the registry: the prompt, run and exit times are read off it at the outcome. */
   session: ManagedSession;
 }
 
@@ -665,20 +665,24 @@ function sessionIdCreationTag(outcome: unknown): string {
   return typeof outcome === 'string' && SESSION_ID_CREATION_TAGS.has(outcome) ? outcome : 'unknown';
 }
 
-/** The agent's store check, bounded, and `unknown` for anything but its own answer. */
-function boundedStoreEvidence(check: (() => Promise<SessionIdStoreEvidence>) | null): Promise<SessionIdStoreEvidence> {
+/** One of the agent's own checks, bounded, and `unknown` for anything but an answer it may give. */
+function boundedEvidence<Evidence extends string>(
+  check: (() => Promise<Evidence>) | null,
+  answers: ReadonlySet<Evidence>,
+  waitMs: number,
+): Promise<Evidence | 'unknown'> {
   if (!check) return Promise.resolve('unknown');
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<SessionIdStoreEvidence>((resolve) => {
-    timer = setTimeout(() => resolve('unknown'), STORE_EVIDENCE_WAIT_MS);
+  const timeout = new Promise<'unknown'>((resolve) => {
+    timer = setTimeout(() => resolve('unknown'), waitMs);
     timer.unref?.();
   });
   const answer = Promise.resolve()
     .then(check)
     .then(
-      (evidence) => (evidence === 'present' || evidence === 'absent' ? evidence : 'unknown'),
-      // report-ok: a failed store check is reported as the fixed value `unknown`.
-      (): SessionIdStoreEvidence => 'unknown',
+      (evidence): Evidence | 'unknown' => (answers.has(evidence) ? evidence : 'unknown'),
+      // report-ok: a failed check is reported as the fixed value `unknown`.
+      (): 'unknown' => 'unknown',
     );
   return Promise.race([answer, timeout]).finally(() => clearTimeout(timer));
 }
@@ -689,20 +693,22 @@ function boundedStoreEvidence(check: (() => Promise<SessionIdStoreEvidence>) | n
  * report that cannot tell late from never (Sentry DESKTOP-36, DESKTOP-3A) says
  * nothing. Taken now, while the row exists, and sent by
  * `reportSessionIdCaptureOutcome` once the outcome is known. The agent's store
- * check (`sessionId.storeEvidence`) starts now too, as close to the miss as can be.
- * An agent that already sent both kinds this run is not held, and its store is
- * not read: neither outcome could send anything.
+ * check (`sessionId.storeEvidence`) and login check (`sessionId.loginEvidence`)
+ * start now too, as close to the miss as can be. An agent that already sent both
+ * kinds this run is not held, and neither check runs: neither outcome could send
+ * anything.
  */
 export function noteSessionIdCaptureWindowPassed(
   session: ManagedSession,
   storeCheck: (() => Promise<SessionIdStoreEvidence>) | null,
+  loginCheck: (() => Promise<SessionIdLoginEvidence>) | null = null,
 ): void {
   const agent = agentTag(session.agentName);
   if (neverCapturedSessionIdAgents.has(agent) && lateSessionIdAgents.has(agent)) return;
   pendingSessionIdReports.set(session.id, {
     agent,
     tags: {
-      agent_cli_version: launchVersionTag(session.agentCliVersion),
+      agent_cli_version: cliVersionTag(session.agentCliVersion),
       start_path: session.startPath ?? 'board',
       shell: shellLabelOf(session.shell),
       opening_prompt: openingPromptTag(session.openingPrompt),
@@ -711,9 +717,81 @@ export function noteSessionIdCaptureWindowPassed(
       agent_started: observedTag(session.agentStartObservedAt),
       first_output: observedTag(session.firstOutputAt),
     },
-    storeEvidence: boundedStoreEvidence(storeCheck),
+    storeEvidence: boundedEvidence(storeCheck, STORE_EVIDENCE_ANSWERS, STORE_EVIDENCE_WAIT_MS),
+    loginEvidence: boundedEvidence(loginCheck, LOGIN_EVIDENCE_ANSWERS, LOGIN_EVIDENCE_WAIT_MS),
     session,
   });
+}
+
+/**
+ * True when a session's missing id is the user's own setup and nothing a
+ * capture path could fix: its CLI holds no login, it wrote no session store,
+ * and no one's prompt reached it. A signed-out CLI can open on its sign-in
+ * screen, which draws a frame (so the agent reads as having run) and never
+ * makes a conversation. Measured on Codex 0.163.0, and the shape of Sentry
+ * DESKTOP-36's recurrence. All three facts, because a CLI can answer "not
+ * logged in" and still work, on a key in its environment or a model provider of
+ * its own: that one takes prompts and writes its store, and its miss still
+ * reports, with `login` saying what the CLI answered.
+ */
+function explainedBySignedOutCli(session: ManagedSession, login: SessionIdLoginEvidence, idStore: SessionIdStoreEvidence): boolean {
+  return login === 'signed_out' && idStore !== 'present' && typeof session.promptObservedAt !== 'number';
+}
+
+/**
+ * How long a late capture waits for the prompt that started it. An agent that
+ * makes its conversation at the first prompt gives the id in its SessionStart
+ * hook, and main reads a batch's ids ahead of its events (`onEventsParsed`), so
+ * at the capture the prompt of the same turn is not on the row yet, and may sit
+ * in the next batch.
+ */
+const FIRST_PROMPT_SETTLE_MS = 2_000;
+
+/** Resolves once the first prompt of a session started with none has had its chance to land. */
+function firstPromptSettled(session: ManagedSession): Promise<void> {
+  if (session.openingPrompt !== 'none' || typeof session.promptObservedAt === 'number') return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, FIRST_PROMPT_SETTLE_MS);
+    timer.unref?.();
+  });
+}
+
+/**
+ * True for a late capture that is on time once it is counted from the prompt:
+ * a session started with no opening prompt, whose first real prompt came no
+ * more than the capture window before the id, or with it. Such an agent may
+ * have no conversation, and so no id, until someone types (Sentry DESKTOP-4C: a
+ * Codex terminal whose first prompt came minutes in was counted late against
+ * its spawn). An agent with no prompt event of its own never has one on the
+ * row, so it is never on time here.
+ */
+function capturedOnTime(session: ManagedSession, capturedAt: number): boolean {
+  if (session.openingPrompt !== 'none' || typeof session.promptObservedAt !== 'number') return false;
+  return capturedAt - session.promptObservedAt <= SESSION_ID_CAPTURE_WINDOW_MS;
+}
+
+/** From the first prompt to the capture, as a bucket, or `none` when no prompt was seen. */
+function afterPromptTag(session: ManagedSession, capturedAt: number): string {
+  const promptAt = session.promptObservedAt;
+  return typeof promptAt === 'number' ? secondsBucket(Math.max(0, capturedAt - promptAt)) : 'none';
+}
+
+/**
+ * How long the agent ran before its session ended, for a session that never gave
+ * an id: an agent that exited seconds after it started had no conversation to
+ * capture, and one still running had one the capture missed (Sentry DESKTOP-36
+ * could not tell them apart). Counted to the session's end, so it is an upper
+ * bound on the agent's own life: a shell outlives the CLI it ran. The end is the
+ * PTY's exit, or the removal when that came first. A removal settles the report
+ * and then ends the session, and that exit lands before or after this is read,
+ * so a removal never counts an exit later than itself.
+ */
+function agentRanForTag(session: ManagedSession, outcome: Extract<SessionIdCaptureOutcome, { kind: 'never' }>): string {
+  if (typeof session.agentRanAt !== 'number') return 'not_run';
+  const exitedAt = typeof session.exitedAt === 'number' ? session.exitedAt : null;
+  const endedAt = outcome.settledBy === 'removed' ? Math.min(exitedAt ?? outcome.settledAt, outcome.settledAt) : exitedAt;
+  if (endedAt !== null) return secondsBucket(Math.max(0, endedAt - session.agentRanAt));
+  return session.status === 'running' ? 'running' : 'unknown';
 }
 
 /**
@@ -722,6 +800,12 @@ export function noteSessionIdCaptureWindowPassed(
  * conversation without a word, or captured late, which a report at the window
  * would have counted as never. Two issues, so one cannot hide the other. Fixed
  * words only.
+ *
+ * A late capture that is on time by its first prompt (`capturedOnTime`) sends
+ * nothing, and neither does a session a signed-out CLI explains
+ * (`explainedBySignedOutCli`). The agent's one report of a kind is spent only
+ * when one is sent, so either of those, or a quit during the wait, leaves it for
+ * a real one.
  */
 export function reportSessionIdCaptureOutcome(
   sessionId: string,
@@ -732,16 +816,23 @@ export function reportSessionIdCaptureOutcome(
   pendingSessionIdReports.delete(sessionId);
   if (!pending || isShuttingDown()) return;
   const outcomeReport = SESSION_ID_OUTCOME_REPORTS[outcome.kind];
+  // Asked here too, so an agent that already sent this kind waits on nothing.
   if (outcomeReport.latch.has(pending.agent)) return;
-  outcomeReport.latch.add(pending.agent);
-  const outcomeTags: Record<string, string> = outcome.kind === 'late'
-    ? { captured_after_s: secondsBucket(outcome.capturedAfterMs) }
-    : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed' };
-  // Read now, not at the window: a prompt typed after it is the case that
-  // tells a conversation that never existed from one the capture missed.
-  const promptSeen = observedTag(pending.session.promptObservedAt);
-  void pending.storeEvidence.then((idStore) => {
+  const session = pending.session;
+  const promptSettled = outcome.kind === 'late' ? firstPromptSettled(session) : Promise.resolve();
+  void Promise.all([pending.storeEvidence, pending.loginEvidence, promptSettled]).then(([idStore, login]) => {
     if (isShuttingDown()) return;
+    if (outcome.kind === 'late' && capturedOnTime(session, outcome.capturedAt)) return;
+    if (explainedBySignedOutCli(session, login, idStore)) {
+      // The local log still says so: the user's CLI needs a sign-in, and no event will.
+      console.warn(`[session-manager] ${pending.agent} gave no session ID for session ${sessionId.slice(0, 8)}: its CLI holds no login, so nothing is reported.`);
+      return;
+    }
+    if (outcomeReport.latch.has(pending.agent)) return;
+    outcomeReport.latch.add(pending.agent);
+    const outcomeTags: Record<string, string> = outcome.kind === 'late'
+      ? { captured_after_s: secondsBucket(outcome.capturedAfterMs), after_prompt_s: afterPromptTag(session, outcome.capturedAt) }
+      : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed', agent_ran_for_s: agentRanForTag(session, outcome) };
     const error = new Error(`${outcomeReport.message} (${pending.agent})`);
     error.name = outcomeReport.errorName;
     reportHandledError(
@@ -750,10 +841,14 @@ export function reportSessionIdCaptureOutcome(
         source: 'agent_session_id',
         agent: pending.agent,
         ...pending.tags,
-        prompt_seen: promptSeen,
+        // Read now, not at the window: a prompt typed after it is the case that
+        // tells a conversation that never existed from one the capture missed.
+        // And after the wait above, so the prompt of the id's own turn counts.
+        prompt_seen: observedTag(session.promptObservedAt),
         ...outcomeTags,
         fs_scan: outcome.filesystemScan,
         id_store: idStore,
+        login,
       },
       {},
       [outcomeReport.fingerprintHead, pending.agent],

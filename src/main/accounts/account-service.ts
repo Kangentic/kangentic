@@ -15,7 +15,20 @@ import {
   type AccountIdentity,
   type EmptyUsageReadReason,
 } from './account-support';
-import type { AccountProblem, AccountProblemFacts } from './account-report';
+import type { AccountProblem, AccountProblemFacts, AccountProblemTags } from './account-report';
+import { cliVersionTag } from '../agent/shared/cli-version-tag';
+
+/**
+ * How many usage reads in a row an account's CLI run must fail before it is reported. One failed
+ * run during a network drop is not a defect. A flag the CLI does not know fails every run, so it
+ * still reports, one read later.
+ */
+const REPORTED_RUN_FAILURES = 2;
+
+/** A child's exit code as a tag: the code itself in the range a shell reports, else `other`. */
+function exitCodeTag(exitCode: number | null): string {
+  return exitCode !== null && Number.isInteger(exitCode) && exitCode >= 0 && exitCode <= 255 ? String(exitCode) : 'other';
+}
 
 /** The folder problems worth a report, by the name they are reported under. */
 const REPORTABLE_FOLDER_PROBLEM: Partial<Record<AccountFolderProblemCode, AccountProblem>> = {
@@ -78,6 +91,8 @@ export interface AccountServiceDependencies {
   listAdapters?: () => AgentAdapter[];
   /** The agent's CLI on this machine, or null when it is not installed. Absent: no CLI reads. */
   resolveCliPath?: (agent: string) => Promise<string | null>;
+  /** The version that CLI printed at detection, for a report's tag. Absent: the tag reads `unknown`. */
+  resolveCliVersion?: (agent: string) => Promise<string | null>;
   /** True when the agent's CLI runs somewhere account folders do not reach (a WSL distro). */
   usesRemoteTarget?: (agent: string) => Promise<boolean>;
   /** Saves the global accounts settings (a drag or Switch to sets Manual). */
@@ -87,7 +102,7 @@ export interface AccountServiceDependencies {
   /** The environment Kangentic runs in, read for the card's line naming a variable that overrides its accounts. */
   environment?: () => NodeJS.ProcessEnv;
   /** Sends an account problem to error reporting (`account-report.ts`). Absent: nothing is sent. */
-  reportProblem?: (problem: AccountProblem, agent: string, facts?: AccountProblemFacts, error?: unknown) => void;
+  reportProblem?: (problem: AccountProblem, agent: string, facts?: AccountProblemFacts, error?: unknown, tags?: AccountProblemTags) => void;
   /**
    * Reads the stale or missing readings among an agent's accounts before Automatic ranks them for
    * a spawn (`AccountUsageRefresher.readBeforeRanking`). Must resolve within its own bound and
@@ -126,6 +141,8 @@ export type AddKeyFileResult =
 export class AccountService {
   /** Why each account's last usage read gave no windows, so a repeat is not logged again. */
   private readonly emptyUsageReasons = new Map<string, EmptyUsageReadReason>();
+  /** How many usage reads in a row each account's CLI run has failed (`REPORTED_RUN_FAILURES`). */
+  private readonly consecutiveRunFailures = new Map<string, number>();
 
   constructor(private readonly dependencies: AccountServiceDependencies) {}
 
@@ -234,9 +251,9 @@ export class AccountService {
   }
 
   /** Sends an account problem to error reporting, when this service was given a reporter. */
-  reportProblem(problem: AccountProblem, agent: string, facts?: AccountProblemFacts, error?: unknown): void {
+  reportProblem(problem: AccountProblem, agent: string, facts?: AccountProblemFacts, error?: unknown, tags?: AccountProblemTags): void {
     try {
-      this.dependencies.reportProblem?.(problem, agent, facts, error);
+      this.dependencies.reportProblem?.(problem, agent, facts, error, tags);
     } catch {
       // Reporting never breaks what it reports on.
     }
@@ -540,19 +557,59 @@ export class AccountService {
   /**
    * A usage read that gave no windows: the account keeps its last values, and the local log says
    * why each time the reason changes, so a read that keeps failing is one line, not one per pass.
+   * Every reason is reported at once but a failed CLI run, which waits for the next read
+   * (`reportRepeatedRunFailure`).
    */
-  private noteEmptyUsageRead(account: AgentAccount, reason: EmptyUsageReadReason): void {
+  private async noteEmptyUsageRead(account: AgentAccount, reason: EmptyUsageReadReason, failure: EmptyUsageReadError | null = null): Promise<void> {
     if (this.emptyUsageReasons.get(account.id) !== reason) {
       console.warn(`[ACCOUNTS] A usage read for a ${account.kind} account of ${account.agent} gave no windows (${reason}); it keeps its last reading`);
     }
     this.emptyUsageReasons.set(account.id, reason);
+    if (reason === 'run-failed') {
+      await this.reportRepeatedRunFailure(account, failure);
+      return;
+    }
+    // The run itself worked, so a failed run before it is not one of a row.
+    this.consecutiveRunFailures.delete(account.id);
     this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason });
+  }
+
+  /**
+   * Counts a usage read whose CLI run failed, and reports it once it has failed
+   * `REPORTED_RUN_FAILURES` reads in a row for this account. The report says how the run ended
+   * and which CLI ran, as tags, and hands on the error the adapter caught: Sentry DESKTOP-4E was
+   * one failed run with none of that, so a timeout, an offline moment and a CLI too old for a
+   * flag all looked the same.
+   */
+  private async reportRepeatedRunFailure(account: AgentAccount, failure: EmptyUsageReadError | null): Promise<void> {
+    const failedRuns = (this.consecutiveRunFailures.get(account.id) ?? 0) + 1;
+    this.consecutiveRunFailures.set(account.id, failedRuns);
+    if (failedRuns < REPORTED_RUN_FAILURES) return;
+    const runFailure = failure?.runFailure ?? null;
+    const tags: AccountProblemTags = {
+      run_failure: runFailure?.kind ?? 'unknown',
+      ...(runFailure?.kind === 'exit_code' ? { run_exit: exitCodeTag(runFailure.exitCode) } : {}),
+      agent_cli_version: cliVersionTag(await this.cliVersionOf(account.agent)),
+    };
+    this.reportProblem('usage-read-empty', account.agent, { kind: account.kind, reason: 'run-failed' }, failure?.cause, tags);
+  }
+
+  /** The agent CLI's version as detection read it, or null when nothing can say. */
+  private async cliVersionOf(agent: string): Promise<string | null> {
+    try {
+      return (await this.dependencies.resolveCliVersion?.(agent)) ?? null;
+    } catch {
+      // report-ok: the version is one tag on a report that is being sent either way, and it reads
+      // `unknown` without it.
+      return null;
+    }
   }
 
   /**
    * Reads an account's usage with no session running on it (`readIdleUsage`) and stores it. False
    * when the adapter has no such read or it gave no windows; the account then keeps its last
-   * values, and a read that gave none is logged and reported.
+   * values, and a read that gave none is logged and reported (a failed CLI run from its second
+   * read in a row).
    */
   async refreshUsage(accountId: string): Promise<boolean> {
     const account = this.dependencies.repository.getById(accountId);
@@ -572,18 +629,22 @@ export class AccountService {
       windows = await support.readIdleUsage(cliPath, account.folderPath);
     } catch (error) {
       if (error instanceof EmptyUsageReadError) {
-        this.noteEmptyUsageRead(account, error.reason);
+        await this.noteEmptyUsageRead(account, error.reason, error);
         return false;
       }
       if (!(error instanceof UnreadableUsageError)) throw error;
+      // The CLI ran and answered, in a shape the adapter does not know.
+      this.consecutiveRunFailures.delete(accountId);
       this.reportProblem('usage-read-unreadable', account.agent, { keys: error.keys });
       return false;
     }
     // An empty list would replace good windows with none and still stamp the read as fresh.
     if (!windows || windows.length === 0) {
-      this.noteEmptyUsageRead(account, windows ? 'no-windows' : 'no-answer');
+      await this.noteEmptyUsageRead(account, windows ? 'no-windows' : 'no-answer');
       return false;
     }
+    // From here the run worked, whatever becomes of its reading.
+    this.consecutiveRunFailures.delete(accountId);
     // The reading is the login the home holds now. When that is not the row's own login (a
     // `/login` replaced it), the reading belongs to another row: the home is reconciled instead.
     if (account.email) {

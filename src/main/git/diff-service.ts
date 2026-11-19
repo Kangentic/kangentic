@@ -152,10 +152,31 @@ async function branchCreationPoint(git: GitClient): Promise<string | null> {
   }
 }
 
+/**
+ * True for a repository with no commits yet. `rev-parse --verify --quiet`
+ * exits 1 and prints nothing for a HEAD that names no commit, which the git
+ * client resolves as empty output. A git that could not start, or that refused
+ * the folder, throws and reads as a HEAD that resolves, so the caller keeps
+ * `'HEAD'`. A git ended mid-run with nothing printed resolves as empty output
+ * too and reads as unborn. The caller caches nothing for an unborn HEAD, so
+ * the next diff asks again.
+ */
+async function isHeadUnborn(git: GitClient): Promise<boolean> {
+  try {
+    return (await git.raw(['rev-parse', '--verify', '--quiet', 'HEAD'])).trim() === '';
+  } catch {
+    // report-ok: the diff this fork point feeds runs next against the same
+    // repository, and its own failure is the one that is reported.
+    return false;
+  }
+}
+
 export class DiffService {
   private readonly gitDirectory: string;
   private mergeBaseCache: Map<string, string> = new Map();
   private parentRefCache: Map<string, string> = new Map();
+  /** The last fork point resolved found a repository with no commits. While it holds, that is asked first. */
+  private headWasUnborn = false;
 
   constructor(gitDirectory: string) {
     this.gitDirectory = gitDirectory;
@@ -207,6 +228,14 @@ export class DiffService {
     const cached = this.mergeBaseCache.get(baseBranch);
     if (cached) return cached;
 
+    // A repository that had no commits a moment ago most likely still has none,
+    // and nothing is cached for it, so every diff there would run the four
+    // reads below only to fail each one. One read answers it instead.
+    if (this.headWasUnborn) {
+      if (await isHeadUnborn(git)) return EMPTY_TREE_HASH;
+      this.headWasUnborn = false;
+    }
+
     // Started together: each is a git child, and the Changes panel waits on
     // this before its first paint.
     const [remoteBase, creationPoint] = await Promise.all([
@@ -227,6 +256,15 @@ export class DiffService {
       && await mergeBaseOf(git, creationPoint, 'HEAD') === creationPoint
       && (refBase === null || await mergeBaseOf(git, refBase, creationPoint) === refBase)) {
       forkPoint = creationPoint;
+    }
+    // A repository with no commits yet: HEAD names nothing, and `git diff HEAD`
+    // exits 128 (Sentry DESKTOP-4A, the panel's default scope on every such
+    // project). The empty tree stands in, so the panel shows the working tree.
+    // Not cached, as `resolveParentRef` leaves its own fallback: the first
+    // commit ends this state, and a service outlives it.
+    if (forkPoint === 'HEAD' && await isHeadUnborn(git)) {
+      this.headWasUnborn = true;
+      return EMPTY_TREE_HASH;
     }
     this.mergeBaseCache.set(baseBranch, forkPoint);
     return forkPoint;

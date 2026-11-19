@@ -6,6 +6,7 @@
 
 import type { RateLimitWindow } from '../../shared/types';
 import type { AgentUsageWindowShape } from '../../shared/agent-accounts';
+import type { ExecRunFailure } from '../utility-process/off-main-exec';
 
 /**
  * How one entry of an account folder relates to the default home. `name` is the entry's path
@@ -140,14 +141,27 @@ export class UnreadableUsageError extends Error {
 /** Why a usage read gave no windows. A fixed word: the account service logs and reports it. */
 export type EmptyUsageReadReason = 'run-failed' | 'cache-missing' | 'cache-stale' | 'no-windows' | 'no-answer';
 
+/** What an adapter knows about a `run-failed` read: the error it caught, and how the run ended. */
+export interface EmptyUsageReadDetail {
+  /** The error the CLI run rejected with. The service reports its class and errno, never its text. */
+  cause?: unknown;
+  /** How the run ended (`execRunFailureOf`), as fixed words. */
+  runFailure?: ExecRunFailure;
+}
+
 /**
  * Thrown by `readIdleUsage` when the read gave no windows: the CLI run failed, or what it left
  * behind holds no current reading. The account keeps its last values, and the service says so.
+ * For a failed run the adapter hands on what it caught, because the service's report could not
+ * otherwise tell a timeout from an exit or a CLI that would not start (Sentry DESKTOP-4E).
  */
 export class EmptyUsageReadError extends Error {
-  constructor(readonly reason: EmptyUsageReadReason) {
-    super(`A usage read gave no windows (${reason})`);
+  readonly runFailure: ExecRunFailure | null;
+
+  constructor(readonly reason: EmptyUsageReadReason, detail: EmptyUsageReadDetail = {}) {
+    super(`A usage read gave no windows (${reason})`, detail.cause === undefined ? undefined : { cause: detail.cause });
     this.name = 'EmptyUsageReadError';
+    this.runFailure = detail.runFailure ?? null;
   }
 }
 

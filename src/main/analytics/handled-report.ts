@@ -132,6 +132,25 @@ export function syscallOf(error: unknown): string | undefined {
   return typeof syscall === 'string' && /^[a-z_]{1,32}$/.test(syscall) ? syscall : undefined;
 }
 
+/** A short lowercase word, so nothing but a fixed cause can ride the tag. */
+const GIT_CAUSE = /^[a-z_]{1,40}$/;
+
+/**
+ * What a failed git command refused on (`GitCommandError.gitCause`), on the
+ * error or one level down its `cause`, where a wrapper such as
+ * `wrapWorktreeSetupError` leaves it. Read by shape, so this module imports no
+ * git code. git's own text never leaves: Sentry DESKTOP-4A was a `git:diffFiles`
+ * failure that could not say why.
+ */
+export function gitCauseOf(error: unknown): string | undefined {
+  const wrapped = (error as { cause?: unknown } | null | undefined)?.cause;
+  for (const candidate of [error, wrapped]) {
+    const gitCause = (candidate as { gitCause?: unknown } | null | undefined)?.gitCause;
+    if (typeof gitCause === 'string' && GIT_CAUSE.test(gitCause)) return gitCause;
+  }
+  return undefined;
+}
+
 /**
  * True for the user's connection, not our code: a network errno, a stream torn down
  * by its peer, or `fetch failed` (Node's `TypeError`) whose cause is one of those.
@@ -192,9 +211,10 @@ export function firstFrameOf(error: unknown): string {
 
 /**
  * Send one handled failure from `source`, path-free, with the tags every report
- * carries (`source`, `error_name`, `errno`, `syscall`) plus the caller's own short
- * enums. Marks the original reported. Does not latch and does not filter: a caller
- * that wants either uses `createChokepointReporter`.
+ * carries (`source`, `error_name`, and `errno`, `syscall` and `git_cause` when the
+ * error has them) plus the caller's own short enums. Marks the original reported.
+ * Does not latch and does not filter: a caller that wants either uses
+ * `createChokepointReporter`.
  */
 export function sendHandledFailure(
   source: string,
@@ -208,6 +228,8 @@ export function sendHandledFailure(
   if (code) allTags.errno = code;
   const syscall = syscallOf(error);
   if (syscall) allTags.syscall = syscall;
+  const gitCause = gitCauseOf(error);
+  if (gitCause) allTags.git_cause = gitCause;
   markReported(error);
   reportHandledError(pathFreeCopy(source, error), allTags, contexts, fingerprint);
 }
@@ -260,6 +282,8 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
           Object.entries(tags).map(([tagKey, value]) => `${tagKey}=${value}`).join(','),
           errorNameOf(error),
           errorCodeOf(error) ?? '',
+          // Every git failure throws from one line, so the cause is what tells two apart.
+          gitCauseOf(error) ?? '',
           firstFrameOf(error),
         ].join('|');
         if (reportedKeys.has(key)) {

@@ -79,12 +79,15 @@ function parseLoginRequest(request: unknown): AgentAccountLoginRequest | null {
 export function registerAccountHandlers(context: IpcContext): AccountService {
   const repository = new AgentAccountRepository();
   const readConfig = () => context.configManager.load().agent.accounts ?? DEFAULT_AGENT_ACCOUNTS_CONFIG;
-  const resolveCliPath = async (agent: string): Promise<string | null> => {
+  // The adapter's detector caches its answer, so the path and the version are one read.
+  const detectCli = async (agent: string) => {
     const adapter = agentRegistry.get(agent);
     if (!adapter) return null;
     const detection = await adapter.detect(context.configManager.load().agent.cliPaths[agent] ?? null);
-    return detection.found && detection.path ? detection.path : null;
+    return detection.found ? detection : null;
   };
+  const resolveCliPath = async (agent: string): Promise<string | null> => (await detectCli(agent))?.path || null;
+  const resolveCliVersion = async (agent: string): Promise<string | null> => (await detectCli(agent))?.version || null;
   // Assigned below, once the service it reads exists. A change before then has nothing waiting.
   let continuation: AccountContinuation | null = null;
   const notifyChanged = (): void => {
@@ -105,6 +108,7 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       context.configManager.save({ agent: { ...context.configManager.load().agent, accounts: next } });
     },
     resolveCliPath,
+    resolveCliVersion,
     usesRemoteTarget: async (agent) => {
       const adapter = agentRegistry.get(agent);
       const cliPath = await resolveCliPath(agent);
@@ -125,6 +129,11 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
     },
   });
   setAccountService(service);
+  // The session-id report asks about the login a session read, which is in its account's home.
+  context.sessionManager.setAccountHomeResolver((accountId) => {
+    const account = repository.getById(accountId);
+    return account ? account.folderPath : undefined;
+  });
   // A saved Order mode changes the order main lists: the tab lists again once the write landed.
   setAccountsConfigListener(notifyChanged);
 

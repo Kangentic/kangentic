@@ -41,6 +41,45 @@ describe('reportAccountProblem', () => {
     expect(reportHandledError).toHaveBeenCalledTimes(3);
   });
 
+  // A usage read's `cache-stale` early in a run used to spend the one report, so a
+  // `run-failed` after it never sent (Sentry DESKTOP-4E wants that one named).
+  it('latches each fixed reason of a problem on its own, under one issue', () => {
+    reportAccountProblem('usage-read-empty', 'test-agent', { kind: 'default', reason: 'cache-stale' });
+    reportAccountProblem('usage-read-empty', 'test-agent', { kind: 'default', reason: 'run-failed' });
+    reportAccountProblem('usage-read-empty', 'test-agent', { kind: 'folder', reason: 'run-failed' });
+
+    expect(reportHandledError).toHaveBeenCalledTimes(2);
+    const fingerprints = reportHandledError.mock.calls.map((call) => call[3]);
+    expect(fingerprints).toEqual([
+      ['agent-accounts', 'usage-read-empty', 'test-agent'],
+      ['agent-accounts', 'usage-read-empty', 'test-agent'],
+    ]);
+  });
+
+  it('keeps a reason that is not a fixed word out of the latch, so it still latches', () => {
+    reportAccountProblem('usage-read-empty', 'test-agent', { reason: 'Acme Corp said no at 10:41' });
+    reportAccountProblem('usage-read-empty', 'test-agent', { reason: 'Acme Corp said no at 10:56' });
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the caller\'s tags beside its own, and drops any that is not a short fixed value', () => {
+    reportAccountProblem('usage-read-empty', 'test-agent', { kind: 'default', reason: 'run-failed' }, undefined, {
+      run_failure: 'timeout',
+      agent_cli_version: '2.1.319',
+      run_exit: 'C:\\Users\\dev\\claude exited 1',
+      'Acme Corp': 'x',
+      agent: 'another-agent',
+    });
+
+    expect(reportHandledError.mock.calls[0][1]).toEqual({
+      subsystem: 'agent_accounts',
+      account_problem: 'usage-read-empty',
+      agent: 'test-agent',
+      run_failure: 'timeout',
+      agent_cli_version: '2.1.319',
+    });
+  });
+
   it('marks the error of a repeat report too, so a chokepoint it is rethrown into skips it', () => {
     const firstError = new Error('first');
     const secondError = new Error('second');

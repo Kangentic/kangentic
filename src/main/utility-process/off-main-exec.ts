@@ -18,6 +18,7 @@
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { HostExecFailure, HostExecOptions, HostExecRequest, HostExecResult } from '../pty/host/protocol';
+import { PtyHostExitedError, PtyHostTimeoutError } from '../pty/host/pty-host-request-errors';
 import { describeSpawnCaller } from '../diagnostics/spawn-caller';
 import { withoutCrashpadPipeName } from '../shared/child-env';
 
@@ -104,6 +105,43 @@ function toError(failure: HostExecFailure): Error {
   error.stderr = failure.stderr;
   if (failure.cmd !== undefined) error.cmd = failure.cmd;
   return error;
+}
+
+/**
+ * How a rejected run ended, as one fixed word. The words are
+ * `ToolFailureCause`'s (`pty/process-tag/process-scan.ts`), which the host's own tools
+ * report by, plus `host_unavailable` for a pty host that gave no answer and
+ * `other` for anything that is not a run's rejection.
+ */
+export type ExecFailureKind = 'timeout' | 'signal' | 'exit_code' | 'spawn_error' | 'host_unavailable' | 'other';
+
+/** How a rejected run ended, with its exit code when it has one. */
+export interface ExecRunFailure {
+  kind: ExecFailureKind;
+  /** The child's exit code. Only for `exit_code`. */
+  exitCode: number | null;
+}
+
+/**
+ * Read what `execAsync` or `execFileAsync` rejected with. A report cannot send
+ * the rejection's text (it holds the command line and whatever the child
+ * printed), so this is what tells a timeout from an exit or a program that
+ * would not start. Sentry DESKTOP-4E had none of it.
+ *
+ * The order matters. A run past its timeout has a signal too, and only the
+ * timer sets `killed`. Node also kills a child whose output passes `maxBuffer`
+ * and sets `killed` there, so that code is read first.
+ */
+export function execRunFailureOf(error: unknown): ExecRunFailure {
+  if (error instanceof PtyHostTimeoutError || error instanceof PtyHostExitedError) return { kind: 'host_unavailable', exitCode: null };
+  if (!(error instanceof Error)) return { kind: 'other', exitCode: null };
+  const failure = error as Error & { code?: unknown; killed?: unknown; signal?: unknown };
+  if (failure.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return { kind: 'other', exitCode: null };
+  if (failure.killed === true) return { kind: 'timeout', exitCode: null };
+  if (typeof failure.signal === 'string') return { kind: 'signal', exitCode: null };
+  if (typeof failure.code === 'number') return { kind: 'exit_code', exitCode: failure.code };
+  if (typeof failure.code === 'string') return { kind: 'spawn_error', exitCode: null };
+  return { kind: 'other', exitCode: null };
 }
 
 /**

@@ -36,6 +36,14 @@ import {
   agentInstallUrl,
 } from '../../src/renderer/utils/agent-display-name';
 
+describe('CodexAdapter session-id login evidence', () => {
+  it('exposes the Codex login check, which asks nothing for a CLI it has no path to', async () => {
+    const { loginEvidence } = new CodexAdapter().runtime.sessionId;
+    expect(loginEvidence).toBeTypeOf('function');
+    await expect(loginEvidence!({ cliPath: null })).resolves.toBe('unknown');
+  });
+});
+
 function makeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
   return {
     agentPath: '/usr/bin/codex',
@@ -1115,11 +1123,15 @@ describe('Codex Adapter', () => {
   });
 
   describe('captureSessionIdFromFilesystem', () => {
-    // Writes synthetic rollout files into the real ~/.codex/sessions
-    // layout and verifies capture-by-cwd. Each test uses a unique UUID
-    // and cleans up after itself so real Codex sessions are untouched.
+    // Writes synthetic rollout files into Codex's sessions layout and verifies
+    // capture-by-cwd. The home is a temp CODEX_HOME, as in the ensureTrust block:
+    // against the developer's real ~/.codex every run left today's dated folder
+    // behind, empty, and that folder is what the session-id report's `id_store`
+    // reads as "Codex wrote a session today".
     const createdFiles: string[] = [];
     let sessionsDir: string;
+    let sessionsHome: string;
+    const originalCodexHome = process.env.CODEX_HOME;
 
     function writeRollout(uuid: string, cwd: string, createdAt: Date = new Date()): string {
       const iso = createdAt.toISOString();
@@ -1137,16 +1149,18 @@ describe('Codex Adapter', () => {
     }
 
     beforeEach(() => {
+      sessionsHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-adapter-sessions-'));
+      process.env.CODEX_HOME = sessionsHome;
       const iso = new Date().toISOString();
-      sessionsDir = path.join(os.homedir(), '.codex', 'sessions', iso.slice(0, 4), iso.slice(5, 7), iso.slice(8, 10));
+      sessionsDir = path.join(sessionsHome, 'sessions', iso.slice(0, 4), iso.slice(5, 7), iso.slice(8, 10));
       fs.mkdirSync(sessionsDir, { recursive: true });
     });
 
     afterEach(() => {
-      for (const filepath of createdFiles) {
-        try { fs.unlinkSync(filepath); } catch { /* ignore */ }
-      }
+      if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = originalCodexHome;
       createdFiles.length = 0;
+      fs.rmSync(sessionsHome, { recursive: true, force: true });
     });
 
     it('captures the UUID for a rollout file whose session_meta.cwd matches', async () => {

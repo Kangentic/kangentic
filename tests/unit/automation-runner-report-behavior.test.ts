@@ -6,6 +6,7 @@
  * silently in the run log with no Sentry event, or a user's dead webhook floods
  * the project.
  */
+import os from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { reportHandledError } = vi.hoisted(() => ({ reportHandledError: vi.fn() }));
@@ -13,6 +14,7 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError 
 
 import { automationRunReporter, runAutomations } from '../../src/main/automations/automation-runner';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
+import { runScriptAdapter } from '../../src/main/automations/adapters/run-script';
 import {
   AutomationPermanentError,
   AutomationRetryableError,
@@ -141,6 +143,46 @@ describe('automationRunReporter in a real run', () => {
     });
 
     expect(attempts).toBe(3);
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+});
+
+// Sentry DESKTOP-49: the adapter threw a plain Error for a non-zero exit, so
+// every script a user wrote that failed reached Sentry as a defect of ours.
+// The real adapter and a real shell, on real timers: the child's exit is I/O.
+describe('a run_script row whose script exits non-zero', () => {
+  // A shell every runner has, in its non-interactive form (run-script-adapter.test.ts).
+  const SHELL = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+
+  beforeEach(() => {
+    reportHandledError.mockClear();
+    automationRunReporter.reset();
+    vi.mocked(runs.finish).mockClear();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('records the run as failed with the exit code and reports nothing', async () => {
+    const registry = new AutomationRegistry();
+    registry.register(runScriptAdapter);
+    const scriptRow: ColumnAutomation = { ...ROW, name: 'Build', type: 'run_script', config: { script: 'exit 1' } };
+
+    await runAutomations({
+      automations: [scriptRow],
+      column: COLUMN,
+      context: {
+        ...context(),
+        cwd: os.tmpdir(),
+        sessionHost: { getShell: async () => SHELL },
+      } as unknown as Omit<AutomationContext, 'runId' | 'signal'>,
+      runs,
+      signal: new AbortController().signal,
+      registry,
+    });
+
+    expect(runs.finish).toHaveBeenCalledWith(expect.any(String), 'failed', 'Script exited with code 1.', 1);
     expect(reportHandledError).not.toHaveBeenCalled();
   });
 });

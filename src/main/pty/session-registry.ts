@@ -172,7 +172,7 @@ export interface ManagedSession {
   openingPrompt?: OpeningPromptDelivery;
   /** How the launch got the agent's conversation id before it ran (`SpawnSessionInput.sessionIdCreation`), where the spawn knew. */
   sessionIdCreation?: SessionIdCreationOutcome;
-  /** The agent CLI's version as detection read it; `launchVersionTag` vets it. */
+  /** The agent CLI's version as detection read it; `cliVersionTag` vets it. */
   agentCliVersion?: string | null;
   /**
    * The CLI path the command builder was handed, the typed command's head.
@@ -202,7 +202,11 @@ export interface ManagedSession {
   agentOutputAt?: number | null;
   /** Epoch ms of the agent's first hook event, SessionEnd aside (a kill synthesizes one). */
   agentHookObservedAt?: number | null;
-  /** Epoch ms of the agent's first Prompt event: someone sent the agent a prompt. Read by the session-id report. */
+  /**
+   * Epoch ms of the agent's first Prompt event: someone sent the agent a prompt.
+   * Never PTY output standing in for one (`PromptReason.PtyActivity`), which a
+   * boot frame produces. Read by the session-id report.
+   */
   promptObservedAt?: number | null;
   /**
    * Epoch ms of the first session id the agent itself gave, from a hook, its
@@ -212,8 +216,14 @@ export interface ManagedSession {
   agentIdReportedAt?: number | null;
   /** Epoch ms the launch overlay gave up waiting for the agent (`AGENT_READY_CEILING_MS`). */
   readyCeilingAt?: number | null;
-  /** The first sign the agent ran was noted, so its trail line and a recovery come once. */
-  agentRanNoted?: boolean;
+  /**
+   * Epoch ms of the first sign the agent ran (`SessionManager.noteAgentRan`), so
+   * its trail line and a recovery come once. With `exitedAt` it is how long the
+   * agent ran, which the session-id report sends for a session that never gave an id.
+   */
+  agentRanAt?: number | null;
+  /** Epoch ms this session's PTY exited, however it ended. Unset while it runs, and for a row that never had one. */
+  exitedAt?: number | null;
   /** A retry that worked has been reported, once. */
   retryRecoveryNoted?: boolean;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */

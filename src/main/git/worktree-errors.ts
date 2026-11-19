@@ -5,6 +5,7 @@
  */
 
 import { UserConfigurationError } from '../../shared/user-configuration-error';
+import { GIT_NO_SPACE, GIT_NOT_A_REPOSITORY, GIT_PERMISSION_DENIED, GIT_REF_LOCK } from './git-command-error';
 
 /**
  * A git step refused because of the repository's own state: the user's to
@@ -116,18 +117,21 @@ export type WorktreeFailureCause =
  * The phrases are git's English. A git that prints another language matches
  * none of them and sends `worktree_other`, so the report loses detail and
  * never misnames a cause. The tests pin `LC_ALL=C` for that reason.
+ *
+ * The four that any git command can hit are `git-command-error.ts`'s, which
+ * names them for every other report.
  */
 const WORKTREE_REFUSALS: ReadonlyArray<readonly [WorktreeFailureCause, RegExp]> = [
   ['worktree_branch_checked_out', BRANCH_IN_ANOTHER_WORKTREE],
-  ['worktree_ref_lock', /^fatal: cannot lock ref\b/m],
+  ['worktree_ref_lock', GIT_REF_LOCK],
   ['worktree_path_registered', /is a missing but already registered worktree/],
   ['worktree_branch_exists', /^fatal: a branch named '.*' already exists/m],
   ['worktree_path_exists', /^fatal: '.*' already exists/m],
   ['worktree_invalid_reference', /^fatal: invalid reference: /m],
   ['worktree_invalid_branch_name', /^fatal: '.*' is not a valid branch name/m],
-  ['worktree_not_a_repository', /^fatal: not a git repository\b/m],
-  ['worktree_permission', /Permission denied/],
-  ['worktree_no_space', /No space left on device/],
+  ['worktree_not_a_repository', GIT_NOT_A_REPOSITORY],
+  ['worktree_permission', GIT_PERMISSION_DENIED],
+  ['worktree_no_space', GIT_NO_SPACE],
 ];
 
 /** How far down a `cause` chain `messagesOf` reads, so a cycle cannot loop. */

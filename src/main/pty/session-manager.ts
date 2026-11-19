@@ -62,7 +62,7 @@ import type {
   SeedFrameResult,
 } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
-import { DEFAULT_CONFIG, EventType } from '../../shared/types';
+import { DEFAULT_CONFIG, EventType, PromptReason } from '../../shared/types';
 import type { HistoryViewOpenResult, SuspendedBy } from '../../shared/types';
 import { reportUnrecognizedHistoryView } from './history-view-report';
 import { isActive } from '../../shared/activity-state';
@@ -90,6 +90,7 @@ import type {
 } from '../activity-engine/engine';
 import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
 import { hostPathForTarget, isPlainIdName, placeFromStored } from '../agent/shared/cli-target';
+import { headlessCliPath } from '../agent/shared/shim-launch';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec, type WslShellSpec } from './process-tag/task-process-tag';
@@ -720,6 +721,8 @@ export class SessionManager extends EventEmitter {
   private statusFileReader: StatusFileReader;
   private sessionFiles: SessionFileManager;
   private sessionIdManager: SessionIdManager;
+  /** Where an account keeps its login (`setAccountHomeResolver`). Null until the account handlers set it. */
+  private accountHomeResolver: ((accountId: string) => string | null | undefined) | null = null;
   private activityEngineOptions: ActivityEngineOptions | undefined;
   private restingGridDelayMs: number;
 
@@ -811,10 +814,20 @@ export class SessionManager extends EventEmitter {
         const session = this.registry.get(id);
         if (!session) return;
         const storeEvidence = session.agentParser?.runtime?.sessionId?.storeEvidence;
+        const loginEvidence = session.agentParser?.runtime?.sessionId?.loginEvidence;
         const cliTarget = session.cliTarget ?? null;
+        // The login the session read is in its account's home, which may not be the agent's own.
+        const accountHome = this.accountHomeOf(session);
+        // A session on a host runs a CLI this computer cannot ask, and one whose account home
+        // cannot be told read a login nobody can name, so either reads `unknown`. The check runs
+        // the CLI with no shell, so it gets the batch shim a PowerShell or Git Bash launch ran a
+        // sibling of: that sibling does not start outside its shell.
+        const launchedCliPath = session.hostId || accountHome === undefined ? null : session.agentCliPath ?? null;
+        const cliPath = launchedCliPath === null || cliTarget ? launchedCliPath : headlessCliPath(launchedCliPath);
         noteSessionIdCaptureWindowPassed(
           session,
           storeEvidence ? () => storeEvidence({ cwd: session.commandCwd, cliTarget }) : null,
+          loginEvidence ? () => loginEvidence({ cliPath, cliTarget, accountHome: accountHome ?? null }) : null,
         );
       },
       onCaptureOutcome: (id, outcome) => {
@@ -909,7 +922,10 @@ export class SessionManager extends EventEmitter {
         }
         if (event.type === EventType.Prompt) {
           this.tookPrompt.add(sessionId);
-          const promptSession = this.registry.get(sessionId);
+          // A prompt the agent received, not PTY output standing in for one: the
+          // tracker pushes that for a session's first frame, and the session-id
+          // report counts a capture from this moment (Sentry DESKTOP-4C).
+          const promptSession = event.detail === PromptReason.PtyActivity ? undefined : this.registry.get(sessionId);
           if (promptSession) promptSession.promptObservedAt ??= Date.now();
         }
         this.noteCommandTerminalAgentEvent(sessionId, event);
@@ -1881,8 +1897,8 @@ export class SessionManager extends EventEmitter {
 
   /** The agent showed it ran, once. On a retry, that makes this launch a recovery. */
   private noteAgentRan(session: ManagedSession): void {
-    if (session.agentRanNoted === true) return;
-    session.agentRanNoted = true;
+    if (typeof session.agentRanAt === 'number') return;
+    session.agentRanAt = Date.now();
     logLaunchStep(session, 'agent_ran');
     if (session.startPath === 'retry') reportLaunchRecovered(session);
     this.emit('agent-ran', session.id);
@@ -3343,6 +3359,24 @@ export class SessionManager extends EventEmitter {
   /** The account whose home a session was spawned in, or null for none (an agent with no accounts). */
   getSessionHomeAccountId(sessionId: string): string | null {
     return this.registry.get(sessionId)?.homeAccountId ?? null;
+  }
+
+  /**
+   * Says where an account keeps its login: its folder, or null for one in the agent's own home.
+   * Undefined for an account the resolver does not know. The account handlers set it, since the
+   * accounts live there and a session row holds only the account's id.
+   */
+  setAccountHomeResolver(resolver: (accountId: string) => string | null | undefined): void {
+    this.accountHomeResolver = resolver;
+  }
+
+  /**
+   * The home a session's CLI read its login from: an account's folder, or null for the agent's
+   * own home (a session with no account ran there too). Undefined when it cannot be told.
+   */
+  private accountHomeOf(session: ManagedSession): string | null | undefined {
+    if (!session.homeAccountId) return null;
+    return this.accountHomeResolver?.(session.homeAccountId);
   }
 
   /** Put the reason a start failed on its row, for the card. A row already replaced is a no-op. */

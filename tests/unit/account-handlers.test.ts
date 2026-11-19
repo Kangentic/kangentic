@@ -53,6 +53,8 @@ const hoisted = vi.hoisted(() => ({
   },
   watchSync: vi.fn(),
   sessionHomes: {} as Record<string, string | null>,
+  /** What the handlers gave the session manager to find an account's home with. */
+  accountHomeResolver: null as ((accountId: string) => string | null | undefined) | null,
 }));
 
 vi.mock('electron', () => ({
@@ -184,13 +186,14 @@ beforeEach(() => {
     getSessionAgentName: (sessionId: string) => hoisted.sessions.find((session) => session.id === sessionId)?.agentName,
     getActivityCache: () => ({}),
     getSessionHomeAccountId: (sessionId: string) => hoisted.sessionHomes[sessionId] ?? null,
+    setAccountHomeResolver: (resolver: (accountId: string) => string | null | undefined) => { hoisted.accountHomeResolver = resolver; },
   });
   hoisted.sessionHomes = {};
   hoisted.refresher.checkHome.mockClear();
   hoisted.watchSync.mockClear();
 });
 
-function register(): void {
+function register() {
   const context = {
     mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
     sessionManager,
@@ -200,7 +203,15 @@ function register(): void {
       save: (patch: { agent: { accounts: typeof hoisted.accountsConfig } }) => { hoisted.accountsConfig = patch.agent.accounts; },
     },
   } as unknown as IpcContext;
-  registerAccountHandlers(context);
+  return registerAccountHandlers(context);
+}
+
+/** The dependencies registration gave the service, which no public method hands back. */
+function dependenciesOf(service: ReturnType<typeof register>): {
+  resolveCliPath: (agent: string) => Promise<string | null>;
+  resolveCliVersion: (agent: string) => Promise<string | null>;
+} {
+  return (service as unknown as { dependencies: ReturnType<typeof dependenciesOf> }).dependencies;
 }
 
 afterEach(() => {
@@ -209,6 +220,64 @@ afterEach(() => {
   setAccountService(null);
   hoisted.database?.close();
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe('what registration gives the account service and the session manager', () => {
+  function adapterDetecting(name: string, detection: Record<string, unknown>): unknown {
+    return { ...(adapterFor(name) as Record<string, unknown>), detect: async () => detection };
+  }
+
+  it('answers the CLI path and version from the adapter detection, and null where nothing was found', async () => {
+    hoisted.adapters = {
+      'found-agent': adapterDetecting('found-agent', { found: true, path: '/usr/bin/found-cli', version: '2.1.319 (Claude Code)' }),
+      'missing-agent': adapterDetecting('missing-agent', { found: false, path: '/usr/bin/ignored', version: '1.0.0' }),
+      'empty-path-agent': adapterDetecting('empty-path-agent', { found: true, path: '', version: '3.0.0' }),
+      'no-version-agent': adapterDetecting('no-version-agent', { found: true, path: '/usr/bin/other-cli' }),
+    };
+    const dependencies = dependenciesOf(register());
+
+    await expect(dependencies.resolveCliPath('found-agent')).resolves.toBe('/usr/bin/found-cli');
+    await expect(dependencies.resolveCliVersion('found-agent')).resolves.toBe('2.1.319 (Claude Code)');
+    await expect(dependencies.resolveCliPath('missing-agent')).resolves.toBeNull();
+    await expect(dependencies.resolveCliVersion('missing-agent')).resolves.toBeNull();
+    await expect(dependencies.resolveCliPath('empty-path-agent')).resolves.toBeNull();
+    await expect(dependencies.resolveCliPath('no-version-agent')).resolves.toBe('/usr/bin/other-cli');
+    await expect(dependencies.resolveCliVersion('no-version-agent')).resolves.toBeNull();
+    await expect(dependencies.resolveCliPath('no-such-agent')).resolves.toBeNull();
+    await expect(dependencies.resolveCliVersion('no-such-agent')).resolves.toBeNull();
+  });
+
+  it('puts the detected CLI version on the report of a usage read that failed twice', async () => {
+    const { EmptyUsageReadError } = await import('../../src/main/accounts/account-support');
+    hoisted.adapters = {
+      'move-agent': {
+        ...(adapterFor('move-agent', {
+          readIdleUsage: async () => { throw new EmptyUsageReadError('run-failed', { runFailure: { kind: 'timeout', exitCode: null } }); },
+        }) as Record<string, unknown>),
+        detect: async () => ({ found: true, path: '/usr/bin/test-cli', version: '2.1.319 (Claude Code)' }),
+      },
+    };
+    const { own } = seedAccounts('move-agent');
+    const service = register();
+    await service.refreshUsage(own.id);
+    await service.refreshUsage(own.id);
+
+    const usageReports = hoisted.report.mock.calls.filter((call) => call[0] === 'usage-read-empty');
+    expect(usageReports).toHaveLength(1);
+    expect(usageReports[0][4]).toMatchObject({ run_failure: 'timeout', agent_cli_version: '2.1.319' });
+  });
+
+  it('gives the session manager a resolver of an account\'s home: the folder, null for the own login, undefined for no row', () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    const { own, second } = seedAccounts('move-agent');
+    register();
+    const resolver = hoisted.accountHomeResolver!;
+
+    expect(resolver).toBeTypeOf('function');
+    expect(resolver(second.id)).toBe(second.folderPath);
+    expect(resolver(own.id)).toBeNull();
+    expect(resolver('no-such-account')).toBeUndefined();
+  });
 });
 
 describe('ACCOUNTS_START_LOGIN', () => {
@@ -275,7 +344,8 @@ describe('the failed-turn report', () => {
     vi.setSystemTime(Date.now() + TEN_MINUTES_MS - 1000);
     fail('s1', 'something broke');
     expect(hoisted.report).toHaveBeenCalledTimes(1);
-    expect(hoisted.report).toHaveBeenCalledWith('turn-failed-after-move', 'move-agent', { detail: 'something broke' }, undefined);
+    // The last two are the caller's error and tags, and this report has neither.
+    expect(hoisted.report).toHaveBeenCalledWith('turn-failed-after-move', 'move-agent', { detail: 'something broke' }, undefined, undefined);
     fail('s1', 'something broke again');
     expect(hoisted.report).toHaveBeenCalledTimes(1);
   });
@@ -303,7 +373,7 @@ describe('the failed-turn report', () => {
 
   it('reports conversation-refused when the adapter reads the detail as a refusal, with no move needed', () => {
     fail('s1', 'conversation refused for this account');
-    expect(hoisted.report).toHaveBeenCalledWith('conversation-refused', 'move-agent', { detail: 'conversation refused for this account' }, undefined);
+    expect(hoisted.report).toHaveBeenCalledWith('conversation-refused', 'move-agent', { detail: 'conversation refused for this account' }, undefined, undefined);
   });
 
   it('reports no refusal for a transient session', () => {

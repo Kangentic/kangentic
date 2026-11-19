@@ -909,6 +909,10 @@ export async function performSpawn(
     // ManagedSession.overrideExitCode.
     const resolvedExitCode = session.overrideExitCode ?? exitCode;
     session.exitCode = resolvedExitCode;
+    // When it ended, beside how: with `agentRanAt` it is how long the agent ran,
+    // which tells an agent that died at its start from a conversation whose id
+    // was missed (Sentry DESKTOP-36, the session-id report).
+    session.exitedAt = Date.now();
     session.pty = null;
 
     // Cancel the session-ID diagnostic timer but keep the scanner so

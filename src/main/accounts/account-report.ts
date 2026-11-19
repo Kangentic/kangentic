@@ -51,10 +51,39 @@ export type AccountProblem =
 export type AccountProblemFacts = Record<string, string | number | boolean | null>;
 
 /**
- * One report per problem and agent per run. A refresh repeats every few minutes, and the facts
- * vary (a provider's text, a count), so a key that held them never latched.
+ * Fixed words a caller wants searchable on the event, beside the three every report carries: how a
+ * CLI run failed, its exit code, the CLI's version. Facts go in a context, which Sentry cannot
+ * filter by.
+ */
+export type AccountProblemTags = Record<string, string>;
+
+/**
+ * One report per problem, agent and reason per run. A refresh repeats every few minutes, and the
+ * facts vary (a provider's text, a count), so a key that held them all never latched. The reason is
+ * the one fact in the key, because it is a fixed word and names a different failure: a usage read's
+ * `cache-stale` early in a run used to spend the report a later `run-failed` needed.
  */
 const reported = new Set<string>();
+
+/** A fixed word, as every `reason` a caller sends is. Anything else stays out of the latch key. */
+const FIXED_REASON = /^[a-z][a-z-]{0,31}$/;
+
+function reasonOf(facts: AccountProblemFacts): string {
+  return typeof facts.reason === 'string' && FIXED_REASON.test(facts.reason) ? facts.reason : '';
+}
+
+const TAG_NAME = /^[a-z][a-z_]{0,31}$/;
+/** One short token: a fixed word, a number, a version. No space, slash or backslash, so no path or sentence. */
+const TAG_VALUE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,47}$/;
+
+/** The caller's tags that are safe to send: a plain name and one short token each. */
+function sendableTags(tags: AccountProblemTags): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(tags)) {
+    if (TAG_NAME.test(name) && TAG_VALUE.test(value)) kept[name] = value;
+  }
+  return kept;
+}
 
 /**
  * What a provider's failure text is about, in one fixed word. The text itself is never sent:
@@ -86,11 +115,12 @@ export function reportAccountProblem(
   agent: string,
   facts: AccountProblemFacts = {},
   error?: unknown,
+  tags: AccountProblemTags = {},
 ): void {
   // Mark the caller's error first, so a chokepoint it is rethrown into skips it even
   // when this problem already reported and the latch below returns early.
   if (error !== undefined) markReported(error);
-  const key = `${problem}:${agent}`;
+  const key = `${problem}:${agent}:${reasonOf(facts)}`;
   if (reported.has(key)) return;
   reported.add(key);
   console.warn(`[ACCOUNTS] ${problem} (${agent})`, facts);
@@ -102,9 +132,10 @@ export function reportAccountProblem(
     : {};
   reportHandledError(
     new Error(`Agent account problem: ${problem} (${agent})`),
-    { subsystem: 'agent_accounts', account_problem: problem, agent },
+    // The three fixed tags last, so a caller's tag can never replace one.
+    { ...sendableTags(tags), subsystem: 'agent_accounts', account_problem: problem, agent },
     { account: sendableFacts(facts), ...causeContext },
-    // One issue per problem and agent, whatever call path found it.
+    // One issue per problem and agent, whatever call path or reason found it.
     ['agent-accounts', problem, agent],
   );
 }

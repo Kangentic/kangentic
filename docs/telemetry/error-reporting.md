@@ -30,6 +30,10 @@ sources:
   - resource: src/main/pty/agent-launch-report.ts
   - resource: src/main/pty/launch-output-class.ts
   - resource: src/main/git/worktree-errors.ts
+  - resource: src/main/git/git-command-error.ts
+  - resource: src/main/accounts/account-report.ts
+  - resource: src/main/agent/shared/cli-version-tag.ts
+  - resource: src/main/utility-process/off-main-exec.ts
   - resource: src/main/pty/spawn/agent-start-refused.ts
   - resource: src/main/pty/lifecycle/session-id-manager.ts
   - resource: src/main/git/spawn-with-abort.ts
@@ -413,7 +417,9 @@ in one Sentry org, one triage surface.
   message is `Handled <source> failure: <ErrorName>` over the original frames (`pathFreeCopy`),
   never `error.message`, a runtime error's included: V8 quotes the property it could not read and
   Node's `ERR_INVALID_ARG_*` quotes the value it got, either of which can be a title. Tags are `source`,
-  `error_name`, `errno` and `syscall` when the error carries them, and the chokepoint's own short enums. It skips what is
+  `error_name`, `errno`, `syscall` and `git_cause` when the error carries them, and the chokepoint's own short enums.
+  `git_cause` is what a failed git command refused on (below, with the launch report's worktree
+  causes), and it is part of the latch key, because every git failure throws from one line. It skips what is
   not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
   `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
   cause), skips an error another reporter already sent (`markReported` and `isReported`, which
@@ -430,6 +436,11 @@ in one Sentry org, one triage surface.
     and Sentry's own handler reports it.
   - `mcp_tool`, `mcp_command`, `mcp_request`: a tool callback (tag `tool`), a command handler and
     the HTTP request layer of the MCP server (`src/main/agent/mcp-http/tool-reporting.ts`).
+  - `automation_runner` reports a row's error once its retries are spent, and only a defect: an
+    adapter's classified outcome (`AutomationRetryableError`, `AutomationPermanentError`,
+    `AutomationTimeoutError`) is the user's endpoint or script answering. A Run script row whose
+    script exits non-zero throws the permanent one, so it is a failed run in the run log and no
+    event (Sentry DESKTOP-49 was every such script reported as a defect).
   - `mobile_verb` (tag `verb`), `automation_runner` (tag `automation_type`), `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only). A `ScreenshotNotComposited`
@@ -481,10 +492,37 @@ in one Sentry org, one triage surface.
     DESKTOP-36 reported there and could not tell late from never). An id that arrives later sends
     `AgentSessionIdCapturedLateError` with `captured_after_s` (a seconds bucket, counted to when
     Kangentic noticed the id, so an upper bound: an id the suspend-time scrollback scan finds
-    counts at the suspend). A session removed
+    counts at the suspend) and `after_prompt_s` (the same buckets from the agent's first prompt
+    to the capture, or `none` when no prompt was seen). One late capture sends nothing: a session
+    started with no opening prompt (`opening_prompt` `none`) whose first prompt came no more than
+    30 s before the id, or within 2 s after it. Such an agent may have no conversation, and so no
+    id, until someone types, so the capture window is counted from the prompt (Sentry DESKTOP-4C
+    was a Codex terminal whose first prompt came minutes in). The id lands first because main
+    reads a batch's ids ahead of its events, which is what the 2 s wait is for. An on-time capture
+    does not spend the agent's one late report. A session removed
     with no id, or still without one five minutes after its spawn (a paused row is never removed),
-    sends `AgentSessionIdNotCapturedError` with `settled_by` (`removed`, `ceiling`) and
-    `session_status`. Each kind reports once per agent per run, as its own issue. Both carry
+    sends `AgentSessionIdNotCapturedError` with `settled_by` (`removed`, `ceiling`),
+    `session_status` and `agent_ran_for_s`: a seconds bucket from the first sign the agent ran to
+    the session's end, `not_run` when it never showed it ran, `running` when the session is still
+    up at the ceiling, and `unknown` for a row that ended with no exit recorded. An agent that
+    exited seconds after it started had no conversation to capture, and one still running had one
+    the capture missed (the DESKTOP-36 recurrence on 0.60.0 could not say which). The end is the
+    PTY's exit, or the removal when that came first, so the bucket is an upper bound on the
+    agent's own life: a shell outlives the CLI it ran, and the agent-absence sweep ends it later.
+    Measured in a preview with Codex 0.163.0 under PowerShell: a signed-out Codex opens on its
+    sign-in screen in the alt screen 2.7 s after the spawn, which counts as the agent having run,
+    fires no hook and writes no session. Quit from that screen, its session was retired 82 s
+    later. That is the shape of the DESKTOP-36 recurrence, and it is the user's setup, so it no
+    longer reports: a session of either kind sends nothing when its CLI holds no login (`login`
+    `signed_out`), its store is not `present`, and no prompt was seen. All three, because a CLI
+    can answer "not logged in" and still work, on a key in its environment or a model provider
+    of its own. That one takes prompts and writes its store, so its miss still reports, with
+    `login` saying what the CLI answered. The screen's own text is not what decides it: ConPTY
+    draws that screen as cursor moves, which read as one run-on line, so
+    `identifyUserSetupFailure`'s whole-line patterns cannot match it. A session with a login
+    that misses its id stays in this report and gets no
+    launch stage, because every launch stage means no sign the agent ran, and the retry reads the
+    same test. Each kind reports once per agent per run, as its own issue. Both carry
     `agent_cli_version`, `start_path`, `shell`, `opening_prompt` (`command_line`, `typed`, `none`,
     or `unknown` where the spawn did not say), `create_chat` (how a fresh start got the id before
     launch: `ok`, or the CLI's miss, `failed`, `timeout` or `no_id`, from the adapter's
@@ -493,15 +531,43 @@ in one Sentry org, one triage surface.
     `unknown` where the spawn did not say), `hook_seen`, `agent_started` and `first_output`
     (`yes`, `no`, at the window), `prompt_seen` (`yes`, `no`: whether the agent's own Prompt event
     arrived, read when the outcome is known, so a prompt typed after the window counts; with no
-    opening prompt and none seen, the agent may never have made a conversation to resume),
+    opening prompt and none seen, the agent may never have made a conversation to resume; PTY
+    output standing in for a prompt, which the tracker pushes for a session's first frame, does
+    not count, and used to),
     `fs_scan` (what the filesystem pathway did: `none`, `pending`,
-    `found`, `empty`, `dropped` for a match another session could own, `failed`) and `id_store`
+    `found`, `empty`, `dropped` for a match another session could own, `failed`), `id_store`
     (`present`, `absent`, `unknown`: whether the agent's own store exists, from the adapter's
     `sessionId.storeEvidence`, today's or yesterday's rollout folder for Codex and `opencode.db`
-    for OpenCode). Every value is fixed; no path or id leaves. No `prompt_seen` source has been
+    for OpenCode) and `login` (`signed_in`, `signed_out`, `unknown`: whether the CLI holds a
+    login, from the adapter's `sessionId.loginEvidence`, asked at the window about the home the
+    session ran in, its account's folder or the agent's own. Codex reads `auth.json` there and
+    runs `codex login status` only when there is none; every other agent, a CLI in a distro or on
+    a host, a session whose account is no longer known, and a check that gave no answer within
+    25 s read `unknown`). Every
+    value is fixed; no path or id leaves. No `prompt_seen` source has been
     confirmed in a real run yet. OpenCode's plugin writes `prompt` on `chat.message`, pinned only
-    on a fixture, and Cursor's `beforeSubmitPrompt` hook was written from its docs. Until a run
-    confirms one, a `no` is not grounds to stop a report.
+    on a fixture, and Cursor's `beforeSubmitPrompt` hook was written from its docs. DESKTOP-4C's
+    `yes` for Codex does not confirm its `UserPromptSubmit` hook either: it was sent before PTY
+    output stopped counting, and that run's first frame alone would have set it. Until a run
+    confirms one, a `no` alone is not grounds to stop a report. The signed-out rule above reads
+    it only beside the CLI's own answer that it holds no login and a store that is not there.
+    The on-time rule needs no such proof, since it acts only on a prompt event that did arrive.
+  - `agent_accounts` is a `subsystem` tag, not a chokepoint source: a named account problem from
+    `reportAccountProblem` (`src/main/accounts/account-report.ts`), sent as `Agent account problem:
+    <problem> (<agent>)` with the tags `subsystem`, `account_problem` and `agent`, fingerprinted
+    `['agent-accounts', problem, agent]`. The problems, their facts (a context, never a tag) and
+    what is never sent are in [Agent accounts](../integrations/accounts.md#what-is-reported). It
+    reports once per problem, agent and fixed `reason` per run, so a usage read's `cache-stale`
+    cannot spend the report a later `run-failed` needs. A `usage-read-empty` whose CLI run failed
+    carries three more tags, because Sentry DESKTOP-4E was one failed `claude -p /usage` with
+    nothing to say why: `run_failure` (`timeout`, `signal`, `exit_code`, `spawn_error`,
+    `host_unavailable` for a pty host that gave no answer, `other`, or `unknown` when the adapter
+    did not say, read from the run's rejection by `execRunFailureOf`), `run_exit` (the exit code
+    from 0 to 255, else `other`, only with `exit_code`) and `agent_cli_version`. On Windows the
+    CLI runs through cmd, so a missing CLI reads `exit_code`, and the version reading `unknown`
+    is what tells it. The caught error goes as its class and errno in the `cause` context. A
+    failed run is sent from the second read in a row that fails for one account: one failed run
+    during a network drop is not a defect, and a flag the CLI does not know fails every time.
   - `preload_callback` (tag `method`, such as `config.onChanged`): a renderer callback that threw
     when the preload called it on a push. That throw is an error of the preload's isolated world,
     which the renderer's SDK cannot see: measured in Electron 45, the main world's `error` and
@@ -747,7 +813,22 @@ in one Sentry org, one triage surface.
   `stale_directory` (a folder that would not clear) and `worktree_setup_script` (the Post-Worktree
   Script failed, `WorktreeSetupScriptError`). Each phrase was read off real git, and
   `tests/unit/worktree-failure-cause-real-git.test.ts` produces each one, except the full disk,
-  which no test can make. No preflight report sends an error's message: the event is the stage's
+  which no test can make. Every other failed git command the git client runs (`runGitCommand`,
+  local or on an SSH host) throws a `GitCommandError` (`src/main/git/git-command-error.ts`), whose
+  `gitCause` any handled report sends as the `git_cause` tag: `unknown_revision` (a revision that
+  names nothing, such as the HEAD of a repository with no commits), `missing_object` (a full hash
+  the repository no longer holds), `not_a_repository`, `dubious_ownership`, `ref_lock`,
+  `index_lock`, `corrupt_index`, `permission`, `no_space`, or `other`. It is read from git's
+  stderr only, since a failed `show` can print file text first, and
+  `tests/unit/git-failure-cause-real-git.test.ts` produces each phrase but the full disk.
+  `permission` and `worktree_permission` match git's own `fatal:` or `error:` line ending in the
+  OS's "Permission denied", so ssh's refused login and a `warning:` about a file git skipped read
+  `other`. A git
+  that prints another language reads `other`. Sentry DESKTOP-4A was `git:diffFiles` failing with
+  only `Error` to go on. Its cause turned out to be a repository with no commits, where the
+  Changes panel now diffs against the empty tree. Two git runners are not named this way yet:
+  `spawnWithAbort` (fetch, prune, `branch -D`) and simple-git's own errors (blame, branch
+  summary, commit graph, file history). No preflight report sends an error's message: the event is the stage's
   built error (`Agent launch failed: preflight (<cause>)`) carrying the original's frames, with
   its class in `error_type` and its code in `errno`. Messages here held branch names, task titles
   and URLs, and redacting paths left those. A failure `spawnAgent` reported and rethrew is marked

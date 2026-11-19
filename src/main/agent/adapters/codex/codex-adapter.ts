@@ -4,6 +4,7 @@ import { CodexDetector } from './detector';
 import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
 import { CodexSessionHistoryParser } from './session-history-parser';
+import { codexLoginEvidence } from './accounts';
 import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
 import { parseCodexTranscript, codexHostRolloutSearch, findCodexTranscriptFile, locateCodexTranscriptFile, readCodexTranscriptPage, CODEX_PATCH_TOOL, CODEX_PATCH_PATH_FIELD } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
@@ -344,6 +345,9 @@ export class CodexAdapter implements AgentAdapter {
       // capture it.
       fromFilesystem: CodexSessionHistoryParser.captureSessionIdFromFilesystem,
       storeEvidence: CodexSessionHistoryParser.storeEvidence,
+      // A signed-out Codex opens on its sign-in screen: a frame, and no
+      // conversation to give an id for (Sentry DESKTOP-36's recurrence).
+      loginEvidence: codexLoginEvidence,
     },
     sessionHistory: {
       locate: CodexSessionHistoryParser.locate,

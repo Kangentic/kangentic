@@ -68,7 +68,10 @@ describe('a script on a remote project', () => {
     setHostAccessLookup(() => access(async () => answers.shift() as HostCommandResult));
     const context = contextWith(hostScriptRunner(SHELL, STAND_IN));
 
-    await expect(runScriptAdapter.execute({ script: 'x', timeoutMinutes: 1 }, context)).rejects.toThrow('code 3');
+    await expect(runScriptAdapter.execute({ script: 'x', timeoutMinutes: 1 }, context)).rejects.toMatchObject({
+      name: 'AutomationPermanentError',
+      message: 'Script exited with code 3.',
+    });
     await expect(runScriptAdapter.execute({ script: 'x', timeoutMinutes: 1 }, context)).rejects.toThrow('did not finish');
     await expect(runScriptAdapter.execute({ script: 'x', timeoutMinutes: 1 }, context)).rejects.toThrow('does not exist on this host');
   });

@@ -7717,6 +7717,21 @@ export interface AdapterRuntimeStrategy {
      */
     storeEvidence?(options: { cwd: string; cliTarget?: StoredCliTarget | null }): Promise<SessionIdStoreEvidence>;
     /**
+     * Whether the CLI holds a login, for a session whose id the capture window
+     * did not see. A CLI that is signed out can open on its own sign-in screen:
+     * it draws a frame, so the agent reads as having run, and it makes no
+     * conversation, so no id ever comes (Codex, measured on 0.163.0). That is
+     * the user's setup and no capture path could fix it. `cliPath` is the CLI
+     * the session ran, as a path a run with no shell can start (the `.cmd` shim
+     * where a PowerShell or Git Bash launch ran its sibling), and `accountHome` the folder its account keeps
+     * its login in (null for the agent's own home), so the answer is about the
+     * login that session read. A fixed word, and `unknown` for a CLI this
+     * computer cannot ask (a distro, a host), a session whose account home
+     * cannot be told, or a CLI that gave no answer. Read only by the session-id
+     * capture reports; an adapter without it reports `unknown`.
+     */
+    loginEvidence?(options: { cliPath: string | null; cliTarget?: StoredCliTarget | null; accountHome?: string | null }): Promise<SessionIdLoginEvidence>;
+    /**
      * True when a SessionStart hook that moves the conversation to another id
      * (`statusFile.parseSessionStart`: a `/clear`, a branch, a `/resume` inside
      * the TUI) switches the session's id by itself. For an agent whose
@@ -8429,6 +8444,9 @@ export type SessionIdCreation =
 /** Whether an agent's session store exists (`sessionId.storeEvidence`). */
 export type SessionIdStoreEvidence = 'present' | 'absent' | 'unknown';
 
+/** Whether an agent's CLI holds a login (`sessionId.loginEvidence`). */
+export type SessionIdLoginEvidence = 'signed_in' | 'signed_out' | 'unknown';
+
 /**
  * What the resume check (`src/main/transition-engine/resume-conversation-guard.ts`)
  * read before a resume, as fixed values a launch report can send, never a path.
@@ -8475,7 +8493,7 @@ export interface SpawnSessionInput {
   sessionIdCreation?: SessionIdCreationOutcome;
   /**
    * The agent CLI's version as detection read it. Raw detector text, so
-   * `launchVersionTag` vets it before it reaches an event.
+   * `cliVersionTag` vets it before it reaches an event.
    */
   agentCliVersion?: string | null;
   /**

@@ -25,7 +25,6 @@ import {
   hasAgentRunEvidence,
   launchNeverStarted,
   launchTagsOf,
-  launchVersionTag,
   lineTooLongSentence,
   logLaunchStep,
   preflightTagsOf,
@@ -39,6 +38,7 @@ import {
   resetLaunchReports,
 } from '../../src/main/pty/agent-launch-report';
 import { isReported } from '../../src/main/analytics/handled-report';
+import { cliVersionTag } from '../../src/main/agent/shared/cli-version-tag';
 import { AgentCliNotFoundError } from '../../src/main/agent/shared/agent-cli-not-found';
 import { WorktreeSetupScriptError } from '../../src/main/git/worktree-errors';
 import { AgentBatchShimUnresolvedError } from '../../src/main/pty/spawn/agent-start-refused';
@@ -48,7 +48,7 @@ import os from 'node:os';
 import path from 'node:path';
 import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
-import type { AgentParser, SessionIdStoreEvidence } from '../../src/shared/types';
+import type { AgentParser, SessionIdLoginEvidence, SessionIdStoreEvidence } from '../../src/shared/types';
 
 const STARTED_AT = '2026-11-04T12:00:00.000Z';
 const STARTED_AT_MS = Date.parse(STARTED_AT);
@@ -119,7 +119,7 @@ describe('launchNeverStarted', () => {
   });
 });
 
-describe('launchVersionTag', () => {
+describe('cliVersionTag', () => {
   it.each([
     ['2.1.302', '2.1.302'],
     ['2.1.302 (Claude Code)', '2.1.302'],
@@ -127,7 +127,7 @@ describe('launchVersionTag', () => {
     ['v0.2026.04.08.08.36.stable_02', 'v0.2026.04.08.08.36.stable_02'],
     ['  1.2.3\n', '1.2.3'],
   ])('keeps %j as %j', (raw, tag) => {
-    expect(launchVersionTag(raw)).toBe(tag);
+    expect(cliVersionTag(raw)).toBe(tag);
   });
 
   it.each([
@@ -137,7 +137,7 @@ describe('launchVersionTag', () => {
     ['Error: cannot read config at /Users/dev'],
     ['a-very-private-branch-name'],
   ])('reads %j as unknown', (raw) => {
-    expect(launchVersionTag(raw)).toBe('unknown');
+    expect(cliVersionTag(raw)).toBe('unknown');
   });
 });
 
@@ -706,8 +706,8 @@ describe('reportPtyPortFailure', () => {
 });
 
 describe('the session id capture reports', () => {
-  const never = { kind: 'never', settledBy: 'removed', filesystemScan: 'empty' } as const;
-  const late = { kind: 'late', capturedAfterMs: 42_000, filesystemScan: 'pending' } as const;
+  const never = { kind: 'never', settledBy: 'removed', settledAt: STARTED_AT_MS + 90_000, filesystemScan: 'empty' } as const;
+  const late = { kind: 'late', capturedAfterMs: 42_000, capturedAt: STARTED_AT_MS + 42_000, filesystemScan: 'pending' } as const;
 
   /** A session past the capture window, then its outcome, and what was sent. */
   async function settle(
@@ -759,11 +759,88 @@ describe('the session id capture reports', () => {
       first_output: 'yes',
       settled_by: 'removed',
       session_status: 'running',
+      agent_ran_for_s: 'not_run',
       fs_scan: 'empty',
       id_store: 'present',
+      login: 'unknown',
     });
     expect(contexts).toEqual({});
     expect(fingerprint).toEqual(['agent-session-id-not-captured', 'codex']);
+  });
+
+  // A signed-out Codex opens on its sign-in screen. It draws a frame, so the
+  // agent reads as having run, and it never makes a conversation, so no id comes.
+  // Measured on Codex 0.163.0, and the shape of Sentry DESKTOP-36's recurrence:
+  // the user's setup, which no capture path could fix.
+  describe('a session whose CLI holds no login', () => {
+    const atCeiling = { kind: 'never', settledBy: 'ceiling', settledAt: STARTED_AT_MS + 300_000, filesystemScan: 'empty' } as const;
+    const signedOut = async (): Promise<SessionIdLoginEvidence> => 'signed_out';
+
+    /** A session past the window with both checks, then its outcome. Resolves once the report chain has run. */
+    async function settleWithLogin(
+      overrides: Partial<ManagedSession>,
+      outcome: Parameters<typeof reportSessionIdCaptureOutcome>[1],
+      store: SessionIdStoreEvidence,
+      loginCheck: (() => Promise<SessionIdLoginEvidence>) | null,
+    ): Promise<void> {
+      const pastWindow = session({ agentName: 'codex', resuming: false, ...overrides });
+      noteSessionIdCaptureWindowPassed(pastWindow, async () => store, loginCheck);
+      reportSessionIdCaptureOutcome(pastWindow.id, outcome, 'exited');
+      await flushReportChain();
+    }
+
+    it('sends nothing when it also wrote no store and took no prompt, and keeps the agent\'s one report', async () => {
+      await settleWithLogin({ agentRanAt: STARTED_AT_MS + 2_700, exitedAt: STARTED_AT_MS + 180_000 }, atCeiling, 'absent', signedOut);
+      expect(reportHandledError).not.toHaveBeenCalled();
+
+      // Not spent on it: a signed-in session of the same agent that misses its id still reports.
+      await settleWithLogin({ id: 'session-2-long-id' }, atCeiling, 'absent', async () => 'signed_in');
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ login: 'signed_in', id_store: 'absent' });
+    });
+
+    it('sends nothing for the late id of a session that was signed out at the window', async () => {
+      await settleWithLogin({}, late, 'absent', signedOut);
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    // A CLI can answer "not logged in" and still work, on a key in its
+    // environment or a model provider of its own. That one takes prompts and
+    // writes its store, so its miss is a miss.
+    it.each<[string, Partial<ManagedSession>, SessionIdStoreEvidence]>([
+      ['took a prompt', { promptObservedAt: STARTED_AT_MS + 4_000 }, 'absent'],
+      ['wrote its store', {}, 'present'],
+    ])('still reports a signed-out CLI that %s, and says what the CLI answered', async (_label, overrides, store) => {
+      await settleWithLogin(overrides, atCeiling, store, signedOut);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ login: 'signed_out', id_store: store });
+    });
+
+    it.each<[string, (() => Promise<SessionIdLoginEvidence>) | null]>([
+      ['has no check', null],
+      ['throws', async () => { throw new Error('spawn C:\\Users\\dev\\codex ENOENT'); }],
+      ['answers something else', async () => 'C:\\Users\\dev\\.codex' as SessionIdLoginEvidence],
+    ])('reads unknown, and reports, when the login check %s', async (_label, loginCheck) => {
+      await settleWithLogin({}, atCeiling, 'absent', loginCheck);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      const eventTags = reportHandledError.mock.calls[0][1];
+      expect(eventTags).toMatchObject({ login: 'unknown' });
+      expect(JSON.stringify(eventTags)).not.toContain('Users');
+    });
+
+    it('stops waiting on a login check that hangs, and reports', async () => {
+      vi.useFakeTimers();
+      try {
+        noteSessionIdCaptureWindowPassed(session({ agentName: 'codex', resuming: false }), null, () => new Promise(() => undefined));
+        reportSessionIdCaptureOutcome('session-1-long-id', atCeiling, 'running');
+        await vi.advanceTimersByTimeAsync(24_999);
+        expect(reportHandledError).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ login: 'unknown' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('sends a late capture as an issue of its own, with how late', async () => {
@@ -779,9 +856,179 @@ describe('the session id capture reports', () => {
       opening_prompt: 'unknown',
       create_chat: 'unknown',
       prompt_seen: 'no',
+      after_prompt_s: 'none',
     });
     expect(eventTags).not.toHaveProperty('settled_by');
+    expect(eventTags).not.toHaveProperty('agent_ran_for_s');
     expect(fingerprint).toEqual(['agent-session-id-captured-late', 'opencode']);
+  });
+
+  // Sentry DESKTOP-4C: a Codex terminal started with no prompt. Its first prompt
+  // came minutes in, the id right behind it, and the report counted that late
+  // against the spawn. An agent may have no conversation until someone types.
+  describe('a late capture, counted from the first prompt', () => {
+    const PROMPT_AT = STARTED_AT_MS + 100_000;
+    const capturedAt = (at: number) => ({ kind: 'late', capturedAfterMs: at - STARTED_AT_MS, capturedAt: at, filesystemScan: 'empty' } as const);
+
+    it('sends nothing for a session started with no prompt whose id came soon after its first one, and keeps the agent\'s one late report', async () => {
+      const onTime = session({ agentName: 'codex', resuming: false, openingPrompt: 'none' });
+      noteSessionIdCaptureWindowPassed(onTime, null);
+      onTime.promptObservedAt = PROMPT_AT;
+      reportSessionIdCaptureOutcome(onTime.id, capturedAt(PROMPT_AT + 3_000), 'running');
+      await flushReportChain();
+      expect(reportHandledError).not.toHaveBeenCalled();
+
+      // Not spent on it: a capture that is late by its prompt as well still reports.
+      await settle(
+        { agentName: 'codex', id: 'session-2-long-id', openingPrompt: 'none', promptObservedAt: PROMPT_AT },
+        capturedAt(PROMPT_AT + 120_000),
+      );
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({
+        opening_prompt: 'none',
+        prompt_seen: 'yes',
+        captured_after_s: '60-300',
+        after_prompt_s: '60-300',
+      });
+    });
+
+    // Main reads a batch's ids ahead of its events, so the id of a conversation
+    // that starts at the first prompt lands before that prompt does.
+    it('waits for a prompt that lands just after the id, and reports when none does', async () => {
+      vi.useFakeTimers();
+      try {
+        const promptFollows = session({ agentName: 'codex', resuming: false, openingPrompt: 'none' });
+        noteSessionIdCaptureWindowPassed(promptFollows, null);
+        reportSessionIdCaptureOutcome(promptFollows.id, capturedAt(PROMPT_AT), 'running');
+        promptFollows.promptObservedAt = PROMPT_AT + 400;
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(reportHandledError).not.toHaveBeenCalled();
+
+        const noPrompt = session({ agentName: 'codex', resuming: false, openingPrompt: 'none', id: 'session-2-long-id' });
+        noteSessionIdCaptureWindowPassed(noPrompt, null);
+        reportSessionIdCaptureOutcome(noPrompt.id, capturedAt(PROMPT_AT), 'running');
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(reportHandledError).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reportHandledError).toHaveBeenCalledTimes(1);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ prompt_seen: 'no', after_prompt_s: 'none' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // On time is "no more than the window", so the edge itself is still on time.
+    it('counts a capture exactly one window after the prompt as on time, and one millisecond more as late', async () => {
+      const atEdge = session({ agentName: 'codex', resuming: false, openingPrompt: 'none', promptObservedAt: PROMPT_AT });
+      noteSessionIdCaptureWindowPassed(atEdge, null);
+      reportSessionIdCaptureOutcome(atEdge.id, capturedAt(PROMPT_AT + 30_000), 'running');
+      await flushReportChain();
+      expect(reportHandledError).not.toHaveBeenCalled();
+
+      const pastEdge = session({ agentName: 'codex', resuming: false, openingPrompt: 'none', promptObservedAt: PROMPT_AT, id: 'session-2-long-id' });
+      noteSessionIdCaptureWindowPassed(pastEdge, null);
+      reportSessionIdCaptureOutcome(pastEdge.id, capturedAt(PROMPT_AT + 30_001), 'running');
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      expect((reportHandledError.mock.calls[0][0] as Error).name).toBe('AgentSessionIdCapturedLateError');
+    });
+
+    it('sends nothing for a quit during the wait for the first prompt, and keeps the agent\'s one late report', async () => {
+      vi.useFakeTimers();
+      try {
+        const waiting = session({ agentName: 'codex', resuming: false, openingPrompt: 'none' });
+        noteSessionIdCaptureWindowPassed(waiting, null);
+        reportSessionIdCaptureOutcome(waiting.id, capturedAt(PROMPT_AT), 'running');
+        shuttingDown.value = true;
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(reportHandledError).not.toHaveBeenCalled();
+
+        // Not spent on it: once the quit flag is clear, the agent's next real late capture reports.
+        shuttingDown.value = false;
+        const next = session({ agentName: 'codex', resuming: false, openingPrompt: 'none', id: 'session-2-long-id' });
+        noteSessionIdCaptureWindowPassed(next, null);
+        reportSessionIdCaptureOutcome(next.id, capturedAt(PROMPT_AT), 'running');
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(reportsNamedLate()).toBe(1);
+      } finally {
+        shuttingDown.value = false;
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not wait on the checks of an agent that already sent its late report', async () => {
+      await settle({ agentName: 'codex' }, capturedAt(PROMPT_AT));
+      reportHandledError.mockClear();
+      vi.mocked(console.warn).mockClear();
+
+      // A signed-out answer would log its "holds no login" line if the second outcome waited for it.
+      const loginCheck = vi.fn(async (): Promise<SessionIdLoginEvidence> => 'signed_out');
+      const second = session({ agentName: 'codex', resuming: false, id: 'session-2-long-id' });
+      noteSessionIdCaptureWindowPassed(second, null, loginCheck);
+      reportSessionIdCaptureOutcome(second.id, capturedAt(PROMPT_AT), 'running');
+      await flushReportChain();
+
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(console.warn).not.toHaveBeenCalled();
+    });
+
+    function reportsNamedLate(): number {
+      return reportHandledError.mock.calls.filter((call) => (call[0] as Error).name === 'AgentSessionIdCapturedLateError').length;
+    }
+
+    it.each(['command_line', 'typed'] as const)('still reports a session whose opening prompt was %s, however close its prompt is', async (openingPrompt) => {
+      await settle({ agentName: 'codex', openingPrompt, promptObservedAt: PROMPT_AT }, capturedAt(PROMPT_AT + 3_000));
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ opening_prompt: openingPrompt, after_prompt_s: '1-5' });
+    });
+  });
+
+  // Sentry DESKTOP-36 recurred for a Codex that ran with its prompt on the
+  // command line and exited about four seconds later, having written no session.
+  // The report could not tell that from a live conversation whose id was missed.
+  describe('a never-captured session says how long its agent ran', () => {
+    const atCeiling = { kind: 'never', settledBy: 'ceiling', settledAt: STARTED_AT_MS + 300_000, filesystemScan: 'empty' } as const;
+
+    it('reports an agent that exited seconds after it ran, exactly once', async () => {
+      const diedAtStart = session({
+        agentName: 'codex',
+        resuming: false,
+        status: 'exited',
+        openingPrompt: 'command_line',
+        agentRanAt: STARTED_AT_MS + 26_000,
+        exitedAt: STARTED_AT_MS + 30_000,
+      });
+      noteSessionIdCaptureWindowPassed(diedAtStart, async () => 'absent');
+      reportSessionIdCaptureOutcome(diedAtStart.id, atCeiling, 'exited');
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalled());
+      await flushReportChain();
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      const [error, eventTags] = reportHandledError.mock.calls[0];
+      expect((error as Error).name).toBe('AgentSessionIdNotCapturedError');
+      expect(eventTags).toMatchObject({ agent_ran_for_s: '1-5', session_status: 'exited', settled_by: 'ceiling', id_store: 'absent' });
+    });
+
+    // A removal settles the report and then ends the PTY, so the exit lands a moment after it and
+    // before or after the tag is read. The end is the earlier of the two, whichever order they land in.
+    it('counts an exit that landed after the removal to the removal', async () => {
+      await settle({ agentName: 'codex', status: 'exited', agentRanAt: STARTED_AT_MS + 10_000, exitedAt: STARTED_AT_MS + 400_000 }, never);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ settled_by: 'removed', agent_ran_for_s: '60-300' });
+    });
+
+    it('counts an agent that exited long before its removal to its own exit', async () => {
+      await settle({ agentName: 'codex', status: 'exited', agentRanAt: STARTED_AT_MS + 10_000, exitedAt: STARTED_AT_MS + 12_000 }, never);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ settled_by: 'removed', agent_ran_for_s: '1-5' });
+    });
+
+    it.each<[string, Partial<ManagedSession>, Parameters<typeof reportSessionIdCaptureOutcome>[1], string]>([
+      ['running for a session still up at the ceiling', { agentRanAt: STARTED_AT_MS + 2_000 }, atCeiling, 'running'],
+      ['not_run for an agent that never showed it ran', { exitedAt: STARTED_AT_MS + 40_000, status: 'exited' }, atCeiling, 'not_run'],
+      // `remove()` settles the report before it ends the session, so the row has no exit yet.
+      ['the time to its removal for a session removed while it ran', { agentRanAt: STARTED_AT_MS + 10_000 }, never, '60-300'],
+      ['unknown for a row that ended with no exit recorded', { agentRanAt: STARTED_AT_MS + 2_000, status: 'exited' }, atCeiling, 'unknown'],
+    ])('reads %s', async (_label, overrides, outcome, expected) => {
+      await settle({ agentName: 'codex', ...overrides }, outcome);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ agent_ran_for_s: expected });
+    });
   });
 
   it('keeps a path or an unrecognized name out of the tags', async () => {

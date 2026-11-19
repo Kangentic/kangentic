@@ -303,9 +303,36 @@ describe('session id not captured', () => {
       first_output: 'no',
       settled_by: 'removed',
       session_status: 'running',
+      agent_ran_for_s: 'not_run',
       fs_scan: 'none',
       id_store: 'absent',
+      login: 'unknown',
     });
+  });
+
+  // Sentry DESKTOP-4C: a terminal started with no prompt, whose first prompt
+  // came minutes in with the id right behind it, was counted late against its
+  // spawn. Main reads a batch's ids ahead of its events, so the id lands first.
+  it('sends nothing for a session with no opening prompt whose id came with its first prompt, minutes in', async () => {
+    const { capture, prompt, sent } = await armManager();
+    await vi.advanceTimersByTimeAsync(180_000);
+    capture('0199a0b2-1111-2222-3333-444455556666');
+    prompt();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(await sent()).toEqual([]);
+  });
+
+  it('still reports that capture as late when no prompt came with it', async () => {
+    const { capture, sent } = await armManager();
+    await vi.advanceTimersByTimeAsync(180_000);
+    capture('0199a0b2-1111-2222-3333-444455556666');
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    const reports = await sent();
+    expect(reports).toHaveLength(1);
+    expect(reports[0][0].name).toBe('AgentSessionIdCapturedLateError');
+    expect(reports[0][1]).toMatchObject({ opening_prompt: 'none', captured_after_s: '60-300', prompt_seen: 'no', after_prompt_s: 'none' });
   });
 
   it('reports a session still without an id at the ceiling, though its PTY exited and its row stayed', async () => {

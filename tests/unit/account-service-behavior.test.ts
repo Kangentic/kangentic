@@ -764,6 +764,143 @@ describe('AccountService.refreshUsage', () => {
       expect(changeCount).toBe(0);
     });
 
+    // Sentry DESKTOP-4E: one failed `claude -p /usage` run was reported with nothing to say why.
+    // A timeout, an offline moment and a flag the CLI does not know all looked the same.
+    describe('whose CLI run failed', () => {
+      const timedOut = Object.assign(new Error('Command failed: /usr/bin/test-cli -p /usage'), { killed: true, signal: 'SIGTERM' });
+      const runFailed = (): EmptyUsageReadError => new EmptyUsageReadError('run-failed', {
+        cause: timedOut,
+        runFailure: { kind: 'timeout', exitCode: null },
+      });
+
+      it('sends nothing for one failed run, and reports the second in a row with how it failed and the CLI version', async () => {
+        const accountService = folderService(
+          folderSupport({ readIdleUsage: async () => { throw runFailed(); } }),
+          { resolveCliVersion: async () => '2.1.319 (Claude Code)' },
+        );
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        expect(reports).toEqual([]);
+
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        expect(reports).toHaveLength(1);
+        const [problem, agent, facts, cause, tags] = reports[0];
+        expect([problem, agent, facts]).toEqual(['usage-read-empty', AGENT, { kind: 'default', reason: 'run-failed' }]);
+        expect(cause).toBe(timedOut);
+        expect(tags).toEqual({ run_failure: 'timeout', agent_cli_version: '2.1.319' });
+      });
+
+      it('sends the exit code of a run that exited, and unknown for a version it cannot read', async () => {
+        const accountService = folderService(folderSupport({
+          readIdleUsage: async () => { throw new EmptyUsageReadError('run-failed', { runFailure: { kind: 'exit_code', exitCode: 1 } }); },
+        }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        await accountService.refreshUsage(own.id);
+        await accountService.refreshUsage(own.id);
+
+        expect(reports.map((entry) => entry[4])).toEqual([{ run_failure: 'exit_code', run_exit: '1', agent_cli_version: 'unknown' }]);
+      });
+
+      it('starts the count again after a good read, and after a read whose run worked', async () => {
+        const reads: Array<() => Promise<RateLimitWindow[] | null>> = [
+          async () => { throw runFailed(); },
+          async () => [sevenDay(5, NOW + 3600)],
+          async () => { throw runFailed(); },
+          async () => { throw new EmptyUsageReadError('cache-stale'); },
+          async () => { throw runFailed(); },
+        ];
+        const accountService = folderService(folderSupport({ readIdleUsage: async () => reads.shift()!() }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        for (let read = 0; read < 5; read += 1) await accountService.refreshUsage(own.id);
+
+        // Three failed runs, none of them two in a row: only the read that ran and found a stale cache reports.
+        expect(reports.map((entry) => entry[2])).toEqual([{ kind: 'default', reason: 'cache-stale' }]);
+      });
+
+      it('starts the count again after a read the CLI answered in a shape it does not know', async () => {
+        const reads: Array<() => Promise<RateLimitWindow[] | null>> = [
+          async () => { throw runFailed(); },
+          async () => { throw new UnreadableUsageError('alpha'); },
+          async () => { throw runFailed(); },
+        ];
+        const accountService = folderService(folderSupport({ readIdleUsage: async () => reads.shift()!() }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        for (let read = 0; read < 3; read += 1) await accountService.refreshUsage(own.id);
+
+        // Only the unreadable answer reports: the two failed runs are not in a row.
+        expect(reports.map((entry) => entry[0])).toEqual(['usage-read-unreadable']);
+      });
+
+      it.each<[string, number, string]>([
+        ['zero', 0, '0'],
+        ['the top of the shell range', 255, '255'],
+        ['one past the shell range', 256, 'other'],
+        ['a negative code', -1, 'other'],
+        ['a Windows status code', 3221225781, 'other'],
+      ])('tags an exit code of %s as run_exit %s', async (_name, exitCode, expectedTag) => {
+        const accountService = folderService(folderSupport({
+          readIdleUsage: async () => { throw new EmptyUsageReadError('run-failed', { runFailure: { kind: 'exit_code', exitCode } }); },
+        }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        await accountService.refreshUsage(own.id);
+        await accountService.refreshUsage(own.id);
+
+        expect(reports).toHaveLength(1);
+        expect(reports[0][4]).toMatchObject({ run_failure: 'exit_code', run_exit: expectedTag });
+      });
+
+      it('carries no run_exit tag for a run that did not exit', async () => {
+        const accountService = folderService(folderSupport({ readIdleUsage: async () => { throw runFailed(); } }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        await accountService.refreshUsage(own.id);
+        await accountService.refreshUsage(own.id);
+
+        expect(reports).toHaveLength(1);
+        expect(reports[0][4]).not.toHaveProperty('run_exit');
+      });
+
+      it('still reports, with an unknown version, when the version lookup throws', async () => {
+        const accountService = folderService(
+          folderSupport({ readIdleUsage: async () => { throw runFailed(); } }),
+          { resolveCliVersion: async () => { throw new Error('detection broke'); } },
+        );
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        expect(await accountService.refreshUsage(own.id)).toBe(false);
+        await expect(accountService.refreshUsage(own.id)).resolves.toBe(false);
+
+        expect(reports).toHaveLength(1);
+        expect(reports[0][4]).toMatchObject({ run_failure: 'timeout', agent_cli_version: 'unknown' });
+      });
+
+      it('tags run_failure unknown when the failed run says nothing about how it failed', async () => {
+        const accountService = folderService(folderSupport({
+          readIdleUsage: async () => { throw new EmptyUsageReadError('run-failed'); },
+        }));
+        const own = accountService.ensureDefaultAccount(AGENT)!;
+        await accountService.refreshUsage(own.id);
+        await accountService.refreshUsage(own.id);
+
+        expect(reports).toHaveLength(1);
+        expect(reports[0][2]).toEqual({ kind: 'default', reason: 'run-failed' });
+        expect(reports[0][4]).toMatchObject({ run_failure: 'unknown' });
+        expect(reports[0][4]).not.toHaveProperty('run_exit');
+      });
+
+      it('counts failed runs for each account on its own', async () => {
+        const accountService = folderService(folderSupport({ readIdleUsage: async () => { throw runFailed(); } }));
+        const accountOne = insertFolderAccount('ok');
+        const accountTwo = insertFolderAccount('ok');
+
+        await accountService.refreshUsage(accountOne.id);
+        await accountService.refreshUsage(accountTwo.id);
+        expect(reports).toEqual([]);
+
+        await accountService.refreshUsage(accountOne.id);
+        expect(reports).toHaveLength(1);
+      });
+    });
+
     it('logs a repeat of the same reason once, and again once it changes', async () => {
       const reasons: Array<'cache-stale' | 'run-failed'> = ['cache-stale', 'cache-stale', 'run-failed'];
       const accountService = folderService(folderSupport({

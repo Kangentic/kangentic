@@ -37,6 +37,13 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+// A spy around the real swap-back, so a test can run it as Windows on any OS
+// (the real one reads process.platform, which a Linux CI run cannot be).
+vi.mock('../../src/main/agent/shared/shim-launch', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/shim-launch')>();
+  return { ...original, headlessCliPath: vi.fn(original.headlessCliPath) };
+});
+
 const reportHandledError = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
@@ -44,16 +51,19 @@ import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { SessionIdManager } from '../../src/main/pty/lifecycle/session-id-manager';
+import { headlessCliPath } from '../../src/main/agent/shared/shim-launch';
 import { InProcessPtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
-import type { AgentParser, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
+import { EventType, PromptReason } from '../../src/shared/types';
+import type { AgentParser, OpeningPromptDelivery, SessionIdLoginEvidence, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
 
 const WINDOW_MS = 30_000;
 
 let tmpDir: string;
 let nextPid = 700;
 let storeEvidence: ReturnType<typeof vi.fn<(options: { cwd: string; cliTarget?: unknown }) => Promise<SessionIdStoreEvidence>>>;
+let loginEvidence: ReturnType<typeof vi.fn<(options: { cliPath: string | null; cliTarget?: unknown; accountHome?: string | null }) => Promise<SessionIdLoginEvidence>>>;
 
 function createMockPty() {
   nextPid += 1;
@@ -76,7 +86,7 @@ function makeAgentParser(): AgentParser {
     removeHooks: vi.fn(),
     runtime: {
       activity: { kind: 'pty' as const, detectIdle: () => false },
-      sessionId: { fromOutput: () => null, storeEvidence },
+      sessionId: { fromOutput: () => null, storeEvidence, loginEvidence },
     },
   } as unknown as AgentParser;
 }
@@ -99,7 +109,7 @@ function registryRowOf(manager: SessionManager, sessionId: string): ManagedSessi
   return row;
 }
 
-async function spawnAgentSession(manager: SessionManager): Promise<string> {
+async function spawnAgentSession(manager: SessionManager, openingPrompt?: OpeningPromptDelivery): Promise<string> {
   const session = await manager.spawn({
     taskId: 'task-1',
     projectId: 'project-1',
@@ -107,8 +117,23 @@ async function spawnAgentSession(manager: SessionManager): Promise<string> {
     cwd: tmpDir,
     agentParser: makeAgentParser(),
     agentName: 'codex',
+    ...(openingPrompt ? { openingPrompt } : {}),
   });
   return session.id;
+}
+
+/** One of the agent's events, ingested as `onEventsParsed` ingests a batch once its ids are taken. */
+function ingestAgentEvent(manager: SessionManager, sessionId: string, type: EventType, detail?: string): void {
+  const { telemetry } = manager as unknown as { telemetry: SessionTelemetry };
+  telemetry.ingestEvents(sessionId, [{ ts: Date.now(), type, ...(detail === undefined ? {} : { detail }) }]);
+}
+
+/** The session's PTY exits by itself, as node-pty reports it. */
+function exitPty(spawnIndex = 0): void {
+  const mockPty = vi.mocked(pty.spawn).mock.results[spawnIndex].value as unknown as ReturnType<typeof createMockPty>;
+  const onExit = mockPty.onExit.mock.calls[0]?.[0] as ((exit: { exitCode: number; signal?: number }) => void) | undefined;
+  if (!onExit) throw new Error('the PTY has no exit listener');
+  onExit({ exitCode: 0, signal: 0 });
 }
 
 /** Past the window, with the pending report's store check settled. */
@@ -128,6 +153,7 @@ beforeEach(() => {
   vi.mocked(pty.spawn).mockImplementation(() => createMockPty() as unknown as pty.IPty);
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-id-capture-'));
   storeEvidence = vi.fn(async () => 'absent' as SessionIdStoreEvidence);
+  loginEvidence = vi.fn(async () => 'signed_in' as SessionIdLoginEvidence);
   reportHandledError.mockClear();
   resetLaunchReports();
 });
@@ -256,6 +282,209 @@ describe('a session whose id the capture window did not see', () => {
       settled_by: 'ceiling',
       session_status: 'running',
     });
+  });
+});
+
+// Sentry DESKTOP-4C: a terminal started with no prompt took its first one
+// minutes in, gave its id right behind it, and was reported late against its
+// spawn. An agent may have no conversation, and so no id, until someone types.
+describe('a session started with no opening prompt', () => {
+  it('reports nothing when its id arrives with its first prompt, minutes after the spawn', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager, 'none');
+    await passTheWindow();
+    await vi.advanceTimersByTimeAsync(150_000);
+
+    // The order of one batch of hook records: its ids, then its events.
+    reportAgentSessionId(manager, sessionId, 'agent-session-0006');
+    ingestAgentEvent(manager, sessionId, EventType.Prompt);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('reports the capture late when the only prompt before it was PTY output standing in for one', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager, 'none');
+    // What the PTY tracker pushes for a first frame: no one typed anything.
+    ingestAgentEvent(manager, sessionId, EventType.Prompt, PromptReason.PtyActivity);
+    await passTheWindow();
+    await vi.advanceTimersByTimeAsync(150_000);
+
+    reportAgentSessionId(manager, sessionId, 'agent-session-0007');
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(reportsNamed('AgentSessionIdCapturedLateError')).toHaveLength(1);
+    expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags).toMatchObject({
+      opening_prompt: 'none',
+      prompt_seen: 'no',
+      after_prompt_s: 'none',
+      captured_after_s: '60-300',
+    });
+  });
+});
+
+// Sentry DESKTOP-36: a Codex that ran and exited about four seconds later, with
+// no hook and no session written, read the same as a live conversation whose id
+// was missed. The row now keeps when its agent ran and when its PTY exited.
+describe('a session that never gave an id', () => {
+  it('says how long its agent ran before its PTY exited, in the one report it sends', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager, 'command_line');
+    await vi.advanceTimersByTimeAsync(27_000);
+    ingestAgentEvent(manager, sessionId, EventType.ToolStart);
+    await vi.advanceTimersByTimeAsync(4_000);
+    exitPty();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(registryRowOf(manager, sessionId).status).toBe('exited');
+
+    await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS);
+
+    const reports = reportsNamed('AgentSessionIdNotCapturedError');
+    expect(reports).toHaveLength(1);
+    expect(reports[0].tags).toMatchObject({
+      opening_prompt: 'command_line',
+      settled_by: 'ceiling',
+      session_status: 'exited',
+      agent_ran_for_s: '1-5',
+    });
+    expect(reportsNamed('AgentSessionIdCapturedLateError')).toHaveLength(0);
+  });
+
+  // A signed-out Codex opens on its sign-in screen: a frame and no conversation.
+  // The adapter is asked at the window, with the command the session ran.
+  it('asks the adapter whether its CLI holds a login, and reports nothing for one that is signed out', async () => {
+    const manager = makeManager();
+    loginEvidence.mockResolvedValue('signed_out');
+    const sessionId = await spawnAgentSession(manager, 'command_line');
+    registryRowOf(manager, sessionId).agentCliPath = path.join(tmpDir, 'codex');
+
+    await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS + 10);
+
+    expect(loginEvidence).toHaveBeenCalledTimes(1);
+    expect(loginEvidence).toHaveBeenCalledWith({ cliPath: path.join(tmpDir, 'codex'), cliTarget: null, accountHome: null });
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('still reports a signed-out CLI that took a prompt, and says what the CLI answered', async () => {
+    const manager = makeManager();
+    loginEvidence.mockResolvedValue('signed_out');
+    const sessionId = await spawnAgentSession(manager, 'command_line');
+    ingestAgentEvent(manager, sessionId, EventType.Prompt);
+
+    await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS + 10);
+
+    expect(reportsNamed('AgentSessionIdNotCapturedError')[0]?.tags).toMatchObject({ login: 'signed_out', prompt_seen: 'yes' });
+  });
+
+  it('names no CLI for a session on a host, whose login this computer cannot ask about', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager);
+    const row = registryRowOf(manager, sessionId);
+    row.agentCliPath = '/usr/local/bin/codex';
+    row.hostId = 'host-1';
+
+    await passTheWindow();
+
+    expect(loginEvidence).toHaveBeenCalledWith({ cliPath: null, cliTarget: null, accountHome: null });
+  });
+
+  // A PowerShell or Git Bash launch keeps the .ps1 or sh sibling as agentCliPath, and the
+  // login check spawns with no shell, where neither starts. The check gets the .cmd back.
+  describe('the login check of a session launched through a shim sibling', () => {
+    async function actAsWindows(): Promise<void> {
+      const actual = await vi.importActual<typeof import('../../src/main/agent/shared/shim-launch')>('../../src/main/agent/shared/shim-launch');
+      vi.mocked(headlessCliPath).mockImplementation((launchPath, dependencies) =>
+        actual.headlessCliPath(launchPath, { platform: 'win32', ...dependencies }));
+    }
+
+    afterEach(async () => {
+      const actual = await vi.importActual<typeof import('../../src/main/agent/shared/shim-launch')>('../../src/main/agent/shared/shim-launch');
+      vi.mocked(headlessCliPath).mockImplementation(actual.headlessCliPath);
+    });
+
+    it('hands the check the .cmd beside a .ps1 launch path', async () => {
+      await actAsWindows();
+      const ps1Path = path.join(tmpDir, 'codex.ps1');
+      const cmdPath = path.join(tmpDir, 'codex.cmd');
+      fs.writeFileSync(cmdPath, '@echo off\r\n');
+      const manager = makeManager();
+      const sessionId = await spawnAgentSession(manager);
+      registryRowOf(manager, sessionId).agentCliPath = ps1Path;
+
+      await passTheWindow();
+
+      expect(loginEvidence).toHaveBeenCalledTimes(1);
+      expect(loginEvidence).toHaveBeenCalledWith({ cliPath: cmdPath, cliTarget: null, accountHome: null });
+    });
+
+    it('passes a WSL session\'s CLI path through unchanged, with no swap back', async () => {
+      await actAsWindows();
+      const ps1Path = path.join(tmpDir, 'codex.ps1');
+      fs.writeFileSync(path.join(tmpDir, 'codex.cmd'), '@echo off\r\n');
+      const wslTarget: StoredCliTarget = { kind: 'wsl', distro: 'TestDistro', homeLinux: '/home/dev' };
+      const manager = makeManager();
+      const sessionId = await spawnAgentSession(manager);
+      const row = registryRowOf(manager, sessionId);
+      row.agentCliPath = ps1Path;
+      row.cliTarget = wslTarget;
+
+      await passTheWindow();
+
+      expect(loginEvidence).toHaveBeenCalledWith({ cliPath: ps1Path, cliTarget: wslTarget, accountHome: null });
+    });
+  });
+
+  // The login a session read is in its account's home, so the check is asked about that home.
+  describe('the login check of a session on an account', () => {
+    async function loginCheckFor(resolver: ((accountId: string) => string | null | undefined) | null): Promise<void> {
+      const manager = makeManager();
+      if (resolver) manager.setAccountHomeResolver(resolver);
+      const sessionId = await spawnAgentSession(manager);
+      const row = registryRowOf(manager, sessionId);
+      row.agentCliPath = path.join(tmpDir, 'codex');
+      row.homeAccountId = 'account-2';
+      await passTheWindow();
+    }
+
+    it('asks about the folder the account keeps its login in', async () => {
+      const accountFolder = path.join(tmpDir, 'account-2-home');
+      const resolver = vi.fn((accountId: string) => (accountId === 'account-2' ? accountFolder : undefined));
+      await loginCheckFor(resolver);
+
+      expect(resolver).toHaveBeenCalledWith('account-2');
+      expect(loginEvidence).toHaveBeenCalledTimes(1);
+      expect(loginEvidence).toHaveBeenCalledWith({ cliPath: path.join(tmpDir, 'codex'), cliTarget: null, accountHome: accountFolder });
+    });
+
+    it('asks about the agent\'s own home for an account that lives there', async () => {
+      await loginCheckFor(() => null);
+
+      expect(loginEvidence).toHaveBeenCalledWith({ cliPath: path.join(tmpDir, 'codex'), cliTarget: null, accountHome: null });
+    });
+
+    it('names no CLI for an account nobody knows, so the adapter answers unknown', async () => {
+      await loginCheckFor(() => undefined);
+
+      expect(loginEvidence).toHaveBeenCalledWith({ cliPath: null, cliTarget: null, accountHome: null });
+    });
+
+    it('names no CLI for an account when no resolver was set', async () => {
+      await loginCheckFor(null);
+
+      expect(loginEvidence).toHaveBeenCalledWith({ cliPath: null, cliTarget: null, accountHome: null });
+    });
+  });
+
+  it('reads running for a session whose agent is still up at the ceiling', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager);
+    await vi.advanceTimersByTimeAsync(2_000);
+    ingestAgentEvent(manager, sessionId, EventType.ToolStart);
+
+    await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS + 10);
+
+    expect(reportsNamed('AgentSessionIdNotCapturedError')[0]?.tags).toMatchObject({ settled_by: 'ceiling', agent_ran_for_s: 'running' });
   });
 });
 

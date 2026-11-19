@@ -8,7 +8,7 @@ import { resolveShellLaunch } from '../../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../../shared/child-env';
 import { killChildTreeNow } from '../../../shared/child-tree-stop';
 import type { AutomationAdapter, AutomationContext, AutomationOutcome } from '../../shared/automation-adapter';
-import { AutomationTimeoutError } from '../../shared/automation-errors';
+import { AutomationPermanentError, AutomationTimeoutError } from '../../shared/automation-errors';
 import type { HostScriptRunner } from '../../../remote/host-script';
 
 /**
@@ -58,7 +58,9 @@ export const runScriptAdapter: AutomationAdapter = {
 
     const exitCode = await runToCompletion({ exe, args, context, timeoutMs });
     if (exitCode !== 0) {
-      throw new Error(`Script exited with code ${exitCode}.`);
+      // The script's own answer, so the classified error: a plain Error here
+      // reported every failing user script as a defect (Sentry DESKTOP-49).
+      throw new AutomationPermanentError(`Script exited with code ${exitCode}.`);
     }
     return { detail: 'exit 0' };
   },
@@ -78,7 +80,7 @@ async function runOnHost(run: HostScriptRunner, script: string, context: Automat
   const result = await Promise.race([run({ script, environment: scriptEnvironment(context), timeoutMs }), superseded]);
   if (result.error) throw new Error(result.error);
   if (result.timedOut) throw new AutomationTimeoutError(`Script did not finish within ${Math.round(timeoutMs / 60_000)} min and was stopped.`);
-  if (result.code !== 0) throw new Error(`Script exited with code ${String(result.code)}.`);
+  if (result.code !== 0) throw new AutomationPermanentError(`Script exited with code ${String(result.code)}.`);
   const omitted = result.omittedVariables.length > 0 ? ` (too long to pass to the host: ${result.omittedVariables.join(', ')})` : '';
   return { detail: `exit 0 on the host${omitted}` };
 }
