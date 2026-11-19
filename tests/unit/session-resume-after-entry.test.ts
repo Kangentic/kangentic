@@ -2,7 +2,7 @@
  * `resumeTaskSession` (src/main/ipc/handlers/session-resume.ts) for a task that
  * entered its column after its agent was paused (#929).
  *
- * A move never starts a paused agent: it runs the column's enter rows that need
+ * A move starts no paused agent the pause holds: it runs the column's enter rows that need
  * no agent and leaves the rest for the Resume. So a Resume whose paused
  * conversation predates the task's entry into its column does what that entry
  * would have done, through `spawnAgent` with `resumesEntry`: the column's own

@@ -216,7 +216,7 @@ describe('TransitionEngine and a task with its automations disabled', () => {
     });
   });
 
-  // #929. A move never starts a paused agent. The engine forwards `agentPaused`
+  // #929. A move starts no paused agent the pause holds. The engine forwards `agentPaused`
   // to the runner, which skips the rows that need the agent with the reason and
   // runs the rest, so the entry does what it can without the agent and the
   // user's Resume runs what is owed.

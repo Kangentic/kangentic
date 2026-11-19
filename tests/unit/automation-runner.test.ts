@@ -549,7 +549,7 @@ describe('a recovery move out of Done', () => {
   });
 });
 
-// #929. A move never starts a paused agent. The entry still runs the rows that
+// #929. A move starts no paused agent the pause holds. The entry still runs the rows that
 // need no agent, and the rows that need it wait for a Resume in this column.
 describe('a move of a task whose agent is paused', () => {
   it('skips a row that needs the agent with the paused reason, and runs the rest', async () => {

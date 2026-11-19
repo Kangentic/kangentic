@@ -13,10 +13,10 @@
  *       construction and not settable through any tool parameter. It is not a
  *       cryptographic identity: the bearer token is shared per launch and the
  *       segment is not validated, so a process holding the token can dial any
- *       id (see caller-url.ts). Absent for a human-driven client, the
- *       per-project `.kangentic/mcp-config.json`, or a Command Terminal
- *       session; steering then degrades to an unattributed caller rather than
- *       refusing.
+ *       id (see caller-url.ts). A Command Terminal's own config carries it
+ *       too (`transient-sessions.ts`). Absent for a human-driven client or the
+ *       per-project `.kangentic/mcp-config.json`; steering then degrades to an
+ *       unattributed caller rather than refusing.
  * Auth: random per-launch token, validated via the `X-Kangentic-Token` header
  *       or `Authorization: Bearer`
  * Bind: 127.0.0.1 by default -- loopback skips Windows Defender Firewall
