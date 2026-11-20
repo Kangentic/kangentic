@@ -108,8 +108,8 @@ test.describe('Monitor card priority pill', () => {
     // this passes without the fix.
     await expect(card.locator('[data-testid="monitor-card-trail"]')).toBeVisible();
     const pill = card.locator('[data-testid="priority-pill"]');
-    await expect(pill).toHaveText('High');
-    await expect(pill.locator('svg.lucide-flag')).toHaveCount(1);
+    await expect(pill).toHaveAccessibleName('Priority: High');
+    await expect(pill.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
     const footer = card.locator('[data-testid="monitor-card-usage"]');
     await expect(footer).toBeVisible();
     await expect.poll(() => footer.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('solid');

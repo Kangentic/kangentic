@@ -137,7 +137,8 @@ test.describe('New Backlog Task Dialog - Discard Confirm (edit mode)', () => {
 
   test('changing a field in edit mode makes the form dirty and Escape shows discard confirm', async () => {
     // Open the edit dialog.
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     await expect(page.locator('[data-testid="new-backlog-task-dialog"]')).toBeVisible();
     await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Original title');
 
@@ -166,7 +167,8 @@ test.describe('New Backlog Task Dialog - Discard Confirm (edit mode)', () => {
 
   test('escape on an unchanged edit dialog closes immediately without a confirm', async () => {
     // Open the edit dialog but make NO changes.
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Original title');
 
     // Form is clean (equal to the saved task) - Escape must close directly.
@@ -418,7 +420,8 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
 
     await createBacklogItem(page, 'Delete me from the dialog');
     await expect(page.locator('text=Delete me from the dialog')).toBeVisible();
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     await expect(editDialog).toBeVisible();
 
@@ -446,7 +449,8 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
       void stores?.config?.getState().updateConfig({ skipDeleteConfirm: true });
     });
 
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     await expect(editDialog).toBeVisible();
 
@@ -514,7 +518,8 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
       };
     });
 
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     await expect(editDialog).toBeVisible();
 
@@ -621,7 +626,8 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     await createBacklogItem(page, 'Delete with dont ask again');
     await expect(page.locator('text=Delete with dont ask again')).toBeVisible();
 
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     await expect(editDialog).toBeVisible();
 
@@ -840,7 +846,8 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     await createBacklogItem(page, 'Enter guard item');
     await expect(page.locator('text=Enter guard item')).toBeVisible();
 
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     const editDialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     await expect(editDialog).toBeVisible();
 

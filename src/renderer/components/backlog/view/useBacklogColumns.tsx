@@ -2,21 +2,39 @@ import { useMemo } from 'react';
 import { useLingui } from '@lingui/react/macro';
 import { ExternalLink } from 'lucide-react';
 import { GitHubIcon } from '../../icons/GitHubIcon';
-import { formatRelativeTime } from '../../../lib/datetime';
-import type { DataTableColumn } from '../../DataTable';
+import { formatRelativeTime, relativeTimeSamples } from '../../../lib/datetime';
+import { DATA_TABLE_GRIP_WIDTH_PX, type DataTableColumn } from '../../DataTable';
 import { Tooltip } from '../../Tooltip';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { PriorityBadge } from '../PriorityBadge';
 import { stripMarkdown } from '../../../utils/strip-markdown';
+import { measureTextWidth } from '../../../utils/text-measure';
+import { CELL_PADDING_PX, priorityColumnWidthPx, updatedColumnWidthPx } from './column-widths';
 import type { BacklogTask } from '../../../../shared/types';
 import { getProviderLabel } from '../import-providers';
 import { isLocalNoteLink, openExternalIssueLink } from '../../../utils/external-issue-link';
-import type { useBoardStore } from '../../../stores/board-store';
-import { BacklogRowActions } from './BacklogRowActions';
+import { BacklogRowActions, ROW_MENU_BUTTON_SIZE_PX } from './BacklogRowActions';
 
-export type SortKey = 'select' | 'priority' | 'title' | 'labels' | 'created' | 'actions';
+export type SortKey = 'select' | 'priority' | 'title' | 'labels' | 'updated' | 'actions';
 
-type Swimlanes = ReturnType<typeof useBoardStore.getState>['swimlanes'];
+/** The narrowest Title the table keeps before it scrolls sideways. */
+const TITLE_MIN_WIDTH_PX = 240;
+
+const SELECT_WIDTH_PX = 40;
+const LABELS_WIDTH_PX = 200;
+/** The menu button inside the cell's padding. */
+const ACTIONS_WIDTH_PX = ROW_MENU_BUTTON_SIZE_PX + CELL_PADDING_PX;
+
+/**
+ * Every column but Title, plus Title's own floor: the width under which the backlog table
+ * scrolls sideways rather than squeezing Title to nothing (a 400px sidebar at the 900px window).
+ */
+export function backlogMinTableWidth(columns: ReadonlyArray<DataTableColumn<BacklogTask, SortKey>>, hasGrip: boolean): number {
+  const fixed = columns
+    .filter((column) => column.key !== 'title')
+    .reduce((total, column) => total + (column.widthPx ?? 0), 0);
+  return Math.ceil(fixed + TITLE_MIN_WIDTH_PX + (hasGrip ? DATA_TABLE_GRIP_WIDTH_PX : 0));
+}
 
 /**
  * Build the DataTable column definitions for the BacklogView table.
@@ -25,26 +43,41 @@ type Swimlanes = ReturnType<typeof useBoardStore.getState>['swimlanes'];
  */
 export function useBacklogColumns(input: {
   selectedIds: Set<string>;
-  swimlanes: Swimlanes;
   labelColors: Record<string, string>;
+  /** How many levels the project's priority scale has, None included. */
+  priorityLevelCount: number;
+  /** The row whose menu is open from its button, or null. */
+  menuItemId: string | null;
   toggleSelected: (itemId: string) => void;
   selectAll: (ids: string[]) => void;
-  handleMoveSingle: (itemId: string, swimlaneId: string) => Promise<void>;
-  handleEdit: (itemId: string) => void;
-  handleDelete: (itemId: string) => void;
+  openRowMenu: (itemId: string, button: HTMLElement) => void;
 }): DataTableColumn<BacklogTask, SortKey>[] {
   const {
     selectedIds,
-    swimlanes,
     labelColors,
+    priorityLevelCount,
+    menuItemId,
     toggleSelected,
     selectAll,
-    handleMoveSingle,
-    handleEdit,
-    handleDelete,
+    openRowMenu,
   } = input;
 
-  const { t } = useLingui();
+  const { t, i18n } = useLingui();
+
+  // Sized from what the columns can show in the session's language, so a translated header or
+  // a longer date never paints into the next column. Recomputed when the language or the
+  // priority scale changes.
+  const priorityHeader = t({ message: 'Priority', context: 'column header' });
+  const updatedHeader = t({ message: 'Updated', context: 'column header' });
+  const priorityWidthPx = useMemo(
+    () => priorityColumnWidthPx(priorityHeader, priorityLevelCount, measureTextWidth),
+    [priorityHeader, priorityLevelCount],
+  );
+  const updatedWidthPx = useMemo(() => {
+    return updatedColumnWidthPx(updatedHeader, relativeTimeSamples(), measureTextWidth);
+    // i18n.locale: the samples are formatted in the session's language.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.locale is the trigger; relativeTimeSamples reads the locale itself
+  }, [updatedHeader, i18n.locale]);
 
   // `t` is in the memo's deps so the headers and tips follow the session's catalog.
   return useMemo(() => {
@@ -58,7 +91,7 @@ export function useBacklogColumns(input: {
     {
       key: 'select' as SortKey,
       label: '',
-      width: 'w-[40px]',
+      widthPx: SELECT_WIDTH_PX,
       render: (item) => (
         // select-none-ok: the label wraps a bare checkbox and renders no text.
         <label className="flex items-center justify-center p-1 cursor-pointer" onClick={(event) => event.stopPropagation()}>
@@ -85,10 +118,10 @@ export function useBacklogColumns(input: {
     },
     {
       key: 'priority' as SortKey,
-      label: t({ message: 'Priority', context: 'column header' }),
-      width: 'w-[80px]',
+      label: priorityHeader,
+      widthPx: priorityWidthPx,
       sortValue: (item) => item.priority,
-      render: (item) => <PriorityBadge priority={item.priority} showLabel />,
+      render: (item) => <PriorityBadge priority={item.priority} showNone />,
     },
     {
       key: 'title' as SortKey,
@@ -124,7 +157,7 @@ export function useBacklogColumns(input: {
     {
       key: 'labels' as SortKey,
       label: t({ message: 'Labels', context: 'column header' }),
-      width: 'w-[200px]',
+      widthPx: LABELS_WIDTH_PX,
       render: (item) =>
         item.labels.length > 0 ? (
           <div className="flex flex-wrap gap-1">
@@ -145,31 +178,31 @@ export function useBacklogColumns(input: {
         ) : null,
     },
     {
-      key: 'created' as SortKey,
-      label: t({ message: 'Created', context: 'column header' }),
-      align: 'right',
-      width: 'w-[160px]',
-      sortValue: (item) => item.created_at,
-      render: (item) => (
-        <span className="text-fg-faint text-xs whitespace-nowrap">
-          {formatRelativeTime(item.created_at)}
-        </span>
-      ),
+      key: 'updated' as SortKey,
+      label: updatedHeader,
+      widthPx: updatedWidthPx,
+      // Most recent activity first on the first click.
+      initialSortDirection: 'desc',
+      sortValue: (item) => item.updated_at,
+      render: (item) => {
+        const created = formatRelativeTime(item.created_at);
+        return (
+          <Tooltip label={t`Created ${created}`}>
+            <span className="text-fg-faint text-xs whitespace-nowrap" data-testid="backlog-updated">
+              {formatRelativeTime(item.updated_at)}
+            </span>
+          </Tooltip>
+        );
+      },
     },
     {
       key: 'actions' as SortKey,
       label: '',
-      width: 'w-[100px]',
+      widthPx: ACTIONS_WIDTH_PX,
       render: (item) => (
-        <BacklogRowActions
-          itemId={item.id}
-          swimlanes={swimlanes}
-          onMoveToBoard={handleMoveSingle}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-        />
+        <BacklogRowActions itemId={item.id} menuOpen={menuItemId === item.id} onOpenMenu={openRowMenu} />
       ),
     },
     ];
-  }, [selectedIds, toggleSelected, selectAll, swimlanes, handleMoveSingle, handleEdit, handleDelete, labelColors, t]);
+  }, [selectedIds, toggleSelected, selectAll, openRowMenu, menuItemId, labelColors, priorityHeader, priorityWidthPx, updatedHeader, updatedWidthPx, t]);
 }

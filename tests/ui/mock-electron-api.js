@@ -5470,11 +5470,16 @@
       delete: async function (id) {
         backlogTasks = backlogTasks.filter(function (i) { return i.id !== id; });
       },
-      reorder: async function (ids) {
+      reorder: async function (ids, movedId) {
         ids.forEach(function (id, index) {
           var item = backlogTasks.find(function (i) { return i.id === id; });
           if (item) item.position = index;
         });
+        // A drag stamps the moved row's updated_at, as the repository does.
+        var moved = movedId && ids.indexOf(movedId) !== -1
+          ? backlogTasks.find(function (i) { return i.id === movedId; })
+          : null;
+        if (moved) moved.updated_at = new Date().toISOString();
       },
       bulkDelete: async function (ids) {
         backlogTasks = backlogTasks.filter(function (i) { return ids.indexOf(i.id) === -1; });

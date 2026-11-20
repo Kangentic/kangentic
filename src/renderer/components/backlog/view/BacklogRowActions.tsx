@@ -1,82 +1,48 @@
-import { useRef, useState } from 'react';
 import { useLingui } from '@lingui/react/macro';
-import { SquareArrowRight, Trash2, Pencil } from 'lucide-react';
-import { PromotePopover } from '../PromotePopover';
+import { EllipsisVertical } from 'lucide-react';
 import { Tooltip } from '../../Tooltip';
-import type { useBoardStore } from '../../../stores/board-store';
+
+/** The menu button's width and height, in px. The Actions column is sized from it. */
+export const ROW_MENU_BUTTON_SIZE_PX = 28;
+const ROW_MENU_BUTTON_STYLE = { width: ROW_MENU_BUTTON_SIZE_PX, height: ROW_MENU_BUTTON_SIZE_PX };
 
 /**
- * Per-row action group in the BacklogView table: move to board (via
- * PromotePopover anchored to the button), edit, delete. Owns its own
- * popover open state.
+ * A backlog row's one action control: a more-actions button that opens the row's menu (the
+ * same `BacklogContextMenu` a right-click opens) anchored under it. It acts on this row only,
+ * never the selection, and never toggles the row's selection itself.
  */
 export function BacklogRowActions({
   itemId,
-  swimlanes,
-  onMoveToBoard,
-  onEdit,
-  onDelete,
+  menuOpen,
+  onOpenMenu,
 }: {
   itemId: string;
-  swimlanes: ReturnType<typeof useBoardStore.getState>['swimlanes'];
-  onMoveToBoard: (itemId: string, swimlaneId: string) => void;
-  onEdit: (itemId: string) => void;
-  onDelete: (itemId: string) => void;
+  menuOpen: boolean;
+  /** Opens the row's menu under the button, or closes it when this row's menu is the one open. */
+  onOpenMenu: (itemId: string, button: HTMLElement) => void;
 }) {
   const { t } = useLingui();
-  const [showPicker, setShowPicker] = useState(false);
-  const moveButtonRef = useRef<HTMLButtonElement>(null);
-  const moveToBoardLabel = t`Move to board`;
-  const editItemLabel = t`Edit item`;
-  const deleteItemLabel = t`Delete item`;
-
+  const itemActionsLabel = t`Item actions`;
   return (
-    <div className="flex items-center justify-end gap-1 relative" onClick={(event) => event.stopPropagation()}>
-      <div className="relative">
-        <Tooltip label={moveToBoardLabel} enabled={!showPicker}>
-          <button
-            ref={moveButtonRef}
-            type="button"
-            onClick={() => setShowPicker(!showPicker)}
-            className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-            aria-label={moveToBoardLabel}
-            data-testid="move-to-board-btn"
-          >
-            <SquareArrowRight size={15} />
-          </button>
-        </Tooltip>
-        {showPicker && (
-          <PromotePopover
-            triggerRef={moveButtonRef}
-            swimlanes={swimlanes}
-            onSelect={(swimlaneId) => {
-              setShowPicker(false);
-              onMoveToBoard(itemId, swimlaneId);
-            }}
-            onClose={() => setShowPicker(false)}
-          />
-        )}
-      </div>
-      <Tooltip label={editItemLabel}>
+    <div className="flex items-center justify-end">
+      <Tooltip label={t`Edit, move or delete`} enabled={!menuOpen}>
         <button
           type="button"
-          onClick={() => onEdit(itemId)}
-          className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-          aria-label={editItemLabel}
-          data-testid="edit-item-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenMenu(itemId, event.currentTarget);
+          }}
+          onDoubleClick={(event) => event.stopPropagation()}
+          style={ROW_MENU_BUTTON_STYLE}
+          className={`flex items-center justify-center rounded transition-colors ${
+            menuOpen ? 'text-fg bg-surface-hover/60' : 'text-fg-muted hover:text-fg hover:bg-surface-hover/40'
+          }`}
+          aria-label={itemActionsLabel}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          data-testid="backlog-row-menu-btn"
         >
-          <Pencil size={14} />
-        </button>
-      </Tooltip>
-      <Tooltip label={deleteItemLabel}>
-        <button
-          type="button"
-          onClick={() => onDelete(itemId)}
-          className="p-1.5 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
-          aria-label={deleteItemLabel}
-          data-testid="delete-item-btn"
-        >
-          <Trash2 size={15} />
+          <EllipsisVertical size={16} />
         </button>
       </Tooltip>
     </div>

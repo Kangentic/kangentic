@@ -151,7 +151,12 @@ export class BacklogRepository {
     })();
   }
 
-  reorder(ids: string[]): void {
+  /**
+   * Persist a new order. `movedId`, the row a drag moved, also has its `updated_at` stamped, so
+   * the backlog's Updated column counts a reorder as activity. The rows it displaced keep theirs,
+   * and a `movedId` that is not in `ids` stamps nothing.
+   */
+  reorder(ids: string[], movedId?: string): void {
     const updatePosition = this.db.prepare(
       'UPDATE backlog_tasks SET position = ? WHERE id = ?'
     );
@@ -159,6 +164,10 @@ export class BacklogRepository {
       ids.forEach((id, index) => {
         updatePosition.run(index, id);
       });
+      if (movedId && ids.includes(movedId)) {
+        this.db.prepare('UPDATE backlog_tasks SET updated_at = ? WHERE id = ?')
+          .run(new Date().toISOString(), movedId);
+      }
     })();
   }
 

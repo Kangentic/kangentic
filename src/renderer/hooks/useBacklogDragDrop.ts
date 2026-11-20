@@ -73,7 +73,7 @@ export function useBacklogDragDrop(displayItems: BacklogTask[], allItems: Backlo
     if (activeIndex === -1 || overIndex === -1) return;
 
     const newDisplayOrder = arrayMove(displayItems, activeIndex, overIndex);
-    reorderItems(computeSlotReorder(newDisplayOrder, displayItems, allItems));
+    reorderItems(computeSlotReorder(newDisplayOrder, displayItems, allItems), String(active.id));
   }, [displayItems, allItems, reorderItems]);
 
   const handleDragCancel = useCallback(() => {

@@ -3,8 +3,8 @@ import { Plus, Inbox, GripVertical } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { DataTable } from '../DataTable';
-import { BacklogContextMenu } from './BacklogContextMenu';
+import { DataTable, columnCellProps, DATA_TABLE_GRIP_WIDTH_PX } from '../DataTable';
+import { BacklogContextMenu, MENU_TRIGGER_GAP_PX } from './BacklogContextMenu';
 import { BacklogBulkToolbar } from './BacklogBulkToolbar';
 import { ImportPopover } from './ImportPopover';
 import { useBacklogDragDrop } from '../../hooks/useBacklogDragDrop';
@@ -12,8 +12,19 @@ import { useBacklogStore } from '../../stores/backlog-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useHmrGeneration } from '../../utils/hmr-generation';
-import type { BacklogTask } from '../../../shared/types';
-import { useBacklogColumns, type SortKey } from './view/useBacklogColumns';
+import { DEFAULT_PRIORITY_CONFIG, type BacklogTask } from '../../../shared/types';
+import { useBacklogColumns, backlogMinTableWidth, type SortKey } from './view/useBacklogColumns';
+
+/** Where the row menu opens: at the pointer (right-click), or under a row's menu button. */
+interface RowMenuState {
+  position: { x: number; y: number };
+  align: 'start' | 'end';
+  item: BacklogTask;
+  /** Opened from the row's own button: acts on that row only, never the selection. */
+  fromRowButton: boolean;
+  /** That button, which the menu returns focus to and flips above when there is no room below. */
+  trigger: HTMLElement | null;
+}
 
 export function BacklogView() {
   const { t } = useLingui();
@@ -38,6 +49,7 @@ export function BacklogView() {
   // fields actually used here.
   const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
   const labelColors = useConfigStore((state) => state.config.backlog.labelColors);
+  const priorityLevelCount = useConfigStore((state) => (state.config.backlog?.priorities ?? DEFAULT_PRIORITY_CONFIG).length);
 
   // Search + filter state lives in the backlog store so the shared ViewToggle
   // toolbar (the controls) and this list (the consumer) read one instance. The
@@ -48,7 +60,7 @@ export function BacklogView() {
   const labelFilters = useBacklogStore((state) => state.backlogLabelFilters);
   const hasActiveFilters = priorityFilters.size > 0 || labelFilters.size > 0;
 
-  const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; item: BacklogTask } | null>(null);
+  const [contextMenu, setContextMenu] = useState<RowMenuState | null>(null);
 
   // --- Sort state (column sort disables drag-to-reorder) ---
   const [isColumnSorted, setIsColumnSorted] = useState(false);
@@ -139,23 +151,38 @@ export function BacklogView() {
       clearSelection();
       toggleSelected(item.id);
     }
-    setContextMenu({ position: { x: event.clientX, y: event.clientY }, item });
+    setContextMenu({ position: { x: event.clientX, y: event.clientY }, align: 'start', item, fromRowButton: false, trigger: null });
   }, [selectedIds, clearSelection, toggleSelected]);
 
+  // The row's menu button opens the same menu under itself, right-aligned to it, for that row
+  // alone, and closes it again on a second click. It leaves the selection as it is. It reads the
+  // items from the store at click time, so its identity, and the columns built from it, hold
+  // across every list change.
+  const handleOpenRowMenu = useCallback((itemId: string, button: HTMLElement) => {
+    const item = useBacklogStore.getState().items.find((backlogItem) => backlogItem.id === itemId);
+    if (!item) return;
+    const anchor = button.getBoundingClientRect();
+    setContextMenu((current) => (current?.fromRowButton && current.item.id === itemId
+      ? null
+      : { position: { x: anchor.right, y: anchor.bottom + MENU_TRIGGER_GAP_PX }, align: 'end', item, fromRowButton: true, trigger: button }));
+  }, []);
+
   // Context menu acts on all selected items when the right-clicked item is part of a multi-selection
-  const contextMenuIsMultiSelect = contextMenu !== null && selectedIds.size > 1 && selectedIds.has(contextMenu.item.id);
+  const contextMenuIsMultiSelect = contextMenu !== null
+    && !contextMenu.fromRowButton
+    && selectedIds.size > 1
+    && selectedIds.has(contextMenu.item.id);
 
   // --- Columns ---
 
   const columns = useBacklogColumns({
     selectedIds,
-    swimlanes,
     labelColors,
+    priorityLevelCount,
+    menuItemId: contextMenu?.fromRowButton ? contextMenu.item.id : null,
     toggleSelected,
     selectAll,
-    handleMoveSingle,
-    handleEdit,
-    handleDelete,
+    openRowMenu: handleOpenRowMenu,
   });
 
   // --- Drag-to-reorder ---
@@ -227,6 +254,7 @@ export function BacklogView() {
                   virtualized
                   sortableEnabled={canDrag}
                   onSortChange={(key) => setIsColumnSorted(key !== undefined)}
+                  minTableWidth={backlogMinTableWidth(columns, canDrag)}
                 />
               </SortableContext>
               <DragOverlay style={{ pointerEvents: 'none' }}>
@@ -234,13 +262,13 @@ export function BacklogView() {
                   <table className="w-full table-fixed text-sm bg-surface-raised border border-edge rounded shadow-lg opacity-90">
                     <tbody>
                       <tr>
-                        <td className="w-[32px] px-1 py-2.5">
+                        <td className="px-1 py-2.5" style={{ width: DATA_TABLE_GRIP_WIDTH_PX }}>
                           <div className="flex items-center justify-center text-fg-disabled">
                             <GripVertical size={14} />
                           </div>
                         </td>
                         {columns.map((column, columnIndex) => (
-                          <td key={columnIndex} className={`px-3 py-2.5 ${column.width || ''}`}>
+                          <td key={columnIndex} {...columnCellProps(column)}>
                             {column.render(activeItem)}
                           </td>
                         ))}
@@ -266,6 +294,8 @@ export function BacklogView() {
       {contextMenu && (
         <BacklogContextMenu
           position={contextMenu.position}
+          align={contextMenu.align}
+          trigger={contextMenu.trigger}
           swimlanes={swimlanes}
           selectedCount={contextMenuIsMultiSelect ? selectedIds.size : 1}
           onMoveToBoard={(swimlaneId) => {

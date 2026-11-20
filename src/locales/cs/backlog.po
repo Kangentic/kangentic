@@ -18,8 +18,9 @@ msgid "{duplicateCount} already in the backlog"
 msgstr "{duplicateCount} již v backlogu"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "{failedServer} is not a GitLab instance."
-msgstr ""
+msgstr "{failedServer} není instance GitLabu."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -64,9 +65,10 @@ msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# atta
 msgstr "{skippedAttachmentCount, plural, one {Přeskočena # příloha} few {Přeskočeny # přílohy} many {Přeskočeno # přílohy} other {Přeskočeno # příloh}}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source"
 msgid "{sourceLabel} on {host}"
-msgstr ""
+msgstr "{sourceLabel} na {host}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -148,8 +150,9 @@ msgid "Change color"
 msgstr "Změnit barvu"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Check the server address."
-msgstr ""
+msgstr "Zkontrolujte adresu serveru."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -228,8 +231,9 @@ msgid "Connect {sourceTypeLabel}"
 msgstr "Připojit {sourceTypeLabel}"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Connect GitLab"
-msgstr ""
+msgstr "Připojit GitLab"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
@@ -238,12 +242,14 @@ msgstr "Úkol backlogu se nepodařilo odstranit"
 
 #. placeholder {0}: result.detail
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Couldn't reach {failedServer}: {0}."
-msgstr ""
+msgstr "Nelze se připojit k {failedServer}: {0}."
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Couldn't reach {failedServer}."
-msgstr ""
+msgstr "Nelze se připojit k {failedServer}."
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
@@ -277,9 +283,8 @@ msgstr "Vytvořte první úkol"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
 #, fuzzy
-msgctxt "column header"
-msgid "Created"
-msgstr "Vytvořeno"
+msgid "Created {created}"
+msgstr "Vytvořeno {created}"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
@@ -318,11 +323,6 @@ msgstr "{selectedCount, plural, one {Smazat # položku} few {Smazat # položky} 
 #, fuzzy
 msgid "Delete backlog task"
 msgstr "Odstranit úkol z backlogu"
-
-#: src/renderer/components/backlog/view/BacklogRowActions.tsx
-#, fuzzy
-msgid "Delete item"
-msgstr "Smazat položku"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #, fuzzy
@@ -384,8 +384,8 @@ msgstr "Upravit úkol backlogu"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
 #, fuzzy
-msgid "Edit item"
-msgstr "Upravit položku"
+msgid "Edit, move or delete"
+msgstr "Upravit, přesunout nebo odstranit"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -409,17 +409,20 @@ msgid "Filter by ID, title, label, or assignee..."
 msgstr "Filtrovat podle ID, názvu, štítku nebo řešitele..."
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "GitLab rejected this token."
-msgstr ""
+msgstr "GitLab tento token odmítl."
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "GitLab sign-in did not finish."
-msgstr ""
+msgstr "Přihlášení ke GitLabu nebylo dokončeno."
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Group"
-msgstr ""
+msgstr "Skupina"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
@@ -466,9 +469,10 @@ msgid "Import from a GitHub Project board"
 msgstr "Import z nástěnky GitHub Project"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a GitLab project, group or board"
-msgstr ""
+msgstr "Import z projektu, skupiny nebo nástěnky GitLab"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -538,6 +542,11 @@ msgstr "Problémy"
 msgid "Issues imported"
 msgstr "Issues importovány"
 
+#: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
+msgid "Item actions"
+msgstr "Akce položky"
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgid "Keep editing"
@@ -580,21 +589,21 @@ msgstr "Střední"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
-msgid "Move {selectedCount} to Board"
-msgstr "Přesunout {selectedCount} na nástěnku"
+msgid "Move {selectedCount, plural, one {# item} other {# items}} to"
+msgstr "{selectedCount, plural, one {Přesunout # položku do} few {Přesunout # položky do} many {Přesunout # položky do} other {Přesunout # položek do}}"
 
 #: src/renderer/components/backlog/PromotePopover.tsx
 #, fuzzy
 msgid "Move to"
 msgstr "Přesunout do"
 
-#: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
-msgid "Move to board"
-msgstr "Přesunout na nástěnku"
+msgctxt "menu header"
+msgid "Move to"
+msgstr "Přesunout do"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
-#: src/renderer/components/backlog/BacklogContextMenu.tsx
 #, fuzzy
 msgid "Move to Board"
 msgstr "Přesunout na nástěnku"
@@ -644,8 +653,9 @@ msgid "Open"
 msgstr "Otevřené"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Open access tokens on {shownServer}"
-msgstr ""
+msgstr "Otevřít přístupové tokeny na {shownServer}"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
@@ -666,13 +676,15 @@ msgid "Open the page again"
 msgstr "Otevřít stránku znovu"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Open your GitLab access tokens"
-msgstr ""
+msgstr "Otevřít přístupové tokeny GitLabu"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste a GitLab project, group or board link."
-msgstr ""
+msgstr "Vložte odkaz na projekt, skupinu nebo nástěnku GitLab."
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -686,8 +698,9 @@ msgid "Paste a search link so the site is known."
 msgstr "Vložte odkaz na vyhledávání, aby byl web známý."
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Paste a token from your GitLab settings"
-msgstr ""
+msgstr "Vložte token z nastavení GitLabu"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -757,6 +770,11 @@ msgctxt "priority"
 msgid "Priority {number}"
 msgstr "Priorita {number}"
 
+#: src/renderer/components/backlog/PriorityBadge.tsx
+#, fuzzy
+msgid "Priority: {label}"
+msgstr "Priorita: {label}"
+
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"
@@ -798,8 +816,9 @@ msgid "Select all"
 msgstr "Vybrat vše"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Server"
-msgstr ""
+msgstr "Server"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
@@ -812,8 +831,9 @@ msgid "Show imported items"
 msgstr "Zobrazit importované položky"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Sign in with GitLab"
-msgstr ""
+msgstr "Přihlásit se přes GitLab"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -844,8 +864,9 @@ msgstr "Tým"
 
 #. read_api is GitLab's own name for the scope. Keep it as written.
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "The name and <0>read_api</0> scope are filled in. Create it, then copy it."
-msgstr ""
+msgstr "Název a obor <0>read_api</0> jsou vyplněné. Token vytvořte a pak ho zkopírujte."
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
@@ -881,6 +902,12 @@ msgctxt "import filter"
 msgid "Type"
 msgstr "Typ"
 
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
+msgctxt "column header"
+msgid "Updated"
+msgstr "Aktualizováno"
+
 #: src/renderer/components/backlog/priority-labels.ts
 #, fuzzy
 msgctxt "priority"
@@ -892,8 +919,9 @@ msgid "Use a personal access token"
 msgstr ""
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Waiting for GitLab in your browser"
-msgstr ""
+msgstr "Čeká se na GitLab v prohlížeči"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy

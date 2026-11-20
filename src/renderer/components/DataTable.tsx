@@ -13,8 +13,15 @@ export interface DataTableColumn<TRow, TKey extends string = string> {
   label: string;
   align?: 'left' | 'right';
   width?: string;
+  /**
+   * A width in px for a column sized at runtime (from a measured label), applied as an inline
+   * style on the header, the cells and the column. Set it or `width`, not both.
+   */
+  widthPx?: number;
   /** Null for a row with no value: it sorts last in both directions. */
   sortValue?: (row: TRow) => number | string | null;
+  /** The direction a first click sorts in. Default: descending for a right-aligned column, else ascending. */
+  initialSortDirection?: 'asc' | 'desc';
   render: (row: TRow) => React.ReactNode;
   headerRender?: (data: TRow[]) => React.ReactNode;
   /** Hover explanation for the column header (what the stat means). Leave it
@@ -62,6 +69,33 @@ interface DataTableProps<TRow, TKey extends string = string> {
   sortableEnabled?: boolean;
   /** Called when sort state changes so parent can detect column-sort vs manual order. */
   onSortChange?: (sortKey: TKey | undefined) => void;
+  /**
+   * The table's minimum width in px. Past it the scroll container scrolls sideways instead of
+   * squeezing a flexible column to nothing.
+   */
+  minTableWidth?: number;
+}
+
+/** A body cell's side padding (its `px-3`), both sides together, for a column sized from its content. */
+export const DATA_TABLE_CELL_PADDING_X_PX = 24;
+/** The drag handle column a table with `sortableEnabled` adds before its own columns. */
+export const DATA_TABLE_GRIP_WIDTH_PX = 32;
+const GRIP_COLUMN_STYLE: React.CSSProperties = { width: DATA_TABLE_GRIP_WIDTH_PX };
+
+/** A column's runtime width as an inline style, or nothing for a class-sized column. */
+function columnWidthStyle(column: { widthPx?: number }): React.CSSProperties | undefined {
+  return column.widthPx !== undefined ? { width: column.widthPx } : undefined;
+}
+
+/** The class and style of a body cell in `column`, shared by every row path and a drag overlay row. */
+export function columnCellProps(column: Pick<DataTableColumn<unknown>, 'width' | 'widthPx' | 'align'>): {
+  className: string;
+  style: React.CSSProperties | undefined;
+} {
+  return {
+    className: `px-3 py-2.5 overflow-hidden ${column.width || ''} ${column.align === 'right' ? 'text-right' : ''}`,
+    style: columnWidthStyle(column),
+  };
 }
 
 const ESTIMATED_ROW_HEIGHT = 45;
@@ -77,6 +111,7 @@ export interface SortableColumn<TRow, TKey extends string> {
   align?: 'left' | 'right';
   /** Null for a row with no value: it sorts last in both directions. */
   sortValue?: (row: TRow) => number | string | null;
+  initialSortDirection?: 'asc' | 'desc';
 }
 
 /**
@@ -128,8 +163,8 @@ export function sortStateOf(primaryDirection: 'asc' | 'desc' | null): 'ascending
  * multi-sort transitions can be unit tested without mounting the table.
  *
  * - Numeric (right-aligned) columns start descending, text columns
- *   ascending; a repeat plain click flips, a third clears back to
- *   manual/position order.
+ *   ascending, unless the column sets `initialSortDirection`; a repeat
+ *   plain click flips, a third clears back to manual/position order.
  * - Shift+Click adds the column as a tie-break level (or flips its
  *   direction if it is already a level) and never clears.
  * - A plain click on a column other than the sole active sort collapses to
@@ -140,7 +175,7 @@ export function computeNextSorts<TRow, TKey extends string>(
   column: SortableColumn<TRow, TKey>,
   shiftKey: boolean,
 ): Array<SortLevel<TKey>> {
-  const initialDirection: 'asc' | 'desc' = column.align === 'right' ? 'desc' : 'asc';
+  const initialDirection: 'asc' | 'desc' = column.initialSortDirection ?? (column.align === 'right' ? 'desc' : 'asc');
   const existingIndex = sorts.findIndex((level) => level.key === column.key);
 
   if (shiftKey && sorts.length > 0) {
@@ -245,7 +280,7 @@ function SortableRow<TRow, TKey extends string>({
           handle - and it lights up on hover, so a click that dismissed a task window instead
           of grabbing would be a promise the UI does not keep. Same shape as the swimlane
           column header's drag handle. */}
-      <td className="w-[32px] px-1 py-2.5">
+      <td className="px-1 py-2.5" style={GRIP_COLUMN_STYLE}>
         <Tooltip label={t`Drag to reorder`}>
           <div
             {...attributes}
@@ -260,10 +295,7 @@ function SortableRow<TRow, TKey extends string>({
         </Tooltip>
       </td>
       {columns.map((column, columnIndex) => (
-        <td
-          key={`${column.key}-${columnIndex}`}
-          className={`px-3 py-2.5 ${column.width || ''} ${column.align === 'right' ? 'text-right' : ''}`}
-        >
+        <td key={`${column.key}-${columnIndex}`} {...columnCellProps(column)}>
           {column.render(row)}
         </td>
       ))}
@@ -286,7 +318,9 @@ export function DataTable<TRow, TKey extends string = string>({
   virtualized = false,
   sortableEnabled = false,
   onSortChange,
+  minTableWidth,
 }: DataTableProps<TRow, TKey>) {
+  const tableStyle = minTableWidth !== undefined ? { minWidth: minTableWidth } : undefined;
   const { t } = useLingui();
   const emptyMessage = emptyMessageProp ?? t`No data`;
   // Ordered sort levels: index 0 is the primary sort, later entries break
@@ -324,7 +358,7 @@ export function DataTable<TRow, TKey extends string = string>({
     }
     return (
       <tr className="bg-surface-raised">
-        {sortableEnabled && <th className="w-[32px]" />}
+        {sortableEnabled && <th style={GRIP_COLUMN_STYLE} />}
         {columnGroups.map((group, groupIndex) => (
           <th
             key={`${group.label}-${groupIndex}`}
@@ -352,9 +386,9 @@ export function DataTable<TRow, TKey extends string = string>({
   // bands, so an ungrouped table stays byte-identical.
   const colGroup = columnGroups ? (
     <colgroup>
-      {sortableEnabled && <col className="w-[32px]" />}
+      {sortableEnabled && <col style={GRIP_COLUMN_STYLE} />}
       {columns.map((column, columnIndex) => (
-        <col key={`${column.key}-${columnIndex}`} className={column.width} />
+        <col key={`${column.key}-${columnIndex}`} className={column.width} style={columnWidthStyle(column)} />
       ))}
     </colgroup>
   ) : null;
@@ -362,7 +396,7 @@ export function DataTable<TRow, TKey extends string = string>({
   const headerRow = (
     <tr className="border-b-2 border-edge bg-surface-raised">
       {/* Drag handle header cell (empty) */}
-      {sortableEnabled && <th className="w-[32px]" />}
+      {sortableEnabled && <th style={GRIP_COLUMN_STYLE} />}
       {columns.map((column, columnIndex) => {
         const isSortable = !!column.sortValue;
         const sortIndex = sorts.findIndex((level) => level.key === column.key);
@@ -376,6 +410,7 @@ export function DataTable<TRow, TKey extends string = string>({
           <Tooltip key={`${column.key}-${columnIndex}`} label={headerTip}>
             <th
               className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none transition-colors ${column.width || ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${isSortable ? 'cursor-pointer hover:text-fg-muted' : ''}`}
+              style={columnWidthStyle(column)}
               onClick={isSortable ? (event) => handleHeaderClick(column, event.shiftKey) : undefined}
               data-column-key={column.key}
               aria-sort={sortStateOf(isSortable && sortIndex === 0 ? sorts[0].direction : null)}
@@ -404,7 +439,7 @@ export function DataTable<TRow, TKey extends string = string>({
 
     return (
       <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
-        <table className="w-full table-fixed text-sm">
+        <table className="w-full table-fixed text-sm" style={tableStyle}>
           {colGroup}
           <thead className="sticky top-0 z-10">
             {groupRow}
@@ -456,10 +491,7 @@ export function DataTable<TRow, TKey extends string = string>({
                       data-row-id={id}
                     >
                       {columns.map((column, columnIndex) => (
-                        <td
-                          key={`${column.key}-${columnIndex}`}
-                          className={`px-3 py-2.5 overflow-hidden ${column.width || ''} ${column.align === 'right' ? 'text-right' : ''}`}
-                        >
+                        <td key={`${column.key}-${columnIndex}`} {...columnCellProps(column)}>
                           {column.render(row)}
                         </td>
                       ))}
@@ -488,7 +520,7 @@ export function DataTable<TRow, TKey extends string = string>({
   // Non-virtualized (default) path
   return (
     <div className="flex-1 min-h-0 overflow-auto">
-      <table className="w-full table-fixed text-sm">
+      <table className="w-full table-fixed text-sm" style={tableStyle}>
         {colGroup}
         <thead className="sticky top-0 z-10">
           {groupRow}
@@ -522,10 +554,7 @@ export function DataTable<TRow, TKey extends string = string>({
                 data-row-id={rowKey(row)}
               >
                 {columns.map((column, columnIndex) => (
-                  <td
-                    key={`${column.key}-${columnIndex}`}
-                    className={`px-3 py-2.5 overflow-hidden ${column.width || ''} ${column.align === 'right' ? 'text-right' : ''}`}
-                  >
+                  <td key={`${column.key}-${columnIndex}`} {...columnCellProps(column)}>
                     {column.render(row)}
                   </td>
                 ))}

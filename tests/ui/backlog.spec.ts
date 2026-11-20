@@ -144,8 +144,9 @@ test.describe('Backlog View', () => {
 
     await expect(page.locator('text=Delete me')).toBeVisible();
 
-    // Click delete button on the row
-    await page.locator('[data-testid="delete-item-btn"]').click();
+    // Delete from the row's menu
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-delete-item"]').click();
 
     // Confirm deletion
     await page.locator('button:has-text("Delete")').last().click();
@@ -169,7 +170,8 @@ test.describe('Backlog View', () => {
     await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Click edit button
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
 
     // Dialog should open with existing title
     await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Original title');
@@ -314,7 +316,8 @@ test.describe('Backlog View', () => {
     await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Open edit dialog
-    await page.locator('[data-testid="edit-item-btn"]').click();
+    await page.locator('[data-testid="backlog-row-menu-btn"]').click();
+    await page.locator('[data-testid="context-edit-item"]').click();
     await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Edit me later');
 
     // Paste an image
@@ -376,8 +379,8 @@ test.describe('Backlog View', () => {
     // Right-click the first selected item
     await rows.nth(0).click({ button: 'right' });
 
-    // Context menu should show count in "Move to Board" header
-    await expect(page.locator('text=Move 2 to Board')).toBeVisible();
+    // Context menu should show count in its "Move to" header
+    await expect(page.locator('text=Move 2 items to')).toBeVisible();
     await expect(page.locator('text=Delete 2 items')).toBeVisible();
 
     // Click the first swimlane target to move both
