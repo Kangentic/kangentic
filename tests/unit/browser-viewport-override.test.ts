@@ -881,6 +881,189 @@ describe('an emulated pane says when it is showing a crop', () => {
   });
 });
 
+describe('a width-only request fills the pane', () => {
+  // Task #1131: an omitted height kept the current one, so a 1900-wide request
+  // fitted to zoom 0.39 would draw as a 740x292 strip and leave most of the
+  // user's 740x749 pane blank. The fill height is the pane's height over the zoom the
+  // WIDTH gets, which is what makes the fit and the fill pick the same zoom.
+  const blankNote = 'of the height of the USER\'s pane';
+
+  // Each case reads the pre-call viewport at a height other than the fill, so
+  // the old "keep the current height" fallback cannot pass it by coincidence.
+  it('chooses the height that fills the pane at the fitted zoom', async () => {
+    metricsSequence({ width: 740, height: 749 }, { width: 1900, height: 1923 });
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 1900 }, 'agent-1');
+
+    // floor(749 / (740 / 1900)) = 1923
+    expect(outcome.requested).toEqual({ width: 1900, height: 1923 });
+    const [, metrics] = setDeviceMetrics.mock.lastCall as unknown as [unknown, { width: number; height: number }];
+    expect(metrics).toMatchObject({ width: 740, height: 749 });
+    expect(outcome.paneHeightFill).toBeCloseTo(1, 2);
+    expect(outcome.note ?? '').not.toContain(blankNote);
+  });
+
+  it('fills over a height an earlier call asked for', async () => {
+    // The fallback that used to win: the earlier request's 200 would have
+    // followed every later width-only call.
+    const guest = guestOf();
+    metricsAlways(1900, 200);
+    await applyViewport(guest, entryOf(), { width: 1900, height: 200 }, 'agent-1');
+
+    metricsAlways(1900, 1923);
+    const outcome = await applyViewport(guest, entryOf(), { width: 1900 }, 'agent-1');
+
+    expect(outcome.requested.height).toBe(1923);
+  });
+
+  it('fills a width that already fits, at zoom 1', async () => {
+    // The ratio form (600 * 749 / 740 = 607) would leave 142px of pane blank.
+    metricsSequence({ width: 600, height: 500 }, { width: 600, height: 749 });
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 600 }, 'agent-1');
+
+    expect(outcome.requested).toEqual({ width: 600, height: 749 });
+  });
+
+  it('fills a width past the zoom floor instead of cropping it vertically', async () => {
+    // 8192 wants zoom 0.09 and is held at 0.25, so the ratio form (8192 tall)
+    // would draw past the bottom of the pane. 749 / 0.25 = 2996 fills it.
+    metricsSequence({ width: 740, height: 749 }, { width: 8192, height: 2996 });
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 8192 }, 'agent-1');
+
+    expect(outcome.requested).toEqual({ width: 8192, height: 2996 });
+    expect(outcome.paneHeightFill).toBeCloseTo(1, 2);
+  });
+
+  it('keeps the current height on a lane, which has a real size', async () => {
+    laneWindow.mockReturnValue(windowStub());
+    metricsFromContent({ width: 0, height: 0 });
+
+    await applyViewport(guestOf(), entryOf({ kind: 'lane', sessionId: 'lane_deadbeef' }), { width: 1900 }, 'agent-1');
+
+    expect(setContentSize).toHaveBeenCalledWith(1900, 800);
+  });
+
+  it('keeps the current height on a popped-out window, which has a real size', async () => {
+    popOutHas.mockReturnValue(true);
+    popOutWindowFor.mockReturnValue(windowStub());
+    metricsFromContent({ width: 0, height: 0 });
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 1900 }, 'agent-1');
+
+    expect(outcome.mechanism).toBe('window-resize');
+    // The window is 800 tall, not the 749 a pane fill would pick.
+    expect(setContentSize).toHaveBeenCalledWith(1900, 800);
+  });
+
+  it('keeps the current height before the pane has reported its size', async () => {
+    // The fallback stand-in is the 2545x1272 host window, so a fill would pick
+    // 1272. The measured 600 must win instead.
+    metricsSequence({ width: 740, height: 600 }, { width: 1900, height: 600 });
+
+    const outcome = await applyViewport(guestOf(), entryOf({ widgetSize: null }), { width: 1900 }, 'agent-1');
+
+    expect(outcome.requested).toEqual({ width: 1900, height: 600 });
+  });
+
+  it('fills at an explicit zoom instead of the fitted one', async () => {
+    // The fit for 1900 is 0.39, which would give 1923. The pre-call height of
+    // 600 differs from both answers, so a carried height cannot pass either.
+    const guest = guestOf();
+    metricsSequence({ width: 740, height: 600 }, { width: 1900, height: 749 });
+
+    const atFullSize = await applyViewport(guest, entryOf(), { width: 1900, zoom: 1 }, 'agent-1');
+
+    expect(atFullSize.requested).toEqual({ width: 1900, height: 749 });
+
+    metricsSequence({ width: 740, height: 600 }, { width: 1900, height: 1498 });
+
+    const atHalfSize = await applyViewport(guest, entryOf(), { width: 1900, zoom: 0.5 }, 'agent-1');
+
+    // floor(749 / 0.5)
+    expect(atHalfSize.requested).toEqual({ width: 1900, height: 1498 });
+  });
+
+  it('keeps the recorded request when a later call names no width', async () => {
+    const guest = guestOf();
+    metricsSequence({ width: 740, height: 749 }, { width: 1900, height: 1923 });
+    const filled = await applyViewport(guest, entryOf(), { width: 1900 }, 'agent-1');
+    expect(filled.requested).toEqual({ width: 1900, height: 1923 });
+
+    // The measured size now differs from the recorded request, so neither a
+    // re-fill (749) nor the measured size (300) can produce the answer.
+    metricsSequence({ width: 760, height: 300 }, { width: 1900, height: 1923 });
+    const zoomed = await applyViewport(guest, entryOf(), { zoom: 1 }, 'agent-1');
+
+    expect(zoomed.requested).toEqual({ width: 1900, height: 1923 });
+  });
+});
+
+describe('the reply says when the user\'s pane is mostly blank', () => {
+  it('reports the task #1131 strip and says how to fill or reset the pane', async () => {
+    metricsAlways(1900, 200);
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 1900, height: 200 }, 'agent-1');
+
+    // 200 * (740 / 1900) / 749
+    expect(outcome.paneHeightFill).toBeCloseTo(0.104, 2);
+    expect(outcome.visibleFraction).toBe(1);
+    expect(outcome.note).toContain('about 10% of the height');
+    expect(outcome.note).toContain('Omit height');
+    expect(outcome.note).toContain('reset: true');
+  });
+
+  it('says nothing for a layout that covers over half the pane', async () => {
+    // 1920x1080 draws 740x416 in the 749-tall pane: 56%.
+    metricsAlways(1920, 1080);
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 1920, height: 1080 }, 'agent-1');
+
+    expect(outcome.paneHeightFill).toBeCloseTo(0.555, 2);
+    expect(outcome.note ?? '').not.toContain('of the height');
+  });
+
+  it('says nothing before the pane has reported its size', async () => {
+    // The fallback is the whole host window, which is not the pane.
+    metricsAlways(1900, 200);
+
+    const outcome = await applyViewport(guestOf(), entryOf({ widgetSize: null }), { width: 1900, height: 200 }, 'agent-1');
+
+    expect(outcome.paneHeightFill).toBe(1);
+    expect(outcome.note ?? '').not.toContain('of the height');
+  });
+
+  it('reports a whole viewport, not NaN, when the page measures a zero height', async () => {
+    // A collapsed pane: it reports a zero height and the page measures one, so
+    // the height term is 0/0. A zero page height under a real pane gives
+    // Infinity instead, which the min already discards.
+    metricsAlways(1900, 0);
+
+    const outcome = await applyViewport(
+      guestOf(),
+      entryOf({ widgetSize: { width: 740, height: 0 } }),
+      { width: 1900, height: 200 },
+      'agent-1',
+    );
+
+    expect(outcome.mechanism).toBe('device-emulation');
+    expect(Number.isNaN(outcome.visibleFraction)).toBe(false);
+    expect(outcome.visibleFraction).toBe(1);
+  });
+
+  it('counts a layout taller than the pane as a crop', async () => {
+    // At zoom 1, 2000 tall in a 749-tall pane: the user sees 37% of it. The
+    // width alone said 1.
+    metricsAlways(600, 2000);
+
+    const outcome = await applyViewport(guestOf(), entryOf(), { width: 600, height: 2000, zoom: 1 }, 'agent-1');
+
+    expect(outcome.visibleFraction).toBeCloseTo(749 / 2000, 2);
+    expect(outcome.note).toContain("The USER's pane shows only about 37%");
+  });
+});
+
 describe('a maximized window can still be resized', () => {
   it('un-maximizes first, because setContentSize is ignored while maximized', async () => {
     // Reported live: an agent popped out maximized, asked for half the size,
@@ -1173,6 +1356,8 @@ describe('asking for a size fits it into the pane', () => {
     const outcome = await clearViewport(guestOf(), entryOf());
 
     expect(outcome.deviceScaleFactor).toBe(1.25);
+    // A reset leaves no blank-pane claim behind.
+    expect(outcome.paneHeightFill).toBe(1);
   });
 
   it('reports 0 after clearing when the page cannot be read', async () => {
