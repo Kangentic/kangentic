@@ -260,6 +260,31 @@ describe('judgeColumnStop', () => {
       expect(stop()).toMatchObject({ cause: 'spent-row' });
     });
 
+    // The runner reads the Text match first: a row it misses would have been skipped
+    // before its Condition was asked, so a yes for that Condition says nothing.
+    describe('a spent move row holding both a Text match and a Condition', () => {
+      const bothGuards = () => row({ final_line: 'Status: needs another round', condition: 'The work passed its checks' });
+
+      it('is not sent to the check, and records no stop, when its Text match misses the reply', async () => {
+        const spent = bothGuards();
+        spend(spent);
+        const check = answered([[spent.id, { met: true, reason: 'They passed.' }], [NEEDS_A_PERSON_CHECK_ID, { met: false, reason: null }]]);
+        await judge([spent], 'All checks passed.', check);
+        expect(check).toHaveBeenCalledTimes(1);
+        expect(check).toHaveBeenCalledWith([], true);
+        expect(stop()).toBeNull();
+      });
+
+      it('records the spent-row stop when its Text match meets the reply and the check answers yes', async () => {
+        const spent = bothGuards();
+        spend(spent);
+        const check = answered([[spent.id, { met: true, reason: 'They passed.' }], [NEEDS_A_PERSON_CHECK_ID, { met: false, reason: null }]]);
+        await judge([spent], 'All checks passed.\nStatus: needs another round', check);
+        expect(check).toHaveBeenCalledWith([spent], true);
+        expect(stop()).toMatchObject({ cause: 'spent-row' });
+      });
+    });
+
     it('leaves a spent row whose Condition answers no', async () => {
       const spent = row({ condition: 'The work passed its checks' });
       spend(spent);

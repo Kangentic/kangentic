@@ -644,12 +644,12 @@ const TESTING_TURN_END_AUTOMATIONS = [
 ];
 
 /** The Edit automation dialog's controls column-automation-edit's choreography works. */
-const AUTOMATION_KIND_TEXT = '[data-testid="edit-automation-condition-kind-text"]';
-const AUTOMATION_KIND_AGENT = '[data-testid="edit-automation-condition-kind-agent"]';
-// The Text match field's one line: the field is a group of line inputs, and a new row has one.
+const AUTOMATION_ADD_CONDITION = '[data-testid="edit-automation-add-condition"]';
+const AUTOMATION_ADD_REPLY = '[data-testid="edit-automation-add-condition-reply"]';
+const AUTOMATION_REPLY_LINE = '[data-testid="edit-automation-condition-line-reply"]';
+const AUTOMATION_REPLY_REMOVE = '[data-testid="edit-automation-condition-line-reply-remove"]';
+// The Reply line's one pattern: the field is a group of line inputs, and a new line has one.
 const AUTOMATION_FINAL_LINE = '[data-testid="edit-automation-final-line-line"]';
-const AUTOMATION_RUNS_DECREMENT = '[data-testid="edit-automation-max-runs-decrement"]';
-const AUTOMATION_RUNS_INCREMENT = '[data-testid="edit-automation-max-runs-increment"]';
 
 /**
  * The whole record of one archived contoso task, Set up CI/CD pipeline, shared by the two
@@ -2371,8 +2371,8 @@ export const SCENES: Record<string, SceneDefinition> = {
   'column-automation-edit': {
     name: 'column-automation-edit',
     reach: 'boot',
-    description: 'The Edit automation dialog on Testing\'s first turn-end row, Send findings back, for the landing page\'s Automations tab: its four cards, Trigger on agent turn end, an Agent evaluation Condition in plain words, a Frequency of three, and a Move to column Action to Executing whose message carries {{agentReply}}. Opened from the Column Manager of the same configured board as column-automation-turn-end, with Claude on Sonnet 5 as the Automation agent that answers the Condition. At the 1600 by 1000 frame the dialog\'s body scrolls by about 115px: the first three cards show whole, and the Action card shows its Type, its column and the Message, whose last line ({{agentReply}}) is cut off at the bottom of the body, with the Template variable picker below the fold.',
-    alt: 'The Edit automation dialog for Send findings back on Testing: it runs on agent turn end when an Agent evaluation finds the review left work for the implementer, up to three times, and moves the task back to Executing with a message.',
+    description: 'The Edit automation dialog on Testing\'s first turn-end row, Send findings back, for the landing page\'s Automations tab, with its Condition card open on one Evaluation line in plain words. The other three cards are closed and name their values in their headers: Trigger On agent turn end, Action Move to column, and Frequency. Opened from the Column Manager of the same configured board as column-automation-turn-end, with Claude on Sonnet 5 as the Automation agent that answers the Evaluation.',
+    alt: 'The Edit automation dialog for Send findings back on Testing: it runs on agent turn end and moves the task, and its open Condition holds one Evaluation line asking whether the review found work the implementer can do.',
     config: DEMO_AUTOMATION_AGENT,
     seeds: {
       __mockSwimlanePatches: COLUMN_LADDER,
@@ -2386,24 +2386,24 @@ export const SCENES: Record<string, SceneDefinition> = {
         click: '[data-testid="column-automation-group"][data-trigger="turn_end"] [data-testid="column-automation-row"][data-name="Send findings back"] [data-testid="column-automation-edit"]',
         waitFor: '[data-testid="edit-automation-dialog"]',
       },
+      // The dialog opens on its Action card, and one card is open at a time: the Condition is the subject.
+      {
+        click: '[data-testid="edit-automation-card-condition-header"]',
+        waitFor: '[data-testid="edit-automation-card-condition"][data-open="true"]',
+      },
     ],
-    // The form changed the way an edit goes: Text match picked and the reviewer's last line typed
-    // for it, the Frequency down to one, and the pointer on Done. Then the cut, and the form put
-    // back behind it: the line cleared, the Frequency back to three, and Agent evaluation again.
-    // The dialog keeps the evaluation's text across the switch (its conditionDraft), so the cycle
-    // ends on the poster's values. Done is never pressed, so the mock's automations are never
-    // written.
+    // The form changed the way an edit goes: a Reply line added and the reviewer's last line typed
+    // for it, and the pointer on Done. Then the cut, and the form put back behind it: the pattern
+    // cleared and the Reply line removed, so the cycle ends on the poster's one Evaluation line.
+    // Done is never pressed, so the mock's automations are never written.
     choreography: [
-      { click: AUTOMATION_KIND_TEXT, waitFor: `${AUTOMATION_KIND_TEXT}[aria-checked="true"]`, ms: 900 },
+      { click: AUTOMATION_ADD_CONDITION, waitFor: AUTOMATION_ADD_REPLY, ms: 700 },
+      { click: AUTOMATION_ADD_REPLY, waitFor: AUTOMATION_REPLY_LINE, ms: 900 },
       { type: { into: AUTOMATION_FINAL_LINE, text: 'Changes requested' }, ms: 1000 },
-      { click: AUTOMATION_RUNS_DECREMENT, ms: 500 },
-      { click: AUTOMATION_RUNS_DECREMENT, ms: 1000 },
       { hover: '[data-testid="edit-automation-done"]', ms: 2000 },
       { cut: true },
       { type: { into: AUTOMATION_FINAL_LINE, text: '' } },
-      { click: AUTOMATION_RUNS_INCREMENT },
-      { click: AUTOMATION_RUNS_INCREMENT },
-      { click: AUTOMATION_KIND_AGENT, waitFor: `${AUTOMATION_KIND_AGENT}[aria-checked="true"]` },
+      { click: AUTOMATION_REPLY_REMOVE },
     ],
   },
   'column-handoff': {
