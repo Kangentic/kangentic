@@ -26,6 +26,53 @@ function liveWindows(account: AgentAccount, nowSeconds: number): RateLimitWindow
   return (account.lastUsage ?? []).filter((limitWindow) => limitWindow.resetsAt <= 0 || limitWindow.resetsAt > nowSeconds);
 }
 
+/**
+ * How far a report's reset may sit past a full window's and still be that window. Two sources of
+ * one window can round its reset differently (Claude's cache keeps fractions of a second, its
+ * status line whole seconds). A window's next reset is 5 hours or 7 days later.
+ */
+export const SAME_WINDOW_SLACK_SECONDS = 10 * 60;
+
+/**
+ * A full window never goes down before its reset. Of `next`, a window that would lower a stored
+ * window at 100 is replaced by the stored one, while that window's reset is still ahead and the
+ * report's reset is not a later one (a new window). Claude's status line reads 99 for a weekly
+ * window its own cache reads 100 and spent (measured on 2.1.330, task #1147): a live report on
+ * another session of the account wrote the 99 over the 100 a continuation had just read, and the
+ * next spawn took the spent account. A window with no reset time is never held, since it would
+ * never expire.
+ */
+export function keepFullWindows(
+  previous: readonly RateLimitWindow[],
+  next: readonly RateLimitWindow[],
+  nowSeconds: number,
+): RateLimitWindow[] {
+  const isHeld = (limitWindow: RateLimitWindow): boolean => limitWindow.usedPercentage >= 100 && limitWindow.resetsAt > nowSeconds;
+  // Every live report passes through here, and almost none find a full window: copy and go.
+  if (!previous.some(isHeld)) return [...next];
+  const fullById = new Map(previous
+    .filter(isHeld)
+    .map((limitWindow): [string, RateLimitWindow] => [limitWindow.id, limitWindow]));
+  return next.map((reported) => {
+    const full = fullById.get(reported.id);
+    if (!full || reported.usedPercentage >= 100) return reported;
+    return reported.resetsAt <= full.resetsAt + SAME_WINDOW_SLACK_SECONDS ? full : reported;
+  });
+}
+
+/**
+ * A window at or above this is worth a fresh read before a session is trusted to it. Claude's
+ * status line reads 99 for a weekly window Claude has spent (task #1147), so a stored reading
+ * under 100 can still be a spent account. The percentage only decides whether to read, never
+ * whether to move a session.
+ */
+export const NEAR_FULL_PERCENT = 95;
+
+/** True when any live window of the account is at `NEAR_FULL_PERCENT` or above. */
+export function isNearFull(account: AgentAccount, nowSeconds: number): boolean {
+  return liveWindows(account, nowSeconds).some((limitWindow) => limitWindow.usedPercentage >= NEAR_FULL_PERCENT);
+}
+
 /** An account that can take a new session: signed in with a plan, links in place, no full window. */
 export function hasRoom(account: AgentAccount, nowSeconds: number): boolean {
   if (account.status !== 'ok') return false;

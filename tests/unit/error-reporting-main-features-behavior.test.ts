@@ -296,6 +296,7 @@ describe('account continuation', () => {
     const continuation = new AccountContinuation({
       readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
       findTaskSession: () => session,
+      canContinue: () => true, openingPrompt: () => null,
       isUsageLimitFailure: () => true,
       ordered: () => accounts as never,
       readUsageNow: async () => { throw new TypeError('usage read defect'); },
@@ -306,6 +307,29 @@ describe('account continuation', () => {
 
     expect(await continuation.onTurnFailure('session-1', 'rate_limit')).toBe('ignored');
 
+    expect(onlyReportTags()).toMatchObject({ source: 'accounts', stage: 'continuation', error_name: 'TypeError' });
+  });
+
+  it.each(['onSessionStarted', 'onTurnFailure'] as const)('reports a session lookup that throws in %s instead of rejecting', async (entryPoint) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { AccountContinuation } = await import('../../src/main/accounts/account-continuation');
+    const continuation = new AccountContinuation({
+      readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
+      findTaskSession: () => { throw new TypeError('session lookup defect'); },
+      canContinue: () => true, openingPrompt: () => null,
+      isUsageLimitFailure: () => true,
+      ordered: () => [],
+      readUsageNow: async () => {},
+      continueOn: async () => true,
+      notifySwitched: vi.fn(),
+      notifyAllFull: vi.fn(),
+    });
+
+    const outcome = entryPoint === 'onSessionStarted'
+      ? await continuation.onSessionStarted('session-1')
+      : await continuation.onTurnFailure('session-1', 'rate_limit');
+
+    expect(outcome).toBe('ignored');
     expect(onlyReportTags()).toMatchObject({ source: 'accounts', stage: 'continuation', error_name: 'TypeError' });
   });
 });

@@ -202,6 +202,85 @@ describe('AccountService.recordUsage', () => {
   });
 });
 
+/**
+ * Task #1147: a continuation read an account's weekly window at 100 and moved the session off it.
+ * Another session still on that account kept reporting 99 from its status line, which replaced the
+ * 100, and the next column move spawned on the spent account again.
+ */
+describe('a full window holds until its reset', () => {
+  const sevenDay = { id: 'seven-day', label: '7d weekly', iconKind: 'period' as const, resetsAt: NOW + 2 * 86_400, windowDurationSeconds: 604_800 };
+
+  function serviceReading(idleReads: number[]): AccountService {
+    const adapter = adapterWith({
+      ...folderSupport(),
+      readIdleUsage: async () => [{ ...sevenDay, usedPercentage: idleReads.shift() ?? 0 }],
+    });
+    return new AccountService({
+      repository,
+      getAdapter: (agent) => (agent === 'test-agent' ? adapter : undefined),
+      configDir: path.join(root, 'config'),
+      readConfig: () => config,
+      resolveCliPath: async () => 'test-agent-cli',
+      now: () => NOW_MS,
+    });
+  }
+
+  it('lands the next spawn on the account the continuation chose, whatever a live report says after', async () => {
+    const accountService = serviceReading([100]);
+    const spent = accountService.ensureDefaultAccount('test-agent')!;
+    const other = repository.insert({ agent: 'test-agent', kind: 'folder', folderPath: accountService.nextFolderPath('test-agent') });
+    // The continuation's forced read.
+    expect(await accountService.refreshUsage(spent.id)).toBe(true);
+    // A session still on the spent account reports its status line.
+    accountService.recordUsage([{ ...sevenDay, usedPercentage: 99, accountId: spent.id }]);
+    expect(repository.getById(spent.id)?.lastUsage?.[0].usedPercentage).toBe(100);
+    expect((await accountService.resolveForSpawn('test-agent'))?.id).toBe(other.id);
+  });
+
+  it('keeps a full window against a later idle read of the same window, and takes the next window', async () => {
+    const accountService = serviceReading([99]);
+    const own = accountService.ensureDefaultAccount('test-agent')!;
+    repository.updateUsage(own.id, [{ ...sevenDay, usedPercentage: 100 }]);
+    expect(await accountService.refreshUsage(own.id)).toBe(true);
+    expect(repository.getById(own.id)?.lastUsage?.[0].usedPercentage).toBe(100);
+    // A report of the next window, after the reset moved, is taken at its value.
+    accountService.recordUsage([{ ...sevenDay, usedPercentage: 3, resetsAt: sevenDay.resetsAt + 604_800, accountId: own.id }]);
+    expect(repository.getById(own.id)?.lastUsage?.[0].usedPercentage).toBe(3);
+  });
+
+  it('respects a live report that lands while the CLI read runs', async () => {
+    const own = repository.insert({ agent: 'test-agent', kind: 'default' });
+    let accountService: AccountService | undefined;
+    const adapter = adapterWith({
+      ...folderSupport(),
+      readIdleUsage: async () => {
+        // The full report arrives mid-read, then the read itself comes back lower.
+        accountService?.recordUsage([{ ...sevenDay, usedPercentage: 100, accountId: own.id }]);
+        return [{ ...sevenDay, usedPercentage: 99 }];
+      },
+    });
+    accountService = new AccountService({
+      repository,
+      getAdapter: (agent) => (agent === 'test-agent' ? adapter : undefined),
+      configDir: path.join(root, 'config'),
+      readConfig: () => config,
+      resolveCliPath: async () => 'test-agent-cli',
+      now: () => NOW_MS,
+    });
+    repository.updateUsage(own.id, [{ ...sevenDay, usedPercentage: 40 }]);
+    expect(await accountService.refreshUsage(own.id)).toBe(true);
+    expect(repository.getById(own.id)?.lastUsage?.[0].usedPercentage).toBe(100);
+  });
+
+  it('reports no change for a lower report against a stored full window of the same window', () => {
+    const accountService = serviceReading([]);
+    const own = accountService.ensureDefaultAccount('test-agent')!;
+    repository.updateUsage(own.id, [{ ...sevenDay, usedPercentage: 100 }]);
+    expect(accountService.recordUsage([{ ...sevenDay, usedPercentage: 99, accountId: own.id }])).toEqual([]);
+    expect(repository.getById(own.id)?.lastUsage?.[0].usedPercentage).toBe(100);
+  });
+});
+
 describe('AccountService.envsForBackgroundStop', () => {
   it('names only the session account when it is known, and every account, own login first, when not', () => {
     const accountService = service(adapterWith(folderSupport()));

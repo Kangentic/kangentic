@@ -30,7 +30,7 @@ function readingIsCurrent(account: AgentAccount, nowMs: number, maxAgeMs: number
 }
 
 /**
- * True when Automatic must read the account before it ranks it: it can run, and it has no reading,
+ * True when a spawn must read the account before it ranks it: it can run, and it has no reading,
  * a reading older than a scheduled pass should leave, or a window whose reset has passed since.
  * Ranking on such a reading puts the account after every account with a live one.
  */
@@ -60,7 +60,7 @@ export type UsageRefreshScope = 'startup' | 'scheduled' | 'requested';
 /**
  * Keeps every account's usage current with no session running on it and no input from the user:
  * when the app opens, when the Accounts tab opens, when a window's reset passes, every 15
- * minutes, before a switch, and before Automatic ranks an account whose reading ran out. One CLI
+ * minutes, before a switch, and before a spawn ranks an account whose reading ran out. One CLI
  * run at a time, a failed read keeps the last values, and nothing runs for an agent with a single
  * account except when the tab asks, so a one-account user's machine does nothing new.
  *
@@ -204,7 +204,7 @@ export class AccountUsageRefresher {
   }
 
   /**
-   * Before Automatic ranks `accounts` for a spawn: reads each one whose reading is missing or
+   * Before a spawn ranks `accounts`: reads each one whose reading is missing or
    * stale, then resolves. Resolves at `timeoutMs` either way, so a slow CLI delays a spawn by that
    * much at most, and the spawn then ranks on the stored readings. Never rejects.
    */
