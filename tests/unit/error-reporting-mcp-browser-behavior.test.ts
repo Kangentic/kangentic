@@ -401,11 +401,13 @@ describe('withGuest reports a driver failure', () => {
      * nothing useful, which the capture path already tolerates, so the real
      * `captureScreenshotWithBudget` runs the whole way to the 5 s bound.
      */
-    function uncompositedGuest(withHost: boolean) {
+    function uncompositedGuest(withHost: boolean, hostAnswers = true) {
       const sendCommand = (method: string): Promise<unknown> => (
         method === 'Page.captureScreenshot' ? new Promise(() => undefined) : Promise.resolve({ result: {} })
       );
-      const host = { isDestroyed: () => false, capturePage: async () => ({}) };
+      // A host whose compositor stopped never answers the hold's own calls.
+      const hostCapturePage = hostAnswers ? async () => ({}) : () => new Promise(() => undefined);
+      const host = { isDestroyed: () => false, capturePage: hostCapturePage };
       return {
         id: 7,
         isDestroyed: () => false,
@@ -454,7 +456,29 @@ describe('withGuest reports a driver failure', () => {
         surface: 'parked',
         host_window: 'visible',
         hold: 'armed',
+        host_hold: 'settled',
+        guest_hold: 'settled',
         since_wake: 'under_30s',
+      });
+    });
+
+    it('tags a hold whose host calls never returned, so a stopped compositor reads apart', async () => {
+      browserPaneRegistry.detachAll();
+      browserPaneRegistry.register({
+        handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null, visibility: 'showing',
+      });
+      vi.mocked(webContents.fromId).mockReturnValue(uncompositedGuest(true, false) as never);
+      vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => false, isVisible: () => true } as never);
+
+      await captureUntilTimeout();
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportedTags()).toMatchObject({
+        error_name: 'ScreenshotNotComposited',
+        host_window: 'visible',
+        hold: 'armed',
+        host_hold: 'none',
+        guest_hold: 'settled',
       });
     });
 
@@ -473,6 +497,8 @@ describe('withGuest reports a driver failure', () => {
         surface: 'lane',
         host_window: 'none',
         hold: 'no_host',
+        host_hold: 'none',
+        guest_hold: 'none',
         since_wake: 'none',
       });
     });
@@ -507,9 +533,34 @@ describe('withGuest reports a driver failure', () => {
       });
 
       const tags = reportedTags();
-      for (const captureTag of ['surface', 'host_window', 'hold', 'since_wake']) {
+      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake']) {
         expect(tags).not.toHaveProperty(captureTag);
       }
+    });
+
+    // The error's name is in the reported set, so it still reports. What the guard
+    // decides is whether its fields may become tags. A hold settlement outside the
+    // fixed set (page or user text) must never ride into a tag.
+    it('adds none of the capture tags to a ScreenshotNotComposited whose hostHold is outside its set', async () => {
+      const wrongShaped = Object.assign(new Error('no frame'), {
+        name: 'ScreenshotNotComposited',
+        hold: 'armed',
+        hostState: 'visible',
+        hostHold: 'bogus',
+        guestHold: 'settled',
+      });
+
+      await withGuest(options, async () => {
+        throw wrongShaped;
+      });
+
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      const tags = reportedTags();
+      expect(tags).toMatchObject({ source: 'browser_driver', error_name: 'ScreenshotNotComposited' });
+      for (const captureTag of ['surface', 'host_window', 'hold', 'host_hold', 'guest_hold', 'since_wake']) {
+        expect(tags).not.toHaveProperty(captureTag);
+      }
+      expect(JSON.stringify(tags)).not.toContain('bogus');
     });
   });
 

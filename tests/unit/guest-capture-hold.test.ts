@@ -28,10 +28,17 @@ function hostWindow({ minimized = false, visible = true }: HostState = {}): void
   } as never);
 }
 
-/** A guest whose `capturePage` calls settle as the test decides. */
-function fakeGuest(capturePage: () => Promise<unknown>, sendCommand: () => Promise<unknown> = async () => ({ data: 'PNG' })) {
+/**
+ * A guest whose `capturePage` calls settle as the test decides. The host's calls
+ * behave like the guest's unless `hostCapturePage` says otherwise.
+ */
+function fakeGuest(
+  capturePage: () => Promise<unknown>,
+  sendCommand: () => Promise<unknown> = async () => ({ data: 'PNG' }),
+  hostCapturePage: () => Promise<unknown> = capturePage,
+) {
   const capturePageSpy = vi.fn(capturePage);
-  const hostCapturePageSpy = vi.fn(capturePage);
+  const hostCapturePageSpy = vi.fn(hostCapturePage);
   const guest = {
     hostWebContents: { isDestroyed: () => false, capturePage: hostCapturePageSpy },
     isDestroyed: () => false,
@@ -219,6 +226,8 @@ describe('captureScreenshot holds the guest for the capture', () => {
       message: expect.stringMatching(/not being composited/),
       hold: 'armed',
       hostState: 'visible',
+      hostHold: 'settled',
+      guestHold: 'settled',
     });
     await vi.advanceTimersByTimeAsync(SCREENSHOT_TIMEOUT_MS);
     await assertion;
@@ -227,5 +236,70 @@ describe('captureScreenshot holds the guest for the capture', () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(capturePageSpy).toHaveBeenCalledTimes(atEnd);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('a capture that timed out says whether the hold was answered (DESKTOP-46)', () => {
+  // The second DESKTOP-46 event armed the hold on a visible host and still got no
+  // frame. These tell "the host compositor stopped" (the hold's own calls never
+  // returned) from "the hold was answered and CDP's capture still hung".
+  const NEVER = (): Promise<unknown> => new Promise(() => undefined);
+  const ANSWERED = async (): Promise<unknown> => ({});
+
+  /** `hostState: null` is a host with no window to read. */
+  async function timeOut(
+    guestCapturePage: () => Promise<unknown>,
+    hostCapturePage: () => Promise<unknown>,
+    hostState: HostState | null = {},
+  ) {
+    vi.useFakeTimers();
+    if (hostState) hostWindow(hostState);
+    else vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(null);
+    const { guest } = fakeGuest(guestCapturePage, NEVER, hostCapturePage);
+    const pending = captureScreenshot(guest);
+    const settledError = pending.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(SCREENSHOT_TIMEOUT_MS);
+    return settledError;
+  }
+
+  it.each([
+    { label: 'neither side answered', guest: NEVER, host: NEVER, guestHold: 'none', hostHold: 'none' },
+    { label: 'both sides answered', guest: ANSWERED, host: ANSWERED, guestHold: 'settled', hostHold: 'settled' },
+    { label: 'only the guest answered', guest: ANSWERED, host: NEVER, guestHold: 'settled', hostHold: 'none' },
+    { label: 'only the host answered', guest: NEVER, host: ANSWERED, guestHold: 'none', hostHold: 'settled' },
+  ] as const)('reports $label', async ({ guest, host, guestHold, hostHold }) => {
+    await expect(timeOut(guest, host)).resolves.toMatchObject({
+      name: 'ScreenshotNotComposited',
+      hold: 'armed',
+      hostHold,
+      guestHold,
+    });
+  });
+
+  it('counts a hold call that rejected as answered, since the compositor returned', async () => {
+    const rejected = (): Promise<unknown> => Promise.reject(new Error('no surface'));
+    await expect(timeOut(rejected, rejected)).resolves.toMatchObject({ hostHold: 'settled', guestHold: 'settled' });
+  });
+
+  it('carries the settlement on a minimized host too, the other armed case', async () => {
+    await expect(timeOut(ANSWERED, NEVER, { minimized: true })).resolves.toMatchObject({
+      hold: 'armed',
+      hostState: 'minimized',
+      hostHold: 'none',
+      guestHold: 'settled',
+    });
+  });
+
+  it.each([
+    { label: 'a host window hidden outright', hostState: { visible: false }, expectedHostState: 'hidden' },
+    { label: 'a host with no window', hostState: null, expectedHostState: 'none' },
+  ] as const)('reports none on both sides for a hold that never armed: $label', async ({ hostState, expectedHostState }) => {
+    // Both hold calls would answer, so `none` can only come from the hold never arming.
+    await expect(timeOut(ANSWERED, ANSWERED, hostState)).resolves.toMatchObject({
+      hold: 'skipped_hidden',
+      hostState: expectedHostState,
+      hostHold: 'none',
+      guestHold: 'none',
+    });
   });
 });

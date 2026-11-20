@@ -14,6 +14,7 @@ import {
   type CaptureHoldDiagnostics,
 } from './cdp/cdp';
 import type { CaptureEmulation, CaptureRefusalDiagnostics } from './cdp/screenshot';
+import type { HoldSettlement } from './cdp/guest-capture-hold';
 import { KeyboardFocusNotInGuestError } from './cdp/keyboard-focus';
 import { AmbiguousSelectorError, ambiguousSelectorDetail, type SelectorCandidate } from './cdp/ambiguous-selector';
 import { beginAgentInput, endAgentInput } from './agent-input-signal';
@@ -81,11 +82,21 @@ function captureSurfaceTag(entry: BrowserPaneEntry): CaptureSurfaceTag {
 
 type ScreenshotTimeoutShape = { name: 'ScreenshotNotComposited' } & CaptureHoldDiagnostics;
 
+function isOwnKey<Key extends string>(allowed: Record<Key, unknown>, value: unknown): value is Key {
+  return typeof value === 'string' && Object.hasOwn(allowed, value);
+}
+
+/** Every value a hold settlement may hold. A keyed record, so a new value fails typecheck until it is listed. */
+const HOLD_SETTLEMENTS: Record<HoldSettlement, true> = { settled: true, none: true };
+
 /** Read structurally, not with `instanceof`: a test may stand in for the whole `cdp` module. */
 function isScreenshotTimeout(error: unknown): error is ScreenshotTimeoutShape {
   if (!(error instanceof Error) || error.name !== 'ScreenshotNotComposited') return false;
-  const fields = error as Partial<CaptureHoldDiagnostics>;
-  return typeof fields.hold === 'string' && typeof fields.hostState === 'string';
+  const fields = error as Partial<Record<keyof CaptureHoldDiagnostics, unknown>>;
+  return typeof fields.hold === 'string'
+    && typeof fields.hostState === 'string'
+    && isOwnKey(HOLD_SETTLEMENTS, fields.hostHold)
+    && isOwnKey(HOLD_SETTLEMENTS, fields.guestHold);
 }
 
 type CaptureRefusalShape = { name: 'CaptureExceedsSurface' } & CaptureRefusalDiagnostics;
@@ -94,10 +105,6 @@ const EMULATED_TAG: Record<CaptureEmulation, string> = { on: 'yes', off: 'no', u
 /** Every value a refusal's `target` and `widgetSource` may hold. Keyed records, so a new value fails typecheck until it is listed. */
 const REFUSAL_TARGETS: Record<CaptureRefusalDiagnostics['target'], true> = { viewport: true, full_page: true, element: true };
 const REFUSAL_WIDGET_SOURCES: Record<CaptureRefusalDiagnostics['widgetSource'], true> = { reported: true, fallback: true };
-
-function isOwnKey<Key extends string>(allowed: Record<Key, unknown>, value: unknown): value is Key {
-  return typeof value === 'string' && Object.hasOwn(allowed, value);
-}
 
 /**
  * Read structurally, for the same reason as `isScreenshotTimeout`. Each field is
@@ -118,7 +125,9 @@ function isCaptureRefusal(error: unknown): error is CaptureRefusalShape {
  * or a user wrote rides along. Every other error adds none.
  *
  * A capture that timed out (DESKTOP-46) says which surface, the host window and the
- * hold as the capture found them, and how long since the machine last woke.
+ * hold as the capture found them, whether any of the hold's calls on the host and
+ * on the guest had returned by the timeout, and how long since the machine last
+ * woke. A host side at `none` with `hold: armed` means its compositor stopped.
  *
  * A capture refused as larger than its pane (DESKTOP-48) says what its request
  * looked like: which surface, the target (`viewport`, `full_page`, `element`),
@@ -132,8 +141,10 @@ function isCaptureRefusal(error: unknown): error is CaptureRefusalShape {
  * The reporter latches on its tags, so each distinct combination sends once per run
  * rather than one failure per run. That is the point: `since_wake` in the key is what
  * lets a timeout right after an unlock report after an earlier one latched. The hold
- * follows from the host window, so the two make 5 pairs, and 5 surfaces x 5 pairs x 5
- * wake buckets is the bound in principle for a timeout, a handful in practice. A
+ * follows from the host window, so the two make 5 pairs. Only the 2 armed pairs
+ * (a visible or minimized host) can carry a settled side, and each takes 4 settlement
+ * pairs, so the hold tags make 11 combinations. 5 surfaces x 11 x 5 wake buckets is
+ * the bound in principle for a timeout, a handful in practice. A
  * refusal has 4 surfaces (a lane has no bound) and 14 request shapes x 2 size
  * sources, again a handful in practice. The 14 are 9 with a clip (3 targets x 3
  * override states) and 5 without: a viewport or a full page with the override on or
@@ -147,6 +158,8 @@ function captureFailureTags(error: unknown, entry: BrowserPaneEntry): Record<str
       surface: captureSurfaceTag(entry),
       host_window: error.hostState,
       hold: error.hold,
+      host_hold: error.hostHold,
+      guest_hold: error.guestHold,
       since_wake: sinceWakeBucket(),
     };
   }

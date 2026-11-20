@@ -325,6 +325,17 @@ The same pass found two things nothing had hit while the app was raised for ever
 
 `withGuest` used to refuse every tier on a minimized host. That refusal is gone: it stopped `open_pane` itself in a minimized app, and with the raise gone nothing would have lifted it. macOS has not been measured, and its capturer path differs, so a capture there may still end in the 5 s bound. Linux has not been measured either. Every number here is Windows, including the cold `open_pane` behind a covered or minimized app, so on the other two a hidden renderer's throttling could yet push a pane's mount past the open bound. Each failure stays bounded: 5 s for a capture and 10 s for an open. A refusal kept only off Windows was rejected, since it would stop the non-pixel tools for a case nobody has seen fail.
 
+*Sentry DESKTOP-46 came back on 0.60.0 with the hold armed.* The event's host was visible, blurred and most likely covered for 11 minutes, `powerMonitor.speed-limit-change` fired every few seconds, and the guest still drew no frame. Both installs that reported it run Windows 10.0.26300 on Intel UHD Graphics 770. The measurements above were all of fresh panes, so a long cover was the first lead to rule out. Measured on 2026-11-19, Windows 10.0.26200, Electron 45.3.3, from a live agent on a showing pane with example.com loaded, the app covered by another window with no battery saver:
+
+| Covered for | Kangentic's `visibilityState` | Capture |
+|---|---|---|
+| 0 (app showing) | not read | returned |
+| about 2 min | hidden, not focused | returned |
+| about 6 min | hidden, not focused | returned, about 0.3 s after the state read |
+| about 11 min | hidden, not focused | returned, about 0.3 s after the state read |
+
+So 11 minutes covered does not stop the hold on this build. This run had no CPU throttling, so throttling, the 26300 build and the UHD 770 driver remain untested. Efficiency mode (EcoQoS) set on Kangentic's own processes is the next test that changes no system setting. It only approximates the event: `speed-limit-change` reports a CPU speed limit for the whole machine, so a pass under EcoQoS would narrow the lead without ruling throttling out. The report now carries `host_hold` and `guest_hold` (`docs/telemetry/error-reporting.md`), which say whether the hold's own calls returned by the timeout. `host_hold: none` means the host compositor stopped, and the one known cure for that is turning off occlusion tracking, which keeps a covered window painting. That is the owner's call, and it waits on the next event's tags.
+
 ## 45. Annotations are layers drawn into the page, saved as they are made
 
 Task #1042. A user who saw five problems on a page made five round trips to the agent, because Inspect held one pick and Draw one set of strokes under one note. The design was signed off on a canvas over several rounds of review; these are the parts that constrain the code.

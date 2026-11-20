@@ -41,6 +41,13 @@ import { BrowserWindow, type WebContents } from 'electron';
  *
  * Only a guest has a `hostWebContents`, so a lane, which composites by itself,
  * and Kangentic's own window under the dev bridge pass straight through.
+ *
+ * Each side records whether any of its calls returned, for the report a capture
+ * that timed out sends. DESKTOP-46's 0.60.0 event armed the hold on a visible
+ * host, most likely covered for 11 minutes on Windows 10.0.26300 while
+ * `speed-limit-change` fired every few seconds, and still got no frame. `none`
+ * on the host says its compositor stopped answering, which the hold cannot fix.
+ * `settled` on both says the hold was answered and CDP's capture hung anyway.
  */
 
 /** Often enough that one call is still running when the next starts. */
@@ -69,9 +76,24 @@ export type CaptureHoldOutcome = 'armed' | 'skipped_hidden' | 'no_host';
 /** The host window as the hold read it when the capture started. `none`: no window, or no host. */
 export type CaptureHostState = 'visible' | 'minimized' | 'hidden' | 'none';
 
+/**
+ * Whether any of one side's hold calls returned, fulfilled or rejected: either way
+ * that surface's compositor answered. `none` also covers a hold that never armed,
+ * and a surface destroyed before any call returned, since a destroyed one is sent
+ * no more calls.
+ */
+export type HoldSettlement = 'settled' | 'none';
+
+export interface HoldSettlements {
+  host: HoldSettlement;
+  guest: HoldSettlement;
+}
+
 export interface GuestCaptureHold {
   outcome: CaptureHoldOutcome;
   hostState: CaptureHostState;
+  /** Read when it is needed: at a capture's timeout, not when the hold starts. */
+  settlement(): HoldSettlements;
   /** Stop holding. Safe to call when nothing was held. */
   end(): void;
 }
@@ -83,13 +105,21 @@ function readHostState(host: WebContents): CaptureHostState {
   return hostWindow.isVisible() ? 'visible' : 'hidden';
 }
 
-function repeatCapture(contents: WebContents, options: typeof GUEST_HOLD_OPTIONS): () => void {
+interface RepeatedCapture {
+  stop(): void;
+  /** This one side's settlement. The pair a hold reports is `GuestCaptureHold.settlement`. */
+  state(): HoldSettlement;
+}
+
+function repeatCapture(contents: WebContents, options: typeof GUEST_HOLD_OPTIONS): RepeatedCapture {
   let inFlight = 0;
+  let settledCalls = 0;
   const hold = (): void => {
     if (inFlight >= MAX_HOLD_CALLS_IN_FLIGHT || contents.isDestroyed()) return;
     inFlight += 1;
     const release = (): void => {
       inFlight -= 1;
+      settledCalls += 1;
     };
     // A rejection only means this call took no frame. The capture it is holding
     // for still reports its own result.
@@ -98,29 +128,34 @@ function repeatCapture(contents: WebContents, options: typeof GUEST_HOLD_OPTIONS
 
   hold();
   const timer = setInterval(hold, HOLD_INTERVAL_MS);
-  return () => clearInterval(timer);
+  return {
+    stop: () => clearInterval(timer),
+    state: () => (settledCalls > 0 ? 'settled' : 'none'),
+  };
 }
 
 const NOTHING_HELD = (): void => undefined;
+const NOTHING_SETTLED = (): HoldSettlements => ({ host: 'none', guest: 'none' });
 
 /** Start holding the guest visible for a capture. Its `end` stops the hold. */
 export function holdGuestRendering(guest: WebContents): GuestCaptureHold {
   const host = guest.hostWebContents;
-  if (!host) return { outcome: 'no_host', hostState: 'none', end: NOTHING_HELD };
+  if (!host) return { outcome: 'no_host', hostState: 'none', settlement: NOTHING_SETTLED, end: NOTHING_HELD };
   const hostState = readHostState(host);
   // A host with no window reads as hidden: nothing says its calls would settle.
   if (hostState === 'hidden' || hostState === 'none') {
-    return { outcome: 'skipped_hidden', hostState, end: NOTHING_HELD };
+    return { outcome: 'skipped_hidden', hostState, settlement: NOTHING_SETTLED, end: NOTHING_HELD };
   }
 
-  const endHostHold = repeatCapture(host, HOST_HOLD_OPTIONS);
-  const endGuestHold = repeatCapture(guest, GUEST_HOLD_OPTIONS);
+  const hostHold = repeatCapture(host, HOST_HOLD_OPTIONS);
+  const guestHold = repeatCapture(guest, GUEST_HOLD_OPTIONS);
   return {
     outcome: 'armed',
     hostState,
+    settlement: () => ({ host: hostHold.state(), guest: guestHold.state() }),
     end: () => {
-      endHostHold();
-      endGuestHold();
+      hostHold.stop();
+      guestHold.stop();
     },
   };
 }
