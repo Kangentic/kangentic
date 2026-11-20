@@ -25,6 +25,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
+import type { PendingPrompt } from '../../src/main/automations/shared/automation-adapter';
 import type { SpawnOutcome } from '../../src/main/transition-engine/transition-engine';
 import type { InjectionReport } from '../../src/main/transition-engine/terminal-submit-scheduler';
 
@@ -159,7 +160,7 @@ const MAIN_RECORD = {
 
 /** What the real engine hands the enter group: the two callbacks a column's rows drive. */
 interface EnterGroupCallbacks {
-  startAgent: (pendingPrompt?: string) => Promise<unknown>;
+  startAgent: (pendingPrompt?: PendingPrompt) => Promise<unknown>;
   deliverToAgent: (message: string, mode: 'immediate' | 'deferred') => Promise<void>;
   suppressAgentMessages?: boolean;
 }
@@ -196,7 +197,7 @@ function makeDeps(isolatedRuns: Array<typeof REVIEW_RUN>, behavior: DepsBehavior
       }
       const message = columnMessages.get(lane.id);
       if (!message || runOptions.suppressAgentMessages) return { outcomes: [], failures: [], startedAgent: false };
-      await runOptions.startAgent(message);
+      await runOptions.startAgent({ message, mode: 'immediate' });
       await runOptions.deliverToAgent(message, 'immediate');
       return { outcomes: [], failures: [], startedAgent: true };
     }),
@@ -309,6 +310,18 @@ describe('spawnAgent: the main conversation\'s return recap (task #952)', () => 
     expect(recapKindOf(RESUMED_SESSION_ID)).toBeNull();
     // The message rode the resume; nothing is typed after it.
     expect(hoisted.deliverAgentMessageInBackground).not.toHaveBeenCalled();
+  });
+
+  // #1138: a message that follows the task template joins the template's opening.
+  // A recap is the resume's own lead, so it never asks the engine to join one.
+  it('does not let the carried message join the task template when a recap leads the resume', async () => {
+    const deps = makeDeps([REVIEW_RUN]);
+    await runSpawn(makeSwimlane(TESTING_LANE_ID, 'Run the gate and open the PR.'), deps);
+
+    // Guard: the recap really did lead, so the flag below was decided with a recap present.
+    expect(resumePromptArg(deps) ?? '').toContain('the task ran in Code Review');
+    const spawnOverrides = deps.engine.resumeSuspendedSession.mock.calls[0]?.[7] as { carriedMessageJoinsTemplate?: boolean } | undefined;
+    expect(spawnOverrides?.carriedMessageJoinsTemplate).not.toBe(true);
   });
 
   it('makes the recap the whole prompt ahead of a slash command, and sends the command once the recap turn ends', async () => {

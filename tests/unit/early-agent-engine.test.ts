@@ -479,6 +479,28 @@ describe('adopting an early agent when a column message is carried', () => {
     expect(outcome.unsentPrompt).toBeNull();
   });
 
+  // #1138: a message the caller lets follow the template joins the typed
+  // opening, so the agent's first turn has it instead of waiting it out.
+  it('types the carried message after the template in the opening when it may follow the template', async () => {
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    const { engine } = makeEngine(sessionManager, sessionRepo);
+    const handle = await launchEarlyAgentFor(engine);
+
+    const outcome = await engine.resumeSuspendedSession(
+      makeTask({ worktree_path: WORKTREE }) as never, null, false, CARRIED_MESSAGE, undefined, 'claude', undefined,
+      { earlyAgent: handle, carriedMessageJoinsTemplate: true },
+    );
+
+    expect(sessionManager.adoptSession).toHaveBeenCalledWith(handle.sessionId);
+    // The template first, then a blank line and the message.
+    expect(outcome.typedOpening).toContain('Fix login flow');
+    expect(outcome.typedOpening?.endsWith(`\n\n${CARRIED_MESSAGE}`)).toBe(true);
+    expect(outcome.unsentPrompt).toBeNull();
+    // The record holds the whole opening, which is what the typed-message ledger keys.
+    expect(sessionRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ id: handle.sessionId, prompt: outcome.typedOpening }));
+  });
+
   it('hands back nothing unsent when the column has no task template, since the message is the opening itself', async () => {
     const sessionManager = makeSessionManager();
     const { engine } = makeEngine(sessionManager, makeSessionRepo());

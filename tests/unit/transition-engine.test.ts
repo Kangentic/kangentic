@@ -1642,6 +1642,27 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
       expect(capturedOptions?.prompt).not.toContain('/code-review');
     });
 
+    // #1138: the caller lets a message that is not a slash command follow the
+    // template, so the downgraded spawn's first turn has it.
+    it('puts a message that may follow the template after it, and reports nothing unsent', async () => {
+      await writeEmptyStatusFile(RECORD_ID);
+      let capturedOptions: { resume?: boolean; prompt?: string } | undefined;
+      mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; prompt?: string }) => {
+        capturedOptions = options;
+        return `claude ${options.prompt ?? ''}`;
+      });
+      const { engine } = makeEngine({ sessionRepo: resumableMainSessionRepo(), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, 'Review the diff', undefined, 'claude', undefined, { carriedMessageJoinsTemplate: true },
+      );
+
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, unsentPrompt: null });
+      expect(capturedOptions?.prompt).toContain('Fix login flow');
+      expect(capturedOptions?.prompt?.endsWith('\n\nReview the diff')).toBe(true);
+    });
+
     it('reports nothing unsent when the spawn has no template: the message is the fresh prompt', async () => {
       await writeEmptyStatusFile(RECORD_ID);
       let capturedOptions: { resume?: boolean; prompt?: string } | undefined;
@@ -2112,6 +2133,86 @@ describe('TransitionEngine - a resume prompt that does not ride the command line
         const throughNative = await freshSpawnWith(NINE_THOUSAND);
         expect(capturedOptions?.prompt).toBe(NINE_THOUSAND);
         expect(throughNative.typedOpening ?? null).toBeNull();
+      });
+    });
+  });
+
+  /**
+   * #1138: a column message the caller lets follow the template
+   * (`carriedMessageJoinsTemplate`) goes in a fresh spawn's opening, after the
+   * task template. Sent after the spawn, a Design column's contract waited out
+   * the agent's whole 26-minute first turn.
+   */
+  describe('a carried message that follows the task template', () => {
+    const MESSAGE = 'Design phase. Draw the canvas and end each turn with the sign-off line.';
+    let sessionRepo: ReturnType<typeof makeSessionRepo>;
+
+    async function freshSpawnFollowedBy(message: string, joins: boolean) {
+      sessionManager = makeSessionManager();
+      sessionRepo = makeSessionRepo();
+      const { engine } = makeEngine({ sessionManager, sessionRepo, projectPath });
+      return engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, message, undefined, 'claude', undefined,
+        joins ? { carriedMessageJoinsTemplate: true } : undefined,
+      );
+    }
+
+    function insertedPrompt(): unknown {
+      return (sessionRepo.insertedRecords.at(-1) as { prompt?: unknown } | undefined)?.prompt;
+    }
+
+    it('puts the message after the task template on the command line, and reports nothing unsent', async () => {
+      const outcome = await freshSpawnFollowedBy(MESSAGE, true);
+
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toContain('<title>Fix login flow</title>');
+      expect(capturedOptions?.prompt?.endsWith(`</task>\n\n${MESSAGE}`)).toBe(true);
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
+      // The record holds the whole opening, which the typed-message ledger records as Kangentic's.
+      expect(insertedPrompt()).toBe(capturedOptions?.prompt);
+    });
+
+    it('leaves it out, and hands it back unsent, when the caller did not let it follow', async () => {
+      const outcome = await freshSpawnFollowedBy(MESSAGE, false);
+
+      expect(capturedOptions?.prompt).not.toContain(MESSAGE);
+      expect(outcome.unsentPrompt).toBe(MESSAGE);
+    });
+
+    describe('an opening the message would push past its command line on Windows', () => {
+      const LONG_MESSAGE = 'y'.repeat(40_000);
+      const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
+      beforeEach(() => {
+        Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+      });
+
+      afterEach(() => {
+        Object.defineProperty(process, 'platform', hostPlatform);
+        delete (mockAdapter as { firstPromptMayBeTyped?: unknown }).firstPromptMayBeTyped;
+      });
+
+      // Left on the line, the spawn would refuse a launch that starts without it.
+      it('starts on the template alone and hands the message back for an agent that cannot type it', async () => {
+        const outcome = await freshSpawnFollowedBy(LONG_MESSAGE, true);
+
+        expect(capturedOptions?.prompt).toContain('Fix login flow');
+        expect(capturedOptions?.prompt).not.toContain(LONG_MESSAGE);
+        expect(outcome.unsentPrompt).toBe(LONG_MESSAGE);
+        expect(outcome.typedOpening ?? null).toBeNull();
+        expect(insertedPrompt()).not.toContain(LONG_MESSAGE);
+      });
+
+      it('types the whole opening into an agent whose input box can be told from a boot screen', async () => {
+        (mockAdapter as { firstPromptMayBeTyped?: () => boolean }).firstPromptMayBeTyped = () => true;
+
+        const outcome = await freshSpawnFollowedBy(LONG_MESSAGE, true);
+
+        expect(capturedOptions?.prompt).toBeUndefined();
+        expect(outcome.typedOpening).toContain('Fix login flow');
+        expect(outcome.typedOpening?.endsWith(`\n\n${LONG_MESSAGE}`)).toBe(true);
+        expect(outcome.unsentPrompt).toBeNull();
       });
     });
   });
@@ -2955,5 +3056,37 @@ describe('TransitionEngine - a remote spawn copies the task\'s attachments to th
 
     expect(hostAsked).toBe(0);
     expect(sessionManager.spawnedSessions[0].command).toContain(localAttachment);
+  });
+
+  // #1138: a host is always Linux, whatever this computer is. An opening past
+  // Windows' command line but within Linux's argument limit stays joined on a
+  // host. Judged by this computer's platform, the join would be dropped and the
+  // column message sent late (the Design contract waiting out a whole first turn).
+  describe('a column message that follows the template, on a Windows computer', () => {
+    const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const PAST_WINDOWS_WITHIN_LINUX = 'z'.repeat(40_000);
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', hostPlatform);
+    });
+
+    it('keeps the message joined to the opening on an SSH host, with nothing handed back unsent', async () => {
+      Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+      const sessionManager = recordSpawnOrder();
+      const sessionRepo = makeSessionRepo();
+      const { engine } = makeEngine({ sessionManager, sessionRepo, projectPath: shell });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, false, PAST_WINDOWS_WITHIN_LINUX, undefined, 'claude', undefined,
+        { carriedMessageJoinsTemplate: true },
+      );
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      expect(sessionManager.spawnedSessions[0].command).toContain('Fix login flow');
+      expect(sessionManager.spawnedSessions[0].command).toContain(PAST_WINDOWS_WITHIN_LINUX);
+      expect(outcome?.unsentPrompt ?? null).toBeNull();
+      expect((sessionRepo.insertedRecords.at(-1) as { prompt?: string } | undefined)?.prompt).toContain(PAST_WINDOWS_WITHIN_LINUX);
+    });
   });
 });

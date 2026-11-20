@@ -43,13 +43,13 @@ export const BROWSER_POLICY_DENY_TEXT =
  */
 export const BROWSER_POLICY_PROMPT = [
   'BROWSER: The Kangentic browser (the kangentic_browser_* tools) is the only browser you drive.',
-  'That holds for any web page, whether localhost, staging, production or a third-party site, and for any purpose: verifying the app, inspecting a page, capturing screenshots or DOM for your own work or an artifact, comparing production with a local build, or scraping.',
+  'That holds for any page (localhost, staging, production or a third-party site) and any purpose: checking the app, capturing screenshots or DOM for your work or an artifact, comparing production with a local build, or scraping.',
   'Do not use mcp__playwright__* tools, mcp__claude-in-chrome__* tools, chrome-devtools or puppeteer MCP servers, a computer-use tool, or a Playwright, Puppeteer or Selenium script you write yourself.',
   'Each drives a different browser from the pane the user watches, and Kangentic blocks those MCP tools in this session.',
-  'Running the project test suite (npx playwright test, for example) is not driving a browser and is fine.',
+  'Running the project test suite (npx playwright test) is not driving a browser and is fine.',
   'Open a browser only when the work needs one, and when it does, use this one.',
   `If no pane is open, call ${BROWSER_POLICY_REPLACEMENT_TOOL} with the URL; you do not need to ask.`,
-  'For a large capture, pass saveToFile to kangentic_browser_screenshot, _screenshot_element, _query_dom (page HTML) or _eval, which writes it to a file and returns the path instead of filling your context.',
+  'For a large capture, pass saveToFile to kangentic_browser_screenshot, _screenshot_element, _query_dom (page HTML) or _eval: it writes the capture to a file and returns the path.',
   'Copy or publish a screenshot from the filePath it names, inside your working directory, never from the path your client gives the image, which needs approval. With no filePath, use saveToFile.',
 ].join(' ');
 

@@ -1,6 +1,7 @@
 import { readJsonlWindow } from '../../shared/history-scan';
 import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { isTaskNotificationText } from '../../shared/agent-reply';
+import { unwrapPastedContent } from './pasted-content';
 
 /**
  * The most a queued-message read takes from the transcript, from the turn's
@@ -42,7 +43,8 @@ export function queuedHumanMessageOf(raw: unknown): { text: string; ts: number }
   const stamp = typeof raw.timestamp === 'string' ? raw.timestamp : typeof attachment.timestamp === 'string' ? attachment.timestamp : null;
   const ts = stamp === null ? Number.NaN : Date.parse(stamp);
   if (!Number.isFinite(ts)) return null;
-  return { text: attachment.prompt, ts };
+  // A paste into a busy Claude queues here, wrapped as a user turn's paste is.
+  return { text: unwrapPastedContent(attachment.prompt), ts };
 }
 
 /**

@@ -23,7 +23,7 @@ import type {
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
 import { automationNeedsAgent, canTaskRunAutomations } from '../../shared/automation-manifest';
 import { englishText } from '../../shared/i18n/english';
-import type { AutomationContext } from '../automations/shared/automation-adapter';
+import type { AutomationContext, PendingPrompt } from '../automations/shared/automation-adapter';
 import type { ConditionCheckCall, ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput } from '../automations/condition-check/condition-prompt';
 import type { AutomationRepository } from '../db/repositories/automation-repository';
@@ -58,7 +58,7 @@ import { keepsSessionPermissionMode, resolveEffectivePermissionMode } from './sp
 import { resolveSpawnIntent } from './spawn-intent';
 import { agentCwdFor } from './agent-cwd';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
-import { promptRidesCommandLine } from './resume-prompt-delivery';
+import { freshPromptRidesCommandLine, promptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
 import { assessResumeConversationWithEvidence, owedPromptOf, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
 import { commandLineLength } from '../agent/shared/prompt-budget';
@@ -177,6 +177,17 @@ export interface SpawnOverrides {
    * Never set by a move: a move into a column keeps that column's prompt.
    */
   owedPromptOpening?: (owedPrompt: string | null) => string | undefined;
+  /**
+   * The carried message (`resumePrompt`) may follow the task template when the
+   * template takes the prompt slot: a fresh spawn, a forced-fresh entry, a
+   * conversation that never started. The opening is then the template, a blank
+   * line, and the message, so the agent's first turn has it, and
+   * `SpawnOutcome.unsentPrompt` is null. Set by `spawnAgent` for a column
+   * message that is `immediate` and not a slash command, which runs only as a
+   * prompt's first word (#1138). Unset, or when the joined opening could not
+   * reach the agent, the message is handed back unsent as before.
+   */
+  carriedMessageJoinsTemplate?: boolean;
 }
 
 /** What an agent spawn takes: the same list on the wrapper that holds its host file pull and on the spawn. */
@@ -205,6 +216,14 @@ interface LaunchInput {
   ptySessionId: string;
   agentSessionId: string | null;
   prompt: string | undefined;
+  /**
+   * A column message that follows a fresh spawn's task template in its opening
+   * (`SpawnOverrides.carriedMessageJoinsTemplate`). Joined after `prompt` only
+   * when the joined opening still reaches the agent: typed in, or within the
+   * command line. Otherwise the launch keeps `prompt` alone
+   * (`ResolvedLaunch.followUpJoined`).
+   */
+  promptFollowUp?: string;
   nonInteractive: boolean;
   spawnOverrides: SpawnOverrides | undefined;
   /** The mode on the session row a resume retires (`SpawnIntent.retiredPermissionMode`). */
@@ -227,6 +246,13 @@ interface ResolvedLaunch {
    * (`freshPromptTypedForLength`), handed back as `typedOpening`.
    */
   promptKeptOff: boolean;
+  /**
+   * The prompt this launch opens on, before any flattening a shim launch needs:
+   * `LaunchInput.prompt`, with `promptFollowUp` after it when that was joined.
+   */
+  prompt: string | undefined;
+  /** Whether `LaunchInput.promptFollowUp` is in `prompt`. False when there was none. */
+  followUpJoined: boolean;
   /** How the opening prompt reaches the agent, for the session-id report. */
   openingPrompt: OpeningPromptDelivery;
   /** `launchKeyOf` for this launch, which an adoption compares. */
@@ -329,7 +355,7 @@ const DECLINED_SPAWN: SpawnOutcome = { startOver: null, recapOnly: false, unsent
 /** Options shared by every way into an automation group. */
 interface AutomationGroupOptions {
   signal: AbortSignal;
-  startAgent?: (pendingPrompt?: string) => Promise<AgentStartReport | void>;
+  startAgent?: (pendingPrompt?: PendingPrompt) => Promise<AgentStartReport | void>;
   // `signal` is the automation run's own, so a caller that WAITS for
   // delivery (the exit hook does; see `deliverExitMessage`) is bounded by
   // the same budget that bounds every other row. A caller that only
@@ -368,6 +394,15 @@ interface AutomationGroupOptions {
   holdMoves?: string;
   /** Turn end of a running workflow only: held moves run now. See `RunAutomationsOptions`. */
   releaseHeldMoves?: ReadonlySet<string>;
+}
+
+/**
+ * A fresh spawn's opening with a carried message after its template
+ * (`SpawnOverrides.carriedMessageJoinsTemplate`): the two separated by a blank
+ * line, or the message alone when there is no template text.
+ */
+function joinFollowUp(prompt: string | undefined, followUp: string): string {
+  return prompt?.trim() ? `${prompt}\n\n${followUp}` : followUp;
 }
 
 export class TransitionEngine {
@@ -778,7 +813,9 @@ export class TransitionEngine {
     // ensureTrust and before buildCommand (spawn-entry-point-parity). The
     // session row persists the ORIGINAL prompt: flattening is a delivery
     // detail, not what the user wrote.
-    const launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt: input.prompt });
+    const followUp = input.promptFollowUp?.trim() ? input.promptFollowUp : undefined;
+    let prompt = followUp === undefined ? input.prompt : joinFollowUp(input.prompt, followUp);
+    let launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt });
     const executionTarget = resolveExecutionTarget(input.agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
     const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
     // The account this session runs on (task #1057). A WSL CLI keeps its single login: an account
@@ -835,17 +872,33 @@ export class TransitionEngine {
     const inputInAlternateScreen = adapter.firstPromptMayBeTyped?.(commandOptions) === true;
     // Kept off the line, the prompt is handed back, and the caller types it in.
     // Print mode has no input box to type into.
-    const promptText = input.prompt?.trim() ? input.prompt : null;
-    const promptKeptOff = promptText !== null && !promptRidesCommandLine({
-      prompt: promptText,
+    const onHost = isSshPlace(cliTarget);
+    const keptOffLine = (text: string | null): boolean => text !== null && !promptRidesCommandLine({
+      prompt: text,
       resuming: input.canResume,
       adapter,
       launchStrategy: launch.strategy,
       agentPath: launch.agentPath,
       shell,
       mayBeTyped: inputInAlternateScreen && !input.nonInteractive,
-      onHost: isSshPlace(cliTarget),
+      onHost,
     });
+    let promptText = prompt?.trim() ? prompt : null;
+    let promptKeptOff = keptOffLine(promptText);
+    let followUpJoined = followUp !== undefined;
+    // A follow-up that left the opening on a line it no longer fits would make
+    // the spawn refuse a launch that starts without it (`launchRefusal`). The
+    // opening goes without it, and the caller sends it after the spawn.
+    if (followUpJoined && promptText !== null && !promptKeptOff
+      && !freshPromptRidesCommandLine({ prompt: promptText, agentPath: launch.agentPath, shell, platform: onHost ? 'linux' : process.platform })) {
+      followUpJoined = false;
+      prompt = input.prompt;
+      launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt });
+      commandOptions.agentPath = launch.agentPath;
+      commandOptions.prompt = launch.prompt;
+      promptText = prompt?.trim() ? prompt : null;
+      promptKeptOff = keptOffLine(promptText);
+    }
     if (promptKeptOff) commandOptions.prompt = undefined;
     return {
       sessionDir,
@@ -855,6 +908,8 @@ export class TransitionEngine {
       shell,
       commandOptions,
       promptKeptOff,
+      prompt,
+      followUpJoined,
       openingPrompt: promptText === null ? 'none' : promptKeptOff ? 'typed' : 'command_line',
       launchKey: launchKeyOf(input.agentName, commandOptions),
       inputInAlternateScreen,
@@ -1096,6 +1151,12 @@ export class TransitionEngine {
     // the whole opening, the carried message included, so nothing is left out.
     const templateTookSlot = !canResume && !recapOnly && !owedPromptReplayed
       && Boolean(resumePrompt?.trim()) && Boolean(spawnIntentOptions.promptTemplate);
+    // A carried message the caller lets follow the template goes in the opening,
+    // after it, so the agent's first turn has it (#1138). Left out, it waited
+    // out that whole turn.
+    const carriedFollowUp = templateTookSlot && spawnOverrides?.carriedMessageJoinsTemplate === true
+      ? resumePrompt
+      : undefined;
     // What every launch this spawn resolves shares; an adoption's and the
     // fresh one's differ only in their ids, prompt and resume.
     const launchBase = {
@@ -1127,10 +1188,11 @@ export class TransitionEngine {
         }, {
           intent,
           isolatedSwimlaneId,
-          openingPrompt: intent.prompt,
+          // Typed in, so a follow-up always fits.
+          openingPrompt: carriedFollowUp === undefined ? intent.prompt : joinFollowUp(intent.prompt, carriedFollowUp),
           // Handed back as a launch hands it back, so the caller sends it after
           // the opening, as it does after a template on the command line.
-          unsentPrompt: templateTookSlot ? resumePrompt ?? null : null,
+          unsentPrompt: templateTookSlot && carriedFollowUp === undefined ? resumePrompt ?? null : null,
           signal,
         });
       if (adopted) return adopted;
@@ -1183,9 +1245,12 @@ export class TransitionEngine {
 
     const launch = await this.resolveLaunch({
       ...launchBase, canResume, ptySessionId, agentSessionId, prompt,
+      promptFollowUp: carriedFollowUp,
       retiredPermissionMode: canResume ? intent.retiredPermissionMode : null,
     });
     const { statusOutputPath, eventsOutputPath, shell, promptKeptOff } = launch;
+    // The opening as launched: the follow-up is in it when it fit.
+    prompt = launch.prompt;
     const { command, extraEnv, rebuildCommand } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
     // A push that fails means this command never reaches spawn() to own its hold.
     await pushHostFilesForSpawn(hostFiles, ptySessionId, () => releaseCommandHold(adapter, cwd, ptySessionId));
@@ -1276,7 +1341,7 @@ export class TransitionEngine {
     // idle for the same reason. A fresh spawn whose prompt waits to be typed has
     // no turn running either. Any real turn hook clears it.
     if (promptKeptOff) this.sessionManager.markIdleAuthoritative(session.id);
-    const carriedMessage = templateTookSlot ? resumePrompt ?? null : null;
+    const carriedMessage = templateTookSlot && !launch.followUpJoined ? resumePrompt ?? null : null;
     // A fresh spawn's prompt is the session's opening, whatever it holds (the
     // task template, a column's message), so it goes as an adopted early agent's
     // does: typed first, then treated as a prompt that rode the command line.

@@ -164,7 +164,8 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
    input box (`awaitInputReady`) and its screen to be quiet, then sends the prompt the way every
    delivery decides (`shouldPaste`): a bracketed paste for the task template, keystrokes for one
    line or a slash command. It is awaited, so the column's later messages and held messages go
-   after it. A CLI whose interactive session takes no starting prompt (`freshPromptDelivery:
+   after it. An `immediate` column message that is not a slash command is already in it, after the
+   task template (`carriedMessageJoinsTemplate`, #1138). A CLI whose interactive session takes no starting prompt (`freshPromptDelivery:
    'typed'`) takes this step on every fresh spawn, with no early agent: the engine hands its prompt
    back as `typedOpening` too. So does a [prompt too long for its command line](#a-prompt-too-long-for-its-command-line).
 5. **Discard.** Every path that does not adopt it discards it: a spawn whose launch changed, an
@@ -232,6 +233,13 @@ blocks its `.ps1` or the sibling is missing. So:
    prompt too long, because a shim the launcher cannot resolve is the launcher's gap; a queued
    promotion reports it too, since no caller does. A prompt too long is never reported, on any path:
    `reportPreflightFailure` counts it and returns before it spends a key (Sentry DESKTOP-3Z).
+
+A column message that follows the task template (`carriedMessageJoinsTemplate`, #1138) is measured
+with the template, and it never decides the third path. `resolveLaunch` joins it only when the
+whole opening still reaches the agent, on the command line or typed (the second path). Otherwise
+the launch starts on the template alone, as it would have without the message, and the message
+comes back in `SpawnOutcome.unsentPrompt` to go out after the spawn. A message too long for the
+line therefore costs the early delivery, never the start.
 
 Measured on Windows 11 with a mock CLI and a 40,000 character task, before the refusal: PowerShell
 printed "The filename or extension is too long" through a `.cmd` shim and an npm `.ps1` alike, and a

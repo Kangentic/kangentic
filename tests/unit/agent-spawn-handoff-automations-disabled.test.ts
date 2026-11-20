@@ -300,15 +300,31 @@ describe('spawnAgent: a cross-agent handoff for a task with its automations disa
     return mockDeliverAgentMessageInBackground.mock.calls.map((call) => (call[1] as { message: string }).message);
   }
 
+  /** The message the handoff handed the engine for the new agent's opening (#1138), the resume's 4th argument. */
+  function openingMessage(): unknown {
+    return mockResumeSuspendedSession.mock.calls[0][3];
+  }
+
   it('delivers nothing when the column has a message and the task has no command of its own', async () => {
     await runHandoff({ automationsDisabled: true });
 
     expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
+    expect(openingMessage()).toBeUndefined();
   });
 
-  it('delivers the column\'s message once for an enabled task (the control)', async () => {
+  it('puts the column\'s message in the new agent\'s opening for an enabled task (the control)', async () => {
     await runHandoff({ automationsDisabled: false });
 
+    // The command line carried it, so nothing is typed after the spawn.
+    expect(openingMessage()).toBe(COLUMN_TEXT);
+    expect(mockResumeSuspendedSession.mock.calls[0][7]).toEqual(expect.objectContaining({ carriedMessageJoinsTemplate: true }));
+    expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
+  });
+
+  it('delivers a deferred column message once after the spawn, for an enabled task', async () => {
+    await runHandoff({ automationsDisabled: false, columnMessageMode: 'deferred' });
+
+    expect(openingMessage()).toBeUndefined();
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledTimes(1);
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
       expect.anything(),
@@ -316,41 +332,45 @@ describe('spawnAgent: a cross-agent handoff for a task with its automations disa
         taskId: TASK_ID,
         sessionId: 'session-new',
         message: COLUMN_TEXT,
-        mode: 'immediate',
+        mode: 'deferred',
         freshlySpawned: true,
       }),
     );
   });
 
-  it('still delivers the task\'s own auto_command once, immediately, and never the column\'s text', async () => {
-    // The column row is deferred so the mode shows where the delivery came
-    // from: the task's pin has no row, and keeps the default.
+  it('still gives the new agent the task\'s own auto_command, in its opening, and never the column\'s text', async () => {
+    // The column row is deferred so the mode shows where the message came
+    // from: the task's pin has no row, keeps the default, and so rides the opening.
     await runHandoff({ automationsDisabled: true, columnMessageMode: 'deferred', taskAutoCommand: TASK_COMMAND });
 
-    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledTimes(1);
-    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        taskId: TASK_ID,
-        sessionId: 'session-new',
-        message: TASK_COMMAND,
-        mode: 'immediate',
-        freshlySpawned: true,
-      }),
-    );
-    expect(deliveredMessages()).not.toContain(COLUMN_TEXT);
+    expect(openingMessage()).toBe(TASK_COMMAND);
+    expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
   });
 
   // A CLI that takes no starting prompt hands the task's opening back as
   // `typedOpening`. The handoff must type it, ahead of the column's message
-  // (textLeftToType), or the new agent sits idle with no first prompt.
+  // (textLeftToType), or the new agent sits idle with no first prompt. A
+  // deferred row, so the column's message is not in that opening already.
   it('types the engine\'s typed opening ahead of the column\'s message in one delivery', async () => {
     await runHandoff({
       automationsDisabled: false,
+      columnMessageMode: 'deferred',
       outcome: { startOver: null, recapOnly: false, unsentPrompt: null, typedOpening: 'Fix the bug' },
     });
 
     expect(deliveredMessages()).toEqual([`Fix the bug\n\n${COLUMN_TEXT}`]);
+  });
+
+  // Behind an immediate row the typed opening already holds the message
+  // (`textLeftToType` over the engine's opening), so it is typed once, alone.
+  it('types the typed opening alone when the column\'s message rode in it', async () => {
+    const opening = `Fix the bug\n\n${COLUMN_TEXT}`;
+    await runHandoff({
+      automationsDisabled: false,
+      outcome: { startOver: null, recapOnly: false, unsentPrompt: null, typedOpening: opening },
+    });
+
+    expect(deliveredMessages()).toEqual([opening]);
   });
 
   it('types the typed opening alone when the column sends no message', async () => {
@@ -363,31 +383,23 @@ describe('spawnAgent: a cross-agent handoff for a task with its automations disa
     expect(deliveredMessages()).toEqual(['Fix the bug']);
   });
 
-  // The gate reads the row the handoff re-reads AFTER the new session exists
-  // (`currentTask`), not the `task` argument it started with: the user can throw
-  // the switch while the target agent is spawning. In each case the argument and
-  // the stored row disagree.
+  // The gate reads the stored row, re-read when the handoff resolves the
+  // column's message (just before the spawn, so the message can ride the
+  // opening), not the `task` argument it started with: the user can throw the
+  // switch after the move began. In each case the argument and the stored row
+  // disagree.
   it('delivers nothing when the stored row says disabled and the task argument says enabled', async () => {
     await runHandoff({ automationsDisabled: true, argumentAutomationsDisabled: false });
 
     // Red: gating on the `task` argument delivers the column's text.
     expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
+    expect(openingMessage()).toBeUndefined();
   });
 
-  it('delivers the column\'s message once when the stored row says enabled and the task argument says disabled', async () => {
+  it('sends the column\'s message when the stored row says enabled and the task argument says disabled', async () => {
     await runHandoff({ automationsDisabled: false, argumentAutomationsDisabled: true });
 
     // Red: gating on the `task` argument holds a message the task is owed.
-    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledTimes(1);
-    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        taskId: TASK_ID,
-        sessionId: 'session-new',
-        message: COLUMN_TEXT,
-        mode: 'immediate',
-        freshlySpawned: true,
-      }),
-    );
+    expect(openingMessage()).toBe(COLUMN_TEXT);
   });
 });

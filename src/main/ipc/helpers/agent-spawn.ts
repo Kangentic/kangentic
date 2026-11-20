@@ -34,6 +34,7 @@ import { buildCommandInjectionVerifier } from '../../transition-engine/injection
 import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
+import type { PendingPrompt } from '../../automations/shared/automation-adapter';
 import { awaitQueuedSessionStart, deliverAgentMessageInBackground, deliverOpeningPromptAndWait, isSlashCommand, OPENING_BOOT_SCREEN_WAIT_MS, OPENING_INPUT_WAIT_MS, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import type { EarlyAgentHandle } from '../../transition-engine/early-agent';
 import { isWorktreeCreationInFlight } from '../../git/worktree-creation-registry';
@@ -344,6 +345,18 @@ export interface AgentSpawnOptions {
 export function setupStillRunningNote(initScript: string): string {
   return `The worktree's setup script is still running in the background: \`${initScript}\`. `
     + 'Do not run it yourself. Commands that need what it installs or builds may fail until it finishes, and you will be told if it fails.';
+}
+
+/**
+ * Whether a message may follow a fresh spawn's task template in the same
+ * opening (#1138). Sent after the spawn, a long one waited out the agent's
+ * whole first turn, and a short one was typed into it at the scheduler's
+ * fallback. A slash command runs only as a prompt's first word, and a
+ * `deferred` message waits for the template's turn to end, so both still go
+ * after the spawn.
+ */
+function canFollowTemplate(message: string | undefined, mode: AutoCommandMode | undefined): message is string {
+  return message !== undefined && message.trim() !== '' && mode === 'immediate' && !isSlashCommand(message);
 }
 
 /**
@@ -676,14 +689,64 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // Messages held for the task go to this agent with the column's message.
     heldClaim = options.projectId ? claimHeldMessages(context, options.projectId, task.id) : null;
 
+    // The column's message now lives in its first enabled `send_message`
+    // enter automation rather than in `swimlanes.auto_command`. The task's own
+    // MCP-set command still outranks it, which is the precedence
+    // `resolveEffectiveAutoCommand` exists to keep identical on every path.
+    // A task with its automations disabled is sent no column message on a
+    // handoff either; its own auto_command still goes. Read before the spawn,
+    // so the message can ride the new agent's opening (#1138, below).
+    const taskBeforeSpawn = tasks.getById(task.id) ?? task;
+    const resolvedColumnMessage = canTaskRunAutomations(taskBeforeSpawn).ok
+      ? resolveColumnMessage(getProjectRepos(context, options.projectId).automations.listForColumn(toLane.id))
+      : null;
+    // A handoff runs no enter group, so nothing here can check a row's
+    // Condition or Frequency. Sending a guarded row would skip both; it is
+    // left unsent, as the runner leaves a row it cannot check.
+    const columnMessage = resolvedColumnMessage && !resolvedColumnMessage.guarded ? resolvedColumnMessage : null;
+    if (resolvedColumnMessage?.guarded) {
+      console.log(`[spawnAgent] Handoff for task ${task.id.slice(0, 8)}: the column's message has a Condition or Frequency limit, so it is not sent.`);
+    }
+    const taskOverride = taskBeforeSpawn.auto_command?.trim();
+    const effectiveAutoCommand = resolveEffectiveAutoCommand(taskBeforeSpawn.auto_command, columnMessage?.message);
+    let columnText: string | undefined;
+    if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
+      // Which interpolator depends on which tier won, and the two genuinely
+      // differ. A task's `auto_command` keeps DROP-AND-COLLAPSE, which is the
+      // rule `task-template-vars-parity.md` states for it. A column's message
+      // is an automation field, and every automation field substitutes
+      // literally through the runner's `interpolateAutomationConfig` - which
+      // is also what the field's own editor promises, in as many words:
+      // "Unknown variable: nope. It will be sent as written."
+      //
+      // The normal path already splits them exactly here (`takeMessage`
+      // swaps a drop-and-collapse task override over a literally-interpolated
+      // column row). This branch is the cross-agent handoff, and it used to
+      // drop-and-collapse BOTH, so the same message delivered one way on a
+      // handoff and another way on every other move.
+      const templateVariables = resolveAutoCommandVars(taskBeforeSpawn);
+      columnText = taskOverride
+        ? interpolateTaskTemplate(effectiveAutoCommand, templateVariables)
+        : interpolateTemplate(effectiveAutoCommand, templateVariables);
+    }
+    const columnMode = columnMessage?.mode ?? 'immediate';
+    // A message that may follow the template (`canFollowTemplate`) goes in the
+    // new agent's opening, after the history pointer (and the task template
+    // when there is one), with the held messages after it. Any other goes
+    // after the spawn, below.
+    const composedOpening = canFollowTemplate(columnText, columnMode)
+      ? composeOpeningMessage(columnText, heldClaim?.text)
+      : null;
+    const openingInSpawn = composedOpening !== null && !composedOpening.heldAfterTurn ? composedOpening.prompt : undefined;
+
     let handoffRecapOnly: boolean;
     let handoffUnsentPrompt: string | null;
     try {
       const handoffOutcome = await engine.resumeSuspendedSession(
-        task, toLane.permission_mode, skipPromptTemplate, undefined, signal,
+        task, toLane.permission_mode, skipPromptTemplate, openingInSpawn, signal,
         targetAgent,
         handoffPromptPrefix,
-        resolveSpawnOverrides(task, toLane, project),
+        { ...resolveSpawnOverrides(task, toLane, project), carriedMessageJoinsTemplate: openingInSpawn !== undefined },
       );
       // The target agent's own earlier conversation was resumed, and the agent
       // had deleted it: the new session opened on a recap that asks it to
@@ -714,61 +777,43 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         console.error('[spawnAgent] Failed to finalize handoff:', error);
       }
 
-      // The column's message now lives in its first enabled `send_message`
-      // enter automation rather than in `swimlanes.auto_command`. The task's own
-      // MCP-set command still outranks it, which is the precedence
-      // `resolveEffectiveAutoCommand` exists to keep identical on every path.
-      // A task with its automations disabled is sent no column message on a
-      // handoff either; its own auto_command still goes.
-      const resolvedColumnMessage = canTaskRunAutomations(currentTask).ok
-        ? resolveColumnMessage(getProjectRepos(context, options.projectId).automations.listForColumn(toLane.id))
-        : null;
-      // A handoff runs no enter group, so nothing here can check a row's
-      // Condition or Frequency. Sending a guarded row would skip both; it is
-      // left unsent, as the runner leaves a row it cannot check.
-      const columnMessage = resolvedColumnMessage && !resolvedColumnMessage.guarded ? resolvedColumnMessage : null;
-      if (resolvedColumnMessage?.guarded) {
-        console.log(`[spawnAgent] Handoff for task ${task.id.slice(0, 8)}: the column's message has a Condition or Frequency limit, so it is not sent.`);
-      }
-      const taskOverride = currentTask.auto_command?.trim();
-      const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, columnMessage?.message);
-      let columnText: string | undefined;
-      if (handoffRecapOnly && effectiveAutoCommand?.trim()) {
+      // An expired conversation's recap withholds the column's message and the
+      // held messages, in the opening or after it.
+      if (handoffRecapOnly && columnText !== undefined) {
         console.log(`[spawnAgent] Handoff for task ${task.id.slice(0, 8)}: the conversation had expired and the agent is waiting on its recap, so the column's message is not sent.`);
-      } else if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
-        // Which interpolator depends on which tier won, and the two genuinely
-        // differ. A task's `auto_command` keeps DROP-AND-COLLAPSE, which is the
-        // rule `task-template-vars-parity.md` states for it. A column's message
-        // is an automation field, and every automation field substitutes
-        // literally through the runner's `interpolateAutomationConfig` - which
-        // is also what the field's own editor promises, in as many words:
-        // "Unknown variable: nope. It will be sent as written."
-        //
-        // The normal path already splits them exactly here (`takeMessage`
-        // swaps a drop-and-collapse task override over a literally-interpolated
-        // column row). This branch is the cross-agent handoff, and it used to
-        // drop-and-collapse BOTH, so the same message delivered one way on a
-        // handoff and another way on every other move.
-        const vars = resolveAutoCommandVars(currentTask);
-        columnText = taskOverride
-          ? interpolateTaskTemplate(effectiveAutoCommand, vars)
-          : interpolateTemplate(effectiveAutoCommand, vars);
       }
-
-      // One typed delivery: the history pointer the resume could not carry,
-      // the column's message, then the held messages (none after an expired
-      // conversation's recap, which withholds them as it withholds the column's).
-      // Text put ahead of a slash command stops it running, and text after one
-      // becomes its arguments, so beside one they are pasted after its turn.
+      const sentColumnText = handoffRecapOnly ? undefined : columnText;
       const handoffSessionId = currentTask.session_id;
       const heldText = handoffRecapOnly ? undefined : heldClaim?.text;
-      const opening = composeOpeningMessage(columnText, heldText);
-      let typedMessage = opening.prompt;
-      const pointerAfterTurn = handoffUnsentPrompt !== null && typedMessage !== undefined && isSlashCommand(typedMessage);
-      if (handoffUnsentPrompt !== null && !pointerAfterTurn) {
-        typedMessage = typedMessage === undefined ? handoffUnsentPrompt : `${handoffUnsentPrompt}\n\n${typedMessage}`;
+      const inOpening = openingInSpawn !== undefined && !handoffRecapOnly;
+
+      let typedMessage: string | undefined;
+      let pointerAfterTurn = false;
+      let heldAfterTurn = false;
+      if (inOpening) {
+        // The message and the held messages are in the opening. Whatever the
+        // command line could not carry came back to be typed, and it holds
+        // them (`textLeftToType`); with nothing left, they rode the line.
+        typedMessage = handoffUnsentPrompt ?? undefined;
+        if (typedMessage === undefined && heldClaim !== null && heldText !== undefined) {
+          commitWhenSessionRuns(context, heldClaim, handoffSessionId);
+          heldHandedOff = true;
+        }
+      } else {
+        // One typed delivery: the history pointer the resume could not carry,
+        // the column's message, then the held messages (none after an expired
+        // conversation's recap, which withholds them as it withholds the column's).
+        // Text put ahead of a slash command stops it running, and text after one
+        // becomes its arguments, so beside one they are pasted after its turn.
+        const opening = composeOpeningMessage(sentColumnText, heldText);
+        heldAfterTurn = opening.heldAfterTurn;
+        typedMessage = opening.prompt;
+        pointerAfterTurn = handoffUnsentPrompt !== null && typedMessage !== undefined && isSlashCommand(typedMessage);
+        if (handoffUnsentPrompt !== null && !pointerAfterTurn) {
+          typedMessage = typedMessage === undefined ? handoffUnsentPrompt : `${handoffUnsentPrompt}\n\n${typedMessage}`;
+        }
       }
-      const carried = heldClaim !== null && heldText !== undefined && !opening.heldAfterTurn ? heldClaim : null;
+      const carried = heldClaim !== null && heldText !== undefined && !heldAfterTurn && !heldHandedOff ? heldClaim : null;
       if (typedMessage !== undefined) {
         // Keystrokes once the new agent is alive, or, for a message with line
         // breaks, a paste once its first turn ends.
@@ -776,16 +821,16 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           taskId: currentTask.id,
           sessionId: handoffSessionId,
           message: typedMessage,
-          mode: columnMessage?.mode ?? 'immediate',
+          mode: columnMode,
           verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
           freshlySpawned: true,
           onOutcome: (report) => {
-            if (columnText !== undefined) {
+            if (sentColumnText !== undefined) {
               reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId);
               holdUndeliveredOpening(context, {
                 projectId: options.projectId,
                 taskId: currentTask.id,
-                message: columnText,
+                message: sentColumnText,
                 report,
                 taskStayed: tasks.getById(currentTask.id)?.swimlane_id === currentTask.swimlane_id,
               });
@@ -797,7 +842,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       }
       // What waits out the slash command's turn goes as ONE paste, the pointer
       // first: two pastes waiting on the same turn could land in either order.
-      const heldAfterLead = heldClaim !== null && heldText !== undefined && opening.heldAfterTurn ? heldClaim : null;
+      const heldAfterLead = heldClaim !== null && heldText !== undefined && heldAfterTurn ? heldClaim : null;
       const afterTurn = [pointerAfterTurn ? handoffUnsentPrompt : null, heldAfterLead?.text ?? null]
         .filter((part): part is string => part !== null);
       if (afterTurn.length > 0) {
@@ -988,7 +1033,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     return true;
   };
 
-  const startAgent = async (pendingPrompt?: string): Promise<AgentStartReport | void> => {
+  const startAgent = async (pendingPrompt?: PendingPrompt): Promise<AgentStartReport | void> => {
     const beforeSpawn = tasks.getById(task.id);
     if (!beforeSpawn || beforeSpawn.session_id) return legacyStartReport ?? undefined;
 
@@ -1011,12 +1056,18 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // message, and a promptless fresh spawn (an isolated review column) would
     // otherwise sit at an empty prompt, emit no 'thinking' event, and make the
     // keystroke scheduler wait out its full 30s fallback before the message
-    // appears. That reads as "the automation never ran".
+    // appears. That reads as "the automation never ran". Where the slot holds
+    // the task template, a message that may follow it (`canFollowTemplate`)
+    // goes in the same opening, after it (`joinsTemplate`).
     const overrideBeforeTake = pendingTaskOverride;
-    const message = takeMessage(pendingPrompt ?? '');
+    const message = takeMessage(pendingPrompt?.message ?? '');
     const promptSlotOpen = canResumeDestination || skipPromptTemplate === true;
-    const takesPromptSlot = message !== '' && promptSlotOpen;
-    if (takesPromptSlot && pendingPrompt !== undefined) promptTakenFromRow = pendingPrompt;
+    // Judged on the message the spawn sends, which a task's own command can
+    // replace, with the row's mode.
+    const mayFollowTemplate = canFollowTemplate(message, pendingPrompt?.mode);
+    const joinsTemplate = mayFollowTemplate && !promptSlotOpen;
+    const takesPromptSlot = message !== '' && (promptSlotOpen || joinsTemplate);
+    if (takesPromptSlot && pendingPrompt !== undefined) promptTakenFromRow = pendingPrompt.message;
 
     // The continuation prompt (plan-exit auto-move) says why the session
     // restarted and asks the agent to proceed. It is a resume-only fallback:
@@ -1034,7 +1085,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // conversation: a fresh one has nothing to catch up, a handoff gets the
     // other agent's history, and a recovery move out of Done sends nothing.
     // Messages held for the task join the opening message, after the lead,
-    // wherever the spawn has a prompt slot. Claimed here, once, as the agent
+    // wherever the opening has room for them: a prompt slot, or after the
+    // template when the message follows it. Claimed here, once, as the agent
     // starts; a later start finds them gone. Behind a deferred lead they wait
     // for its turn, as they do behind any slash command.
     if (heldClaim === null && options.projectId) heldClaim = claimHeldMessages(context, options.projectId, task.id);
@@ -1060,10 +1112,12 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       console.log(`[spawnAgent] Task ${task.id.slice(0, 8)} returns to its main conversation after a column session of its own; its recap opens the resume (${recapOpening}).`);
     }
 
+    // Behind the template, the held messages follow the column's message.
+    const openingCarriesHeld = promptSlotOpen || joinsTemplate;
     const opening = recapDefersLead
       ? { prompt: openingLead, heldAfterTurn: heldClaim !== null }
-      : (promptSlotOpen ? composeOpeningMessage(openingLead, heldClaim?.text) : { prompt: openingLead, heldAfterTurn: false });
-    const heldInPrompt = heldClaim !== null && promptSlotOpen && !opening.heldAfterTurn;
+      : (openingCarriesHeld ? composeOpeningMessage(openingLead, heldClaim?.text) : { prompt: openingLead, heldAfterTurn: false });
+    const heldInPrompt = heldClaim !== null && openingCarriesHeld && !opening.heldAfterTurn;
 
     try {
       // Always pass targetAgent so the column's agent_override is respected.
@@ -1086,6 +1140,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           ...resolveSpawnOverrides(beforeSpawn, toLane, project),
           earlyAgent: options.earlyAgent,
           startPath: options.startPath,
+          // Also where a resume starts over or the column always starts fresh:
+          // the engine puts the template in the slot, and the message follows
+          // it. Never a recap, which a start-over drops.
+          carriedMessageJoinsTemplate: mayFollowTemplate && recapText === null,
         },
       );
       startedAgentInGroup = true;
@@ -1107,9 +1165,9 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // task's own command: `deliverToAgent` sends both. The spawn did not send
       // it when it did not take the prompt slot, when the engine spawned fresh
       // with the task template as the prompt (the conversation never started
-      // or expired on an isolated column, or the column always spawns new), or
-      // when the resume could not carry it on its command line
-      // (`SpawnOutcome.unsentPrompt`).
+      // or expired on an isolated column, or the column always spawns new) and
+      // the message could not follow the template, or when the resume could not
+      // carry it on its command line (`SpawnOutcome.unsentPrompt`).
       const unsentPrompt = outcome?.unsentPrompt ?? null;
       if (!takesPromptSlot || unsentPrompt !== null) {
         promptTakenFromRow = null;
@@ -1244,6 +1302,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const sessionId = currentTask.session_id;
     // Keystrokes once the CLI is alive, or, for a message with line breaks, a
     // paste once the fresh agent's first turn ends, whatever the row's mode.
+    // An `immediate` message on a fresh spawn rode the opening instead, after
+    // the template, unless it is a slash command or the opening had no room.
     // Behind a return recap, once the recap's turn has ended.
     afterRecapTurn((freshlySpawned) => {
       deliverAgentMessageInBackground(context, {
@@ -1370,11 +1430,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // here" setting does.
 
   try {
-    await startAgent();
     // No row asked for the agent, so the only message is the task's own
-    // command. When the spawn did not send it, it goes out now, as it does
-    // after a message row. An expired conversation's recap-only start leaves
-    // none to send.
+    // command, which `takeMessage` puts in place of the empty one. It has no
+    // row to say otherwise, so it is `immediate` and may follow a fresh
+    // spawn's template, as on a handoff. When the spawn did not send it, it
+    // goes out now, as it does after a message row. An expired conversation's
+    // recap-only start leaves none to send.
+    await startAgent({ message: '', mode: 'immediate' });
     if (pendingTaskOverride !== null) await deliverToAgent('', 'immediate');
     deliverHeldRemainder();
   } catch (error) {

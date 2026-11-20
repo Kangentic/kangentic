@@ -22,6 +22,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Task, Swimlane } from '../../src/shared/types';
+import type { PendingPrompt } from '../../src/main/automations/shared/automation-adapter';
 import type { EarlyAgentHandle } from '../../src/main/transition-engine/early-agent';
 import { IPC } from '../../src/shared/ipc-channels';
 
@@ -89,10 +90,13 @@ function makeHandle(): EarlyAgentHandle & { discard: ReturnType<typeof vi.fn> } 
 
 /**
  * `columnMessage` is the column's send_message row, which the runner hands to
- * `startAgent` and then to `deliverToAgent`. `typedOpening` is what the engine
- * reports it could not put on the adopted agent's command line.
+ * `startAgent` and then to `deliverToAgent`, in `columnMode` (`immediate` by
+ * default). `typedOpening` is what the engine reports it could not put on the
+ * adopted agent's command line. A test about what waits behind the opening uses
+ * a `deferred` row: an `immediate` one joins the opening after the template.
  */
-function makeDeps(args: { columnMessage: string | null; typedOpening: string | null; legacyStartRow?: boolean }) {
+function makeDeps(args: { columnMessage: string | null; columnMode?: 'immediate' | 'deferred'; typedOpening: string | null; legacyStartRow?: boolean }) {
+  const columnMode = args.columnMode ?? 'immediate';
   const events: string[] = [];
   // The session manager's push events, which a queued session's promotion rides.
   const sessionEvents = new EventEmitter();
@@ -112,7 +116,7 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
       _lane: Swimlane,
       _trigger: string,
       runOptions: {
-        startAgent: (pendingPrompt?: string) => Promise<void>;
+        startAgent: (pendingPrompt?: PendingPrompt) => Promise<void>;
         deliverToAgent: (message: string, mode: 'immediate' | 'deferred') => Promise<void>;
         legacySpawnAgent: (legacyConfig: Record<string, never>) => Promise<void>;
       },
@@ -123,8 +127,8 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
         return { outcomes: [], failures: [], startedAgent: true };
       }
       if (!args.columnMessage) return { outcomes: [], failures: [], startedAgent: false };
-      await runOptions.startAgent(args.columnMessage);
-      await runOptions.deliverToAgent(args.columnMessage, 'immediate');
+      await runOptions.startAgent({ message: args.columnMessage, mode: columnMode });
+      await runOptions.deliverToAgent(args.columnMessage, columnMode);
       return { outcomes: [], failures: [], startedAgent: true };
     }),
     resumeSuspendedSession: vi.fn(async () => {
@@ -226,8 +230,8 @@ describe('spawnAgent with an adopted early agent', () => {
     expect(spawnOverrides.earlyAgent).toBe(handle);
   });
 
-  it('pastes the task template first, then schedules the column message', async () => {
-    const deps = makeDeps({ columnMessage: 'Run the tests before you finish.', typedOpening: TEMPLATE_PROMPT });
+  it('pastes the task template first, then schedules a deferred column message', async () => {
+    const deps = makeDeps({ columnMessage: 'Run the tests before you finish.', columnMode: 'deferred', typedOpening: TEMPLATE_PROMPT });
 
     await runSpawn(deps, makeHandle(), false);
 
@@ -466,7 +470,7 @@ describe('spawnAgent when the agent opens on a boot screen', () => {
 
   // A row's keystrokes carry an Enter too, and that screen would take it.
   it('holds the column\'s message behind the opening, so nothing reaches the screen', async () => {
-    const deps = makeDeps({ columnMessage: 'Run the tests before you finish.', typedOpening: TEMPLATE_PROMPT });
+    const deps = makeDeps({ columnMessage: 'Run the tests before you finish.', columnMode: 'deferred', typedOpening: TEMPLATE_PROMPT });
     const screen = onABootScreen(deps);
 
     await runSpawn(deps, makeHandle(), false);
@@ -482,7 +486,7 @@ describe('spawnAgent when the agent opens on a boot screen', () => {
 
   it('sends a column\'s multi-line message after the opening too, never over it', async () => {
     const message = 'The reviewer says:\n- fix the null check';
-    const deps = makeDeps({ columnMessage: message, typedOpening: TEMPLATE_PROMPT });
+    const deps = makeDeps({ columnMessage: message, columnMode: 'deferred', typedOpening: TEMPLATE_PROMPT });
     const screen = onABootScreen(deps);
 
     await runSpawn(deps, makeHandle(), false);
@@ -791,7 +795,7 @@ describe('spawnAgent while a deferred opening waits out a boot screen or a queue
     });
 
     it('drops a later column message with the reason about the opening, not the recap one', async () => {
-      const deps = makeDeps({ columnMessage: COLUMN_MESSAGE, typedOpening: TEMPLATE_PROMPT });
+      const deps = makeDeps({ columnMessage: COLUMN_MESSAGE, columnMode: 'deferred', typedOpening: TEMPLATE_PROMPT });
       const screen = scriptedInputReady(deps, false);
 
       await runSpawn(deps, makeHandle(), false);
