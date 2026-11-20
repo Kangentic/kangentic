@@ -350,7 +350,27 @@ describe('a turn end and a row whose Task lines the task does not match', () => 
       expect(stop()).toMatchObject({ cause: 'spent-row' });
     });
 
-    it('is not recorded for a spent move row filtered out for the task', async () => {
+    it('is not recorded for a spent move row filtered out for the task, beside a row that is for it', async () => {
+      const spentFiltered = filteredRow({ max_runs: 1 });
+      const matchingWithCondition = row({ id: 'row-matching-condition', condition: 'The review is clean' });
+      hoisted.rows = [matchingWithCondition, spentFiltered];
+      spend(spentFiltered);
+      enterColumnAt(secondsAgo(60));
+      // The matching row's Condition answers no, so nothing moves the task or
+      // messages the agent and the pass goes on to judge the card's stop.
+      hoisted.checkConditions.mockImplementation(async () => ({
+        ok: true,
+        answers: new Map([['row-matching-condition', { met: false, reason: 'Not clean.' }]]),
+      }));
+
+      await endTurn();
+
+      // The pass did reach the stop judgement: it waited for the turn.
+      expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(1);
+      expect(stop()).toBeNull();
+    });
+
+    it('ends the pass at the fast path when every row leaves the task out: no paint wait, no check, no stop', async () => {
       const spentFiltered = filteredRow({ max_runs: 1 });
       hoisted.rows = [spentFiltered];
       spend(spentFiltered);
@@ -358,8 +378,10 @@ describe('a turn end and a row whose Task lines the task does not match', () => 
 
       await endTurn();
 
-      // The pass did reach the stop judgement: it waited for the turn.
-      expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(1);
+      // For this task the column has no rows, so the pass never waits on the
+      // paint or pays for the Needs-a-person question.
+      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
       expect(stop()).toBeNull();
     });
   });
