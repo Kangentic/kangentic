@@ -339,20 +339,20 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(dialog.locator('[data-testid="column-automation-group"][data-trigger="enter"] [data-testid="column-automation-row"]')).toHaveCount(0);
   },
   'column-automation-edit': async (page) => {
-    // Send findings back opened in its editor, every card holding the row's own value. The Condition
-    // shows its field, not the setup notice, which is what the scene's Automation agent seed buys:
-    // the sample install chooses none.
+    // Send findings back opened in its editor on the Condition card, the closed cards naming the
+    // row's own values. The Evaluation line shows its field, not the setup notice, which is what the
+    // scene's Automation agent seed buys: the sample install chooses none.
     const editor = page.locator('[data-testid="edit-automation-dialog"]');
     await expect(editor.locator('[data-testid="edit-automation-name"]')).toHaveValue('Send findings back');
-    await expect(editor.locator('[data-testid="edit-automation-trigger-turn_end"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(editor.locator('[data-testid="edit-automation-card-condition"]')).toHaveAttribute('data-open', 'true');
+    await expect(editor.locator('[data-testid="edit-automation-card-trigger-description"]')).toHaveText('On agent turn end');
     await expect(editor.locator('[data-testid="edit-automation-condition-setup"]')).toHaveCount(0);
-    await expect(editor.locator('[data-testid="edit-automation-condition-kind-agent"]')).toHaveAttribute('aria-checked', 'true');
+    await expect(editor.locator('[data-testid="edit-automation-condition-line-evaluation"]')).toBeVisible();
+    await expect(editor.locator('[data-testid="edit-automation-condition-line-reply"]')).toHaveCount(0);
     await expect(editor.locator('[data-testid="edit-automation-condition"]')).toHaveValue('The review found work the implementer can do');
-    await expect(editor.locator('[data-testid="edit-automation-max-runs-value"]')).toHaveValue('3');
-    await expect(editor.locator('[data-testid="automation-config-targetColumn"]')).toHaveAttribute('data-value', 'Executing');
-    await expect(editor.locator('[data-testid="automation-config-message"]')).toHaveValue(/\{\{agentReply\}\}/);
-    // A dialog, not a menu: no menu or popover is left open over it.
-    await expect(page.locator('[aria-expanded="true"]')).toHaveCount(0);
+    // A dialog, not a menu: no menu or popover is left open over it. The open card's own header is
+    // a disclosure (`aria-expanded` on `edit-automation-card-<section>-header`), not a menu.
+    await expect(page.locator('[aria-expanded="true"]:not([data-testid^="edit-automation-card-"])')).toHaveCount(0);
   },
   'task-mcp': async (page) => {
     // The scene-only task's window, maximized, over a board that now carries its card in Code

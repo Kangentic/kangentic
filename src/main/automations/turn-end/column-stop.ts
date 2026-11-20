@@ -148,7 +148,12 @@ export async function judgeColumnStop(input: JudgeColumnStopInput): Promise<void
     return;
   }
 
-  const conditionRows = spent.map(({ row }) => row).filter(hasCondition);
+  // A row may hold a Text match and a Condition together, and the runner reads
+  // the Text match first: one that missed would have skipped the row, so its
+  // Condition is never asked here.
+  const conditionRows = spent
+    .map(({ row }) => row)
+    .filter((row) => hasCondition(row) && (!hasFinalLine(row) || textMatchMet(row)));
   const askNeedsAPerson = Boolean(reply?.trim());
   if (conditionRows.length === 0 && !askNeedsAPerson) {
     clearReplyStop(input, current !== null, NO_MESSAGE_REASON);
@@ -161,7 +166,7 @@ export async function judgeColumnStop(input: JudgeColumnStopInput): Promise<void
     if (outcome.cause === 'unavailable') clearReplyStop(input, current !== null, 'The agent\'s last message does not end on Needs owner, and no Automation agent is set up to ask.');
     return;
   }
-  const metRow = spent.find(({ row }) => outcome.answers.get(row.id)?.met === true);
+  const metRow = spent.find(({ row }) => conditionRows.includes(row) && outcome.answers.get(row.id)?.met === true);
   if (metRow) {
     input.runs.recordColumnStop({
       taskId: input.taskId,
