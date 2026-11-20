@@ -18,14 +18,23 @@ describe('labelFromSourceText', () => {
     ['C:\\Users\\dev\\vault\\Notes', 'Notes'],
     // A drive letter is no URL scheme: a folder right under it still names the source.
     ['C:\\Notes', 'Notes'],
-    ['D:\\vault\\issues', 'vault'],
     ['https://github.com/acme/web?tab=issues#top', 'web'],
+    // A link typed without its scheme is still a link.
+    ['gitlab.com/acme/web/-/issues', 'web'],
+    // A folder is named by its own name, even one a tracker link would skip (an
+    // Obsidian vault folder called Projects, a notes folder called 2024).
+    ['/vaults/Work/Projects', 'Projects'],
+    ['D:\\vault\\issues', 'issues'],
+    ['vault/Tasks', 'Tasks'],
+    ['notes/2024', '2024'],
+    ['.changeset', '.changeset'],
   ])('%s gives %s', (text, label) => {
     expect(labelFromSourceText(text)).toBe(label);
   });
 
   it('gives nothing for a bare host or an empty field', () => {
     expect(labelFromSourceText('https://github.com')).toBe('');
+    expect(labelFromSourceText('github.com')).toBe('');
     expect(labelFromSourceText('   ')).toBe('');
     expect(labelFromSourceText('C:\\')).toBe('');
   });

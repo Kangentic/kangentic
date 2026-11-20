@@ -136,6 +136,7 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.external_id !== next.external_id ||
     previous.external_source !== next.external_source ||
     previous.external_url !== next.external_url ||
+    previous.external_repository !== next.external_repository ||
     previous.priority !== next.priority ||
     previous.model_override !== next.model_override ||
     previous.effort_override !== next.effort_override ||
