@@ -428,8 +428,12 @@ in one Sentry org, one triage surface.
   DESKTOP-47's day-precision refusal had none. It skips what is
   not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
   `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
-  cause), skips an error another reporter already sent (`markReported` and `isReported`, which
-  reads one level of `cause`), latches once per key per run and stops after 25 keys. An errno,
+  cause, a relay dial that never opened as `RelayDialError`), skips an error another reporter
+  already sent (`markReported` and `isReported`, which reads one level of `cause`), latches once
+  per key per run and stops after 25 keys. A relay dial is expected because undici fails a network
+  error and a non-101 answer from the relay with the same fixed text, so the client cannot tell
+  them apart. The relay watches its own health. Sentry DESKTOP-4G was Pair a device reporting
+  that failure as a defect. An errno,
   libuv's Windows `UNKNOWN` or a `SQLITE_` failure is fingerprinted `['handled-env', name, code]`;
   a code defect keeps Sentry's stack grouping. The sources:
   - `ipc_handler`: every `ipcMain.handle` handler, wrapped once at install
