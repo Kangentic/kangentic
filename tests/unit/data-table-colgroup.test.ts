@@ -32,7 +32,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { i18n } from '@lingui/core';
 import { I18nProvider } from '@lingui/react';
-import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../src/renderer/components/DataTable';
+import { DataTable, DATA_TABLE_GRIP_WIDTH_PX, type DataTableColumn, type DataTableColumnGroup } from '../../src/renderer/components/DataTable';
 
 interface Row {
   id: string;
@@ -62,10 +62,21 @@ function renderTable(props: {
   );
 }
 
-/** Extracts every `<col .../>` element's `class` attribute, in document order. */
-function colClasses(html: string): string[] {
-  return [...html.matchAll(/<col class="([^"]*)"/g)].map((match) => match[1]);
+/**
+ * Every `<col .../>` element's width, in document order: its width class, or the px width of its
+ * inline style where it is sized that way (the drag-handle column, sized from
+ * `DATA_TABLE_GRIP_WIDTH_PX`, and a column with `widthPx`).
+ */
+function colWidths(html: string): string[] {
+  return [...html.matchAll(/<col\b([^>]*)>/g)].map((match) => {
+    const attributes = match[1];
+    const widthClass = /class="([^"]*)"/.exec(attributes)?.[1];
+    const widthStyle = /style="width:\s*([^;"]+)/.exec(attributes)?.[1];
+    return widthClass ?? widthStyle ?? '';
+  });
 }
+
+const GRIP_WIDTH = `${DATA_TABLE_GRIP_WIDTH_PX}px`;
 
 describe('DataTable <colgroup>', () => {
   it('emits no <colgroup> for an ungrouped table (non-virtualized path)', () => {
@@ -82,16 +93,29 @@ describe('DataTable <colgroup>', () => {
     const html = renderTable({ columnGroups, virtualized: false });
     expect(html).toContain('<colgroup');
     expect(html.indexOf('<colgroup')).toBeLessThan(html.indexOf('<thead'));
-    expect(colClasses(html)).toEqual(['w-[40%]', 'w-[60%]']);
+    expect(colWidths(html)).toEqual(['w-[40%]', 'w-[60%]']);
   });
 
   it('gives the drag-handle its own leading <col> on a grouped, sortable table, rather than shifting column widths', () => {
     const html = renderTable({ columnGroups, virtualized: false, sortableEnabled: true });
-    expect(colClasses(html)).toEqual(['w-[32px]', 'w-[40%]', 'w-[60%]']);
+    expect(colWidths(html)).toEqual([GRIP_WIDTH, 'w-[40%]', 'w-[60%]']);
   });
 
   it('emits the same <colgroup> shape on the virtualized render path', () => {
     const html = renderTable({ columnGroups, virtualized: true, sortableEnabled: true });
-    expect(colClasses(html)).toEqual(['w-[32px]', 'w-[40%]', 'w-[60%]']);
+    expect(colWidths(html)).toEqual([GRIP_WIDTH, 'w-[40%]', 'w-[60%]']);
+  });
+
+  it('sizes a column with widthPx from an inline style, so a measured width reaches the <col> too', () => {
+    const measured: DataTableColumn<Row>[] = [{ ...nameColumn, width: undefined, widthPx: 92 }, amountColumn];
+    const html = renderToStaticMarkup(
+      createElement(I18nProvider, { i18n }, createElement(DataTable<Row>, {
+        columns: measured,
+        columnGroups,
+        data: [],
+        rowKey: (row: Row) => row.id,
+      })),
+    );
+    expect(colWidths(html)).toEqual(['92px', 'w-[60%]']);
   });
 });
