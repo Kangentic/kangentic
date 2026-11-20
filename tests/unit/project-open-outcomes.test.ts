@@ -30,7 +30,6 @@ import { PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../src
 
 vi.mock('../../src/renderer/stores/session-lifecycle-hooks', () => ({
   killTransientSessionForProject: vi.fn(),
-  markIdleSessionsSeen: vi.fn(),
 }));
 vi.mock('../../src/renderer/stores/config-store', () => ({
   useConfigStore: { getState: () => ({ loadConfig: vi.fn() }) },

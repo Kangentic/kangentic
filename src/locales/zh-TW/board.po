@@ -255,7 +255,7 @@ msgstr "編輯 {columnName} 欄"
 msgid "Folder missing"
 msgstr ""
 
-#: src/renderer/components/board/task-card-view.tsx
+#: src/renderer/components/board/useActivityReasonTip.ts
 msgctxt "Agent status"
 msgid "Idle"
 msgstr "閒置"
@@ -483,7 +483,7 @@ msgid "The terminal could not start. Its window shows why."
 msgstr ""
 
 #: src/renderer/components/board/activity-reason-text.ts
-#: src/renderer/components/board/task-card-view.tsx
+#: src/renderer/components/board/useActivityReasonTip.ts
 msgctxt "Agent status"
 msgid "Thinking"
 msgstr "思考中"

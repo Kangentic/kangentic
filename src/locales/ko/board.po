@@ -307,7 +307,7 @@ msgstr "{columnName} 열 편집"
 msgid "Folder missing"
 msgstr ""
 
-#: src/renderer/components/board/task-card-view.tsx
+#: src/renderer/components/board/useActivityReasonTip.ts
 #, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
@@ -577,7 +577,7 @@ msgid "The terminal could not start. Its window shows why."
 msgstr ""
 
 #: src/renderer/components/board/activity-reason-text.ts
-#: src/renderer/components/board/task-card-view.tsx
+#: src/renderer/components/board/useActivityReasonTip.ts
 #, fuzzy
 msgctxt "Agent status"
 msgid "Thinking"

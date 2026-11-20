@@ -216,17 +216,20 @@ to the glyph rather than put on the button, since its clickable is a whole card 
 interactive children. It also shows where a tip goes on a slotted mark: the card's `Tooltip` wraps
 the `IconSlot`, which forwards the pointer, focus and `aria-description` props the Tooltip clones
 onto it, because the mark inside takes no pointer and a tip around it would never open. Still
-unwrapped, with the same
-element-type swap: `MonitorTable`'s `StateCell` (inside `DataTable`'s clickable `<tr>`) and
-`TerminalPanel`'s session-tab glyph.
+unwrapped, with the same element-type swap: `MonitorTable`'s `StateCell` (inside `DataTable`'s
+clickable `<tr>`). `TerminalPanel`'s session tab left that list when it moved from a lucide
+spinner and a dot to one `ActivityMark` in every state (#1135): it is a mark flip, like `TaskCard`.
 
 ## Geometry and sizing
 
 The set's grid is a width keyline, not a square ink box: each mark fills its slot's width and
 takes the height its form needs. Width is the advance that shifts a row; height is absorbed by
 `align-items: center`. Two keylines, one per role: 18 for indicators, 20 for controls. Size
-floors are 12 for indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot
-stays lucide.
+floors are 12 for indicators and 16 for controls. Indicators render at 16 beside 14px text (the
+board card's title row, the sidebar) and at 14 in the bottom panel's session tabs, beside 12px
+text. A 16px mark there read as bigger than its label: the ring is 12px across against 9px
+capitals, where 14 gives 10.5px, about the Activity tab's lucide glyph beside it. Both sizes keep
+the 28px tab at its height; 18 grows it to 30px (measured in a live tab, #1135).
 
 Upstream geometry has moved three times:
 

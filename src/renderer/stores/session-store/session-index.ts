@@ -119,7 +119,6 @@ export type SessionKeyedState = Pick<
   | 'sessionActivity'
   | 'sessionActivityReason'
   | 'sessionEvents'
-  | 'seenIdleSessions'
   | 'sessionMessageTrails'
 >;
 
@@ -147,7 +146,6 @@ export function hasSessionState(state: SessionKeyedState, sessionId: string): bo
     || sessionId in state.sessionActivity
     || sessionId in state.sessionActivityReason
     || sessionId in state.sessionEvents
-    || sessionId in state.seenIdleSessions
     || sessionId in state.sessionMessageTrails;
 }
 
@@ -182,7 +180,6 @@ export function withoutSessions(
     sessionActivity: omitKeys(state.sessionActivity, ids),
     sessionActivityReason: omitKeys(state.sessionActivityReason, ids),
     sessionEvents: omitKeys(state.sessionEvents, ids),
-    seenIdleSessions: omitKeys(state.seenIdleSessions, ids),
     sessionMessageTrails: omitKeys(state.sessionMessageTrails, ids),
   };
 }

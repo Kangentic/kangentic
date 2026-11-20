@@ -148,7 +148,6 @@ function resetStore(): void {
     sessionFirstOutput: {},
     sessionActivity: {},
     sessionEvents: {},
-    seenIdleSessions: {},
     pendingCommandLabel: {},
     spawnProgress: {},
     _pendingOpenTaskId: null,

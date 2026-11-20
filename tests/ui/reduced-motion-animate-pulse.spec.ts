@@ -2,11 +2,11 @@
  * Coverage for the `prefers-reduced-motion` rule added to `src/renderer/index.css`
  * that stops Tailwind's stock `.animate-pulse` utility (`@media (prefers-reduced-motion:
  * reduce) { .animate-pulse { animation: none } }`). Every current consumer (the
- * dictation recording dot, TerminalPanel's unseen-attention dot, WindowFrame's focus
- * hairline, QueuedPlaceholder's waiting clock, and the loading skeletons) shares this
- * one rule, so the coverage lives here at the generic-rule level rather than on any
- * one consumer - asserting the dictation dot specifically would prove nothing about
- * the other five sites, and none of them are needed to prove the rule itself works.
+ * dictation recording dot, WindowFrame's focus hairline, QueuedPlaceholder's waiting
+ * clock, and the loading skeletons) shares this one rule, so the coverage lives here
+ * at the generic-rule level rather than on any one consumer - asserting the dictation
+ * dot specifically would prove nothing about the other sites, and none of them are
+ * needed to prove the rule itself works.
  *
  * The probe is a bare synthetic element carrying only the Tailwind class, appended to
  * the already-booted app page so it inherits the real `index.css` cascade. Mirrors the

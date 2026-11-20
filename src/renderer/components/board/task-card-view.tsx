@@ -9,10 +9,8 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useTaskProgress } from '../../utils/task-progress';
-import { useNow } from '../../hooks/useNow';
 import { useQueuePlace } from '../../hooks/useQueuePlace';
 import { isContextOccupancyKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
-import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
 import { ContextUsageFooter } from './ContextUsageFooter';
 import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } from './CardMessageTrail';
@@ -23,9 +21,8 @@ import { openArtifactsEditor } from '../artifacts/artifacts-focus';
 import type {
   ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, StartBlockedReason, SuspendedBy, Task,
 } from '../../../shared/types';
-import { activityReasonIcon } from './ActivityReasonTooltip';
-import { formatActivityReasonText } from './activity-reason-text';
-import { agentActivityMark, isStoppedReason, type AgentActivityMarkName } from './agent-wait';
+import { titleRowMark, type AgentActivityMarkName } from './agent-wait';
+import { useActivityReasonTip } from './useActivityReasonTip';
 import { Tooltip } from '../Tooltip';
 import { AutomationsDisabledStrip } from './AutomationsDisabledStrip';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
@@ -288,14 +285,10 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
   const shownTrail = trailMode && isLive && messageTrail && messageTrail.length > 0 ? messageTrail : null;
 
   // A running session is in one of three states (idle, thinking, permission).
-  // See task-progress.ts for how the fallback is resolved. The idle-vs-active
-  // bucketing (permission grouped with idle as "needs attention") lives in
-  // shared/activity-state.ts so every consumer agrees.
-  const isIdle = displayState.kind === 'running' && requiresUserInteraction(displayState.activity);
-  const isThinking = displayState.kind === 'running' && isActive(displayState.activity);
-  // Which of the waits the agent is in, so a question, an approval and a
-  // finished turn each draw their own mark (`agent-wait.ts`).
-  const activityMark = agentActivityMark(displayState.kind === 'running' ? displayState.activity : undefined, activityReason);
+  // See task-progress.ts for how the fallback is resolved. Which mark it draws,
+  // and its tone, come from `titleRowMark`, which the bottom panel's session tab
+  // asks too, so the tab and the card cannot disagree.
+  const { mark: activityMark, isIdle, isThinking } = titleRowMark(displayState, activityReason);
 
   // One object per change, not per render, so a host can skip re-rendering the
   // card's content when nothing in it changed (`TaskCard` does, through every
@@ -509,9 +502,6 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }:
   );
 }
 
-/** How often a waiting card re-reads the clock for its elapsed time: the text shows seconds. */
-const WAIT_ELAPSED_TICK_MS = 1000;
-
 interface TitleRowActivityMarkProps {
   activityMark: AgentActivityMarkName;
   activityReason: TaskCardViewModel['activityReason'];
@@ -522,29 +512,23 @@ interface TitleRowActivityMarkProps {
 /**
  * The title row's mark and its tip. A card that waits on the user (a finished
  * turn, a question, an approval) says how long it has waited, so it re-reads the
- * clock every second, here only: the tick re-renders this mark and its tip, never
- * the rest of the card. Before, the time was read when the card rendered, and a
- * card that sat waiting did not render again, so its tip kept saying "for 0s".
- * One component in both states, so the slot never swaps element types.
+ * clock every second, here only (`useActivityReasonTip`): the tick re-renders this
+ * mark and its tip, never the rest of the card. Before, the time was read when the
+ * card rendered, and a card that sat waiting did not render again, so its tip kept
+ * saying "for 0s". One component in both states, so the slot never swaps element
+ * types.
  */
 function TitleRowActivityMark({ activityMark, activityReason, isIdle, isThinking }: TitleRowActivityMarkProps) {
-  const { t } = useLingui();
-  const stopped = isStoppedReason(activityReason);
-  const now = useNow(WAIT_ELAPSED_TICK_MS, isIdle && Boolean(activityReason) && !stopped);
-  // Read once per render: the mark's name and its tip must match. A wait that
-  // began after the last tick reads "0s" until the next one, at most a second.
-  const reasonText = activityReason ? formatActivityReasonText(activityReason, now) : '';
+  const { tipText, icon, accessibleName } = useActivityReasonTip({ activityReason, isIdle, isThinking });
   return (
     // A stopped card has no tip: a person opens the task to read why, and the
     // mark keeps "Stopped" as its name. An empty label holds the tip shut.
-    <Tooltip label={stopped ? '' : reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
+    <Tooltip label={tipText} icon={icon}>
       <ActivityMark
         mark={activityMark}
         size={16}
         className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
-        aria-label={reasonText !== ''
-          ? reasonText
-          : isThinking ? t({ message: 'Thinking', context: 'Agent status' }) : t({ message: 'Idle', context: 'Agent status' })}
+        aria-label={accessibleName}
       />
     </Tooltip>
   );

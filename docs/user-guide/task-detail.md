@@ -27,13 +27,16 @@ Each running session gets a tab. Click a tab to switch between sessions. The act
 
 Opening a task's detail moves its terminal out of the panel, so that tab disappears while the detail is open - on the board and in the [Agent Monitor](agent-monitor.md#agent-monitor) alike. The other tabs stay where they are. Close the detail and the tab comes back, still selected. When the last tab goes because its detail is open, the panel closes completely and the board takes its space. It comes back when you close the detail.
 
-Tab indicators show session state at a glance:
-- **Green spinner** - agent is actively working
-- **Amber dot** - agent is idle (waiting for input). Pulses on tabs that have not been viewed since going idle.
-- **Green dot** - session is running (no activity data yet)
-- **Gray dot** - session is not running
+Each tab shows the same mark as its task's card on the board, so the two always agree:
+- **Green ring** - the agent is working. A start with a prompt, such as a card moving into Code Review, opens on it.
+- **Envelope** - the agent finished its turn and waits for you.
+- **Pennant** - the agent finished its turn and the board stopped the card there.
+- **Speech bubble** - the agent asked you a question.
+- **Shield** - the agent waits for you to approve a tool or a plan.
 
-The amber idle indicator replaces the previous auto-focus behavior (which switched the panel to the idle session automatically). Auto-focus is still available as an opt-in setting under Behavior > Auto-Focus Idle Sessions, but defaults to off.
+The waits are amber. Hover a tab to read what its agent is doing or how long it has waited, with the tab's shell on the line below.
+
+The amber marks replace the previous auto-focus behavior (which switched the panel to the idle session automatically). Auto-focus is still available as an opt-in setting under Behavior > Auto-Focus Idle Sessions, but defaults to off.
 
 ### Activity Tab
 

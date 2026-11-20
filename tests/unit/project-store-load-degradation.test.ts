@@ -26,7 +26,6 @@ import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vites
 
 vi.mock('../../src/renderer/stores/session-lifecycle-hooks', () => ({
   killTransientSessionForProject: vi.fn(),
-  markIdleSessionsSeen: vi.fn(),
 }));
 vi.mock('../../src/renderer/stores/config-store', () => ({
   useConfigStore: { getState: () => ({ loadConfig: vi.fn() }) },

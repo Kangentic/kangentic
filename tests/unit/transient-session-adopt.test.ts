@@ -54,7 +54,6 @@ function makeSliceStore(initial?: {
     sessionFirstOutput: {},
     sessionActivity: {},
     sessionEvents: {},
-    seenIdleSessions: {},
     commandBarVisible: false,
   };
 

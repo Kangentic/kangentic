@@ -171,7 +171,6 @@ export interface CoreSessionSlice {
    */
   sessionMessageTrails: Record<string, AssistantMessageTrailEntry[]>;
   sessionEvents: Record<string, SessionEvent[]>;
-  seenIdleSessions: Record<string, boolean>;
   /** Who is waiting for an agent slot and why, as main last reported it. */
   queueSnapshot: QueueSnapshot;
   /** Command label to show in the terminal overlay (e.g. "/code-review") keyed by task ID. */
@@ -263,8 +262,6 @@ export interface CoreSessionSlice {
   setPendingCommandLabel: (taskId: string, label: string) => void;
   clearPendingCommandLabel: (taskId: string) => void;
   setSpawnProgress: (taskId: string, label: string | null) => void;
-  markIdleSessionsSeen: (projectId: string) => void;
-  markSingleIdleSessionSeen: (sessionId: string) => void;
 
   getRunningCount: () => number;
   getQueuedCount: () => number;

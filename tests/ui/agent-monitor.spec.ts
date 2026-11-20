@@ -356,10 +356,10 @@ test.describe('agent monitor', () => {
         // With both kinds showing terminal text, the state glyph is what separates
         // them. `data-mark` is the branding mark's own test contract.
         await expect(
-          page.locator('[data-session-id="sess-working"] svg[data-mark]'),
+          page.locator('[data-testid="monitor-page"] [data-session-id="sess-working"] svg[data-mark]'),
         ).toHaveAttribute('data-mark', 'agent-working');
         await expect(
-          page.locator('[data-session-id="sess-command-terminal"] svg[data-mark]'),
+          page.locator('[data-testid="monitor-page"] [data-session-id="sess-command-terminal"] svg[data-mark]'),
         ).toHaveAttribute('data-mark', 'terminal-working');
       });
 
@@ -472,7 +472,7 @@ test.describe('agent monitor', () => {
       ))));
 
       // An approval wears the board card's quartered shield (#452), not the envelope.
-      const mark = page.locator('[data-session-id="sess-working"] svg[data-mark]');
+      const mark = page.locator('[data-testid="monitor-page"] [data-session-id="sess-working"] svg[data-mark]');
       await expect(mark).toHaveAttribute('data-mark', 'agent-approval');
       // The slot, not the mark: the mark inside an IconSlot takes no pointer.
       const slot = mark.locator('xpath=..');
@@ -499,7 +499,7 @@ test.describe('agent monitor', () => {
           : row
       ))));
 
-      const mark = page.locator('[data-session-id="sess-working"] svg[data-mark]');
+      const mark = page.locator('[data-testid="monitor-page"] [data-session-id="sess-working"] svg[data-mark]');
       await expect(mark).toHaveAttribute('data-mark', 'agent-stopped');
       await expect(mark).toHaveAccessibleName('Stopped');
       await mark.locator('xpath=..').hover();

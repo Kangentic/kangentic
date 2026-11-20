@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { agentActivityMark, agentWaitKind, waitMarkForReason } from '../../src/renderer/components/board/agent-wait';
+import { agentActivityMark, agentWaitKind, titleRowMark, waitMarkForReason } from '../../src/renderer/components/board/agent-wait';
 import { formatActivityReasonText } from '../../src/renderer/components/board/activity-reason-text';
-import type { ActivityReason, ActivityState } from '../../src/shared/types';
+import type { ActivityReason, ActivityState, SessionDisplayState } from '../../src/shared/types';
 
 // One function decides which mark an agent session wears, for every surface that
 // draws one (board card, Workflows inspector and agent pane, Agent Monitor). A
@@ -57,6 +57,42 @@ describe('agentActivityMark', () => {
   it('covers every ActivityState, so a new variant fails here', () => {
     const states: ActivityState[] = ['thinking', 'idle', 'permission'];
     expect(states.map((state) => agentActivityMark(state, approval))).toEqual(['agent-working', 'agent-idle', 'agent-approval']);
+  });
+});
+
+// The board card's title row and the bottom panel's session tab both ask this
+// with the card's own display state, so the tab can never show a state the
+// card does not (#1135).
+describe('titleRowMark', () => {
+  const running = (activity: ActivityState): SessionDisplayState => ({ kind: 'running', activity, usage: null });
+
+  it('draws the green ring while the agent works', () => {
+    expect(titleRowMark(running('thinking'), { kind: 'turn-active' })).toEqual({
+      mark: 'agent-working', isThinking: true, isIdle: false, toneClass: 'text-active',
+    });
+  });
+
+  it('draws each wait in the amber of a wait', () => {
+    expect(titleRowMark(running('permission'), question)).toEqual({
+      mark: 'agent-question', isThinking: false, isIdle: true, toneClass: 'text-attention',
+    });
+    expect(titleRowMark(running('permission'), approval).mark).toBe('agent-approval');
+    expect(titleRowMark(running('idle'), finishedTurn).mark).toBe('agent-idle');
+    expect(titleRowMark(running('idle'), stoppedTurn).mark).toBe('agent-stopped');
+  });
+
+  it('is neither working nor waiting for a session that is not running', () => {
+    const notRunning: SessionDisplayState[] = [
+      { kind: 'none' },
+      { kind: 'preparing', label: 'Creating worktree...' },
+      { kind: 'queued' },
+      { kind: 'suspended' },
+      { kind: 'exited', exitCode: 0 },
+    ];
+    for (const displayState of notRunning) {
+      const result = titleRowMark(displayState, question);
+      expect(result.isThinking || result.isIdle, displayState.kind).toBe(false);
+    }
   });
 });
 

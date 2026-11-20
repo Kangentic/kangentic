@@ -359,10 +359,11 @@ describe('activity indicator smoothness', () => {
     ).toBe(false);
 
     // Exactly one render site, and its mark is computed rather than literal: the view model's
-    // `activityMark`, which picks the working ring or one of the three waits' marks.
+    // `activityMark`, which `titleRowMark` picks (the working ring or one of the waits' marks),
+    // the same function the bottom panel's session tab asks.
     expect(taskCard.match(/<ActivityMark/g) ?? []).toHaveLength(1);
     expect(taskCard).toMatch(/mark=\{activityMark\}/);
-    expect(taskCard).toMatch(/const activityMark = agentActivityMark\(/);
+    expect(taskCard).toMatch(/\{\s*mark:\s*activityMark\b[^}]*\}\s*=\s*titleRowMark\(/);
   });
 
   it('ActivityMark anchors mark motion to the document timeline before paint', () => {

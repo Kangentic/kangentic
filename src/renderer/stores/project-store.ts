@@ -8,7 +8,7 @@ import { describeIpcError, asSentence } from '../lib/ipc-error';
 import { reportRendererFailure } from '../utils/renderer-failure';
 // Not `./session-store` directly: that would close an import cycle whose
 // circular-import invalidate full-reloads the dev page. See the module docblock.
-import { killTransientSessionForProject, markIdleSessionsSeen } from './session-lifecycle-hooks';
+import { killTransientSessionForProject } from './session-lifecycle-hooks';
 import { useConfigStore } from './config-store';
 import { useToastStore } from './toast-store';
 import { dropProject as dropProjectCache } from './project-cache';
@@ -276,7 +276,6 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
       }
     }
     set({ currentProject: project });
-    markIdleSessionsSeen(id);
     return 'opened';
   },
 

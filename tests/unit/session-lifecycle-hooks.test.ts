@@ -4,7 +4,7 @@
  * `project-store` used to call `useSessionStore.getState()` directly. That closed
  * an import cycle whose circular-import invalidate full-reloaded the dev page and
  * destroyed live Browser pane guests (see `.claude/rules/hmr-patterns.md`), so the
- * two calls now go through `stores/session-lifecycle-hooks.ts`, which `session-store`
+ * call now goes through `stores/session-lifecycle-hooks.ts`, which `session-store`
  * fills in at module init.
  *
  * That indirection is the ONE production behavior change in that fix, and it fails
@@ -18,7 +18,6 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
-import type { Session } from '../../src/shared/types';
 
 const killedSessionIds: string[] = [];
 
@@ -48,41 +47,10 @@ const killedSessionIds: string[] = [];
 const { useSessionStore } = await import('../../src/renderer/stores/session-store');
 const hooks = await import('../../src/renderer/stores/session-lifecycle-hooks');
 
-function runningSession(id: string, projectId: string): Session {
-  return {
-    id,
-    taskId: `task-${id}`,
-    projectId,
-    pid: 1234,
-    status: 'running',
-    shell: 'bash',
-    cwd: '/mock',
-    startedAt: new Date().toISOString(),
-    exitCode: null,
-    resuming: false,
-  };
-}
-
 describe('session lifecycle hooks are registered by session-store', () => {
   beforeEach(() => {
     killedSessionIds.length = 0;
-    useSessionStore.setState({ sessions: [], sessionActivity: {}, seenIdleSessions: {} });
-  });
-
-  it('markIdleSessionsSeen reaches the store through the hooks module', () => {
-    useSessionStore.setState({
-      sessions: [runningSession('sess-idle', 'proj-a')],
-      sessionActivity: { 'sess-idle': 'idle' },
-      seenIdleSessions: {},
-    });
-
-    // The forwarder, NOT the store action - this is the path project-store takes.
-    hooks.markIdleSessionsSeen('proj-a');
-
-    expect(
-      useSessionStore.getState().seenIdleSessions['sess-idle'],
-      'the hooks module no-opped, so session-store never registered its handlers',
-    ).toBe(true);
+    useSessionStore.setState({ sessions: [], sessionActivity: {} });
   });
 
   it('killTransientSessionForProject reaches the store through the hooks module', async () => {

@@ -134,7 +134,6 @@ function summarizeSession(state: unknown): unknown {
     detailTaskId: partial.detailTaskId ?? null,
     dialogSessionIds: partial.dialogSessionIds ?? [],
     scrollToEventKey: partial.scrollToEventKey ?? null,
-    seenIdleSessions: partial.seenIdleSessions ?? null,
     latestRateLimits: partial.latestRateLimits ?? null,
   };
 }

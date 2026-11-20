@@ -35,7 +35,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../src/renderer/stores/session-lifecycle-hooks', () => ({
   killTransientSessionForProject: vi.fn(),
-  markIdleSessionsSeen: vi.fn(),
 }));
 // The toast store reads the configured duration and cap when it adds a toast;
 // project-store only reaches for `loadConfig`.

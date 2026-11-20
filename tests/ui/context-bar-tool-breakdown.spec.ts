@@ -285,7 +285,6 @@ interface ResetSnapshot {
   sessionActivity: Record<string, ActivityState>;
   sessionFirstOutput: Record<string, boolean>;
   sessionEvents: Record<string, SessionEvent[]>;
-  seenIdleSessions: Record<string, boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +320,6 @@ test.describe('ContextBar tool-call breakdown popover', () => {
         sessionActivity: clone(session.sessionActivity),
         sessionFirstOutput: clone(session.sessionFirstOutput),
         sessionEvents: clone(session.sessionEvents),
-        seenIdleSessions: clone(session.seenIdleSessions),
       };
     });
   });
@@ -354,7 +352,6 @@ test.describe('ContextBar tool-call breakdown popover', () => {
         sessionActivity: snapshot.sessionActivity,
         sessionFirstOutput: snapshot.sessionFirstOutput,
         sessionEvents: snapshot.sessionEvents,
-        seenIdleSessions: snapshot.seenIdleSessions,
       }, false);
 
       // Reset the getToolBreakdown mock back to the default empty-array stub

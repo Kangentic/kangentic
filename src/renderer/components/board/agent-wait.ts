@@ -1,5 +1,5 @@
-import type { ActivityReason, ActivityState, PermissionWaitKind } from '../../../shared/types';
-import { isActive } from '../../../shared/activity-state';
+import type { ActivityReason, ActivityState, PermissionWaitKind, SessionDisplayState } from '../../../shared/types';
+import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import type { ActivityMarkName } from '../ActivityMark';
 
 /**
@@ -75,6 +75,40 @@ export function agentActivityMark(
   const waitKind = agentWaitKind(activity, reason);
   if (waitKind) return WAIT_MARKS[waitKind];
   return isStoppedReason(reason) ? 'agent-stopped' : 'agent-idle';
+}
+
+/** What a task's title-row mark shows for its session's display state. */
+export interface TitleRowMark {
+  /** The mark to draw while `isIdle` or `isThinking`. */
+  mark: AgentActivityMarkName;
+  /** A running session whose agent is working. */
+  isThinking: boolean;
+  /** A running session waiting on the user (idle or permission). */
+  isIdle: boolean;
+  /** The tone class the mark takes: working green, or the amber of a wait. */
+  toneClass: 'text-active' | 'text-attention';
+}
+
+/**
+ * The mark a task's board card draws in its title row, from the card's own
+ * display state (`getTaskProgress`). The bottom panel's session tab asks this
+ * same function with the same state, so a tab can never show a state its card
+ * does not. A running session is always working or waiting: `getTaskProgress`
+ * reads a session with no activity yet as idle.
+ */
+export function titleRowMark(
+  displayState: SessionDisplayState,
+  reason: ActivityReason | null | undefined,
+): TitleRowMark {
+  const running = displayState.kind === 'running';
+  const isThinking = running && isActive(displayState.activity);
+  const isIdle = running && requiresUserInteraction(displayState.activity);
+  return {
+    mark: agentActivityMark(running ? displayState.activity : undefined, reason),
+    isThinking,
+    isIdle,
+    toneClass: isThinking ? 'text-active' : 'text-attention',
+  };
 }
 
 /** The mark a permission reason's own tooltip leads with. */

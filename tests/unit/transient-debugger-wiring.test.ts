@@ -71,7 +71,6 @@ function makeSliceStore(
     sessionActivity: {},
     sessionActivityReason: {},
     sessionEvents: {},
-    seenIdleSessions: {},
     sessionMessageTrails: {},
     spawnProgress: {},
     commandBarVisible: false,

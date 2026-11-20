@@ -199,7 +199,6 @@ function resetStore(): void {
     sessionActivityReason: {},
     sessionMessageTrails: {},
     sessionEvents: {},
-    seenIdleSessions: {},
     pendingCommandLabel: {},
     spawnProgress: {},
     _pendingOpenTaskId: null,
