@@ -77,7 +77,7 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `checkCli(repository?)` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. The Import dialog passes the saved source's `repository` (`importCheckCli(source, repository)`), so a provider whose sign-ins are per site (Jira) checks the right one, and one whose source can disappear on its own says so before the list loads (Obsidian answers "Folder not found" here). An `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect. Providers that check only a CLI ignore the repository. |
 | `prepareSource(repository)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site, a GitLab link its server's real base and canonical path). It may also return `scopeKind` (`project` or `group`) and `host`, which the saved source keeps for its subtitle ("GitLab Group on git.example.com"). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. When the saved sign-in is what the provider refused (a 401), the adapter throws `SignInRefusedError` (`src/shared/refusal.ts`), a `RefusalError` whose class name survives IPC: the popover reads it with `ipcErrorClassName` and opens the provider's Connect dialog with that line, the site filled in, and the add carried on once a new sign-in is saved. Before that, a refused sign-in on a site with no saved source could not be replaced at all. Implemented by Jira and GitLab; other providers keep `resolveLabel`. |
 | `workItemTypeIsItemType` | optional | True when `ExternalIssue.workItemType` is the item's type, so the import stores it as the backlog item's type. Set by Azure DevOps, Jira and GitLab; Asana uses the field for its section and leaves it off. |
-| `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. In the Azure DevOps and GitHub adapters, a CLI sign-in or network failure throws `AzUnavailableError` / `AzTransientError` or `GhUnavailableError` / `GhTransientError`, judged on the CLI's stderr with URLs removed, its errno and the timeout kill, never on the command line. An az answer that carries an Azure DevOps server code other than a sign-in code, and a gh `unavailable` without gh's own sign-in words, rethrow unchanged, because those messages echo the user's project and owner names. The Import dialog shows the reason, the error report skips it, and a failure the classifier does not recognize rethrows unchanged and still reports. The same throw covers the az token the import's downloads use. |
+| `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. In the Azure DevOps and GitHub adapters, a CLI sign-in or network failure throws `AzUnavailableError` / `AzTransientError` or `GhUnavailableError` / `GhTransientError`, judged on the CLI's stderr with URLs removed, its errno and the timeout kill, never on the command line. An az answer that carries an Azure DevOps server code other than a sign-in code, and a gh `unavailable` without gh's own sign-in words, rethrow the original error with its class and message unchanged (the az one gains the `azServerCode` property below), because those messages echo the user's project and owner names. For the same reason the az classifier drops the "The error is caused by ..." tail a refused WIQL quotes. A project that is not there (`TF200016`, or az's code-less "The project specified is not found in hierarchy.") throws `AzProjectNotFoundError`, a `UserConfigurationError`. The Import dialog shows the reason, the error report skips it, and a failure the classifier does not recognize rethrows unchanged and still reports, carrying its server code or `none` for the `az_server_code` tag. The same throw covers the az token the import's downloads use. |
 | `hydrateForImport(repository, issues)` | optional | Fetch deferred per-item detail for the SELECTED import set and fold it into each body, called at import time only. Lets a provider keep the list fetch cheap. Implemented by Azure DevOps to fetch work item comments (one `az rest` per item) for just the items being imported instead of every listed one, and by Jira to fetch each issue's comments, four issues at a time. |
 | `listExternalIds(input)` | optional | Cheap, id-only listing of every current remote item, used by the reconcile to prune cache rows the remote no longer has. Implemented by Azure DevOps as an ids-only WIQL, by Jira as an ids-only search or board listing, and by Obsidian as a vault walk that shares the fetch's read (see Obsidian below). Providers without a cheap listing omit it; their deletions clear on a full reconcile, which the reconcile escalates to on its own once their cache goes a day without one. An empty result must mean the remote genuinely has no items, so an adapter that cannot answer THROWS rather than returning `[]`: the reconcile prunes against whatever this resolves to, and an empty list claims the remote is empty. |
 | `downloadImages(markdownBody)` | yes | Download inline markdown images referenced in an issue body. |
@@ -89,7 +89,46 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
 | `pushUpdates(tasks, credentials)` | optional | Future: write task updates back to the remote. |
 
-Not every adapter honours `input.since`. Jira adds `updated >= "yyyy/MM/dd HH:mm"` to the source's JQL (before any `ORDER BY`), formatted in the signed-in user's Jira time zone from `/myself` and rewound five minutes, because JQL compares to the minute and Cloud's search is eventually consistent. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= ...` clause, Linear to an inclusive `updatedAt: { gte }` issue filter, GitLab to the issues API's `updated_after`, and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana, GitHub Projects and Obsidian ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
+Not every adapter honours `input.since`. Jira adds `updated >= "yyyy/MM/dd HH:mm"` to the source's JQL (before any `ORDER BY`), formatted in the signed-in user's Jira time zone from `/myself` and rewound five minutes, because JQL compares to the minute and Cloud's search is eventually consistent. Azure DevOps maps it to a WIQL `[System.ChangedDate] >= 'yyyy-MM-dd'` clause, date-only and one day before the watermark's UTC date, with no clause at all for a watermark that does not parse (see the Azure DevOps answers below), Linear to an inclusive `updatedAt: { gte }` issue filter, GitLab to the issues API's `updated_after`, and GitHub Issues to the REST `since=` parameter (rewound one second, because GitHub documents its boundary as exclusive where the WIQL one is inclusive, and both feed the same watermark). Asana, GitHub Projects and Obsidian ignore it and re-fetch in full on every reconcile: results stay correct, but an incremental pass costs the same as a full one. Adding `since` support to either is a contained change in that adapter's `fetch`.
+
+### Azure DevOps: what `az boards query` answers
+
+Measured on 2026-11-19 with the azure-devops extension 1.0.2 against a real organization (Sentry
+DESKTOP-47). The answers below are az's own lines, with the quoted clause left out.
+
+- `work_item.py` posts the WIQL through `query_by_wiql` with no `time_precision`, and az has no flag
+  for it, so every query runs at day precision. A date literal with a time is refused: "You cannot
+  supply a time with the date when running a query using date precision." The answer carries no TF
+  or VS code. The same clause with a date only succeeds. Microsoft's WIQL syntax page shows literals
+  with a time and does not mention the precision, so it is no guide here. A date-only literal with
+  no zone is read in the zone the server uses for the user, which is why the watermark goes out one
+  day early. An incremental pass re-fetches between one and two days of changes, an idempotent
+  upsert. Calling the endpoint with
+  `timePrecision=true` through `az devops invoke` was the alternative. It returns ids only, so it
+  would give up az's batched field fetch.
+- A WIQL naming a project the organization does not have: "The project specified is not found in
+  hierarchy.", with no code.
+- A field the organization's process does not have: `TF51005`, "The query references a field that
+  does not exist."
+- An organization that does not exist: az's "Before you can run Azure DevOps commands, you need to
+  run the login command", which reads as a sign-in failure.
+- A query that matches nothing prints nothing at all, with exit 0. The client reads that as no
+  items.
+- az fetches at most 1000 of a query's work items ("Only retrieving the first 1000 work items").
+  So every query the client runs is ordered by `[System.Id]`, and a full page is followed by the
+  same query with `[System.Id] > <the page's highest id>`, until a page comes back short. That
+  applies to the fetch and to the ids-only prune listing. Before it, a project with more than 1000
+  work items listed only 1000, and its prune listing held the oldest 1000 ids, so the prune deleted
+  recently changed items that were still live. The cache sorts by changed date when it is read, so
+  the query's order does not reach the Import dialog.
+  The pager stops at 25 pages and throws a plain `Error` past that, which a real project cannot
+  reach because of the next limit.
+- Azure DevOps refuses a WIQL whose result passes 20,000 ids (`VS402337`). Paging does not get
+  around that, because the first page's query still matches every id. A full reconcile of a
+  project that large fails, and the report carries `az_server_code: VS402337`. An incremental
+  reconcile fetches only the changed items and succeeds, but its ids-only prune listing is refused
+  the same way. That listing runs through `execAz` and not the import classifier, so the refusal
+  carries no tag. The reconcile logs a warning, skips that round's prune and sends no report.
 
 ### `FileAttachmentRef`
 

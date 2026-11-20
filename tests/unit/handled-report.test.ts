@@ -160,6 +160,25 @@ describe('sendHandledFailure', () => {
     expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('acme');
   });
 
+  // An az import call the server refused carries the Microsoft code (or `none`)
+  // as `azServerCode`. Only a code of that shape rides the tag.
+  it('adds the Azure DevOps server code an error or its cause carries, and never text in its place', () => {
+    const refused = Object.assign(new Error("ERROR: TF51005: field 'Acme.Billing' does not exist"), { azServerCode: 'TF51005' });
+    sendHandledFailure('ipc_handler', refused);
+    sendHandledFailure('ipc_handler', new Error('wrapped', { cause: refused }));
+    sendHandledFailure('ipc_handler', Object.assign(new Error('x'), { azServerCode: 'none' }));
+    sendHandledFailure('ipc_handler', Object.assign(new Error('x'), { azServerCode: 'TF51005: Acme.Billing' }));
+    sendHandledFailure('ipc_handler', new TypeError('no az here'));
+
+    const tagsOf = (call: number): Record<string, string> => reportHandledError.mock.calls[call][1] as Record<string, string>;
+    expect(tagsOf(0).az_server_code).toBe('TF51005');
+    expect(tagsOf(1).az_server_code).toBe('TF51005');
+    expect(tagsOf(2).az_server_code).toBe('none');
+    expect(tagsOf(3)).not.toHaveProperty('az_server_code');
+    expect(tagsOf(4)).not.toHaveProperty('az_server_code');
+    expect(JSON.stringify(reportHandledError.mock.calls.map((call) => [(call[0] as Error).message, call[1]]))).not.toContain('Acme');
+  });
+
   it.each([
     ['a V8 TypeError naming the property it read', new TypeError("Cannot read properties of undefined (reading 'Fix Acme billing')")],
     ['a Node ERR_INVALID_ARG_TYPE quoting its value', Object.assign(
@@ -192,6 +211,15 @@ describe('createChokepointReporter', () => {
     expect(reporter.report(new RangeError('c'), { tags: { channel: 'second' } })).toBe(true);
     expect(reporter.report(new ReferenceError('d'), { tags: { channel: 'third' } })).toBe(false);
     expect(reportHandledError).toHaveBeenCalledTimes(2);
+  });
+
+  it('latches two Azure DevOps server codes thrown from one line as two keys', () => {
+    const reporter = createChokepointReporter('ipc_handler');
+    const refusal = (azServerCode: string): Error => Object.assign(new Error('refused'), { azServerCode });
+    const reportAt = (azServerCode: string): boolean => reporter.report(refusal(azServerCode), { tags: { channel: 'backlog:importReconcile' } });
+    expect(reportAt('TF51005')).toBe(true);
+    expect(reportAt('none')).toBe(true);
+    expect(reportAt('TF51005')).toBe(false);
   });
 
   it('applies its own filter after the expected-failure skip', () => {

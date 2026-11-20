@@ -25,7 +25,15 @@ describe('WIQL query building', () => {
       const query = buildWiqlQuery('MyProject');
       expect(query).toContain(`[System.TeamProject] = 'MyProject'`);
       expect(query).toContain('FROM WorkItems');
-      expect(query).toContain('ORDER BY [System.ChangedDate] DESC');
+      // By id, so the client can page past az's 1000-item cap.
+      expect(query).toContain('ORDER BY [System.Id]');
+      expect(query).not.toContain('[System.Id] >');
+    });
+
+    it('adds the page condition for the ids past the last page', () => {
+      const query = buildWiqlQuery('MyProject', 'all', undefined, undefined, undefined, 4821);
+      expect(query).toContain(`[System.TeamProject] = 'MyProject' AND [System.Id] > 4821`);
+      expect(query).toMatch(/ORDER BY \[System\.Id\]$/);
     });
 
     it('adds open-state filter', () => {
@@ -58,9 +66,24 @@ describe('WIQL query building', () => {
       expect(query).not.toContain('[System.Title] CONTAINS');
     });
 
-    it('adds a changed-since filter when given', () => {
+    // Sentry DESKTOP-47: `az boards query` runs WIQL at day precision, and the
+    // server refuses a literal with a time ("You cannot supply a time with the
+    // date when running a query using date precision"). The watermark goes out
+    // date-only, one day early so any time zone the server reads it in is covered.
+    it('writes the changed-since watermark as a date-only literal one day earlier', () => {
       const query = buildWiqlQuery('MyProject', 'all', undefined, undefined, '2026-01-02T03:04:05.000Z');
-      expect(query).toContain(`[System.ChangedDate] >= '2026-01-02T03:04:05.000Z'`);
+      expect(query).toContain(`[System.ChangedDate] >= '2026-01-01'`);
+      expect(query).not.toMatch(/\[System\.ChangedDate\] >= '[^']*T/);
+    });
+
+    it('takes the day before from the UTC date, across a month boundary', () => {
+      const query = buildWiqlQuery('MyProject', 'all', undefined, undefined, '2026-03-01T00:30:00.000Z');
+      expect(query).toContain(`[System.ChangedDate] >= '2026-02-28'`);
+    });
+
+    it('drops the changed-since filter for a watermark that does not parse', () => {
+      const query = buildWiqlQuery('MyProject', 'all', undefined, undefined, 'not-a-date');
+      expect(query).not.toContain('[System.ChangedDate] >=');
     });
 
     it('omits the changed-since filter when not given', () => {
@@ -72,6 +95,13 @@ describe('WIQL query building', () => {
     it('ignores an empty changed-since watermark', () => {
       const query = buildWiqlQuery('MyProject', undefined, undefined, undefined, '   ');
       expect(query).not.toContain('[System.ChangedDate] >=');
+    });
+  });
+
+  describe('an afterId that is not a safe integer', () => {
+    it.each([Number.NaN, 1.5, Number.POSITIVE_INFINITY, 2 ** 60])('is ignored by both builders (%s)', (afterId) => {
+      expect(buildWiqlQuery('MyProject', 'all', undefined, undefined, undefined, afterId)).not.toContain('[System.Id] >');
+      expect(buildWorkItemIdsWiql('MyProject', undefined, afterId)).not.toContain('[System.Id] >');
     });
   });
 
@@ -87,6 +117,12 @@ describe('WIQL query building', () => {
     it('adds an iteration-path filter when given', () => {
       const query = buildWorkItemIdsWiql('MyProject', 'MyProject\\Sprint 1');
       expect(query).toContain(`[System.IterationPath] UNDER 'MyProject\\Sprint 1'`);
+    });
+
+    it('adds the page condition for the ids past the last page', () => {
+      const query = buildWorkItemIdsWiql('MyProject', undefined, 1000);
+      expect(query).toContain(`[System.TeamProject] = 'MyProject' AND [System.Id] > 1000`);
+      expect(query).toMatch(/ORDER BY \[System\.Id\]$/);
     });
   });
 });

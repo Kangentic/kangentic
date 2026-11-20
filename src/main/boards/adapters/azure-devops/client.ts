@@ -4,6 +4,7 @@ import type { ExternalIssue } from '../../../../shared/types';
 import { convertHtmlToMarkdown, extractInlineImageUrls, formatCommentsSection } from '../../shared';
 import { AZURE_CLOSED_STATES, buildWiqlQuery, buildWorkItemIdsWiql } from './wiql';
 import { RefusalError } from '../../../../shared/refusal';
+import { UserConfigurationError } from '../../../../shared/user-configuration-error';
 
 
 /** Raw work item shape from az boards query. */
@@ -225,6 +226,18 @@ export class AzTransientError extends Error {
 }
 
 /**
+ * Azure DevOps answered that the source's project does not exist or cannot be
+ * read: the user's configuration, not a defect, so it does not report. The
+ * message carries az's own line for the Import dialog.
+ */
+export class AzProjectNotFoundError extends UserConfigurationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AzProjectNotFoundError';
+  }
+}
+
+/**
  * Classify a failed `az` invocation, mirroring `classifyGhError`:
  *   - 'unavailable': az missing / unauthenticated / extension absent -> degrade.
  *   - 'transient':   network / 5xx / rate-limit / timeout -> preserve, retry later.
@@ -319,6 +332,37 @@ const AZ_SERVER_CODE_PATTERN = /\b(?:TF|VS)\d{5,6}\b/g;
 const AZ_SIGN_IN_SERVER_CODES = new Set(['TF400813', 'VS30063']);
 
 /**
+ * The answers that mean the source's project is gone or cannot be read. A WIQL
+ * naming a project the organization does not have gets az's line "The project
+ * specified is not found in hierarchy.", with no server code (measured on
+ * extension 1.0.2, `docs/integrations/boards.md`). TF200016 is the coded form
+ * other Azure DevOps calls give.
+ */
+const AZ_PROJECT_NOT_FOUND_SERVER_CODES = new Set(['TF200016']);
+const AZ_PROJECT_NOT_FOUND_PATTERN = /The project specified is not found in hierarchy/i;
+
+/**
+ * The tail az adds to a refused WIQL: "The error is caused by «<the clause>»".
+ * It quotes the user's own query (a search, a project name), so it is dropped
+ * before any pattern reads the answer.
+ */
+const AZ_QUERY_ECHO_PATTERN = /The error is caused by.*$/gim;
+
+/**
+ * Put the server code that refused an import call on the error it rethrows, or
+ * `none` when az's answer carried no code, so the handled report can send it as
+ * the `az_server_code` tag (`azServerCodeOf` in `analytics/handled-report.ts`).
+ * The original error is marked rather than wrapped: a wrapper would change the
+ * frames Sentry groups on.
+ */
+function withAzServerCode(error: unknown, serverCode: string): unknown {
+  if (typeof error === 'object' && error !== null) {
+    (error as { azServerCode?: string }).azServerCode = serverCode;
+  }
+  return error;
+}
+
+/**
  * The throw for a failed `az` call on the import path: the Import dialog's
  * sync, and the token its downloads use. Sentry DESKTOP-47: a signed-out az
  * escaped this path as a plain Error and reported as a code defect.
@@ -334,19 +378,33 @@ const AZ_SIGN_IN_SERVER_CODES = new Set(['TF400813', 'VS30063']);
  * otherwise hide any failure. The reason shown is az's stderr line for the
  * same reason. URLs az echoes on stderr carry the organization and project
  * names, so they are dropped before it is classified. A server code returns
- * the original error before any pattern runs. Both gates live here and not in
- * `classifyAzError`, which the PR resolvers share.
+ * the original error before any pattern runs. The "caused by" tail a refused
+ * WIQL adds quotes the query, so it is dropped as the URLs are. All of these
+ * gates live here and not in `classifyAzError`, which the PR resolvers share.
+ *
+ * A project that is gone or cannot be read is the user's configuration and
+ * throws `AzProjectNotFoundError`, which does not report. Every other refusal
+ * reports, carrying its server code (or `none`) for the `az_server_code` tag.
+ * Most WIQL refusals carry no code: the day-precision refusal behind Sentry
+ * DESKTOP-47's recurrence read "You cannot supply a time with the date when
+ * running a query using date precision." with none.
  */
 function importAzErrorToThrow(error: unknown): unknown {
   const failure = readExecFailure(error);
-  const stderrWithoutUrls = failure.stderr.replace(/https?:\/\/\S+/g, '');
-  const serverCodes = stderrWithoutUrls.match(AZ_SERVER_CODE_PATTERN) ?? [];
-  if (serverCodes.some((serverCode) => !AZ_SIGN_IN_SERVER_CODES.has(serverCode))) return error;
-  const classification = classifyAzError({ stderr: stderrWithoutUrls, code: failure.code, killed: failure.killed });
-  // Not `describeAzFailure`: with no stderr (a timeout, a missing binary) it
-  // falls back to the message's first line, which is the command line.
   const reason = stderrReasonLine(failure.stderr);
   const detail = reason ? `\n${reason}` : '';
+  const answer = failure.stderr.replace(/https?:\/\/\S+/g, '').replace(AZ_QUERY_ECHO_PATTERN, '');
+  const serverCodes = answer.match(AZ_SERVER_CODE_PATTERN) ?? [];
+  const projectIsGone = AZ_PROJECT_NOT_FOUND_PATTERN.test(answer)
+    || serverCodes.some((serverCode) => AZ_PROJECT_NOT_FOUND_SERVER_CODES.has(serverCode));
+  if (projectIsGone) {
+    return new AzProjectNotFoundError(`Azure DevOps cannot find this project. Check the source's organization and project.${detail}`);
+  }
+  const refusingCode = serverCodes.find((serverCode) => !AZ_SIGN_IN_SERVER_CODES.has(serverCode));
+  if (refusingCode) return withAzServerCode(error, refusingCode);
+  const classification = classifyAzError({ stderr: answer, code: failure.code, killed: failure.killed });
+  // Not `describeAzFailure`: with no stderr (a timeout, a missing binary) it
+  // falls back to the message's first line, which is the command line.
   switch (classification) {
     case 'unavailable':
       return new AzUnavailableError(
@@ -355,7 +413,7 @@ function importAzErrorToThrow(error: unknown): unknown {
     case 'transient':
       return new AzTransientError(`Azure DevOps did not answer. Try again.${detail}`);
     default:
-      return error;
+      return withAzServerCode(error, 'none');
   }
 }
 
@@ -507,6 +565,65 @@ function azureOrgUrl(organization: string): string {
   return `https://dev.azure.com/${encodeURIComponent(organization)}`;
 }
 
+/**
+ * The most work items one `az boards query` returns: the extension fetches the
+ * first 1000 of the query's ids and drops the rest ("Only retrieving the first
+ * 1000 work items", `work_item.py` in azure-devops 1.0.2).
+ */
+const AZ_BOARDS_QUERY_MAX_ITEMS = 1000;
+
+/**
+ * A bound on the pages one paged query reads. Azure DevOps refuses a WIQL whose
+ * result passes 20,000 ids (VS402337), so a real query never needs more than 20
+ * pages of 1000; a pager past this bound is a defect, and it throws.
+ */
+const AZ_BOARDS_QUERY_MAX_PAGES = 25;
+
+/**
+ * Parse `az boards query` output. A query that matches nothing prints nothing at
+ * all (exit 0), which `JSON.parse` would throw on, and an incremental reconcile
+ * that finds no changes is the common case. Output that is not JSON still throws.
+ */
+function parseAzWorkItemArray(stdout: string): AzureDevOpsWorkItemRaw[] {
+  if (stdout.trim() === '') return [];
+  const parsed = JSON.parse(stdout) as AzureDevOpsWorkItemRaw[] | null;
+  return parsed ?? [];
+}
+
+/** The argv of one `az boards query` page, shared by the fetch and the ids-only listing. */
+function azBoardsQueryArgs(wiql: string, organizationUrl: string, project: string): string[] {
+  return ['boards', 'query', '--wiql', wiql, '--organization', organizationUrl, '--project', project, '--output', 'json'];
+}
+
+const AZ_BOARDS_QUERY_EXEC_OPTIONS = { timeout: COMMAND_TIMEOUT, maxBuffer: 50 * 1024 * 1024 };
+
+/**
+ * Every work item a WIQL matches, read past az's 1000-item cap. Each query is
+ * ordered by id (`buildWiqlQuery`), and a full page is followed by the query for
+ * ids past its highest, until a page comes back short. Before this a project with
+ * more than 1000 work items listed only its first 1000, and the prune listing,
+ * cut the same way, deleted cached rows that were still live.
+ */
+async function queryAllWorkItemPages(
+  runQuery: (wiql: string) => Promise<{ stdout: string }>,
+  buildPage: (afterId: number | undefined) => string,
+): Promise<AzureDevOpsWorkItemRaw[]> {
+  const allItems: AzureDevOpsWorkItemRaw[] = [];
+  let afterId: number | undefined;
+  for (let pageNumber = 1; pageNumber <= AZ_BOARDS_QUERY_MAX_PAGES; pageNumber += 1) {
+    const page = parseAzWorkItemArray((await runQuery(buildPage(afterId))).stdout);
+    allItems.push(...page);
+    if (page.length < AZ_BOARDS_QUERY_MAX_ITEMS) return allItems;
+    const pageIds = page.map((item) => item?.id).filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id));
+    const highestId = pageIds.length > 0 ? Math.max(...pageIds) : undefined;
+    if (highestId === undefined || (afterId !== undefined && highestId <= afterId)) {
+      throw new Error('az boards query paging did not advance past the last page');
+    }
+    afterId = highestId;
+  }
+  throw new Error(`az boards query paging passed ${AZ_BOARDS_QUERY_MAX_PAGES} pages`);
+}
+
 /** Parse a projected PR array, tolerating the `null` / non-array shapes a --query can yield. */
 function parseAzurePrList(stdout: string): AzurePrItem[] {
   const parsed = JSON.parse(stdout) as AzurePrRaw[] | null;
@@ -597,21 +714,11 @@ export class AzureDevOpsImporter {
     if (cached && (now - cached.timestamp) < QUERY_CACHE_TTL) {
       allItems = cached.items;
     } else {
-      const wiql = buildWiqlQuery(project, state, searchQuery, iterationPath, changedSince);
       const organizationUrl = `https://dev.azure.com/${organization}`;
-
-      const { stdout } = await execAzForImport(
-        [
-          'boards', 'query',
-          '--wiql', wiql,
-          '--organization', organizationUrl,
-          '--project', project,
-          '--output', 'json',
-        ],
-        { timeout: COMMAND_TIMEOUT, maxBuffer: 50 * 1024 * 1024 },
+      const parsed = await queryAllWorkItemPages(
+        (wiql) => execAzForImport(azBoardsQueryArgs(wiql, organizationUrl, project), AZ_BOARDS_QUERY_EXEC_OPTIONS),
+        (afterId) => buildWiqlQuery(project, state, searchQuery, iterationPath, changedSince, afterId),
       );
-
-      const parsed = JSON.parse(stdout) as AzureDevOpsWorkItemRaw[];
 
       // az boards query returns full work item data, but guard against
       // API changes where only IDs might be returned (fields missing)
@@ -634,7 +741,7 @@ export class AzureDevOpsImporter {
       this.queryCache.set(cacheKey, { items: allItems, timestamp: now });
     }
 
-    // Return all items at once - no pagination needed since WIQL fetches everything
+    // All items at once: the az paging happened above, so the caller sees one page.
     return { items: allItems, hasNextPage: false, totalCount: allItems.length };
   }
 
@@ -674,6 +781,9 @@ export class AzureDevOpsImporter {
    * List every current work item id in a project (all states) via an ids-only
    * WIQL. Cheap (one query, no fields, comments, or relations) and used by the
    * reconcile's auto-prune sweep to drop cache rows the remote no longer has.
+   * Paged past az's 1000-item cap (`queryAllWorkItemPages`): a listing cut at
+   * the cap holds the oldest ids only, and pruning against it deleted the
+   * recently changed items the fetch had just cached.
    */
   async fetchWorkItemIds(
     organization: string,
@@ -683,20 +793,11 @@ export class AzureDevOpsImporter {
     const available = await this.detect();
     if (!available) throw new RefusalError('Azure CLI not found');
 
-    const wiql = buildWorkItemIdsWiql(project, iterationPath);
     const organizationUrl = `https://dev.azure.com/${organization}`;
-    const { stdout } = await execAz(
-      [
-        'boards', 'query',
-        '--wiql', wiql,
-        '--organization', organizationUrl,
-        '--project', project,
-        '--output', 'json',
-      ],
-      { timeout: COMMAND_TIMEOUT, maxBuffer: 50 * 1024 * 1024 },
+    const parsed = await queryAllWorkItemPages(
+      (wiql) => execAz(azBoardsQueryArgs(wiql, organizationUrl, project), AZ_BOARDS_QUERY_EXEC_OPTIONS),
+      (afterId) => buildWorkItemIdsWiql(project, iterationPath, afterId),
     );
-
-    const parsed = JSON.parse(stdout) as AzureDevOpsWorkItemRaw[];
     // The ids feed the reconcile's prune keep-list, where a stray undefined would
     // not match any cached row and would therefore delete a live item. Drop
     // anything that is not a real numeric id rather than passing it through.

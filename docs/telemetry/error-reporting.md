@@ -417,9 +417,15 @@ in one Sentry org, one triage surface.
   message is `Handled <source> failure: <ErrorName>` over the original frames (`pathFreeCopy`),
   never `error.message`, a runtime error's included: V8 quotes the property it could not read and
   Node's `ERR_INVALID_ARG_*` quotes the value it got, either of which can be a title. Tags are `source`,
-  `error_name`, `errno`, `syscall` and `git_cause` when the error carries them, and the chokepoint's own short enums.
+  `error_name`, `errno`, `syscall`, `git_cause` and `az_server_code` when the error carries them, and the chokepoint's own short enums.
   `git_cause` is what a failed git command refused on (below, with the launch report's worktree
-  causes), and it is part of the latch key, because every git failure throws from one line. It skips what is
+  causes), and it is part of the latch key, because every git failure throws from one line.
+  `az_server_code` is the Azure DevOps server code (`TF51005`) that refused an az call on the
+  Import path, or `none` when az's answer carried no code. The import classifier in
+  `boards/adapters/azure-devops/client.ts` reads it from az's stderr and keeps only the code, since
+  the rest quotes the user's query and project. `azServerCodeOf` sends only a value of that shape.
+  It is part of the latch key too. Most WIQL refusals carry no code, so `none` is common: Sentry
+  DESKTOP-47's day-precision refusal had none. It skips what is
   not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
   `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
   cause), skips an error another reporter already sent (`markReported` and `isReported`, which
