@@ -11,7 +11,11 @@
 import diagnosticsChannel from 'node:diagnostics_channel';
 import { describe, it, expect, afterEach, beforeEach, vi, type MockInstance } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { RelayClient, isRedialableTransport } from '../../../src/main/mobile-bridge/transport/relay-client';
+import { RelayClient, RelayDialError, isRedialableTransport } from '../../../src/main/mobile-bridge/transport/relay-client';
+import { isExpectedFailure } from '../../../src/main/analytics/handled-report';
+
+// handled-report's only import of the Sentry module; mocked so isExpectedFailure loads alone.
+vi.mock('../../../src/main/analytics/error-reporting', () => ({ reportHandledError: vi.fn() }));
 
 /**
  * A minimal controllable stand-in for the global `WebSocket`. Deliberately
@@ -258,6 +262,106 @@ describe('RelayClient', () => {
 });
 
 /**
+ * A dial that never opened rejects with RelayDialError, a decided outcome the
+ * error reporter skips. Sentry DESKTOP-4G was Pair a device reporting the plain
+ * Error this used to be as a code defect: undici sends a network failure and a
+ * non-101 answer from the relay through one handshake failure, so the client
+ * cannot tell them apart. The cause carries only what the client holds, never
+ * the relay URL or the slot.
+ */
+describe('RelayClient dial failure', () => {
+  const SLOT_ID = 'a1b2c3d4e5f6-slot';
+  const RELAY_URL = 'wss://relay.invalid/socket';
+  let activeClients: RelayClient[] = [];
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    stubFakeWebSocket();
+  });
+
+  afterEach(() => {
+    for (const client of activeClients) client.close();
+    activeClients = [];
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function startDial(): Promise<void> {
+    const client = new RelayClient({ relayUrl: RELAY_URL, slotId: SLOT_ID });
+    activeClients.push(client);
+    const connectPromise = client.connect();
+    connectPromise.catch(() => undefined);
+    return connectPromise;
+  }
+
+  async function rejectionOf(connectPromise: Promise<void>): Promise<unknown> {
+    try {
+      await connectPromise;
+    } catch (error) {
+      return error;
+    }
+    throw new Error('connect() resolved; expected a rejection');
+  }
+
+  function expectDecidedAndPathFree(rejection: unknown): void {
+    expect(rejection).toBeInstanceOf(RelayDialError);
+    expect((rejection as Error).name).toBe('RelayDialError');
+    expect(isExpectedFailure(rejection)).toBe(true);
+    const serialized = `${(rejection as Error).message} ${JSON.stringify(rejection)}`;
+    expect(serialized).not.toContain(SLOT_ID);
+    expect(serialized).not.toContain('relay.invalid');
+  }
+
+  it('a handshake that fails (onerror, then close 1006) rejects as an expected closed dial', async () => {
+    const connectPromise = startDial();
+    FakeWebSocket.instances[0].fail(1006, '', { type: 'error', message: `Received network error or non-101 status code. ${SLOT_ID}` });
+
+    const rejection = await rejectionOf(connectPromise);
+    expectDecidedAndPathFree(rejection);
+    expect((rejection as RelayDialError).dialCause).toEqual({ kind: 'closed', errorFirst: true, closeCode: 1006, stack: 'node' });
+    expect((rejection as Error).message).toBe('Relay connection closed before it opened');
+  });
+
+  it('a close with no error first records errorFirst false and the close code', async () => {
+    const connectPromise = startDial();
+    FakeWebSocket.instances[0].fail(1002, `reason quoting ${SLOT_ID}`);
+
+    const rejection = await rejectionOf(connectPromise);
+    expectDecidedAndPathFree(rejection);
+    expect((rejection as RelayDialError).dialCause).toEqual({ kind: 'closed', errorFirst: false, closeCode: 1002, stack: 'node' });
+  });
+
+  it('close() while the dial is in flight (a superseding pairing) rejects as aborted', async () => {
+    const connectPromise = startDial();
+    activeClients[0].close();
+
+    const rejection = await rejectionOf(connectPromise);
+    expectDecidedAndPathFree(rejection);
+    expect((rejection as RelayDialError).dialCause).toEqual({ kind: 'aborted', stack: 'node' });
+  });
+
+  it('a dial the watchdog gives up on rejects as an expected timeout', async () => {
+    vi.useFakeTimers();
+    const connectPromise = startDial();
+    vi.advanceTimersByTime(30_000);
+
+    const rejection = await rejectionOf(connectPromise);
+    expectDecidedAndPathFree(rejection);
+    expect((rejection as RelayDialError).dialCause).toEqual({ kind: 'timeout', stack: 'node' });
+  });
+
+  it('a malformed relay URL stays a plain error, which still reports', async () => {
+    const client = new RelayClient({ relayUrl: 'not a url', slotId: SLOT_ID });
+    activeClients.push(client);
+    const rejection = await rejectionOf(client.connect());
+    expect(rejection).not.toBeInstanceOf(RelayDialError);
+    expect(isExpectedFailure(rejection)).toBe(false);
+  });
+});
+
+/**
  * The forced redial and the dial watchdog: the two ways a socket the OS never
  * reports on gets replaced. `redialNow({ force })` is BridgeSession's lever
  * for a socket that reads open and carries nothing (its spent presence
@@ -461,7 +565,7 @@ describe('RelayClient redial and dial watchdog', () => {
 
     client.redialNow({ force: true, reason: 'test' });
 
-    await expect(connectPromise).rejects.toThrow(/abandoned by a forced redial/);
+    await expect(connectPromise).rejects.toMatchObject({ name: 'RelayDialError', dialCause: { kind: 'abandoned', stack: 'node' } });
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(FakeWebSocket.instances[0].closeCallCount).toBe(1);
     expect(FakeWebSocket.instances[1].closeCallCount).toBe(0);
@@ -482,7 +586,7 @@ describe('RelayClient redial and dial watchdog', () => {
     vi.advanceTimersByTime(1);
     expect(FakeWebSocket.instances[0].closeCallCount).toBe(1);
     expect(client.state).toBe('reconnecting');
-    await expect(connectPromise).rejects.toThrow(/timed out/);
+    await expect(connectPromise).rejects.toMatchObject({ name: 'RelayDialError', dialCause: { kind: 'timeout', stack: 'node' } });
     expect(loggedLines(warnSpy).some((line) => line.includes('dial timed out after 30 s'))).toBe(true);
 
     vi.advanceTimersByTime(500);

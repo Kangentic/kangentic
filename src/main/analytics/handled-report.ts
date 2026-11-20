@@ -62,6 +62,8 @@ export const EXPECTED_FAILURE_NAMES: ReadonlySet<string> = new Set([
   'UnsupportedOnHostError',
   'RemoteGitUnavailableError',
   'HostTransferError',
+  // A mobile relay dial that never opened: the network or the relay, which the client cannot tell apart
+  'RelayDialError',
   // Workers that are down
   'RetrievalUnavailableError',
   'HostUnavailableError',
