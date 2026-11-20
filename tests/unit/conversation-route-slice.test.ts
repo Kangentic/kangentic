@@ -108,12 +108,25 @@ describe('sliceConversationByRoute', () => {
   });
 
   it('a minute-precision clock in the minute a stay starts belongs to that stay', () => {
-    // Cursor clocks name only the minute. A card moved 43 seconds in still
+    // A clock that names only the minute: a card moved 30 seconds in still
     // owns the turn whose clock is that minute (the column often types then).
     const route = [column('executing', 'Executing', [0.5])];
-    const prompt: TranscriptEntry = { kind: 'user', uuid: 'prompt', ts: at(0), text: '/code-review' };
+    const prompt: TranscriptEntry = { kind: 'user', uuid: 'prompt', ts: at(0), tsPrecision: 'minute', text: '/code-review' };
 
     expect(uuids(sliceConversationByRoute([prompt], route, 'executing').entries)).toContain('prompt');
+  });
+
+  it('an unmarked clock that lands on a whole minute keeps its own stay', () => {
+    // A seconds clock reads :00 once a minute. Without the minute mark it is
+    // a precise time, so a stay that starts 30 seconds later does not take it.
+    const route = [
+      column('executing', 'Executing', [0]),
+      column('review', 'Code Review', [0.5]),
+    ];
+    const onTheMinute: TranscriptEntry = { kind: 'user', uuid: 'on-the-minute', ts: at(0), text: 'go' };
+
+    expect(uuids(sliceConversationByRoute([onTheMinute], route, 'executing').entries)).toContain('on-the-minute');
+    expect(uuids(sliceConversationByRoute([onTheMinute], route, 'review').entries)).not.toContain('on-the-minute');
   });
 
   it('a millisecond clock before a stay that starts later in the same minute stays in the earlier stay', () => {
@@ -127,6 +140,52 @@ describe('sliceConversationByRoute', () => {
 
     expect(uuids(sliceConversationByRoute([stillExecuting], route, 'executing').entries)).toContain('still');
     expect(uuids(sliceConversationByRoute([stillExecuting], route, 'review').entries)).not.toContain('still');
+  });
+
+  it('a minute-precision clock inside an earlier stay moves to the next stay that starts later in the same minute', () => {
+    const route = [
+      column('executing', 'Executing', [0]),
+      column('review', 'Code Review', [5.5]),
+    ];
+    const command: TranscriptEntry = { kind: 'user', uuid: 'command', ts: at(5), tsPrecision: 'minute', text: '/code-review' };
+
+    expect(uuids(sliceConversationByRoute([command], route, 'executing').entries)).not.toContain('command');
+    expect(uuids(sliceConversationByRoute([command], route, 'review').entries)).toContain('command');
+  });
+
+  it('does not bump a minute-precision clock when the next stay starts exactly a minute later', () => {
+    const route = [
+      column('executing', 'Executing', [0]),
+      column('review', 'Code Review', [6]),
+    ];
+    const command: TranscriptEntry = { kind: 'user', uuid: 'command', ts: at(5), tsPrecision: 'minute', text: 'go' };
+
+    expect(uuids(sliceConversationByRoute([command], route, 'executing').entries)).toContain('command');
+    expect(uuids(sliceConversationByRoute([command], route, 'review').entries)).not.toContain('command');
+  });
+
+  it('bumps a minute-precision clock only to the very next stay, never one further ahead', () => {
+    const route = [
+      column('executing', 'Executing', [0]),
+      column('review', 'Code Review', [5.25]),
+      column('merge', 'Merge', [5.5]),
+    ];
+    const command: TranscriptEntry = { kind: 'user', uuid: 'command', ts: at(5), tsPrecision: 'minute', text: 'go' };
+
+    expect(uuids(sliceConversationByRoute([command], route, 'review').entries)).toContain('command');
+    expect(uuids(sliceConversationByRoute([command], route, 'executing').entries)).not.toContain('command');
+    expect(uuids(sliceConversationByRoute([command], route, 'merge').entries)).not.toContain('command');
+  });
+
+  it('does not bump a minute-precision clock to a stay that is minutes away', () => {
+    const route = [
+      column('executing', 'Executing', [0]),
+      column('review', 'Code Review', [9]),
+    ];
+    const command: TranscriptEntry = { kind: 'user', uuid: 'command', ts: at(7), tsPrecision: 'minute', text: 'go' };
+
+    expect(uuids(sliceConversationByRoute([command], route, 'executing').entries)).toContain('command');
+    expect(uuids(sliceConversationByRoute([command], route, 'review').entries)).not.toContain('command');
   });
 
   it('keeps a tool result with its tool call when the result lands after the next move', () => {

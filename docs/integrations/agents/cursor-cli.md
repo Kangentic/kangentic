@@ -264,7 +264,8 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   slash command (`/pull-request`, `/merge-pull-request`) are stripped, then the
   `<user_query>` wrapper is removed. A line whose whole body is one `<task>` element is
   unwrapped once more. The user line's `<timestamp>` tag (minute precision) is stamped
-  onto that turn and the assistant lines that follow, so Route tabs can place it.
+  onto that turn and the assistant lines that follow, marked `tsPrecision: 'minute'`, so
+  Route tabs can place it.
   `transcriptHasTimestamps` stays false: the viewer still pages by position, because a
   minute clock is not a JSON field the timeline can probe. There is still no
   `command-injection` verifier: the records have no timestamp field, so a confirm cannot bound

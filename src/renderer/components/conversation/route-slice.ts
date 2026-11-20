@@ -9,13 +9,14 @@
  * working columns only, and no turn happens in To Do or Done, so a gap the task
  * spent there never needs a stay of its own. An entry with no timestamp (0), or
  * one from before the first logged move, belongs to no stay: it shows in All
- * and in no column tab. A clock that names only the minute (Cursor's
- * `<timestamp>` tag) still belongs to a stay that starts later in that
- * minute: the card often moves, then the column types, inside the same
- * minute the clock reports. A millisecond clock does not get that bump, so
- * a Claude turn a few seconds before the move stays in the column it ran
- * in. A tool result follows its tool call's stay, so a card is never split
- * from its result across a boundary.
+ * and in no column tab. An entry whose clock names only the minute
+ * (`tsPrecision: 'minute'`) still belongs to a stay that starts later in
+ * that minute: the card often moves, then the column types, inside the same
+ * minute the clock reports. An entry without that mark does not get the
+ * bump, so a turn a few seconds before the move stays in the column it ran
+ * in, even when its time lands on a whole minute. A tool result follows its
+ * tool call's stay, so a card is never split from its result across a
+ * boundary.
  *
  * The dividers are synthetic system entries, built here and never sent
  * anywhere: they use the subtype whose text is ready to display
@@ -117,8 +118,9 @@ function staysOf(route: ReadonlyArray<TaskReportRouteColumn>): Stay[] {
 const MINUTE_MS = 60_000;
 
 /** The index of the stay an instant falls in, or -1 for none (no timestamp, or before the first stay).
- *  A binary search: with older pages loaded this runs once per entry over thousands of entries. */
-function stayIndexAt(stays: ReadonlyArray<Stay>, timestampMs: number): number {
+ *  A binary search: with older pages loaded this runs once per entry over thousands of entries.
+ *  `minutePrecision` is the entry's `tsPrecision === 'minute'`. */
+function stayIndexAt(stays: ReadonlyArray<Stay>, timestampMs: number, minutePrecision: boolean): number {
   if (!(timestampMs > 0)) return -1;
   let low = 0;
   let high = stays.length - 1;
@@ -134,10 +136,10 @@ function stayIndexAt(stays: ReadonlyArray<Stay>, timestampMs: number): number {
   }
   // A clock that only names the minute cannot say whether it beat a stay
   // that starts later in that minute. Give that later stay the turn, so a
-  // Cursor slash command typed as the card arrived still lands in the new
-  // column. A timestamp with leftover milliseconds is a real clock and
-  // stays on the earlier stay.
-  if (timestampMs % MINUTE_MS === 0) {
+  // command the column typed as the card arrived still lands in the new
+  // column. An entry without the mark is a precise clock and stays on the
+  // earlier stay.
+  if (minutePrecision) {
     const candidate = found + 1;
     if (candidate >= 0 && candidate < stays.length) {
       const stay = stays[candidate];
@@ -157,7 +159,7 @@ function assignStays(entries: ReadonlyArray<TranscriptEntry>, stays: ReadonlyArr
       const owner = stayByToolUseId.get(entry.toolUseId);
       if (owner !== undefined) return owner;
     }
-    const stayIndex = stayIndexAt(stays, entry.ts);
+    const stayIndex = stayIndexAt(stays, entry.ts, entry.tsPrecision === 'minute');
     if (entry.kind === 'assistant') {
       for (const block of entry.blocks) {
         if (block.type === 'tool_use') stayByToolUseId.set(block.id, stayIndex);

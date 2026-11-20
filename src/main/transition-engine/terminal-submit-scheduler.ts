@@ -219,13 +219,14 @@ interface LaunchWait {
  *   2. **Existing session, deferred mode** - holds until the current turn
  *      genuinely completes (see `turn-completion.ts`), then delivers.
  *
-   *   3. **Freshly spawned / queued session** - waits until the CLI can take
-   *      keys. A fresh spawn delivers on the first `'thinking'` or `'idle'`.
-   *      A queued resume waits for `'idle'` after it starts: its first
-   *      `'thinking'` is the PTY painting the boot screen, and keys typed
-   *      then are lost. 30s fallback delivers anyway if neither fires. The
-   *      hard timeout (`opts.timeoutMs`, default 120s) caps the wait after
-   *      the session is running, not the time spent queued for a column slot.
+ *   3. **Freshly spawned / queued session** - waits until the CLI can take
+ *      keys. A fresh spawn delivers on the first `'thinking'` or `'idle'`.
+ *      A queued session waits for `'idle'` after it starts: for a resume,
+ *      its first `'thinking'` is the PTY painting the boot screen, and keys
+ *      typed then are lost. 30s fallback delivers anyway if neither fires.
+ *      The hard timeout (`opts.timeoutMs`, default 120s) caps the wait after
+ *      the session is running, not the time spent queued for a column slot.
+ *      A queued session paused or ended before it runs fails the burst.
  *
  *   4. **Existing session whose agent is still starting** - a session the
  *      caller did not flag as fresh, but whose agent is not on screen yet
@@ -917,20 +918,8 @@ export class TerminalSubmitScheduler {
       if (!isQueued && activityState === 'thinking') detachAndDeliver();
     };
 
-    const onSessionChanged = (evtSessionId: string, evtSession: { status: string }): void => {
-      if (evtSessionId !== sessionId) return;
-      if (!isCurrent()) return;
-      if (state === 'queued' && evtSession.status === 'running') {
-        state = 'waiting';
-        beginWaitingForCli();
-      }
-    };
-
-    const onExit = (evtSessionId: string): void => {
-      if (evtSessionId !== sessionId) return;
-      if (!isCurrent()) return;
-      console.log(`[TerminalSubmitScheduler] Session ${sessionId.slice(0, 8)} exited -- cancelling injection for task ${taskId.slice(0, 8)}`);
-      // This burst reports its own failure below; `cancel` stops the rest.
+    // This burst reports its own failure; `cancel` stops the rest.
+    const failBeforeDelivery = (reason: string): void => {
       this.dropDeferred(taskId);
       this.cancel(taskId);
       this.report(opts, {
@@ -942,9 +931,34 @@ export class TerminalSubmitScheduler {
         discardedDraft: null,
         interruptedTurn: false,
         escalated: false,
-        reason: 'The session exited before the command could be sent.',
+        reason,
         textReachedAgent: false,
       });
+    };
+
+    const onSessionChanged = (evtSessionId: string, evtSession: { status: string }): void => {
+      if (evtSessionId !== sessionId) return;
+      if (!isCurrent()) return;
+      if (state !== 'queued') return;
+      if (evtSession.status === 'running') {
+        state = 'waiting';
+        beginWaitingForCli();
+        return;
+      }
+      // A queued row that is paused never ran a PTY, so no 'exit' follows,
+      // and the hard timer has not started: without this the burst would
+      // wait, unreported, for a session that is gone.
+      if (evtSession.status === 'suspended' || evtSession.status === 'exited') {
+        console.log(`[TerminalSubmitScheduler] Queued session ${sessionId.slice(0, 8)} ${evtSession.status} before it ran -- cancelling injection for task ${taskId.slice(0, 8)}`);
+        failBeforeDelivery('The session stopped before it started, so the command was not sent.');
+      }
+    };
+
+    const onExit = (evtSessionId: string): void => {
+      if (evtSessionId !== sessionId) return;
+      if (!isCurrent()) return;
+      console.log(`[TerminalSubmitScheduler] Session ${sessionId.slice(0, 8)} exited -- cancelling injection for task ${taskId.slice(0, 8)}`);
+      failBeforeDelivery('The session exited before the command could be sent.');
     };
 
     this.sessionManager.on('activity', onActivity);

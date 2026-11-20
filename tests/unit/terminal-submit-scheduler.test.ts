@@ -618,6 +618,84 @@ describe('TerminalSubmitScheduler', () => {
       expect(terminalSubmit.calls).toHaveLength(1);
       expect(reports).toHaveLength(0);
     });
+
+    it.each(['suspended', 'exited'])('fails the burst at once when the queued session is %s before it ever runs', async (status) => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      sessionManager.emitSessionChanged('s1', { status });
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        commands: ['/test'],
+        reason: 'The session stopped before it started, so the command was not sent.',
+        textReachedAgent: false,
+      });
+
+      // Every later signal and both timers: nothing may deliver or report again.
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      sessionManager.emitActivity('s1', 'idle');
+      sessionManager.emitExit('s1');
+      vi.advanceTimersByTime(130_000);
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(terminalSubmit.calls).toHaveLength(0);
+    });
+
+    it('does not deliver on idle that arrives before the queued session is running', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], { freshlySpawned: true });
+      await tick();
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+    });
+
+    it('delivers a running queued session that never goes idle at the 30s fallback, and clears the hard timer', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      await tick();
+
+      vi.advanceTimersByTime(29_999);
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      vi.advanceTimersByTime(1);
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+
+      // Delivery cleared the 120s hard timer: no failed report may follow.
+      vi.advanceTimersByTime(130_000);
+      await tick();
+      expect(reports.filter((report) => report.outcome === 'failed')).toHaveLength(0);
+    });
   });
 
   describe('deferred mode', () => {

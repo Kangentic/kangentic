@@ -8305,10 +8305,20 @@ export interface TranscriptEarlierHistory {
   position: number;
 }
 
+/**
+ * How much of `TranscriptEntry.ts` the agent's clock recorded. `'minute'`:
+ * the clock names only the minute, so `ts` is that minute's start and the
+ * turn may have happened up to 59 s later. Absent: `ts` is as precise as the
+ * clock it came from.
+ */
+export type TranscriptTimestampPrecision = 'minute';
+
 export type TranscriptEntry =
   // origin: where the entry came from, set by parsers that can page their
   // history (`TranscriptEntryOrigin`). Absent elsewhere, and on older archives.
-  | { kind: 'user'; uuid: string; ts: number; text: string; origin?: TranscriptEntryOrigin }
+  // tsPrecision: set by a parser whose agent's clock is coarser than a
+  // millisecond (`TranscriptTimestampPrecision`), on every variant.
+  | { kind: 'user'; uuid: string; ts: number; tsPrecision?: TranscriptTimestampPrecision; text: string; origin?: TranscriptEntryOrigin }
   // agentName is set only when this entry was stitched into a cross-session
   // task-level view (resolveTaskTranscript) whose sessions used different
   // agents - the role badge prefers it over the response's single top-level
@@ -8319,21 +8329,21 @@ export type TranscriptEntry =
   // them (see TranscriptTurnUsage). It is not shown in the viewer today; it is
   // captured so consumption/burn-rate analysis can read it straight off the
   // conversation. Absent when the agent/turn reported no usage.
-  | { kind: 'assistant'; uuid: string; ts: number; model?: string; agentName?: string; usage?: TranscriptTurnUsage; blocks: TranscriptBlock[]; origin?: TranscriptEntryOrigin }
+  | { kind: 'assistant'; uuid: string; ts: number; tsPrecision?: TranscriptTimestampPrecision; model?: string; agentName?: string; usage?: TranscriptTurnUsage; blocks: TranscriptBlock[]; origin?: TranscriptEntryOrigin }
   // approval: who let the call run, where the agent records it: 'automatic' for
   // a hook (Kangentic's plan approval), 'user' for the person. Absent when the
   // agent records nothing, or a rule or mode allowed it.
   // plan: the plan an approved plan exit returned, for an agent whose call
   // carried none in its input (Claude 2.1.303 calls ExitPlanMode with `{}` and
   // records the plan on the result line).
-  | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean; approval?: TranscriptToolApproval; plan?: string; origin?: TranscriptEntryOrigin }
+  | { kind: 'tool_result'; uuid: string; ts: number; tsPrecision?: TranscriptTimestampPrecision; toolUseId: string; content: string; isError?: boolean; approval?: TranscriptToolApproval; plan?: string; origin?: TranscriptEntryOrigin }
   // Non-conversation events surfaced explicitly instead of being rendered as
   // misleading "## User" turns: conversation-compaction boundaries/summaries,
   // slash-command invocations and their local stdout, and (session_boundary)
   // the seam between two sessions stitched into one task-level view.
   // earlierHistory: on a `truncated` notice from a pageable conversation, the
   // cursor the viewer pages older history from (`TranscriptEarlierHistory`).
-  | { kind: 'system'; uuid: string; ts: number; subtype: TranscriptSystemSubtype; text: string; origin?: TranscriptEntryOrigin; earlierHistory?: TranscriptEarlierHistory };
+  | { kind: 'system'; uuid: string; ts: number; tsPrecision?: TranscriptTimestampPrecision; subtype: TranscriptSystemSubtype; text: string; origin?: TranscriptEntryOrigin; earlierHistory?: TranscriptEarlierHistory };
 
 /**
  * The `kind: 'system'` entry variants.

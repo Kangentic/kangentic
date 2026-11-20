@@ -20,8 +20,9 @@ const UUIDS_NUMBER_LINES = true;
  * timestamp field. The clock lives in the user line's `<timestamp>` tag
  * (`Monday, Aug 24, 2026, 3:16 PM (UTC+8)`), minute precision. That value
  * is stamped onto the user turn and carried forward onto the assistant
- * lines of the same turn, so the conversation window's Route tabs can
- * place the turn. The adapter still sets `transcriptHasTimestamps` false:
+ * lines of the same turn, each marked `tsPrecision: 'minute'`, so the
+ * conversation window's Route tabs can place the turn. The adapter still
+ * sets `transcriptHasTimestamps` false:
  * the viewer pages by position and asks for no timeline, because a minute
  * clock is not a JSON field the timeline can probe.
  *
@@ -57,7 +58,7 @@ export async function parseCursorTranscript(
   const entries = parseCursorLines(
     agentSessionId,
     splitJsonlLines(window.text, window.startByte, window.omittedLineCount),
-    timestampBefore(filePath, window.startByte),
+    () => timestampBefore(filePath, window.startByte),
   );
   return {
     entries: prependTruncationMarker(
@@ -80,7 +81,7 @@ export function readCursorTranscriptPage(
     filePath,
     request,
     countLines: UUIDS_NUMBER_LINES,
-    parseLines: (lines) => parseCursorLines(agentSessionId, lines, timestampBefore(filePath, lines[0]?.byte ?? 0)),
+    parseLines: (lines) => parseCursorLines(agentSessionId, lines, () => timestampBefore(filePath, lines[0]?.byte ?? 0)),
   });
 }
 
@@ -90,6 +91,11 @@ export function readCursorTranscriptPage(
  * the turn. A leftover leading tag after this is injected context, not a turn.
  */
 const LEADING_USER_WRAPPERS = ['manually_attached_skills', 'cursor_commands'] as const;
+
+/** One leading-block pattern per wrapper, built once. */
+const LEADING_WRAPPER_PATTERNS = LEADING_USER_WRAPPERS.map(
+  (tag) => new RegExp(`^\\s*<${tag}>[\\s\\S]*?</${tag}>\\s*`),
+);
 
 /**
  * The text a user line should show. Null when the line is not a user turn.
@@ -114,11 +120,8 @@ function stripLeadingWrappers(text: string): string {
   let stripped = true;
   while (stripped) {
     stripped = false;
-    for (const tag of LEADING_USER_WRAPPERS) {
-      const withoutThisWrapper = remaining.replace(
-        new RegExp(`^\\s*<${tag}>[\\s\\S]*?</${tag}>\\s*`),
-        '',
-      );
+    for (const pattern of LEADING_WRAPPER_PATTERNS) {
+      const withoutThisWrapper = remaining.replace(pattern, '');
       if (withoutThisWrapper !== remaining) {
         remaining = withoutThisWrapper;
         stripped = true;
@@ -143,7 +146,10 @@ const CURSOR_CLOCK = /^[A-Za-z]+, ([A-Za-z]+) (\d{1,2}), (\d{4}), (\d{1,2}):(\d{
 
 /**
  * Epoch ms for a Cursor `<timestamp>` body, or 0 when the string is not
- * that clock. Exported so the format stays pinned without a file read.
+ * that clock: English month abbreviations and a 12-hour time only, the
+ * form Cursor writes. A field out of range (13 PM, Feb 30, minute 75)
+ * is 0, not a date `Date.UTC` would roll over into the next unit.
+ * Exported so the format stays pinned without a file read.
  */
 export function parseCursorClock(raw: string): number {
   const match = raw.trim().match(CURSOR_CLOCK);
@@ -154,6 +160,10 @@ export function parseCursorClock(raw: string): number {
   const year = Number(match[3]);
   let hour = Number(match[4]);
   const minute = Number(match[5]);
+  const offsetHours = Number(match[8]);
+  const offsetMinutes = Number(match[9] ?? '0');
+  if (hour < 1 || hour > 12 || minute > 59 || offsetHours > 14 || offsetMinutes > 59) return 0;
+  if (new Date(Date.UTC(year, month, day)).getUTCDate() !== day) return 0;
   const period = match[6];
   if (period === 'AM') {
     if (hour === 12) hour = 0;
@@ -161,8 +171,6 @@ export function parseCursorClock(raw: string): number {
     hour += 12;
   }
   const offsetSign = match[7] === '-' ? -1 : 1;
-  const offsetHours = Number(match[8]);
-  const offsetMinutes = Number(match[9] ?? '0');
   const offsetMs = offsetSign * (offsetHours * 3600 + offsetMinutes * 60) * 1000;
   return Date.UTC(year, month, day, hour, minute) - offsetMs;
 }
@@ -177,9 +185,12 @@ function cursorUserTimestampMs(text: string): number {
 const TIMESTAMP_LOOKBACK_BYTES = 256 * 1024;
 
 /**
- * The nearest earlier user clock before `beforeByte`, or 0. A page (or a
- * truncated tail) can open on an assistant line; without this those entries
- * would keep `ts: 0` while a whole-file parse stamps the turn's clock.
+ * The clock of the nearest earlier user turn before `beforeByte`, or 0. A
+ * user line that is not a turn (injected context) or carries no clock is
+ * passed over, as the forward parse passes over it. A page (or a truncated
+ * tail) can open on an assistant line; without this those entries would
+ * keep `ts: 0` while a whole-file parse stamps the turn's clock. Read only
+ * when a window meets such a line before a clock of its own.
  */
 function timestampBefore(filePath: string, beforeByte: number): number {
   if (!(beforeByte > 0)) return 0;
@@ -188,7 +199,7 @@ function timestampBefore(filePath: string, beforeByte: number): number {
     file = fs.openSync(filePath, 'r');
     const lookback = Math.min(beforeByte, TIMESTAMP_LOOKBACK_BYTES);
     const start = beforeByte - lookback;
-    const buffer = Buffer.alloc(lookback);
+    const buffer = Buffer.allocUnsafe(lookback);
     const bytesRead = fs.readSync(file, buffer, 0, lookback, start);
     const text = buffer.toString('utf8', 0, bytesRead);
     const lines = text.split(/\n/);
@@ -209,7 +220,7 @@ function timestampBefore(filePath: string, beforeByte: number): number {
       if (parsed > 0) return parsed;
     }
     return 0;
-  } catch { // report-ok: a missing transcript during lookback leaves those assistant lines at ts 0
+  } catch { // report-ok: a transcript that cannot be read during lookback only leaves those lines at ts 0
     return 0;
   } finally {
     if (file !== undefined) fs.closeSync(file);
@@ -219,57 +230,67 @@ function timestampBefore(filePath: string, beforeByte: number): number {
 function parseCursorLines(
   agentSessionId: string,
   lines: ReadonlyArray<JsonlLine>,
-  seedTimestampMs: number,
+  earlierTimestampMs: () => number,
 ): TranscriptEntry[] {
-  return timeSyncWork('transcript:parse-cursor', () => collectCursorEntries(agentSessionId, lines, seedTimestampMs));
+  return timeSyncWork('transcript:parse-cursor', () => collectCursorEntries(agentSessionId, lines, earlierTimestampMs));
 }
 
 function collectCursorEntries(
   agentSessionId: string,
   lines: ReadonlyArray<JsonlLine>,
-  seedTimestampMs: number,
+  earlierTimestampMs: () => number,
 ): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
-  let lastTimestampMs = seedTimestampMs;
+  // The clock a line with none of its own carries: the latest user clock in
+  // this window, else the one before the window, read the first time a line
+  // needs it. A window that opens on a clocked user line never reads back.
+  let carriedTimestampMs: number | null = null;
+  const carried = (): number => {
+    if (carriedTimestampMs === null) carriedTimestampMs = earlierTimestampMs();
+    return carriedTimestampMs;
+  };
   for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;
     const firstNew = entries.length;
-    lastTimestampMs = parseCursorRecord(`${agentSessionId}:${lineNumber ?? 0}`, line, lastTimestampMs, entries);
+    const userClockMs = parseCursorRecord(`${agentSessionId}:${lineNumber ?? 0}`, line, carried, entries);
+    if (userClockMs > 0) carriedTimestampMs = userClockMs;
     stampOrigin(entries, firstNew, agentSessionId, byte);
   }
   return entries;
 }
 
+/** Parse one line into `entries`. Returns the user turn's own clock, or 0. */
 function parseCursorRecord(
   uuid: string,
   line: string,
-  lastTimestampMs: number,
+  carried: () => number,
   entries: TranscriptEntry[],
 ): number {
   let raw: unknown;
   try {
     raw = JSON.parse(line);
   } catch { // report-ok: a truncated JSONL line is not a turn
-    return lastTimestampMs;
+    return 0;
   }
-  if (!isRecord(raw) || !isRecord(raw.message)) return lastTimestampMs;
+  if (!isRecord(raw) || !isRecord(raw.message)) return 0;
 
   if (raw.role === 'user') {
     const stored = extractText(raw.message.content);
     const text = cursorDisplayedUserText(stored);
-    if (!text) return lastTimestampMs;
-    const parsed = cursorUserTimestampMs(stored);
-    const ts = parsed > 0 ? parsed : lastTimestampMs;
-    entries.push({ kind: 'user', uuid, ts, text });
-    return ts > 0 ? ts : lastTimestampMs;
+    if (!text) return 0;
+    const ownClockMs = cursorUserTimestampMs(stored);
+    const ts = ownClockMs > 0 ? ownClockMs : carried();
+    entries.push(ts > 0 ? { kind: 'user', uuid, ts, tsPrecision: 'minute', text } : { kind: 'user', uuid, ts, text });
+    return ownClockMs;
   }
 
   if (raw.role === 'assistant') {
     const blocks = assistantBlocks(raw.message.content, uuid);
-    if (blocks.length === 0) return lastTimestampMs;
-    entries.push({ kind: 'assistant', uuid, ts: lastTimestampMs, blocks });
+    if (blocks.length === 0) return 0;
+    const ts = carried();
+    entries.push(ts > 0 ? { kind: 'assistant', uuid, ts, tsPrecision: 'minute', blocks } : { kind: 'assistant', uuid, ts, blocks });
   }
-  return lastTimestampMs;
+  return 0;
 }
 
 function assistantBlocks(content: unknown, uuid: string): TranscriptBlock[] {
