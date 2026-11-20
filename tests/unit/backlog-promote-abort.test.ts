@@ -589,7 +589,7 @@ describe('BACKLOG_DEMOTE external-origin carry-back', () => {
       'Some description',
       2,
       ['bug'],
-      { externalId: '77', externalSource: 'github_issues', externalUrl: 'https://github.com/acme/repo/issues/77' },
+      { externalId: '77', externalSource: 'github_issues', externalUrl: 'https://github.com/acme/repo/issues/77', externalRepository: null },
     );
   });
 
@@ -678,7 +678,7 @@ describe('BACKLOG_DEMOTE external-origin carry-back', () => {
       'desc',
       0,
       [],
-      { externalId: null, externalSource: null, externalUrl: null },
+      { externalId: null, externalSource: null, externalUrl: null, externalRepository: null },
     );
   });
 });

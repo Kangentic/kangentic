@@ -24,8 +24,10 @@ import { englishText } from '../../../../shared/i18n/english';
 import { translateText } from '../../../i18n/translate';
 import { conditionKindsAsStored, textMatchSourceOf } from '../../../../shared/final-line-match';
 import { TEMPLATE_VARIABLE_PATTERN } from '../../../../shared/task-template-vars';
+import { normalizeTaskFilter } from '../../../../shared/automation-filter';
 import type {
   AutomationConfig,
+  AutomationTaskFilter,
   AutomationTrigger,
   AutomationType,
   AutomationWriteInput,
@@ -50,9 +52,9 @@ export interface AutomationDraft {
   condition: string | null;
   /**
    * Condition, Text match: the line the agent's final message must end on.
-   * Null: none. A row holds one kind, and a turn end only; the save
-   * (`toWriteInput`) holds both rules, so a draft may carry one a moment
-   * longer while the dialog keeps it for a Trigger switched back.
+   * Null: none. A turn end only; the save (`toWriteInput`) holds that rule,
+   * so a draft may carry one a moment longer while the dialog keeps it for a
+   * Trigger switched back. It may sit beside an Agent evaluation (#872).
    */
   final_line: string | null;
   /**
@@ -61,6 +63,8 @@ export interface AutomationDraft {
    * save forces it to `'agent'` then.
    */
   text_match_source: TextMatchSource;
+  /** Condition, Task lines: the priority levels and labels a task must have (#872). Null: every task. */
+  filter: AutomationTaskFilter | null;
   /** Frequency: the most runs on one task. Null: no limit. */
   max_runs: number | null;
 }
@@ -104,6 +108,8 @@ export function toDraft(automation: ColumnAutomation): AutomationDraft {
     final_line: automation.final_line ?? null,
     // A main process from before #1078 sends no field, which is the agent's line.
     text_match_source: textMatchSourceOf(automation),
+    // A main process from before #872 sends no field, which is every task.
+    filter: normalizeTaskFilter(automation.filter ?? null),
     max_runs: automation.max_runs,
   };
 }
@@ -158,6 +164,7 @@ export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigg
     condition: null,
     final_line: null,
     text_match_source: 'agent',
+    filter: null,
     max_runs: null,
   };
 }
@@ -178,6 +185,7 @@ export function copyAutomation(source: AutomationDraft, trigger: AutomationTrigg
     condition: source.condition,
     final_line: source.final_line,
     text_match_source: source.text_match_source,
+    filter: source.filter,
     max_runs: source.max_runs,
   };
 }
@@ -384,6 +392,7 @@ export function serializeAutomation(draft: AutomationDraft): string {
     enabled: draft.enabled,
     config,
     ...draftConditionKinds(draft),
+    filter: normalizeTaskFilter(draft.filter),
     max_runs: normalizeDraftMaxRuns(draft.max_runs),
   });
 }
@@ -395,11 +404,12 @@ export function normalizeDraftCondition(condition: string | null): string | null
 }
 
 /**
- * The Condition as it is saved: one kind per row, a Text match on a turn end
- * only. A Text match wins over prose, and off a turn end it is dropped, so a
- * row moved to On task enter saves without a check it could never run. The
- * dialog keeps the line in its own state until Done, which is what lets a
- * Trigger switched back restore it.
+ * The Condition's text kinds as they are saved: an Agent evaluation on any
+ * trigger, a Text match on a turn end only, and both together when both are
+ * set (#872). Off a turn end a Text match is dropped, so a row moved to On
+ * task enter saves without a check it could never run. The dialog keeps the
+ * line in its own state until Done, which is what lets a Trigger switched back
+ * restore it.
  */
 export function draftConditionKinds(draft: Pick<AutomationDraft, 'condition' | 'final_line' | 'trigger'> & { text_match_source?: TextMatchSource }): {
   condition: string | null;
@@ -530,6 +540,7 @@ export function toWriteInput(draft: AutomationDraft): AutomationWriteInput {
     enabled: draft.enabled,
     config: config as AutomationConfig,
     ...draftConditionKinds(draft),
+    filter: normalizeTaskFilter(draft.filter),
     max_runs: normalizeDraftMaxRuns(draft.max_runs),
   };
 }

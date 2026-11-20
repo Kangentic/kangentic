@@ -354,6 +354,7 @@ export const handlePromoteBacklog: CommandHandler = (
       priority: item.priority,
       externalId: item.external_id ?? undefined,
       externalSource: item.external_source ?? undefined,
+      externalRepository: item.external_repository ?? undefined,
       externalUrl: item.external_url ?? undefined,
     });
 

@@ -130,8 +130,13 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
   // What Connect fills in again, for a provider whose sign-in belongs to a site (Jira's site and email).
   const [setupDialogPrefill, setSetupDialogPrefill] = useState<BoardConnectPrefill | undefined>(undefined);
   const providerAuth = getProviderForSource(source.source)?.auth;
+  const sourceTypeOption = getSourceTypeOption(source.source);
   // A source added by folder (an Obsidian vault) whose folder can move away.
-  const folderSource = getSourceTypeOption(source.source)?.folder;
+  const folderSource = sourceTypeOption?.folder;
+  // Items with no open or closed state (a repository folder's) need no Open/Closed toggle.
+  const itemsHaveNoState = Boolean(sourceTypeOption?.itemsHaveNoState);
+  const bodyListsPaths = Boolean(sourceTypeOption?.bodyListsPaths);
+  const sourceTaskLabel = source.taskLabel?.trim() || undefined;
   const [choosingFolder, setChoosingFolder] = useState(false);
 
   // Client-side filters, evaluated live over the full (unbounded) issue set
@@ -269,7 +274,12 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
     try {
       const folder = await window.electronAPI.dialog.selectFolder({ title: translateText(folderSource.dialogTitle) });
       if (!folder) return;
-      replacement = await window.electronAPI.backlog.importSourcesAdd({ source: source.source, url: folder });
+      // The replacement keeps this source's Label.
+      replacement = await window.electronAPI.backlog.importSourcesAdd({
+        source: source.source,
+        url: folder,
+        ...(sourceTaskLabel ? { taskLabel: sourceTaskLabel } : {}),
+      });
     } catch (chooseError: unknown) {
       // A refused folder (not in a vault) is a rejection main saw, which the reporter skips.
       reportRendererFailure('backlog', 'import-choose-folder', chooseError);
@@ -476,6 +486,7 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       const result = await window.electronAPI.backlog.importExecute({
         source: source.source,
         repository: source.repository,
+        sourceId: source.id,
         issues: selectedIssues.map((issue) => ({
           externalId: issue.externalId,
           externalUrl: issue.externalUrl,
@@ -528,7 +539,7 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
       </div>
       <div className="flex-1" />
       {/* Server-side state toggle (controls what's fetched from API) */}
-      {!isProjectsSource && (
+      {!isProjectsSource && !itemsHaveNoState && (
         <ButtonGroup
           size="sm"
           options={[
@@ -771,6 +782,8 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
                     issue={issue}
                     selected={selectedIds.has(issue.externalId)}
                     onToggle={handleToggleSelect}
+                    sourceTaskLabel={sourceTaskLabel}
+                    showsBodyPaths={bodyListsPaths}
                   />
                 </div>
               );
@@ -857,18 +870,47 @@ export function ImportDialog({ source, onClose, onSourceReplaced }: ImportDialog
 
 // --- Individual issue row ---
 
+/**
+ * The names a path-list body lists (`- a/b/proposal.md`, `- a/b/specs/`), as
+ * `proposal.md, specs/`: what a repository folder item holds.
+ */
+function pathNamesOf(body: string): string {
+  const names: string[] = [];
+  for (const line of body.split('\n')) {
+    const match = /^- (.+)$/.exec(line.trim());
+    if (!match) continue;
+    const isFolder = match[1].endsWith('/');
+    const segments = match[1].split('/').filter((segment) => segment !== '');
+    const name = segments[segments.length - 1];
+    if (name) names.push(isFolder ? `${name}/` : name);
+  }
+  return names.join(', ');
+}
+
 const ImportIssueRow = React.memo(function ImportIssueRow({
   issue,
   selected,
   onToggle,
+  sourceTaskLabel,
+  showsBodyPaths,
 }: {
   issue: ExternalIssue;
   selected: boolean;
   onToggle: (externalId: string) => void;
+  /** The saved source's Label, which the import adds to every item. */
+  sourceTaskLabel?: string;
+  /** The body is a path list, shown as names under the title. */
+  showsBodyPaths: boolean;
 }) {
   const isImported = issue.alreadyImported;
   const isProject = issue.externalSource === 'github_projects';
-  const issueDisplayId = displayId(issue);
+  const rowDisplayId = displayId(issue);
+  // An id that only repeats the title (a repository folder item's name) is not printed twice.
+  const issueDisplayId = rowDisplayId === issue.title ? '' : rowDisplayId;
+  const labels = sourceTaskLabel && !issue.labels.some((label) => label.toLowerCase() === sourceTaskLabel.toLowerCase())
+    ? [sourceTaskLabel, ...issue.labels]
+    : issue.labels;
+  const pathNames = showsBodyPaths ? pathNamesOf(issue.body) : '';
 
   return (
     <div
@@ -918,11 +960,14 @@ const ImportIssueRow = React.memo(function ImportIssueRow({
               {issue.state}
             </span>
           )}
-          {issue.labels.slice(0, 4).map((label) => (
+          {labels.slice(0, 4).map((label) => (
             <Pill key={label} size="sm" className="border border-edge/40 text-fg-muted">{label}</Pill>
           ))}
-          {issue.labels.length > 4 && (
-            <span className="text-[11px] text-fg-faint">+{issue.labels.length - 4}</span>
+          {labels.length > 4 && (
+            <span className="text-[11px] text-fg-faint">+{labels.length - 4}</span>
+          )}
+          {pathNames && (
+            <span className="text-[11px] text-fg-faint truncate min-w-0" data-testid="import-issue-paths">{pathNames}</span>
           )}
           {issue.assignee && (
             <span className="text-[11px] text-fg-faint shrink-0">@{issue.assignee}</span>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus } from 'lucide-react';
-import { Trans } from '@lingui/react/macro';
+import { Braces } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from './OverlayPopover';
 import { Tooltip } from './Tooltip';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -8,9 +8,9 @@ import { templateVarsFor, type TaskTemplateContextName } from '../../shared/task
 import { translateText } from '../i18n/translate';
 
 /**
- * The "Template variable" inserter that sits under a field taking template
- * variables: the Edit automation dialog's fields, and Settings' Workflow agent
- * prompt.
+ * The "Template variable" inserter joined to a field taking template
+ * variables: the Edit automation dialog's fields and Condition lines, and
+ * Settings' Workflow agent prompt.
  *
  * This replaced a row of ten always-on `{{chip}}` buttons. Ten monospace tokens
  * are a wall of syntax the user has to read past to reach the field they
@@ -27,16 +27,27 @@ import { translateText } from '../i18n/translate';
  * handler checks BOTH refs for the same reason - once portaled, a click inside
  * the menu is "outside" the trigger's subtree.
  */
-export function TemplateVariablePicker({ onInsert, context, testId = 'template-variable' }: {
+export function TemplateVariablePicker({ onInsert, context, testId = 'template-variable', exclude, disabled = false }: {
   onInsert: (variable: string) => void;
   context: TaskTemplateContextName;
   /** The trigger is `<testId>-trigger` and the menu `<testId>-menu`. */
   testId?: string;
+  /**
+   * Variables this field does not offer: a Text match leaves out
+   * `agentReply`, the very text it is matched against (#872).
+   */
+  exclude?: readonly string[];
+  disabled?: boolean;
 }) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const variables = useMemo(() => templateVarsFor(context), [context]);
+  const excludeKey = exclude?.join(',') ?? '';
+  const variables = useMemo(
+    () => templateVarsFor(context).filter((templateVar) => !excludeKey.split(',').includes(templateVar.name)),
+    [context, excludeKey],
+  );
 
   const { style } = usePopoverPosition(
     buttonRef as React.RefObject<HTMLElement>,
@@ -69,17 +80,24 @@ export function TemplateVariablePicker({ onInsert, context, testId = 'template-v
 
   return (
     <>
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        data-testid={`${testId}-trigger`}
-        className="inline-flex cursor-pointer items-center gap-1 rounded border border-edge/40 bg-surface-control/40 px-2 py-1 text-xs text-fg-muted transition-colors hover:border-edge hover:text-fg focus:outline-none focus-visible:border-accent"
-      >
-        <Plus size={13} />
-        <Trans>Template variable</Trans>
-      </button>
+      {/* A 34px button joined to its field's right edge, sharing the field's
+          border and running its full height, so every field that takes
+          variables has its picker in one place (#872, canvas board F1d). The
+          field squares its own right corners (`joinedRight`). */}
+      <Tooltip label={t`Template variable`}>
+        <button
+          ref={buttonRef}
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen((current) => !current)}
+          aria-expanded={open}
+          aria-label={t`Template variable`}
+          data-testid={`${testId}-trigger`}
+          className="flex w-[34px] flex-shrink-0 cursor-pointer items-center justify-center self-stretch rounded-r border border-l-0 border-edge-input bg-surface-control text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Braces size={15} aria-hidden="true" />
+        </button>
+      </Tooltip>
 
       <OverlayPopover
         open={open}

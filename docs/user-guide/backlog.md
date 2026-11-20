@@ -83,6 +83,7 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 - **GitLab** - import issues from a GitLab project or group, on gitlab.com or your own GitLab server
 - **Obsidian Notes** - import each note in a folder of an Obsidian vault as a task
 - **Obsidian Checklist items** - import each task line in a folder's notes (`- [ ]`, and the done, in-progress and cancelled marks) as a task
+- **Repository folder** - import each file or folder inside a folder of this project's repository as a task (an OpenSpec `changes/` folder gives one task per change)
 
 **Prerequisites:**
 - **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
@@ -113,13 +114,22 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
   tokens always expire (365 days at most), so expect to connect again when yours does.
 - **Obsidian:** nothing to install or sign in to. The vault is read from this computer, also for a
   remote project, and Kangentic never writes to it.
+- **Repository folder:** nothing to sign in to. The folder is read with git from the project's
+  default branch, local or `origin` whichever is newer, never from the files checked out, and
+  nothing is fetched. A remote project's repository is read on its host.
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, Trello, GitLab, or Obsidian) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
-3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). For GitLab, paste any project, group, issue list, issue or board link (`https://gitlab.com/acme/web`, `https://gitlab.com/groups/acme/-/issues`, `https://gitlab.com/acme/web/-/boards/12`); filters in the link are dropped. A link on a server that is not GitLab is refused ("github.com is not a GitLab instance."). Linear lists your teams instead, and Trello your open boards under their Workspace: click one. One you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it, and the source is saved and opened at once.
-4. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it. For GitLab it checks that the account can open the project or group (and the board a board link names), and names the source by its path. The saved source says whether it is a project or a group, and names a self-managed server ("GitLab Group on git.example.com").
-5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
+2. Choose a provider (GitHub, Azure DevOps, Asana, Jira, Linear, Trello, GitLab, Obsidian, or Repository folder) and source type (GitHub has Issues and Projects, Obsidian has Notes and Checklist items)
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, `https://dev.azure.com/org/project`, or `https://app.asana.com/0/1234567890/list`). For Jira, paste a board, project, saved filter or search link (`https://your-site.atlassian.net/jira/software/projects/ENG/boards/12`, `.../browse/ENG`, `.../issues/?filter=10021`, `.../issues/?jql=...`), or type JQL, which runs on your one connected Jira site. With more than one Jira site connected, typed JQL does not say which to use, so the popover asks for a search link instead ("Paste a search link so the site is known."). For GitLab, paste any project, group, issue list, issue or board link (`https://gitlab.com/acme/web`, `https://gitlab.com/groups/acme/-/issues`, `https://gitlab.com/acme/web/-/boards/12`); filters in the link are dropped. A link on a server that is not GitLab is refused ("github.com is not a GitLab instance."). Linear lists your teams instead, and Trello your open boards under their Workspace: click one. One you already added says **Added** and opens its source. Obsidian opens the folder dialog instead: choose the vault, or any folder inside it. For a Repository folder, type the folder's path in the repository or click **Browse**, which lists the folders on the default branch with how many tasks each would import; typing narrows the list, and a folder the branch does not have is refused.
+4. Optionally set a **Label**. It starts as the last part of the link or folder, and every task the source imports gets it. A source picked from a list (Linear, Trello) gets its Label from **Edit source** afterwards.
+5. Click **Connect** - Kangentic verifies authentication and saves the source. For Jira it also checks that the account can open the board, project or filter, and names the source after it. For GitLab it checks that the account can open the project or group (and the board a board link names), and names the source by its path. The saved source says whether it is a project or a group, and names a self-managed server ("GitLab Group on git.example.com").
+6. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
+
+Each saved source's **...** menu has **Edit source**, which changes or clears its Label, and
+**Remove**. A Repository folder item is named for the file or folder, its description lists the
+paths it holds, and a folder that holds only subfolders (an `archive/`) is not a task, so a change
+moved into the archive leaves the import list.
 
 An Obsidian vault is the folder that holds `.obsidian`. Choose a folder inside one and Kangentic
 finds the vault above it; the source reads that folder and its subfolders. A source is named for

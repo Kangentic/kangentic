@@ -7,10 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
-#: src/shared/final-line-match.ts
-msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
-msgstr "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
-
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr "{baseName}, frame {frame}"
@@ -249,16 +245,8 @@ msgid "Condition checks"
 msgstr "Condition checks"
 
 #: src/shared/automation-describe.ts
-msgid "Condition: only if {condition}."
-msgstr "Condition: only if {condition}."
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if the last line {rule}."
-msgstr "Condition: only if the last line {rule}."
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if your message {rule}."
-msgstr "Condition: only if your message {rule}."
+msgid "Condition: {clauses}."
+msgstr "Condition: {clauses}."
 
 #: src/shared/keybindings.ts
 msgctxt "hotkey"
@@ -380,6 +368,14 @@ msgstr "Find on board"
 #: src/shared/keybindings.ts
 msgid "Focus the board search, or open Quick Find if not on the board."
 msgstr "Focus the board search, or open Quick Find if not on the board."
+
+#: src/shared/automation-describe.ts
+msgid "for label {labels}"
+msgstr "for label {labels}"
+
+#: src/shared/automation-describe.ts
+msgid "for priority {levels}"
+msgstr "for priority {levels}"
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"

@@ -41,6 +41,7 @@ Operates on a per-project DB.
 | `create(input)` | Insert at the end of the target swimlane (next position). Transactional: allocates a monotonic `display_id` from `project_meta` in the same transaction as the INSERT |
 | `nextPositionInSwimlane(swimlaneId)` | The raw append position past everything in a swimlane, archived rows included. `create()`'s append anchor, and what MCP task placement resolves an out-of-range ordinal slot against |
 | `update(input)` | Partial update -- only provided fields are changed |
+| `remapPriorities(mapping)` | Remap priority values across board tasks (old level to new), in one transaction, returning the count changed. `BACKLOG_REMAP_PRIORITIES` calls it beside the backlog's own remap, so a level means the same on a backlog item and a task (#872) |
 | `recordWorktree(id, path, branch, folder, resolvedBaseBranch?)` | Transactional write of `worktree_path`, `branch_name` and the write-once `worktree_folder` together, clearing `worktree_skip_reason` in the same transaction. Separate statements would leave a crash window where the path is set and the folder is not, which a later Done move would turn into permanent loss. The 5th parameter carries `createWorktree`'s observed base into `resolved_base_branch`, and is OMITTED from the write rather than nulled when absent, so a reattach that cannot observe a base (the pre-existing-branch path reports none) never erases what an earlier real creation recorded |
 | `setWorktreeFolder(id, folder)` | Record the worktree's directory name. Write-once: guarded on `worktree_folder IS NULL`, so a task's worktree can never be relocated by a later write |
 | `setWorktreeSkipReason(id, reason)` | Record why the last spawn ran without a worktree (a `WorktreeSkipReason`), or null once it has one. Does NOT bump `updated_at`: spawn telemetry must not reorder the board |
@@ -90,6 +91,7 @@ Operates on a per-project DB. Takes over from `ActionRepository`, whose IPC hand
 | `getForTrigger(columnId, trigger)` | That trigger's ENABLED rows in run order. The read the engine does on a move. |
 | `replaceForColumn(columnId, automations)` | Whole-column delete-and-insert. `position` is assigned PER TRIGGER, so the three groups number from 0 independently and can never interleave. A supplied `id` is kept, so a row keeps its identity and its run history across an edit. |
 | `deleteForColumn(columnId)` | Drop a column's rows. `SwimlaneRepository.delete` calls it explicitly, even though the foreign key cascades too. |
+| `remapFilterPriorities(mapping)` | Remap the priority levels in every row's `filter_json` (a Condition's Priority line) with the mapping the tasks take, so a row keeps matching the tasks it matched. Returns the rows changed (#872). |
 
 ## AutomationRunRepository
 

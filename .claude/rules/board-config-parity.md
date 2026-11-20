@@ -27,7 +27,7 @@ A build that reads a file it cannot fully read must never write it back. On 2026
 
 - **Any change to what the export can write bumps `CURRENT_VERSION`** (`config-helpers.ts`) and records a NEW signature in `tests/unit/helpers/board-config-format-history.ts`. Never edit a shipped entry. A new column field, a new manifest field, and a new Condition shape all count.
 - **A key the new format replaces joins `LEGACY_FILE_KEYS`** with the old version as its `lastVersion`. Readers ask `legacyKeyReadable` and never hard-code a version. A retired key is never silently ignored: a retired guard keeps its column's automations, and every retired key warns.
-- **The open-time export migrates the file to the newest format.** It writes no legacy key and stamps `CURRENT_VERSION`.
+- **The open-time export migrates the file to the newest format.** It writes no legacy key and stamps the oldest version that holds what the file uses (`fileFormatVersionFor`): a key a format added moves the file to that format only once a row uses it, so a board without one stays readable by a teammate's older build. A new format's keys join `fileFormatVersionFor`.
 - **A newer file is applied but never written.** `readProblem` marks it `newerFormat`, so the write-back skips it and every settings save to it refuses. A row of a known type with a key this build does not know keeps its column's automations.
 - **A guard the reader cannot read keeps the column** (`keepExisting`), and the write-back refuses the file while any column does (`fileHoldsUnreadableAutomations`). Never plan a row without a guard the file gave it.
 

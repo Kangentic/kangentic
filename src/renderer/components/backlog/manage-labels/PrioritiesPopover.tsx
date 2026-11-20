@@ -20,6 +20,7 @@ import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { Tooltip } from '../../Tooltip';
 import { useBacklogStore } from '../../../stores/backlog-store';
+import { useBoardStore } from '../../../stores/board-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
@@ -132,6 +133,7 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
     updateConfig({ backlog: { ...config.backlog, priorities: updated } } as Partial<AppConfig>);
     // Reload backlog to reflect remapped priorities
     useBacklogStore.getState().loadBacklog();
+    void useBoardStore.getState().loadBoard();
     setPendingDeletePriority(null);
   }, [priorities, config.backlog, updateConfig]);
 
@@ -156,6 +158,7 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
     updateConfig({ backlog: { ...config.backlog, priorities: reordered } } as Partial<AppConfig>);
     // Reload backlog to reflect remapped priorities
     useBacklogStore.getState().loadBacklog();
+    void useBoardStore.getState().loadBoard();
   }, [priorities, config.backlog, updateConfig]);
 
   const reversedPriorities = useMemo(() => {

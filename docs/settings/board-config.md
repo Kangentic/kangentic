@@ -324,18 +324,27 @@ cannot change it.
 **Automations nest under the column that owns them, as three named arrays** (`onEnter`,
 `onTurnEnd`, `onExit`). Array order IS the run order within its group, an empty group is an absent
 key, and the type's own fields sit flat on the row beside `name`, `type`, `enabled`, `condition`,
-`finalLine` and `maxRuns` rather than under a `with` object. Those six keys are reserved:
+`finalLine`, `filter` and `maxRuns` rather than under a `with` object. Those seven keys are reserved:
 `automation-manifest-reserved-keys.test.ts` fails an adapter that declares a field colliding with
 one, which is what keeps the flat shape safe as the reserved set grows. `finalLine` is only read
 now (below), and stays reserved so an adapter field can never take the name.
 
-`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`
-and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits
+`enabled` is omitted when true, so a switched-off row is the only one that carries it; `condition`,
+`filter` and `maxRuns` are omitted when off. There is no `on` key, because the array a row sits
 in already says which trigger it runs on. A `move_to_column` row names its column by name, as
 `planExitTarget` does, and renaming that column rewrites the row.
 
-**A row's Condition is one of two kinds, named inside `condition`**, as the Edit automation dialog's
-Condition card holds them. `{ "agent": "..." }` is plain words the Automation agent judges in a
+**A row's Condition is a list of lines, and every line must hold (#872).** The Task lines sit
+under `filter`: `{ "priorities": ["High", "Urgent"], "labels": ["openspec"] }`, priority levels by
+the project's own level names (any case) and task labels, each list matching any of its values and
+either left out when empty. They are checked in code before anything else, and a task they do not
+match leaves no run behind. A level name the project's priority list does not have is a guard the
+reader cannot read: it warns and keeps the column. The database stores levels by number, so a
+renamed level keeps matching and a deleted or reordered one is remapped with the tasks' own.
+
+The text lines sit inside `condition`, as the Edit automation dialog's Evaluation and Reply or
+Prompt lines hold them, one or both: `{ "text": ..., "agent": ... }` checks the Text match first,
+so a miss never pays for the agent call. `{ "agent": "..." }` is plain words the Automation agent judges in a
 headless call. `{ "text": ... }` is a Text match: one pattern as a string, several as a list. It is
 checked in code against the last line of the agent's final message that has a word in it (a
 closing code fence or rule is skipped), with no call: a pattern must cover the whole line, `*`
@@ -377,6 +386,11 @@ to what the export can write, and `tests/unit/board-config-format-version.test.t
 the written shape that does not bump it. The test serializes a board with every key set and
 compares it to the signature recorded for each version.
 
+The export stamps the oldest version that holds what the file uses (`fileFormatVersionFor`).
+Version 2 (#872) added a row's `filter` and a `condition` holding both `text` and `agent`, so a
+board that uses neither stays version 1 and a teammate on an older build keeps saving it. The
+first row with a `filter` or both kinds moves the file to 2.
+
 A build that opens a file of a newer version than it reads:
 
 - Applies what it can read. The board shows a warning saying so, and that board edits are not saved
@@ -403,7 +417,7 @@ carry it: `finalLine`, a string `condition`, the `send_command` type and its `co
 the top-level `actions` and `transitions`. All are version 1. In a file at or below that version the
 key is converted: a plain string under `condition` is an Agent evaluation, and a `finalLine` is a
 Text match of one pattern whose leading `!` is taken off. The export writes none of them and stamps
-the current version, and the open-time export runs right after the apply. So the first open by an
+the version its keys need, and the open-time export runs right after the apply. So the first open by an
 updated build rewrites the file in the newest format, a one-time diff in a tracked file. In a file
 of a later version, a legacy key is retired and is never silently ignored. A retired guard or
 message keeps the column's current automations, a retired permission key keeps the column's
@@ -437,7 +451,8 @@ board:
   warning.
 - A guard the reader cannot read keeps the column's current automations, warns, and stops the
   write-back (below). That covers a `maxRuns` that is not a number, a `condition` that is neither
-  text nor an object, an object with no kind, both kinds or another key, a `condition.agent` that
+  text nor an object, an object with no kind or another key, a `filter` that is not
+  `{ "priorities", "labels" }` lists of text, a `filter` priority this project has no level for, a `condition.agent` that
   is not text, a `condition.text` that is not text or a list of text (or a long form that is not
   `{ "from", "patterns" }`), a `finalLine` that is not text, and a Text match on a row in `onEnter`
   or `onExit`. A row is never planned without a guard the file gave it, and one unreadable row

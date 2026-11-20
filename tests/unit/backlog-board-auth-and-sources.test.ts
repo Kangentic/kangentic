@@ -96,7 +96,13 @@ registerSourceUrlParser('trello', {
 const context = {
   currentProjectId: 'proj-1',
   currentProjectPath: '/mock/proj',
+  // The default branch every source is handed with its project (`SourceProject`).
+  boardConfigManager: { getDefaultBaseBranch: () => null },
+  configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: 'main' } }) },
 } as unknown as IpcContext;
+
+/** What the handlers hand an adapter as the source's project. */
+const SOURCE_PROJECT = { path: '/mock/proj', baseBranch: 'main' };
 
 function handlerFor(channel: string) {
   const handler = capturedHandlers.get(channel);
@@ -142,7 +148,7 @@ describe('BACKLOG_IMPORT_SOURCES_ADD with a validating adapter', () => {
 
     await expect(handlerFor(IPC.BACKLOG_IMPORT_SOURCES_ADD)(null, input)).rejects.toBe(refusal);
 
-    expect(registeredAdapter.prepareSource).toHaveBeenCalledWith('trello.com/b/abc123');
+    expect(registeredAdapter.prepareSource).toHaveBeenCalledWith('trello.com/b/abc123', SOURCE_PROJECT);
     expect(storeAdd).not.toHaveBeenCalled();
   });
 
@@ -157,8 +163,16 @@ describe('BACKLOG_IMPORT_SOURCES_ADD with a validating adapter', () => {
     expect(storeAdd).toHaveBeenCalledWith('trello', input.url, {
       label: 'Sprint board',
       repository: 'https://site.example|project = X',
-    });
+    }, undefined);
     expect(result).toEqual({ id: 'source-1' });
+  });
+
+  it("passes the add form's Label on to the store", async () => {
+    registeredAdapter = { prepareSource: vi.fn(async () => ({ label: 'Sprint board' })) };
+
+    await handlerFor(IPC.BACKLOG_IMPORT_SOURCES_ADD)(null, { ...input, taskLabel: 'sprint' });
+
+    expect(storeAdd).toHaveBeenCalledWith('trello', input.url, expect.objectContaining({ label: 'Sprint board' }), 'sprint');
   });
 
   it('keeps the parsed repository when the adapter does not complete it', async () => {
@@ -169,7 +183,7 @@ describe('BACKLOG_IMPORT_SOURCES_ADD with a validating adapter', () => {
     expect(storeAdd).toHaveBeenCalledWith('trello', input.url, {
       label: 'Sprint board',
       repository: 'trello.com/b/abc123',
-    });
+    }, undefined);
   });
 });
 

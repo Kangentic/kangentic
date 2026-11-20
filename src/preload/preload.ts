@@ -790,7 +790,9 @@ const api: ElectronAPI = {
     importExecute: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_EXECUTE, input),
     importSourcesList: () => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_LIST),
     importSourcesAdd: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_ADD, input),
+    importSourcesUpdate: (input) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_UPDATE, input),
     importSourcesRemove: (id) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_REMOVE, id),
+    repoFoldersList: (input) => ipcRenderer.invoke(IPC.BACKLOG_REPO_FOLDERS_LIST, input),
     jira: {
       authStatus: (target) => ipcRenderer.invoke(IPC.BOARDS_JIRA_AUTH_STATUS, target),
       detectSite: (siteOrUrl) => ipcRenderer.invoke(IPC.BOARDS_JIRA_DETECT_SITE, siteOrUrl),

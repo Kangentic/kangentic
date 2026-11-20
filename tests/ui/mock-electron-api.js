@@ -929,22 +929,41 @@
     return lines.length > 0 ? lines.join('\n') : null;
   }
 
+  /**
+   * A row's Task lines as the repository stores them (`normalizeTaskFilter` in
+   * `src/shared/automation-filter.ts`): whole levels and trimmed labels,
+   * deduped, or null when neither list has any.
+   */
+  function mockNormalizeTaskFilter(value) {
+    if (!value || typeof value !== 'object') return null;
+    var priorities = [];
+    (Array.isArray(value.priorities) ? value.priorities : []).forEach(function (level) {
+      if (typeof level === 'number' && Number.isInteger(level) && level >= 0 && priorities.indexOf(level) === -1) priorities.push(level);
+    });
+    var labels = [];
+    (Array.isArray(value.labels) ? value.labels : []).forEach(function (label) {
+      var trimmed = typeof label === 'string' ? label.trim() : '';
+      if (trimmed !== '' && labels.indexOf(trimmed) === -1) labels.push(trimmed);
+    });
+    if (priorities.length === 0 && labels.length === 0) return null;
+    return { priorities: priorities.sort(function (first, second) { return first - second; }), labels: labels };
+  }
+
   function hydrateSeededAutomations() {
     if (automationsHydrated) return;
     automationsHydrated = true;
     if (!Array.isArray(window.__mockAutomations)) return;
     window.__mockAutomations.forEach(function (row, index) {
       var seeded = Object.assign(
-        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, condition: null, final_line: null, text_match_source: 'agent', max_runs: null, created_at: now(), updated_at: now() },
+        { id: 'automation-seed-' + index, trigger: 'enter', position: index, enabled: true, condition: null, final_line: null, text_match_source: 'agent', filter: null, max_runs: null, created_at: now(), updated_at: now() },
         row,
         { config: Object.assign({}, row.config) },
       );
       // As the repository's read hands a row over: a Text match on a turn end
-      // only, so a seeded enter row never shows one the app would drop.
+      // only, so a seeded enter row never shows one the app would drop. It may
+      // sit beside an Agent evaluation (#872), as `conditionKindsAsStored` keeps both.
       seeded.final_line = seeded.trigger === 'turn_end' ? mockNormalizeTextMatch(seeded.final_line) : null;
-      // One Condition kind per row, as `conditionKindsAsStored` stores it: a
-      // Text match clears the Agent evaluation, so a seed cannot hold both.
-      if (seeded.final_line !== null) seeded.condition = null;
+      seeded.filter = mockNormalizeTaskFilter(seeded.filter);
       // Whose message the Text match reads: the user's only when it says so and has one.
       seeded.text_match_source = seeded.final_line !== null && seeded.text_match_source === 'user' ? 'user' : 'agent';
       automations.push(seeded);
@@ -2637,8 +2656,9 @@
           // A trigger the repository would not know is stored as 'enter', the
           // column's original and default group; the other two are kept as sent.
           var trigger = AUTOMATION_TRIGGER_ORDER.indexOf(row.trigger) >= 0 ? row.trigger : 'enter';
-          // One Condition kind per row, a Text match on a turn end only: the
-          // repository's backstop, mirrored so a spec reads back what the app would.
+          // A Text match on a turn end only, beside or instead of an Agent
+          // evaluation: the repository's backstop, mirrored so a spec reads
+          // back what the app would.
           var finalLine = trigger === 'turn_end' ? mockNormalizeTextMatch(row.final_line) : null;
           automations.push({
             id: row.id || uuid(),
@@ -2655,9 +2675,10 @@
             // would show a Repeat with no count and the tooltip "Frequency: at most
             // undefined times until you move the task." The Condition marks read a blank
             // condition or text match as none either way.
-            condition: finalLine === null && typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
+            condition: typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
             final_line: finalLine,
             text_match_source: finalLine !== null && row.text_match_source === 'user' ? 'user' : 'agent',
+            filter: mockNormalizeTaskFilter(row.filter),
             max_runs: Number.isFinite(row.max_runs) && Math.floor(row.max_runs) >= 1 ? Math.floor(row.max_runs) : null,
             created_at: now(),
             updated_at: now(),
@@ -5616,8 +5637,9 @@
         return count;
       },
       remapPriorities: async function (mapping) {
+        // Backlog items and board tasks both, as main's handler does.
         var count = 0;
-        backlogTasks.forEach(function (item) {
+        backlogTasks.concat(tasks).forEach(function (item) {
           var newPriority = mapping[item.priority];
           if (newPriority !== undefined && newPriority !== item.priority) {
             item.priority = newPriority;
@@ -5774,7 +5796,7 @@
           });
           if (alreadySaved) return alreadySaved;
         }
-        return {
+        var added = {
           id: 'import-src-' + Date.now(),
           source: input.source,
           label: input.url,
@@ -5782,6 +5804,31 @@
           url: input.url,
           createdAt: new Date().toISOString(),
         };
+        if (typeof input.taskLabel === 'string' && input.taskLabel.trim()) added.taskLabel = input.taskLabel.trim();
+        // Kept so an update of a source this mock added finds it, as main's store would.
+        if (typeof window !== 'undefined') {
+          if (!window.__mockImportSourcesAdded) window.__mockImportSourcesAdded = [];
+          window.__mockImportSourcesAdded.push(added);
+        }
+        return added;
+      },
+      importSourcesUpdate: async function (input) {
+        // Tests read window.__mockImportSourcesUpdateCalls. Like main, the saved
+        // source (in window.__mockImportSourcesPreset, or one this mock added) takes
+        // the new Label, blank clears it, and an id no source has is refused.
+        var saved = null;
+        if (typeof window !== 'undefined') {
+          if (!window.__mockImportSourcesUpdateCalls) window.__mockImportSourcesUpdateCalls = [];
+          window.__mockImportSourcesUpdateCalls.push(input);
+          var presetSources = Array.isArray(window.__mockImportSourcesPreset) ? window.__mockImportSourcesPreset : [];
+          var addedSources = Array.isArray(window.__mockImportSourcesAdded) ? window.__mockImportSourcesAdded : [];
+          saved = presetSources.concat(addedSources).find(function (candidate) { return candidate.id === input.id; }) || null;
+        }
+        if (!saved) throw new Error('That source is no longer saved.');
+        var trimmedLabel = typeof input.taskLabel === 'string' ? input.taskLabel.trim() : '';
+        if (trimmedLabel) saved.taskLabel = trimmedLabel;
+        else delete saved.taskLabel;
+        return Object.assign({}, saved);
       },
       importSourcesRemove: async function (id) {
         // Tests read window.__mockImportSourcesRemoved.
@@ -5790,6 +5837,16 @@
           window.__mockImportSourcesRemoved.push(id);
           if (window.__mockImportSourcesRemoveError) throw new Error(window.__mockImportSourcesRemoveError);
         }
+      },
+      repoFoldersList: async function () {
+        // Browse in the Repository folder form. Tests seed window.__mockRepoFolders
+        // with { baseBranch, folders: [{ path, itemCount }] }, or
+        // window.__mockRepoFoldersError to refuse it.
+        if (typeof window !== 'undefined') {
+          if (window.__mockRepoFoldersError) throw new Error(window.__mockRepoFoldersError);
+          if (window.__mockRepoFolders) return window.__mockRepoFolders;
+        }
+        return { baseBranch: 'main', folders: [] };
       },
       jira: {
         // Sign in with Atlassian reads window.__mockJiraPreset too: signInAvailable (default false,

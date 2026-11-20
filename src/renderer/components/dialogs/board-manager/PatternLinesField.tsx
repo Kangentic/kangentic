@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ClipboardEvent, type KeyboardEvent, type ReactElement } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ClipboardEvent, type KeyboardEvent, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { useLingui } from '@lingui/react/macro';
 import { PATTERN_LINE_BREAK } from '../../../../shared/final-line-match';
 
@@ -22,6 +22,18 @@ export interface PatternLinesFieldProps {
   placeholder: string;
   disabled: boolean;
   testId: string;
+  /** Square the right corners, for a field joined to the Template variable button (#872). */
+  joinedRight?: boolean;
+  /** Drawn inside the field at the first line's right end (the Patterns tip), with the text kept clear of it. */
+  endAdornment?: ReactNode;
+  /**
+   * Filled with an inserter that puts text at the caret of the line last
+   * focused (the first line before any is), for the attached Template
+   * variable button, which sits outside the field.
+   */
+  insertRef?: RefObject<((text: string) => void) | null>;
+  /** The field's accessible name. Defaults to "Text match". */
+  ariaLabel?: string;
 }
 
 /** Where the caret goes after an edit: the line, and the offset in it. */
@@ -30,11 +42,34 @@ interface CaretTarget {
   offset: number;
 }
 
-export function PatternLinesField({ value, onChange, placeholder, disabled, testId }: PatternLinesFieldProps): ReactElement {
+export function PatternLinesField({
+  value, onChange, placeholder, disabled, testId, joinedRight = false, endAdornment, insertRef, ariaLabel,
+}: PatternLinesFieldProps): ReactElement {
   const { t } = useLingui();
   const lines = value.split('\n');
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const pendingCaret = useRef<CaretTarget | null>(null);
+  // Where an inserted variable goes: the line last focused, at its caret.
+  const lastCaret = useRef<CaretTarget>({ line: 0, offset: 0 });
+  const rememberCaret = (index: number, input: HTMLInputElement): void => {
+    lastCaret.current = { line: index, offset: input.selectionStart ?? input.value.length };
+  };
+
+  useEffect(() => {
+    if (!insertRef) return;
+    insertRef.current = (text: string) => {
+      const currentLines = value.split('\n');
+      const line = Math.min(lastCaret.current.line, currentLines.length - 1);
+      const lineText = currentLines[line] ?? '';
+      const offset = Math.min(lastCaret.current.offset, lineText.length);
+      const next = [...currentLines];
+      next[line] = lineText.slice(0, offset) + text + lineText.slice(offset);
+      lastCaret.current = { line, offset: offset + text.length };
+      pendingCaret.current = { line, offset: offset + text.length };
+      onChange(next.join('\n'));
+    };
+    return () => { insertRef.current = null; };
+  }, [insertRef, value, onChange]);
 
   // Moved after the render that made the line, so a new line exists to focus.
   useLayoutEffect(() => {
@@ -128,12 +163,16 @@ export function PatternLinesField({ value, onChange, placeholder, disabled, test
   return (
     <div
       role="group"
-      aria-label={t`Text match`}
+      aria-label={ariaLabel ?? t`Text match`}
       data-testid={testId}
       // `FIELD_CONTROL_CLASS`'s fill, border, value and placeholder tones,
       // drawn on the box, with the accent border when any line has focus.
-      className={`flex w-full flex-col overflow-hidden rounded border border-edge-input bg-surface-control focus-within:border-accent ${disabled ? 'opacity-50' : ''}`}
+      className={`relative flex w-full flex-col overflow-hidden rounded border border-edge-input bg-surface-control focus-within:border-accent ${joinedRight ? 'rounded-r-none' : ''} ${disabled ? 'opacity-50' : ''}`}
     >
+      {endAdornment && (
+        // At the first line's end, so the tip sits beside the pattern it explains.
+        <span className="absolute right-2 top-[8px] z-[1] flex">{endAdornment}</span>
+      )}
       {lines.map((line, index) => {
         const lineNumber = index + 1;
         return (
@@ -154,8 +193,11 @@ export function PatternLinesField({ value, onChange, placeholder, disabled, test
               commit(next, null);
             }}
             onKeyDown={(event) => handleKeyDown(event, index)}
+            onKeyUp={(event) => rememberCaret(index, event.currentTarget)}
+            onSelect={(event) => rememberCaret(index, event.currentTarget)}
+            onFocus={(event) => rememberCaret(index, event.currentTarget)}
             onPaste={(event) => handlePaste(event, index)}
-            className="min-w-0 border-0 border-b border-edge-input bg-transparent px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted outline-none last:border-b-0 disabled:cursor-not-allowed"
+            className={`min-w-0 border-0 border-b border-edge-input bg-transparent px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted outline-none last:border-b-0 disabled:cursor-not-allowed ${endAdornment && index === 0 ? 'pr-8' : ''}`}
           />
         );
       })}

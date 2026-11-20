@@ -3,7 +3,7 @@
 ## Engine
 
 * [Transition engine](transition-engine.md) - The task-move priority ladder (To Do, Done, auto_spawn off, live session, no session), the four live-session cases, the six automation adapters and their fields, isolated bounded recorded runs, the Template Variables table, AbortSignal cancellation, plan_exit_target_id and cross-agent handoff.
-* [Automation triggers](triggers.md) - How enter, turn_end and exit automations run: why exit runs before the priority ladder under a 60 second budget, what counts as an agent turn end, Condition, Text match and Frequency checks, and the per-task automations_disabled switch.
+* [Automation triggers](triggers.md) - How enter, turn_end and exit automations run: why exit runs before the priority ladder under a 60 second budget, what counts as an agent turn end, Condition (Task lines, Text match, Evaluation) and Frequency checks, and the per-task automations_disabled switch.
 * [Automation agent](automation-agent.md) - The headless agent that answers a column's Agent evaluation Conditions, judges a workflow step done, and names tasks and Command Terminals: how resolveAutomationAgent picks it with no fallback, what is skipped while it is unset, its cached CLI detection, and the two-at-once check limit.
 
 ## Message delivery

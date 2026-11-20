@@ -30,6 +30,18 @@ export interface PreparedSource {
   host?: string;
 }
 
+/**
+ * The project a source belongs to, for a provider that reads the project itself
+ * (a folder in its repository) rather than a remote. The backlog handlers pass it
+ * on every call; a provider with a remote of its own ignores it.
+ */
+export interface SourceProject {
+  /** The project's folder here (a stand-in for a remote project, whose git runs on its host). */
+  path: string;
+  /** The project's default base branch. */
+  baseBranch: string;
+}
+
 /** Opaque per-adapter credential bag. Each adapter owns its shape. */
 export type Credentials = Record<string, string>;
 
@@ -130,7 +142,7 @@ export interface BoardAdapter {
    * source can disappear on its own (a vault folder that moved) can say so before
    * the list loads. Providers that check only a CLI or a sign-in ignore it.
    */
-  checkCli(repository?: string): Promise<ImportCheckCliResult>;
+  checkCli(repository?: string, project?: SourceProject): Promise<ImportCheckCliResult>;
 
   /**
    * True when `ExternalIssue.workItemType` is the item's type (a Jira issue type,
@@ -146,7 +158,7 @@ export interface BoardAdapter {
    * best-effort `resolveLabel`. `scopeKind` and `host` describe the source for
    * its saved row's subtitle (a GitLab group on a self-managed server).
    */
-  prepareSource?(repository: string): Promise<PreparedSource>;
+  prepareSource?(repository: string, project?: SourceProject): Promise<PreparedSource>;
 
   /**
    * Fetch a page of issues from the remote source. Receives the original
@@ -156,6 +168,7 @@ export interface BoardAdapter {
   fetch(
     input: ImportFetchInput,
     findAlreadyImported: (source: ExternalSource, externalIds: string[]) => Set<string>,
+    project?: SourceProject,
   ): Promise<ImportFetchResult>;
 
   /**
@@ -174,7 +187,7 @@ export interface BoardAdapter {
    * reconcile uses it to prune cache rows the remote no longer has. Providers
    * with no cheap id listing omit this; their deletions clear on a full reconcile.
    */
-  listExternalIds?(input: { source: ExternalSource; repository: string }): Promise<string[]>;
+  listExternalIds?(input: { source: ExternalSource; repository: string }, project?: SourceProject): Promise<string[]>;
 
   /** Download inline images referenced in a markdown body. */
   downloadImages(markdownBody: string): Promise<{

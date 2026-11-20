@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Plus, Trash2, ChevronRight, ArrowLeft, LoaderCircle, X } from 'lucide-react';
+import { Download, Plus, Trash2, ChevronRight, ArrowLeft, X, MoreHorizontal, Pencil } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { translateText } from '../../i18n/translate';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
-import { PROVIDERS, getSavedSourceLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
+import { KebabMenu, KebabMenuItem } from '../KebabMenu';
+import { PROVIDERS, getProviderForSource, getSavedSourceLabel, getSourceIcon, getSourceTypeOption } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
+import { ImportSourceForm } from './ImportSourceForm';
+import { labelFromSourceText } from './import-source-label';
 import type { BoardConnectPrefill, ImportSource } from '../../../shared/types';
 import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
 import { reportRendererFailure } from '../../utils/renderer-failure';
@@ -28,7 +31,17 @@ interface ImportPopoverProps {
 }
 
 // --- Add source flow phases ---
-type AddPhase = 'provider' | 'sourceType' | 'url';
+// 'edit' is a saved source's form: its link or folder read-only, its Label editable.
+type AddPhase = 'provider' | 'sourceType' | 'url' | 'edit';
+
+/** The saved-source row menu, portaled to the body; the popover's own dismissals yield to it. */
+const SOURCE_MENU_TEST_ID = 'import-source-menu';
+const SOURCE_MENU_TRIGGER_PREFIX = 'import-source-menu-btn-';
+
+/** True while a saved row's menu is open, so its Escape and its clicks stay the menu's. */
+function sourceMenuIsOpen(): boolean {
+  return document.querySelector(`[data-testid^="${SOURCE_MENU_TRIGGER_PREFIX}"][aria-expanded="true"]`) !== null;
+}
 
 export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = false }: ImportPopoverProps) {
   const { t } = useLingui();
@@ -41,6 +54,12 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [selectedSourceType, setSelectedSourceType] = useState<SourceTypeOption | null>(null);
   const [newSourceUrl, setNewSourceUrl] = useState('');
+  // The Label every task the source imports gets. Prefilled from the link or
+  // folder until the user types in it.
+  const [taskLabel, setTaskLabel] = useState('');
+  const [taskLabelEdited, setTaskLabelEdited] = useState(false);
+  // The saved source the edit form is for.
+  const [editingSource, setEditingSource] = useState<ImportSource | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,6 +101,13 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     if (addPhase === 'url') urlInputRef.current?.focus();
   }, [addPhase]);
 
+  const clearSourceForm = () => {
+    setNewSourceUrl('');
+    setTaskLabel('');
+    setTaskLabelEdited(false);
+    setError(null);
+  };
+
   // Declared ahead of the effects that call it. They only ran it from
   // listeners, after it existed, but that is a timing accident the compiler
   // rules read as a use before declaration.
@@ -89,9 +115,27 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     setAddPhase(null);
     setSelectedProvider(null);
     setSelectedSourceType(null);
+    setEditingSource(null);
+    // The form's setters inline, not `clearSourceForm()`: only setters keep this stable for the effects below.
     setNewSourceUrl('');
+    setTaskLabel('');
+    setTaskLabelEdited(false);
     setError(null);
   };
+
+  const handleBackFromUrl = () => {
+    clearSourceForm();
+    if (selectedProvider?.sourceTypes.length === 1) {
+      setAddPhase('provider');
+      setSelectedProvider(null);
+    } else {
+      setAddPhase('sourceType');
+    }
+    setSelectedSourceType(null);
+  };
+
+  // Leaving the edit form is the same reset as leaving the add flow.
+  const handleBackFromEdit = resetAddFlow;
 
   // Close on click outside
   useEffect(() => {
@@ -101,9 +145,12 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
       // (which renders as a sibling of popoverRef). Don't treat those as
       // outside the popover - the dialog owns its own dismissal behavior.
       if (setupDialogOpen) return;
+      const target = event.target as Node;
+      // A saved row's menu is portaled to the body, so a click in it is not outside.
+      if (target instanceof Element && target.closest(`[data-testid="${SOURCE_MENU_TEST_ID}"]`)) return;
       if (
-        popoverRef.current && !popoverRef.current.contains(event.target as Node) &&
-        buttonRef.current && !buttonRef.current.contains(event.target as Node)
+        popoverRef.current && !popoverRef.current.contains(target) &&
+        buttonRef.current && !buttonRef.current.contains(target)
       ) {
         setOpen(false);
         resetAddFlow();
@@ -113,41 +160,55 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     return () => document.removeEventListener('mousedown', handleClick, true);
   }, [open, setupDialogOpen]);
 
-  // Close on Escape
+  // Escape steps back one phase. The back arrow does the same.
   useEffect(() => {
     if (!open) return;
     const handleEscape = (event: KeyboardEvent) => {
       // While a provider's Connect dialog is open, let it own Escape entirely.
       // Otherwise the popover would rewind its phase underneath the dialog.
       if (setupDialogOpen) return;
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        if (addPhase === 'url') {
-          setAddPhase('sourceType');
-          setNewSourceUrl('');
-          setError(null);
-        } else if (addPhase === 'sourceType') {
-          setAddPhase('provider');
-          setSelectedProvider(null);
-        } else if (addPhase === 'provider') {
-          resetAddFlow();
-        } else {
-          setOpen(false);
-        }
+      if (event.key !== 'Escape') return;
+      // An open row menu takes this Escape (KebabMenu closes itself on it); this
+      // listener was registered first, so it has to step aside by hand.
+      if (sourceMenuIsOpen()) return;
+      event.stopPropagation();
+      if (addPhase === 'url') {
+        handleBackFromUrl();
+      } else if (addPhase === 'edit') {
+        handleBackFromEdit();
+      } else if (addPhase === 'sourceType') {
+        setAddPhase('provider');
+        setSelectedProvider(null);
+        setError(null);
+      } else if (addPhase === 'provider') {
+        resetAddFlow();
+      } else {
+        setOpen(false);
       }
     };
     document.addEventListener('keydown', handleEscape, true);
     return () => document.removeEventListener('keydown', handleEscape, true);
-  }, [open, addPhase, setupDialogOpen]);
+    // The back handlers are re-created each render and read only state setters and the current phase.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, addPhase, setupDialogOpen, selectedProvider]);
+
+  /** Open the add form for `sourceType` with `value` filled in (a folder the system dialog picked). */
+  const openSourceForm = (sourceType: SourceTypeOption, value = '') => {
+    setSelectedSourceType(sourceType);
+    setNewSourceUrl(value);
+    setTaskLabel(labelFromSourceText(value));
+    setTaskLabelEdited(false);
+    setError(null);
+    setAddPhase('url');
+  };
 
   /**
    * Advance past the provider selection step to either sourceType or url,
    * matching the single-sourceType fast-path in handleSelectProvider.
    */
   const advanceAfterProvider = (provider: Provider) => {
-    if (provider.sourceTypes.length === 1) {
-      setSelectedSourceType(provider.sourceTypes[0]);
-      setAddPhase('url');
+    if (provider.sourceTypes.length === 1 && !provider.sourceTypes[0].folder) {
+      openSourceForm(provider.sourceTypes[0]);
     } else {
       setAddPhase('sourceType');
     }
@@ -228,13 +289,13 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
       void handlePickFolder(sourceType);
       return;
     }
-    setSelectedSourceType(sourceType);
-    setAddPhase('url');
+    openSourceForm(sourceType);
   };
 
   /**
-   * A source added by folder skips the URL step: the system folder dialog opens
-   * at once, and the chosen folder is added. A cancel leaves the source types up.
+   * A source added by folder opens the system folder dialog at once. The chosen
+   * folder fills the form, which waits for Connect so its Label can be set. A
+   * cancel leaves the source types up.
    */
   const handlePickFolder = async (sourceType: SourceTypeOption) => {
     if (!sourceType.folder || loading) return;
@@ -246,13 +307,23 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
       reportRendererFailure('backlog', 'import-select-folder', pickError);
       return;
     }
-    if (folder) await handleConnect(folder, sourceType);
+    if (folder) openSourceForm(sourceType, folder);
   };
 
-  /** Add the source at `url`: the typed URL, or the one a source picker or folder dialog hands over. */
-  const handleConnect = async (pickedUrl?: string, pickedSourceType?: SourceTypeOption) => {
+  const handleSourceValueChange = (value: string) => {
+    setNewSourceUrl(value);
+    if (!taskLabelEdited) setTaskLabel(labelFromSourceText(value));
+  };
+
+  const handleTaskLabelChange = (value: string) => {
+    setTaskLabel(value);
+    setTaskLabelEdited(true);
+  };
+
+  /** Add the source at `url`: the form's link or folder, or the one a source picker hands over. */
+  const handleConnect = async (pickedUrl?: string) => {
     const sourceUrl = (pickedUrl ?? newSourceUrl).trim();
-    const sourceType = pickedSourceType ?? selectedSourceType;
+    const sourceType = selectedSourceType;
     if (!sourceUrl || !sourceType || loading) return;
     setLoading(true);
     setError(null);
@@ -287,9 +358,12 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
         return;
       }
 
+      // A source picker connects on pick and shows no Label; Edit source sets one later.
+      const formTaskLabel = sourceType.picker ? '' : taskLabel.trim();
       const source = await window.electronAPI.backlog.importSourcesAdd({
         source: sourceType.value,
         url: sourceUrl,
+        ...(formTaskLabel ? { taskLabel: formTaskLabel } : {}),
       });
 
       setSources((previous) => (previous.some((existing) => existing.id === source.id) ? previous : [...previous, source]));
@@ -314,23 +388,43 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
     }
   };
 
-  const handleBackFromUrl = () => {
-    setNewSourceUrl('');
-    setError(null);
-    if (selectedProvider?.sourceTypes.length === 1) {
-      setAddPhase('provider');
-      setSelectedProvider(null);
-    } else {
-      setAddPhase('sourceType');
-    }
-    setSelectedSourceType(null);
-  };
-
   const handleRemoveSource = async (sourceId: string) => {
     try {
       await window.electronAPI.backlog.importSourcesRemove(sourceId);
       setSources((previous) => previous.filter((source) => source.id !== sourceId));
-    } catch { /* ignore */ }
+    } catch (removeError) {
+      reportRendererFailure('backlog', 'import-remove-source', removeError);
+    }
+  };
+
+  const handleEditSource = (source: ImportSource) => {
+    const provider = getProviderForSource(source.source);
+    const sourceType = getSourceTypeOption(source.source);
+    if (!provider || !sourceType) return;
+    setSelectedProvider(provider);
+    setSelectedSourceType(sourceType);
+    setEditingSource(source);
+    setNewSourceUrl(source.url);
+    setTaskLabel(source.taskLabel ?? '');
+    setTaskLabelEdited(true);
+    setError(null);
+    setAddPhase('edit');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingSource || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const updated = await window.electronAPI.backlog.importSourcesUpdate({ id: editingSource.id, taskLabel: taskLabel.trim() });
+      setSources((previous) => previous.map((source) => (source.id === updated.id ? updated : source)));
+      handleBackFromEdit();
+    } catch (saveError: unknown) {
+      reportRendererFailure('backlog', 'import-update-source', saveError);
+      setError(describeIpcError(saveError, t`Couldn't save the source`));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSourceClick = (source: ImportSource) => {
@@ -379,7 +473,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
               {sources.map((source) => (
                 <div
                   key={source.id}
-                  className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-hover/40 cursor-pointer select-none group"
+                  className="flex items-center gap-2.5 px-3 py-2 hover:bg-surface-hover/40 cursor-pointer select-none"
                   onClick={() => handleSourceClick(source)}
                   data-testid={`import-source-${source.id}`}
                 >
@@ -390,17 +484,35 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                     </Tooltip>
                     <span className="text-[11px] text-fg-faint">{getSavedSourceLabel(source)}</span>
                   </div>
-                  <button
-                    type="button"
-                    className="opacity-0 group-hover:opacity-100 p-1 text-fg-faint hover:text-danger transition-all"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleRemoveSource(source.id);
-                    }}
-                    data-testid={`remove-source-${source.id}`}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {/* The row opens the source; a click on its menu, which React bubbles
+                      out of the portal too, must not. */}
+                  <span className="flex" onClick={(event) => event.stopPropagation()}>
+                    <KebabMenu
+                      icon={<MoreHorizontal size={14} />}
+                      label={t`Source actions`}
+                      triggerClassName="p-1 rounded text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover transition-colors"
+                      triggerTestId={`${SOURCE_MENU_TRIGGER_PREFIX}${source.id}`}
+                      menuTestId={SOURCE_MENU_TEST_ID}
+                    >
+                      {(close) => (
+                        <>
+                          <KebabMenuItem
+                            icon={<Pencil size={12} />}
+                            label={t`Edit source`}
+                            onClick={() => { close(); handleEditSource(source); }}
+                            data-testid={`edit-source-${source.id}`}
+                          />
+                          <KebabMenuItem
+                            icon={<Trash2 size={12} />}
+                            label={t({ message: 'Remove', context: 'import source menu' })}
+                            destructive
+                            onClick={() => { close(); void handleRemoveSource(source.id); }}
+                            data-testid={`remove-source-${source.id}`}
+                          />
+                        </>
+                      )}
+                    </KebabMenu>
+                  </span>
                 </div>
               ))}
             </div>
@@ -420,6 +532,7 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
                       ? 'hover:bg-surface-hover/40 cursor-pointer'
                       : 'opacity-40 cursor-not-allowed'
                   }`}
+                  data-testid={`import-provider-${provider.id}`}
                 >
                   <span className="w-5 flex justify-center text-fg-muted shrink-0">{provider.icon}</span>
                   <div className="flex-1 min-w-0">
@@ -493,52 +606,39 @@ export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = fals
             />
           )}
 
-          {/* Phase 3b: URL input */}
+          {/* Phase 3b: the link or folder, and its Label */}
           {addPhase === 'url' && selectedSourceType && !selectedSourceType.picker && selectedProvider && (
-            <div className="px-3 py-2.5">
-              <div className="flex items-center gap-2.5 mb-2">
-                <span className="w-5 flex justify-center text-fg-muted shrink-0">{selectedProvider.icon}</span>
-                <span className="text-xs font-medium text-fg">{translateText(selectedSourceType.label)}</span>
-              </div>
-              <input
-                ref={urlInputRef}
-                type="text"
-                value={newSourceUrl}
-                onChange={(event) => setNewSourceUrl(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') handleConnect();
-                }}
-                placeholder={selectedSourceType.placeholder}
-                className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted px-2.5 py-1.5 outline-none focus:border-edge-input mb-1"
-                data-testid="import-source-url-input"
-              />
-              {selectedSourceType.hint && (
-                <p className="text-[11px] text-fg-faint mb-2">{translateText(selectedSourceType.hint)}</p>
-              )}
-              {error && (
-                <p className="text-xs text-danger mb-2" data-testid="import-source-error">{error}</p>
-              )}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => void handleConnect()}
-                  disabled={loading || !newSourceUrl.trim()}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
-                  data-testid="import-source-connect-btn"
-                >
-                  {loading ? <LoaderCircle size={14} className="animate-spin" /> : null}
-                  <Trans>Connect</Trans>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBackFromUrl}
-                  className="flex items-center gap-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg border border-edge/50 rounded transition-colors"
-                >
-                  <ArrowLeft size={12} />
-                  <Trans context="button">Back</Trans>
-                </button>
-              </div>
-            </div>
+            <ImportSourceForm
+              provider={selectedProvider}
+              sourceType={selectedSourceType}
+              mode="add"
+              value={newSourceUrl}
+              // A folder the system dialog picked is shown as picked; Back picks again.
+              onValueChange={selectedSourceType.folder ? undefined : handleSourceValueChange}
+              taskLabel={taskLabel}
+              onTaskLabelChange={handleTaskLabelChange}
+              busy={loading}
+              error={error}
+              onSubmit={() => void handleConnect()}
+              onBack={handleBackFromUrl}
+              valueInputRef={urlInputRef}
+            />
+          )}
+
+          {/* A saved source's Label */}
+          {addPhase === 'edit' && editingSource && selectedSourceType && selectedProvider && (
+            <ImportSourceForm
+              provider={selectedProvider}
+              sourceType={selectedSourceType}
+              mode="edit"
+              value={editingSource.url}
+              taskLabel={taskLabel}
+              onTaskLabelChange={handleTaskLabelChange}
+              busy={loading}
+              error={error}
+              onSubmit={() => void handleSaveEdit()}
+              onBack={handleBackFromEdit}
+            />
           )}
 
           {/* Add source button */}

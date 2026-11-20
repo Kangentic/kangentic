@@ -82,49 +82,55 @@ it runs. The picker offers the types that group runs, and below them every row o
 column, to copy. A copy is independent of the original. A type the column cannot run is offered
 disabled, with the reason.
 
-**Editing one.** Clicking the row opens a dialog with the name, then one card for each part of the
-rule: **Trigger** (when it runs), **Condition**, **Frequency**, and **Action** (the type and its own
-fields). The pencil does the same, for a pointer that is already over it; the grip, the switch and
-the trash keep their own jobs and do not open it. A name is required and must be unique on its
-column. Every text field takes template variables: type `{{` to pick one, or use the **Template
-variable** button. A known variable is highlighted; an unknown one is flagged and sent as written.
+**Editing one.** Clicking the row opens a dialog with the name, then one section for each part of
+the rule, one open at a time: **Trigger** (when it runs), **Action** (the type and its own fields),
+**Condition** and **Frequency**. It opens on Action. A closed Trigger or Action shows its value; a
+closed Condition or Frequency keeps its switch, which says whether it is on. The pencil opens the
+dialog too, for a pointer that is already over it; the switch and the trash keep their own jobs. A
+name is required and must be unique on its column. Every text field takes template variables:
+type `{{` to pick one, or use the braces button joined to the field's right edge. A known variable
+is highlighted; an unknown one is flagged and sent as written.
 
-**Condition and Frequency.** Any row can carry a **Condition**, and the Condition card picks how
-it is checked:
+**Condition and Frequency.** Any row can carry a **Condition**: a list of lines, and the row runs
+only when every line holds. It starts empty, which runs the row for every task. **Add condition**
+opens a menu in three groups, cheapest check first, and each pick adds one line:
 
-- **Agent evaluation** is a sentence in plain words ("the review found work the implementer can
-  do"). The **Automation agent**, chosen in Settings > Workflows, checks it before the row runs.
-  Until one is set up, this kind shows a notice with Open Settings where its field would be. The
-  same agent names tasks and Command Terminals, and without one naming is off.
-- **Agent's message** is a Text match checked against the last line the agent writes when its
-  turn ends, such as `Verdict: Ready`. It is read once per turn end, from the agent's final
-  message, on the spot, with no agent and no cost. Use `*` as a wildcard (`Ready for *`); case,
-  punctuation and markdown are ignored, so `**Verdict: Ready.**` matches too. A `!` at the very
-  start means not: `!Design: waiting on you` runs on any last line but that one. The field takes
-  one pattern per line, and Enter adds a line. The row runs when the last line matches any plain
-  line and none of the `!` lines, in any order; with only `!` lines it runs on any line but those.
-  A turn that ends with no message runs no Text match, with or without `!`. Hover the info icon
-  after its hint for the rules and examples.
-- **Your message** is the same Text match, against the messages you sent in the turn instead,
-  including ones you typed while the agent was working. Each is judged on its own, and the newest
-  one that matches a pattern decides: "signed off" followed by a question still moves the card,
-  and "signed off" followed by "not signed off" does not. A message Kangentic typed (a column
-  message, a nudge) never counts as yours. Neither does one you sent while no agent was running,
-  from your phone or the desktop: Kangentic holds it and hands it to the next agent itself, often
-  inside the column's own message. It is how a column lets you move a card on by saying so: the
-  Design column's **On to Planning** row moves a card when you type "signed off". The run log says
-  whether your message matched and, when you sent several, which one decided. It never says what
-  any of them said. When Kangentic cannot read the turn exactly (an
-  agent's first turn, a very large turn, Run again), the row does not run. It needs an agent that
-  reports the messages you send (Claude Code today); for another agent the tab is disabled with the
-  reason, and a saved row is shown off.
+- **Task.** **Priority** runs the row only for tasks at one of the levels you pick (the same chip
+  field as Labels, with each level's meter). **Labels** runs it only for tasks that carry one of the
+  labels you pick. A task they do not match is not the row's business: it records no run at all.
+  Every saved source can put a label on everything it imports (see the Backlog), so a Labels line is
+  how a column runs one command for one kind of work, such as `/opsx:apply {{issueKey}}` for tasks
+  labelled `openspec`.
+- **Text match** (On agent turn end only). **Reply** is checked against the last line the agent
+  writes when its turn ends, such as `Verdict: Ready`, read once per turn end on the spot, with no
+  agent and no cost. Use `*` as a wildcard (`Ready for *`); case, punctuation and markdown are
+  ignored, so `**Verdict: Ready.**` matches too. A `!` at the very start means not:
+  `!Design: waiting on you` runs on any last line but that one. The field takes one pattern per
+  line, and Enter adds a line. The row runs when the last line matches any plain line and none of
+  the `!` lines; with only `!` lines it runs on any line but those. A turn that ends with no message
+  runs no Text match. The info icon inside the field has the rules and examples. A pattern can hold
+  template variables, and a filled-in value is matched as written: a `*` in a task title is never a
+  wildcard. `{{agentReply}}` is not offered, since it is the text being matched.
+  **Prompt** is the same match against the messages you sent in the turn instead, including ones you
+  typed while the agent was working. Each is judged on its own, and the newest one that matches a
+  pattern decides: "signed off" followed by a question still moves the card, and "signed off"
+  followed by "not signed off" does not. A message Kangentic typed (a column message, a nudge) never
+  counts as yours, and neither does one you sent while no agent was running, which Kangentic hands
+  to the next agent itself. It is how the Design column's **On to Planning** row moves a card when
+  you type "signed off". When Kangentic cannot read the turn exactly (an agent's first turn, a very
+  large turn, Run again), the row does not run. It needs an agent that reports the messages you send
+  (Claude Code today), and the menu leaves it out for any other. Reply and Prompt share one field,
+  so a row takes one of them.
+- **Agent.** **Evaluation** is a statement in plain words ("the review found work the implementer
+  can do"). The **Automation agent**, chosen in Settings > Workflows, checks it before the row runs.
+  Until one is set up, the line shows **Set up**, and the row does not run. The same agent names tasks
+  and Command Terminals.
 
-Both message tabs share one patterns field, and both are offered on **On agent turn end** only: on
-enter or exit they are shown disabled, with the reason.
-
-Either way, a no means the row did not run, and it is checked again next time. A row holds one kind.
-A new Condition starts on Agent evaluation, or on Agent's message at a turn end when no Automation
-agent is set up. **Frequency** caps how many times a row runs on one task, across every visit, which is
+The menu leaves out a kind already on the list and, on an enter or exit row, the whole Text match
+group. A Text match line on a row whose Trigger you change dims and says **Turn end only**; Done
+drops it, and switching the Trigger back before Done keeps it. Lines are checked in the menu's order,
+so a Task or Text match miss never pays for an Evaluation. A no means the row did not run, and it is
+checked again next time. **Frequency** caps how many times a row runs on one task, across every visit, which is
 what keeps a review loop from bouncing a task forever. The count starts over each time you move the
 task to another column, by a drag, from your phone, or by restoring it from the Completed list, so
 a task you send back for another pass runs the board's automations again. So does a move you ask
@@ -153,11 +159,9 @@ what: the verb and the type's one required value, such as `Sends "Review the cha
 task to Executing`, or `Runs npm run lint` (a script shows in code type). A long value ends where
 the row ends, and a message or script with several lines shows its first line; hover the line to
 read all of it, every line. Any option you switched on is a mark after the name,
-in the editor's card order: a robot for an Agent evaluation or a magnifier over text for a Text
-match, a repeat icon with the run limit for a Frequency, a clock on a Send message row that waits
+in the editor's order: a funnel for a Condition, whatever lines it holds, a repeat icon with the run limit for a Frequency, a clock on a Send message row that waits
 for the current turn, and a speech bubble on a Move to column row that carries a Message. Hover a
-mark to read its card and value ("Condition: only if the review is clean.", "Condition: only if the
-last line reads "Verdict: Ready".", "Condition: only if your message reads "*signed off*".",
+mark to read its card and value ("Condition: for label "openspec"; only if the last line reads "Verdict: Ready".",
 "Frequency: at most 3 times until you move the task."); a
 Message or a Condition reads in full there. A webhook's body and headers and a notification's body are not
 marked: open the row for those. The rows under **Copy existing** in the Add automation picker carry
@@ -180,7 +184,9 @@ marking tool's description. A marked command no longer counts. While a task wait
 card's activity tooltip names the background shells. If one of them is a server, ask the agent to
 mark it as a service.
 
-**Reordering.** Drag a row by its grip. A drag stays inside its own group: it changes where the row
+**Reordering.** Drag a row anywhere on it: there is no grip, and a short move starts the drag, so a
+click still opens the row and its pencil, trash and switch still click. A badge before each row's
+icon gives its place in its group. A drag stays inside its own group: it changes where the row
 sits, never when it runs. To change when it runs, open the row and set its Trigger.
 
 **The agent starts by itself.** Nothing in the list starts the agent, and there is no Start agent

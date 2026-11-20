@@ -52,11 +52,13 @@ export class ImportSourceStore {
    * `prepared` carries what a validating provider (`BoardAdapter.prepareSource`)
    * resolved: the label it read from the remote, a repository it completed
    * (typed JQL gains its site), and what the source names for its subtitle.
+   * `taskLabel` is the Label the add form held; a source already saved keeps its own.
    */
   add(
     source: ExternalSource,
     url: string,
     prepared?: { label: string; repository: string; scopeKind?: ImportSource['scopeKind']; host?: string },
+    taskLabel?: string,
   ): ImportSource {
     const config = this.readConfig();
     const sources = config.importSources ?? [];
@@ -72,6 +74,7 @@ export class ImportSourceStore {
 
     const parser = urlParsers.get(source);
     const fallbackLabel = parser ? parser.buildLabel(repository) : repository;
+    const trimmedTaskLabel = taskLabel?.trim() ?? '';
     const newSource: ImportSource = {
       id: uuidv4(),
       source,
@@ -81,6 +84,7 @@ export class ImportSourceStore {
       createdAt: new Date().toISOString(),
       ...(prepared?.scopeKind ? { scopeKind: prepared.scopeKind } : {}),
       ...(prepared?.host ? { host: prepared.host } : {}),
+      ...(trimmedTaskLabel ? { taskLabel: trimmedTaskLabel } : {}),
     };
 
     sources.push(newSource);
@@ -105,6 +109,24 @@ export class ImportSourceStore {
     const index = sources.findIndex((source) => source.id === id);
     if (index < 0) return null;
     const updated: ImportSource = { ...sources[index], label: trimmed };
+    sources[index] = updated;
+    this.writeConfig({ ...config, importSources: sources });
+    return updated;
+  }
+
+  /**
+   * Set or clear a saved source's Label, the label every item it imports gets.
+   * An empty or blank `taskLabel` removes it. Null when no source has `id`.
+   */
+  update(id: string, changes: { taskLabel: string }): ImportSource | null {
+    const config = this.readConfig();
+    const sources = config.importSources ?? [];
+    const index = sources.findIndex((source) => source.id === id);
+    if (index < 0) return null;
+    const updated: ImportSource = { ...sources[index] };
+    const trimmedTaskLabel = changes.taskLabel.trim();
+    if (trimmedTaskLabel) updated.taskLabel = trimmedTaskLabel;
+    else delete updated.taskLabel;
     sources[index] = updated;
     this.writeConfig({ ...config, importSources: sources });
     return updated;

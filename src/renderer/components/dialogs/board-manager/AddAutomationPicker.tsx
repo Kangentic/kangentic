@@ -5,6 +5,8 @@ import { translateText } from '../../../i18n/translate';
 import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_PHRASES } from '../../../../shared/automation-manifest';
 import { describeAutomationMarks } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
+import { DEFAULT_PRIORITY_CONFIG } from '../../../../shared/types';
+import { useConfigStore } from '../../../stores/config-store';
 import { OverlayPopover } from '../../OverlayPopover';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { AutomationIcon, AutomationMarks } from './automation-icons';
@@ -41,6 +43,7 @@ export interface AddAutomationPickerProps {
 
 export function AddAutomationPicker(props: AddAutomationPickerProps) {
   const { t } = useLingui();
+  const priorityLevels = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
   const [filter, setFilter] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   // The anchor arrives as a prop; the position hook wants a ref. Kept current
@@ -200,7 +203,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
                     source row's own trigger decides them, as it does there. */}
                 <span data-testid="column-automation-picker-copy-title" className="flex items-center gap-1.5">
                   <span className="truncate text-xs text-fg">{draft.name}</span>
-                  <AutomationMarks marks={describeAutomationMarks(draft, i18n)} />
+                  <AutomationMarks marks={describeAutomationMarks(draft, i18n, priorityLevels)} />
                 </span>
                 <span className="block truncate text-[11px] text-fg-faint">{describeDraft(draft)}</span>
                 <span className="block text-[11px] text-fg-muted">

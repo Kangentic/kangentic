@@ -106,7 +106,7 @@ async function openObsidianSourceTypes(page: Page): Promise<void> {
 }
 
 test.describe('Adding an Obsidian source', () => {
-  test('picking Notes opens the folder dialog, saves the folder and opens the Import dialog', async () => {
+  test('picking Notes opens the folder dialog and stops at the form, whose Connect saves the folder with its Label', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'obsidian-add');
     await page.evaluate(() => {
@@ -116,18 +116,25 @@ test.describe('Adding an Obsidian source', () => {
     await openObsidianSourceTypes(page);
     await page.locator('[data-testid="import-source-type-obsidian_notes"]').click();
 
+    // The picked folder waits in the form, read-only, with its Label from the folder name.
+    await expect(page.locator('[data-testid="import-source-url-readonly"]')).toHaveText('/vaults/Work/Projects');
+    await expect(page.locator('[data-testid="import-source-label-input"]')).toHaveValue('Projects');
+    expect(await readAddCalls(page)).toEqual([]);
+
+    await page.locator('[data-testid="import-source-connect-btn"]').click();
+
     await expect(page.locator('[data-testid="import-dialog"]')).toBeVisible();
     const calls = await page.evaluate(() => ({
       added: (window as unknown as ObsidianMockWindow).__mockImportSourcesAddCalls,
       options: (window as unknown as ObsidianMockWindow).__mockSelectFolderLastOptions,
     }));
-    expect(calls.added).toEqual([{ source: 'obsidian_notes', url: '/vaults/Work/Projects' }]);
+    expect(calls.added).toEqual([{ source: 'obsidian_notes', url: '/vaults/Work/Projects', taskLabel: 'Projects' }]);
     expect(calls.options?.title).toBe('Choose a folder in your Obsidian vault');
 
     await browser.close();
   });
 
-  test('a folder outside any vault is refused under the source types, and nothing opens', async () => {
+  test('a folder outside any vault is refused in the form, and nothing opens', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'obsidian-refused');
     await page.evaluate(() => {
@@ -139,10 +146,15 @@ test.describe('Adding an Obsidian source', () => {
 
     await openObsidianSourceTypes(page);
     await page.locator('[data-testid="import-source-type-obsidian_checklist"]').click();
+    await page.locator('[data-testid="import-source-connect-btn"]').click();
 
     await expect(page.locator('[data-testid="import-source-error"]')).toHaveText('Not in a vault: /notes/Recipes');
-    await expect(page.locator('[data-testid="import-source-type-obsidian_notes"]')).toBeVisible();
+    await expect(page.locator('[data-testid="import-source-form"]')).toBeVisible();
     await expect(page.locator('[data-testid="import-dialog"]')).toHaveCount(0);
+
+    // The header's back arrow returns to the source types to pick again.
+    await page.locator('[data-testid="import-source-back-btn"]').click();
+    await expect(page.locator('[data-testid="import-source-type-obsidian_notes"]')).toBeVisible();
 
     await browser.close();
   });

@@ -54,14 +54,14 @@ describe('describeAutomationGuards and marks by source', () => {
       .toBe('Only if the last line reads "Verdict: Ready".');
   });
 
-  it('marks: the text-match mark carries the user label and phrase', () => {
+  it('marks: the Condition mark carries the user label and phrase', () => {
     const userMark = describeAutomationMarks({ ...baseRow, text_match_source: 'user' }, englishI18n)
-      .find((mark) => mark.kind === 'text-match');
+      .find((mark) => mark.kind === 'condition');
     expect(userMark?.label).toBe('Condition: only if your message reads "Verdict: Ready".');
     expect(userMark?.phrase).toBe('only if your message reads "Verdict: Ready"');
 
     const agentMark = describeAutomationMarks({ ...baseRow, text_match_source: 'agent' }, englishI18n)
-      .find((mark) => mark.kind === 'text-match');
+      .find((mark) => mark.kind === 'condition');
     expect(agentMark?.label).toBe('Condition: only if the last line reads "Verdict: Ready".');
     expect(agentMark?.phrase).toBe('only if the last line reads "Verdict: Ready"');
   });

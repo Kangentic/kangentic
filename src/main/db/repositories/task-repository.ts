@@ -433,6 +433,7 @@ export class TaskRepository {
       external_id: input.externalId ?? null,
       external_source: input.externalSource ?? null,
       external_url: input.externalUrl ?? null,
+      external_repository: input.externalRepository ?? null,
       base_branch: input.baseBranch || null,
       resolved_base_branch: null,
       use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
@@ -469,9 +470,9 @@ export class TaskRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, external_id, external_source, external_url, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, run_mode, automations_disabled, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.pr_merge_readiness, task.head_sha, task.external_id, task.external_source, task.external_url, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.automations_disabled ? 1 : 0, task.created_at, task.updated_at);
+      INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, external_id, external_source, external_url, external_repository, base_branch, use_worktree, labels, priority, model_override, effort_override, agent_override, permission_mode, auto_command, profile_id, run_mode, automations_disabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.display_id, task.title, task.description, task.swimlane_id, task.position, task.agent, task.session_id, task.worktree_path, task.branch_name, task.pr_number, task.pr_url, task.pr_state, task.pr_merge_readiness, task.head_sha, task.external_id, task.external_source, task.external_url, task.external_repository ?? null, task.base_branch, task.use_worktree, JSON.stringify(labels), task.priority, task.model_override, task.effort_override, task.agent_override, task.permission_mode, task.auto_command, task.profile_id, task.run_mode, task.automations_disabled ? 1 : 0, task.created_at, task.updated_at);
 
     // Only a workflow's Start passes membership, so an ordinary create costs
     // no second statement.
@@ -1019,6 +1020,31 @@ export class TaskRepository {
         labels[index] = newName;
         const unique = [...new Set(labels)];
         updateStatement.run(JSON.stringify(unique), now, row.id);
+        modifiedCount++;
+      }
+    })();
+
+    return modifiedCount;
+  }
+
+  /**
+   * Remap task priorities with a mapping of old level -> new level, after the
+   * project's priority list was edited (a level deleted or reordered). The
+   * backlog's items take the same mapping (`BacklogRepository.remapPriorities`),
+   * so a level means the same thing on a backlog item and on a board task.
+   * Returns the count of modified tasks.
+   */
+  remapPriorities(mapping: Record<number, number>): number {
+    const allRows = this.db.prepare('SELECT id, priority FROM tasks').all() as Array<{ id: string; priority: number }>;
+    let modifiedCount = 0;
+    const now = new Date().toISOString();
+    const updateStatement = this.db.prepare('UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?');
+
+    writeTransaction(this.db, () => {
+      for (const row of allRows) {
+        const newPriority = mapping[row.priority];
+        if (newPriority === undefined || newPriority === row.priority) continue;
+        updateStatement.run(newPriority, now, row.id);
         modifiedCount++;
       }
     })();

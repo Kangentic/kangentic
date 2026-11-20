@@ -21,7 +21,7 @@ import { DEFAULT_WORKFLOW_AGENT_PROMPT } from '../../../../shared/workflow-agent
 /** Rows the field shows in the card: the default prompt's opening fits, and the card never changes height. */
 const PROMPT_ROWS = 15;
 
-/** The field, with Template variable at its left and Reset to default at its right, under it. */
+/** The field with Template variable joined to its right edge, and Reset to default under it. */
 export function WorkflowAgentPromptField({ value, onChange, onBlur, onReset, fill = false, testId }: {
   value: string;
   onChange: (value: string) => void;
@@ -35,23 +35,30 @@ export function WorkflowAgentPromptField({ value, onChange, onBlur, onReset, fil
   const insertRef = useRef<TemplateTextFieldInsert | null>(null);
   return (
     <div className={fill ? 'flex min-h-0 flex-1 flex-col gap-2' : 'flex flex-col gap-2'}>
-      <TemplateTextField
-        value={value}
-        onChange={onChange}
-        onBlur={onBlur}
-        context="workflow"
-        testId={testId}
-        rows={PROMPT_ROWS}
-        fill={fill}
-        ariaLabel={t`Workflow agent prompt`}
-        insertRef={insertRef}
-      />
-      <div className="flex items-center justify-between gap-3">
+      {/* The Template variable button is joined to the field's right edge,
+          its full height, as on every field that takes variables (#872). */}
+      <div className={`flex items-stretch ${fill ? 'min-h-0 flex-1' : ''}`}>
+        <div className={`flex min-w-0 flex-1 flex-col ${fill ? 'min-h-0' : ''}`}>
+          <TemplateTextField
+            value={value}
+            onChange={onChange}
+            onBlur={onBlur}
+            context="workflow"
+            testId={testId}
+            rows={PROMPT_ROWS}
+            fill={fill}
+            ariaLabel={t`Workflow agent prompt`}
+            insertRef={insertRef}
+            joinedRight
+          />
+        </div>
         <TemplateVariablePicker
           context="workflow"
           onInsert={(chip) => insertRef.current?.(chip)}
           testId={`${testId}-variable`}
         />
+      </div>
+      <div className="flex items-center justify-end gap-3">
         <Pill
           size="sm"
           onClick={onReset}

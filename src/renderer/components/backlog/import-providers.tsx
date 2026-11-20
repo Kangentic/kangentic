@@ -1,5 +1,5 @@
 import React from 'react';
-import { SquareKanban, CircleDot, Cloud } from 'lucide-react';
+import { SquareKanban, CircleDot, Cloud, FolderGit2 } from 'lucide-react';
 import { msg } from '@lingui/core/runtime-macro';
 import { GitHubIcon } from '../icons/GitHubIcon';
 import { ArtifactPlatformLogo } from '../VendorMark';
@@ -87,6 +87,23 @@ export interface SourceTypeOption {
    * the folder has gone.
    */
   folder?: { dialogTitle: LocalizedText };
+  /**
+   * A source that names a folder of the project's own repository: its form has
+   * a Browse list of the default branch's folders, read through main.
+   */
+  repoFolder?: boolean;
+  /** The source field's label in the add form. Absent: "URL". */
+  fieldLabel?: LocalizedText;
+  /**
+   * The source's items have no open or closed state, status or assignee, so
+   * the Import dialog leaves out the Open/Closed toggle.
+   */
+  itemsHaveNoState?: boolean;
+  /**
+   * An item's description is a list of paths, one `- path` per line, and the
+   * Import dialog shows their names under the title.
+   */
+  bodyListsPaths?: boolean;
 }
 
 export interface Provider {
@@ -101,6 +118,7 @@ export interface Provider {
 }
 
 const OBSIDIAN_FOLDER_DIALOG_TITLE = msg({ message: 'Choose a folder in your Obsidian vault', context: 'import folder dialog' });
+const REPO_FOLDER_LABEL = msg({ message: 'Repository folder', context: 'import provider' });
 
 export const PROVIDERS: Provider[] = [
   {
@@ -267,6 +285,26 @@ export const PROVIDERS: Provider[] = [
       },
     ],
   },
+  {
+    id: 'repo-folder',
+    label: REPO_FOLDER_LABEL,
+    icon: <FolderGit2 size={16} />,
+    available: true,
+    sourceTypes: [
+      {
+        value: 'repo_folder',
+        // The provider's own name again, so its saved rows read "Repository folder" once.
+        label: REPO_FOLDER_LABEL,
+        description: msg({ message: 'Each file or folder inside becomes a task', context: 'import source type' }),
+        fieldLabel: msg({ message: 'Folder', context: 'import source field' }),
+        hint: msg({ message: 'Each file or folder inside becomes a task.', context: 'import source type' }),
+        icon: <FolderGit2 size={16} />,
+        repoFolder: true,
+        itemsHaveNoState: true,
+        bodyListsPaths: true,
+      },
+    ],
+  },
 ];
 
 /** The source type `source` names, for its per-type behavior (a folder source's tooltip). */
@@ -291,10 +329,19 @@ export function getSourceLabel(source: ExternalSource): string {
   const provider = getProviderForSource(source);
   const sourceType = getSourceTypeOption(source);
   if (!provider || !sourceType) return source;
-  return translateText(SOURCE_LABEL_MESSAGE, {
-    provider: translateText(provider.label),
-    sourceType: translateText(sourceType.label),
-  });
+  const providerLabel = translateText(provider.label);
+  const sourceTypeLabel = translateText(sourceType.label);
+  // A source type named after its provider (Repository folder) reads once.
+  if (providerLabel === sourceTypeLabel) return providerLabel;
+  return translateText(SOURCE_LABEL_MESSAGE, { provider: providerLabel, sourceType: sourceTypeLabel });
+}
+
+/**
+ * The add and edit form's title: the provider's name, with the source type when
+ * the provider offers more than one ("GitHub Issues").
+ */
+export function getSourceFormTitle(provider: Provider, sourceType: SourceTypeOption): string {
+  return provider.sourceTypes.length > 1 ? getSourceLabel(sourceType.value) : translateText(provider.label);
 }
 
 const SCOPE_KIND_LABELS = {

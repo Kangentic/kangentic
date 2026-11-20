@@ -10,6 +10,7 @@ import type {
 } from '../../../shared/types';
 import { AUTOMATION_MANIFEST, isAutomationTrigger } from '../../../shared/automation-manifest';
 import { conditionKindsAsStored, normalizeTextMatch } from '../../../shared/final-line-match';
+import { remapTaskFilterPriorities, taskFilterFromJson, taskFilterToJson } from '../../../shared/automation-filter';
 import { columnNameKey } from '../../automations/move-target';
 import { writeTransaction } from '../transaction';
 
@@ -25,6 +26,7 @@ interface AutomationRow {
   condition: string | null;
   final_line: string | null;
   text_match_source: string | null;
+  filter_json: string | null;
   max_runs: number | null;
   created_at: string;
   updated_at: string;
@@ -89,8 +91,8 @@ export class AutomationRepository {
     const now = new Date().toISOString();
     const insert = this.db.prepare(`
       INSERT INTO column_automations
-        (id, swimlane_id, name, type, trigger, position, enabled, config_json, condition, final_line, text_match_source, max_runs, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, swimlane_id, name, type, trigger, position, enabled, config_json, condition, final_line, text_match_source, filter_json, max_runs, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const tx = writeTransaction(this.db, () => {
@@ -116,9 +118,9 @@ export class AutomationRepository {
         const reusable = kept !== undefined && !explicitIds.has(kept) && !usedIds.has(kept) ? kept : undefined;
         const id = automation.id ?? reusable ?? randomUUID();
         usedIds.add(id);
-        // One Condition kind per row, Text match on a turn end only. Every
-        // writer already holds to this (the dialog, the file reader, MCP), so
-        // this is the backstop, not the rule.
+        // Text match on a turn end only, beside or instead of an Agent
+        // evaluation. Every writer already holds to this (the dialog, the
+        // file reader, MCP), so this is the backstop, not the rule.
         const kinds = conditionKindsAsStored(automation);
         insert.run(
           id,
@@ -134,6 +136,7 @@ export class AutomationRepository {
           // NULL for the agent's line, the column's meaning before #1078, so a
           // DB an older build opens reads every row it already knew unchanged.
           kinds.text_match_source === 'user' ? 'user' : null,
+          taskFilterToJson(automation.filter),
           normalizeMaxRuns(automation.max_runs),
           existing.get(id) ?? now,
           now,
@@ -148,6 +151,31 @@ export class AutomationRepository {
 
   deleteForColumn(swimlaneId: string): void {
     this.db.prepare('DELETE FROM column_automations WHERE swimlane_id = ?').run(swimlaneId);
+  }
+
+  /**
+   * Follow a deletion or reorder of the project's priority levels: each Task
+   * line's levels move as the tasks' own did (`BacklogRepository.remapPriorities`),
+   * so a row keeps matching the tasks it matched. Returns the rows changed.
+   */
+  remapFilterPriorities(mapping: Record<number, number>): number {
+    const rows = this.db
+      .prepare('SELECT id, filter_json FROM column_automations WHERE filter_json IS NOT NULL')
+      .all() as Array<{ id: string; filter_json: string }>;
+    const update = this.db.prepare('UPDATE column_automations SET filter_json = ?, updated_at = ? WHERE id = ?');
+    const now = new Date().toISOString();
+    let changed = 0;
+    const tx = writeTransaction(this.db, () => {
+      for (const row of rows) {
+        const current = taskFilterFromJson(row.filter_json);
+        const before = taskFilterToJson(current);
+        const after = taskFilterToJson(remapTaskFilterPriorities(current, mapping));
+        if (after === before) continue;
+        changed += update.run(after, now, row.id).changes;
+      }
+    });
+    tx();
+    return changed;
   }
 }
 
@@ -250,6 +278,7 @@ function mapRow(row: AutomationRow): ColumnAutomation | null {
     condition: normalizeCondition(row.condition),
     final_line: finalLine,
     text_match_source: mapTextMatchSource(row.text_match_source, finalLine),
+    filter: taskFilterFromJson(row.filter_json),
     max_runs: normalizeMaxRuns(row.max_runs),
     created_at: row.created_at,
     updated_at: row.updated_at,

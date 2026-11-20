@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef } from 'react';
-import { Columns3Cog, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Columns3Cog, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -9,6 +9,8 @@ import { translateText } from '../../../i18n/translate';
 import { i18n } from '@lingui/core';
 import { describeAutomationMarks, describeAutomationSentence } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
+import { DEFAULT_PRIORITY_CONFIG } from '../../../../shared/types';
+import { useConfigStore } from '../../../stores/config-store';
 import { Tooltip } from '../../Tooltip';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
@@ -370,7 +372,8 @@ function AutomationRow({
   const legacy = entry.status === 'legacy';
   // Each mark's tooltip leads with its editor card's name, so a first hover
   // names the concept: "Condition: only if the review is clean."
-  const marks = describeAutomationMarks(draft, i18n);
+  const priorityLevels = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
+  const marks = describeAutomationMarks(draft, i18n, priorityLevels);
   const sentence = describeAutomationSentence(draft.type, draft.config, i18n);
 
   // A row the column cannot run is shown OFF with its switch disabled, and the
@@ -414,82 +417,36 @@ function AutomationRow({
       // `py-[7px]` rather than `py-1.5`: the sentence sits 3px under the name,
       // and the extra pixel above and below keeps that gap from crowding the row.
       onClick={readOnly ? undefined : () => onEdit(draft)}
-      className={`group flex select-none items-center gap-2 rounded border border-edge-input bg-surface-control px-2 py-[7px] ${
-        readOnly ? '' : 'cursor-pointer hover:border-fg-faint'
+      // The whole row drags (#872, canvas board F1a): no grip, a grab cursor,
+      // and the pointer sensor's short move before a drag starts, so the
+      // pencil, trash and switch still click. The sortable's `attributes`
+      // and `listeners` sit on this one element (keyboard-drag-intent.md),
+      // with its role left as the list item it is: the row holds real
+      // controls, so it is no button.
+      {...(reorderable ? { ...attributes, role: undefined } : {})}
+      {...(reorderable ? listeners : {})}
+      // light-dismiss-ok: the grab cursor is not `pointer`, so the row says it
+      // is no dead space itself, as ColumnRail's handle does.
+      data-no-dismiss={reorderable ? true : undefined}
+      className={`group flex select-none items-center gap-3 rounded border border-edge-input bg-surface-control px-3 py-[7px] ${
+        readOnly ? '' : reorderable ? 'cursor-grab hover:border-fg-faint active:cursor-grabbing' : 'cursor-pointer hover:border-fg-faint'
       } ${isDragging ? 'z-10 shadow-lg' : ''}`}
     >
-      {/* light-dismiss-ok: a grab cursor is not `pointer`, so the denylist would
-          read this handle as dead space and close the window on a drag start.
-          Same exemption ColumnRail's handle carries. */}
+      {/* The row's position in its group, so each group reads 1 to N: a
+          filled, muted 20px badge. A lone row shows 1. */}
       <span
-        {...(reorderable ? attributes : {})}
-        {...(reorderable ? listeners : {})}
-        {...(reorderable
-          ? { 'data-drag-handle': true, 'data-no-dismiss': true, 'aria-label': t`Reorder ${name}` }
-          // Not a handle, so it is not announced as one and the light-dismiss
-          // denylist has nothing to exempt: it is inert padding at this point.
-          : { 'aria-hidden': true })}
-        // The grip reorders and does nothing else. Without this a plain click
-        // on it (a drag that never moved far enough to start) would fall
-        // through to the row and open the editor. A real drag is already
-        // covered: dnd-kit's pointer sensor arms a capture-phase click
-        // suppressor on drop, which is what keeps a finished reorder from
-        // opening the row it just moved.
-        //
-        // With no grip there is nothing to protect, and swallowing the click
-        // would leave a dead 33px notch in a row that opens everywhere else.
-        onClick={reorderable ? (event) => event.stopPropagation() : undefined}
-        // The TARGET is a full-height strip down the row's left edge, not the
-        // glyph. The glyph alone measured 13 x 13, which is 169 square pixels
-        // to hit in a 50px row, well under the 24px minimum every pointer
-        // guideline gives a drag affordance, and it read as clunky because it
-        // was: you had to find a 13px square before the row would move.
-        //
-        // `self-stretch` takes the row's full inner height against its
-        // `items-center`, and the negative margins cancel the row's own
-        // `px-2 py-[7px]` so the strip reaches the inside of the border instead
-        // of floating in the middle of it. The padding is then given back on
-        // the inside, so the glyph sits exactly where it always did.
-        //
-        // The right edge works the same way and is worth spelling out, because
-        // it looks like a typo: `pr-3` with `-mr-2` widens the strip by the 8px
-        // of the row's own `gap-2`, which was dead space between the glyph and
-        // the index. Widening with padding alone would have pushed every row's
-        // text right instead. Measured: the label's left edge is the same pixel
-        // before and after, and the target went from 169 square pixels to 1584.
-        //
-        // The tint is what makes it discoverable. The glyph is visible at rest
-        // either way (a hover-only control is banned, `ui-conventions.md`), but
-        // nothing said how far the grabbable zone reached, so hovering the row
-        // paints the whole strip and the boundary stops being a guess.
-        //
-        // A veil at 8%, not a surface token, and the whole ramp was tried to
-        // get here. The row is already `surface-control` (#393940), so its
-        // neighbours on that ramp are either invisible or loud: `surface-hover`
-        // is #3f3f46, a six-unit difference that disappeared on screen, while
-        // `surface-raised` (#27272a) and `surface-inset` (#18181b) both landed
-        // as a dark block cut out of the row. A translucent foreground is the
-        // only one of the four that scales, because it is a FRACTION of the row
-        // rather than a fixed step away from it, and it inverts on its own: the
-        // token is near-white in the dark themes and near-black in the light
-        // ones, so the strip lifts against a dark row and deepens against a
-        // light one without a second rule.
-        className={`flex select-none items-center self-stretch rounded-l -my-[7px] -ml-2 -mr-2 pl-2 pr-3 text-fg-faint transition-colors ${
-          reorderable ? 'cursor-grab group-hover:bg-fg/[0.08] group-hover:text-fg-tertiary active:cursor-grabbing' : ''
-        }`}
+        data-testid="column-automation-row-position"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-fg/10 text-[11px] font-medium tabular-nums text-fg-tertiary"
       >
-        {/* The gutter stays even with no grip in it, and the glyph is what
-            holds it open: hidden rather than dropped, so the spacer is exactly
-            the width of the thing it replaces and follows any later change to
-            `size` on its own. Dropping the element instead measured a 13px
-            pull, putting a lone row's text at x=1487 against x=1500 for every
-            row in the group above it, in one card where the eye tracks that
-            left edge straight down. */}
-        <GripVertical size={13} className={reorderable ? '' : 'invisible'} />
+        {index + 1}
       </span>
-
-      <span className="w-4 shrink-0 text-right text-[11px] tabular-nums text-fg-faint">{index + 1}</span>
-      <AutomationIcon name={entry.icon} size={13} className="shrink-0 text-fg-muted" />
+      {/* A faint full-height line between the position and the row's own content. */}
+      <span aria-hidden="true" className="-my-[7px] w-px shrink-0 self-stretch bg-fg/[0.06]" />
+      {/* The type's icon in a 32px tile at 16px, the size the Edit automation
+          dialog's Action section draws it. */}
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-fg/[0.06] text-fg-muted">
+        <AutomationIcon name={entry.icon} size={16} />
+      </span>
 
       {/* The name is the shared setting label, so it reads at the size, weight
           and tone of the ToggleCards and SettingFields beside it. The sentence

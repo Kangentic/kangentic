@@ -44,6 +44,7 @@ const EXPECTED_PROVIDERS: ExternalSource[] = [
   'obsidian_notes',
   'obsidian_checklist',
   'gitlab',
+  'repo_folder',
 ];
 
 describe('boardRegistry', () => {
@@ -90,6 +91,7 @@ describe('boardRegistry', () => {
     expect(boardRegistry.getOrThrow('obsidian_checklist').status).toBe('stable');
     expect(boardRegistry.getOrThrow('trello').status).toBe('stable');
     expect(boardRegistry.getOrThrow('gitlab').status).toBe('stable');
+    expect(boardRegistry.getOrThrow('repo_folder').status).toBe('stable');
   });
 
   it('getOrThrow throws for unknown provider id', () => {

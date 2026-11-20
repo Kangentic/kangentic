@@ -29,6 +29,7 @@ interface BacklogTaskRow {
   external_id: string | null;
   external_source: string | null;
   external_url: string | null;
+  external_repository: string | null;
   sync_status: string | null;
   external_metadata: string | null;
   attachment_count: number;
@@ -93,6 +94,7 @@ export class BacklogRepository {
       external_id: input.externalId ?? null,
       external_source: input.externalSource ?? null,
       external_url: input.externalUrl ?? null,
+      external_repository: input.externalRepository ?? null,
       sync_status: input.syncStatus ?? null,
       external_metadata: input.externalMetadata ? JSON.stringify(input.externalMetadata) : null,
       attachment_count: 0,
@@ -101,12 +103,12 @@ export class BacklogRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO backlog_tasks (id, title, description, priority, labels, position, assignee, due_date, item_type, external_id, external_source, external_url, sync_status, external_metadata, attachment_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO backlog_tasks (id, title, description, priority, labels, position, assignee, due_date, item_type, external_id, external_source, external_url, external_repository, sync_status, external_metadata, attachment_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.title, row.description, row.priority, row.labels, row.position,
       row.assignee, row.due_date, row.item_type,
-      row.external_id, row.external_source, row.external_url, row.sync_status,
+      row.external_id, row.external_source, row.external_url, row.external_repository, row.sync_status,
       row.external_metadata, row.attachment_count, row.created_at, row.updated_at,
     );
 
@@ -279,8 +281,13 @@ export class BacklogRepository {
    * origin onto the board task, so a board-only match must still count as
    * "imported" to prevent re-importing the same issue. Archived board tasks are
    * intentionally included (they are recoverable, not deleted).
+   *
+   * With a `repository` (the saved source's), a row stamped with another
+   * repository does not count (#872): two repository folders, or two GitHub
+   * repos, can hold the same id. A row with none (imported before the column
+   * existed, or made here) still matches by source alone, as it always did.
    */
-  findByExternalIds(source: string, externalIds: string[]): Set<string> {
+  findByExternalIds(source: string, externalIds: string[], repository?: string | null): Set<string> {
     if (externalIds.length === 0) return new Set();
     const matched = new Set<string>();
     // Chunked, because the Import dialog's paint path passes the ENTIRE remote
@@ -288,14 +295,18 @@ export class BacklogRepository {
     // unioned table), so a few thousand cached items would exceed SQLite's
     // bound-parameter ceiling and fail the read outright, and every distinct length
     // compiles a fresh statement. A fixed chunk bounds both.
+    const repositoryKey = repository ?? null;
+    // No repository asked for matches every row; otherwise a row of that
+    // repository or of none. Bound twice per table, once for each `?`.
+    const repositoryClause = 'AND (? IS NULL OR external_repository IS NULL OR external_repository = ?)';
     for (let start = 0; start < externalIds.length; start += EXTERNAL_ID_QUERY_CHUNK) {
       const chunk = externalIds.slice(start, start + EXTERNAL_ID_QUERY_CHUNK);
       const placeholders = chunk.map(() => '?').join(', ');
       const rows = this.db.prepare(
-        `SELECT external_id FROM backlog_tasks WHERE external_source = ? AND external_id IN (${placeholders})
+        `SELECT external_id FROM backlog_tasks WHERE external_source = ? AND external_id IN (${placeholders}) ${repositoryClause}
        UNION
-       SELECT external_id FROM tasks WHERE external_source = ? AND external_id IN (${placeholders})`
-      ).all(source, ...chunk, source, ...chunk) as Array<{ external_id: string }>;
+       SELECT external_id FROM tasks WHERE external_source = ? AND external_id IN (${placeholders}) ${repositoryClause}`
+      ).all(source, ...chunk, repositoryKey, repositoryKey, source, ...chunk, repositoryKey, repositoryKey) as Array<{ external_id: string }>;
       for (const row of rows) matched.add(row.external_id);
     }
     return matched;
@@ -312,7 +323,7 @@ export class BacklogRepository {
     description: string,
     priority?: number,
     labels?: string[],
-    externalOrigin?: { externalId: string | null; externalSource: string | null; externalUrl: string | null },
+    externalOrigin?: { externalId: string | null; externalSource: string | null; externalUrl: string | null; externalRepository?: string | null },
   ): BacklogTask {
     return this.create({
       title,
@@ -322,6 +333,7 @@ export class BacklogRepository {
       externalId: externalOrigin?.externalId ?? undefined,
       externalSource: externalOrigin?.externalSource ?? undefined,
       externalUrl: externalOrigin?.externalUrl ?? undefined,
+      externalRepository: externalOrigin?.externalRepository ?? undefined,
     });
   }
 }

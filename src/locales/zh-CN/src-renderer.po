@@ -1251,8 +1251,8 @@ msgid "Reload"
 msgstr "重新加载"
 
 #: src/renderer/components/LabelInput.tsx
-msgid "Remove {label}"
-msgstr "移除 {label}"
+msgid "Remove {text}"
+msgstr ""
 
 #: src/renderer/utils/gpu-notice.ts
 msgid "Repeated failures shut down your last run."

@@ -80,6 +80,11 @@ msgstr "{host} üzerinde {sourceLabel}"
 msgid "{summary}."
 msgstr "{summary}."
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+#, fuzzy
+msgid "About {about}"
+msgstr "{about} hakkında"
+
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #, fuzzy
 msgid "Add Label"
@@ -124,6 +129,7 @@ msgstr "Atanan kişi"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
+#: src/renderer/components/backlog/ImportSourceForm.tsx
 #, fuzzy
 msgctxt "button"
 msgid "Back"
@@ -139,6 +145,11 @@ msgstr "Biriktirme listesi boş"
 msgctxt "import source type"
 msgid "Board"
 msgstr "Pano"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgctxt "button"
+msgid "Browse"
+msgstr ""
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
@@ -224,7 +235,7 @@ msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} ot
 msgstr "{detailUnavailableCount, plural, one {# öğe için yorumlar kullanılamıyor} other {# öğe için yorumlar kullanılamıyor}}"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
-#: src/renderer/components/backlog/ImportPopover.tsx
+#: src/renderer/components/backlog/ImportSourceForm.tsx
 #, fuzzy
 msgid "Connect"
 msgstr "Bağlan"
@@ -244,6 +255,10 @@ msgstr "GitLab'e bağlan"
 #, fuzzy
 msgid "Couldn't delete backlog task"
 msgstr "İş listesi görevi silinemedi"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Couldn't list the folders"
+msgstr ""
 
 #. placeholder {0}: result.detail
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
@@ -265,6 +280,10 @@ msgstr "Ek kaldırılamadı"
 #, fuzzy
 msgid "Couldn't save backlog task"
 msgstr "İş listesi görevi kaydedilemedi"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Couldn't save the source"
+msgstr ""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
@@ -371,6 +390,16 @@ msgid "Each - [ ] line becomes a task"
 msgstr "Her - [ ] satırı bir görev olur"
 
 #: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each file or folder inside becomes a task"
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each file or folder inside becomes a task."
+msgstr ""
+
+#: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
 msgctxt "import source type"
 msgid "Each note becomes a task"
@@ -386,6 +415,10 @@ msgstr "Düzenle"
 #, fuzzy
 msgid "Edit Backlog Task"
 msgstr "İş listesi görevini düzenle"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Edit source"
+msgstr ""
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
 #, fuzzy
@@ -412,6 +445,27 @@ msgstr "Dosya çok büyük"
 #, fuzzy
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "Kimlik, başlık, etiket veya atanan kişiye göre filtrele..."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source field"
+msgid "Folder"
+msgstr ""
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Folders"
+msgstr ""
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Folders on {branchName}"
+msgstr ""
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "From the folder name. Put on every task it imports."
+msgstr ""
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "From the link. Put on every task it imports."
+msgstr ""
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 #, fuzzy
@@ -563,6 +617,11 @@ msgctxt "import filter"
 msgid "Label"
 msgstr "Etiket"
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgctxt "import source field"
+msgid "Label"
+msgstr ""
+
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #, fuzzy
 msgid "Label name"
@@ -617,6 +676,10 @@ msgstr "Panoya taşı"
 #, fuzzy
 msgid "New Backlog Task"
 msgstr "Yeni iş listesi görevi"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "No folders match"
+msgstr ""
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -797,6 +860,11 @@ msgstr "Projeler"
 msgid "Refresh to check for new items"
 msgstr "Yeni öğeleri denetlemek için yenileyin"
 
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgctxt "import source menu"
+msgid "Remove"
+msgstr ""
+
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #, fuzzy
@@ -804,11 +872,17 @@ msgctxt "button"
 msgid "Rename"
 msgstr "Yeniden adlandır"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import provider"
+msgid "Repository folder"
+msgstr ""
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "Retry"
 msgstr "Yeniden dene"
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #, fuzzy
 msgctxt "button"
@@ -839,6 +913,10 @@ msgstr "İçe aktarılan öğeleri göster"
 #, fuzzy
 msgid "Sign in with GitLab"
 msgstr "GitLab ile oturum aç"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Source actions"
+msgstr ""
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
@@ -907,6 +985,10 @@ msgctxt "import filter"
 msgid "Type"
 msgstr "Tür"
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Type a folder or browse"
+msgstr ""
+
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
 #, fuzzy
 msgctxt "column header"
@@ -918,6 +1000,11 @@ msgstr "Güncellenme"
 msgctxt "priority"
 msgid "Urgent"
 msgstr "Acil"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgctxt "import source field"
+msgid "URL"
+msgstr ""
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 msgid "Use a personal access token"

@@ -7,8 +7,8 @@ import type { AutomationRunRepository, RunConditionAnswer } from '../db/reposito
 import { automationRegistry, type AutomationRegistry } from './automation-registry';
 import { createChokepointReporter } from '../analytics/handled-report';
 import type { ConditionCheckLimits } from './condition-check/condition-check';
-import { interpolateAutomationConfig } from './interpolate-config';
-import { hasCondition, hasFinalLine, hasFrequencyLimit, textMatchSourceOf } from './row-guards';
+import { interpolateAutomationConfig, interpolateTextMatch } from './interpolate-config';
+import { hasCondition, hasFinalLine, hasFrequencyLimit, rowMatchesTaskFilter, textMatchSourceOf } from './row-guards';
 import type { AutomationContext, PendingPrompt } from './shared/automation-adapter';
 import {
   AutomationTimeoutError,
@@ -264,7 +264,11 @@ export const AGENT_PAUSED_REASON = 'The agent is paused. This row runs if the ag
 export const automationRunReporter = createChokepointReporter('automation_runner');
 
 export async function runAutomations(options: RunAutomationsOptions): Promise<AutomationRunSummary> {
-  const { automations, column, context, runs, signal } = options;
+  const { column, context, runs, signal } = options;
+  // A row whose Condition Task lines (Priority, Labels) this task does not
+  // match is not for this task at all: it records no run and is never asked
+  // about, so it costs nothing and leaves nothing behind (#872).
+  const automations = options.automations.filter((automation) => rowMatchesTaskFilter(automation, context.task));
   const registry = options.registry ?? automationRegistry;
   const summary: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
   if (automations.length === 0) return summary;
@@ -420,9 +424,13 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       // A Text match on the user's message reads their messages in the
       // turn instead (#1078). A caller that did not read it gives nothing,
       // which fails closed: the row does not run.
+      // Its template variables are filled in first, each value matched
+      // literally (`interpolateTextMatch`), so "Applied {{issueKey}}" reads
+      // this task's key.
+      const patterns = interpolateTextMatch(automation.final_line, context.templateVars);
       const match = textMatchSourceOf(automation) === 'user'
-        ? matchUserMessage(automation.final_line, options.userMessage ?? { readable: false })
-        : matchFinalLine(automation.final_line, options.agentReply);
+        ? matchUserMessage(patterns, options.userMessage ?? { readable: false })
+        : matchFinalLine(patterns, options.agentReply);
       started.finalLine = match;
       if (!match.met) {
         const reason = textMatchNotMetReason(match);

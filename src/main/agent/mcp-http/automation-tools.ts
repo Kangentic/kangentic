@@ -48,12 +48,19 @@ const AUTOMATION_ROW_SCHEMA = z.object({
   // handler, so that refusal names the field and the fix in our own words, and
   // the mobile bridge, which skips zod, gets the same check.
   condition: z.union([z.string().max(AGENT_CONDITION_MAX_LENGTH), z.record(z.string(), z.unknown())]).nullable().optional().describe(
-    'When the row runs, one kind of two. A no is not a run: the row is checked again next time. Omit or null to always run.\n'
+    'When the row runs: a Text match, an Agent evaluation, or both in one object ({ "text": ..., "agent": ... }), and every kind given must hold. The Text match is checked first, so a miss costs no agent call. A no is not a run: the row is checked again next time. Omit or null to always run.\n'
     + '- { "agent": "the review found work the implementer can do" }: Agent evaluation, a sentence the Automation agent judges before the row runs. Needs an Automation agent set up in Settings > Workflows.\n'
     + '- { "text": "Ready for *" } or { "text": ["Ready for *", "!Ready for review"] }: Text match, checked in code with no agent call, against the last line the agent writes when its turn ends. "turn_end" rows only. Any case, punctuation and markdown ignored; * matches any text, and without one a pattern must match the whole line; a leading ! means not. The row runs when the line matches any plain pattern and no ! pattern; with only ! patterns, on any line but those. '
     + `Up to ${TEXT_MATCH_MAX_PATTERNS} patterns of ${TEXT_MATCH_MAX_PATTERN_LENGTH} characters.\n`
     + '- { "text": { "from": "user", "patterns": ["*signed off*", "!*not signed off*"] } }: Text match on the messages the user sent in the turn instead of the agent\'s line, same patterns. Each message is judged on its own, and the newest one that matches any pattern decides. Messages Kangentic typed never count. A forward row of this kind makes the column a person\'s gate: the agent never moves the card out of it. "from": "agent" is the same as the short form.\n'
     + 'A plain string is still read as { "agent": ... }.',
+  ),
+  // Its contents are checked in the handler, as condition's are, so the
+  // refusal names the field and the mobile bridge, which skips zod, gets it.
+  filter: z.record(z.string(), z.unknown()).nullable().optional().describe(
+    'Which tasks the row runs for, checked in code before anything else: { "priorities": ["High", "Urgent"], "labels": ["openspec"] }. '
+    + 'priorities are this project\'s priority level names (any case); labels are task labels. Each list matches any of its values, either may be left out, and both must match when both are given. '
+    + 'A task that does not match leaves no run behind. Omit or null for every task.',
   ),
   finalLine: z.string().max(TEXT_MATCH_MAX_PATTERN_LENGTH).nullable().optional().describe('Legacy: the old key for condition: { "text": ... }, one pattern, a leading ! ignored as it was then. Prefer condition.text. Give this or condition, not both.'),
   maxRuns: z.number().int().min(1).nullable().optional().describe('Frequency: the most times this row may run on one task, counted across every visit to the column since a person last moved the task to another column (a drag on the board, a move from the phone) or it last left Done. A move an agent makes, kangentic_move_task included, or an automation or workflow makes keeps the count, which is what holds a review loop to its round-trip limit. Omit or null for no limit.'),

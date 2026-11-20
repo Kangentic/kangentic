@@ -71,7 +71,7 @@ export function setColumnMessage(
   const name = uniqueName(DEFAULT_MESSAGE_NAME, rows.map((row) => row.name));
   automations.replaceForColumn(swimlaneId, [
     ...rows.map(toWriteInput),
-    { name, type: 'send_message', trigger: 'enter', enabled: true, config: { message: trimmed, mode: mode ?? 'immediate' }, final_line: null, text_match_source: 'agent' },
+    { name, type: 'send_message', trigger: 'enter', enabled: true, config: { message: trimmed, mode: mode ?? 'immediate' }, final_line: null, text_match_source: 'agent', filter: null },
   ]);
   return { action: 'created', name };
 }
@@ -138,6 +138,7 @@ function toWriteInput(row: ColumnAutomation): AutomationWriteInput {
     condition: row.condition,
     final_line: row.final_line,
     text_match_source: row.text_match_source,
+    filter: row.filter,
     max_runs: row.max_runs,
   };
 }

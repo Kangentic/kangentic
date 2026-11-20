@@ -386,9 +386,9 @@ describe('pattern lines: line breaks and the file value', () => {
 });
 
 describe('conditionKindsAsStored', () => {
-  it('keeps a Text match on a turn end and stores no Condition beside it', () => {
-    expect(conditionKindsAsStored({ trigger: 'turn_end', condition: 'CI is green', final_line: ' Verdict: Ready ' }))
-      .toEqual({ condition: null, final_line: 'Verdict: Ready', text_match_source: 'agent' });
+  it('keeps both a Text match and an Agent evaluation on a turn end', () => {
+    expect(conditionKindsAsStored({ trigger: 'turn_end', condition: ' CI is green ', final_line: ' Verdict: Ready ' }))
+      .toEqual({ condition: 'CI is green', final_line: 'Verdict: Ready', text_match_source: 'agent' });
   });
 
   it('drops a Text match off a turn end and keeps the Condition', () => {

@@ -10,10 +10,11 @@ import type {
   BoardProfile,
   ShortcutConfig,
 } from '../../shared/types';
+import { boardPriorityLevels } from './board-config/priority-levels';
 import {
   AUTOMATION_OWNERSHIP_KEYS,
   ownsColumnAutomations,
-  CURRENT_VERSION,
+  fileFormatVersionFor,
   TEAM_FILE,
   LOCAL_FILE,
   migrateBoardColumnFields,
@@ -83,7 +84,7 @@ function parseConfigObject(raw: string): Record<string, unknown> {
 
 /** What a settings save writes when kangentic.json does not exist yet. */
 function emptyTeamConfig(): Partial<BoardConfig> {
-  return { version: CURRENT_VERSION, columns: [], actions: [], transitions: [] };
+  return { version: fileFormatVersionFor([]), columns: [], actions: [], transitions: [] };
 }
 
 /** The column keys a removal from kangentic.local.json resets (see `localFieldResets`). */
@@ -517,7 +518,7 @@ export class BoardConfigManager {
     // The write-back refuses a file whose automations this build cannot fully
     // read (`doWriteBack`), and the board is the only place that can say so.
     // A newer file's own warning already says it.
-    if (config && !teamProblem?.newerFormat && fileHoldsUnreadableAutomations(config.columns, config.version)) {
+    if (config && !teamProblem?.newerFormat && fileHoldsUnreadableAutomations(config.columns, config.version, boardPriorityLevels(projectId))) {
       warnings.push(UNREADABLE_AUTOMATIONS_REASON);
     }
     // Resets only against a local file that was read. One caught mid-save
@@ -945,7 +946,7 @@ export class BoardConfigManager {
       // says with what this machine had, so nothing is written until the file
       // reads. The apply's warning on the board says why.
       const effective = this.getEffectiveConfigForPath(projectPath);
-      if (effective && fileHoldsUnreadableAutomations(effective.columns, effective.version)) {
+      if (effective && fileHoldsUnreadableAutomations(effective.columns, effective.version, boardPriorityLevels(projectId))) {
         console.warn(`[BOARD_CONFIG] Write-back skipped: ${UNREADABLE_AUTOMATIONS_REASON}`);
         return UNREADABLE_AUTOMATIONS_REASON;
       }

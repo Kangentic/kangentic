@@ -6,6 +6,9 @@ import type {
   BoardColumnConfig,
   TextMatchSource,
 } from '../../../shared/types';
+import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
+import { taskFilterFromBoard } from '../../../shared/automation-filter';
+import type { PriorityLevelName } from './priority-levels';
 import type { AutomationWriteInput } from '../../db/repositories/automation-repository';
 import { isWholeMaxRuns, normalizeCondition, normalizeMaxRuns } from '../../db/repositories/automation-repository';
 import {
@@ -55,6 +58,8 @@ export interface ColumnAutomationPlan {
 /** What the file's format lets the reader convert. `formatVersion` is the team file's `version`. */
 export interface ColumnAutomationReadOptions {
   formatVersion?: unknown;
+  /** The project's priority levels, which a row's `filter` names. Defaults to the default levels. */
+  priorityLevels?: readonly PriorityLevelName[];
 }
 
 /**
@@ -111,16 +116,21 @@ export function configIsAutomationAware(columns: BoardColumnConfig[]): boolean {
  * Pure, and run on the files as they are on disk at the time of the write, not
  * on a flag from the last apply: a hand edit may have landed since.
  */
-export function fileHoldsUnreadableAutomations(columns: unknown, formatVersion: unknown): boolean {
+export function fileHoldsUnreadableAutomations(
+  columns: unknown,
+  formatVersion: unknown,
+  priorityLevels?: readonly PriorityLevelName[],
+): boolean {
   if (!Array.isArray(columns)) return false;
   return columns.some((column: unknown) =>
-    isJsonObject(column) && planColumnAutomations(column as unknown as BoardColumnConfig, { formatVersion }).keepExisting);
+    isJsonObject(column) && planColumnAutomations(column as unknown as BoardColumnConfig, { formatVersion, priorityLevels }).keepExisting);
 }
 
 export function planColumnAutomations(column: BoardColumnConfig, options: ColumnAutomationReadOptions = {}): ColumnAutomationPlan {
   const warnings: string[] = [];
   const rows: AutomationWriteInput[] = [];
   const formatVersion = options.formatVersion;
+  const priorityLevels = options.priorityLevels ?? DEFAULT_PRIORITY_CONFIG;
 
   // Read the containers through `unknown`. The declared types are what the app
   // writes, but this came from JSON.parse. A group that is truthy and not a list
@@ -166,7 +176,7 @@ export function planColumnAutomations(column: BoardColumnConfig, options: Column
       const group = groups[trigger];
       if (!Array.isArray(group)) continue;
       for (const entry of group as unknown[]) {
-        const read = readRow(entry, trigger, column.name, formatVersion, warnings);
+        const read = readRow(entry, trigger, column.name, formatVersion, priorityLevels, warnings);
         if (read.kind === 'unreadable') unreadable = true;
         if (read.kind !== 'row') continue;
         const row = read.row;
@@ -215,6 +225,7 @@ export function planColumnAutomations(column: BoardColumnConfig, options: Column
       config: { message: legacyMessage, mode: column.autoCommandMode ?? 'immediate' },
       final_line: null,
       text_match_source: 'agent',
+      filter: null,
     });
   }
 
@@ -238,6 +249,7 @@ function readRow(
   trigger: AutomationTrigger,
   columnName: string,
   formatVersion: unknown,
+  priorityLevels: readonly PriorityLevelName[],
   warnings: string[],
 ): RowRead {
   // `"onEnter": [null]` used to throw reading `.name` off null.
@@ -326,6 +338,19 @@ function readRow(
     unreadable = true;
   }
 
+  // The Condition's Task lines (#872). A level name this project's list does
+  // not have is never dropped: the row would then run for tasks it was written
+  // to skip, so the column keeps what it has, as for any guard it cannot read.
+  const filterRead = taskFilterFromBoard(entry.filter, priorityLevels);
+  if (filterRead.malformed) {
+    warnings.push(`${rowLabel} has a filter that is not { "priorities": [...], "labels": [...] }.`);
+    unreadable = true;
+  } else if (filterRead.unknownPriorities.length > 0) {
+    const names = filterRead.unknownPriorities.map((priorityName) => `"${priorityName}"`).join(', ');
+    warnings.push(`${rowLabel} has a filter priority ${names} that is not one of this project's priority levels.`);
+    unreadable = true;
+  }
+
   const read = readCondition(entry, trigger, rowLabel, formatVersion, warnings);
   if (read.unreadable || unreadable) return { kind: 'unreadable' };
   const { condition, finalLine, source } = read;
@@ -337,9 +362,10 @@ function readRow(
       trigger,
       enabled: entry.enabled !== false,
       config: readConfig(entry, type as AutomationType),
-      condition: finalLine === null ? condition : null,
+      condition,
       final_line: finalLine,
       text_match_source: finalLine === null ? 'agent' : source,
+      filter: filterRead.filter,
       max_runs: normalizeMaxRuns(typeof rawMaxRuns === 'number' ? rawMaxRuns : null),
     },
   };
@@ -402,17 +428,21 @@ function readCondition(
       unreadable = true;
     }
   } else if (conditionIsObject) {
+    // `text`, `agent`, or both (format 2, #872): every kind written must hold.
     const kinds = Object.keys(rawCondition);
-    const kind = kinds.length === 1 ? kinds[0] : null;
-    const value: unknown = kind === null ? undefined : rawCondition[kind];
-    if (kind === 'agent') {
-      if (typeof value === 'string') {
-        condition = normalizeCondition(value);
+    const knownKinds = kinds.length > 0 && kinds.every((kind) => kind === 'text' || kind === 'agent');
+    if (knownKinds && kinds.includes('agent')) {
+      const agentValue: unknown = rawCondition.agent;
+      if (typeof agentValue === 'string') {
+        condition = normalizeCondition(agentValue);
       } else {
         warnings.push(`${rowLabel} has a condition.agent that is not text.`);
         unreadable = true;
       }
-    } else if (kind === 'text') {
+    }
+    const value: unknown = rawCondition.text;
+    // An Agent evaluation alone was read above; only a `text` kind reads on here.
+    if (knownKinds && kinds.includes('text')) {
       // The long form says whose message it reads (#1078):
       // `{ "from": "user" | "agent", "patterns": "..." | [...] }`.
       const longForm = isJsonObject(value) ? readTextMatchLongForm(value) : null;
@@ -428,8 +458,8 @@ function readCondition(
         objectText = textMatch.text;
         if (objectText !== null) source = longForm?.source ?? 'agent';
       }
-    } else {
-      warnings.push(`${rowLabel} has a condition that is not { "text": ... } or { "agent": ... }.`);
+    } else if (!knownKinds) {
+      warnings.push(`${rowLabel} has a condition that is not { "text": ... }, { "agent": ... } or both.`);
       unreadable = true;
     }
   } else if (rawCondition !== undefined && rawCondition !== null) {
@@ -454,19 +484,22 @@ function readCondition(
 
   if (unreadable) return { condition: null, finalLine: null, source: 'agent', unreadable: true };
 
-  // One kind per row. A written shape that gave a Condition wins over the old
-  // key; between the two old keys, the Text match wins, as it always did. A
-  // blank object leaves the finalLine in charge, so an emptied edit never
-  // unguards the row.
+  // The written object holds both kinds when it names both (#872). The old
+  // keys still hold one kind between them: a written shape that gave a
+  // Condition wins over the old `finalLine`, and between the two old keys the
+  // Text match wins, as it always did. A blank object leaves the finalLine in
+  // charge, so an emptied edit never unguards the row.
   const objectGaveCondition = objectText !== null || (conditionIsObject && condition !== null);
   if (legacyText !== null && (objectGaveCondition || condition !== null)) {
     const kept = objectGaveCondition ? 'the condition' : 'the finalLine';
-    warnings.push(`${rowLabel} has both a condition and a finalLine. A row holds one kind of condition, so it keeps ${kept}.`);
+    warnings.push(`${rowLabel} has both a condition and a finalLine. It keeps ${kept}.`);
   }
   const finalLine = objectText ?? (objectGaveCondition ? null : legacyText);
+  // A legacy string condition next to a legacy finalLine gives way to it.
+  const keepsAgent = conditionIsObject || finalLine === null;
   // A legacy finalLine is always the agent's line.
   return {
-    condition: finalLine === null ? condition : null,
+    condition: keepsAgent ? condition : null,
     finalLine,
     source: objectText !== null ? source : 'agent',
     unreadable: false,

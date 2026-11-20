@@ -3,7 +3,9 @@ import { msg } from '@lingui/core/runtime-macro';
 import { AUTOMATION_MANIFEST, automationFieldUnavailableReason, automationMoveTargetName } from './automation-manifest';
 import { resolveText } from './i18n/text';
 import { parseTextMatch, patternCanMatch, textMatchCanMatch, textMatchLines } from './final-line-match';
-import type { AutomationConfig, AutomationTrigger, AutomationType, TextMatchSource } from './types';
+import type { AutomationConfig, AutomationTaskFilter, AutomationTrigger, AutomationType, TextMatchSource } from './types';
+import { DEFAULT_PRIORITY_CONFIG } from './types';
+import { normalizeTaskFilter } from './automation-filter';
 
 /**
  * The most of a value a row sentence carries.
@@ -40,15 +42,16 @@ const SENTENCES = {
 
 const GUARDS = {
   onlyIf: msg({ message: 'Only if {condition}.' }),
-  onlyIfLabel: msg({ message: 'Condition: only if {condition}.' }),
   onlyIfPhrase: msg({ message: 'only if {condition}' }),
   textMatch: msg({ message: 'Only if the last line {rule}.' }),
-  textMatchLabel: msg({ message: 'Condition: only if the last line {rule}.' }),
   textMatchPhrase: msg({ message: 'only if the last line {rule}' }),
   // A Text match on the user's message (#1078). The rule reads the same.
   userTextMatch: msg({ message: 'Only if your message {rule}.' }),
-  userTextMatchLabel: msg({ message: 'Condition: only if your message {rule}.' }),
   userTextMatchPhrase: msg({ message: 'only if your message {rule}' }),
+  // The Condition's one mark (#872): its lines, each a phrase below or above.
+  conditionLabel: msg({ message: 'Condition: {clauses}.' }),
+  priorityPhrase: msg({ message: 'for priority {levels}' }),
+  labelsPhrase: msg({ message: 'for label {labels}' }),
   frequency: msg({ message: '{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}' }),
   frequencyLabel: msg({ message: '{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}' }),
   frequencyPhrase: msg({ message: '{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}' }),
@@ -178,12 +181,11 @@ function prose(text: string, tooltip: string = text): AutomationSentence {
 }
 
 /**
- * What a row's mark stands for, in the Edit automation dialog's card order.
- * The Condition marks by its kind: `condition` for an Agent evaluation,
- * `text-match` for a Text match, so a row says without a hover whether its
- * check costs an agent call.
+ * What a row's mark stands for, in the Edit automation dialog's section
+ * order. The Condition is one mark, Condition's funnel, whatever lines it
+ * holds; its tip lists them (#872, canvas board F1a).
  */
-export type AutomationRowMarkKind = 'condition' | 'text-match' | 'frequency' | 'delivery' | 'message';
+export type AutomationRowMarkKind = 'condition' | 'frequency' | 'delivery' | 'message';
 
 /** One mark beside a row's name: an option that is switched on. */
 export interface AutomationRowMark {
@@ -222,28 +224,48 @@ export function describeAutomationMarks(row: {
   final_line: string | null;
   /** Whose message the Text match reads. Absent reads as the agent's line. */
   text_match_source?: TextMatchSource;
+  /** The Condition's Task lines. Absent reads as none. */
+  filter?: AutomationTaskFilter | null;
   max_runs: number | null;
-}, i18n: I18n): AutomationRowMark[] {
+}, i18n: I18n, priorityLevels: readonly { label: string }[] = DEFAULT_PRIORITY_CONFIG): AutomationRowMark[] {
   const marks: AutomationRowMark[] = [];
-  // One Condition kind per row. A Text match is matched only at a turn end, so
-  // a draft that still holds one on another trigger earns no mark: it would
-  // promise a check that never runs.
+  // One Condition mark for every line it holds, in the dialog's menu order:
+  // Task lines, then the Text match, then the Evaluation. A Text match is
+  // matched only at a turn end, so a draft that still holds one on another
+  // trigger earns no clause: it would promise a check that never runs.
+  const filter = normalizeTaskFilter(row.filter ?? null);
+  const fullClauses: string[] = [];
+  const oneLineClauses: string[] = [];
+  if (filter !== null && filter.priorities.length > 0) {
+    const levels = filter.priorities.map((level) => priorityLevels[level]?.label ?? `P${level}`);
+    const clause = resolveText(i18n, GUARDS.priorityPhrase, { levels: joinPatterns(levels, 'disjunction', i18n) });
+    fullClauses.push(clause);
+    oneLineClauses.push(clause);
+  }
+  if (filter !== null && filter.labels.length > 0) {
+    const clause = resolveText(i18n, GUARDS.labelsPhrase, { labels: joinPatterns(filter.labels, 'disjunction', i18n) });
+    fullClauses.push(clause);
+    oneLineClauses.push(clause);
+  }
   const rule = row.trigger === 'turn_end' ? textMatchRule(row.final_line, i18n) : null;
+  if (rule !== null) {
+    // The words say whose message.
+    const user = row.text_match_source === 'user';
+    const clause = resolveText(i18n, user ? GUARDS.userTextMatchPhrase : GUARDS.textMatchPhrase, { rule });
+    fullClauses.push(clause);
+    oneLineClauses.push(clause);
+  }
   const condition = conditionText(row.condition, 'keep-lines');
   const conditionOneLine = conditionText(row.condition, 'one-line');
-  if (rule !== null) {
-    // The same mark for both sources (the canvas's one icon); the words say whose message.
-    const user = row.text_match_source === 'user';
-    marks.push({
-      kind: 'text-match',
-      label: resolveText(i18n, user ? GUARDS.userTextMatchLabel : GUARDS.textMatchLabel, { rule }),
-      phrase: resolveText(i18n, user ? GUARDS.userTextMatchPhrase : GUARDS.textMatchPhrase, { rule }),
-    });
-  } else if (condition !== null && conditionOneLine !== null) {
+  if (condition !== null && conditionOneLine !== null) {
+    fullClauses.push(resolveText(i18n, GUARDS.onlyIfPhrase, { condition }));
+    oneLineClauses.push(resolveText(i18n, GUARDS.onlyIfPhrase, { condition: conditionOneLine }));
+  }
+  if (fullClauses.length > 0) {
     marks.push({
       kind: 'condition',
-      label: resolveText(i18n, GUARDS.onlyIfLabel, { condition }),
-      phrase: resolveText(i18n, GUARDS.onlyIfPhrase, { condition: conditionOneLine }),
+      label: resolveText(i18n, GUARDS.conditionLabel, { clauses: fullClauses.join('; ') }),
+      phrase: oneLineClauses.join('; '),
     });
   }
   if (row.max_runs !== null) {
@@ -267,9 +289,13 @@ export function describeAutomationMarks(row: {
  * finish the sentence's verb ("Moves the task to Executing, with a message")
  * and the guards then say when it runs.
  */
-export function describeAutomationMarksInWords(row: Parameters<typeof describeAutomationMarks>[0], i18n: I18n): string | null {
-  const marks = describeAutomationMarks(row, i18n);
-  const isGuard = (mark: AutomationRowMark): boolean => mark.kind === 'condition' || mark.kind === 'text-match' || mark.kind === 'frequency';
+export function describeAutomationMarksInWords(
+  row: Parameters<typeof describeAutomationMarks>[0],
+  i18n: I18n,
+  priorityLevels: readonly { label: string }[] = DEFAULT_PRIORITY_CONFIG,
+): string | null {
+  const marks = describeAutomationMarks(row, i18n, priorityLevels);
+  const isGuard = (mark: AutomationRowMark): boolean => mark.kind === 'condition' || mark.kind === 'frequency';
   const ordered = [...marks.filter((mark) => !isGuard(mark)), ...marks.filter(isGuard)];
   return ordered.length > 0 ? ordered.map((mark) => mark.phrase).join('; ') : null;
 }

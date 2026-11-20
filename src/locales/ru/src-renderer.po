@@ -1512,9 +1512,8 @@ msgid "Reload"
 msgstr "Перезагрузить"
 
 #: src/renderer/components/LabelInput.tsx
-#, fuzzy
-msgid "Remove {label}"
-msgstr "Удалить {label}"
+msgid "Remove {text}"
+msgstr ""
 
 #: src/renderer/utils/gpu-notice.ts
 #, fuzzy

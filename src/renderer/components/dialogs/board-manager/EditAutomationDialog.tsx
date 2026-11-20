@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Funnel, Info, Repeat, Settings, TextSearch, Zap } from 'lucide-react';
+import { ChevronDown, Funnel, Repeat, Zap } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { plural } from '@lingui/core/macro';
 import { msg } from '@lingui/core/runtime-macro';
@@ -17,13 +17,8 @@ import {
   stableAutomationTypes,
 } from '../../../../shared/automation-manifest';
 import type { AutomationField } from '../../../../shared/automation-manifest';
-import {
-  TEXT_MATCH_PLACEHOLDER,
-  TEXT_MATCH_UNAVAILABLE_REASON,
-  TEXT_MATCH_USER_PLACEHOLDER,
-  TEXT_MATCH_USER_UNSUPPORTED_REASON,
-} from '../../../../shared/final-line-match';
-import type { AutomationTrigger, AutomationType, Swimlane, TextMatchSource } from '../../../../shared/types';
+import { normalizeTaskFilter } from '../../../../shared/automation-filter';
+import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { BaseDialog, DialogFooterActions } from '../BaseDialog';
 import { Select, ToggleSwitch } from '../../settings/shared';
 import { InfoTip } from '../../settings/settings-card';
@@ -35,8 +30,7 @@ import { OptionalTag } from '../../OptionalTag';
 import { AutomationTypePicker } from './AutomationTypePicker';
 import { ColumnPicker, type ColumnPickerChoice } from '../../ColumnPicker';
 import { AutomationIcon } from './automation-icons';
-import { TextMatchPatternsTip } from './TextMatchPatternsTip';
-import { PatternLinesField } from './PatternLinesField';
+import { ConditionList, linesFromDraft, type AutomationTemplatePickerProps, type ConditionLines } from './ConditionList';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import {
   draftConditionKinds,
@@ -47,17 +41,15 @@ import {
   type AutomationDraft,
 } from './automation-drafts';
 
+export type { AutomationTemplatePickerProps };
+
 /**
- * The ONE place an automation is edited, laid out as the rule reads: a Name,
- * then one card for each part, Trigger, Condition, Frequency and Action
- * (approved on the #732 canvas, board 15c, as the "condensed cards").
- *
- * Each card is a settings card's header (icon, title, one line, its switch
- * alone on the right) over ONE lighter panel holding all of that card's
- * fields. The switch in a card's header is what makes clear what it controls:
- * the card's border encloses its field, and a click anywhere on the header
- * flips it. Off, a field stays in place, dimmed, with an example in it, so the
- * dialog never changes height (no control comes or goes).
+ * The ONE place an automation is edited: a Name, then one section for each
+ * part of the rule, Trigger, Action, Condition and Frequency, as a
+ * one-column accordion with one section open at a time (#872, canvas board
+ * F1b). A closed Trigger or Action shows its value; Condition and Frequency
+ * keep their switch and a static description, since the switch says whether
+ * each is on and opening the section shows what it holds.
  *
  * Everything type-specific is rendered from the manifest, so a new automation
  * type needs no change here at all.
@@ -72,81 +64,11 @@ import {
  */
 const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
 
-/**
- * How the Condition is checked: the Automation agent judging prose, or a Text
- * match in code, against the agent's last line or against the user's last
- * message in the turn (#1078). A row holds one at a time.
- */
-type ConditionKind = 'agent' | 'agent-message' | 'user-message';
-
-/** Whose message a Text match kind reads, or null for Agent evaluation. */
-function textMatchSourceOfKind(kind: ConditionKind): TextMatchSource | null {
-  if (kind === 'agent-message') return 'agent';
-  if (kind === 'user-message') return 'user';
-  return null;
-}
-
-/**
- * Agent evaluation first: it runs on every trigger and is what a Condition has
- * always meant, so the two options that can be unavailable (the message tabs,
- * off a turn end) sit after it. Both message tabs carry Text match's icon, so
- * the pair reads as one kind with two sources (signed off on the #1078 canvas).
- * Cached until the catalog changes, for the same ResizeObserver reason as
- * `allTriggerOptions` below, one array per state. The labels are descriptors
- * resolved when the arrays are built, at render and after the catalog has
- * loaded, never at module load.
- */
-const AGENT_KIND_LABEL = msg`Agent evaluation`;
-const AGENT_MESSAGE_KIND_LABEL = msg`Agent's message`;
-const USER_MESSAGE_KIND_LABEL = msg`Your message`;
-/**
- * Keyed by why each message tab is disabled (the empty string for none), so
- * the array keeps its identity across renders. Off a turn end both message
- * tabs are disabled with one reason; an agent that cannot report the user's
- * messages disables Your message alone, with that agent's and column's names.
- */
-const conditionKindOptions = cachePerCatalogBy((key: string): SegmentedControlOption<ConditionKind>[] => {
-  const { textReason, userReason } = JSON.parse(key) as { textReason: string; userReason: string };
-  const disabledBy = (reason: string): Partial<SegmentedControlOption<ConditionKind>> => (
-    reason ? { disabled: true, disabledReason: reason } : {}
-  );
-  return [
-    {
-      value: 'agent',
-      label: translateText(AGENT_KIND_LABEL),
-      icon: <Bot size={14} />,
-      testId: 'edit-automation-condition-kind-agent',
-    },
-    {
-      value: 'agent-message',
-      label: translateText(AGENT_MESSAGE_KIND_LABEL),
-      icon: <TextSearch size={14} />,
-      testId: 'edit-automation-condition-kind-text',
-      ...disabledBy(textReason),
-    },
-    {
-      value: 'user-message',
-      label: translateText(USER_MESSAGE_KIND_LABEL),
-      icon: <TextSearch size={14} />,
-      testId: 'edit-automation-condition-kind-user',
-      ...disabledBy(textReason || userReason),
-    },
-  ];
-});
-
-/**
- * The kind a Condition opens on. A saved one keeps its own; a new one starts
- * on the first kind that can run here, so Text match is a deliberate pick
- * wherever an Automation agent can evaluate instead. Without one, a turn end
- * starts on the agent's message, the kind that works with no agent at all.
- */
-function initialConditionKind(draft: AutomationDraft, automationAgentReady: boolean): ConditionKind {
-  if (draft.final_line !== null) return draft.text_match_source === 'user' ? 'user-message' : 'agent-message';
-  if (draft.condition !== null) return 'agent';
-  return !automationAgentReady && draft.trigger === 'turn_end' ? 'agent-message' : 'agent';
-}
 /** How tall a growing prose field may get before it scrolls. */
 const PROSE_MAX_ROWS = 8;
+
+/** The accordion's sections, in the order the dialog stacks them. */
+type SectionId = 'trigger' | 'action' | 'condition' | 'frequency';
 
 /**
  * Cached until the catalog changes, not an inline literal: `SegmentedControl`
@@ -240,6 +162,28 @@ function segmentedOptionsFor(field: AutomationField, unavailableReason: string |
   return built;
 }
 
+/**
+ * The saved row's Condition from the dialog's list: the Task lines into
+ * `filter`, a Text match line into `final_line` (its kind deciding whose
+ * message it reads), an Evaluation line into `condition`. Off, or with no
+ * lines, the row runs for every task. Values of lines not on the list stay in
+ * the dialog, so removing a line and adding it back before Done loses nothing.
+ */
+export function applyConditionLines(draft: AutomationDraft, lines: ConditionLines, on: boolean): AutomationDraft {
+  const has = (kind: ConditionLines['kinds'][number]): boolean => on && lines.kinds.includes(kind);
+  const textKind = has('prompt') ? 'prompt' : has('reply') ? 'reply' : null;
+  return {
+    ...draft,
+    filter: normalizeTaskFilter({
+      priorities: has('priority') ? lines.priorities : [],
+      labels: has('labels') ? lines.labels : [],
+    }),
+    final_line: textKind !== null ? lines.textMatch : null,
+    text_match_source: textKind === 'prompt' ? 'user' : textKind === 'reply' ? 'agent' : draft.text_match_source,
+    condition: has('evaluation') ? lines.evaluation : null,
+  };
+}
+
 export interface EditAutomationDialogProps {
   draft: AutomationDraft;
   column: Swimlane;
@@ -247,11 +191,9 @@ export interface EditAutomationDialogProps {
   reportsTurnEnd?: boolean;
   /**
    * Whether the column's agent reports the messages a person sends it, which
-   * Your message reads. Undefined while unknown, which allows the tab.
+   * Prompt reads. Undefined while unknown, which offers it.
    */
   reportsUserMessages?: boolean;
-  /** The column's agent's name, for Your message's disabled reason. */
-  agentDisplayName?: string;
   /**
    * The board's other columns in board order, for a Column field, valued by
    * NAME: the Board Manager's drafts, so a column added, recolored or given a
@@ -260,10 +202,10 @@ export interface EditAutomationDialogProps {
   columns: ColumnPickerChoice[];
   /**
    * Whether the Automation agent is set up (Settings > Workflows). Until it
-   * is, a Condition cannot be switched on: nothing could check it.
+   * is, an Evaluation line shows the setup box in place of its field.
    */
   automationAgentReady: boolean;
-  /** Open Settings at the Automation agent, from the Condition card's notice. */
+  /** Open Settings at the Automation agent, from an Evaluation line's Set up. */
   onOpenAutomationSettings: () => void;
   isNew: boolean;
   /** The column's other rows, for the uniqueness check. */
@@ -275,7 +217,7 @@ export interface EditAutomationDialogProps {
    * render-prop call from a render-time read, whereas a JSX prop is understood
    * as deferred.
    */
-  templatePicker: React.ComponentType<{ onInsert: (variable: string) => void }>;
+  templatePicker: React.ComponentType<AutomationTemplatePickerProps>;
   onDone: (draft: AutomationDraft) => void;
   onCancel: () => void;
 }
@@ -285,17 +227,14 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
   // A LOCAL copy: Done applies it to the board draft, Cancel discards it. That
   // is what makes the dialog safe to experiment in.
   const [local, setLocal] = useState<AutomationDraft>(props.draft);
-  // What a switched-off guard returns to when switched back on, so turning a
-  // Condition off and on again, or flipping its kind, does not lose what was
-  // written. Each kind keeps its own text.
-  const [conditionDraft, setConditionDraft] = useState<string>(props.draft.condition ?? '');
-  const [finalLineDraft, setFinalLineDraft] = useState<string>(props.draft.final_line ?? '');
-  const [conditionKindChoice, setConditionKindChoice] = useState<ConditionKind>(
-    () => initialConditionKind(props.draft, props.automationAgentReady),
-  );
+  // The Condition's lines and every kind's value, kept while a line is
+  // removed or the switch is off, so either undone before Done loses nothing.
+  const [conditionLines, setConditionLines] = useState<ConditionLines>(() => linesFromDraft(props.draft));
+  // Read off the lines' first state, so the draft is read once.
+  const [conditionOn, setConditionOnState] = useState<boolean>(() => conditionLines.kinds.length > 0);
   const [maxRunsDraft, setMaxRunsDraft] = useState<number>(props.draft.max_runs ?? 1);
+  const [openSection, setOpenSection] = useState<SectionId>('action');
   const nameRef = useRef<HTMLInputElement | null>(null);
-  const conditionInsertRef = useRef<TemplateTextFieldInsert | null>(null);
 
   const entry = AUTOMATION_MANIFEST[local.type];
   const conflict = findNameConflict(
@@ -347,68 +286,37 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only, see above
   }, []);
 
-  // The Condition card, two kinds. Text match needs the agent's final message,
-  // so off a turn end the card shows Agent evaluation while the Text match line
-  // waits in `finalLineDraft`, back if the Trigger returns before Done. With no
-  // Automation agent the switch still works: Text match needs none, and an
-  // Agent evaluation shows the setup notice in its own field.
-  //
-  // Both message tabs share one pattern field (`finalLineDraft`): flipping
-  // between them changes whose message it reads, never what it says.
-  const textMatchAvailable = local.trigger === 'turn_end';
-  const userMessageAvailable = props.reportsUserMessages !== false;
-  const columnName = props.column.name;
-  const agentName = props.agentDisplayName ?? '';
-  const userUnsupportedReason = userMessageAvailable
-    ? ''
-    : translateText(TEXT_MATCH_USER_UNSUPPORTED_REASON, { agentName, columnName });
-  const conditionKindSet = conditionKindOptions(JSON.stringify({
-    textReason: textMatchAvailable ? '' : translateText(TEXT_MATCH_UNAVAILABLE_REASON),
-    userReason: userUnsupportedReason,
-  }));
-  const kindIsAvailable = (kind: ConditionKind): boolean => {
-    if (kind === 'agent') return true;
-    if (!textMatchAvailable) return false;
-    // A saved row on the user's message stays on its tab even where the agent
-    // cannot serve it, so the row reads what it is; the pane shows it off.
-    return kind !== 'user-message' || userMessageAvailable || props.draft.text_match_source === 'user';
-  };
-  const conditionKind: ConditionKind = kindIsAvailable(conditionKindChoice) ? conditionKindChoice : 'agent';
-  const conditionKindIsText = conditionKind !== 'agent';
-  const conditionOn = conditionKindIsText ? local.final_line !== null : local.condition !== null;
-  // An empty value while on is kept as '' so the switch stays on mid-edit; the
-  // save normalizes a blank one to none.
-  const withCondition = (current: AutomationDraft, kind: ConditionKind, on: boolean): AutomationDraft => {
-    const source = textMatchSourceOfKind(kind);
-    return {
-      ...current,
-      condition: on && source === null ? conditionDraft : null,
-      final_line: on && source !== null ? finalLineDraft : null,
-      // The tab picked is kept even while the Condition is off, so switching
-      // it on lands where it was left.
-      text_match_source: source ?? current.text_match_source,
-    };
+  const changeConditionLines = (next: ConditionLines): void => {
+    // Adding the first line switches the Condition on; removing the last one
+    // leaves the switch where it is, saying the row runs for every task.
+    const nextOn = conditionOn || next.kinds.length > conditionLines.kinds.length;
+    setConditionLines(next);
+    setConditionOnState(nextOn);
+    setLocal((current) => applyConditionLines(current, next, nextOn));
   };
   const setConditionOn = (on: boolean): void => {
-    setConditionKindChoice(conditionKind);
-    setLocal((current) => withCondition(current, conditionKind, on));
+    setConditionOnState(on);
+    setLocal((current) => applyConditionLines(current, conditionLines, on));
+    if (on) setOpenSection('condition');
   };
-  const changeConditionKind = (kind: ConditionKind): void => {
-    setConditionKindChoice(kind);
-    setLocal((current) => withCondition(current, kind, conditionOn));
-  };
+
   const frequencyOn = local.max_runs !== null;
   const setFrequencyOn = (on: boolean): void => {
     setLocal((current) => ({ ...current, max_runs: on ? maxRunsDraft : null }));
+    if (on) setOpenSection('frequency');
   };
 
-  // Saved with one Condition kind, and no Text match off a turn end: the line
-  // kept for a Trigger switched back goes no further than Done.
-  const handleDone = (): void => props.onDone({ ...local, ...draftConditionKinds(local) });
+  // Saved with no Text match off a turn end: the line kept for a Trigger
+  // switched back goes no further than Done.
+  const handleDone = (): void => props.onDone({ ...local, ...draftConditionKinds(local), filter: normalizeTaskFilter(local.filter) });
 
   const exitBudgetSeconds = Math.round(EXIT_GROUP_BUDGET_MS / 1000);
   const pairColumn = entry.fields.find((field) => field.kind === 'column' && !field.hidden) ?? null;
   const otherFields = entry.fields.filter((field) => !field.hidden && field !== pairColumn);
+  const sectionProps = (id: SectionId) => ({
+    open: openSection === id,
+    onOpen: () => setOpenSection(id),
+  });
 
   return (
     <BaseDialog
@@ -419,9 +327,9 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
       // that did not exist a moment ago. `isNew` already distinguishes the two
       // (it selects the generated name for overtyping); the title now says so.
       title={props.isNew ? t`Add automation` : t`Edit automation`}
-      // With every card on the dialog is about 990px tall, past the 600px
-      // window floor, so the body scrolls and the header and footer stay put.
-      // Its menus (Type, Template variable, Column) portal, so the scroll clips
+      // One section open at a time keeps the dialog short, and an open
+      // Condition with every line still fits; the body scrolls past that, and
+      // the header and footer stay put. Its menus portal, so the scroll clips
       // none of them.
       className="w-[640px] max-h-[calc(100vh-2rem)]"
       bodyClassName="flex-1 min-h-0 overflow-y-auto"
@@ -466,7 +374,13 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           )}
         </label>
 
-        <RuleCard testId="edit-automation-card-trigger" icon={<Zap size={16} />} title={t`Trigger`} description={t`What starts it.`}>
+        <RuleCard
+          testId="edit-automation-card-trigger"
+          icon={<Zap size={16} />}
+          title={t`Trigger`}
+          description={translateText(AUTOMATION_TRIGGER_LABELS[local.trigger])}
+          {...sectionProps('trigger')}
+        >
           {/* Full width: three options that each name who acts. */}
           <SegmentedControl
             quiet
@@ -492,150 +406,14 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
         </RuleCard>
 
         <RuleCard
-          testId="edit-automation-card-condition"
-          icon={<Funnel size={16} />}
-          title={t`Condition`}
-          description={t`Runs only when this holds.`}
-          checked={conditionOn}
-          onToggle={setConditionOn}
-          switchLabel={t`Condition`}
-        >
-          {/* Full width, as the Trigger is: two options that each name who
-              checks. Dimmed with the field while the Condition is off, still
-              live, so the kind can be picked before switching it on. */}
-          <div className={conditionOn ? '' : 'opacity-50'}>
-            <SegmentedControl
-              quiet
-              fullWidth
-              ariaLabel={t`Condition kind`}
-              testId="edit-automation-condition-kind"
-              options={conditionKindSet}
-              value={conditionKind}
-              onChange={changeConditionKind}
-            />
-          </div>
-          {/* One slot for both kinds' bodies: stacked in a single grid cell, the
-              inactive one hidden, so the cell is always the taller of the two
-              and flipping the kind (or the setup notice standing in for the
-              field) never moves anything below the card. */}
-          <div data-testid="edit-automation-condition-slot" className="grid">
-            <ConditionKindBody active={conditionKind === 'agent'} testId="edit-automation-condition-agent-body">
-              {props.automationAgentReady ? (
-                <>
-                  <TemplateTextField
-                    value={conditionOn && conditionKind === 'agent' ? (local.condition ?? '') : ''}
-                    onChange={(next) => {
-                      setConditionDraft(next);
-                      setLocal((current) => ({ ...current, condition: next }));
-                    }}
-                    context="automation"
-                    testId="edit-automation-condition"
-                    placeholder={t`All tests pass`}
-                    ariaLabel={t`Condition`}
-                    grow={{ maxRows: PROSE_MAX_ROWS }}
-                    disabled={!conditionOn}
-                    insertRef={conditionInsertRef}
-                  />
-                  <div className={`flex ${conditionOn ? '' : 'pointer-events-none opacity-50'}`}>
-                    <props.templatePicker onInsert={(variable) => conditionInsertRef.current?.(variable)} />
-                  </div>
-                </>
-              ) : (
-                // No field and no Template variable: there is nothing to write
-                // an evaluation for until an agent can make it. Fills the slot,
-                // so it takes exactly the room the field would.
-                <div
-                  data-testid="edit-automation-condition-setup"
-                  className="flex flex-1 items-center gap-3 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5"
-                >
-                  <Info size={16} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
-                  <span data-testid="edit-automation-condition-setup-text" className="min-w-0 flex-1 text-[13px] font-semibold text-fg">
-                    <Trans>Set up an Automation agent</Trans>
-                  </span>
-                  {/* Accent outline and text: the one thing to do here, so it reads as
-                      the way forward rather than a neutral secondary button. */}
-                  <button
-                    type="button"
-                    data-testid="edit-automation-open-settings"
-                    onClick={props.onOpenAutomationSettings}
-                    className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/10"
-                  >
-                    <Settings size={14} aria-hidden="true" />
-                    <Trans>Open Settings</Trans>
-                  </button>
-                </div>
-              )}
-            </ConditionKindBody>
-            <ConditionKindBody active={conditionKindIsText} testId="edit-automation-condition-text-body">
-              {/* One pattern per line, kept raw (blank lines too) while editing
-                  so a line survives a Trigger switch; Done drops the blanks.
-                  The same field for both message tabs. */}
-              <PatternLinesField
-                testId="edit-automation-final-line"
-                value={conditionOn && conditionKindIsText ? (local.final_line ?? '') : ''}
-                placeholder={conditionKind === 'user-message' ? TEXT_MATCH_USER_PLACEHOLDER : TEXT_MATCH_PLACEHOLDER}
-                disabled={!conditionOn}
-                onChange={(next) => {
-                  setFinalLineDraft(next);
-                  setLocal((current) => ({ ...current, final_line: next }));
-                }}
-              />
-              {/* The template picker's height, so the two bodies line up. */}
-              <span className={`flex min-h-7 items-center gap-1.5 ${SETTING_DESCRIPTION_CLASS} ${conditionOn ? '' : 'opacity-50'}`}>
-                <span data-testid="edit-automation-final-line-hint">
-                  {conditionKind === 'user-message'
-                    ? t`Matches your messages in the turn, with * and ! supported.`
-                    : t`Matches the last line the agent writes when its turn ends, with * and ! supported.`}
-                </span>
-                <TextMatchPatternsTip />
-              </span>
-            </ConditionKindBody>
-          </div>
-        </RuleCard>
-
-        <RuleCard
-          testId="edit-automation-card-frequency"
-          icon={<Repeat size={16} />}
-          title={t`Frequency`}
-          description={t`How many times it can run on a task.`}
-          checked={frequencyOn}
-          onToggle={setFrequencyOn}
-          switchLabel={t`Frequency`}
-        >
-          <div className="flex items-center gap-3">
-            {/* Off, the whole panel reads dimmed, its label included, not only
-                the stepper. The label dims here rather than the panel because
-                the stepper already dims itself when disabled, and a second
-                opacity on top of that left it at a quarter. */}
-            <span
-              data-testid="edit-automation-max-runs-label"
-              data-dimmed={!frequencyOn}
-              className={`flex min-w-0 flex-1 items-center gap-1.5 ${frequencyOn ? '' : 'opacity-50'}`}
-            >
-              <span className={SETTING_LABEL_CLASS}><Trans>Maximum runs</Trans></span>
-              <InfoTip label={t`Maximum runs`} text={t`Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere.`} />
-            </span>
-            <NumberStepper
-              testId="edit-automation-max-runs"
-              ariaLabel={t`Maximum runs`}
-              value={frequencyOn ? (local.max_runs ?? 1) : 1}
-              disabled={!frequencyOn}
-              onChange={(next) => {
-                setMaxRunsDraft(next);
-                setLocal((current) => ({ ...current, max_runs: next }));
-              }}
-            />
-          </div>
-        </RuleCard>
-
-        <RuleCard
           testId="edit-automation-card-action"
           // The chosen type's own icon (a speech bubble for Send message), so
           // the card's header changes with Type below it. `data-icon` names it
           // for the specs, which should not lean on lucide's class names.
           icon={<AutomationIcon name={entry.icon} size={16} data-icon={entry.icon} />}
           title={t`Action`}
-          description={t`What it does.`}
+          description={translateText(entry.label)}
+          {...sectionProps('action')}
         >
           <div className={pairColumn ? 'grid grid-cols-2 gap-3' : 'flex flex-col'}>
             {/* A <div>, not a <label>: the control is a button, and a label
@@ -683,71 +461,123 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
             />
           ))}
         </RuleCard>
+
+        <RuleCard
+          testId="edit-automation-card-condition"
+          icon={<Funnel size={16} />}
+          title={t`Condition`}
+          description={t`Runs only when all match.`}
+          checked={conditionOn}
+          onToggle={setConditionOn}
+          switchLabel={t`Condition`}
+          {...sectionProps('condition')}
+        >
+          {/* Off, the lines dim and stay as written; Add condition stays live,
+              and adding a line switches the Condition on. */}
+          <ConditionList
+            lines={conditionLines}
+            onChange={changeConditionLines}
+            linesOff={!conditionOn}
+            trigger={local.trigger}
+            reportsUserMessages={props.reportsUserMessages}
+            automationAgentReady={props.automationAgentReady}
+            onOpenAutomationSettings={props.onOpenAutomationSettings}
+            templatePicker={props.templatePicker}
+          />
+        </RuleCard>
+
+        <RuleCard
+          testId="edit-automation-card-frequency"
+          icon={<Repeat size={16} />}
+          title={t`Frequency`}
+          description={t`How many times it can run on a task.`}
+          checked={frequencyOn}
+          onToggle={setFrequencyOn}
+          switchLabel={t`Frequency`}
+          {...sectionProps('frequency')}
+        >
+          <div className="flex items-center gap-3">
+            {/* Off, the whole panel reads dimmed, its label included, not only
+                the stepper. The label dims here rather than the panel because
+                the stepper already dims itself when disabled, and a second
+                opacity on top of that left it at a quarter. */}
+            <span
+              data-testid="edit-automation-max-runs-label"
+              data-dimmed={!frequencyOn}
+              className={`flex min-w-0 flex-1 items-center gap-1.5 ${frequencyOn ? '' : 'opacity-50'}`}
+            >
+              <span className={SETTING_LABEL_CLASS}><Trans>Maximum runs</Trans></span>
+              <InfoTip label={t`Maximum runs`} text={t`Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere.`} />
+            </span>
+            <NumberStepper
+              testId="edit-automation-max-runs"
+              ariaLabel={t`Maximum runs`}
+              value={frequencyOn ? (local.max_runs ?? 1) : 1}
+              disabled={!frequencyOn}
+              onChange={(next) => {
+                setMaxRunsDraft(next);
+                setLocal((current) => ({ ...current, max_runs: next }));
+              }}
+            />
+          </div>
+        </RuleCard>
       </div>
     </BaseDialog>
   );
 }
 
 /**
- * One Condition kind's body in the card's shared slot. Both bodies sit in one
- * grid cell and the inactive one is hidden and inert, so the cell is always
- * the taller of the two.
- */
-function ConditionKindBody({ active, testId, children }: { active: boolean; testId: string; children: React.ReactNode }) {
-  return (
-    <div
-      data-testid={testId}
-      aria-hidden={!active}
-      inert={!active}
-      className={`col-start-1 row-start-1 flex min-w-0 flex-col gap-2 ${active ? '' : 'invisible'}`}
-    >
-      {children}
-    </div>
-  );
-}
-
-/**
- * One part of the rule: a settings card's header over one lighter panel.
+ * One section of the rule: a header (icon, title, one line, the switch alone on
+ * the right where the section has one) over its fields, shown only while the
+ * section is open. A click on the header opens the section; the switch's own
+ * click is the switch's.
  *
- * The geometry is `settings-card.tsx`'s (a tile-shaped header target, the
- * icon in a 16px column, the switch on the panel's right edge), reused by
- * choice: `settings-card-design.md` scopes out dialogs, but one tile shape in
- * Settings and in this dialog reads as one design.
+ * The header's geometry is `settings-card.tsx`'s (a tile-shaped header target,
+ * the icon in a 16px column, the switch on the right edge), reused by choice:
+ * `settings-card-design.md` scopes out dialogs, but one tile shape in Settings
+ * and in this dialog reads as one design.
  */
 function RuleCard({
-  testId, icon, title, description, checked, onToggle, switchLabel, children,
+  testId, icon, title, description, checked, onToggle, switchLabel, open, onOpen, children,
 }: {
   testId: string;
   icon: React.ReactNode;
   title: string;
+  /** A switched section's static description, or a closed section's value (Trigger, Action). */
   description: string;
-  /** The card's switch, when it has one. */
+  /** The section's switch, when it has one. */
   checked?: boolean;
   onToggle?: (on: boolean) => void;
   switchLabel?: string;
+  open: boolean;
+  onOpen: () => void;
   children: React.ReactNode;
 }) {
   const hasSwitch = checked !== undefined;
-  const toggle = hasSwitch && onToggle ? () => onToggle(!checked) : undefined;
+  const bodyId = `${testId}-body`;
   return (
-    <section data-testid={testId} aria-label={title} className="rounded-lg border border-edge">
+    <section data-testid={testId} data-open={open ? 'true' : 'false'} aria-label={title} className="rounded-lg border border-edge">
       <div className="px-3 py-1.5">
         <div
-          // A click anywhere on the header flips its switch, as a settings
-          // card's does. The switch's own click is left to the switch.
-          onClick={toggle ? (event) => {
-            if (event.target instanceof Element && event.target.closest('[role="switch"], button, a')) return;
-            toggle();
-          } : undefined}
-          className={`flex items-center gap-3 rounded-md px-4 py-2 ${toggle ? 'cursor-pointer select-none transition-colors hover:bg-surface-hover/40' : ''}`}
+          onClick={(event) => {
+            if (event.target instanceof Element && event.target.closest('[role="switch"], a')) return;
+            onOpen();
+          }}
+          className="flex cursor-pointer select-none items-center gap-3 rounded-md px-4 py-2 transition-colors hover:bg-surface-hover/40"
         >
           <span className="flex w-4 flex-shrink-0 justify-center text-fg-muted" aria-hidden="true">
             {icon}
           </span>
-          <span className="min-w-0 flex-1">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={bodyId}
+            data-testid={`${testId}-header`}
+            className="min-w-0 flex-1 cursor-pointer text-left focus:outline-none focus-visible:underline"
+          >
             <span className="block text-sm font-semibold text-fg">{title}</span>
-            <span className="mt-0.5 block text-xs text-fg-tertiary">{description}</span>
-          </span>
+            <span data-testid={`${testId}-description`} className="mt-0.5 block truncate text-xs text-fg-tertiary">{description}</span>
+          </button>
           {hasSwitch && (
             <span className="flex flex-shrink-0">
               <ToggleSwitch
@@ -758,13 +588,20 @@ function RuleCard({
               />
             </span>
           )}
+          <ChevronDown
+            size={16}
+            aria-hidden="true"
+            className={`flex-shrink-0 text-fg-faint transition-transform ${open ? 'rotate-180' : ''}`}
+          />
         </div>
       </div>
-      <div className="px-3 pb-3">
-        <div className="flex flex-col gap-3 rounded-md bg-surface-hover/40 px-4 py-3">
-          {children}
+      {open && (
+        <div id={bodyId} data-testid={bodyId} className="px-3 pb-3">
+          <div className="flex flex-col gap-3 rounded-md bg-surface-hover/40 px-4 py-3">
+            {children}
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -809,6 +646,9 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
   // inputs still use `inputRef`, which is why both survive.
   const templateInsertRef = useRef<TemplateTextFieldInsert | null>(null);
   const highlighted = field.kind === 'textarea' && Boolean(field.templateVariables);
+  // The Template variable button is joined to the field's right edge (#872,
+  // canvas board F1d), on every field that takes variables.
+  const attached = Boolean(field.templateVariables) && (field.kind === 'textarea' || field.kind === 'text');
 
   /**
    * Insert at the CARET, not at the end.
@@ -841,6 +681,52 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
     });
   };
 
+  const control = (
+    <>
+      {field.kind === 'textarea' && highlighted && (
+        <TemplateTextField
+          value={text}
+          onChange={onChange}
+          // Every automation runs on a move or a turn end, so this is the
+          // catalog that can actually resolve here. A spawn prompt passes 'spawn'.
+          context="automation"
+          testId={testId}
+          // Prose (a message for an agent) declares no `rows`, so it starts one
+          // row tall and grows with its text, as Condition does. A script or a
+          // JSON body keeps the fixed rows its type asks for.
+          {...(field.rows === undefined ? { grow: { maxRows: PROSE_MAX_ROWS } } : { rows: field.rows })}
+          placeholder={placeholder}
+          ariaLabel={label}
+          insertRef={templateInsertRef}
+          joinedRight={attached}
+        />
+      )}
+
+      {field.kind === 'textarea' && !highlighted && (
+        <textarea
+          ref={(node) => { inputRef.current = node; }}
+          data-testid={testId}
+          value={text}
+          rows={field.rows ?? 3}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          className={`w-full resize-y rounded border border-edge-input bg-surface-control px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:border-accent focus:outline-none ${attached ? 'rounded-r-none' : ''}`}
+        />
+      )}
+
+      {field.kind === 'text' && (
+        <input
+          ref={(node) => { inputRef.current = node; }}
+          data-testid={testId}
+          value={text}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+          className={`${FIELD_CONTROL_CLASS} ${attached ? 'rounded-r-none' : ''}`}
+        />
+      )}
+    </>
+  );
+
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       {field.kind === 'segmented' ? (
@@ -869,46 +755,12 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
         <FieldLabel field={field} />
       )}
 
-      {field.kind === 'textarea' && highlighted && (
-        <TemplateTextField
-          value={text}
-          onChange={onChange}
-          // Every automation runs on a move or a turn end, so this is the
-          // catalog that can actually resolve here. A spawn prompt passes 'spawn'.
-          context="automation"
-          testId={testId}
-          // Prose (a message for an agent) declares no `rows`, so it starts one
-          // row tall and grows with its text, as Condition does. A script or a
-          // JSON body keeps the fixed rows its type asks for.
-          {...(field.rows === undefined ? { grow: { maxRows: PROSE_MAX_ROWS } } : { rows: field.rows })}
-          placeholder={placeholder}
-          ariaLabel={label}
-          insertRef={templateInsertRef}
-        />
-      )}
-
-      {field.kind === 'textarea' && !highlighted && (
-        <textarea
-          ref={(node) => { inputRef.current = node; }}
-          data-testid={testId}
-          value={text}
-          rows={field.rows ?? 3}
-          placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          className="w-full resize-y rounded border border-edge-input bg-surface-control px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:border-accent focus:outline-none"
-        />
-      )}
-
-      {field.kind === 'text' && (
-        <input
-          ref={(node) => { inputRef.current = node; }}
-          data-testid={testId}
-          value={text}
-          placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          className={FIELD_CONTROL_CLASS}
-        />
-      )}
+      {attached ? (
+        <div className="flex items-stretch">
+          <div className="min-w-0 flex-1">{control}</div>
+          <TemplatePicker onInsert={insertAtCaret} testId={`${testId}-variable`} />
+        </div>
+      ) : control}
 
       {field.kind === 'number' && (
         // The input takes its content width rather than the row's, so the unit
@@ -965,14 +817,6 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           onChange={(event) => onChange(parseHeaderLines(event.target.value))}
           className="w-full resize-y rounded border border-edge-input bg-surface-control px-3 py-1.5 font-mono text-xs text-fg-tertiary placeholder-fg-muted focus:border-accent focus:outline-none"
         />
-      )}
-
-      {/* Template variable sits UNDER its field, at the left, where the typing
-          is (the Agent prompt card's layout). */}
-      {field.templateVariables && (
-        <div className="flex">
-          <TemplatePicker onInsert={insertAtCaret} />
-        </div>
       )}
 
       {field.hint && <span className="text-[11px] text-fg-faint">{translateText(field.hint)}</span>}

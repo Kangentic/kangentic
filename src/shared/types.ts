@@ -908,6 +908,13 @@ export interface Task {
   external_source: string | null;
   external_url: string | null;
   /**
+   * The saved source's `repository` the task was imported from (#872), so the
+   * "already imported" check tells two sources of one provider apart. Null for
+   * a task made here or imported before the field existed. Optional because a
+   * main process from before it sends rows without it.
+   */
+  external_repository?: string | null;
+  /**
    * The base branch a user explicitly chose for this task. NULL for most tasks,
    * because nothing ever infers it. Prefer {@link Task.resolved_base_branch}
    * when you need "what base is this task's work actually relative to".
@@ -1434,10 +1441,19 @@ export interface ColumnAutomation {
    * The Condition's other kind, Text match: the line the agent's final message
    * must end on, `*` a wildcard, checked in code with no agent call
    * (`src/shared/final-line-match.ts`). Turn end only, since only a turn end
-   * has a final message. A row holds one kind at a time, so a row with this
-   * set has no `condition`. Null means no Text match.
+   * has a final message. A row may hold both kinds, and both must hold: the
+   * Text match is checked first, so a miss never pays for an Agent
+   * evaluation. Null means no Text match.
    */
   final_line: string | null;
+  /**
+   * The Condition's Task lines: the row runs only for a task whose priority is
+   * one of `priorities` and that carries one of `labels`, each list checked
+   * only when it is not empty. Checked in code before every other guard, and a
+   * task it does not match leaves no run behind (`rowMatchesTaskFilter`).
+   * Null means no Task lines.
+   */
+  filter: AutomationTaskFilter | null;
   /**
    * Whose message the Text match reads: the agent's last line (`'agent'`, the
    * only kind before #1078) or the user's messages in the turn, the newest
@@ -1466,6 +1482,18 @@ export interface ColumnAutomation {
  */
 export type TextMatchSource = 'agent' | 'user';
 
+/**
+ * A row's Task lines. `priorities` holds priority levels as indices into the
+ * project's priority list, the same numbers `Task.priority` holds, so a
+ * renamed level keeps matching and a deleted or reordered one is remapped
+ * with the tasks' own (`BACKLOG_REMAP_PRIORITIES`). `kangentic.json` and the
+ * MCP tools name the levels instead.
+ */
+export interface AutomationTaskFilter {
+  priorities: number[];
+  labels: string[];
+}
+
 /** What the renderer sends when saving a column's list. `id` is kept when supplied. */
 export interface AutomationWriteInput {
   id?: string;
@@ -1489,6 +1517,11 @@ export interface AutomationWriteInput {
    * message into one on the agent's line, which a workflow reads as an exit.
    */
   text_match_source: TextMatchSource;
+  /**
+   * See `ColumnAutomation.filter`. REQUIRED for the same reason as
+   * `final_line`: a writer that dropped it would run a row for every task.
+   */
+  filter: AutomationTaskFilter | null;
   /** See `ColumnAutomation.max_runs`. Omitted or null: no limit. */
   max_runs?: number | null;
 }
@@ -5885,6 +5918,8 @@ export interface BacklogTask {
   external_id: string | null;
   external_source: string | null;
   external_url: string | null;
+  /** The saved source's `repository` the item was imported from (see `Task.external_repository`). */
+  external_repository?: string | null;
   sync_status: string | null;
   external_metadata: Record<string, unknown> | null;
   attachment_count: number;
@@ -5904,6 +5939,8 @@ export interface BacklogTaskCreateInput {
   externalId?: string;
   externalSource?: string;
   externalUrl?: string;
+  /** The saved source's `repository` (see `Task.external_repository`). */
+  externalRepository?: string;
   syncStatus?: string;
   externalMetadata?: Record<string, unknown>;
 }
@@ -5946,15 +5983,22 @@ export type ExternalSource =
   | 'trello'
   | 'obsidian_notes'
   | 'obsidian_checklist'
-  | 'gitlab';
+  | 'gitlab'
+  | 'repo_folder';
 
 export interface ImportSource {
   id: string;
   source: ExternalSource;
+  /** The source's display name in Import Tasks. */
   label: string;
   repository: string;
   url: string;
   createdAt: string;
+  /**
+   * A label put on every backlog item this source imports, on top of the item's
+   * own labels. Absent or empty: the import adds none.
+   */
+  taskLabel?: string;
   /**
    * What the source names, for a provider whose one source type covers more
    * than one kind (a GitLab project or group). Shown in the saved source's
@@ -6047,6 +6091,8 @@ export interface ImportFetchResult {
 export interface ImportExecuteInput {
   source: ExternalSource;
   repository: string;
+  /** The saved source being imported from, whose `taskLabel` goes on every item. */
+  sourceId?: string;
   issues: Array<{
     externalId: string;
     externalUrl: string;
@@ -6106,6 +6152,21 @@ export interface ImportReconcileInput extends ImportCacheQuery {
 
 export interface ImportCachedResult {
   issues: ExternalIssue[];
+}
+
+/** A folder on the project's default branch that a Repository folder source can read. */
+export interface RepoFolderEntry {
+  /** Repo-relative, `/`-separated, no trailing slash. */
+  path: string;
+  /** How many direct children would import as tasks. */
+  itemCount: number;
+}
+
+/** The answer to Browse in the Repository folder form. */
+export interface RepoFolderListing {
+  /** The default branch the folders were read from. */
+  baseBranch: string;
+  folders: RepoFolderEntry[];
 }
 
 export interface ImportReconcileResult {
@@ -6524,6 +6585,7 @@ export interface TaskCreateInput {
   externalId?: string;
   externalSource?: string;
   externalUrl?: string;
+  externalRepository?: string;
   pendingAttachments?: Array<{
     filename: string;
     data: string; // base64
@@ -8836,14 +8898,24 @@ export interface BoardColumnConfig {
  * declares one of them.
  */
 /**
- * A `kangentic.json` row's Condition, as written: exactly one kind. A Text
- * match on the agent's line is the short form, `{ "text": ... }`; one on the
- * user's message is the long form, `{ "text": { "from": "user", "patterns":
- * ... } }`, which also takes `"from": "agent"`.
+ * A `kangentic.json` row's Condition, as written: a Text match, an Agent
+ * evaluation, or both (format version 2), and every kind written must hold. A
+ * Text match on the agent's line is the short form, `{ "text": ... }`; one on
+ * the user's message is the long form, `{ "text": { "from": "user",
+ * "patterns": ... } }`, which also takes `"from": "agent"`.
  */
 export type BoardAutomationCondition =
-  | { text: string | string[] | BoardTextMatchCondition }
+  | { text: string | string[] | BoardTextMatchCondition; agent?: string }
   | { agent: string };
+
+/**
+ * A `kangentic.json` row's Task lines (format version 2): priority level NAMES
+ * and labels. Either list may be left out.
+ */
+export interface BoardAutomationFilter {
+  priorities?: string[];
+  labels?: string[];
+}
 
 /** The long form of a `condition.text`: whose message it reads, and its patterns. */
 export interface BoardTextMatchCondition {
@@ -8868,6 +8940,11 @@ export type BoardAutomationConfig = {
    * Omitted means the row always runs.
    */
   condition?: string | BoardAutomationCondition;
+  /**
+   * The Condition's Task lines: priority level names and labels, each list
+   * matching any of its values (format version 2). Omitted means every task.
+   */
+  filter?: BoardAutomationFilter;
   /**
    * The Text match key older builds wrote, read only: one pattern, a leading
    * `!` ignored as it was then. A build that reads this file writes
@@ -10164,8 +10241,12 @@ export interface ElectronAPI {
     importReconcile: (input: ImportReconcileInput) => Promise<ImportReconcileResult>;
     importExecute: (input: ImportExecuteInput) => Promise<ImportExecuteResult>;
     importSourcesList: () => Promise<ImportSource[]>;
-    importSourcesAdd: (input: { source: ExternalSource; url: string }) => Promise<ImportSource>;
+    importSourcesAdd: (input: { source: ExternalSource; url: string; taskLabel?: string }) => Promise<ImportSource>;
+    /** Change a saved source's Label. An empty `taskLabel` clears it. */
+    importSourcesUpdate: (input: { id: string; taskLabel: string }) => Promise<ImportSource>;
     importSourcesRemove: (id: string) => Promise<void>;
+    /** The folders on the project's default branch, for the Repository folder source's Browse. */
+    repoFoldersList: (input?: { projectId?: string }) => Promise<RepoFolderListing>;
     jira: {
       /**
        * Whether a sign-in is saved for the site `target` names: a pasted link,

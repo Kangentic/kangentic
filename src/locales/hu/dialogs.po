@@ -380,6 +380,10 @@ msgstr "Automatizálás hozzáadása"
 msgid "Add column"
 msgstr "Oszlop hozzáadása"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Add condition"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Add project"
@@ -436,16 +440,16 @@ msgctxt "board overview group"
 msgid "Agent"
 msgstr "Ágens"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Agent"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Agent default"
 msgstr "Ügynök alapértelmezése"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Agent evaluation"
-msgstr "Ügynöki kiértékelés"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -469,16 +473,12 @@ msgstr "Ügynök futásideje"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "Ágens: {agentOverrideLabel}"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Agent's message"
-msgstr ""
-
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #, fuzzy
 msgid "All columns"
 msgstr "Minden oszlop"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 #, fuzzy
 msgid "All tests pass"
 msgstr "Minden teszt sikeres"
@@ -493,10 +493,18 @@ msgstr "Már naprakész"
 msgid "Already used on this column."
 msgstr "Ebben az oszlopban már használatban van."
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An agent checks your statement"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "An alternate set of per-column agent, model, and effort settings"
 msgstr "Oszloponkénti ügynök-, modell- és erőfeszítés-beállítások alternatív készlete"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An Automation agent reads this statement against the turn and answers yes or no, after the variables are filled in."
+msgstr ""
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 #, fuzzy
@@ -971,11 +979,6 @@ msgstr "Feltétel"
 #, fuzzy
 msgid "Condition check"
 msgstr "Feltétel ellenőrzése"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Condition kind"
-msgstr "Feltétel típusa"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -1470,6 +1473,11 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "Hiba"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Evaluation"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples"
 msgstr ""
@@ -1660,6 +1668,10 @@ msgstr "Előzmények"
 msgid "History: {historyFileName}"
 msgstr "Előzmények: {historyFileName}"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "How Evaluation works"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
 msgid "How many times it can run on a task."
@@ -1786,6 +1798,11 @@ msgstr "A tudásgráf-indexelés ki van kapcsolva"
 msgid "Labels"
 msgstr "Címkék"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Labels"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy
 msgid "Last message"
@@ -1853,14 +1870,6 @@ msgstr "Megjelölés nem megtekintettként"
 #, fuzzy
 msgid "Mark as viewed"
 msgstr "Megjelölés megtekintettként"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
-msgstr ""
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches your messages in the turn, with * and ! supported."
-msgstr ""
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 #, fuzzy
@@ -1933,6 +1942,10 @@ msgstr "Terminál elnevezése"
 #, fuzzy
 msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
 msgstr "A név, a leírás, a szín és az ikon minden profilban közös. Szerkesztésükhöz váltson az Alapértelmezettre."
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Needs an Automation agent."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -2319,7 +2332,6 @@ msgstr "Projektmappa megnyitása"
 msgid "Open settings"
 msgstr "Beállítások megnyitása"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy
 msgid "Open Settings"
@@ -2451,6 +2463,10 @@ msgctxt "column header"
 msgid "Permissions"
 msgstr "Engedélyek"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Pick levels..."
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Pinned for the whole task, ignoring column settings."
@@ -2517,6 +2533,11 @@ msgstr "Előző módosítás"
 msgid "Priority"
 msgstr "Prioritás"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Priority"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #, fuzzy
@@ -2538,6 +2559,11 @@ msgstr "A projekt mappája nem található"
 #, fuzzy
 msgid "Project relocated"
 msgstr "Projekt áthelyezve"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Prompt"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
@@ -2610,6 +2636,10 @@ msgstr "Oszlop eltávolítása"
 msgid "Remove column \"{removeTargetName}\""
 msgstr "„{removeTargetName}” oszlop eltávolítása"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Remove condition"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Removed profile"
@@ -2636,10 +2666,10 @@ msgctxt "file status"
 msgid "Renamed"
 msgstr "Átnevezve"
 
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
-msgid "Reorder {name}"
-msgstr "{name} átrendezése"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Reply"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2756,10 +2786,13 @@ msgctxt "completed task card"
 msgid "Runs"
 msgstr "Futtatások"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Runs for every task."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Runs only when this holds."
-msgstr "Csak akkor fut, ha ez teljesül."
+msgid "Runs only when all match."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2898,10 +2931,9 @@ msgstr "A(z) {roleName} oszlopokban nem futnak munkamenetek, ezért a(z) {label}
 msgid "Sessions don't run in {terminalName} columns."
 msgstr "A(z) {terminalName} oszlopokban nem futnak munkamenetek."
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Set up an Automation agent"
-msgstr "Automatizálási ügynök beállítása"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Set up"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -3164,6 +3196,11 @@ msgstr "Váltás lapos listára"
 msgid "Switch to tree"
 msgstr "Váltás fanézetre"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Task"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
 msgid "Task archived"
@@ -3216,6 +3253,11 @@ msgstr "Szövegfájl"
 msgid "Text match"
 msgstr "Szövegegyezés"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Text match"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match, line {lineNumber}"
 msgstr ""
@@ -3224,6 +3266,10 @@ msgstr ""
 #, fuzzy
 msgid "The agent CLI this task runs on"
 msgstr "A feladatot futtató ügynök CLI"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The agent's last line"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {baseLabel}, which does not move."
@@ -3278,6 +3324,14 @@ msgstr "A feladat módosításai nem olvashatók be"
 #, fuzzy
 msgid "The task's changes could not be read."
 msgstr "A feladat módosításai nem olvashatók be."
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's labels"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's priority level"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
@@ -3445,6 +3499,10 @@ msgstr "Eseményindító"
 msgid "Try again in a moment."
 msgstr "Próbálja újra egy kis idő múlva."
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Turn end only"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
@@ -3581,18 +3639,12 @@ msgstr "Mire szolgál ez az oszlop?"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
-msgid "What it does."
-msgstr "Mit csinál."
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "What runs. Each type brings its own fields."
 msgstr "Mi fut. Minden típusnak saját mezői vannak."
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "What starts it."
-msgstr "Mi indítja el."
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "What you sent this turn"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -3682,7 +3734,3 @@ msgstr "A táblaprofil módosításai elvesznek."
 #, fuzzy
 msgid "Your column order changes will be discarded."
 msgstr "Az oszlopsorrend módosításai elvesznek."
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Your message"
-msgstr ""

@@ -197,7 +197,10 @@ once per visit, and only a row that actually runs counts: a row whose Condition 
 checked again at the next turn end. To Do and Done have no turn ends, nor does a column whose agent
 is off or does not report turn ends (agents whose only signal is terminal silence).
 
-**Condition and Frequency apply to every type.** A row's **Condition** is one of two kinds. An
+**Condition and Frequency apply to every type.** A row's **Condition** is a list of lines, and
+every line must hold (#872). **Task lines** (`filter`) run the row only for tasks at a listed
+priority level or carrying a listed label, checked in code first, and a task they do not match
+leaves no run behind. An
 **Agent evaluation** is a sentence in plain words ("the review found work the implementer can do"),
 answered yes or no by the **Automation agent** (Settings > Workflows) before the row runs, with a
 one-line reason the run log keeps. One headless, read-only call answers every pending Agent
@@ -206,7 +209,7 @@ enter or exit the task and the move. Until an Automation agent is set up, a row 
 evaluation is skipped (a Condition written earlier is kept). A **Text match** (`condition.text`) is
 checked in code at a turn end against the agent's last line, or against the user's messages in
 the turn when the row says `from: "user"`, one pattern per line with a leading `!` meaning not,
-needs no Automation agent and makes no call; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
+needs no Automation agent and makes no call, and may sit beside an Agent evaluation on the same row; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
 **Frequency** is the most times it may run on one task, counted across every visit; a row past it
 is skipped. The count starts over when a person moves the task to another column, when an agent
 moves it in a turn the person started (typed into its session), and when the task leaves Done, so a

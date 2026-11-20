@@ -39,6 +39,7 @@ function webhook(name: string, overrides: Partial<AutomationWriteInput> = {}): A
     trigger: 'enter',
     enabled: true,
     config: { url: 'https://example.com/hook' },
+    filter: null,
     ...overrides,
   };
 }
@@ -242,17 +243,53 @@ describe('AutomationRepository', () => {
       ]);
     });
 
-    it('keeps one Condition kind: a Text match wins over prose on the same row', () => {
+    it('keeps both Condition kinds on one turn-end row, and drops the Text match off a turn end', () => {
       const { automations, columnId } = setup();
       automations.replaceForColumn(columnId, [
         webhook('Both', { trigger: 'turn_end', condition: 'The review is clean', final_line: 'Verdict: Ready' }),
         webhook('Prose only', { trigger: 'turn_end', condition: 'The review is clean', final_line: null }),
+        webhook('Enter', { trigger: 'enter', condition: 'The review is clean', final_line: 'Verdict: Ready' }),
       ]);
 
       expect(automations.listForColumn(columnId).map((row) => [row.name, row.condition, row.final_line])).toEqual([
-        ['Both', null, 'Verdict: Ready'],
+        ['Enter', 'The review is clean', null],
+        ['Both', 'The review is clean', 'Verdict: Ready'],
         ['Prose only', 'The review is clean', null],
       ]);
+    });
+  });
+
+  describe('a Task filter (filter_json)', () => {
+    it('round-trips through replaceForColumn and listForColumn, and reads null when empty', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [
+        webhook('Filtered', { filter: { priorities: [3, 1], labels: ['bug', 'ui'] } }),
+        webhook('Empty lists', { filter: { priorities: [], labels: [] } }),
+        webhook('None', { filter: null }),
+      ]);
+
+      const byName = new Map(automations.listForColumn(columnId).map((row) => [row.name, row.filter]));
+      expect(byName.get('Filtered')).toEqual({ priorities: [1, 3], labels: ['bug', 'ui'] });
+      expect(byName.get('Empty lists')).toBeNull();
+      expect(byName.get('None')).toBeNull();
+    });
+
+    it('remaps stored priority levels and reports how many rows changed', () => {
+      const { automations, columnId } = setup();
+      automations.replaceForColumn(columnId, [
+        webhook('Moves', { filter: { priorities: [3], labels: ['bug'] } }),
+        webhook('Stays', { filter: { priorities: [1], labels: [] } }),
+        webhook('Unfiltered', { filter: null }),
+      ]);
+
+      const changed = automations.remapFilterPriorities({ 3: 2 });
+
+      expect(changed).toBe(1);
+      const byName = new Map(automations.listForColumn(columnId).map((row) => [row.name, row.filter]));
+      expect(byName.get('Moves')).toEqual({ priorities: [2], labels: ['bug'] });
+      expect(byName.get('Stays')).toEqual({ priorities: [1], labels: [] });
+      expect(byName.get('Unfiltered')).toBeNull();
+      expect(automations.remapFilterPriorities({ 3: 2 })).toBe(0);
     });
   });
 

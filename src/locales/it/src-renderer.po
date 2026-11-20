@@ -1512,9 +1512,8 @@ msgid "Reload"
 msgstr "Ricarica"
 
 #: src/renderer/components/LabelInput.tsx
-#, fuzzy
-msgid "Remove {label}"
-msgstr "Rimuovi {label}"
+msgid "Remove {text}"
+msgstr ""
 
 #: src/renderer/utils/gpu-notice.ts
 #, fuzzy

@@ -1,4 +1,4 @@
-export { boardRegistry, BoardRegistry } from './board-registry';
+export { boardRegistry, BoardRegistry, repoFolderAdapter } from './board-registry';
 export type {
   BoardAdapter,
   AdapterStatus,
@@ -12,5 +12,6 @@ export type {
   AuthInput,
   AuthResult,
   SyncResult,
+  SourceProject,
 } from './shared';
 export { ImportSourceStore } from './shared';

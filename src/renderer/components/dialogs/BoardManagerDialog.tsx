@@ -20,7 +20,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { SectionCard } from './board-manager/form-layout';
 import { AutomationsPane } from './board-manager/AutomationsPane';
 import { AddAutomationPicker } from './board-manager/AddAutomationPicker';
-import { EditAutomationDialog } from './board-manager/EditAutomationDialog';
+import { EditAutomationDialog, type AutomationTemplatePickerProps } from './board-manager/EditAutomationDialog';
 import {
   appendRow,
   columnFacts,
@@ -630,8 +630,8 @@ function DisabledSectionNotice({ reason }: { reason: string }) {
 }
 
 /** The automation fields' Template variable menu: the shared picker, on the automation context. */
-function AutomationTemplateVariablePicker({ onInsert }: { onInsert: (variable: string) => void }) {
-  return <TemplateVariablePicker context="automation" onInsert={onInsert} />;
+function AutomationTemplateVariablePicker({ onInsert, exclude, disabled, testId }: AutomationTemplatePickerProps) {
+  return <TemplateVariablePicker context="automation" onInsert={onInsert} exclude={exclude} disabled={disabled} testId={testId} />;
 }
 
 /**
@@ -2657,7 +2657,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           column={editingColumn}
           reportsTurnEnd={editingAgentInfo?.reportsTurnEnd}
           reportsUserMessages={editingAgentInfo?.reportsUserMessages}
-          agentDisplayName={editingAgentInfo?.displayName ?? editingColumn.agent_override ?? projectDefaultAgent}
           columns={laneOrder
             .filter((id) => id !== editing.columnId)
             .flatMap((id) => {

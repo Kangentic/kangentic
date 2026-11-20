@@ -1,5 +1,6 @@
 import type { ColumnAutomation, TextMatchSource } from '../../shared/types';
 import { textMatchSourceOf } from '../../shared/final-line-match';
+import { hasTaskFilter, matchesTaskFilter, type FilterableTaskFacts } from '../../shared/automation-filter';
 
 /**
  * Whether a row carries a guard the runner applies: a Condition (either kind,
@@ -65,7 +66,22 @@ export function hasUserTextMatch(
   return hasFinalLine(automation) && textMatchSourceOf(automation) === 'user';
 }
 
-/** Whether a row carries any guard: either Condition kind or a Frequency limit. */
-export function hasGuard(automation: Pick<ColumnAutomation, 'condition' | 'final_line' | 'trigger' | 'max_runs'>): boolean {
-  return hasCondition(automation) || hasFinalLine(automation) || hasFrequencyLimit(automation);
+/** Whether a row carries any guard: a Condition line of any kind or a Frequency limit. */
+export function hasGuard(
+  automation: Pick<ColumnAutomation, 'condition' | 'final_line' | 'trigger' | 'max_runs'> & Partial<Pick<ColumnAutomation, 'filter'>>,
+): boolean {
+  return hasTaskFilter(automation) || hasCondition(automation) || hasFinalLine(automation) || hasFrequencyLimit(automation);
+}
+
+/**
+ * Whether a row's Condition Task lines (Priority, Labels) let it run for this
+ * task. A row with none matches every task. Checked before every other guard,
+ * and a task it does not match leaves no run behind: the row is not for that
+ * task at all, so there is nothing to report on it (#872).
+ */
+export function rowMatchesTaskFilter(
+  automation: Partial<Pick<ColumnAutomation, 'filter'>>,
+  task: FilterableTaskFacts,
+): boolean {
+  return matchesTaskFilter(automation.filter ?? null, task);
 }

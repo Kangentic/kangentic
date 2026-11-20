@@ -329,7 +329,7 @@ describe('BACKLOG_DEMOTE routes by the explicit trailing projectId', () => {
     expect(stamped.backlogRepository.createFromTask).toHaveBeenCalledTimes(1);
     expect(stamped.backlogRepository.createFromTask).toHaveBeenCalledWith(
       titleIn(OTHER_PROJECT_ID), 'desc', 2, ['bug'],
-      { externalId: null, externalSource: null, externalUrl: null },
+      { externalId: null, externalSource: null, externalUrl: null, externalRepository: null },
     );
     expect(ambient.backlogRepository.createFromTask).not.toHaveBeenCalled();
 

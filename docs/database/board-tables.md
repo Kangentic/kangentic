@@ -100,6 +100,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and [Is
 | external_id | TEXT | | NULL |
 | external_source | TEXT | | NULL |
 | external_url | TEXT | | NULL |
+| external_repository | TEXT | | NULL |
 | base_branch | TEXT | | NULL |
 | use_worktree | INTEGER | | NULL |
 | labels | TEXT | NOT NULL | '[]' |
@@ -298,6 +299,7 @@ one column.
 | updated_at | TEXT | NOT NULL | |
 | final_line | TEXT | | NULL |
 | text_match_source | TEXT | | NULL |
+| filter_json | TEXT | | NULL |
 
 Valid types: `send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus legacy
 `spawn_agent` on boards that already had one. `trigger` is `enter`, `turn_end` (each time the
@@ -306,16 +308,22 @@ trigger was a new value rather than a migration. A row read with a trigger this 
 is skipped with a warning, never read as `enter`.
 
 `condition` is the row's Condition in plain words, judged by the Automation agent before the row
-runs; NULL (or blank) means the row always runs. `final_line` is the other kind of Condition, a
-Text match: patterns checked in code against the agent's last line, or the user's messages in
+runs; NULL (or blank) means the row has no Agent evaluation. `final_line` is the Condition's Text
+match line, which may sit beside `condition` and `filter_json` on one row, all of them holding
+(#872): patterns checked in code against the agent's last line, or the user's messages in
 the turn when `text_match_source` is `'user'`, with no agent call
 (`src/shared/final-line-match.ts`), one per line joined by a line break, each trimmed with blank
-lines dropped (`normalizeTextMatch`). A pattern that starts with `!` means not. A row holds one kind. `AutomationRepository.replaceForColumn`
-stores `final_line` only on a `turn_end` row and, when it is set, stores `condition` as NULL, so a
-writer that slips past the editor, the file reader and the MCP refusals still cannot leave a row
-with two checks or a Text match on a trigger with no final message. `max_runs` is its Frequency,
+lines dropped (`normalizeTextMatch`). A pattern that starts with `!` means not. A row may hold both
+kinds, and both must hold (#872): the runner checks the Text match first. `AutomationRepository.replaceForColumn`
+stores `final_line` only on a `turn_end` row, so a writer that slips past the editor, the file
+reader and the MCP refusals still cannot leave a Text match on a trigger with no final message.
+`filter_json` is the Condition's Task lines (#872), `{ "priorities": [levels], "labels": [...] }`,
+levels by number as `tasks.priority` holds them (`src/shared/automation-filter.ts`). NULL is none.
+The runner drops a row whose filter the task does not match before every other guard, recording no
+run. `BACKLOG_REMAP_PRIORITIES` remaps the levels on backlog items, board tasks and `filter_json`
+together when the project's priority list is edited. `max_runs` is its Frequency,
 the most times it may run on one task across every visit since a person last moved the task to
-another column, or it last left Done; NULL means no limit. All three are nullable so a build from
+another column, or it last left Done; NULL means no limit. All four are nullable so a build from
 before them still inserts into a database that has them.
 
 `text_match_source` says whose message the Text match reads (#1078): NULL for the agent's last
@@ -698,6 +706,7 @@ Index: `idx_task_attachments_task_id` on (task_id).
 | external_id | TEXT | | NULL |
 | external_source | TEXT | | NULL |
 | external_url | TEXT | | NULL |
+| external_repository | TEXT | | NULL |
 | sync_status | TEXT | | NULL |
 | assignee | TEXT | | NULL |
 | due_date | TEXT | | NULL |
@@ -708,6 +717,13 @@ Index: `idx_task_attachments_task_id` on (task_id).
 | updated_at | TEXT | NOT NULL | |
 
 Indexes: `idx_backlog_position` on (position), `idx_backlog_external` on (external_source, external_id).
+
+`external_repository` is the saved source's `repository` the item was imported from (#872), and
+promote carries it onto the task's own `external_repository`, as demote carries it back. The
+"already imported" check (`BacklogRepository.findByExternalIds`) matches by it as well as by
+provider, so two sources of one provider holding the same id (two repository folders, two GitHub
+repos) do not mark each other's items imported. NULL on a row imported before the column existed,
+which still matches by provider alone.
 
 ## backlog_attachments table
 

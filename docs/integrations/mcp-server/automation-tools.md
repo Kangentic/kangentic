@@ -26,10 +26,18 @@ leaves. Each column owns one ordered list, split into three groups (`on`: `enter
 | `notify` | Notifies the user on the desktop and every paired phone | `title`, `body` |
 | `move_to_column` | `turn_end` only. Moves the task, and hands the agent there a message; ends the group | `targetColumn` (omit for the next column), `message` |
 
-Every row also takes guards, a Condition of one kind or the other and a Frequency:
+Every row also takes guards, a Condition (its Task lines in `filter`, its text lines in
+`condition`) and a Frequency. Every Condition line must hold:
 
-- **`condition`**: when the row runs, one kind of two. Omit or `null` to always run. A no or a
-  miss is not a run, so the next trigger checks it again.
+- **`filter`**: which tasks the row runs for (#872), checked in code before anything else:
+  `{ "priorities": ["High", "Urgent"], "labels": ["openspec"] }`. `priorities` are this project's
+  priority level names, any case; `labels` are task labels. Each list matches any of its values,
+  either may be left out, and both must match when both are given. A task that does not match
+  leaves no run behind. Omit or `null` for every task. A level name the project does not have, or
+  a shape other than those two lists, is refused, naming the levels.
+- **`condition`**: when the row runs: a Text match, an Agent evaluation, or both in one object
+  (`{ "text": ..., "agent": ... }`), the Text match checked first so a miss costs no agent call.
+  Omit or `null` to always run. A no or a miss is not a run, so the next trigger checks it again.
   - `{ "agent": "the review found work the implementer can do" }`: an Agent evaluation, a sentence
     answered yes or no by the Automation agent (Settings > Workflows) before the row runs. A row
     with one is skipped until an Automation agent is set up. A plain string is still read as this
@@ -49,7 +57,8 @@ Every row also takes guards, a Condition of one kind or the other and a Frequenc
     `"from": "agent"` is the short form, and a row reads back in the short form for it. An unknown
     `from` or an extra key is refused, naming the long form.
 - **`finalLine`**: the old key for `condition: { "text": ... }`, still accepted: one pattern, its
-  leading `!` taken off as it meant nothing then. A row gives this or `condition`, not both. A
+  leading `!` taken off as it meant nothing then. A row gives this or a `condition` holding a
+  Text match, not both. A
   blank sentence or an empty `{ "text": [] }` is no condition, so either may sit beside it.
 - **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
   loop's round-trip limit). The count starts over when a person moves the task to another column (a
@@ -107,10 +116,11 @@ board do": a board-wide read answers it once instead of one call per column.
 | `column` | string | No | Column name (case-insensitive). Omit to read every column. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
-Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `maxRuns`,
+Each row reports its `id`, `name`, `type`, `on`, `position`, `enabled`, `condition`, `filter`, `maxRuns`,
 and the type's own fields. `condition` is in the shape `kangentic_set_automations` takes
 (`{ "text": ... }` or `{ "agent": ... }`), so a row read back can be sent back as it is.
-`condition` and `maxRuns` are null when the row has none. A row that cannot run as things stand is
+`condition`, `filter` and `maxRuns` are null when the row has none. `filter` names priority levels
+by name, as `kangentic_set_automations` takes them. A row that cannot run as things stand is
 flagged with the reason.
 
 The text lists each row on one line: its name, its type, and the sentence the Column Manager shows
@@ -145,7 +155,7 @@ change applied. Pass `[]` to remove them all.
 
 Each entry takes `name` (required, unique within the column ignoring case), `type`, an optional
 `on` (`enter` by default, or `turn_end` or `exit`), an optional `enabled` (true by default), an
-optional `condition` (or the old `finalLine`) and an optional `maxRuns` (all off by default), an optional
+optional `condition` (or the old `finalLine`), an optional `filter` and an optional `maxRuns` (all off by default), an optional
 `id`, and the type's own fields flat on the object. The `on` key belongs to this tool's input
 only: `kangentic.json` stores the same rows in one array per trigger and has no `on` key (see
 [Configuration cascade](../../settings/cascade.md#column-automations)). When the new list reached
@@ -186,10 +196,8 @@ unknown `on`, and a type written under a trigger it does not run on (`move_to_co
 each `condition` it cannot read. Every refusal names the field and the fix, and ends "Nothing was
 saved.":
 
-- A `condition` that is neither a string nor an object, an object with no kind or another key, or
-  both kinds ("condition takes one kind: give "text" or "agent", not both"). Over MCP the tool's
-  schema refuses a list or a number first, in its own words; the handler's refusal covers a caller
-  that skips the schema, such as the mobile bridge.
+- A `condition` that is neither a string nor an object, or an object with no kind or another key
+  ("condition must hold "text", "agent", or both, and no other key.").
 - A `condition.agent` that is not a string, or a `condition.text` that is not a pattern or a list
   of them.
 - A sentence, plain or under `condition.agent`, longer than 2000 characters.

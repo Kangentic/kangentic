@@ -151,6 +151,13 @@ export interface TemplateTextFieldProps {
    * a dialog (the Workflow agent prompt's editor). `rows` is ignored while set.
    */
   fill?: boolean;
+  /**
+   * Square the right corners, for a field joined to a button on its right
+   * edge (the attached Template variable button, #872).
+   */
+  joinedRight?: boolean;
+  /** Drawn inside the field at its right end (an (i) tip), with the text kept clear of it. */
+  endAdornment?: React.ReactNode;
 }
 
 /** `leading-5` and `py-1.5` from `LAYER_CLASS`: one row, and the padding around the rows. */
@@ -170,6 +177,8 @@ export function TemplateTextField({
   disabled = false,
   onBlur,
   fill = false,
+  joinedRight = false,
+  endAdornment,
 }: TemplateTextFieldProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
@@ -323,7 +332,7 @@ export function TemplateTextField({
           while the field rendered blank, because they assert DOM attributes and
           a blank field has all the right ones. */}
       <div className={`relative ${fill ? 'min-h-0 flex-1' : ''} ${disabled ? 'opacity-50' : ''}`} data-testid={`${testId}-body`}>
-        <div className={`relative overflow-hidden rounded border border-edge-input bg-surface-control focus-within:border-accent ${fill ? 'h-full' : ''}`}>
+        <div className={`relative overflow-hidden rounded border border-edge-input bg-surface-control focus-within:border-accent ${joinedRight ? 'rounded-r-none' : ''} ${endAdornment ? '[&>textarea]:pr-8 [&>div]:pr-8' : ''} ${fill ? 'h-full' : ''}`}>
           {/* Under the textarea, and inert. `aria-hidden` because it is the same
               string the textarea already exposes: without it every value is
               announced twice. */}
@@ -384,6 +393,10 @@ export function TemplateTextField({
             // selection painting and IME correct.
             className={`${LAYER_CLASS} relative block bg-transparent text-transparent caret-fg-tertiary placeholder-fg-muted focus:outline-none overflow-y-auto ${fill ? 'h-full' : ''}`}
           />
+          {endAdornment && (
+            // On the first line, so it stays beside the text it explains as the field grows.
+            <span className="absolute right-2 top-[7px] flex">{endAdornment}</span>
+          )}
         </div>
 
         {trigger && matches.length > 0 && (

@@ -44,7 +44,7 @@
  */
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import type { TextMatchSource } from './types';
+import type { BoardAutomationCondition, ColumnAutomation, TextMatchSource } from './types';
 
 /**
  * The Text match field's placeholder, and the line the Patterns tip's examples
@@ -123,13 +123,6 @@ export const TEXT_MATCH_EXAMPLES: readonly TextMatchExample[] = [
  * refusals reuse it in English (`englishText`).
  */
 export const TEXT_MATCH_UNAVAILABLE_REASON = msg`Matching a message runs on agent turn end only.`;
-
-/**
- * Why the Your message tab is off for a column's agent: Kangentic cannot read
- * the user's messages back from that agent's transcript. Resolve it where it
- * shows, with the agent's display name and the column's name.
- */
-export const TEXT_MATCH_USER_UNSUPPORTED_REASON = msg({ message: "{agentName} doesn't report the messages you send, so this can't run in {columnName}." });
 
 /** The reason when there is no line to read: no reply, or one with no words. */
 export const TEXT_MATCH_NO_REPLY_REASON = 'The turn ended without a message Kangentic could read.';
@@ -261,6 +254,24 @@ export function textMatchFileValue(value: string | null | undefined): string | s
   return patterns.length === 1 ? patterns[0] : patterns;
 }
 
+/**
+ * A row's Condition text kinds as `kangentic.json` and the MCP tools write
+ * them, or null when it has neither: each kind inside `condition`, both when
+ * the row has both (#872). A Text match on the user's message takes the long
+ * form, which says so (#1078); the agent's line keeps the short form.
+ */
+export function boardConditionOf(
+  row: Pick<ColumnAutomation, 'final_line' | 'text_match_source' | 'condition'>,
+): BoardAutomationCondition | null {
+  const text = textMatchFileValue(row.final_line);
+  const agent = row.condition ? row.condition : null;
+  if (text === null) return agent !== null ? { agent } : null;
+  const textCondition: BoardAutomationCondition = row.text_match_source === 'user'
+    ? { text: { from: 'user', patterns: text } }
+    : { text };
+  return agent !== null ? { ...textCondition, agent } : textCondition;
+}
+
 /** Split a Text match into its plain patterns and its `!` patterns. */
 export function parseTextMatch(value: string | null | undefined): TextMatchPatterns {
   const plain: string[] = [];
@@ -362,12 +373,12 @@ export function normalizeTextMatch(value: string | null | undefined): string | n
 }
 
 /**
- * A row's two Condition kinds as stored: one kind per row, a Text match on a
- * turn end only (the one trigger with a final message), and a blank of either
- * kind none. A Text match wins, being the kind that costs nothing and cannot
- * be judged wrong. The repository stores every row through this and the Edit
- * automation dialog saves its draft through it, so the row the dialog saved is
- * the row a read gives back.
+ * A row's two Condition kinds as stored: a Text match on a turn end only (the
+ * one trigger with a final message), an Agent evaluation on any trigger, both
+ * at once when both are given (#872: every Condition line must hold), and a
+ * blank of either kind none. The repository stores every row through this and
+ * the Edit automation dialog saves its draft through it, so the row the dialog
+ * saved is the row a read gives back.
  */
 export function conditionKindsAsStored(row: {
   condition?: string | null;
@@ -377,7 +388,7 @@ export function conditionKindsAsStored(row: {
 }): { condition: string | null; final_line: string | null; text_match_source: TextMatchSource } {
   const finalLine = row.trigger === 'turn_end' && typeof row.final_line === 'string' ? normalizeTextMatch(row.final_line) : null;
   return {
-    condition: finalLine === null ? trimmedOrNull(row.condition) : null,
+    condition: trimmedOrNull(row.condition),
     final_line: finalLine,
     // A source means nothing without a Text match, so a row with none reads
     // as the agent's, the default.

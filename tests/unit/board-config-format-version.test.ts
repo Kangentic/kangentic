@@ -35,7 +35,7 @@ const { AutomationRepository } = await import('../../src/main/db/repositories/au
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { AUTOMATION_MANIFEST, AUTOMATION_TRIGGERS, AUTOMATION_TRIGGER_FILE_KEYS, isTypeOfferedOnTrigger } =
   await import('../../src/shared/automation-manifest');
-const { CURRENT_VERSION, LEGACY_FILE_KEYS, isLegacyPermissionValue } = await import('../../src/main/config/board-config/config-helpers');
+const { CURRENT_VERSION, LEGACY_FILE_KEYS, fileFormatVersionFor, isLegacyPermissionValue } = await import('../../src/main/config/board-config/config-helpers');
 
 import { openTestDatabase } from './helpers/test-database';
 import { readInterfaceFieldNames } from './helpers/shared-type-source';
@@ -150,6 +150,17 @@ describe('kangentic.json file format version', () => {
       { name: 'Pattern list', type: 'notify', trigger: 'turn_end', enabled: true, config: {}, final_line: 'Ready for *\n!Ready for review' },
       { name: 'User message', type: 'notify', trigger: 'turn_end', enabled: true, config: {}, final_line: 'signed off', text_match_source: 'user' },
       { name: 'User patterns', type: 'notify', trigger: 'turn_end', enabled: true, config: {}, final_line: 'signed off\n!not signed off', text_match_source: 'user' },
+      // Format 2 (#872): a Text match beside an Agent evaluation, and Task lines.
+      {
+        name: 'Both kinds and Task lines',
+        type: 'notify',
+        trigger: 'turn_end',
+        enabled: true,
+        config: {},
+        condition: 'The review is clean',
+        final_line: 'Verdict: Ready',
+        filter: { priorities: [3, 4], labels: ['bug'] },
+      },
     );
     automations.replaceForColumn(everything.id, rows);
 
@@ -261,6 +272,19 @@ describe('kangentic.json file format version', () => {
       expect(row('.condition.text.patterns[]:string')).toBe(true);
       expect(row('.maxRuns:number')).toBe(true);
       expect(row('.enabled:boolean')).toBe(true);
+      expect(row('.filter.priorities[]:string')).toBe(true);
+      expect(row('.filter.labels[]:string')).toBe(true);
+    });
+
+    // The file says 2 only when a row needs it, so a build that predates the
+    // new keys keeps reading and writing every board that does not use them.
+    it('stamps the format a board needs: 2 for a Task filter or both kinds, otherwise 1', () => {
+      expect(buildMaximalBoard().version).toBe(2);
+      expect(fileFormatVersionFor([{ id: 'a', name: 'A', automations: { onTurnEnd: [{ name: 'Judged', type: 'notify', condition: { agent: 'Clean' } }] } }])).toBe(1);
+      expect(fileFormatVersionFor([{ id: 'a', name: 'A', automations: { onTurnEnd: [{ name: 'Texted', type: 'notify', condition: { text: 'Ready' } }] } }])).toBe(1);
+      expect(fileFormatVersionFor([{ id: 'a', name: 'A', automations: { onTurnEnd: [{ name: 'Both', type: 'notify', condition: { text: 'Ready', agent: 'Clean' } }] } }])).toBe(2);
+      expect(fileFormatVersionFor([{ id: 'a', name: 'A', automations: { onEnter: [{ name: 'Filtered', type: 'notify', filter: { priorities: ['High'] } }] } }])).toBe(2);
+      expect(fileFormatVersionFor([])).toBe(1);
     });
   });
 
