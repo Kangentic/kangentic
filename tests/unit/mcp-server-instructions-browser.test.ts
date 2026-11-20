@@ -142,6 +142,10 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('Open a browser only when the work needs one');
     // The capture gap that pushed the agent to Playwright is advertised closed.
     expect(instructions).toContain('saveToFile');
+    // A copy out of Claude Code's tool-results folder stops on a permission prompt (task #1136).
+    expect(instructions).toContain('Copy or publish a screenshot from the filePath it names, never from the path your client gives the image');
+    // A remote project or a failed copy names no filePath, so the agent is given a way out.
+    expect(instructions).toContain('With no filePath, use saveToFile.');
     // Open the pane, and do not treat "the user closed it" as a reason not to.
     expect(instructions).toContain('OPEN THE PANE.');
     // One surface per task, stated so the agent does not go looking for a

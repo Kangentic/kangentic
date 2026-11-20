@@ -58,7 +58,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('electron', () => ({
   webContents: { fromId: () => null },
@@ -238,10 +238,11 @@ function automationConfig(): ResolvedBrowserAutomationConfig {
   return { enabled: true, allowInteraction: true, allowNavigation: true, allowEval: true, restrictNavigationToLocalhost: false };
 }
 
-async function connect(captureDirectory?: string) {
+async function connect(captureDirectory?: string, captureCopyDirectory?: string) {
   const browser: BrowserToolDependencies = {
     projectId: CALLER_PROJECT,
     ...(captureDirectory ? { captureDirectory: () => captureDirectory } : {}),
+    ...(captureCopyDirectory ? { captureCopyDirectory: () => captureCopyDirectory } : {}),
   };
   const server = buildConfiguredMcpServer(makeResolver(), fakeTaskCounter, automationConfig, null, browser);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -656,6 +657,170 @@ describe('saveToFile: a capture written to the caller\'s folder instead of inlin
       fs.rmSync(data.filePath, { force: true });
       await close();
     }
+  });
+
+  // Claude Code saves every image block under its config folder, and copying it out of there
+  // stops on a permission prompt (task #1136). A screenshot is also written to the caller's copies
+  // folder, so the agent has a path it can copy with no prompt.
+  describe('a screenshot also names a copy in the caller\'s folder', () => {
+    // Cleanup runs here, not at the end of each test, so a failing assertion leaks no folder and
+    // leaves no client open.
+    const createdFolders: string[] = [];
+    let closeConnection: (() => Promise<void>) | null = null;
+
+    function copyTestFolder(): string {
+      const folder = captureFolder();
+      createdFolders.push(folder);
+      return folder;
+    }
+
+    async function connectForCopy(captureDirectory?: string, captureCopyDirectory?: string) {
+      const connection = await connect(captureDirectory, captureCopyDirectory);
+      closeConnection = connection.close;
+      return connection.client;
+    }
+
+    afterEach(async () => {
+      await closeConnection?.();
+      closeConnection = null;
+      for (const folder of createdFolders.splice(0)) fs.rmSync(folder, { recursive: true, force: true });
+    });
+
+    it('screenshot keeps the image and writes the same bytes to the copy folder', async () => {
+      const folder = copyTestFolder();
+      detectDevServerError.mockResolvedValue(null);
+      captureScreenshotWithBudget.mockResolvedValue(inlineShot);
+      const client = await connectForCopy(undefined, folder);
+
+      const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: { format: 'png' } });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image', data: inlineShot.base64 })]));
+      const meta = result.structuredContent as { mode: string; filePath: string; location: string };
+      expect(meta).toMatchObject({ mode: 'inline', location: 'local' });
+      expect(path.dirname(meta.filePath)).toBe(folder);
+      expect(meta.filePath).toMatch(/screenshot-.*\.png$/);
+      expect(fs.readFileSync(meta.filePath).equals(PNG_BYTES)).toBe(true);
+      // The capture budget is untouched: the copy is the inline image, not a save.
+      const options = captureScreenshotWithBudget.mock.calls[0][1] as { inlineCeiling?: number };
+      expect(options.inlineCeiling).toBeUndefined();
+    });
+
+    it('screenshot_element names its copy with the element prefix', async () => {
+      const folder = copyTestFolder();
+      captureElementClip.mockResolvedValue({ ...inlineShot, fullPage: false, elementClip: { selector: 'main', box: { x: 0, y: 0, width: 740, height: 749 } } });
+      const client = await connectForCopy(undefined, folder);
+
+      const result = await client.callTool({ name: 'kangentic_browser_screenshot_element', arguments: { selector: 'main' } });
+
+      const meta = result.structuredContent as { filePath: string };
+      expect(path.dirname(meta.filePath)).toBe(folder);
+      expect(meta.filePath).toMatch(/element-.*\.png$/);
+    });
+
+    it('copies a capture past the inline ceiling out of the inspected checkout, and names the copy', async () => {
+      const folder = copyTestFolder();
+      const elsewhere = copyTestFolder();
+      const persisted = path.join(elsewhere, 'devtools-shots', 'shot.png');
+      fs.mkdirSync(path.dirname(persisted), { recursive: true });
+      fs.writeFileSync(persisted, PNG_BYTES);
+      detectDevServerError.mockResolvedValue(null);
+      const { base64: _unused, ...fields } = inlineShot;
+      captureScreenshotWithBudget.mockResolvedValue({ ...fields, mode: 'file', filePath: persisted, fileUri: 'file:///unused', reason: 'over-inline-ceiling' });
+      const client = await connectForCopy(undefined, folder);
+
+      const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: { format: 'png' } });
+
+      const meta = result.structuredContent as { mode: string; filePath: string; reason: string };
+      expect(meta).toMatchObject({ mode: 'file', reason: 'over-inline-ceiling' });
+      expect(path.dirname(meta.filePath)).toBe(folder);
+      expect(fs.readFileSync(meta.filePath).equals(PNG_BYTES)).toBe(true);
+    });
+
+    it('names no file when there is no copy folder (a remote project)', async () => {
+      detectDevServerError.mockResolvedValue(null);
+      captureScreenshotWithBudget.mockResolvedValue(inlineShot);
+      const client = await connectForCopy(copyTestFolder());
+
+      const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: {} });
+
+      expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]));
+      expect(result.structuredContent).not.toHaveProperty('filePath');
+      expect(result.structuredContent).not.toHaveProperty('location');
+    });
+
+    it('still returns the image when the copy cannot be written', async () => {
+      const blocker = copyTestFolder();
+      const blockerFile = path.join(blocker, 'not-a-directory');
+      fs.writeFileSync(blockerFile, 'file');
+      detectDevServerError.mockResolvedValue(null);
+      captureScreenshotWithBudget.mockResolvedValue(inlineShot);
+      const client = await connectForCopy(undefined, path.join(blockerFile, 'captures'));
+
+      const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: {} });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]));
+      expect(result.structuredContent).not.toHaveProperty('filePath');
+    });
+
+    it('names a jpeg copy with a .jpg extension', async () => {
+      const folder = copyTestFolder();
+      const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+      detectDevServerError.mockResolvedValue(null);
+      captureScreenshotWithBudget.mockResolvedValue({
+        ...inlineShot,
+        format: 'jpeg' as const,
+        base64: jpegBytes.toString('base64'),
+        byteLength: jpegBytes.byteLength,
+      });
+      const client = await connectForCopy(undefined, folder);
+
+      const result = await client.callTool({ name: 'kangentic_browser_screenshot', arguments: { format: 'jpeg' } });
+
+      const meta = result.structuredContent as { mode: string; filePath: string };
+      expect(meta.mode).toBe('inline');
+      expect(meta.filePath).toMatch(/screenshot-.*\.jpg$/);
+      expect(path.dirname(meta.filePath)).toBe(folder);
+      expect(fs.readFileSync(meta.filePath).equals(jpegBytes)).toBe(true);
+    });
+
+    describe('a file-mode capture that gets no copy keeps its original path', () => {
+      async function captureFileMode(originalPath: string, copyFolder: string) {
+        detectDevServerError.mockResolvedValue(null);
+        const { base64: _unused, ...fields } = inlineShot;
+        captureScreenshotWithBudget.mockResolvedValue({ ...fields, mode: 'file', filePath: originalPath, fileUri: 'file:///original', reason: 'over-inline-ceiling' });
+        const client = await connectForCopy(undefined, copyFolder);
+        return client.callTool({ name: 'kangentic_browser_screenshot', arguments: { format: 'png' } });
+      }
+
+      it('when the file under devtools-shots is missing', async () => {
+        const root = copyTestFolder();
+        const copyFolder = path.join(root, 'copies-target');
+        const missing = path.join(root, 'devtools-shots', 'gone.png');
+        fs.mkdirSync(path.dirname(missing), { recursive: true });
+
+        const result = await captureFileMode(missing, copyFolder);
+
+        expect(result.isError).toBeUndefined();
+        expect(result.structuredContent).toMatchObject({ mode: 'file', filePath: missing, fileUri: 'file:///original' });
+        expect(fs.existsSync(copyFolder)).toBe(false);
+      });
+
+      it('when the real file is not under a devtools-shots folder', async () => {
+        const root = copyTestFolder();
+        const copyFolder = path.join(root, 'copies-target');
+        const elsewhere = path.join(root, 'other-folder', 'shot.png');
+        fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+        fs.writeFileSync(elsewhere, PNG_BYTES);
+
+        const result = await captureFileMode(elsewhere, copyFolder);
+
+        expect(result.isError).toBeUndefined();
+        expect(result.structuredContent).toMatchObject({ mode: 'file', filePath: elsewhere, fileUri: 'file:///original' });
+        expect(fs.existsSync(copyFolder)).toBe(false);
+      });
+    });
   });
 
   describe('a folder that cannot be created reports save-failed', () => {

@@ -20,7 +20,8 @@ const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i;
 
 /**
  * Where `saveToFile` on `kangentic_browser_screenshot`, `_screenshot_element`
- * and `_eval` writes, and how (task #977).
+ * and `_eval` writes, and how (task #977). The copy every screenshot gets
+ * goes to a `copies` folder inside it (`copyScreenshotForCaller`, task #1136).
  *
  * An agent comparing a deployed page with its local build needed large DOM
  * captures and full-page PNGs as files to build an artifact from. The pane
@@ -245,6 +246,97 @@ export async function writeBrowserCaptureFile(
   await fs.promises.writeFile(filePath, content);
   const bytes = typeof content === 'string' ? Buffer.byteLength(content, 'utf8') : content.byteLength;
   return { filePath, fileUri: pathToFileURL(filePath).toString(), bytes, pruned };
+}
+
+/** Where a screenshot's copy in the caller's folder was written, as the result reports it. */
+export interface CaptureCopy {
+  filePath: string;
+  fileUri: string;
+  /** Always this computer's: a remote project gets no copy (`copiesInlineCaptures`). */
+  location: 'local';
+}
+
+/**
+ * What a screenshot tool's description says about the copy (task #1136). One string for the
+ * browser tools and the dev-only devtools tools, so the two families cannot drift apart.
+ */
+export const CAPTURE_COPY_DESCRIPTION =
+  ' On a project on this computer the image is also written to a Kangentic captures folder inside your working directory, and `filePath` in the metadata names it. To copy or publish the image, copy `filePath`, never the path your client names for the image, which can need approval to read.';
+
+/** The folder a capture folder keeps its screenshot copies in. */
+const CAPTURE_COPIES_FOLDER = 'copies';
+
+/**
+ * Where a caller's screenshot copies go: a folder of their own inside its capture folder. Each
+ * folder runs its own rolling prune, so a long run of screenshots never prunes a file the agent
+ * saved with `saveToFile` beside them.
+ */
+export function captureCopiesFolder(captureDirectory: string): string {
+  return path.join(captureDirectory, CAPTURE_COPIES_FOLDER);
+}
+
+/**
+ * Whether a project's screenshots get a copy on disk: a project on this computer only. On a
+ * remote one the copy would be an SSH write on every screenshot, and its agent's tool-results
+ * folder is on the host, out of this computer's reach. `saveToFile` still delivers there. Null
+ * (no project path) has no folder inside the agent's working directory to write to.
+ */
+export function copiesInlineCaptures(projectPath: string | null): boolean {
+  return projectPath !== null && !agentPathsForProjectPath(projectPath)?.hostId;
+}
+
+/** Null when the write fails. The image still reaches the agent, and the copy only spares a later prompt. */
+async function writeCaptureCopy(
+  directory: string,
+  prefix: BrowserCaptureFilePrefix,
+  format: 'png' | 'jpeg',
+  bytes: Buffer,
+): Promise<CaptureCopy | null> {
+  try {
+    const saved = await writeBrowserCaptureFile(directory, prefix, format === 'jpeg' ? 'jpg' : 'png', bytes);
+    return { filePath: saved.filePath, fileUri: saved.fileUri, location: 'local' };
+  } catch {
+    // report-ok: the screenshot still returns; a missing copy costs the agent a prompt on a later copy, never the image.
+    return null;
+  }
+}
+
+/** The fields of a screenshot response the copy reads. Both the browser and the devtools responses have them. */
+interface CopyableScreenshot {
+  mode: 'inline' | 'file';
+  format: 'png' | 'jpeg';
+  base64?: string;
+  filePath?: string;
+}
+
+/**
+ * Write a screenshot's bytes to the caller's copies folder too (task #1136), and return the copy,
+ * or null when there is none.
+ *
+ * Claude Code saves every MCP image block under its config folder's
+ * `projects/<project>/<session>/tool-results/` and names that file to the agent. A copy out of it
+ * stops on a permission prompt that auto mode and allow rules do not answer. `~/.claude` is a
+ * protected path, and on an account its `projects` is a link that resolves there (measured with
+ * `scripts/probe-claude-plan-tool-approval.js --target tool-results`). A copy from this folder,
+ * inside the agent's working directory, runs with no prompt.
+ *
+ * An inline capture is copied from its base64. A capture past the inline ceiling is copied from the
+ * file the capture wrote under the inspected checkout's `.kangentic/devtools-shots`
+ * (`persistShot`). For a worktree task that folder is outside the agent's working directory, so a
+ * copy from it prompts as a tool-results copy does. A source outside a `devtools-shots` folder, or
+ * one that cannot be read, gets no copy, and its result keeps the original path.
+ */
+export async function copyScreenshotForCaller(
+  directory: string,
+  prefix: BrowserCaptureFilePrefix,
+  shot: CopyableScreenshot,
+): Promise<CaptureCopy | null> {
+  if (shot.mode === 'inline') {
+    return shot.base64 ? writeCaptureCopy(directory, prefix, shot.format, Buffer.from(shot.base64, 'base64')) : null;
+  }
+  if (!shot.filePath || path.basename(path.dirname(shot.filePath)) !== 'devtools-shots') return null;
+  const bytes = await fs.promises.readFile(shot.filePath).catch(() => null); // report-ok: an unreadable source keeps its own path in the result.
+  return bytes ? writeCaptureCopy(directory, prefix, shot.format, bytes) : null;
 }
 
 /** Save an inline screenshot to a file, put it where its agent reads it, and describe it as a file response. */

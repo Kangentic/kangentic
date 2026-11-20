@@ -9,6 +9,7 @@ import { DOCS_URLS } from '../../../../shared/docs-links';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
 import { translateText } from '../../../i18n/translate';
 import { formatDate, formatDateTime, formatShortDateTime } from '../../../lib/datetime';
+import { describeIpcError } from '../../../lib/ipc-error';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardTile } from '../settings-card';
 import { SegmentedControl } from '../../SegmentedControl';
@@ -249,7 +250,8 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       const result = await startPairing();
       setQrUri(result.qrUri);
     } catch (error) {
-      setPairingEnded(error instanceof Error ? error.message : t`Could not start pairing.`);
+      // Main's own words, without Electron's channel and class prefix.
+      setPairingEnded(describeIpcError(error, t`Could not start pairing.`));
     }
   };
 

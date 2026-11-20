@@ -525,6 +525,109 @@ describe('UtilityPtyHostTransport', () => {
       expect(reports[0].contexts.pty_host).toMatchObject({ timerLateMs: 700 });
     });
 
+    describe('a beat that spans a sleep', () => {
+      const SLEPT_MS = 16 * 60 * 60 * 1_000;
+
+      it('reports nothing when the threshold timer fires hours late', async () => {
+        // DESKTOP-43 on 0.60.0. The machine slept with a beat in flight. On wake the threshold
+        // timer and the ping's timeout were both overdue, and a sleep was reported as every
+        // terminal frozen. A beat that never watched the host says nothing about it.
+        await hostWithPingSent();
+        await vi.advanceTimersByTimeAsync(5_000);
+        vi.setSystemTime(Date.now() + SLEPT_MS);
+        await vi.advanceTimersByTimeAsync(11_000);
+
+        expect(stallReports()).toHaveLength(0);
+      });
+
+      it('still reports a host that stays frozen on the next beat after the wake', async () => {
+        // Voiding must not hide a real freeze. The next beat's timer fires on time.
+        await hostWithPingSent();
+        await vi.advanceTimersByTimeAsync(5_000);
+        vi.setSystemTime(Date.now() + SLEPT_MS);
+        // The voided ping runs out its budget, the next tick sends a fresh beat, and that beat
+        // passes its threshold and its own budget with no answer.
+        await vi.advanceTimersByTimeAsync(10_000 + 5_000 + 15_000);
+
+        const reports = stallReports();
+        expect(reports).toHaveLength(1);
+        expect(reports[0].tags.outcome).toBe('no_answer');
+        expect(reports[0].contexts.pty_host).toMatchObject({ neverAnswered: true, timerLateMs: 0 });
+      });
+
+      /**
+       * Sleeps past the ping's send (fake t=5 s), then lets the 11 s threshold timer fire
+       * `lateMs` late. Date.now at the fire is start + 11 s + lateMs, so timerLateMs is lateMs.
+       * The ping's own 15 s timeout (fake t=20 s) has not fired yet when this returns.
+       */
+      async function thresholdTimerFiresLate(lateMs: number): Promise<void> {
+        await vi.advanceTimersByTimeAsync(5_000);
+        vi.setSystemTime(Date.now() + lateMs);
+        await vi.advanceTimersByTimeAsync(6_000);
+      }
+
+      it('reports and warns of nothing when a voided beat\'s ping is answered after the wake, and says it was not measured', async () => {
+        // The ping's .then would otherwise report an "answered" stall for a beat that only slept.
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const { child, pingId } = await hostWithPingSent();
+        await thresholdTimerFiresLate(SLEPT_MS);
+        expect(infoSpy).toHaveBeenCalledWith(expect.stringMatching(/a heartbeat spanned 57600 s with main not running; not measured/));
+
+        reply(child, pingId, null);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(stallReports()).toHaveLength(0);
+        expect(console.warn).not.toHaveBeenCalledWith(expect.stringMatching(/answered a heartbeat after/));
+        expect(console.warn).not.toHaveBeenCalledWith(expect.stringMatching(/has not answered a heartbeat/));
+      });
+
+      it('records nothing at quit while a voided beat\'s ping is still pending', async () => {
+        // A quit during the wake must not write a stall-at-quit record for a beat that slept.
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-host-voided-at-quit-'));
+        try {
+          const stallAtQuitFilePath = path.join(directory, 'pty-host-stall-at-quit.json');
+          vi.spyOn(console, 'info').mockImplementation(() => undefined);
+          const { transport, child } = await hostWithPingSent(stallAtQuitFilePath);
+          await thresholdTimerFiresLate(SLEPT_MS);
+
+          transport.shutdown();
+          child.emit('exit', 0);
+          await vi.advanceTimersByTimeAsync(0);
+
+          expect(fs.existsSync(stallAtQuitFilePath)).toBe(false);
+          expect(stallReports()).toHaveLength(0);
+          reportPtyHostStallFromLastRun(stallAtQuitFilePath);
+          expect(stallReports()).toHaveLength(0);
+        } finally {
+          fs.rmSync(directory, { recursive: true, force: true });
+        }
+      });
+
+      it('voids a beat whose threshold timer is late by more than 60 s and still reports one late by less', async () => {
+        // HEARTBEAT_UNMEASURED_LATE_MS is 4 * the 15 s request timeout = 60 s. timerLateMs is
+        // Date.now() - start - 11 s, so a clock jump of J ms during the beat makes it J ms late.
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        const over = await hostWithPingSent();
+        await thresholdTimerFiresLate(61_000);
+        reply(over.child, over.pingId, null);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stallReports(), '61 s late is voided').toHaveLength(0);
+        over.transport.shutdown();
+
+        vi.mocked(reportHandledError).mockClear();
+        resetPtyHostReports();
+        const under = await hostWithPingSent();
+        await thresholdTimerFiresLate(59_000);
+        reply(under.child, under.pingId, null);
+        await vi.advanceTimersByTimeAsync(0);
+
+        const reports = stallReports();
+        expect(reports, '59 s late is still measured').toHaveLength(1);
+        expect(reports[0].tags.outcome).toBe('answered');
+        expect(reports[0].contexts.pty_host).toMatchObject({ timerLateMs: 59_000 });
+      });
+    });
+
     it('lists the requests waiting beside the ping once each, sorted', async () => {
       // A report that repeated or shuffled the methods would group differently run to run.
       const { transport, child, pingId } = await hostWithPingSent();

@@ -200,6 +200,58 @@ export function isRedialableTransport(transport: Transport): transport is Redial
   return typeof (transport as Partial<RedialableTransport>).redialNow === 'function';
 }
 
+/**
+ * Why a dial ended before its socket opened. Every field is something the
+ * client already holds and none of it is text from the wire. `stack` is the
+ * dialing stack's label (`node`, `chromium` from relay-websocket.ts, or
+ * `injected`), never the relay URL or the slot id. A close's `reason` is left
+ * out because the relay can put any text there.
+ * - `closed`: the socket closed before `open`. `errorFirst` says whether
+ *   `onerror` fired first (undici always does; Chromium may not).
+ * - `aborted`: close() while the dial was in flight, which is how a
+ *   superseding startPairing() ends the older ceremony's dial.
+ * - `timeout`: the dial watchdog gave up on a dial that reached no handler.
+ * - `abandoned`: a forced redial dropped a dial still in flight.
+ *
+ * Nothing in production reads it. The reporter skips the error by name, and the
+ * Pair dialog shows the fixed message. It keeps on the error which of the four
+ * paths ended the dial, for a debugger and for the tests that pin each path,
+ * because the fixed message no longer says.
+ */
+export type RelayDialCause =
+  | { kind: 'closed'; errorFirst: boolean; closeCode: number; stack: string }
+  | { kind: 'aborted'; stack: string | null }
+  | { kind: 'timeout'; stack: string }
+  | { kind: 'abandoned'; stack: string | null };
+
+/**
+ * A relay dial that never opened. An expected failure (`EXPECTED_FAILURE_NAMES`
+ * in analytics/handled-report.ts), not a code defect: undici sends a network
+ * failure and a non-101 answer from the relay through the same
+ * `failWebsocketConnection(ws, 'Received network error or non-101 status code.')`
+ * (undici's lib/web/websocket/connection.js), and no HTTP status reaches
+ * JavaScript, so the client cannot tell the relay refusing it from the user's
+ * own network. The relay service's health is watched on the relay side. Sentry
+ * DESKTOP-4G was Pair a device reporting this as a defect.
+ *
+ * Two dial rejections stay plain errors and keep reporting, because neither is
+ * the network: a relay URL that does not parse, and a WebSocket constructor
+ * that throws. Both mean a bug in what reached the client.
+ *
+ * The message is the same for every cause, so the Pair dialog shows one sentence.
+ * `dialCause` is deliberately not `cause`, which the expected-failure check
+ * reads as a wrapped error.
+ */
+export class RelayDialError extends Error {
+  readonly dialCause: RelayDialCause;
+
+  constructor(dialCause: RelayDialCause) {
+    super('Relay connection closed before it opened');
+    this.name = 'RelayDialError';
+    this.dialCause = dialCause;
+  }
+}
+
 export class RelayClient implements RedialableTransport {
   private readonly relayUrl: string;
   private readonly slotId: string;
@@ -288,7 +340,7 @@ export class RelayClient implements RedialableTransport {
       }
       const relayPing = this.currentState === 'connected' && this.lastDialStack ? this.describeRelayPing(this.socket, this.lastDialStack) : '';
       console.warn(`${this.logPrefix} forced redial (${reason}) from ${this.currentState}${relayPing}`);
-      this.abandonSocket(new Error('Relay connection abandoned by a forced redial'));
+      this.abandonSocket(new RelayDialError({ kind: 'abandoned', stack: this.lastDialStack }));
     } else {
       console.log(`${this.logPrefix} redial kick (${reason}) from ${this.currentState}: dialing now`);
     }
@@ -393,15 +445,19 @@ export class RelayClient implements RedialableTransport {
           // close() already settled any pending dial synchronously; this is a
           // no-op if so. Guard against a socket closed via close() while still
           // connecting so the awaiter is never left hanging.
-          rejectOnce(new Error('Relay connection closed before it opened'));
+          rejectOnce(new RelayDialError({ kind: 'aborted', stack: dialChoice.stack }));
           return;
         }
+        // Whether onerror fired before this close. Only the next dial resets it.
+        const errorFirst = this.pendingError !== null;
         const wasConnected = this.currentState === 'connected';
         if (!wasConnected) this.noteDialFailed(dialChoice.stack);
         const delayMs = this.scheduleReconnect();
         this.logClose(event, wasConnected, delayMs, dialChoice.stack, this.describeRelayPing(socket, dialChoice.stack));
         // Only reject the in-flight connect() promise if we never reached 'open'.
-        if (!wasConnected) rejectOnce(new Error('Relay connection closed before it opened'));
+        if (!wasConnected) {
+          rejectOnce(new RelayDialError({ kind: 'closed', errorFirst, closeCode: event.code, stack: dialChoice.stack }));
+        }
       };
     });
   }
@@ -481,7 +537,7 @@ export class RelayClient implements RedialableTransport {
     this.dialWatchdog = setTimeout(() => {
       this.dialWatchdog = null;
       if (this.socket !== socket) return;
-      this.abandonSocket(new Error(`Relay dial timed out after ${DIAL_TIMEOUT_MS} ms`));
+      this.abandonSocket(new RelayDialError({ kind: 'timeout', stack: dialStack }));
       this.noteDialFailed(dialStack);
       const delayMs = this.scheduleReconnect();
       console.warn(`${this.logPrefix} dial timed out after ${DIAL_TIMEOUT_MS / 1000} s; redial in ${delayMs} ms (via ${dialStack})`);
@@ -609,7 +665,7 @@ export class RelayClient implements RedialableTransport {
     if (this.pendingDialReject) {
       const rejectPending = this.pendingDialReject;
       this.pendingDialReject = null;
-      rejectPending(new Error('Relay connection closed before it opened'));
+      rejectPending(new RelayDialError({ kind: 'aborted', stack: this.lastDialStack }));
     }
   }
 

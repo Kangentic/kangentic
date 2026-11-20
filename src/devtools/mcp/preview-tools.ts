@@ -4,6 +4,12 @@ import { z } from 'zod/v4';
 import { enumeratePreviewInstances, findRespondingPreviews } from '../main/instances';
 import { readLockfile, isLockfilePidAlive } from '../main/lockfile';
 import type { RequestResolver } from '../../main/agent/mcp-http/project-resolver';
+import {
+  CAPTURE_COPY_DESCRIPTION,
+  copyScreenshotForCaller,
+  type BrowserCaptureFilePrefix,
+  type CaptureCopy,
+} from '../../main/agent/mcp-http/browser-capture-file';
 
 /**
  * Dev-only MCP tools that wrap the localhost inspection bridge. Each
@@ -298,7 +304,7 @@ interface BridgeScreenshotResponse {
  * the agent's text token budget and trip Claude Code's "saved to file"
  * fallback for what should be a cheap inline image.
  */
-function screenshotToolResult(result: BridgeResult): McpToolResult {
+function screenshotToolResult(result: BridgeResult, inlineCopy: CaptureCopy | null = null): McpToolResult {
   if (!result.ok) return toolResult(result);
   const data = result.data as BridgeScreenshotResponse;
   const mimeType = data.format === 'jpeg' ? 'image/jpeg' : 'image/png';
@@ -338,6 +344,10 @@ function screenshotToolResult(result: BridgeResult): McpToolResult {
     };
   }
   meta.mode = 'inline';
+  if (inlineCopy) {
+    meta.filePath = inlineCopy.filePath;
+    meta.location = inlineCopy.location;
+  }
   return {
     content: [
       { type: 'image', data: data.base64 ?? '', mimeType },
@@ -390,11 +400,33 @@ const MUTATING_ANNOTATIONS = {
 const INSTANCE_ARG_DESCRIPTION =
   'Optional instanceId - the absolute worktree path identifying the preview to target. Omit to use the single running instance in this project; the call errors if more than one is running. Use kangentic_devtools_list_instances to discover instanceIds, including a preview in another project.';
 
-export function registerDevtoolsPreviewTools(server: McpServer, resolver: RequestResolver): void {
+export function registerDevtoolsPreviewTools(
+  server: McpServer,
+  resolver: RequestResolver,
+  captureCopyDirectory: () => string | null,
+): void {
   // Bound to the request's project: this server is built per request, so the
   // path cannot live in module state.
   const callBridge = (options: CallBridgeOptions): Promise<BridgeResult> =>
     callProjectBridge(options, resolver.defaultContextResolved().context.getProjectPath());
+
+  /**
+   * A screenshot as the tool returns it, with its bytes copied into the
+   * caller's own captures folder (task #1136). Claude Code saves every image
+   * block under its config folder, and a copy out of there stops on a
+   * permission prompt. The bridge's own file for a capture past the inline
+   * ceiling is under the INSPECTED instance's root, which is often another
+   * checkout than the caller's, so it is copied too and the copy named.
+   */
+  const screenshotWithCopy = async (result: BridgeResult, prefix: BrowserCaptureFilePrefix): Promise<McpToolResult> => {
+    const directory = result.ok ? captureCopyDirectory() : null;
+    if (!result.ok || !directory) return screenshotToolResult(result);
+    const data = result.data as BridgeScreenshotResponse;
+    const copy = await copyScreenshotForCaller(directory, prefix, data);
+    if (data.mode === 'inline') return screenshotToolResult(result, copy);
+    if (!copy) return screenshotToolResult(result);
+    return screenshotToolResult({ ...result, data: { ...data, filePath: copy.filePath, fileUri: copy.fileUri } });
+  };
 
   // ── Discovery ────────────────────────────────────────────────────────
   server.registerTool(
@@ -601,7 +633,7 @@ export function registerDevtoolsPreviewTools(server: McpServer, resolver: Reques
     'kangentic_devtools_screenshot',
     {
       description:
-        'Capture the inspected preview window. Returns an MCP image content block inline (under ~3.5MB) or a resource_link to a file when the capture exceeds the inline ceiling. The response also carries metadata: viewport dims, image dims, deviceScaleFactor (so image-space coords can be mapped to viewport-space). Defaults: jpeg q80 (q75 for fullPage); pass `format: "png"` for lossless. For specific components prefer kangentic_devtools_screenshot_element to clip down before capture. Dev-only.',
+        'Capture the inspected preview window. Returns an MCP image content block inline (under ~3.5MB) or a resource_link to a file when the capture exceeds the inline ceiling. The response also carries metadata: viewport dims, image dims, deviceScaleFactor (so image-space coords can be mapped to viewport-space). Defaults: jpeg q80 (q75 for fullPage); pass `format: "png"` for lossless. For specific components prefer kangentic_devtools_screenshot_element to clip down before capture.' + CAPTURE_COPY_DESCRIPTION + ' Dev-only.',
       inputSchema: z.object({
         format: z.enum(['png', 'jpeg']).optional().describe('Image format. Default jpeg.'),
         quality: z.number().int().min(1).max(100).optional().describe('JPEG quality 1-100. Ignored for PNG. Default 80 (75 fullPage).'),
@@ -613,7 +645,7 @@ export function registerDevtoolsPreviewTools(server: McpServer, resolver: Reques
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ format, quality, fullPage, maxBytes, maxKb, instanceId }) =>
-      screenshotToolResult(
+      screenshotWithCopy(
         await callBridge({
           method: 'GET',
           path: '/screenshot',
@@ -627,6 +659,7 @@ export function registerDevtoolsPreviewTools(server: McpServer, resolver: Reques
           instanceId,
           timeoutMs: 10000,
         }),
+        'screenshot',
       ),
   );
 
@@ -634,7 +667,7 @@ export function registerDevtoolsPreviewTools(server: McpServer, resolver: Reques
     'kangentic_devtools_screenshot_element',
     {
       description:
-        'Capture only the element matching `selector`, clipped to its bounding box. Returns a PNG inline (default; small clips stay well under the inline ceiling) or a resource_link to a file when the capture is unusually large. Dev-only.',
+        'Capture only the element matching `selector`, clipped to its bounding box. Returns a PNG inline (default; small clips stay well under the inline ceiling) or a resource_link to a file when the capture is unusually large.' + CAPTURE_COPY_DESCRIPTION + ' Dev-only.',
       inputSchema: z.object({
         selector: z.string().describe('CSS selector. Defaults to clipping the matched element\'s box.'),
         format: z.enum(['png', 'jpeg']).optional().describe('Image format. Default png (element clips usually fit losslessly).'),
@@ -646,7 +679,7 @@ export function registerDevtoolsPreviewTools(server: McpServer, resolver: Reques
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ selector, format, quality, maxBytes, maxKb, instanceId }) =>
-      screenshotToolResult(
+      screenshotWithCopy(
         await callBridge({
           method: 'GET',
           path: '/screenshot-element',
@@ -654,6 +687,7 @@ export function registerDevtoolsPreviewTools(server: McpServer, resolver: Reques
           instanceId,
           timeoutMs: 10000,
         }),
+        'element',
       ),
   );
 

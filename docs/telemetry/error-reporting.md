@@ -428,8 +428,12 @@ in one Sentry org, one triage surface.
   DESKTOP-47's day-precision refusal had none. It skips what is
   not a defect (`isExpectedFailure`: shutdown, an abort, a `UserConfigurationError` or
   `RefusalError`, the named expected classes, a network errno, `fetch failed` with a network
-  cause), skips an error another reporter already sent (`markReported` and `isReported`, which
-  reads one level of `cause`), latches once per key per run and stops after 25 keys. An errno,
+  cause, a relay dial that never opened as `RelayDialError`), skips an error another reporter
+  already sent (`markReported` and `isReported`, which reads one level of `cause`), latches once
+  per key per run and stops after 25 keys. A relay dial is expected because undici fails a network
+  error and a non-101 answer from the relay with the same fixed text, so the client cannot tell
+  them apart. The relay watches its own health. Sentry DESKTOP-4G was Pair a device reporting
+  that failure as a defect. An errno,
   libuv's Windows `UNKNOWN` or a `SQLITE_` failure is fingerprinted `['handled-env', name, code]`;
   a code defect keeps Sentry's stack grouping. The sources:
   - `ipc_handler`: every `ipcMain.handle` handler, wrapped once at install
@@ -494,6 +498,12 @@ in one Sentry org, one triage surface.
     sent when it ends, not at the 11 s threshold, because DESKTOP-43 could not tell a late answer
     from none. Its `outcome` tag is `answered` (with `answeredAfterMs`), `host_exited`,
     `no_answer` (no answer within the ping's 15 s budget) or `shutdown` (the app quit first).
+    A beat whose 11 s threshold timer fired more than 60 s late, four times the ping's budget, is
+    voided and sends nothing. The machine slept or main's own loop did not run, so the budget ran
+    out with nothing watching the host (the 0.60.0 DESKTOP-43 event fired 15.7 h late). The
+    wall-clock lateness decides it, not the wake clock, because a wake's overdue timers can run
+    before the `resume` event arrives. A host that stays frozen is still reported by the next
+    beat, whose timer fires on time.
     Nothing sent from the quit path lands. So a `shutdown` stall is written to
     `pty-host-stall-at-quit.json` in the config directory, and the next launch reports it, as
     `abandoned-launches.ts` does. Its `pty_host` context lists the other requests in flight and
