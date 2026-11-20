@@ -155,6 +155,11 @@ function toTranscriptBlockWire(block: TranscriptBlock): TranscriptBlockWire {
   }
 }
 
+/**
+ * `tsPrecision` is not carried: the wire has no field for it, and adding one
+ * is a protocol release. The phone gets `ts` as stamped, which for a
+ * minute-precision entry is the start of that minute.
+ */
 export function toTranscriptEntryWire(entry: TranscriptEntry): TranscriptEntryWire {
   switch (entry.kind) {
     case 'user':

@@ -178,7 +178,9 @@ function extentOf(
 
 /** Reconstruct lossy display entries from indexed chunks when the native
  *  history file is gone. Block structure is not recoverable, so each chunk maps
- *  to a single-block entry of its recorded role. */
+ *  to a single-block entry of its recorded role. A chunk keeps no `tsPrecision`
+ *  either, so a minute clock comes back unmarked and Route tabs read it as
+ *  precise. */
 async function entriesFromIndex(db: Database.Database, docId: string): Promise<TranscriptEntry[]> {
   const chunks = await readIndexedChunks(db, docId);
   return chunks.map((chunk): TranscriptEntry => {

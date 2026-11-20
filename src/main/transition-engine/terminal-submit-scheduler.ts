@@ -905,8 +905,8 @@ export class TerminalSubmitScheduler {
     // listener exists, so its only edge here is the idle its first turn ends
     // on; waiting for a thinking edge alone left a column's message on the 30s
     // fallback. A permission prompt is not alive enough: typed keys would
-    // answer it. A queued resume's first thinking is the boot paint, so that
-    // path waits for idle.
+    // answer it. A queued session waits for idle: for a resume, its first
+    // thinking is the boot paint.
     const onActivity = (evtSessionId: string, activityState: string): void => {
       if (evtSessionId !== sessionId) return;
       if (!isCurrent()) return;

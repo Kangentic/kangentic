@@ -381,8 +381,8 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
   const clockedUser = (clock: string): object =>
     userLine(`<timestamp>${clock}</timestamp>\n<user_query>\nplease continue\n</user_query>`);
   const assistantText = (text: string): object => ({ role: 'assistant', message: { content: [{ type: 'text', text }] } });
-  const A_LINE = (): object => clockedUser('Thursday, Jan 1, 2026, 9:00 AM (UTC+0)');
-  const B_LINE = (): object => clockedUser('Thursday, Jan 1, 2026, 10:30 AM (UTC+0)');
+  const clockedLineA = (): object => clockedUser('Thursday, Jan 1, 2026, 9:00 AM (UTC+0)');
+  const clockedLineB = (): object => clockedUser('Thursday, Jan 1, 2026, 10:30 AM (UTC+0)');
   const bulk = (count: number, characters: number): object[] =>
     Array.from({ length: count }, (_unused, index) => assistantText(`${index} ${'x'.repeat(characters)}`));
 
@@ -411,7 +411,7 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
 
   it('stamps the nearest earlier user clock, not an older one beyond a large gap', async () => {
     // A, 400KB of replies, B, then the page opens on a reply after B.
-    const lines = [A_LINE(), ...bulk(20, 20_000), B_LINE(), ...bulk(10, 2_000)];
+    const lines = [clockedLineA(), ...bulk(20, 20_000), clockedLineB(), ...bulk(10, 2_000)];
     const { filePath, offsets } = writeLines(lines);
     expect(fs.statSync(filePath).size).toBeGreaterThan(lookbackBytes);
 
@@ -426,7 +426,7 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
 
   it('passes over a user line with no clock and an injected line to an older clock', async () => {
     const lines = [
-      A_LINE(), ...bulk(2, 200),
+      clockedLineA(), ...bulk(2, 200),
       userLine('a follow up that carries no clock'),
       userLine('<available_subagent_types>\n- generalPurpose\n</available_subagent_types>'),
       ...bulk(5, 200),
@@ -438,7 +438,7 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
   });
 
   it('leaves the opening replies at ts 0 when no user clock lies within the lookback', async () => {
-    const lines = [A_LINE(), ...bulk(15, 20_000), ...bulk(5, 2_000)];
+    const lines = [clockedLineA(), ...bulk(15, 20_000), ...bulk(5, 2_000)];
     const { filePath, offsets } = writeLines(lines);
 
     const page = await pageFrom(filePath, offsets[16]);
@@ -450,7 +450,7 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
   });
 
   it('reads the earlier clock out of a file written with CRLF line endings', async () => {
-    const lines = [A_LINE(), ...bulk(3, 200)];
+    const lines = [clockedLineA(), ...bulk(3, 200)];
     const { filePath, offsets } = writeLines(lines, '\r\n');
 
     const page = await pageFrom(filePath, offsets[2]);
@@ -458,7 +458,7 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
   });
 
   it('reads the earlier clock for the tail window of a truncated transcript', async () => {
-    const lines = [A_LINE(), ...bulk(12, 2_000), B_LINE(), ...bulk(8, 2_000)];
+    const lines = [clockedLineA(), ...bulk(12, 2_000), clockedLineB(), ...bulk(8, 2_000)];
     const { filePath } = writeLines(lines);
 
     setParseWindowBytesForTests(5_000);
@@ -474,7 +474,7 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
   });
 
   it('never reads back when the window opens on a user line that has its own clock', async () => {
-    const lines = [A_LINE(), ...bulk(3, 200), B_LINE(), ...bulk(3, 200)];
+    const lines = [clockedLineA(), ...bulk(3, 200), clockedLineB(), ...bulk(3, 200)];
     const { filePath, offsets } = writeLines(lines);
     const openSpy = vi.spyOn(fs, 'openSync');
     try {
@@ -490,6 +490,39 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
       expect(opensOf()).toBe(1);
     } finally {
       openSpy.mockRestore();
+    }
+  });
+
+  it('keeps a user line that starts exactly where the lookback starts', async () => {
+    // A reply, the clocked line, then one reply sized so the next line starts
+    // exactly one lookback after the clocked line's first byte.
+    const clocked = clockedLineA();
+    const padding = (characters: number): object => assistantText('x'.repeat(characters));
+    const paddingOverhead = Buffer.byteLength(JSON.stringify(padding(0)));
+    const clockedBytes = Buffer.byteLength(JSON.stringify(clocked));
+    const paddingCharacters = lookbackBytes - (clockedBytes + 1) - paddingOverhead - 1;
+    const lines = [assistantText('opening reply'), clocked, padding(paddingCharacters), ...bulk(2, 200)];
+    const { filePath, offsets } = writeLines(lines);
+    expect(offsets[3] - offsets[1]).toBe(lookbackBytes);
+
+    const page = await pageFrom(filePath, offsets[3]);
+    expect(page.entries.map((entry) => entry.ts)).toEqual([clockA, clockA]);
+  });
+
+  it('still stamps the page when closing the file after the lookback throws', async () => {
+    const lines = [clockedLineA(), ...bulk(3, 200)];
+    const { filePath, offsets } = writeLines(lines);
+    const realCloseSync = fs.closeSync;
+    const closeSpy = vi.spyOn(fs, 'closeSync').mockImplementationOnce((descriptor: number) => {
+      realCloseSync(descriptor);
+      throw Object.assign(new Error('close failed'), { code: 'EIO' });
+    });
+    try {
+      const page = await pageFrom(filePath, offsets[2]);
+      expect(closeSpy).toHaveBeenCalled();
+      expect(page.entries.map((entry) => entry.ts)).toEqual([clockA, clockA]);
+    } finally {
+      closeSpy.mockRestore();
     }
   });
 });

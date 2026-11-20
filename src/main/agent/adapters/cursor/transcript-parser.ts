@@ -198,15 +198,22 @@ function timestampBefore(filePath: string, beforeByte: number): number {
   try {
     file = fs.openSync(filePath, 'r');
     const lookback = Math.min(beforeByte, TIMESTAMP_LOOKBACK_BYTES);
-    const start = beforeByte - lookback;
-    const buffer = Buffer.allocUnsafe(lookback);
-    const bytesRead = fs.readSync(file, buffer, 0, lookback, start);
+    // Read from one byte before the lookback, so the first segment the split
+    // gives is the cut line before the first whole one, or empty when the
+    // lookback starts on a line. Dropping it never drops a whole line.
+    const readStart = Math.max(0, beforeByte - lookback - 1);
+    const readLength = beforeByte - readStart;
+    const buffer = Buffer.allocUnsafe(readLength);
+    const bytesRead = fs.readSync(file, buffer, 0, readLength, readStart);
     const text = buffer.toString('utf8', 0, bytesRead);
     const lines = text.split(/\n/);
-    if (start > 0) lines.shift();
+    if (readStart > 0) lines.shift();
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const line = lines[index].endsWith('\r') ? lines[index].slice(0, -1) : lines[index];
       if (line.length === 0) continue;
+      // Only a user line can carry the clock. Skip the reply lines between
+      // without parsing them.
+      if (!line.includes('"user"')) continue;
       let raw: unknown;
       try {
         raw = JSON.parse(line);
@@ -223,7 +230,12 @@ function timestampBefore(filePath: string, beforeByte: number): number {
   } catch { // report-ok: a transcript that cannot be read during lookback only leaves those lines at ts 0
     return 0;
   } finally {
-    if (file !== undefined) fs.closeSync(file);
+    if (file !== undefined) {
+      try {
+        fs.closeSync(file);
+      } catch { // report-ok: the read already finished; a failed close leaks one descriptor and must not fail the page
+      }
+    }
   }
 }
 
@@ -245,25 +257,30 @@ function collectCursorEntries(
   // this window, else the one before the window, read the first time a line
   // needs it. A window that opens on a clocked user line never reads back.
   let carriedTimestampMs: number | null = null;
-  const carried = (): number => {
+  const readCarriedClockMs = (): number => {
     if (carriedTimestampMs === null) carriedTimestampMs = earlierTimestampMs();
     return carriedTimestampMs;
   };
   for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;
     const firstNew = entries.length;
-    const userClockMs = parseCursorRecord(`${agentSessionId}:${lineNumber ?? 0}`, line, carried, entries);
+    const userClockMs = parseCursorRecord(`${agentSessionId}:${lineNumber ?? 0}`, line, readCarriedClockMs, entries);
     if (userClockMs > 0) carriedTimestampMs = userClockMs;
     stampOrigin(entries, firstNew, agentSessionId, byte);
   }
   return entries;
 }
 
+/** The minute mark for an entry stamped from a Cursor clock. None when there is no clock. */
+function minuteMark(ts: number): { tsPrecision?: 'minute' } {
+  return ts > 0 ? { tsPrecision: 'minute' } : {};
+}
+
 /** Parse one line into `entries`. Returns the user turn's own clock, or 0. */
 function parseCursorRecord(
   uuid: string,
   line: string,
-  carried: () => number,
+  readCarriedClockMs: () => number,
   entries: TranscriptEntry[],
 ): number {
   let raw: unknown;
@@ -279,16 +296,16 @@ function parseCursorRecord(
     const text = cursorDisplayedUserText(stored);
     if (!text) return 0;
     const ownClockMs = cursorUserTimestampMs(stored);
-    const ts = ownClockMs > 0 ? ownClockMs : carried();
-    entries.push(ts > 0 ? { kind: 'user', uuid, ts, tsPrecision: 'minute', text } : { kind: 'user', uuid, ts, text });
+    const ts = ownClockMs > 0 ? ownClockMs : readCarriedClockMs();
+    entries.push({ kind: 'user', uuid, ts, ...minuteMark(ts), text });
     return ownClockMs;
   }
 
   if (raw.role === 'assistant') {
     const blocks = assistantBlocks(raw.message.content, uuid);
     if (blocks.length === 0) return 0;
-    const ts = carried();
-    entries.push(ts > 0 ? { kind: 'assistant', uuid, ts, tsPrecision: 'minute', blocks } : { kind: 'assistant', uuid, ts, blocks });
+    const ts = readCarriedClockMs();
+    entries.push({ kind: 'assistant', uuid, ts, ...minuteMark(ts), blocks });
   }
   return 0;
 }
