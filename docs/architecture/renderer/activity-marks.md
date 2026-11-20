@@ -6,6 +6,8 @@ tags: [activity-marks, branding, motion, design]
 sources:
   - resource: src/renderer/components/ActivityMark.tsx
   - resource: src/renderer/components/board/agent-wait.ts
+  - resource: src/renderer/components/board/useActivityReasonTip.ts
+  - resource: src/renderer/components/terminal/TerminalPanel.tsx
   - resource: src/renderer/components/IconSlot.tsx
   - resource: src/renderer/utils/icon-registry.ts
   - resource: src/renderer/utils/icon-catalog.ts
@@ -55,8 +57,9 @@ has no tooltip, because a person opens the task to read why, and its accessible 
 All four stay amber. The kind comes from the engine's permission reason (`waitKind`, see
 [the activity engine](../activity/activity-engine.md)), and one function picks the mark for every
 surface that draws an agent's: `agentActivityMark` in `components/board/agent-wait.ts`, read by
-`TaskCard`, the Workflows inspector and agent pane, and `monitorActivityMark` (the Agent Monitor's
-cards and list). The state decides a wait is open and the reason only what it is for, because the
+`TaskCard`, the Workflows inspector and agent pane, `monitorActivityMark` (the Agent Monitor's
+cards and list), and the bottom panel's session tab, which asks it through `titleRowMark` over the
+card's own display state, so a tab draws exactly what its card draws. The state decides a wait is open and the reason only what it is for, because the
 reason can lag the state: the web demo seeds states with no reason, and a wait of unknown kind takes
 the bubble, the general "waiting on your answer", as its notification falls back to "Agent needs
 your input".

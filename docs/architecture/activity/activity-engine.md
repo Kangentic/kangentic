@@ -22,12 +22,14 @@ sources:
   - resource: src/renderer/components/board/ActivityReasonTooltip.tsx
   - resource: src/renderer/components/board/activity-reason-text.ts
   - resource: src/renderer/components/board/agent-wait.ts
+  - resource: src/renderer/components/board/useActivityReasonTip.ts
+  - resource: src/renderer/components/terminal/TerminalPanel.tsx
   - resource: src/shared/types.ts
     title: ActivityState, PermissionWaitKind, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode, SessionEvent.waitKind, SessionEvent.launchesSubagent, SessionEvent.expiresAfterMs, SessionEvent.urls, SessionEvent.urlsTitle
 ---
 # Activity engine
 
-Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting the user's answer or approval). This drives the task card spinner, the desktop "task done" notification, the in-app idle toast, idle-timeout suspend, and auto-focus behavior.
+Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting the user's answer or approval). This drives the working ring and waiting marks on the task card and the bottom panel's session tab, the desktop "task done" notification, the in-app idle toast, idle-timeout suspend, and auto-focus behavior.
 
 ## Why this matters
 
@@ -126,7 +128,7 @@ type ActivityState = 'thinking' | 'idle' | 'permission';
 
 Three top-level states:
 
-- **`thinking`** - agent is working. Spinner shown on task card. Notifications NOT fired.
+- **`thinking`** - agent is working. The working ring shows on the task card and its session tab. Notifications NOT fired.
 - **`idle`** - agent is truly done. Notification fires. Auto-focus / auto-suspend can act. The
   desktop notify decision (cooldown, focus gate, active-project gate, title assembly) is owned by
   `src/main/notifications/desktop-notifier.ts`, which listens to `SessionManager`'s own `activity`
@@ -176,7 +178,9 @@ needs-user state. It spans both `idle` and `permission` - a `permission <-> idle
 the original park time rather than resetting it - and is cleared only on returning to `thinking`.
 The renderer uses it to show elapsed wait time ("Idle for 12m") in the TaskCard hover tooltip
 (`formatActivityReasonText` in `src/renderer/components/board/activity-reason-text.ts`, and
-`activityReasonIcon` in `src/renderer/components/board/ActivityReasonTooltip.tsx`).
+`activityReasonIcon` in `src/renderer/components/board/ActivityReasonTooltip.tsx`), assembled by
+`useActivityReasonTip` (`src/renderer/components/board/useActivityReasonTip.ts`), which ticks the
+clock each second while a wait is open. The bottom panel's session tab asks the same hook.
 
 `stopped` is not the engine's either. `SessionManager` adds it to an idle reason while the board has
 stopped the task (`setTaskStopped`, which `automations/stopped-mark.ts` calls from the run log), in
@@ -435,7 +439,7 @@ The resume path now adopts nothing. Any surviving shell-like descendants are ins
 
 ### TaskCard hover tooltip
 
-The activity mark on each task card is wrapped in the app's Tooltip. Its label is `formatActivityReasonText` and it leads with `activityReasonIcon`, one glyph per reason kind: "Running Bash", "2 subagents active", "1 background shell (bdrb9enzm)", "Asking you a question for 2m", "Waiting for your approval for 1m", "Waiting on you for 2m" (a wait of unknown kind), etc. The mark's `aria-label` is the same text, so a screen reader hears the reason once, without hovering.
+The activity mark on each task card, and on each bottom panel session tab (which shows the shell on a second line), is wrapped in the app's Tooltip through the same `useActivityReasonTip`. Its label is `formatActivityReasonText` and it leads with `activityReasonIcon`, one glyph per reason kind: "Running Bash", "2 subagents active", "1 background shell (bdrb9enzm)", "Asking you a question for 2m", "Waiting for your approval for 1m", "Waiting on you for 2m" (a wait of unknown kind), etc. The mark's `aria-label` is the same text, so a screen reader hears the reason once, without hovering.
 
 ### Activity Engine Debug Overlay (Developer settings tab)
 
