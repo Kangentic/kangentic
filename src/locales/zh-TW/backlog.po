@@ -20,6 +20,11 @@ msgstr "{duplicateCount} 個已在待辦清單中"
 msgid "{failedServer} is not a GitLab instance."
 msgstr "{failedServer} 不是 GitLab 執行個體。"
 
+#: src/renderer/components/backlog/view/BacklogLabels.tsx
+#, fuzzy
+msgid "{hiddenCount, plural, one {# more label} other {# more labels}}"
+msgstr "{hiddenCount, plural, other {還有 # 個標籤}}"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "{importedCount} imported"
 msgstr "已匯入 {importedCount} 個"

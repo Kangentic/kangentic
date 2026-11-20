@@ -16,6 +16,8 @@ const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const PROJECT_ID = 'list-columns-proj';
 
 const NEWEST_TITLE = 'Edited two hours ago';
+const FOLDED_LABELS = ['investigation', 'mcp', 'multi-agent', 'agent-adapter'];
+const LONG_LABEL = 'infrastructure-and-self-hosting-follow-ups';
 
 function seedScript(): string {
   return `
@@ -32,20 +34,25 @@ function seedScript(): string {
           { label: 'Urgent', color: '#ef4444' },
           { label: 'Waiting on vendor response', color: '#14b8a6' },
         ],
+        // A colored label is drawn wider (medium weight and a border); the fit must count that.
+        labelColors: { '${FOLDED_LABELS[0]}': '#3b82f6' },
       });
       state.projects.push({ id: '${PROJECT_ID}', name: 'list-columns', path: '/mock/list-columns', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: hoursAgo(0), created_at: hoursAgo(0) });
       state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
         state.swimlanes.push(Object.assign({}, swimlane, { id: 'list-lane-' + index, position: index, created_at: hoursAgo(0) }));
       });
+      var description = 'A description long enough to fill the title column on a narrow window.';
       var rows = [
-        { title: 'Filed in spring, untouched', priority: 2, created: 4000, updated: 4000 },
+        // More labels than the column holds: two show, the rest fold into a chip.
+        { title: 'Filed in spring, untouched', priority: 2, created: 4000, updated: 4000, description: description, labels: ['${FOLDED_LABELS.join("', '")}'] },
         // Created most recently and never edited: newest by Created, but not by Updated, so the
         // Updated column's order differs from what a sort on created_at would give.
-        { title: 'Waiting on a vendor', priority: 5, created: 100, updated: 100 },
-        { title: '${NEWEST_TITLE}', priority: 0, created: 2000, updated: 2 },
+        { title: 'Waiting on a vendor', priority: 5, created: 100, updated: 100, description: description, labels: ['${LONG_LABEL}'] },
+        // No description: still as tall as the rows that have one.
+        { title: '${NEWEST_TITLE}', priority: 0, created: 2000, updated: 2, description: '', labels: ['bug'] },
       ];
       rows.forEach(function (row, index) {
-        state.backlogTasks.push({ id: 'list-item-' + index, title: row.title, description: 'A description long enough to fill the title column on a narrow window.', priority: row.priority, labels: [], position: index, assignee: null, due_date: null, item_type: null, external_id: null, external_source: null, external_url: null, sync_status: null, external_metadata: null, attachment_count: 0, created_at: hoursAgo(row.created), updated_at: hoursAgo(row.updated) });
+        state.backlogTasks.push({ id: 'list-item-' + index, title: row.title, description: row.description, priority: row.priority, labels: row.labels, position: index, assignee: null, due_date: null, item_type: null, external_id: null, external_source: null, external_url: null, sync_status: null, external_metadata: null, attachment_count: 0, created_at: hoursAgo(row.created), updated_at: hoursAgo(row.updated) });
       });
       return { currentProjectId: '${PROJECT_ID}' };
     });
@@ -89,6 +96,62 @@ test('backlog table columns', async () => {
     const { pillRights, titleLeft } = await readPriorityFit(page);
     expect(pillRights).toHaveLength(3);
     for (const right of pillRights) expect(right).toBeLessThanOrEqual(titleLeft + 1);
+  });
+
+  await test.step('labels stay on one line, every row is one height, and the rest fold into a +N chip', async () => {
+    const layout = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('[data-testid="backlog-task-row"]'));
+      const cells = Array.from(document.querySelectorAll('[data-testid="backlog-labels"]'));
+      return {
+        rowHeights: rows.map((row) => row.getBoundingClientRect().height),
+        cells: cells.map((cell) => {
+          const cellRect = cell.getBoundingClientRect();
+          const pills = Array.from(cell.children).map((pill) => pill.getBoundingClientRect());
+          return { right: cellRect.right, tops: pills.map((rect) => rect.top), rights: pills.map((rect) => rect.right) };
+        }),
+      };
+    });
+    expect(layout.rowHeights).toHaveLength(3);
+    expect(Math.max(...layout.rowHeights) - Math.min(...layout.rowHeights)).toBeLessThanOrEqual(1);
+    expect(layout.cells).toHaveLength(3);
+    for (const cell of layout.cells) {
+      expect(Math.max(...cell.tops) - Math.min(...cell.tops)).toBeLessThanOrEqual(1);
+      for (const right of cell.rights) expect(right).toBeLessThanOrEqual(cell.right + 1);
+    }
+
+    const foldedRow = page.locator('[data-testid="backlog-task-row"]', { hasText: 'Filed in spring' });
+    const chip = foldedRow.locator('[data-testid="backlog-labels-more"]');
+    await expect(chip).toHaveText('+2');
+    await expect(chip).toHaveAccessibleName('2 more labels');
+    await expect(chip).toHaveAccessibleDescription(FOLDED_LABELS.slice(2).join(', '));
+    // The chip is the next Tab stop after the row's checkbox, and Tab opens its tip at once.
+    await foldedRow.locator('[data-testid="backlog-task-checkbox"]').focus();
+    await page.keyboard.press('Tab');
+    await expect(chip).toBeFocused();
+    await expect(page.locator('[data-tooltip]')).toHaveText(FOLDED_LABELS.slice(2).join(', '));
+    await chip.blur();
+
+    const longRow = page.locator('[data-testid="backlog-task-row"]', { hasText: 'Waiting on a vendor' });
+    const longText = longRow.locator('[data-testid="backlog-labels"] .truncate');
+    expect(await longText.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await longText.hover();
+    await expect(page.locator('[data-tooltip]')).toHaveText(LONG_LABEL);
+    await page.mouse.move(0, 0);
+
+    // A label that fits has no truncating span and no tip of its own.
+    const shortRow = page.locator('[data-testid="backlog-task-row"]', { hasText: NEWEST_TITLE });
+    await expect(shortRow.locator('[data-testid="backlog-labels"] .truncate')).toHaveCount(0);
+
+    // The Labels column is about 260px wide (LABELS_WIDTH_PX), give or take rounding.
+    const labelsHeader = page.locator('th', { hasText: /^\s*labels\s*$/i });
+    const headerWidth = await labelsHeader.evaluate((element) => element.getBoundingClientRect().width);
+    expect(Math.abs(headerWidth - 260)).toBeLessThanOrEqual(2);
+
+    // A row with no description is as tall as its Title cell's reserved minimum, never shorter
+    // than a described row's title cell.
+    const titleCellHeight = (row: typeof shortRow, title: string) => row.locator('td', { hasText: title }).first().evaluate((element) => element.getBoundingClientRect().height);
+    const describedHeight = await titleCellHeight(foldedRow, 'Filed in spring');
+    expect(await titleCellHeight(shortRow, NEWEST_TITLE)).toBeGreaterThanOrEqual(describedHeight - 1);
   });
 
   await test.step('None draws an empty meter, named for the level', async () => {
