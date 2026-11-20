@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react';
-import { Activity, ChevronDown, ChevronUp, LoaderCircle } from 'lucide-react';
+import { Activity, ChevronDown, ChevronUp } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
@@ -10,14 +10,17 @@ import { ActivityLog } from './ActivityLog';
 import { ContextBar } from './ContextBar';
 import { IsolatedBadge } from '../IsolatedBadge';
 import { Tooltip } from '../Tooltip';
+import { ActivityMark } from '../ActivityMark';
+import { titleRowMark } from '../board/agent-wait';
+import { useActivityReasonTip } from '../board/useActivityReasonTip';
+import { useTaskProgress } from '../../utils/task-progress';
 import { slugify } from '../../utils/slugify';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { derivePanelSessions } from '../../utils/panel-sessions';
 import { derivePanelSessionId } from '../../utils/focused-sessions';
 import { isEveryPanelSessionDetached } from '../../utils/terminal-force-collapse';
 import { ACTIVITY_TAB } from '../../../shared/types';
-import type { ActivityState } from '../../../shared/types';
-import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
+import type { ActivityState, Session } from '../../../shared/types';
 
 interface TerminalPanelProps {
   collapsed?: boolean;
@@ -41,7 +44,6 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
   const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
   const remoteDetailTaskIds = useSessionStore((s) => s.remoteDetailTaskIds);
-  const markSingleIdleSessionSeen = useSessionStore((s) => s.markSingleIdleSessionSeen);
   const mobileTerminalStreamedSessionIds = useSessionStore((s) => s.mobileTerminalStreamedSessionIds);
 
   // Which sessions the panel shows a tab for. `active` is every running,
@@ -82,18 +84,6 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
       }, [activeSessionIdSet]),
     ),
   );
-  const seenIdleSessions = useSessionStore(
-    useShallow(
-      useCallback((s) => {
-        const result: Record<string, boolean> = {};
-        for (const id of activeSessionIdSet) {
-          if (s.seenIdleSessions[id]) result[id] = s.seenIdleSessions[id];
-        }
-        return result;
-      }, [activeSessionIdSet]),
-    ),
-  );
-
   const showActivityTab = visibleSessions.length >= 1;
 
   // Resolve the effective active ID: must be a visible tab, or the ACTIVITY_TAB
@@ -129,13 +119,6 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
       setActiveSession(effectiveActiveId);
     }
   }, [selectionDetached, effectiveActiveId, activeSessionId, setActiveSession]);
-
-  // Mark the active session as seen when it becomes the selected tab
-  useEffect(() => {
-    if (effectiveActiveId && effectiveActiveId !== ACTIVITY_TAB && requiresUserInteraction(sessionActivity[effectiveActiveId])) {
-      markSingleIdleSessionSeen(effectiveActiveId);
-    }
-  }, [effectiveActiveId, sessionActivity, markSingleIdleSessionSeen]);
 
   const tasks = useBoardStore((s) => s.tasks);
 
@@ -180,8 +163,10 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
     <div className="h-full flex flex-col bg-surface">
       {/* Tab bar. `data-no-dismiss` is DEFENSIVE here, not a live fix: today the tabs, the
           `cursor-pointer` spacer and the toggle tile the whole row (tab buttons and the toggle
-          both compute to 28px - `py-1.5` around a 16px line box - so the strip leaves no band
-          above or below itself), and every one of them is already excluded. What is not
+          are a fixed `h-7`, 28px, so the strip leaves no band above or below itself), and every
+          one of them is already excluded. The height is fixed rather than padded around the
+          16px line box because the 17px Isolated badge grew a padded tab to 29px and the row
+          to 30px, leaving every other tab's selected fill half a pixel short of the row. What is not
           structural is that the spacer and the toggle are BOTH conditional on
           `onToggleCollapse`: a second mount site that omits it would expose the entire
           right-hand remainder as dead space directly above a live terminal. AppLayout is the
@@ -195,7 +180,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             <button
               data-testid="terminal-activity-tab"
               onClick={() => setActiveSession(ACTIVITY_TAB)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-edge transition-colors whitespace-nowrap ${
+              className={`flex items-center gap-1.5 h-7 px-3 text-xs border-r border-edge transition-colors whitespace-nowrap ${
                 isActivityActive
                   ? 'bg-surface-raised text-fg'
                   : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-raised/50'
@@ -206,44 +191,17 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             </button>
           )}
 
-          {visibleSessions.map((session) => {
-            const label = taskLabelMap.get(session.id) || session.taskId.slice(0, 8);
-            // Null/undefined is the Main session; a swimlane id means this is a
-            // separate, context-isolated session for that column.
-            const isIsolated = session.isolatedSwimlaneId != null;
-            // The tab shows its label and the Isolated badge (which has its own
-            // tip), so the tip is only the shell: the context bar names it for
-            // the active tab alone.
-            return (
-              <Tooltip key={session.id} label={shellDisplayName(session.shell, { onHost: projectOnHost })}>
-                <button
-                  data-testid="terminal-session-tab"
-                  data-session-id={session.id}
-                  onClick={() => selectActiveSession(session.id)}
-                  onDoubleClick={() => setDetailTaskId(session.taskId)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-edge transition-colors whitespace-nowrap ${
-                    effectiveActiveId === session.id
-                      ? 'bg-surface-raised text-fg'
-                      : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-raised/50'
-                  }`}
-                >
-                  {session.status === 'running' && isActive(sessionActivity[session.id]) ? (
-                    <LoaderCircle size={8} className="text-active animate-spin" />
-                  ) : session.status === 'running' && requiresUserInteraction(sessionActivity[session.id]) ? (
-                    <div className={`w-1.5 h-1.5 rounded-full bg-attention${
-                      effectiveActiveId !== session.id && !seenIdleSessions[session.id] ? ' animate-pulse' : ''
-                    }`} />
-                  ) : (
-                    <div className={`w-1.5 h-1.5 rounded-full ${
-                      session.status === 'running' ? 'bg-active' : 'bg-fg-faint'
-                    }`} />
-                  )}
-                  {label}
-                  {isIsolated && <IsolatedBadge data-testid="terminal-tab-isolated-badge" />}
-                </button>
-              </Tooltip>
-            );
-          })}
+          {visibleSessions.map((session) => (
+            <SessionTab
+              key={session.id}
+              session={session}
+              label={taskLabelMap.get(session.id) || session.taskId.slice(0, 8)}
+              selected={effectiveActiveId === session.id}
+              shellName={shellDisplayName(session.shell, { onHost: projectOnHost })}
+              onSelect={selectActiveSession}
+              onOpenDetail={setDetailTaskId}
+            />
+          ))}
         </div>
 
         {/* Clickable spacer fills remaining tab bar space */}
@@ -263,7 +221,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
           <Tooltip label={toggleLabel} keys="view.toggleTerminalPanel">
             <button
               onClick={onToggleCollapse}
-              className="flex items-center justify-center px-2 py-1.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
+              className="flex items-center justify-center h-7 px-2 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
               aria-label={toggleLabel}
             >
               {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -354,5 +312,58 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
         </>
       )}
     </div>
+  );
+}
+
+interface SessionTabProps {
+  session: Session;
+  /** The task's slug, the tab's visible label. */
+  label: string;
+  selected: boolean;
+  /** The shell's display name, the tip's last line. */
+  shellName: string;
+  onSelect: (sessionId: string) => void;
+  onOpenDetail: (taskId: string) => void;
+}
+
+/**
+ * One session's tab. It draws the mark its task's board card draws in its title
+ * row, from the same display state (`useTaskProgress`, then `titleRowMark`), so a
+ * tab can never show a state its card does not, and its tip leads with the card's
+ * own reason text and glyph (`useActivityReasonTip`), with the shell on the line
+ * below. There is no pulse: the card has none.
+ *
+ * ONE `ActivityMark` at one JSX position in every state, so a state change is a
+ * mark flip, as on the card: no element-type swap, so no `IconSlot`. A component
+ * of its own so a waiting tab's per-second tick re-renders this tab alone.
+ */
+function SessionTab({ session, label, selected, shellName, onSelect, onOpenDetail }: SessionTabProps) {
+  const displayState = useTaskProgress(session.taskId, session.id);
+  const activityReason = useSessionStore((state) => state.sessionActivityReason[session.id]);
+  const { mark, isIdle, isThinking, toneClass } = titleRowMark(displayState, activityReason);
+  const { tipText, icon, accessibleName } = useActivityReasonTip({ activityReason, isIdle, isThinking });
+  // The two lines are each already translated; the Tooltip keeps the newline.
+  const tipLabel = tipText ? [tipText, shellName].join('\n') : shellName;
+  // Null is the Main session; a swimlane id means this is a separate,
+  // context-isolated session for that column.
+  const isIsolated = session.isolatedSwimlaneId != null;
+  return (
+    <Tooltip label={tipLabel} icon={icon}>
+      <button
+        data-testid="terminal-session-tab"
+        data-session-id={session.id}
+        onClick={() => onSelect(session.id)}
+        onDoubleClick={() => onOpenDetail(session.taskId)}
+        className={`flex items-center gap-1.5 h-7 px-3 text-xs border-r border-edge transition-colors whitespace-nowrap ${
+          selected
+            ? 'bg-surface-raised text-fg'
+            : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-raised/50'
+        }`}
+      >
+        <ActivityMark mark={mark} size={14} className={`${toneClass} shrink-0`} aria-label={accessibleName} />
+        {label}
+        {isIsolated && <IsolatedBadge data-testid="terminal-tab-isolated-badge" />}
+      </button>
+    </Tooltip>
   );
 }

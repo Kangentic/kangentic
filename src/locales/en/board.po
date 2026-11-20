@@ -252,7 +252,7 @@ msgstr "Edit {columnName} column"
 msgid "Folder missing"
 msgstr "Folder missing"
 
-#: src/renderer/components/board/task-card-view.tsx
+#: src/renderer/components/board/useActivityReasonTip.ts
 msgctxt "Agent status"
 msgid "Idle"
 msgstr "Idle"
@@ -475,7 +475,7 @@ msgid "The terminal could not start. Its window shows why."
 msgstr "The terminal could not start. Its window shows why."
 
 #: src/renderer/components/board/activity-reason-text.ts
-#: src/renderer/components/board/task-card-view.tsx
+#: src/renderer/components/board/useActivityReasonTip.ts
 msgctxt "Agent status"
 msgid "Thinking"
 msgstr "Thinking"

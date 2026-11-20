@@ -179,7 +179,6 @@ interface ResetSnapshot {
   sessionActivity: Record<string, ActivityState>;
   sessionFirstOutput: Record<string, boolean>;
   sessionEvents: Record<string, SessionEvent[]>;
-  seenIdleSessions: Record<string, boolean>;
 }
 
 test.describe('ContextBar model/effort popover', () => {
@@ -220,7 +219,6 @@ test.describe('ContextBar model/effort popover', () => {
         sessionActivity: clone(session.sessionActivity),
         sessionFirstOutput: clone(session.sessionFirstOutput),
         sessionEvents: clone(session.sessionEvents),
-        seenIdleSessions: clone(session.seenIdleSessions),
       };
     });
   });
@@ -265,7 +263,6 @@ test.describe('ContextBar model/effort popover', () => {
         sessionActivity: snapshot.sessionActivity,
         sessionFirstOutput: snapshot.sessionFirstOutput,
         sessionEvents: snapshot.sessionEvents,
-        seenIdleSessions: snapshot.seenIdleSessions,
       }, false);
       const w = window as unknown as {
         __mockSetRuntimeOverrideCalls?: unknown[];

@@ -264,8 +264,6 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           }
         }
 
-        useSessionStore.getState().markIdleSessionsSeen(currentProject.id);
-
         // Open task detail dialog if a notification click set a pending task ID
         const pendingTaskId = useSessionStore.getState()._pendingOpenTaskId;
         if (pendingTaskId) {
@@ -369,7 +367,6 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
             useSessionStore.getState().setPendingOpenTaskId(null);
             return;
           }
-          useSessionStore.getState().markIdleSessionsSeen(currentProject.id);
 
           // Restore the last user-selected task tab for this project.
           // If the task no longer has a running session, fall through and

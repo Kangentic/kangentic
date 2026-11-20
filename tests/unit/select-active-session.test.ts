@@ -120,7 +120,6 @@ function resetStores(options: { currentProjectId?: string } = {}): void {
     sessionFirstOutput: {},
     sessionActivity: {},
     sessionEvents: {},
-    seenIdleSessions: {},
     pendingCommandLabel: {},
     spawnProgress: {},
     _pendingOpenTaskId: null,

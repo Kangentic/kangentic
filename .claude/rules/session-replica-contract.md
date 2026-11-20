@@ -53,8 +53,8 @@ a black terminal with a populated context bar instead of the edit form.
   other's job. `removeSession` is the one push-driven writer that takes a row OUT.
 - **Forgetting a session forgets everything keyed on it.** Dropping rows by id goes through
   `withoutSessions` / `withoutSessionsIndexed` (`session-index.ts`), which also scrub `sessionUsage`,
-  `sessionActivity`, `sessionActivityReason`, `sessionEvents`, `sessionFirstOutput`,
-  `seenIdleSessions`, and `sessionMessageTrails`, and clear a matching `activeSessionId`. Dropping
+  `sessionActivity`, `sessionActivityReason`, `sessionEvents`, `sessionFirstOutput`, and
+  `sessionMessageTrails`, and clear a matching `activeSessionId`. Dropping
   rows by task goes through `withoutSessionsForTasks`. No writer filters `sessions` by hand and
   leaves the index or a map behind.
 - **A sync never resurrects and never drops what arrived in its gap.** `syncSessions` skips a

@@ -40,7 +40,6 @@ function makeSliceStore(initial: Record<string, TransientSessionEntry>) {
     sessionActivity: {},
     sessionActivityReason: {},
     sessionEvents: {},
-    seenIdleSessions: {},
     sessionMessageTrails: {},
     commandBarVisible: false,
   };

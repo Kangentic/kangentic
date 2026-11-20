@@ -346,7 +346,6 @@ function assertConverged(main: MainModel, seed: number): void {
     ['sessionActivityReason', state.sessionActivityReason],
     ['sessionEvents', state.sessionEvents],
     ['sessionFirstOutput', state.sessionFirstOutput],
-    ['seenIdleSessions', state.seenIdleSessions],
     ['sessionMessageTrails', state.sessionMessageTrails],
   ];
   for (const [name, map] of keyedMaps) {
@@ -368,7 +367,6 @@ function resetStore(): void {
     sessionActivity: {},
     sessionActivityReason: {},
     sessionEvents: {},
-    seenIdleSessions: {},
     sessionMessageTrails: {},
     spawnProgress: {},
     pendingCommandLabel: {},

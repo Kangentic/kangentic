@@ -1,8 +1,8 @@
 /**
  * Late-bound session-store handlers for project lifecycle events.
  *
- * `project-store` has to tell the session store when a project is deleted or
- * opened. Importing the session store to do it closes an import CYCLE, because
+ * `project-store` has to tell the session store when a project is deleted.
+ * Importing the session store to do it closes an import CYCLE, because
  * `session-store` imports `project-store` for the current project id (see
  * `.claude/rules/project-scoped-ipc.md` - every renderer-driven mutation stamps
  * it). Both sides only ever call `getState()`, so the cycle is harmless at
@@ -16,7 +16,7 @@
  *
  * A full page reload destroys every live Browser pane `<webview>` guest (and
  * every `import.meta.hot.data` pin), so saving an unrelated store slice reset an
- * agent's browser mid-task. Routing these two calls through this module removes
+ * agent's browser mid-task. Routing the call through this module removes
  * the only cycle in the renderer store graph, so the same edit hot-updates
  * instead. Verified with `scripts/hmr-guest-probe.mjs`.
  *
@@ -29,8 +29,6 @@
 interface SessionLifecycleHooks {
   /** Tear down the project's Command Terminal (transient) PTYs. */
   killTransientSessionForProject: (projectId: string) => Promise<void>;
-  /** Clear the project's unseen-idle badges now that the user is looking at it. */
-  markIdleSessionsSeen: (projectId: string) => void;
 }
 
 // The directive has to sit on the line DIRECTLY above the declaration: the
@@ -51,8 +49,4 @@ export function registerSessionLifecycleHooks(hooks: SessionLifecycleHooks): voi
  */
 export function killTransientSessionForProject(projectId: string): void {
   registeredHooks?.killTransientSessionForProject(projectId).catch(() => {});
-}
-
-export function markIdleSessionsSeen(projectId: string): void {
-  registeredHooks?.markIdleSessionsSeen(projectId);
 }

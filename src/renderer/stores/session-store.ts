@@ -1,6 +1,5 @@
 import { create, type StateCreator } from 'zustand';
 import { ACTIVITY_TAB, type Session, type SessionUsage, type SessionEvent } from '../../shared/types';
-import { requiresUserInteraction, isActive } from '../../shared/activity-state';
 import { reportRendererFailure } from '../utils/renderer-failure';
 import { useProjectStore } from './project-store';
 import { useConfigStore } from './config-store';
@@ -305,7 +304,6 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   sessionActivityReason: {},
   sessionMessageTrails: {},
   sessionEvents: {},
-  seenIdleSessions: {},
   queueSnapshot: { columns: [], global: [] },
   pendingCommandLabel: preservedPendingCommandLabel,
   spawnProgress: preservedSpawnProgress,
@@ -845,12 +843,6 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       if (reason !== undefined) {
         updates.sessionActivityReason = { ...s.sessionActivityReason, [sessionId]: reason };
       }
-      // When the session resumes active work, remove from seen so the next
-      // idle/permission pause notifies fresh.
-      if (isActive(state)) {
-        const { [sessionId]: _removed, ...rest } = s.seenIdleSessions;
-        updates.seenIdleSessions = rest;
-      }
       return updates;
     });
   },
@@ -941,26 +933,6 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     }
   },
 
-  markIdleSessionsSeen: (projectId) => {
-    const { sessions, sessionActivity, seenIdleSessions } = get();
-    const idleSessionIds = sessions
-      .filter((s) => s.projectId === projectId && s.status === 'running' && requiresUserInteraction(sessionActivity[s.id]))
-      .map((s) => s.id);
-    if (idleSessionIds.length === 0) return;
-    const updated = { ...seenIdleSessions };
-    for (const id of idleSessionIds) {
-      updated[id] = true;
-    }
-    set({ seenIdleSessions: updated });
-  },
-
-  markSingleIdleSessionSeen: (sessionId) => {
-    const { sessionActivity, seenIdleSessions } = get();
-    if (requiresUserInteraction(sessionActivity[sessionId]) && !seenIdleSessions[sessionId]) {
-      set({ seenIdleSessions: { ...seenIdleSessions, [sessionId]: true } });
-    }
-  },
-
   getRunningCount: () => get().sessions.filter((s) => s.status === 'running').length,
   getQueuedCount: () => get().sessions.filter((s) => s.status === 'queued').length,
   setQueueSnapshot: (snapshot) => set({ queueSnapshot: snapshot }),
@@ -993,15 +965,13 @@ if (preservedSessionStore) refreshPinnedStore(preservedSessionStore, sessionStor
 
 export const useSessionStore = preservedSessionStore ?? createSessionStore();
 
-// Hand project-store the two session actions it needs, rather than letting it
+// Hand project-store the session action it needs, rather than letting it
 // import this module. That import used to close the renderer store graph's only
 // cycle, and Vite answers a circular-import invalidate with a full page reload -
 // which destroys every live Browser pane guest. See ./session-lifecycle-hooks.ts.
 registerSessionLifecycleHooks({
   killTransientSessionForProject: (projectId) =>
     useSessionStore.getState().killTransientSessionForProject(projectId),
-  markIdleSessionsSeen: (projectId) =>
-    useSessionStore.getState().markIdleSessionsSeen(projectId),
 });
 
 // Must stay BELOW the declaration above, in its own block: the dispose block

@@ -133,7 +133,6 @@ function seedLiveAgent(): void {
     sessionActivity: { [SESSION_ID]: 'thinking', [OTHER_SESSION_ID]: 'idle' },
     sessionActivityReason: { [SESSION_ID]: { kind: 'turn-active' }, [OTHER_SESSION_ID]: { kind: 'idle', since: 1 } },
     sessionEvents: { [SESSION_ID]: [{ ts: 1, type: 'idle', detail: 'x' }], [OTHER_SESSION_ID]: [] },
-    seenIdleSessions: { [SESSION_ID]: true },
     sessionMessageTrails: { [SESSION_ID]: [{ uuid: 'u1', ts: 1, text: 'last words' }] },
     spawnProgress: {},
     pendingCommandLabel: {},
@@ -155,14 +154,13 @@ function keyedEntriesFor(sessionId: string): Record<string, boolean> {
     activity: sessionId in state.sessionActivity,
     activityReason: sessionId in state.sessionActivityReason,
     events: sessionId in state.sessionEvents,
-    seenIdle: sessionId in state.seenIdleSessions,
     messageTrail: sessionId in state.sessionMessageTrails,
   };
 }
 
 const NONE_HELD = {
   usage: false, firstOutput: false, activity: false, activityReason: false,
-  events: false, seenIdle: false, messageTrail: false,
+  events: false, messageTrail: false,
 };
 
 // The task window's line under Resume reads this on its first paused paint

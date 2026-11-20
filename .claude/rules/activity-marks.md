@@ -73,16 +73,19 @@ measurements, and the upstream geometry history live in
   speech bubble (`agent-question`) for a question or a wait whose kind the agent did not report,
   and the quartered shield (`agent-approval`) for a tool or plan to approve. Every surface that
   draws an agent's mark asks that one function (TaskCard, the Workflows inspector and agent pane,
-  `monitorActivityMark`). The sidebar count and the Monitor's Idle tile keep the envelope for all
+  `monitorActivityMark`). The bottom panel's session tab asks it through `titleRowMark`, over the
+  card's own `useTaskProgress` state, so a tab draws exactly what its task's card draws in its title
+  row. The sidebar count and the Monitor's Idle tile keep the envelope for all
   four waits. The shield's ink is 18 by 20; it renders at the same size.
 - **There is no `-rest` mark.** Rest is the `-idle` geometry in a muted tone. `data-rest` on the
   root is the reduced-motion strategy (`static` / `keep-dash` / `drop-dash`), NOT a tone, and only
   the web build applies it. Test selectors key off `data-mark`.
 - **Sizes are fixed by role.** Two keylines: 18 for indicators, 20 for controls. Size floors are
-  12 for indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot stays
-  lucide. Control marks render at size 20, indicators at 16 (`TaskCard`, both sidebar
-  components, and the Workflows tab in `ViewToggle`). Move the sidebar's two indicator components
-  together or the row goes ragged.
+  12 for indicators and 16 for controls. Control marks render at size 20, indicators at 16
+  (`TaskCard`, both sidebar components, and the Workflows tab in `ViewToggle`), 14 in
+  `TerminalPanel`'s session tabs, where the mark sits beside 12px text (its ring is 10.5px against
+  the label's 9px capitals), and 12 in an activity reason's tip. Move the sidebar's two indicator
+  components together or the row goes ragged.
 - **lucide stays everywhere else** (140+ files). Column icon names are persisted as kebab-case
   strings in the DB, so `utils/icon-registry.ts` resolves them, loading lucide's whole glyph map
   lazily (`ui-conventions.md`, Icons).
@@ -117,7 +120,8 @@ Renderer code that renders an activity mark. `IconSlot` has been adopted at `Sto
 `PauseButtonIcon`, `MonitorCard`'s `StateGlyph`, and `ViewToggle`'s Workflows tab, which swaps its
 count pill for the working mark and passes `grow` so a 2-digit pill can widen the slot. That is
 what has been ADOPTED, not where the hazard exists: `MonitorTable`'s `StateCell` (inside
-`DataTable`'s clickable `<tr>`) and `TerminalPanel`'s session-tab glyph have the same
-element-type swap and are still unwrapped.
+`DataTable`'s clickable `<tr>`) has the same element-type swap and is still unwrapped.
 `TaskCard` is a mark flip only, with its reason in a Tooltip around the mark, so it is
-deliberately not a slot candidate. Does not govern lucide icons, which stay everywhere else.
+deliberately not a slot candidate. `TerminalPanel`'s session tab is the same: one `ActivityMark`
+in every state, with its reason in the tab's Tooltip. Does not govern lucide icons, which stay
+everywhere else.
