@@ -64,6 +64,49 @@ describe('readClaudeCachedUsage', () => {
     expect(windows?.map((window) => window.usedPercentage)).toEqual([100, 0]);
   });
 
+  // Task #1147, measured on 2.1.330 with a spent weekly allowance: the status line read 99 while
+  // the cache's `limits[]` marked the weekly window spent. The entries keep the real shape.
+  describe('a window Claude marks spent', () => {
+    const resetsAt = '2027-01-18T00:00:00.021680+00:00';
+    function limit(kind: string, isActive: boolean, scope: unknown = null, percent: unknown = 100): Record<string, unknown> {
+      return { kind, group: 'weekly', percent, severity: 'critical', resets_at: resetsAt, scope, is_active: isActive };
+    }
+    function sevenDayWith(limits: unknown): number | undefined {
+      const state = loadState();
+      state.cachedUsageUtilization.utilization.seven_day = { utilization: 99.4, resets_at: resetsAt };
+      (state.cachedUsageUtilization.utilization as Record<string, unknown>).limits = limits;
+      return windowsOf(state, state.cachedUsageUtilization.fetchedAtMs)?.find((window) => window.id === 'seven-day')?.usedPercentage;
+    }
+
+    it('reads an active account-wide weekly limit as full', () => {
+      expect(sevenDayWith([limit('weekly_all', true)])).toBe(100);
+    });
+
+    it('leaves the percentage for an inactive limit and for one model\'s limit, which other models can still use', () => {
+      expect(sevenDayWith([limit('weekly_all', false)])).toBe(99.4);
+      expect(sevenDayWith([limit('weekly_scoped', true, { model: { id: null, display_name: 'Fable' }, surface: null })])).toBe(99.4);
+    });
+
+    it('reads the measured limits shape of a spent weekly allowance, with the weekly window full and the session one not', () => {
+      const text = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-state-spent-weekly.json'), 'utf8');
+      const state = JSON.parse(text) as CachedUsageState;
+      const windows = windowsOf(state, state.cachedUsageUtilization.fetchedAtMs);
+      expect(windows?.find((window) => window.id === 'seven-day')?.usedPercentage).toBe(100);
+      expect(windows?.find((window) => window.id === 'five-hour')?.usedPercentage).toBe(12);
+    });
+
+    it('leaves the percentage when the active account-wide limit is itself under 100 or has no numeric percent', () => {
+      expect(sevenDayWith([limit('weekly_all', true, null, 40)])).toBe(99.4);
+      expect(sevenDayWith([limit('weekly_all', true, null, '100')])).toBe(99.4);
+      expect(sevenDayWith([limit('weekly_all', true, null, null)])).toBe(99.4);
+    });
+
+    it('ignores a limits value it does not know', () => {
+      expect(sevenDayWith('weekly_all')).toBe(99.4);
+      expect(sevenDayWith([null, 7, { kind: 'weekly_all', is_active: 'yes', scope: null }])).toBe(99.4);
+    });
+  });
+
   it('names no-windows when utilization is not an object', () => {
     const state = loadState();
     const broken = { cachedUsageUtilization: { fetchedAtMs: state.cachedUsageUtilization.fetchedAtMs, utilization: 'x' } };

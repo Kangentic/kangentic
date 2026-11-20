@@ -63,7 +63,8 @@ soonest goes first) or Manual (your order). In Manual, drag a row by its grip to
 that reports no usage has no reset to sort by, so its list is always in your order and takes a drag
 once it has two accounts. A drag or Switch to on an agent that reports usage sets Manual.
 **Automatically switch accounts at the usage limit** (on by default) lets a task's session that
-reaches 100% continue on the next account in the list. How accounts share history and usage is in
+reaches its usage limit continue on the next account in the list. A resume that starts on a spent
+account moves to the next one too. How accounts share history and usage is in
 [Agent accounts](../integrations/accounts.md).
 
 ## Search

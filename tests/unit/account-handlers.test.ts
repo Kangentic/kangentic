@@ -22,6 +22,7 @@ interface FakeSession {
   status: string;
   accountId: string | null;
   agentName: string;
+  resuming?: boolean;
 }
 
 const hoisted = vi.hoisted(() => ({
@@ -52,6 +53,8 @@ const hoisted = vi.hoisted(() => ({
     checkHome: vi.fn(async () => undefined),
   },
   watchSync: vi.fn(),
+  /** What `getProjectDb` hands out. Null: it throws, as a project with no database would. */
+  projectDb: null as unknown,
   sessionHomes: {} as Record<string, string | null>,
   /** What the handlers gave the session manager to find an account's home with. */
   accountHomeResolver: null as ((accountId: string) => string | null | undefined) | null,
@@ -64,7 +67,14 @@ vi.mock('electron', () => ({
   },
   dialog: { showOpenDialog: vi.fn() },
 }));
-vi.mock('../../src/main/db/database', () => ({ getGlobalDb: () => hoisted.database }));
+vi.mock('../../src/main/db/database', () => ({
+  getGlobalDb: () => hoisted.database,
+  // No session records unless a test sets `projectDb`: a session's opening prompt then reads as none.
+  getProjectDb: () => {
+    if (hoisted.projectDb) return hoisted.projectDb;
+    throw new Error('no project database in this test');
+  },
+}));
 vi.mock('../../src/main/config/paths', () => ({ PATHS: { get configDir() { return hoisted.configDir; } } }));
 vi.mock('../../src/main/accounts/account-report', () => ({
   reportAccountProblem: hoisted.report,
@@ -172,6 +182,8 @@ beforeEach(() => {
   hoisted.accountsConfig = { orderMode: 'manual', autoSwitchAtLimit: true };
   hoisted.adapters = {};
   hoisted.report.mockReset();
+  hoisted.defectReport.mockClear();
+  hoisted.projectDb = null;
   hoisted.refresher.refreshAccount.mockClear();
   hoisted.runner.start.mockReset();
   // A restart that succeeds puts the task's live session on the account it was asked for.
@@ -472,6 +484,78 @@ describe('the continuation at a usage limit', () => {
     expect(hoisted.refresher.refreshAccount.mock.calls.map((call) => (call as unknown[])[0])).toEqual([move.own.id]);
     expect(hoisted.restart).not.toHaveBeenCalled();
   });
+
+  // Task #1147: a resume Claude refused at a spent limit fired no failed turn, only its start.
+  it('decides a resumed task session that starts on a full account, off the event stack', async () => {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    const { own, second } = seedAccounts('move-agent');
+    const resetsAt = Math.floor(Date.now() / 1000) + 86_400;
+    repository.updateUsage(own.id, [{ id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 100, resetsAt }]);
+    addSession({ id: 's-full', taskId: 't-full', agentName: 'move-agent', accountId: own.id, resuming: true });
+    addSession({ id: 's-room', taskId: 't-room', agentName: 'move-agent', accountId: second.id, resuming: true });
+    register();
+
+    sessionManager.emit('event', 's-room', { type: EventType.SessionStart });
+    sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+    // Never on the event's stack: the spawn that emitted it may hold the task's lock.
+    expect(hoisted.refresher.refreshAccount).not.toHaveBeenCalled();
+    await expect.poll(() => hoisted.refresher.refreshAccount.mock.calls.length).toBeGreaterThan(0);
+    // The session on an account with room started first and read nothing: the first read is the
+    // full account's own, made by the decision for the session on it.
+    expect(hoisted.refresher.refreshAccount.mock.calls[0]).toEqual([own.id, true]);
+  });
+
+  /** A resumed session on a full account, with the second account free to take it. */
+  function seedFullResumedSession(): { second: AgentAccount } {
+    hoisted.adapters = { 'move-agent': adapterFor('move-agent') };
+    const { own, second } = seedAccounts('move-agent');
+    const resetsAt = Math.floor(Date.now() / 1000) + 86_400;
+    repository.updateUsage(own.id, [{ id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 100, resetsAt }]);
+    addSession({ id: 's-full', taskId: 't-full', agentName: 'move-agent', accountId: own.id, resuming: true });
+    register();
+    return { second };
+  }
+
+  it('carries the opening prompt from the session record into the move', async () => {
+    const { second } = seedFullResumedSession();
+    // A minimal project database: the repository reads one session row through `prepare().get()`.
+    hoisted.projectDb = { prepare: () => ({ get: () => ({ prompt: 'Read the handoff.' }) }) };
+
+    sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+    await expect.poll(() => hoisted.restart.mock.calls.length).toBeGreaterThan(0);
+
+    expect(hoisted.restart.mock.calls[0][4]).toMatchObject({ phase: 'switching-account', accountId: second.id, resumePrompt: 'Read the handoff.' });
+    expect(hoisted.defectReport).not.toHaveBeenCalled();
+  });
+
+  it('still moves, with no prompt, and reports the failure when the session record cannot be read', async () => {
+    const { second } = seedFullResumedSession();
+
+    sessionManager.emit('event', 's-full', { type: EventType.SessionStart });
+    await expect.poll(() => hoisted.restart.mock.calls.length).toBeGreaterThan(0);
+
+    const options = hoisted.restart.mock.calls[0][4] as { accountId: string; resumePrompt?: string };
+    expect(options.accountId).toBe(second.id);
+    expect(options.resumePrompt).toBeUndefined();
+    expect(hoisted.defectReport).toHaveBeenCalledWith(expect.any(Error), { tags: { stage: 'opening_prompt' } });
+  });
+
+  it('reads nothing at the start of a resumed session of an agent whose conversations stay on their account', async () => {
+    hoisted.adapters = { 'stay-agent': adapterFor('stay-agent', { conversationsStayOnAccount: true }) };
+    const { own } = seedAccounts('stay-agent');
+    const resetsAt = Math.floor(Date.now() / 1000) + 86_400;
+    repository.updateUsage(own.id, [{ id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 100, resetsAt }]);
+    addSession({ id: 's-stay', taskId: 't-stay', agentName: 'stay-agent', accountId: own.id, resuming: true });
+    register();
+
+    sessionManager.emit('event', 's-stay', { type: EventType.SessionStart });
+    // The negative cannot be polled: let the scheduled check run, twice over.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(hoisted.refresher.refreshAccount).not.toHaveBeenCalled();
+    expect(hoisted.restart).not.toHaveBeenCalled();
+  });
 });
 
 describe('keeping Automatic and the tab current', () => {
@@ -537,9 +621,11 @@ describe('keeping Automatic and the tab current', () => {
     expect(hoisted.refresher.refreshAll).toHaveBeenCalledWith('requested');
   });
 
-  it('reads the stale accounts before Automatic ranks them for a spawn', async () => {
+  // Manual reads too (task #1147): it skips a full account, and a reading from before it filled
+  // says it has room.
+  it.each(['automatic', 'manual'] as const)('reads the stale accounts before a spawn chooses one under %s', async (orderMode) => {
     hoisted.adapters = { 'move-agent': adapterFor('move-agent', { readIdleUsage: async () => null }) };
-    hoisted.accountsConfig = { orderMode: 'automatic', autoSwitchAtLimit: true };
+    hoisted.accountsConfig = { orderMode, autoSwitchAtLimit: true };
     const { own, second } = seedAccounts('move-agent');
     register();
     const { resolveSpawnAccount } = await import('../../src/main/accounts/account-service');

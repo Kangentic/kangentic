@@ -5,7 +5,7 @@ import type { AgentAccount, AgentAccountStatus, AgentAccountsCard, AgentAccounts
 import type { RateLimitWindow, ResumeAccountMatch } from '../../shared/types';
 import type { AgentAccountRepository } from '../db/repositories/agent-account-repository';
 import { provisionAccountFolder, type AccountFolderProblemCode } from './account-folder';
-import { automaticOrder, topAccountWithRoom } from './account-order';
+import { automaticOrder, keepFullWindows, topAccountWithRoom } from './account-order';
 import { decideIdentity, duplicateLoginRows, loginFromRead, loginOf, NO_LOGIN, sameLogin, type IdentityDecision, type LoginIdentity } from './account-identity';
 import { readKeyFile } from './key-file';
 import {
@@ -104,8 +104,8 @@ export interface AccountServiceDependencies {
   /** Sends an account problem to error reporting (`account-report.ts`). Absent: nothing is sent. */
   reportProblem?: (problem: AccountProblem, agent: string, facts?: AccountProblemFacts, error?: unknown, tags?: AccountProblemTags) => void;
   /**
-   * Reads the stale or missing readings among an agent's accounts before Automatic ranks them for
-   * a spawn (`AccountUsageRefresher.readBeforeRanking`). Must resolve within its own bound and
+   * Reads the stale or missing readings among an agent's accounts before a spawn ranks them, in
+   * either order mode (`AccountUsageRefresher.readBeforeRanking`). Must resolve within its own bound and
    * never reject. Absent: a spawn ranks on the stored readings.
    */
   readBeforeRanking?: (accounts: readonly AgentAccount[]) => Promise<void>;
@@ -655,20 +655,24 @@ export class AccountService {
       }
     }
     this.emptyUsageReasons.delete(accountId);
-    this.dependencies.repository.updateUsage(accountId, windows);
+    // A full window the row holds stays full until its reset (`keepFullWindows`). Read again: a
+    // live report may have landed while the CLI ran.
+    const stored = this.dependencies.repository.getById(accountId)?.lastUsage ?? [];
+    this.dependencies.repository.updateUsage(accountId, keepFullWindows(stored, windows, this.nowSeconds()));
     this.changed();
     return true;
   }
 
   /**
-   * Before Automatic ranks an agent's accounts for a spawn: reads every account whose reading is
-   * missing or stale (`needsReadBeforeRanking`), so the order is never decided from a reading that
-   * has run out. Bounded by the reader. Nothing for Manual, an agent with one account, or an agent
-   * whose accounts cannot be read idle.
+   * Before a spawn ranks an agent's accounts: reads every account whose reading is missing or stale
+   * (`needsReadBeforeRanking`), so the choice is never made from a reading that has run out.
+   * Manual reads too: it skips a full account, and a reading from before the account filled says
+   * it has room. Bounded by the reader. Nothing for an agent with one account, one that reports no
+   * usage, or one whose accounts cannot be read idle.
    */
   private async readBeforeRanking(agent: string): Promise<void> {
     const readStaleAccounts = this.dependencies.readBeforeRanking;
-    if (!readStaleAccounts || this.dependencies.readConfig().orderMode !== 'automatic' || !this.followsOrderMode(agent)) return;
+    if (!readStaleAccounts || !this.followsOrderMode(agent)) return;
     const support = this.dependencies.getAdapter(agent)?.accounts;
     if (support?.kind !== 'folder' || !support.readIdleUsage) return;
     const accounts = this.dependencies.repository.listForAgent(agent);
@@ -893,7 +897,8 @@ export class AccountService {
   /**
    * Keep each account's latest windows from a live report (stamped with `accountId` by main), so
    * the Accounts tab and Automatic order read usage with no session running. A window the report
-   * leaves out keeps its last value. Writes only on a change: status reports repeat every few
+   * leaves out keeps its last value, and a full window keeps 100 until its reset whatever a later
+   * report says (`keepFullWindows`). Writes only on a change: status reports repeat every few
    * seconds. Returns the ids of the accounts it changed.
    */
   recordUsage(windows: readonly RateLimitWindow[] | undefined): string[] {
@@ -912,7 +917,7 @@ export class AccountService {
       // home's new login, which its own row reads once the session is re-pointed.
       if (!account || account.status === 'replaced') continue;
       const previous = account.lastUsage ?? [];
-      const next = mergeUsage(previous, reported);
+      const next = keepFullWindows(previous, mergeUsage(previous, reported), this.nowSeconds());
       if (sameUsage(previous, next)) continue;
       this.dependencies.repository.updateUsage(accountId, next);
       changed.push(accountId);
@@ -937,8 +942,8 @@ export class AccountService {
     // The agent's own login is account #1, so its sessions are recorded against it too and its
     // usage lands on its row. Its env is empty: the spawn is exactly what it was before accounts.
     this.ensureDefaultAccount(agent);
-    // A named account needs no ranking. Otherwise Automatic reads what has run out first, which
-    // also covers a spawn at boot, before the first scheduled read.
+    // A named account needs no ranking. Otherwise what has run out is read first, in either order
+    // mode, which also covers a spawn at boot, before the first scheduled read.
     if (!overrideAccountId) await this.readBeforeRanking(agent);
     const ordered = this.ordered(agent);
     if (ordered.length === 1 && ordered[0].kind === 'default' && !overrideAccountId) {

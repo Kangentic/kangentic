@@ -514,12 +514,18 @@ describe('AccountService.resolveForSpawn under Automatic', () => {
     expect(resolved?.id).toBe(own.id);
   });
 
-  it('reads nothing under Manual, or for a named account', async () => {
+  it('reads nothing for a named account', async () => {
     const { accountService, busy } = seedIncident();
     expect((await accountService.resolveForSpawn(AGENT, busy.id))?.id).toBe(busy.id);
-    config = { orderMode: 'manual', autoSwitchAtLimit: true };
-    expect((await accountService.resolveForSpawn(AGENT))?.id).toBe(busy.id);
     expect(readAsked).toEqual([]);
+  });
+
+  // Task #1147: Manual skips a full account, and a reading from before it filled says it has room.
+  it('reads before Manual chooses too', async () => {
+    const { accountService } = seedIncident();
+    config = { orderMode: 'manual', autoSwitchAtLimit: true };
+    await accountService.resolveForSpawn(AGENT);
+    expect(readAsked).toHaveLength(1);
   });
 
   describe('asks the reader for nothing when there is nothing to read', () => {

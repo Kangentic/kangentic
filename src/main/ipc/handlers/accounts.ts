@@ -27,6 +27,8 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { resolveCliTarget } from '../../agent/shared/cli-target';
 import { PATHS } from '../../config/paths';
 import { AgentAccountRepository } from '../../db/repositories/agent-account-repository';
+import { SessionRepository } from '../../db/repositories/session-repository';
+import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../helpers';
 import type { IpcContext } from '../ipc-context';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -266,14 +268,24 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
       const session = context.sessionManager.listSessions().find((candidate) => candidate.id === sessionId);
       const agent = context.sessionManager.getSessionAgentName(sessionId);
       if (!session || session.transient || session.status !== 'running' || !session.accountId || !agent) return null;
-      return { sessionId, taskId: session.taskId, projectId: session.projectId, agent, accountId: session.accountId };
+      return { sessionId, taskId: session.taskId, projectId: session.projectId, agent, accountId: session.accountId, resuming: session.resuming === true };
     },
-    isUsageLimitFailure: (agent, detail) => {
+    openingPrompt: (session) => {
+      try {
+        return new SessionRepository(getProjectDb(session.projectId)).findByAnyId(session.sessionId)?.prompt ?? null;
+      } catch (error) {
+        // The move still happens, resumed idle: the session's conversation is whole either way.
+        accountsReporter.report(error, { tags: { stage: 'opening_prompt' } });
+        return null;
+      }
+    },
+    canContinue: (agent) => {
       const support = agentRegistry.get(agent)?.accounts;
+      if (!support) return false;
       // A conversation that can only be resumed on its own account is never moved to another.
-      if (!support || (support.kind === 'folder' && support.conversationsStayOnAccount)) return false;
-      return support.isUsageLimitFailure?.(detail) ?? false;
+      return !(support.kind === 'folder' && support.conversationsStayOnAccount);
     },
+    isUsageLimitFailure: (agent, detail) => agentRegistry.get(agent)?.accounts?.isUsageLimitFailure?.(detail) ?? false,
     ordered: (agent) => service.ordered(agent),
     readUsageNow: (accountId) => refresher.refreshAccount(accountId, true),
     continueOn: restartTaskOn,
@@ -319,6 +331,12 @@ export function registerAccountHandlers(context: IpcContext): AccountService {
 
   const activeContinuation = continuation;
   context.sessionManager.on('event', (sessionId: string, event: SessionEvent) => {
+    if (event.type === EventType.SessionStart) {
+      // Off the event's stack, and never awaited: the spawn may still hold the task's lock, which
+      // a continuation's restart takes.
+      setImmediate(() => { void activeContinuation.onSessionStarted(sessionId); });
+      return;
+    }
     if (event.type !== EventType.TurnFailed && event.type !== EventType.TurnRetrying) return;
     if (event.type === EventType.TurnFailed) reportTurnFailure(sessionId, event.detail ?? '');
     // Off the event's stack: the decision reads usage through the CLI.

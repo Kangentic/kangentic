@@ -294,10 +294,13 @@ moves no running session, and its tip says so. The call answers once the session
 and the renderer raises one toast from it (`describeAccountSwitchResult`): how many running
 sessions moved, that new sessions start on the account when none was running, or that some
 could not be moved and stay on their accounts.
-An account that is signed out or `replaced`, has no plan, or has a window at 100% is skipped.
+An account that is signed out or `replaced`, has no plan, or has a window at 100% is skipped. A
+window at 100% stays there until its reset, whatever a later report says (see "Usage").
 
-Automatic never ranks from a reading that has run out. Before a spawn that is not named to an
-account, for an agent with two or more accounts whose usage can be read idle (`readIdleUsage`),
+No spawn chooses from a reading that has run out, in either order mode. Manual skips a full
+account, so the read below runs in both modes and an old reading is refreshed before it ranks.
+Before a spawn that is not named to an account, for an agent with two or more accounts whose usage
+can be read idle (`readIdleUsage`),
 `resolveForSpawn` asks the refresher to read every `ok` account with no reading, a reading older
 than a scheduled pass should leave (`USAGE_STALE_FOR_RANKING_MS`, 20 minutes), or a window whose
 reset has passed since (`needsReadBeforeRanking`). The spawn waits up to 10 seconds for those
@@ -326,7 +329,7 @@ An account with no session running is read through the CLI (`readIdleUsage`). Fo
 Measured: about 1.2 seconds, no model turn, no cost, and nothing added to the shared prompt history
 or the conversations. Typing `/usage` into a hidden terminal added both, so that route was dropped.
 `AccountUsageRefresher` reads one account at a time: when the app opens, when the tab opens, when a
-window's reset passes, every 15 minutes, before a switch, and before Automatic ranks an account
+window's reset passes, every 15 minutes, before a switch, and before a spawn ranks an account
 whose reading ran out. Nothing is read on a schedule for an agent with one account.
 
 A read that gives no windows keeps the last values and its read time, and is logged and reported
@@ -345,6 +348,23 @@ an exit and a CLI that would not start no longer read the same.
 
 Two calls to `accounts:refreshUsage` that overlap, as a tab that mounts twice sends, share one
 in-flight batch of sign-in and usage reads instead of running each CLI twice.
+
+**A full window holds until its reset** (`keepFullWindows`, `account-order.ts`). Both writers of a
+row apply it: a live report (`recordUsage`) and an idle read (`refreshUsage`). A report that would
+lower a stored 100 is dropped while that window's reset is ahead, unless the report names a later
+reset, which is the next window. The two may round the reset apart by up to 10 minutes
+(`SAME_WINDOW_SLACK_SECONDS`) and still be one window. A window with no reset time is never held.
+Measured on Claude Code 2.1.330 (task #1147): with a weekly allowance spent, the status line of a
+session on that account kept reporting 99, while Claude's own cache read 100. The continuation's
+read stored 100 and moved the session. Another session still on the account wrote 99 over it
+within 72 seconds, and the next column move spawned on the spent account again.
+
+Claude's cache also says outright when a window is spent: `cachedUsageUtilization.limits[]` holds
+entries with a `kind`, a `percent`, a `severity` and `is_active`. `readClaudeCachedUsage` reads an
+active entry at `percent` 100 or more with no `scope` as a full window. An active entry under 100 was never
+measured, so it leaves the window at its own percentage. Only `weekly_all` (the 7d window) is mapped, since it
+is the only kind measured spent. A scoped entry (`weekly_scoped`, one model's allowance) leaves the
+account usable for other models and is ignored.
 
 Who is signed in is read by `refreshIdentity`, which sets an account's status. The tab reads every
 account's sign-in when it opens. For an agent with two or more accounts, the startup pass reads
@@ -476,19 +496,45 @@ stays listed one Sign in away, and macOS stays out unless P5 finds a safe path.
 ## At a usage limit
 
 With `autoSwitchAtLimit` on, a task's session that reaches its account's limit continues on the
-next account (`account-continuation.ts`). The trigger is two facts together:
+next account (`account-continuation.ts`). A failed turn triggers it when two facts hold together:
 
 1. The turn failed, and the adapter reads the failure as a usage limit.
 2. A read of that account, made then, shows it has no room.
 
-A percentage alone never triggers it. The value moves while a turn runs, and a CLI reports a
+A percentage alone never moves a session. The value moves while a turn runs, and a CLI reports a
 momentary rate limit with the same error as a spent plan and retries those by itself. The next
 account is read before it is chosen. The session then restarts in place on it, resuming the same
-conversation with the prompt `Continue.`, and a toast names where it continues.
+conversation with the prompt `Continue.`, and a toast names where it continues. A resume that
+starts on a full account is the second trigger, described below, and carries its own opening
+prompt instead.
 
 When every account is full, the session waits where it is, one toast names the first reset, and it
 continues once a later read shows room. A Command Terminal or a workflow's own agent is not
 continued: at its limit it waits as before.
+
+The read that proved an account full is the stored 100, which holds until the window resets (see
+"Usage"). So every later spawn, a column move included, passes over that account.
+
+**A resume that starts on a full account is continued too.** A resume Claude refuses at a spent
+limit can end with no hook but its start. Measured in task #1147 on 2.1.330: the resumed session's
+`events.jsonl` held `SessionStart` (source `resume`), then nothing until the owner restarted it 9
+minutes later. No prompt, no `StopFailure`, so no failed turn ever reached the continuation, and
+the opening prompt (the Testing column's handoff) never reached the conversation.
+
+A task session's first `SessionStart` now calls `onSessionStarted`. It acts only on a resumed
+session (`resuming`). A fresh session at a limit fails its turn, which fires, and a move at its
+start could cut it short before its conversation was written. A later `SessionStart` in the same
+session, after a compact or a clear, is not a start. When the row of the account it started on
+shows no room, or a window at 95% or more (`NEAR_FULL_PERCENT`, since a spent account reads 99),
+the session is decided as a limit would be. Its account is read, and only a read that finds it full
+moves it, or leaves it waiting with every account full. The percentage decides whether to read,
+never whether to move. The move restarts the session with its own opening prompt, read from its
+session record, never `Continue.`, since that prompt was never answered. A session that started
+with none resumes idle. A failed turn on a session already waiting this way keeps its opening
+prompt. An account under 95% costs nothing, and no read runs. With the rules above,
+this catches a spawn named to a full account, one that found every account full, and an account a
+live report holds at 99 before any read stored its 100. The call runs off the event's stack and is
+never awaited, since the spawn may still hold the task's lock that a restart takes.
 
 ## The tab
 

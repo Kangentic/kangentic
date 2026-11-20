@@ -345,11 +345,40 @@ function homeEnv(home: string | null): Record<string, string> | undefined {
 const IDLE_USAGE_MAX_AGE_MS = 10 * 60 * 1000;
 
 /**
+ * The `limits[]` kinds whose spent flag fills a whole window, by the window's `utilization` key.
+ * Only the kind measured spent is here (2.1.330, task #1147). A scoped entry (`weekly_scoped`, one
+ * model's allowance) never fills the account, which other models can still use.
+ */
+const SPENT_LIMIT_WINDOW_KEYS: Readonly<Record<string, string>> = { weekly_all: 'seven_day' };
+
+/**
+ * The `utilization` keys of the windows Claude itself marks spent: a `limits[]` entry with
+ * `is_active: true`, `percent` 100 and no `scope`. Measured on 2.1.330 with a spent weekly
+ * allowance: the status line read 99 while the cache read `utilization` 100 and a `weekly_all`
+ * entry at `percent` 100, `severity` `critical`, `is_active` true. A window Claude marks spent is
+ * full whatever its percentage says, so a 99.x read never offers an account Claude will refuse.
+ * The entry's own `percent` must say 100 too: an active entry under it was never measured, and
+ * reading it as spent would hold a usable account at 100 until its reset.
+ */
+function spentWindowKeys(utilization: Record<string, unknown>): Set<string> {
+  const spent = new Set<string>();
+  if (!Array.isArray(utilization.limits)) return spent;
+  for (const limit of utilization.limits) {
+    if (!isPlainRecord(limit) || limit.is_active !== true || (limit.scope !== null && limit.scope !== undefined)) continue;
+    if (typeof limit.percent !== 'number' || limit.percent < 100) continue;
+    const key = typeof limit.kind === 'string' ? SPENT_LIMIT_WINDOW_KEYS[limit.kind] : undefined;
+    if (key) spent.add(key);
+  }
+  return spent;
+}
+
+/**
  * The windows in Claude's own cached usage (`cachedUsageUtilization` in the account's state
  * file), in the shape the status line's `rate_limits` parse to. Measured on 2.1.319: each window
  * is null when it does not apply (Ultra has no 5h window), `utilization` is a percentage (99 where
- * `/usage` printed "99% used"), and `resets_at` is an ISO time. Otherwise why it gives no current
- * windows: the cache is missing, older than `maxAgeMs`, or holds no window.
+ * `/usage` printed "99% used"), and `resets_at` is an ISO time. A window Claude marks spent in
+ * `limits[]` reads 100 (`spentWindowKeys`). Otherwise why it gives no current windows: the cache is
+ * missing, older than `maxAgeMs`, or holds no window.
  */
 export function readClaudeCachedUsage(
   state: unknown,
@@ -362,6 +391,7 @@ export function readClaudeCachedUsage(
   if (nowMs - cache.fetchedAtMs > maxAgeMs) return { empty: 'cache-stale' };
   const utilization = cache.utilization;
   if (!isPlainRecord(utilization)) return { empty: 'no-windows' };
+  const spent = spentWindowKeys(utilization);
   const windows: RateLimitWindow[] = [];
   for (const { key, ...windowShape } of RATE_LIMIT_WINDOWS) {
     const windowRaw = utilization[key];
@@ -369,7 +399,7 @@ export function readClaudeCachedUsage(
     const resetsAtMs = typeof windowRaw.resets_at === 'string' ? Date.parse(windowRaw.resets_at) : Number.NaN;
     windows.push({
       ...windowShape,
-      usedPercentage: Math.min(100, Math.max(0, windowRaw.utilization)),
+      usedPercentage: spent.has(key) ? 100 : Math.min(100, Math.max(0, windowRaw.utilization)),
       resetsAt: Number.isFinite(resetsAtMs) ? Math.floor(resetsAtMs / 1000) : 0,
     });
   }

@@ -30,6 +30,7 @@ function rig(accounts: AgentAccount[], readUsageNow: (accountId: string) => Prom
   const continuation = new AccountContinuation({
     readConfig: () => ({ orderMode: 'manual', autoSwitchAtLimit: true }),
     findTaskSession: (sessionId) => (sessionId === SESSION.sessionId ? SESSION : null),
+    canContinue: () => true, openingPrompt: () => null,
     isUsageLimitFailure: (_agent, detail) => detail.includes('rate_limit'),
     ordered: () => accounts,
     readUsageNow: read,
