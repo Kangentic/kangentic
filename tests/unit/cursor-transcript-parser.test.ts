@@ -457,6 +457,18 @@ describe('the clock a page opening mid-turn gets from before its window', () => 
     expect(page.entries.map((entry) => entry.ts)).toEqual([clockA, clockA]);
   });
 
+  it('stamps a clockless user line that opens the page with the earlier clock too', async () => {
+    const lines = [clockedLineA(), ...bulk(2, 200), userLine('a follow up that carries no clock'), ...bulk(2, 200)];
+    const { filePath, offsets } = writeLines(lines);
+
+    const page = await pageFrom(filePath, offsets[3]);
+    expect(page.entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'assistant']);
+    for (const entry of page.entries) {
+      expect(entry.ts).toBe(clockA);
+      expect(entry.tsPrecision).toBe('minute');
+    }
+  });
+
   it('reads the earlier clock for the tail window of a truncated transcript', async () => {
     const lines = [clockedLineA(), ...bulk(12, 2_000), clockedLineB(), ...bulk(8, 2_000)];
     const { filePath } = writeLines(lines);

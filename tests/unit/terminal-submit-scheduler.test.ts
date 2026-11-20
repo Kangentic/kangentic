@@ -651,6 +651,34 @@ describe('TerminalSubmitScheduler', () => {
       expect(terminalSubmit.calls).toHaveLength(0);
     });
 
+    it('ignores another session stopping, starting, or going idle while this one is queued', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        timeoutMs: 1000,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      // A sibling's stop must not fail this burst, and its start must neither
+      // begin this burst's wait nor its hard timer.
+      sessionManager.emitSessionChanged('other', { status: 'suspended' });
+      sessionManager.emitSessionChanged('other', { status: 'running' });
+      sessionManager.emitActivity('other', 'idle');
+      vi.advanceTimersByTime(5000);
+      await tick();
+      expect(reports).toHaveLength(0);
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(reports).toHaveLength(0);
+    });
+
     it('does not deliver on idle that arrives before the queued session is running', async () => {
       sessionManager.registry.set('s1', { status: 'queued' });
 
