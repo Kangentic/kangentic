@@ -37,6 +37,8 @@ const SEEDED: SeededSession[] = [
   { key: 'finished', activity: 'idle', reason: "{ kind: 'idle', since: since }", expectedMark: 'agent-idle' },
   { key: 'stopped', activity: 'idle', reason: "{ kind: 'idle', since: since, stopped: true }", expectedMark: 'agent-stopped' },
   { key: 'isolated', activity: 'thinking', reason: "{ kind: 'turn-active' }", isolated: true, expectedMark: 'agent-working' },
+  // The engine has reported no reason yet: the mark's name falls back to the state.
+  { key: 'bare', activity: 'thinking', reason: 'undefined', expectedMark: 'agent-working' },
 ];
 
 const sessionIdOf = (key: string): string => `sess-tab-${key}`;
@@ -93,6 +95,9 @@ test.describe('TerminalPanel: session tabs follow the board card', () => {
     page = await context.newPage();
     await page.addInitScript({ path: MOCK_SCRIPT });
     await page.addInitScript(preConfig());
+    // A fake clock that keeps running, so the tick step can fast-forward a waiting tab's
+    // clock instead of waiting a real minute.
+    await page.clock.install();
     await gotoVite(page, VITE_URL);
     await page.waitForLoadState('load');
     await page.locator('[data-swimlane-name="Executing"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -141,18 +146,62 @@ test.describe('TerminalPanel: session tabs follow the board card', () => {
   });
 
   test('a tab\'s tip leads with the card\'s reason, with the shell below it', async () => {
-    await test.step('a question names itself and how long it has waited', async () => {
+    await test.step('a question names itself and how long it has waited, with the shell after it', async () => {
       const tab = tabFor(page, 'question');
       await tab.hover();
-      await expect(tab).toHaveAccessibleDescription(/Asking you a question for 2m/, { timeout: 5000 });
-      await expect(tab).toHaveAccessibleDescription(/bash/i);
+      // One match, anchored: the reason leads and the shell follows (a shell-first or
+      // reason-less tip fails it).
+      await expect(tab).toHaveAccessibleDescription(/^Asking you a question for 2m\b.*\bbash$/i, { timeout: 5000 });
+    });
+
+    await test.step('the open tip leads with the reason\'s own glyph', async () => {
+      const tab = tabFor(page, 'question');
+      await tab.hover();
+      const tip = page.getByRole('tooltip').filter({ hasText: 'Asking you a question' });
+      await expect(tip).toBeVisible({ timeout: 5000 });
+      // activityReasonIcon draws the wait's mark at 12px; Tooltip puts `icon` in its first span.
+      const glyph = tip.locator('svg[data-mark]');
+      await expect(glyph).toHaveCount(1);
+      await expect(glyph).toHaveAttribute('data-mark', 'agent-question');
+      await expect(glyph).toHaveAttribute('width', '12');
     });
 
     await test.step('a stopped turn shows only the shell, as its card shows no tip', async () => {
       const tab = tabFor(page, 'stopped');
       await tab.hover();
-      await expect(tab).toHaveAccessibleDescription(/bash/i, { timeout: 5000 });
-      await expect(tab).not.toHaveAccessibleDescription(/Stopped/);
+      await expect(tab).toHaveAccessibleDescription(/^(Git )?bash$/i, { timeout: 5000 });
+      await expect(page.getByRole('tooltip').filter({ hasText: /bash/i })).toBeVisible();
+      await expect(page.getByRole('tooltip').locator('svg[data-mark]')).toHaveCount(0);
+    });
+  });
+
+  test('a tab\'s mark is named like its card\'s mark, and a waiting tab keeps its clock', async () => {
+    await test.step('the mark is named by the reason, or by the state when there is none', async () => {
+      await expect(tabFor(page, 'question').locator('svg[data-mark]')).toHaveAttribute('aria-label', /^Asking you a question for 2m\b/);
+      await expect(tabFor(page, 'bare').locator('svg[data-mark]')).toHaveAttribute('aria-label', 'Thinking');
+    });
+
+    await test.step('tab and card name one session the same way', async () => {
+      for (const key of ['question', 'approval', 'finished', 'stopped', 'bare']) {
+        await expect.poll(async () => {
+          const tabName = await tabFor(page, key).locator('svg[data-mark]').getAttribute('aria-label');
+          const cardName = await page
+            .locator(`[data-swimlane-name="Executing"] [data-task-id="${taskIdOf(key)}"] svg[data-mark]`)
+            .first()
+            .getAttribute('aria-label');
+          return tabName !== null && tabName === cardName;
+        }, { message: key }).toBe(true);
+      }
+    });
+
+    await test.step('a waiting tab\'s time advances with the clock', async () => {
+      const mark = tabFor(page, 'question').locator('svg[data-mark]');
+      await expect(mark).toHaveAttribute('aria-label', /for 2m\b/);
+      await page.clock.fastForward(60_000);
+      await expect(mark).toHaveAttribute('aria-label', /for 3m\b/, { timeout: 5000 });
+      const tab = tabFor(page, 'question');
+      await tab.hover();
+      await expect(tab).toHaveAccessibleDescription(/^Asking you a question for 3m\b/, { timeout: 5000 });
     });
   });
 });

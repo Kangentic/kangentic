@@ -21,7 +21,7 @@ import { openArtifactsEditor } from '../artifacts/artifacts-focus';
 import type {
   ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, StartBlockedReason, SuspendedBy, Task,
 } from '../../../shared/types';
-import { titleRowMark, type AgentActivityMarkName } from './agent-wait';
+import { titleRowMark, type AgentActivityMarkName, type TitleRowMark } from './agent-wait';
 import { useActivityReasonTip } from './useActivityReasonTip';
 import { Tooltip } from '../Tooltip';
 import { AutomationsDisabledStrip } from './AutomationsDisabledStrip';
@@ -187,6 +187,8 @@ export interface TaskCardViewModel {
    * and an approval (`agentActivityMark`).
    */
   activityMark: AgentActivityMarkName;
+  /** The mark's tone, from `titleRowMark`, so the card and the session tab share one rule. */
+  activityMarkTone: TitleRowMark['toneClass'];
   shownTrail: AssistantMessageTrailEntry[] | null;
   trailMode: ReturnType<typeof trailModeFor>;
   labelColors: Record<string, string>;
@@ -288,7 +290,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
   // See task-progress.ts for how the fallback is resolved. Which mark it draws,
   // and its tone, come from `titleRowMark`, which the bottom panel's session tab
   // asks too, so the tab and the card cannot disagree.
-  const { mark: activityMark, isIdle, isThinking } = titleRowMark(displayState, activityReason);
+  const { mark: activityMark, isIdle, isThinking, toneClass: activityMarkTone } = titleRowMark(displayState, activityReason);
 
   // One object per change, not per render, so a host can skip re-rendering the
   // card's content when nothing in it changed (`TaskCard` does, through every
@@ -305,6 +307,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
       isIdle,
       isThinking,
       activityMark,
+      activityMarkTone,
       shownTrail,
       trailMode,
       labelColors,
@@ -316,7 +319,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
     }),
     [
       sessionId, isHighlighted, isResuming, activityReason, displayState, browserAlive, isIdle, isThinking,
-      activityMark, shownTrail, trailMode, labelColors, taskLabels, archivedRelativeTime, cardDensity,
+      activityMark, activityMarkTone, shownTrail, trailMode, labelColors, taskLabels, archivedRelativeTime, cardDensity,
       showTaskNumbers, liveTelemetryUnsupported,
     ],
   );
@@ -504,6 +507,7 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }:
 
 interface TitleRowActivityMarkProps {
   activityMark: AgentActivityMarkName;
+  toneClass: TitleRowMark['toneClass'];
   activityReason: TaskCardViewModel['activityReason'];
   isIdle: boolean;
   isThinking: boolean;
@@ -518,7 +522,7 @@ interface TitleRowActivityMarkProps {
  * saying "for 0s". One component in both states, so the slot never swaps element
  * types.
  */
-function TitleRowActivityMark({ activityMark, activityReason, isIdle, isThinking }: TitleRowActivityMarkProps) {
+function TitleRowActivityMark({ activityMark, toneClass, activityReason, isIdle, isThinking }: TitleRowActivityMarkProps) {
   const { tipText, icon, accessibleName } = useActivityReasonTip({ activityReason, isIdle, isThinking });
   return (
     // A stopped card has no tip: a person opens the task to read why, and the
@@ -527,7 +531,7 @@ function TitleRowActivityMark({ activityMark, activityReason, isIdle, isThinking
       <ActivityMark
         mark={activityMark}
         size={16}
-        className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
+        className={`${toneClass} shrink-0`}
         aria-label={accessibleName}
       />
     </Tooltip>
@@ -535,7 +539,7 @@ function TitleRowActivityMark({ activityMark, activityReason, isIdle, isThinking
 }
 
 function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
-  const { displayState, isIdle, isThinking, activityMark, activityReason, shownTrail, trailMode } = view;
+  const { displayState, isIdle, isThinking, activityMark, activityMarkTone, activityReason, shownTrail, trailMode } = view;
   const isCompactDensity = density === 'compact';
   // The description slot's clamp per density. Compact used to print no excerpt
   // at all; it now always shows exactly one line, so a compact board still says
@@ -565,6 +569,7 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
         {(isIdle || isThinking) && (
           <TitleRowActivityMark
             activityMark={activityMark}
+            toneClass={activityMarkTone}
             activityReason={activityReason}
             isIdle={isIdle}
             isThinking={isThinking}
