@@ -315,8 +315,8 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   'column-automation-turn-end': async (page) => {
     // The review loop on Testing: two Move to column rows at the turn end, in the order the runner
     // reads them, runnable because Claude reports a turn end, each with the marks
-    // describeAutomationMarks gives it. One row of each Condition kind: the robot mark for the
-    // Agent evaluation, the text search mark for the Text match.
+    // describeAutomationMarks gives it. A Condition is one funnel mark whatever lines it holds,
+    // so the Agent evaluation row and the Text match row carry the same mark.
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
     const turnEnd = dialog.locator('[data-testid="column-automation-group"][data-trigger="turn_end"]');
     const rows = turnEnd.locator('[data-testid="column-automation-row"]');
@@ -325,7 +325,7 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(turnEnd.locator('[data-testid="column-automation-group-blocked"]')).toHaveCount(0);
     const expected = [
       { marks: ['column-automation-condition-mark', 'column-automation-frequency-mark', 'column-automation-message-mark'], count: '3', sentence: 'Moves the task to Executing' },
-      { marks: ['column-automation-text-match-mark', 'column-automation-frequency-mark'], count: '1', sentence: 'Moves the task to Merge' },
+      { marks: ['column-automation-condition-mark', 'column-automation-frequency-mark'], count: '1', sentence: 'Moves the task to Merge' },
     ];
     for (const [index, row] of expected.entries()) {
       const target = rows.nth(index);
