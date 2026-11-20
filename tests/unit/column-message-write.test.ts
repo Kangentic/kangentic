@@ -184,6 +184,50 @@ describe('setColumnMessage', () => {
     expect(fake.rows()).toHaveLength(2);
     expect(fake.rows().find((row) => row.id === 'exit-msg')?.config.message).toBe('/wrap-up');
   });
+
+  // `replaceForColumn` rewrites the whole column, so a row passed back without
+  // its guards would lose them: a Move to column row with Task lines would
+  // start running for every task after an unrelated message write.
+  it('carries every other row\'s Task lines, Text match and Condition through the write', () => {
+    const guarded = makeRow({
+      id: 'guarded',
+      name: 'Back for revisions',
+      type: 'move_to_column',
+      trigger: 'turn_end',
+      config: { targetColumn: 'Executing' },
+      condition: 'The review found work',
+      final_line: 'Verdict: Changes',
+      text_match_source: 'user',
+      filter: { priorities: [3, 4], labels: ['bug'] },
+      max_runs: 2,
+    });
+    const expectedGuards = {
+      id: 'guarded',
+      condition: 'The review found work',
+      final_line: 'Verdict: Changes',
+      text_match_source: 'user',
+      filter: { priorities: [3, 4], labels: ['bug'] },
+      max_runs: 2,
+    };
+
+    fake = makeRepo([makeRow(), guarded]);
+    setColumnMessage(fake.repo, COLUMN_ID, '/new');
+    expect(fake.writes()[0].find((input) => input.id === 'guarded')).toMatchObject(expectedGuards);
+
+    fake = makeRepo([makeRow(), guarded]);
+    setColumnMessageMode(fake.repo, COLUMN_ID, 'deferred');
+    expect(fake.writes()[0].find((input) => input.id === 'guarded')).toMatchObject(expectedGuards);
+
+    fake = makeRepo([guarded]);
+    setColumnMessage(fake.repo, COLUMN_ID, '/created');
+    expect(fake.writes()[0].find((input) => input.id === 'guarded')).toMatchObject(expectedGuards);
+    expect(fake.writes()[0].find((input) => input.type === 'send_message')?.filter).toBeNull();
+
+    fake = makeRepo([makeRow(), guarded]);
+    setColumnMessage(fake.repo, COLUMN_ID, null);
+    expect(fake.writes()[0]).toHaveLength(1);
+    expect(fake.writes()[0][0]).toMatchObject(expectedGuards);
+  });
 });
 
 describe('setColumnMessageMode', () => {
