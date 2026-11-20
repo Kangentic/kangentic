@@ -159,6 +159,8 @@ test('backlog table columns', async () => {
     const pill = noneRow.locator('[data-testid="priority-pill"]');
     await expect(pill).toHaveAccessibleName('Priority: None');
     await expect(pill.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(0);
+    // The table keeps the tinted pill (#1137); only a task's pill row draws the bare meter (#1143).
+    await expect(pill).not.toHaveAttribute('data-variant', 'bare');
   });
 
   await test.step('the row menu button opens Edit, Move to, Delete under itself and leaves the row unselected', async () => {

@@ -1,10 +1,11 @@
 /**
  * UI tests for priority on the task card (#1053).
  *
- * Intent: a task's priority is the first pill in the row that holds its labels,
- * with a leading flag so an orange level and an orange label read apart. The
+ * Intent: a task's priority leads the row that holds its labels, drawn as the
+ * bare level meter with no pill around it (#1143), so it reads apart from the
+ * label pills by shape and does not take a label's room. The
  * bottom entry of the scale (index 0, "None" by default) draws nothing, so a
- * board where nobody sets priority looks as it did. A card whose only pill is
+ * board where nobody sets priority looks as it did. A card whose row holds only
  * its priority keeps the rule above its footer, as a labelled card does. The
  * task detail header carries no priority badge any more.
  *
@@ -107,6 +108,20 @@ test.describe('Task card priority meter', () => {
     await expect(pills.locator('> *')).toHaveText(['', 'ui', 'git']);
   });
 
+  test('the priority is the bare meter, not a pill', async () => {
+    const mark = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="priority-pill"]`);
+    await expect(mark).toHaveAttribute('data-variant', 'bare');
+    const look = await mark.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, border: style.borderTopWidth, width: element.getBoundingClientRect().width };
+    });
+    expect(look.background).toBe('rgba(0, 0, 0, 0)');
+    expect(look.border).toBe('0px');
+    // 18px meter plus 2px padding; the pill was 36px.
+    expect(look.width).toBeGreaterThan(19);
+    expect(look.width).toBeLessThan(21);
+  });
+
   test('the bottom entry of the scale draws no pill', async () => {
     const card = page.locator(`[data-task-id="${NONE_TASK_ID}"]`);
     await expect(card.locator('[data-testid="task-pills"]')).toHaveText('refactor');
@@ -124,7 +139,33 @@ test.describe('Task card priority meter', () => {
     await expect.poll(() => footer.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('solid');
   });
 
-  test('the Done list row shows the pill', async () => {
+  test('a priority-only pill row holds the same line height as a labelled row', async () => {
+    const labelledRow = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="task-pills"]`);
+    const priorityOnlyRow = page.locator(`[data-task-id="${TRAIL_TASK_ID}"] [data-testid="task-pills"]`);
+    await expect(labelledRow).toBeVisible();
+    await expect(priorityOnlyRow).toBeVisible();
+    // The bare meter is 14px tall; min-h-6 is what lifts the row to the 24px
+    // line the label pills set. Without it this row would be about 14px.
+    await expect.poll(async () => {
+      const labelledHeight = (await labelledRow.boundingBox())?.height ?? 0;
+      const priorityOnlyHeight = (await priorityOnlyRow.boundingBox())?.height ?? 0;
+      return priorityOnlyHeight >= 23 && Math.abs(priorityOnlyHeight - labelledHeight) <= 1;
+    }).toBe(true);
+  });
+
+  test('the bare mark shows its level in the hover tip', async () => {
+    const mark = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="priority-pill"]`);
+    await mark.hover();
+    const tip = page.locator('[data-tooltip]');
+    await expect(tip).toBeVisible();
+    await expect(tip).toHaveAttribute('role', 'tooltip');
+    await expect(tip).toHaveText('High');
+    // Park the pointer on empty page space so the tip does not leak into later tests.
+    await page.mouse.move(2, 2);
+    await expect(tip).toHaveCount(0);
+  });
+
+  test('the Done list row shows the priority meter', async () => {
     const row = page.locator(`[data-task-id="${DONE_TASK_ID}"]`);
     await expect(row.locator('[data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Urgent');
   });
