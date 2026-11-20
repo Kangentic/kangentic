@@ -152,6 +152,29 @@ export function gitCauseOf(error: unknown): string | undefined {
 }
 
 /**
+ * An Azure DevOps server code, or `none`. The shape of `AZ_SERVER_CODE_PATTERN`
+ * in `boards/adapters/azure-devops/client.ts`, anchored and without its global
+ * flag, kept here so this module imports no board code.
+ */
+const AZ_SERVER_CODE = /^(?:(?:TF|VS)\d{5,6}|none)$/;
+
+/**
+ * The Azure DevOps server code that refused an az import call (`azServerCode`,
+ * set by the import classifier in `azure-devops/client.ts`), or `none` when az's
+ * answer carried no code, on the error or one level down its `cause`. Only the
+ * code leaves: az's stderr quotes the user's query and project. Sentry DESKTOP-47
+ * came back with a refusal it could not name.
+ */
+export function azServerCodeOf(error: unknown): string | undefined {
+  const wrapped = (error as { cause?: unknown } | null | undefined)?.cause;
+  for (const candidate of [error, wrapped]) {
+    const azServerCode = (candidate as { azServerCode?: unknown } | null | undefined)?.azServerCode;
+    if (typeof azServerCode === 'string' && AZ_SERVER_CODE.test(azServerCode)) return azServerCode;
+  }
+  return undefined;
+}
+
+/**
  * True for the user's connection, not our code: a network errno, a stream torn down
  * by its peer, or `fetch failed` (Node's `TypeError`) whose cause is one of those.
  */
@@ -211,8 +234,9 @@ export function firstFrameOf(error: unknown): string {
 
 /**
  * Send one handled failure from `source`, path-free, with the tags every report
- * carries (`source`, `error_name`, and `errno`, `syscall` and `git_cause` when the
- * error has them) plus the caller's own short enums. Marks the original reported.
+ * carries (`source`, `error_name`, and `errno`, `syscall`, `git_cause` and
+ * `az_server_code` when the error has them) plus the caller's own short enums.
+ * Marks the original reported.
  * Does not latch and does not filter: a caller that wants either uses
  * `createChokepointReporter`.
  */
@@ -230,6 +254,8 @@ export function sendHandledFailure(
   if (syscall) allTags.syscall = syscall;
   const gitCause = gitCauseOf(error);
   if (gitCause) allTags.git_cause = gitCause;
+  const azServerCode = azServerCodeOf(error);
+  if (azServerCode) allTags.az_server_code = azServerCode;
   markReported(error);
   reportHandledError(pathFreeCopy(source, error), allTags, contexts, fingerprint);
 }
@@ -284,6 +310,8 @@ export function createChokepointReporter(source: string, options: ChokepointRepo
           errorCodeOf(error) ?? '',
           // Every git failure throws from one line, so the cause is what tells two apart.
           gitCauseOf(error) ?? '',
+          // Every az import failure throws from one line too.
+          azServerCodeOf(error) ?? '',
           firstFrameOf(error),
         ].join('|');
         if (reportedKeys.has(key)) {

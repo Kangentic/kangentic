@@ -19,7 +19,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   whichResult: '/usr/bin/az' as string | Error,
   azStdout: '[]',
+  /** When set, answers each query from its WIQL instead of `azStdout`. */
+  azStdoutForWiql: null as ((wiql: string) => string) | null,
   azArgs: [] as readonly string[],
+  wiqlsRun: [] as string[],
 }));
 
 vi.mock('which', () => ({
@@ -46,7 +49,9 @@ vi.mock('node:child_process', async (importOriginal) => {
         // Windows and on ubuntu CI alike.
         const tailArgs = rawArgs[0] === '/c' && rawArgs[1] === 'az' ? rawArgs.slice(2) : rawArgs;
         state.azArgs = tailArgs;
-        return { stdout: state.azStdout, stderr: '' };
+        const wiql = tailArgs[tailArgs.indexOf('--wiql') + 1] ?? '';
+        state.wiqlsRun.push(wiql);
+        return { stdout: state.azStdoutForWiql ? state.azStdoutForWiql(wiql) : state.azStdout, stderr: '' };
       },
     },
   );
@@ -58,7 +63,9 @@ const { AzureDevOpsImporter } = await import('../../src/main/boards/adapters/azu
 beforeEach(() => {
   state.whichResult = '/usr/bin/az';
   state.azStdout = '[]';
+  state.azStdoutForWiql = null;
   state.azArgs = [];
+  state.wiqlsRun = [];
 });
 
 describe('AzureDevOpsImporter.fetchWorkItemIds', () => {
@@ -102,6 +109,64 @@ describe('AzureDevOpsImporter.fetchWorkItemIds', () => {
     state.azStdout = '[]';
     const workItemIds = await new AzureDevOpsImporter().fetchWorkItemIds('my-org', 'My Project');
     expect(workItemIds).toEqual([]);
+  });
+
+  // az prints nothing at all for a query that matches nothing (measured,
+  // extension 1.0.2), not `[]`.
+  it('returns an empty array when az prints nothing', async () => {
+    state.azStdout = '';
+    const workItemIds = await new AzureDevOpsImporter().fetchWorkItemIds('my-org', 'My Project');
+    expect(workItemIds).toEqual([]);
+  });
+
+  // az keeps only the first 1000 work items of a query. Ordered by id, that is
+  // the oldest 1000, and a keep-list cut there would prune the recently changed
+  // items the fetch just cached. So a full page is followed by the page past it.
+  it('pages past az\'s 1000-item cap by id until a page comes back short', async () => {
+    const idsFrom = (firstId: number, count: number): string => JSON.stringify(
+      Array.from({ length: count }, (_unused, index) => ({ id: firstId + index })),
+    );
+    state.azStdoutForWiql = (wiql) => {
+      if (wiql.includes('[System.Id] > 2000')) return idsFrom(2001, 5);
+      if (wiql.includes('[System.Id] > 1000')) return idsFrom(1001, 1000);
+      return idsFrom(1, 1000);
+    };
+
+    const workItemIds = await new AzureDevOpsImporter().fetchWorkItemIds('my-org', 'My Project');
+
+    expect(workItemIds).toHaveLength(2005);
+    expect(workItemIds.at(-1)).toBe(2005);
+    expect(state.wiqlsRun).toHaveLength(3);
+    expect(state.wiqlsRun[0]).not.toContain('[System.Id] >');
+  });
+
+  it('runs one query when the first page is under the cap', async () => {
+    state.azStdout = JSON.stringify(Array.from({ length: 999 }, (_unused, index) => ({ id: index + 1 })));
+    expect(await new AzureDevOpsImporter().fetchWorkItemIds('my-org', 'My Project')).toHaveLength(999);
+    expect(state.wiqlsRun).toHaveLength(1);
+  });
+
+  it('throws when a full page would not advance, rather than loop', async () => {
+    state.azStdout = JSON.stringify(Array.from({ length: 1000 }, () => ({ id: 7 })));
+    await expect(new AzureDevOpsImporter().fetchWorkItemIds('my-org', 'My Project')).rejects.toThrow('did not advance');
+  });
+
+  it('throws after 25 pages when every page is full and keeps advancing', async () => {
+    state.azStdoutForWiql = (wiql) => {
+      const afterIdMatch = /\[System\.Id\] > (\d+)/.exec(wiql);
+      const afterId = afterIdMatch ? Number(afterIdMatch[1]) : 0;
+      return JSON.stringify(Array.from({ length: 1000 }, (_unused, index) => ({ id: afterId + index + 1 })));
+    };
+
+    await expect(new AzureDevOpsImporter().fetchWorkItemIds('my-org', 'My Project')).rejects.toThrow('passed 25 pages');
+    expect(state.wiqlsRun).toHaveLength(25);
+  });
+
+  it('throws when a full page carries no numeric ids, after one query', async () => {
+    state.azStdout = JSON.stringify(Array.from({ length: 1000 }, () => ({ url: 'x' })));
+
+    await expect(new AzureDevOpsImporter().fetchWorkItemIds('my-org', 'My Project')).rejects.toThrow('did not advance');
+    expect(state.wiqlsRun).toHaveLength(1);
   });
 
   it('forwards the iteration path filter into the WIQL when given', async () => {

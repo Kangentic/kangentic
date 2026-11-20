@@ -48,9 +48,20 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...original, execFile: mockExecFile };
 });
 
+const reportHandledError = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
+
 const { AzureDevOpsImporter } = await import('../../src/main/boards/adapters/azure-devops/client');
 const { AzureDevOpsAdapter } = await import('../../src/main/boards/adapters/azure-devops/adapter');
-const { isExpectedFailure } = await import('../../src/main/analytics/handled-report');
+const { isExpectedFailure, sendHandledFailure } = await import('../../src/main/analytics/handled-report');
+
+/** What the IPC wrap sends for `error`: the event, its tags and contexts, serialized. */
+function reportOf(error: unknown): { tags: Record<string, string>; serialized: string } {
+  reportHandledError.mockReset();
+  sendHandledFailure('ipc_handler', error, { channel: 'backlog:importReconcile' });
+  const [sent, tags, contexts] = reportHandledError.mock.calls[0] as [Error, Record<string, string>, unknown];
+  return { tags, serialized: JSON.stringify([sent.message, sent.stack, tags, contexts]) };
+}
 
 /**
  * A rejection shaped like execFile's: the message opens with the whole command
@@ -130,26 +141,116 @@ describe('AzureDevOpsImporter.fetchWorkItems - az failure classification', () =>
     expect((error as Error).message).not.toContain('\r');
   });
 
-  it('a server code that echoes a project name rethrows unchanged, even when the name reads like a network failure', async () => {
-    // TF200016 quotes the project back. "Network Ops" matches az's network
-    // pattern, but the server answered, so this is not a dropped connection.
-    const original = azFailure('ERROR: TF200016: The following project does not exist: Network Ops. Verify that the name of the project is correct and that the project exists on the specified Azure DevOps Server.');
-    state.azAnswer = () => original;
+  it.each([
+    // The coded form, which quotes the project back. "Network Ops" matches az's
+    // network pattern, but the server answered, so this is not a dropped connection.
+    ['TF200016', 'ERROR: TF200016: The following project does not exist: Network Ops. Verify that the name of the project is correct and that the project exists on the specified Azure DevOps Server.'],
+    // What a WIQL naming a missing project actually gets (measured, extension
+    // 1.0.2): no code, and az's echo of the clause it refused.
+    ['the WIQL answer', "ERROR: The project specified is not found in hierarchy. The error is caused by «'Network Ops'»."],
+  ])('a project that is not there (%s) is the user\'s configuration: shown, never reported', async (_label, stderr) => {
+    state.azAnswer = () => azFailure(stderr);
 
     const error = await fetchRejection(undefined, 'Network Ops');
 
-    expect(error).toBe(original);
-    expect(isExpectedFailure(error)).toBe(false);
+    expect((error as Error).name).toBe('AzProjectNotFoundError');
+    expect(isExpectedFailure(error)).toBe(true);
+    expect((error as Error).message).toContain('cannot find this project');
+    expect((error as Error).message).toContain(stderr.split('\n')[0]);
+    expect((error as Error).message).not.toContain('Command failed');
+    expect((error as Error).message).not.toContain('--wiql');
   });
 
-  it('an unrecognized az failure rethrows unchanged and still reports', async () => {
-    const original = azFailure('ERROR: TF51005: The query references a field that does not exist.');
+  it('a field the process does not have still reports, tagged with its server code and nothing az said', async () => {
+    const original = azFailure('ERROR: TF51005: The query references a field that does not exist. The error is caused by «[Acme.Billing.Code]».');
     state.azAnswer = () => original;
 
     const error = await fetchRejection();
 
     expect(error).toBe(original);
     expect(isExpectedFailure(error)).toBe(false);
+    const report = reportOf(error);
+    expect(report.tags.az_server_code).toBe('TF51005');
+    expect(report.serialized).not.toContain('Acme');
+    expect(report.serialized).not.toContain('references a field');
+  });
+
+  // client.ts matches a server code with AZ_SERVER_CODE_PATTERN and handled-report.ts
+  // keeps its own copy of the shape (AZ_SERVER_CODE) before it tags a report. This
+  // pins the two together on the 6-digit VS form, end to end through the report.
+  it('a 6-digit VS server code reaches the report tag intact', async () => {
+    const original = azFailure('ERROR: VS402337: The number of work items returned exceeds the size limit of 20000.');
+    state.azAnswer = () => original;
+
+    const error = await fetchRejection();
+
+    expect(error).toBe(original);
+    expect(isExpectedFailure(error)).toBe(false);
+    expect(reportOf(error).tags.az_server_code).toBe('VS402337');
+  });
+
+  // Sentry DESKTOP-47's recurrence: the server refuses a time in a WIQL date at
+  // day precision, with no TF or VS code. The echo of the refused clause quotes
+  // the user's search, which must not read as a sign-in failure or a dropped
+  // connection. The terms are ones classifyAzError DOES match ("network" is its
+  // transient pattern, "az login" its sign-in pattern), so without the echo
+  // strip the first would become AzTransientError and the second
+  // AzUnavailableError, and these cases go red.
+  it.each(['network', 'az login'])('a code-less WIQL refusal echoing the search "%s" still reports, tagged none, with no stderr text', async (searchTerm) => {
+    const original = azFailure(`ERROR: You cannot supply a time with the date when running a query using date precision. The error is caused by «[System.Title] CONTAINS '${searchTerm}' AND [System.ChangedDate] >= '2026-11-10T10:00:00.000Z'».`);
+    state.azAnswer = () => original;
+
+    const error = await fetchRejection(searchTerm);
+
+    expect(error).toBe(original);
+    expect(isExpectedFailure(error)).toBe(false);
+    const report = reportOf(error);
+    expect(report.tags.az_server_code).toBe('none');
+    expect(report.serialized).not.toContain('date precision');
+    expect(report.serialized).not.toContain('ChangedDate');
+    expect(report.serialized).not.toContain(searchTerm);
+  });
+
+  // The project-gone sentence inside the echoed clause is the user's search, not
+  // az's answer. The real answer here is an unrecognized refusal, so it reports.
+  it('a search that quotes the project-not-found sentence is not read as a missing project', async () => {
+    const original = azFailure("ERROR: The WIQL text is not valid. The error is caused by «[System.Title] CONTAINS 'The project specified is not found in hierarchy'».");
+    state.azAnswer = () => original;
+
+    const error = await fetchRejection('The project specified is not found in hierarchy');
+
+    expect((error as Error).name).not.toBe('AzProjectNotFoundError');
+    expect(error).toBe(original);
+    expect(isExpectedFailure(error)).toBe(false);
+    expect(reportOf(error).tags.az_server_code).toBe('none');
+  });
+
+  it('a query that matches nothing (az prints nothing) is an empty result, not a failure', async () => {
+    state.azAnswer = () => '';
+
+    const result = await new AzureDevOpsImporter().fetchWorkItems('my-org', 'My Project', undefined, undefined, undefined, '2026-11-18T10:00:00.000Z');
+
+    expect(result).toEqual({ items: [], hasNextPage: false, totalCount: 0 });
+  });
+
+  // az keeps only the first 1000 work items of a query, so a project with more
+  // listed 1000 of them. The fetch pages by id past a full page.
+  it('lists every work item past az\'s 1000-item cap', async () => {
+    const workItemsFrom = (firstId: number, count: number): string => JSON.stringify(
+      Array.from({ length: count }, (_unused, index) => ({ id: firstId + index, url: '', fields: { 'System.Title': `Item ${firstId + index}` } })),
+    );
+    const wiqlsRun: string[] = [];
+    state.azAnswer = (args) => {
+      const wiql = args[args.indexOf('--wiql') + 1] ?? '';
+      wiqlsRun.push(wiql);
+      return wiql.includes('[System.Id] > 1000') ? workItemsFrom(1001, 12) : workItemsFrom(1, 1000);
+    };
+
+    const result = await new AzureDevOpsImporter().fetchWorkItems('my-org', 'My Project');
+
+    expect(result.items).toHaveLength(1012);
+    expect(result.totalCount).toBe(1012);
+    expect(wiqlsRun).toHaveLength(2);
   });
 
   it('ignores the command line and the URLs az echoes when classifying', async () => {
