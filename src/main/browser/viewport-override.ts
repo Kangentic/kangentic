@@ -270,8 +270,44 @@ function displayScaleFor(webContents: WebContents): number {
 function fitZoomFor(target: ViewportSize, widget: ViewportSize): number {
   const byWidth = widget.width / target.width;
   const byHeight = widget.height / target.height;
-  return Math.max(MIN_ZOOM, Math.min(1, byWidth, byHeight));
+  return clampFitZoom(Math.min(byWidth, byHeight));
 }
+
+/**
+ * The bounds every fit obeys. Shared by `fitZoomFor` and `fillHeightFor`, so
+ * the zoom the fill assumes is always the zoom the fit then picks.
+ */
+function clampFitZoom(zoom: number): number {
+  return Math.max(MIN_ZOOM, Math.min(1, zoom));
+}
+
+/**
+ * The height that makes a width-only request fill the pane it is drawn in.
+ *
+ * Without it an omitted height kept the current one, about the pane's own
+ * height. A 1900-wide request fitted to zoom 0.39 would draw as a 740x292
+ * strip and leave 61% of the user's pane blank, and nothing in the reply said
+ * so. An agent checking a desktop breakpoint asks for exactly that.
+ *
+ * The height is `paneHeight / zoom`, not `width * paneHeight / paneWidth`. The
+ * two agree while the fit is unclamped and disagree at both clamps. A width
+ * that already fits sits at zoom 1, where the ratio comes out short of the
+ * pane. A width above `paneWidth / MIN_ZOOM` stops zooming out, where the
+ * ratio comes out taller than the pane shows. Dividing by the zoom the WIDTH
+ * will get fills the pane in every case, and `fitZoomFor` then picks that same
+ * zoom. Floored, so rounding never makes the height the tighter axis.
+ */
+function fillHeightFor(width: number, widget: ViewportSize, explicitZoom: number | null): number {
+  const zoomForWidth = explicitZoom ?? clampFitZoom(widget.width / width);
+  return Math.floor(widget.height / zoomForWidth);
+}
+
+/**
+ * Below this share of the user's pane height, the reply says the pane is
+ * mostly blank. Half, so task #1131's 1900x200 strip (10%) is named while an
+ * explicit 16:9 request in an ordinary pane (about 56%) is not.
+ */
+const PANE_HEIGHT_FILL_NOTE_BELOW = 0.5;
 
 /** Poll until the page's own metrics stop describing the pre-resize frame. */
 async function waitForViewport(
@@ -694,8 +730,16 @@ export interface ApplyViewportOutcome {
    */
   exact: boolean;
   /** 1 when the whole emulated viewport is visible in the real widget, less
-   *  when the agent is looking at a crop of it. */
+   *  when the user is looking at a crop of it, on either axis. */
   visibleFraction: number;
+  /**
+   * The share of the user's pane height the drawn layout covers, and 1 when it
+   * fills it. The opposite failure to `visibleFraction`: not a crop but blank
+   * pane. Measured in task #1131, a 1900x200 request drew as a 740x78 strip in a
+   * 749-tall pane, which is 0.10, while `visibleFraction` read 1. Always 1 off
+   * the emulation path, and before the pane has reported its size.
+   */
+  paneHeightFill: number;
   note: string | null;
 }
 
@@ -735,10 +779,28 @@ export async function applyViewport(
   // viewport from 1920 to 768. The recorded request is the stable intent and
   // survives any number of zoom changes.
   const fallback = existing?.requested ?? current;
-  const target: ViewportSize = {
-    width: clampDimension(request.width ?? fallback?.width ?? DEFAULT_LANE_WIDTH),
-    height: clampDimension(request.height ?? fallback?.height ?? DEFAULT_LANE_HEIGHT),
-  };
+  const width = clampDimension(request.width ?? fallback?.width ?? DEFAULT_LANE_WIDTH);
+  // A width-only request on a docked pane fills the pane rather than carrying
+  // a height forward. That includes a height an earlier call asked for: a
+  // width-only call means "this width, fill the pane", and a carried height
+  // would make the answer depend on call history the agent may not remember.
+  // A call that names no width (a zoom or a position alone) keeps the recorded
+  // request, for the reason above. Windows and lanes have real sizes to keep.
+  // A pane that has not reported its size keeps the old fallback too: the
+  // stand-in is the whole host window, so filling it would draw a layout far
+  // taller than the pane, the same reason the blank-pane note below waits.
+  //
+  // The explicit zoom is the one set above, already clamped; null lets the fit
+  // choose.
+  const explicitZoom = typeof request.zoom === 'number' ? webContents.getZoomFactor() || 1 : null;
+  const fillWidget =
+    mechanism === 'device-emulation' && request.width !== undefined && request.height === undefined
+      ? entry.widgetSize
+      : null;
+  const height = fillWidget
+    ? fillHeightFor(width, fillWidget, explicitZoom)
+    : request.height ?? fallback?.height ?? DEFAULT_LANE_HEIGHT;
+  const target: ViewportSize = { width, height: clampDimension(height) };
   const requestedPixelRatio =
     typeof request.deviceScaleFactor === 'number' && request.deviceScaleFactor > 0
       ? request.deviceScaleFactor
@@ -837,11 +899,8 @@ export async function applyViewport(
     // An explicit `zoom` wins, so an agent can still ask for `zoom: 1` and show
     // the user a 1:1 crop. Its screenshots are still the whole viewport.
     const widget = paneWidgetSize(webContents, entry);
-    const zoomFactor =
-      typeof request.zoom === 'number'
-        ? webContents.getZoomFactor() || 1
-        : fitZoomFor(target, widget ?? target);
-    if (typeof request.zoom !== 'number') webContents.setZoomFactor(zoomFactor);
+    const zoomFactor = explicitZoom ?? fitZoomFor(target, widget ?? target);
+    if (explicitZoom === null) webContents.setZoomFactor(zoomFactor);
 
     const applied = await setDeviceMetrics(webContents, {
       width: Math.max(1, Math.round(target.width * zoomFactor)),
@@ -882,15 +941,39 @@ export async function applyViewport(
   // user's screen, not the agent's screenshots, which always hold the whole
   // viewport.
   let visibleFraction = 1;
+  let paneHeightFill = 1;
   if (mechanism === 'device-emulation') {
-    // The PANE's width, not the window's, for the same reason the fit uses it.
-    const paneWidth = paneWidgetSize(webContents, entry)?.width ?? viewport.width;
-    visibleFraction = Math.min(1, (paneWidth / zoom) / viewport.width);
+    // The PANE, not the window, for the same reason the fit uses it.
+    const pane = paneWidgetSize(webContents, entry) ?? viewport;
+    // Both axes: an explicit zoom, or a fit held at MIN_ZOOM, can leave the
+    // layout taller than the pane as well as wider. A page that measures a
+    // zero axis (a collapsed pane) is not a crop, and when the pane reads zero
+    // on that axis too, the division is 0/0 and would report NaN.
+    if (viewport.width > 0 && viewport.height > 0) {
+      visibleFraction = Math.min(
+        1,
+        (pane.width / zoom) / viewport.width,
+        (pane.height / zoom) / viewport.height,
+      );
+    }
     if (visibleFraction < 0.999) {
       notes.push(
         `The USER's pane shows only about ${Math.round(visibleFraction * 100)}% of this layout at zoom ${zoom.toFixed(2)}. ` +
         'If they need to watch, kangentic_browser_pop_out gives a real window at this size.',
       );
+    }
+    // Only against a size the pane reported. Before that, the pane is the whole
+    // host window, and a note built on it would describe a pane that does not
+    // exist. A percentage only, so it cannot disagree with the capture note,
+    // which names the pane in DIP through the host's zoom.
+    if (entry.widgetSize && pane.height > 0) {
+      paneHeightFill = Math.min(1, (viewport.height * zoom) / pane.height);
+      if (paneHeightFill < PANE_HEIGHT_FILL_NOTE_BELOW) {
+        notes.push(
+          `The layout fills only about ${Math.round(paneHeightFill * 100)}% of the height of the USER's pane, and the rest is blank. ` +
+          'Omit height to fill the pane at this width, or pass reset: true when you are done.',
+        );
+      }
     }
     const surface = guestCaptureSurface(webContents, entry);
     const capture = await describeViewportCapture(webContents, surface, pageState);
@@ -953,6 +1036,7 @@ export async function applyViewport(
     ...limits,
     exact,
     visibleFraction,
+    paneHeightFill,
     note: notes.length > 0 ? notes.join(' ') : null,
   };
 }
@@ -1083,6 +1167,7 @@ export async function clearViewport(
     maxWindowViewport: null,
     exact: true,
     visibleFraction: 1,
+    paneHeightFill: 1,
     note,
   };
 }

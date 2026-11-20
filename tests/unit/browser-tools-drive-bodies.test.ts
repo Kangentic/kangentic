@@ -190,6 +190,7 @@ const applyViewport = vi.fn(async () => ({
   zoom: 1,
   exact: true,
   visibleFraction: 1,
+  paneHeightFill: 1,
   note: null,
 }));
 const clearViewport = vi.fn(async () => ({
@@ -200,6 +201,7 @@ const clearViewport = vi.fn(async () => ({
   zoom: 1,
   exact: true,
   visibleFraction: 1,
+  paneHeightFill: 1,
   note: null,
 }));
 vi.mock('../../src/main/browser/viewport-override', async (importOriginal) => {
