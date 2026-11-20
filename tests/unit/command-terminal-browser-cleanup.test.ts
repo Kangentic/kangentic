@@ -40,6 +40,11 @@ import {
   RESPAWN_SETTLE_MS,
 } from '../../src/main/ipc/helpers/command-terminal-browser';
 import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
+import {
+  setBrowserPaneReason,
+  getBrowserPaneReason,
+  clearAllBrowserPaneReasons,
+} from '../../src/main/browser/browser-pane-reason';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Session } from '../../src/shared/types';
@@ -69,6 +74,7 @@ describe('installCommandTerminalBrowserCleanup', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearAllBrowserPaneReasons();
     sessionManager = new EventEmitter();
     const context = {
       sessionManager,
@@ -90,6 +96,26 @@ describe('installCommandTerminalBrowserCleanup', () => {
     expect(browserUrlStore.clear).toHaveBeenCalledWith('/projects/app', OWNER);
     expect(commandTerminalBrowserStore.clear).toHaveBeenCalledWith('/projects/app', 'slot-2');
     expect(discardAnnotationDraft).toHaveBeenCalledWith('/projects/app', OWNER, { retire: true });
+  });
+
+  it("forgets the reason the slot's agent gave when the terminal ends, and no other owner's", () => {
+    const otherOwner = commandTerminalBrowserOwner('proj-1', 'slot-3');
+    setBrowserPaneReason(OWNER, { purpose: 'for-user', reason: 'showing the app', sessionId: 'terminal-session' });
+    setBrowserPaneReason(otherOwner, { purpose: 'own-work', reason: 'measuring', sessionId: 'other-session' });
+
+    sessionManager.emit('session-removed', 'terminal-session', terminalSession());
+
+    expect(getBrowserPaneReason(OWNER)).toBeNull();
+    expect(getBrowserPaneReason(otherOwner)).not.toBeNull();
+  });
+
+  it('keeps the reason through a respawn of the slot', () => {
+    setBrowserPaneReason(OWNER, { purpose: 'for-user', reason: 'showing the app', sessionId: 'terminal-session' });
+    markCommandTerminalRespawn('terminal-session');
+
+    sessionManager.emit('session-removed', 'terminal-session', terminalSession());
+
+    expect(getBrowserPaneReason(OWNER)).not.toBeNull();
   });
 
   it('keeps everything through a respawn of the slot (a branch switch or a resume in place)', () => {

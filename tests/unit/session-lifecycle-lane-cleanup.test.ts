@@ -40,6 +40,11 @@ vi.mock('../../src/main/browser/viewport-override', () => ({
 }));
 
 import { markRecordExited } from '../../src/main/transition-engine/session-lifecycle';
+import {
+  setBrowserPaneReason,
+  getBrowserPaneReason,
+  clearAllBrowserPaneReasons,
+} from '../../src/main/browser/browser-pane-reason';
 
 function makeSessionRepoStub(compareAndUpdateStatusResult: boolean): SessionRepository {
   return {
@@ -142,5 +147,38 @@ describe('markRecordExited: releaseViewportOverridesForSession wiring (red-green
     // LATER test rather than failing this one.
     await Promise.resolve();
     await Promise.resolve();
+  });
+});
+
+describe('markRecordExited: Browser pane reasons end with the session (red-green)', () => {
+  beforeEach(() => {
+    clearAllBrowserPaneReasons();
+    destroyLanesForSessionMock.mockClear();
+    destroyLanesForSessionMock.mockReturnValue(0);
+    releaseViewportOverridesForSessionMock.mockClear();
+    releaseViewportOverridesForSessionMock.mockReturnValue(Promise.resolve());
+  });
+
+  function seedReasons(): void {
+    setBrowserPaneReason('task-exiting', { purpose: 'for-user', reason: 'showing the app', sessionId: 'record-abc12345' });
+    setBrowserPaneReason('task-other', { purpose: 'own-work', reason: 'measuring', sessionId: 'record-other999' });
+  }
+
+  it('forgets the reason the exiting session gave and keeps the one another session gave', () => {
+    seedReasons();
+
+    markRecordExited(makeSessionRepoStub(true), 'record-abc12345');
+
+    expect(getBrowserPaneReason('task-exiting')).toBeNull();
+    expect(getBrowserPaneReason('task-other')).toMatchObject({ reason: 'measuring' });
+  });
+
+  it('keeps every reason when the CAS fails (a repeated onExit on a suspended record)', () => {
+    seedReasons();
+
+    markRecordExited(makeSessionRepoStub(false), 'record-abc12345');
+
+    expect(getBrowserPaneReason('task-exiting')).not.toBeNull();
+    expect(getBrowserPaneReason('task-other')).not.toBeNull();
   });
 });

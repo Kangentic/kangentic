@@ -816,7 +816,7 @@ export async function applyViewport(
     const window = laneWindow(entry.sessionId);
     if (!window) {
       throw new Error(
-        'This offscreen surface no longer has a window, so its viewport cannot be set. Call kangentic_browser_open_pane with a url to bring your task\'s browser back.',
+        'This offscreen surface no longer has a window, so its viewport cannot be set. Call kangentic_browser_open_pane with a url, a purpose and a reason to bring your task\'s browser back.',
       );
     }
     // No display clamp: a lane is offscreen and may exceed the monitor.

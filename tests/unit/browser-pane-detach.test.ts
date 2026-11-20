@@ -80,6 +80,7 @@ import {
   popOutPaneForCallerTask,
   dockPaneForCallerTask,
 } from '../../src/main/browser/browser-pane-detach';
+import { setBrowserPaneReason, clearAllBrowserPaneReasons } from '../../src/main/browser/browser-pane-reason';
 import type { ResolvedBrowserAutomationConfig } from '../../src/main/browser/browser-automation-config';
 
 const PROJECT = 'project-1';
@@ -404,6 +405,33 @@ describe('pop_out that cannot finish', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.detail).toContain('offscreen as lane_1234abcd');
+  });
+
+  describe('the recovery open keeps the reason the agent gave', () => {
+    beforeEach(() => {
+      clearAllBrowserPaneReasons();
+      seedDockedPane(7);
+      waitForLivePane.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      openPaneForCallerTask.mockResolvedValue({ ok: false, error: { kind: 'pane-open-timeout', detail: 'did not come up' } });
+    });
+
+    it('re-opens an own-work pane as own-work with the stored reason, never as one shown to the user', async () => {
+      setBrowserPaneReason(TASK, { purpose: 'own-work', reason: 'measuring canvas heights', sessionId: 'agent-1' });
+
+      await popOutPaneForCallerTask(base());
+
+      expect(openPaneForCallerTask).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: 'own-work', reason: 'measuring canvas heights' }),
+      );
+    });
+
+    it('re-opens as for-user with an empty reason when nothing is stored', async () => {
+      await popOutPaneForCallerTask(base());
+
+      expect(openPaneForCallerTask).toHaveBeenCalledWith(
+        expect.objectContaining({ purpose: 'for-user', reason: '' }),
+      );
+    });
   });
 
   it('says no surface came back, and how to get one, when nothing does', async () => {
