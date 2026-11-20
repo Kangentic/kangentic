@@ -55,6 +55,7 @@ import { BacklogRepository } from '../../src/main/db/repositories/backlog-reposi
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { AutomationRepository } from '../../src/main/db/repositories/automation-repository';
+import { matchesTaskFilter } from '../../src/shared/automation-filter';
 import { IPC } from '../../src/shared/ipc-channels';
 import { openTestDatabase } from './helpers/test-database';
 
@@ -100,6 +101,34 @@ describe('BACKLOG_REMAP_PRIORITIES transaction', () => {
 
     expect(backlog.getById(backlogItem.id)?.priority).toBe(3);
     expect(tasks.getById(task.id)?.priority).toBe(0);
+  });
+
+  // The invariant the Priority line exists for: after a level is deleted, a row
+  // keeps matching the tasks it matched. Real repositories, no mocked remap.
+  it('moves a row\'s Priority line with the tasks, so it matches the same tasks afterwards', () => {
+    const urgentTask = tasks.create({ title: 'urgent', description: '', swimlane_id: todoLaneId, priority: 4 });
+    const highTask = tasks.create({ title: 'high', description: '', swimlane_id: todoLaneId, priority: 3 });
+    const mediumTask = tasks.create({ title: 'medium', description: '', swimlane_id: todoLaneId, priority: 2 });
+    automations.replaceForColumn(todoLaneId, [
+      { name: 'Urgent only', type: 'notify', trigger: 'enter', enabled: true, config: {}, final_line: null, text_match_source: 'agent', filter: { priorities: [4], labels: [] } },
+      { name: 'Deleted level', type: 'notify', trigger: 'exit', enabled: true, config: {}, final_line: null, text_match_source: 'agent', filter: { priorities: [2, 3], labels: ['bug'] } },
+    ]);
+    const rowFilter = (name: string) => automations.listForColumn(todoLaneId).find((row) => row.name === name)?.filter;
+    const facts = (taskId: string) => {
+      const task = tasks.getById(taskId)!;
+      return { priority: task.priority, labels: task.labels };
+    };
+    expect(matchesTaskFilter(rowFilter('Urgent only'), facts(urgentTask.id))).toBe(true);
+
+    remap();
+
+    expect(rowFilter('Urgent only')).toEqual({ priorities: [3], labels: [] });
+    expect(matchesTaskFilter(rowFilter('Urgent only'), facts(urgentTask.id))).toBe(true);
+    expect(matchesTaskFilter(rowFilter('Urgent only'), facts(highTask.id))).toBe(false);
+    // The deleted level folds into 0 as the tasks' own did, and the other level follows its tasks.
+    expect(rowFilter('Deleted level')).toEqual({ priorities: [0, 2], labels: ['bug'] });
+    expect(facts(mediumTask.id).priority).toBe(0);
+    expect(facts(highTask.id).priority).toBe(2);
   });
 
   it('rolls the backlog and task remaps back when the automation remap throws', () => {
