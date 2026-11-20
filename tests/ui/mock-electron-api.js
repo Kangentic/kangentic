@@ -6390,6 +6390,9 @@
     //   - window.__mockMobileBridgeStatus: shallow-merged onto getStatus()'s result
     //   - window.__mockMobileDevices: overrides listDevices()'s return value
     //   - window.__mockFireMobilePairingSas(payload) / __mockFireMobilePairingEnded(payload) / __mockFireMobileStateChanged()
+    //   - window.__mockStartPairingError: when set (to any value, an Error or a
+    //     non-Error), the next startPairing() throws it once and clears the hook,
+    //     so a spec can drive the tab's startPairing() rejection path
     //   - window.__mockCancelPairingCallCount: incremented on every cancelPairing()
     //     call, so a spec can assert the tab's unmount cleanup actually fired one
     //   - window.__mockCompleteMobilePairing(displayName): stands in for the
@@ -6497,6 +6500,12 @@
           }, overrides);
         },
         startPairing: async function () {
+          if (typeof window !== 'undefined' && '__mockStartPairingError' in window) {
+            // One-shot: consumed so a later startPairing() in the same page succeeds.
+            var pendingError = window.__mockStartPairingError;
+            delete window.__mockStartPairingError;
+            throw pendingError;
+          }
           state.pairingInProgress = true;
           return {
             qrUri: 'kangentic-pair://mock',

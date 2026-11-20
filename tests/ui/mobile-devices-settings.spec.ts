@@ -1059,6 +1059,39 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
+  test('a startPairing() rejection shows the bare reason, and a non-Error rejection shows the fallback', async () => {
+    await openMobileTab();
+
+    await test.step('an Electron-wrapped rejection loses its IPC and class prefixes', async () => {
+      await page.evaluate(() => {
+        (window as unknown as { __mockStartPairingError: unknown }).__mockStartPairingError = new Error(
+          "Error invoking remote method 'mobile:startPairing': RelayDialError: Relay connection closed before it opened",
+        );
+      });
+      await page.getByRole('button', { name: 'Pair a device' }).click();
+
+      const errorText = page.getByText('Relay connection closed before it opened');
+      await expect(errorText).toBeVisible();
+      await expect(errorText).toHaveClass(/text-danger/);
+      await expect(errorText).toHaveText('Relay connection closed before it opened');
+      await expect(page.getByText('Error invoking remote method')).toHaveCount(0);
+      await expect(page.getByText('RelayDialError')).toHaveCount(0);
+      await expect(page.getByAltText('Pairing QR code')).toHaveCount(0);
+    });
+
+    await test.step('a non-Error rejection falls back to the generic message', async () => {
+      await page.evaluate(() => {
+        (window as unknown as { __mockStartPairingError: unknown }).__mockStartPairingError = 'not an Error';
+      });
+      await page.getByRole('button', { name: 'Pair a device' }).click();
+
+      await expect(page.getByText('Could not start pairing.')).toBeVisible();
+      await expect(page.getByText('Relay connection closed before it opened')).toHaveCount(0);
+    });
+
+    await closeSettings();
+  });
+
   test('Part 4 regression: closing Settings mid-ceremony and reopening lets "Pair a device" show a fresh QR again', async () => {
     // Historically the "Pair a device" click silently no-op'd the second time
     // if the panel was closed while a ceremony was in progress - the
