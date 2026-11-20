@@ -70,7 +70,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
     [allSessions, currentProjectId, dialogSessionIds, remoteDetailTaskIds, mobileTerminalStreamedSessionIds],
   );
 
-  // Narrow activity/idle selectors to only the panel's visible sessions.
+  // Narrow the activity selector to only the panel's visible sessions.
   // Prevents re-renders from background session state changes.
   const activeSessionIdSet = useMemo(() => visibleSessions.map((s) => s.id), [visibleSessions]);
   const sessionActivity = useSessionStore(
