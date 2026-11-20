@@ -43,6 +43,14 @@ const SIZE_CLASSES: Record<PillSize, string> = {
 };
 
 /**
+ * The `sm` size's side padding (`px-2.5`, one side) and minimum width (`min-w-[32px]`) as numbers,
+ * for code that fits pills into a fixed width (the backlog Labels column). Change them with the
+ * class string above.
+ */
+export const PILL_SM_PADDING_X_PX = 10;
+export const PILL_SM_MIN_WIDTH_PX = 32;
+
+/**
  * Trims a text run's line box to cap height and baseline, so the pill's
  * `items-center` centers the ink rather than the font's content area. A 12px
  * font's 16px line box centers that content area, and every UI font puts more
@@ -150,18 +158,23 @@ export function LabelPillItems({ labels, labelColors }: { labels: string[]; labe
   return (
     <>
       {labels.map((label) => {
-        const color = labelColors[label];
+        const look = labelPillLook(labelColors[label]);
         return (
-          <Pill
-            key={label}
-            size="sm"
-            className={color ? 'font-medium border' : 'bg-surface-hover/60 text-fg-muted'}
-            style={color ? { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } : undefined}
-          >
+          <Pill key={label} size="sm" className={look.className} style={look.style}>
             {label}
           </Pill>
         );
       })}
     </>
   );
+}
+
+/**
+ * A label pill's classes and style: tinted from its colour when it has one, the flat muted fill
+ * when it does not (see `LabelPillItems`). The backlog Labels column measures the coloured look
+ * at medium weight with a 2px border (`labelPillWidthPx`), so a change here changes that too.
+ */
+export function labelPillLook(color: string | undefined): { className: string; style: React.CSSProperties | undefined } {
+  if (!color) return { className: 'bg-surface-hover/60 text-fg-muted', style: undefined };
+  return { className: 'font-medium border', style: { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } };
 }
