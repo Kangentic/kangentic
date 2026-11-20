@@ -10,6 +10,7 @@ import { LinearAdapter } from './adapters/linear';
 import { GitLabAdapter } from './adapters/gitlab';
 import { TrelloAdapter } from './adapters/trello';
 import { ObsidianChecklistAdapter, ObsidianNotesAdapter } from './adapters/obsidian';
+import { RepoFolderAdapter } from './adapters/repo-folder';
 import { trackFeatureUsed } from '../analytics/usage';
 import { RefusalError } from '../../shared/refusal';
 
@@ -89,3 +90,7 @@ boardRegistry.register(new TrelloAdapter());
 boardRegistry.register(new ObsidianNotesAdapter());
 boardRegistry.register(new ObsidianChecklistAdapter());
 boardRegistry.register(new GitLabAdapter());
+
+/** Registered like the rest; exported as well for Browse, which lists the branch's folders. */
+export const repoFolderAdapter = new RepoFolderAdapter();
+boardRegistry.register(repoFolderAdapter);

@@ -66,6 +66,10 @@ msgstr "{sourceLabel} on {host}"
 msgid "{summary}."
 msgstr "{summary}."
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "About {about}"
+msgstr "About {about}"
+
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 msgid "Add Label"
 msgstr "Add Label"
@@ -102,6 +106,7 @@ msgstr "Assignee"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
+#: src/renderer/components/backlog/ImportSourceForm.tsx
 msgctxt "button"
 msgid "Back"
 msgstr "Back"
@@ -114,6 +119,11 @@ msgstr "Backlog is empty"
 msgctxt "import source type"
 msgid "Board"
 msgstr "Board"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgctxt "button"
+msgid "Browse"
+msgstr "Browse"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
@@ -184,7 +194,7 @@ msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} ot
 msgstr "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
-#: src/renderer/components/backlog/ImportPopover.tsx
+#: src/renderer/components/backlog/ImportSourceForm.tsx
 msgid "Connect"
 msgstr "Connect"
 
@@ -200,6 +210,10 @@ msgstr "Connect GitLab"
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't delete backlog task"
 msgstr "Couldn't delete backlog task"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Couldn't list the folders"
+msgstr "Couldn't list the folders"
 
 #. placeholder {0}: result.detail
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
@@ -217,6 +231,10 @@ msgstr "Couldn't remove attachment"
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't save backlog task"
 msgstr "Couldn't save backlog task"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Couldn't save the source"
+msgstr "Couldn't save the source"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgctxt "button"
@@ -306,6 +324,16 @@ msgstr "Each - [ ] line becomes a task"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
+msgid "Each file or folder inside becomes a task"
+msgstr "Each file or folder inside becomes a task"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Each file or folder inside becomes a task."
+msgstr "Each file or folder inside becomes a task."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
 msgid "Each note becomes a task"
 msgstr "Each note becomes a task"
 
@@ -317,6 +345,10 @@ msgstr "Edit"
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Edit Backlog Task"
 msgstr "Edit Backlog Task"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Edit source"
+msgstr "Edit source"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
 msgid "Edit, move or delete"
@@ -338,6 +370,27 @@ msgstr "File too large"
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "Filter by ID, title, label, or assignee..."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source field"
+msgid "Folder"
+msgstr "Folder"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Folders"
+msgstr "Folders"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Folders on {branchName}"
+msgstr "Folders on {branchName}"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "From the folder name. Put on every task it imports."
+msgstr "From the folder name. Put on every task it imports."
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "From the link. Put on every task it imports."
+msgstr "From the link. Put on every task it imports."
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 msgid "GitLab rejected this token."
@@ -462,6 +515,11 @@ msgctxt "import filter"
 msgid "Label"
 msgstr "Label"
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgctxt "import source field"
+msgid "Label"
+msgstr "Label"
+
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 msgid "Label name"
 msgstr "Label name"
@@ -506,6 +564,10 @@ msgstr "Move to Board"
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "New Backlog Task"
 msgstr "New Backlog Task"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "No folders match"
+msgstr "No folders match"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "No items found"
@@ -655,16 +717,27 @@ msgstr "Projects"
 msgid "Refresh to check for new items"
 msgstr "Refresh to check for new items"
 
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgctxt "import source menu"
+msgid "Remove"
+msgstr "Remove"
+
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 msgctxt "button"
 msgid "Rename"
 msgstr "Rename"
 
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import provider"
+msgid "Repository folder"
+msgstr "Repository folder"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "Retry"
 msgstr "Retry"
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgctxt "button"
 msgid "Save"
@@ -689,6 +762,10 @@ msgstr "Show imported items"
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 msgid "Sign in with GitLab"
 msgstr "Sign in with GitLab"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Source actions"
+msgstr "Source actions"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgctxt "import filter"
@@ -745,6 +822,10 @@ msgctxt "import filter"
 msgid "Type"
 msgstr "Type"
 
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgid "Type a folder or browse"
+msgstr "Type a folder or browse"
+
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
 msgctxt "column header"
 msgid "Updated"
@@ -754,6 +835,11 @@ msgstr "Updated"
 msgctxt "priority"
 msgid "Urgent"
 msgstr "Urgent"
+
+#: src/renderer/components/backlog/ImportSourceForm.tsx
+msgctxt "import source field"
+msgid "URL"
+msgstr "URL"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
 msgid "Use a personal access token"

@@ -40,17 +40,58 @@ const dialog = () => page.locator('[data-testid="board-manager-dialog"]');
 const editDialog = () => page.locator('[data-testid="edit-automation-dialog"]');
 
 /** One of the editor's cards: trigger, condition, frequency or action. */
-function card(name: 'trigger' | 'condition' | 'frequency' | 'action'): Locator {
+function card(name: CardName): Locator {
   return editDialog().locator(`[data-testid="edit-automation-card-${name}"]`);
 }
 
-/** The line each guard card prints under its title. Clicked, not the switch beside it. */
-const CONDITION_DESCRIPTION = 'Runs only when this holds.';
-/** The hover reason a disabled Text match option carries off a turn end. */
-const TEXT_MATCH_UNAVAILABLE = 'Matching a message runs on agent turn end only.';
-const FREQUENCY_DESCRIPTION = 'How many times it can run on a task.';
-
+type CardName = 'trigger' | 'condition' | 'frequency' | 'action';
+type ConditionKindName = 'priority' | 'labels' | 'reply' | 'prompt' | 'evaluation';
 type AutomationTriggerName = 'enter' | 'turn_end' | 'exit';
+
+/**
+ * Open one accordion section. Only one section's body is rendered at a time,
+ * so a spec that reaches into a field opens its section first.
+ */
+async function openCard(name: CardName): Promise<void> {
+  if ((await card(name).getAttribute('data-open')) !== 'true') {
+    await card(name).locator(`[data-testid="edit-automation-card-${name}-header"]`).click();
+  }
+  await expect(card(name)).toHaveAttribute('data-open', 'true');
+}
+
+/** Pick a Trigger option, which lives in the Trigger section. */
+async function setTrigger(trigger: AutomationTriggerName): Promise<void> {
+  await openCard('trigger');
+  await editDialog().locator(`[data-testid="edit-automation-trigger-${trigger}"]`).click();
+}
+
+/** The Add condition menu, a body portal. */
+function addConditionMenu(): Locator {
+  return page.locator('[data-testid="edit-automation-add-condition-menu"]');
+}
+
+/** Open the Condition section and its Add condition menu. */
+async function openAddConditionMenu(): Promise<void> {
+  await openCard('condition');
+  // While the switch is off the whole list is inert (EditAutomationDialog wraps it in
+  // `inert={!conditionOn}`), so Add condition cannot be clicked until the switch is on.
+  const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
+  if ((await conditionSwitch.getAttribute('aria-checked')) !== 'true') await conditionSwitch.click();
+  await card('condition').locator('[data-testid="edit-automation-add-condition"]').click();
+  await expect(addConditionMenu()).toBeVisible();
+}
+
+/** Add one line to the Condition list through its menu. */
+async function addCondition(kind: ConditionKindName): Promise<void> {
+  await openAddConditionMenu();
+  await addConditionMenu().locator(`[data-testid="edit-automation-add-condition-${kind}"]`).click();
+  await expect(addConditionMenu()).toHaveCount(0);
+  await expect(card('condition').locator(`[data-testid="edit-automation-condition-line-${kind}"]`)).toBeVisible();
+}
+
+function frequencySwitch(): Locator {
+  return card('frequency').locator('[data-testid="edit-automation-card-frequency-switch"]');
+}
 
 /** Open the Column Manager on a column by clicking its board header. */
 async function openColumn(columnName: string): Promise<void> {
@@ -94,6 +135,8 @@ interface PersistedRow {
   config: Record<string, unknown>;
   condition: string | null;
   final_line: string | null;
+  text_match_source?: string;
+  filter?: { priorities: number[]; labels: string[] } | null;
   max_runs: number | null;
 }
 
@@ -235,16 +278,6 @@ function conditionMark(name: string): Locator {
   return titleLine(name).locator('[data-testid="column-automation-condition-mark"]');
 }
 
-/** The Text match mark: a Condition of the other kind, on the name's line the same way. */
-function textMatchMark(name: string): Locator {
-  return titleLine(name).locator('[data-testid="column-automation-text-match-mark"]');
-}
-
-/** One option of the Condition card's kind control. */
-function conditionKind(kind: 'agent' | 'text' | 'user'): Locator {
-  return card('condition').locator(`[data-testid="edit-automation-condition-kind-${kind}"]`);
-}
-
 /** The Frequency mark, looked up on the name's line for the same reason. */
 function frequencyMark(name: string): Locator {
   return titleLine(name).locator('[data-testid="column-automation-frequency-mark"]');
@@ -306,34 +339,42 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
 
   // 1 - A click on a card header flips its switch ────────────────────────────
 
-  test('a click on the Condition header flips its switch and unlocks the field, and Frequency does the same', async () => {
+  test('the Condition and Frequency switches lock and unlock their sections, and a header click only opens one', async () => {
     await setAutomationAgent({ agent: 'claude', model: 'sonnet' });
     await openColumn('Executing');
     await addThroughPicker('enter', 'run_script');
 
     const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
-    const conditionField = editDialog().locator('[data-testid="edit-automation-condition"]');
+    const conditionLines = card('condition').locator('[data-testid="edit-automation-condition-lines"]');
 
-    // Off, the field keeps its place: dimmed and not editable.
+    // Action is open on arrival, and a closed section's body is not rendered.
+    await expect(card('action')).toHaveAttribute('data-open', 'true');
+    await expect(card('condition')).toHaveAttribute('data-open', 'false');
+    await expect(card('condition').locator('[data-testid="edit-automation-card-condition-body"]')).toHaveCount(0);
+
+    // A header click opens the section and leaves the switch where it was.
+    await openCard('condition');
+    await expect(card('action')).toHaveAttribute('data-open', 'false');
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'false');
-    await expect(conditionField).toBeDisabled();
+    await expect(card('condition').locator('[data-testid="edit-automation-condition-empty"]')).toHaveText('Runs for every task.');
 
-    // The description line, not the switch: a click anywhere on the header flips it.
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    // The switch turns the list on, and a line written there survives the switch going off and on:
+    // off, the lines dim and take no input while Add condition stays live.
+    await conditionSwitch.click();
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
-    await expect(conditionField).toBeEnabled();
+    await addCondition('evaluation');
+    await expect(conditionLines).not.toHaveAttribute('inert', /.*/);
+    const conditionField = card('condition').locator('[data-testid="edit-automation-condition"]');
     await conditionField.fill('The review is clean');
 
-    // Off again: locked, and showing nothing. On again: what was written returns.
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    await conditionSwitch.click();
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'false');
-    await expect(conditionField).toBeDisabled();
-    await expect(conditionField).toHaveValue('');
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    await expect(conditionLines).toHaveAttribute('inert', '');
+    await expect(card('condition').locator('[data-testid="edit-automation-add-condition"]')).toBeEnabled();
+    await conditionSwitch.click();
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
     await expect(conditionField).toHaveValue('The review is clean');
 
-    const frequencySwitch = card('frequency').locator('[data-testid="edit-automation-card-frequency-switch"]');
     const stepperValue = editDialog().locator('[data-testid="edit-automation-max-runs-value"]');
     const stepperMore = editDialog().locator('[data-testid="edit-automation-max-runs-increment"]');
 
@@ -341,13 +382,14 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     // the stepper (board 15c), not the stepper alone.
     const maxRunsLabel = editDialog().locator('[data-testid="edit-automation-max-runs-label"]');
 
-    await expect(frequencySwitch).toHaveAttribute('aria-checked', 'false');
+    await openCard('frequency');
+    await expect(frequencySwitch()).toHaveAttribute('aria-checked', 'false');
     await expect(stepperValue).toBeDisabled();
     await expect(stepperMore).toBeDisabled();
     await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'true');
 
-    await card('frequency').getByText(FREQUENCY_DESCRIPTION).click();
-    await expect(frequencySwitch).toHaveAttribute('aria-checked', 'true');
+    await frequencySwitch().click();
+    await expect(frequencySwitch()).toHaveAttribute('aria-checked', 'true');
     await expect(stepperValue).toBeEnabled();
     await expect(stepperMore).toBeEnabled();
     await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'false');
@@ -355,8 +397,8 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await stepperMore.click();
     await expect(stepperValue).toHaveValue('2');
 
-    await card('frequency').getByText(FREQUENCY_DESCRIPTION).click();
-    await expect(frequencySwitch).toHaveAttribute('aria-checked', 'false');
+    await frequencySwitch().click();
+    await expect(frequencySwitch()).toHaveAttribute('aria-checked', 'false');
     await expect(stepperValue).toBeDisabled();
     await expect(stepperMore).toBeDisabled();
     await expect(maxRunsLabel).toHaveAttribute('data-dimmed', 'true');
@@ -373,7 +415,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await openColumn('Executing');
     await addThroughPicker('enter', 'notify');
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Ping');
-    await card('frequency').getByText(FREQUENCY_DESCRIPTION).click();
+    await frequencySwitch().click();
     const increment = editDialog().locator('[data-testid="edit-automation-max-runs-increment"]');
     await increment.click();
     await increment.click();
@@ -435,9 +477,9 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await addThroughPicker('enter', 'notify');
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Ping');
 
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    await addCondition('evaluation');
     await editDialog().locator('[data-testid="edit-automation-condition"]').fill('CI is green');
-    await card('frequency').getByText(FREQUENCY_DESCRIPTION).click();
+    await frequencySwitch().click();
     await editDialog().locator('[data-testid="edit-automation-max-runs-increment"]').click();
     await editDialog().locator('[data-testid="edit-automation-max-runs-increment"]').click();
     await expect(editDialog().locator('[data-testid="edit-automation-max-runs-value"]')).toHaveValue('3');
@@ -461,6 +503,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
   test('Move to column disables the enter and exit triggers with the reason, and keeps turn end', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'move_to_column');
+    await openCard('trigger');
 
     const enter = editDialog().locator('[data-testid="edit-automation-trigger-enter"]');
     const turnEnd = editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]');
@@ -486,10 +529,15 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await addThroughPicker('enter', 'run_script');
     const enter = editDialog().locator('[data-testid="edit-automation-trigger-enter"]');
     const turnEnd = editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]');
+    await openCard('trigger');
     await expect(enter).toHaveAttribute('aria-checked', 'true');
     await expect(enter).toBeEnabled();
 
+    await openCard('action');
     await pickType('move_to_column');
+    // A closed Trigger still says where the row now runs.
+    await expect(card('trigger').locator('[data-testid="edit-automation-card-trigger-description"]')).toHaveText('On agent turn end');
+    await openCard('trigger');
     await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
     await expect(enter).toBeDisabled();
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toBeDisabled();
@@ -540,9 +588,11 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(editDialog()).toBeVisible();
     const enter = editDialog().locator('[data-testid="edit-automation-trigger-enter"]');
     const turnEnd = editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]');
+    await openCard('trigger');
     await expect(turnEnd).toHaveAttribute('aria-checked', 'true');
     await expect(turnEnd).toBeDisabled();
 
+    await openCard('action');
     const options = await openTypeOptions();
     // The row's own type stays listed so it still reads what it is.
     await expect(typeOption('notify')).toBeVisible();
@@ -553,6 +603,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     // Run script is allowed at a turn end by its type, but this column cannot
     // run one, so the row moves to the first trigger that does.
     await expect(editDialog().locator('[data-testid="edit-automation-type"]')).toHaveAttribute('data-value', 'run_script');
+    await openCard('trigger');
     await expect(enter).toHaveAttribute('aria-checked', 'true');
     await expect(turnEnd).toHaveAttribute('aria-checked', 'false');
   });
@@ -591,8 +642,8 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(groups.nth(1).locator('[data-testid="column-automation-row"]')).toHaveCount(1);
     await expect(row('Hand off')).toHaveAttribute('data-trigger', 'turn_end');
     await expectMarkSays(conditionMark('Hand off'), 'Condition: only if the review is clean.');
-    // An Agent evaluation's mark is its kind's icon, the same one the kind control shows.
-    await expect(conditionMark('Hand off').locator('svg.lucide-bot')).toHaveCount(1);
+    // One mark for any Condition line, the Condition section's funnel.
+    await expect(conditionMark('Hand off').locator('svg.lucide-funnel')).toHaveCount(1);
     await expectMarkSays(frequencyMark('Hand off'), 'Frequency: at most 3 times until you move the task.');
     await expect(frequencyMark('Hand off').locator('[data-testid="column-automation-frequency-count"]')).toHaveText('3');
     expect(await titleLine('Hand off').evaluate((node) =>
@@ -815,14 +866,16 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expect(options[1]).toHaveAttribute('aria-checked', 'true');
 
     // Moving the row to enter brings Delivery back, with no reason on it.
-    await editDialog().locator('[data-testid="edit-automation-trigger-enter"]').click();
+    await setTrigger('enter');
+    await openCard('action');
     for (const option of options) {
       await expect(option).toBeEnabled();
       await expect(option).not.toHaveAccessibleDescription(reason);
     }
     // And back to turn end, where Done keeps the stored value untouched. The
     // rename is a real edit, so Save has something to write.
-    await editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]').click();
+    await setTrigger('turn_end');
+    await openCard('action');
     await expect(options[0]).toBeDisabled();
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Summarize the turn');
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
@@ -841,50 +894,25 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await addThroughPicker('enter', 'run_script');
 
     // The switch stays live: a Condition no longer means an agent, so having
-    // none never locks the card. On enter, the one kind that runs is this one.
+    // none never locks the card.
+    await openCard('condition');
     const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
     await expect(conditionSwitch).toBeEnabled();
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'false');
-    await expect(conditionKind('agent')).toHaveAttribute('aria-checked', 'true');
 
+    // Evaluation is still pickable, and says what it needs in place of its field.
+    await addCondition('evaluation');
+    await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
     const setup = card('condition').locator('[data-testid="edit-automation-condition-setup"]');
     await expect(setup).toBeVisible();
-    await expect(setup).toContainText('Set up an Automation agent');
+    await expect(setup.locator('[data-testid="edit-automation-condition-setup-text"]')).toHaveText('Needs an Automation agent.');
     const openSettings = setup.locator('[data-testid="edit-automation-open-settings"]');
-    await expect(openSettings).toHaveText('Open Settings');
-
-    // Board 15c: the notice reads as the way forward. Its line is semibold in
-    // the body color, and Open Settings carries a gear and the accent, the same
-    // tone as the notice's own info icon. Compared to each other, not to a hex.
+    await expect(openSettings).toHaveText('Set up');
     await expect(openSettings.locator('svg')).toHaveCount(1);
-    const tones = await setup.evaluate((node) => {
-      const text = node.querySelector('[data-testid="edit-automation-condition-setup-text"]');
-      const icon = node.querySelector(':scope > svg');
-      const button = node.querySelector('[data-testid="edit-automation-open-settings"]');
-      if (!text || !icon || !button) return null;
-      // The body text color, read off a probe so the theme decides it.
-      const probe = document.createElement('span');
-      probe.className = 'text-fg';
-      node.appendChild(probe);
-      const bodyColor = getComputedStyle(probe).color;
-      probe.remove();
-      return {
-        textWeight: getComputedStyle(text).fontWeight,
-        textIsBodyColor: getComputedStyle(text).color === bodyColor,
-        buttonMatchesIcon: getComputedStyle(button).color === getComputedStyle(icon).color,
-      };
-    });
-    expect(tones).toEqual({ textWeight: '600', textIsBodyColor: true, buttonMatchesIcon: true });
 
-    // Nothing to write a condition into, and no variable to put in it.
+    // Nothing to write a statement into, and no variable to put in it.
     await expect(card('condition').locator('[data-testid="edit-automation-condition"]')).toHaveCount(0);
-    await expect(card('condition').locator('[data-testid="template-variable-trigger"]')).toHaveCount(0);
-
-    // A click on the header switches it on, and the notice stays where the field
-    // would be: an evaluation still has no agent to make it.
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
-    await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
-    await expect(setup).toBeVisible();
+    await expect(card('condition').locator('[data-testid="edit-automation-condition-variable-trigger"]')).toHaveCount(0);
 
     // Done with nothing written saves no Condition, rather than an empty one.
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Lint on arrival');
@@ -901,6 +929,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await openColumn('Executing');
     await addThroughPicker('enter', 'run_script');
 
+    await addCondition('evaluation');
     await expect(card('condition').locator('[data-testid="edit-automation-condition-setup"]')).toBeVisible();
     await expect(card('condition').locator('[data-testid="edit-automation-card-condition-switch"]')).toBeEnabled();
     await expect(card('condition').locator('[data-testid="edit-automation-condition"]')).toHaveCount(0);
@@ -911,78 +940,71 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await openColumn('Executing');
     await addThroughPicker('enter', 'run_script');
 
+    await addCondition('evaluation');
     await expect(card('condition').locator('[data-testid="edit-automation-condition-setup"]')).toHaveCount(0);
     await expect(card('condition').locator('[data-testid="edit-automation-open-settings"]')).toHaveCount(0);
     const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
     await expect(conditionSwitch).toBeEnabled();
-    await expect(card('condition').locator('[data-testid="edit-automation-condition"]')).toBeVisible();
-    await expect(card('condition').locator('[data-testid="template-variable-trigger"]')).toBeVisible();
-
-    await conditionSwitch.click();
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(card('condition').locator('[data-testid="edit-automation-condition"]')).toBeVisible();
+    await expect(card('condition').locator('[data-testid="edit-automation-condition-variable-trigger"]')).toBeVisible();
     await expect(card('condition').locator('[data-testid="edit-automation-condition"]')).toBeEnabled();
   });
 
   // 4b - The two Condition kinds ─────────────────────────────────────────────
 
-  test('the kind control lists Agent evaluation, Agent\'s message, Your message, and both messages are turn end only, with the reason', async () => {
+  test('Text match is offered only at a turn end, and a line kept off one is greyed with the reason', async () => {
     await setAutomationAgent({ agent: 'claude', model: 'sonnet' });
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
 
-    const kinds = card('condition').locator('[data-testid^="edit-automation-condition-kind-"]');
-    expect(await kinds.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-testid'))))
-      .toEqual(['edit-automation-condition-kind-agent', 'edit-automation-condition-kind-text', 'edit-automation-condition-kind-user']);
-    await expect(conditionKind('text')).toHaveText("Agent's message");
-    await expect(conditionKind('user')).toHaveText('Your message');
-    // With an agent set up, a new Condition starts on the kind that has always been the default.
-    await expect(conditionKind('agent')).toHaveAttribute('aria-checked', 'true');
-    await expect(conditionKind('text')).toBeEnabled();
-    await expect(conditionKind('user')).toBeEnabled();
-
-    // Off a turn end there is no message to match: both shown, disabled, and saying why.
-    for (const trigger of ['enter', 'exit'] as const) {
-      await editDialog().locator(`[data-testid="edit-automation-trigger-${trigger}"]`).click();
-      for (const kind of ['text', 'user'] as const) {
-        await expect(conditionKind(kind)).toBeDisabled();
-        await expect(conditionKind(kind)).toHaveAccessibleDescription(TEXT_MATCH_UNAVAILABLE);
-      }
-      await expect(conditionKind('agent')).toBeEnabled();
+    // At a turn end the menu lists all five kinds in three groups.
+    await openAddConditionMenu();
+    const menu = addConditionMenu();
+    for (const group of ['Task', 'Text match', 'Agent']) {
+      await expect(menu.getByText(group, { exact: true })).toBeVisible();
     }
+    for (const kind of ['priority', 'labels', 'reply', 'prompt', 'evaluation']) {
+      await expect(menu.locator(`[data-testid="edit-automation-add-condition-${kind}"]`)).toBeVisible();
+    }
+    await menu.locator('[data-testid="edit-automation-add-condition-reply"]').click();
+    await expect(menu).toHaveCount(0);
 
-    await editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]').click();
-    await expect(conditionKind('text')).toBeEnabled();
-    await expect(conditionKind('text')).not.toHaveAccessibleDescription(TEXT_MATCH_UNAVAILABLE);
+    // Off a turn end the line is kept, dimmed, and says why it will not run.
+    const unavailable = card('condition').locator('[data-testid="edit-automation-condition-line-reply-unavailable"]');
+    await expect(unavailable).toHaveCount(0);
+    for (const trigger of ['enter', 'exit'] as const) {
+      await setTrigger(trigger);
+      await openCard('condition');
+      await expect(unavailable).toHaveText('Turn end only');
+    }
+    await setTrigger('turn_end');
+    await openCard('condition');
+    await expect(unavailable).toHaveCount(0);
   });
 
-  // #1078: the two message tabs share one patterns field; the tab says whose message it reads.
-  test('Your message shares the patterns field, says whose message it reads, and saves the source', async () => {
+  // #1078: Reply and Prompt share one patterns field; the line's name says whose message it reads.
+  test('Prompt shares the patterns field with Reply, reads the user\'s message, and saves the source', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Sign-off ping');
 
     const finalLine = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
-    const hint = card('condition').locator('[data-testid="edit-automation-final-line-hint"]');
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    await addCondition('reply');
     await finalLine.fill('*signed off*');
 
-    await conditionKind('user').click();
-    await expect(conditionKind('user')).toHaveAttribute('aria-checked', 'true');
+    // The two share one stored field, so the line swaps rather than adds.
+    await card('condition').locator('[data-testid="edit-automation-condition-line-reply-remove"]').click();
+    await addCondition('prompt');
     await expect(finalLine).toHaveValue('*signed off*');
-    await expect(hint).toHaveText('Matches your messages in the turn, with * and ! supported.');
     await finalLine.fill('');
     await expect(finalLine).toHaveAttribute('placeholder', 'Signed off');
     await finalLine.fill('*signed off*');
 
-    await conditionKind('text').click();
-    await expect(finalLine).toHaveValue('*signed off*');
-    await expect(hint).toHaveText('Matches the last line the agent writes when its turn ends, with * and ! supported.');
-    await conditionKind('user').click();
-
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await expect(editDialog()).toBeHidden();
-    // The same mark as the agent's message, worded for the user's.
-    await expectMarkSays(textMatchMark('Sign-off ping'), 'Condition: only if your message reads "*signed off*".');
+    // The words say whose message it reads.
+    await expectMarkSays(conditionMark('Sign-off ping'), 'Condition: only if your message reads "*signed off*".');
 
     await saveManager();
     const saved = (await readColumnRows('Executing')).find((entry) => entry.name === 'Sign-off ping');
@@ -990,40 +1012,29 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     expect(saved?.text_match_source).toBe('user');
   });
 
-  test('with no Automation agent a new turn-end Condition starts on Text match, which needs no setup', async () => {
+  test('with no Automation agent a Reply needs no setup, and sits beside an Evaluation that does', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Ready ping');
 
-    await expect(conditionKind('text')).toHaveAttribute('aria-checked', 'true');
     const finalLine = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
     const setup = card('condition').locator('[data-testid="edit-automation-condition-setup"]');
+    await addCondition('reply');
     await expect(finalLine).toBeVisible();
     await expect(finalLine).toHaveAttribute('placeholder', 'Ready for review');
-    await expect(card('condition').locator('[data-testid="edit-automation-final-line-hint"]'))
-      .toHaveText('Matches the last line the agent writes when its turn ends, with * and ! supported.');
-    await expect(setup).toBeHidden();
-
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
-    await expect(finalLine).toBeEnabled();
+    await expect(setup).toHaveCount(0);
     await finalLine.fill('Ready for *');
 
-    // Agent evaluation shows its notice in the same slot; the line waits and comes back.
-    await conditionKind('agent').click();
+    // An Evaluation line shows its notice, and the Reply line keeps its value.
+    await addCondition('evaluation');
     await expect(setup).toBeVisible();
-    await expect(finalLine).toBeHidden();
-    await expect(card('condition').locator('[data-testid="edit-automation-condition-text-body"]')).toHaveAttribute('aria-hidden', 'true');
-    await conditionKind('text').click();
     await expect(finalLine).toHaveValue('Ready for *');
-    await expect(setup).toBeHidden();
 
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await expect(editDialog()).toBeHidden();
 
-    // Its own mark, the kind's icon, and the same "Condition:" lead as the other kind.
-    await expectMarkSays(textMatchMark('Ready ping'), 'Condition: only if the last line reads "Ready for *".');
-    await expect(textMatchMark('Ready ping').locator('svg.lucide-text-search')).toHaveCount(1);
-    await expect(conditionMark('Ready ping')).toHaveCount(0);
+    // One funnel mark for the whole Condition, worded for the Reply.
+    await expectMarkSays(conditionMark('Ready ping'), 'Condition: only if the last line reads "Ready for *".');
 
     await saveManager();
     const saved = (await readColumnRows('Executing')).find((entry) => entry.name === 'Ready ping');
@@ -1031,38 +1042,39 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     expect(saved?.condition).toBeNull();
   });
 
-  test('a Text match line waits while the Trigger is off a turn end, comes back on return, and Done off a turn end saves the row without it', async () => {
+  test('a Reply line waits while the Trigger is off a turn end, comes back on return, and Done off a turn end saves the row without it', async () => {
     await seedColumn('Executing', [
       { name: 'Verdict ping', type: 'notify', trigger: 'turn_end', config: { title: 'Ready' }, finalLine: 'Verdict: Ready' },
     ]);
     await openColumn('Executing');
-    await expectMarkSays(textMatchMark('Verdict ping'), 'Condition: only if the last line reads "Verdict: Ready".');
+    await expectMarkSays(conditionMark('Verdict ping'), 'Condition: only if the last line reads "Verdict: Ready".');
     await row('Verdict ping').locator('[data-testid="column-automation-edit"]').click();
     await expect(editDialog()).toBeVisible();
 
+    await openCard('condition');
     const conditionSwitch = card('condition').locator('[data-testid="edit-automation-card-condition-switch"]');
     const finalLine = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
-    await expect(conditionKind('text')).toHaveAttribute('aria-checked', 'true');
+    await expect(card('condition').locator('[data-testid="edit-automation-condition-line-reply"]')).toBeVisible();
     await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
     await expect(finalLine).toHaveValue('Verdict: Ready');
 
-    // On enter the card shows the kind that runs there, holding nothing.
-    await editDialog().locator('[data-testid="edit-automation-trigger-enter"]').click();
-    await expect(conditionKind('agent')).toHaveAttribute('aria-checked', 'true');
-    await expect(conditionKind('text')).toBeDisabled();
-    await expect(conditionSwitch).toHaveAttribute('aria-checked', 'false');
+    // On enter the line stays, saying it will not run, and holds its value.
+    await setTrigger('enter');
+    await openCard('condition');
+    await expect(card('condition').locator('[data-testid="edit-automation-condition-line-reply-unavailable"]')).toHaveText('Turn end only');
+    await expect(finalLine).toHaveValue('Verdict: Ready');
 
     // Back to a turn end before Done: the line returns.
-    await editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]').click();
-    await expect(conditionKind('text')).toHaveAttribute('aria-checked', 'true');
-    await expect(conditionSwitch).toHaveAttribute('aria-checked', 'true');
+    await setTrigger('turn_end');
+    await openCard('condition');
+    await expect(card('condition').locator('[data-testid="edit-automation-condition-line-reply-unavailable"]')).toHaveCount(0);
     await expect(finalLine).toHaveValue('Verdict: Ready');
 
     // Done on enter keeps the move and drops the line.
-    await editDialog().locator('[data-testid="edit-automation-trigger-enter"]').click();
+    await setTrigger('enter');
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await expect(editDialog()).toBeHidden();
-    await expect(textMatchMark('Verdict ping')).toHaveCount(0);
+    await expect(conditionMark('Verdict ping')).toHaveCount(0);
 
     await saveManager();
     const saved = (await readColumnRows('Executing')).find((entry) => entry.name === 'Verdict ping');
@@ -1071,59 +1083,15 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     expect(saved?.condition).toBeNull();
   });
 
-  test('the Condition card holds its height across both kinds, with a field or with the setup notice', async () => {
-    /**
-     * The card's height once two reads in a row agree. The radio reports checked a frame before
-     * the kind's body has laid out, and one read taken straight after it came back 6.5px off on
-     * a loaded CI runner (it passed on the retry). What the test pins is the height the card
-     * comes to rest at, so it waits for the card to rest.
-     */
-    async function settledHeight(): Promise<number> {
-      let previousHeight = -1;
-      await expect.poll(async () => {
-        const box = await card('condition').boundingBox();
-        if (!box) throw new Error('The Condition card has no box');
-        const settled = box.height === previousHeight;
-        previousHeight = box.height;
-        return settled;
-      }, { intervals: [50, 100, 100, 200], timeout: 5000 }).toBe(true);
-      return previousHeight;
-    }
+  // Deleted: "the Condition card holds its height across both kinds". Its whole purpose was the
+  // kind SegmentedControl, which is gone. The Condition is a list of lines now and its height
+  // follows its lines by design, so there is no per-kind height to hold equal.
 
-    /** The card's height on each kind, switched off, as the user flips between them. */
-    async function heightsByKind(): Promise<number[]> {
-      const heights: number[] = [];
-      for (const kind of ['agent', 'text', 'agent'] as const) {
-        await conditionKind(kind).click();
-        await expect(conditionKind(kind)).toHaveAttribute('aria-checked', 'true');
-        heights.push(await settledHeight());
-      }
-      return heights;
-    }
-
-    await setAutomationAgent({ agent: 'claude', model: 'sonnet' });
-    await openColumn('Executing');
-    await addThroughPicker('turn_end', 'notify');
-    const withField = await heightsByKind();
-    await editDialog().locator('[data-testid="edit-automation-cancel"]').click();
-    await cancelManager();
-
-    await setAutomationAgent({ agent: null, model: null });
-    await openColumn('Executing');
-    await addThroughPicker('turn_end', 'notify');
-    await expect(card('condition').locator('[data-testid="edit-automation-condition-setup"]')).toHaveCount(1);
-    const withNotice = await heightsByKind();
-
-    // Sub-pixel rounding differs across platforms, so a small tolerance, never zero.
-    const all = [...withField, ...withNotice];
-    expect(Math.max(...all) - Math.min(...all)).toBeLessThanOrEqual(1);
-  });
-
-  test('a Text match takes one pattern per line, edited like a text editor, and saves the lines', async () => {
+  test('a Reply takes one pattern per line, edited like a text editor, and saves the lines', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Apply findings');
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    await addCondition('reply');
 
     const lines = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
     await expect(lines).toHaveCount(1);
@@ -1170,7 +1138,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await expect(editDialog()).toBeHidden();
     await expectMarkSays(
-      textMatchMark('Apply findings'),
+      conditionMark('Apply findings'),
       'Condition: only if the last line reads neither "Design: waiting on you" nor "Design: shelved".',
     );
 
@@ -1182,7 +1150,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
   test('the last empty line stays when Backspace is pressed on it', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
-    await card('condition').getByText(CONDITION_DESCRIPTION).click();
+    await addCondition('reply');
 
     const lines = card('condition').locator('[data-testid="edit-automation-final-line-line"]');
     await lines.nth(0).focus();
@@ -1194,7 +1162,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
   test('the patterns tip opens on hover and on keyboard focus, with its rules and examples', async () => {
     await openColumn('Executing');
     await addThroughPicker('turn_end', 'notify');
-    await expect(conditionKind('text')).toHaveAttribute('aria-checked', 'true');
+    await addCondition('reply');
 
     const info = card('condition').locator('[data-testid="edit-automation-patterns-info"]');
     const tip = page.locator('[data-testid="edit-automation-patterns-tip"]');

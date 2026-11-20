@@ -42,9 +42,9 @@ import {
   TEXT_MATCH_MAX_PATTERNS,
   TEXT_MATCH_MAX_PATTERN_LENGTH,
   TEXT_MATCH_UNAVAILABLE_REASON,
+  boardConditionOf,
   legacyTextMatch,
   normalizeTextMatch,
-  textMatchFileValue,
   unmatchablePattern,
 } from '../../../shared/final-line-match';
 import { resolveMoveTarget, routeOf } from '../../automations/move-target';
@@ -54,13 +54,14 @@ import { boardFileNote } from './column-commands';
 import { needsRunningWorkCheck, refuseRunningWork, teardownOfColumn } from './running-work-guard';
 import { resolveTask } from './task-resolver';
 import { agentRegistry } from '../agent-registry';
+import { taskFilterFromBoard, taskFilterToBoard } from '../../../shared/automation-filter';
+import { boardPriorityLevels, type PriorityLevelName } from '../../config/board-config/priority-levels';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type {
   AutomationConfig,
   AutomationRunCheck,
   AutomationTrigger,
   AutomationType,
-  BoardAutomationCondition,
   ColumnAutomation,
   TextMatchSource,
 } from '../../../shared/types';
@@ -115,7 +116,7 @@ export const handleListAutomations: CommandHandler = (
         // row's second line does. Everything the panel shows as a mark (the
         // send timing, Move to column's message, the Condition, the Frequency)
         // follows in words, since an agent reads this text and not `data`.
-        const marks = describeAutomationMarksInWords(row, englishI18n);
+        const marks = describeAutomationMarksInWords(row, englishI18n, boardPriorityLevels(context.projectId));
         lines.push(
           `    ${row.position + 1}. ${row.name} (${row.type}) ${describeAutomation(row.type, row.config, englishI18n)}`
           + (marks !== null ? ` (${marks})` : '')
@@ -123,7 +124,7 @@ export const handleListAutomations: CommandHandler = (
         );
       }
     }
-    data.push(...rows.map((row) => serializeRow(row, column.name)));
+    data.push(...rows.map((row) => serializeRow(row, column.name, boardPriorityLevels(context.projectId))));
   }
 
   return {
@@ -167,6 +168,7 @@ export const handleSetAutomations: CommandHandler = (
   // tool description tells an agent to do.
   const ownIds = new Set(new AutomationRepository(db).listForColumn(swimlane.id).map((row) => row.id));
   const usedIds = new Set<string>();
+  const priorityLevels = boardPriorityLevels(context.projectId);
 
   for (let index = 0; index < rawRows.length; index += 1) {
     const entry = rawRows[index] as Record<string, unknown> | null;
@@ -246,6 +248,22 @@ export const handleSetAutomations: CommandHandler = (
       return { success: false, error: `${where}: ${conditionRead.error} Nothing was saved.` };
     }
     const { condition, finalLine, textMatchSource } = conditionRead;
+    // The Condition's Task lines, by priority level name and label (#872).
+    const filterRead = taskFilterFromBoard(entry.filter, priorityLevels);
+    if (filterRead.malformed) {
+      return {
+        success: false,
+        error: `${where}: filter must be { "priorities": [level names], "labels": [labels] } (either may be left out), or null for every task. Nothing was saved.`,
+      };
+    }
+    if (filterRead.unknownPriorities.length > 0) {
+      const levelNames = priorityLevels.map((level) => level.label).join(', ');
+      return {
+        success: false,
+        error: `${where}: filter.priorities has ${filterRead.unknownPriorities.map((levelName) => JSON.stringify(levelName)).join(', ')}, `
+          + `which is not one of this project's priority levels (${levelNames}). Nothing was saved.`,
+      };
+    }
 
     const runnable = canColumnRun(type as AutomationType, { autoSpawn: swimlane.auto_spawn, role: swimlane.role }, trigger);
     if (!runnable.ok) {
@@ -274,6 +292,7 @@ export const handleSetAutomations: CommandHandler = (
       condition,
       final_line: finalLine,
       text_match_source: textMatchSource,
+      filter: filterRead.filter,
       max_runs: normalizeMaxRuns(typeof entry.maxRuns === 'number' ? entry.maxRuns : null),
     });
   }
@@ -295,7 +314,7 @@ export const handleSetAutomations: CommandHandler = (
     success: true,
     message: `Replaced "${swimlane.name}" automations: ${counts}.${fileNote}`
       + (warnings.length > 0 ? `\nHeads up: ${warnings.join(' ')}` : ''),
-    data: { automations: saved.map((row) => serializeRow(row, swimlane.name)), warnings },
+    data: { automations: saved.map((row) => serializeRow(row, swimlane.name, priorityLevels)), warnings },
   };
 };
 
@@ -492,23 +511,22 @@ export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown,
     if (typeof rawCondition !== 'object' || Array.isArray(rawCondition)) {
       return { error: 'condition must be { "text": pattern or [patterns] } or { "agent": sentence } (or null to always run).' };
     }
+    // "text", "agent", or both (#872): every kind given must hold.
     const kinds = Object.keys(rawCondition);
-    const [kind] = kinds;
-    if (kinds.length !== 1 || (kind !== 'text' && kind !== 'agent')) {
-      return {
-        error: kinds.includes('text') && kinds.includes('agent')
-          ? 'condition takes one kind: give "text" or "agent", not both.'
-          : 'condition must hold exactly one key, "text" or "agent".',
-      };
+    if (kinds.length === 0 || kinds.some((kind) => kind !== 'text' && kind !== 'agent')) {
+      return { error: 'condition must hold "text", "agent", or both, and no other key.' };
     }
-    const value: unknown = (rawCondition as Record<string, unknown>)[kind];
-    if (kind === 'agent') {
-      if (typeof value !== 'string') return { error: 'condition.agent must be a sentence for the Automation agent to judge.' };
-      if (value.length > AGENT_CONDITION_MAX_LENGTH) {
+    const record = rawCondition as Record<string, unknown>;
+    if (kinds.includes('agent')) {
+      const agentValue: unknown = record.agent;
+      if (typeof agentValue !== 'string') return { error: 'condition.agent must be a sentence for the Automation agent to judge.' };
+      if (agentValue.length > AGENT_CONDITION_MAX_LENGTH) {
         return { error: `condition.agent is longer than ${AGENT_CONDITION_MAX_LENGTH} characters; shorten the sentence.` };
       }
-      condition = normalizeCondition(value);
-    } else {
+      condition = normalizeCondition(agentValue);
+    }
+    const value: unknown = record.text;
+    if (kinds.includes('text')) {
       // The long form says whose message it reads (#1078).
       let patternValue: unknown = value;
       if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
@@ -578,21 +596,13 @@ export function readConditionParam(rawCondition: unknown, rawFinalLine: unknown,
     }
   }
   return {
-    condition: textMatch === null ? condition : null,
+    condition,
     finalLine: textMatch,
     textMatchSource: textMatch === null ? 'agent' : source,
   };
 }
 
-/** A row's Condition in the shape set_automations takes, or null when it always runs. */
-function conditionParamOf(row: ColumnAutomation): BoardAutomationCondition | null {
-  const text = textMatchFileValue(row.final_line);
-  if (text !== null && row.text_match_source === 'user') return { text: { from: 'user', patterns: text } };
-  if (text !== null) return { text };
-  return row.condition ? { agent: row.condition } : null;
-}
-
-function serializeRow(row: ColumnAutomation, columnName: string): Record<string, unknown> {
+function serializeRow(row: ColumnAutomation, columnName: string, priorityLevels: readonly PriorityLevelName[]): Record<string, unknown> {
   return {
     id: row.id,
     column: columnName,
@@ -601,7 +611,9 @@ function serializeRow(row: ColumnAutomation, columnName: string): Record<string,
     on: row.trigger,
     position: row.position,
     enabled: row.enabled,
-    condition: conditionParamOf(row),
+    // The same shape set_automations takes, or null when the row always runs.
+    condition: boardConditionOf(row),
+    filter: taskFilterToBoard(row.filter, priorityLevels),
     maxRuns: row.max_runs,
     ...row.config,
   };

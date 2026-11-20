@@ -362,6 +362,12 @@ test('the rich shape draws a header band over its body', async () => {
     await expect(manager).toBeVisible({ timeout: 3000 });
     await manager.locator('[data-testid="column-automation-add"][data-trigger="turn_end"]').click();
     await page.locator('[data-testid="column-automation-picker-type"][data-type="notify"]').click();
+    // The patterns tip sits on a Reply line, in the Condition section's list (inert until its switch is on).
+    const condition = page.locator('[data-testid="edit-automation-card-condition"]');
+    await condition.locator('[data-testid="edit-automation-card-condition-header"]').click();
+    await condition.locator('[data-testid="edit-automation-card-condition-switch"]').click();
+    await condition.locator('[data-testid="edit-automation-add-condition"]').click();
+    await page.locator('[data-testid="edit-automation-add-condition-reply"]').click();
     const info = page.locator('[data-testid="edit-automation-patterns-info"]');
     await expect(info).toBeVisible();
 

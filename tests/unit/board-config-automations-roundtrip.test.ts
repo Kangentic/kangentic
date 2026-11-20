@@ -29,8 +29,8 @@ const { AutomationRunRepository } = await import('../../src/main/db/repositories
 const { frequencyLimitReason } = await import('../../src/main/automations/automation-runner');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { ActionRepository } = await import('../../src/main/db/repositories/action-repository');
-const { planColumnAutomations } = await import('../../src/main/config/board-config/apply-automations');
-const { CURRENT_VERSION, migrateBoardColumnFields, newerFormatReason } = await import('../../src/main/config/board-config/config-helpers');
+const { planColumnAutomations, fileHoldsUnreadableAutomations } = await import('../../src/main/config/board-config/apply-automations');
+const { CURRENT_VERSION, fileFormatVersionFor, migrateBoardColumnFields, newerFormatReason } = await import('../../src/main/config/board-config/config-helpers');
 
 import { openTestDatabase } from './helpers/test-database';
 
@@ -140,6 +140,122 @@ describe('kangentic.json automations round-trip', () => {
     const second = build();
 
     expect(second.columns).toEqual(first.columns);
+  });
+
+  // #872: a row's Task lines (filter) and a Text match beside an Agent
+  // evaluation are file format 2. A board that uses neither stays format 1, so
+  // an older build keeps reading it.
+  describe('Task filter and a two-kind condition (file format 2)', () => {
+    const bothKinds = {
+      name: 'Back for revisions',
+      type: 'move_to_column',
+      trigger: 'turn_end',
+      enabled: true,
+      config: { targetColumn: 'Executing' },
+      condition: 'The review found work',
+      final_line: 'Verdict: Changes',
+      filter: { priorities: [3, 4], labels: ['bug'] },
+    } as const satisfies AutomationWriteInput;
+
+    it('writes the filter by level name and both condition kinds, stamps format 2, and round-trips through apply', () => {
+      const { lanes, automations } = freshDatabase();
+      const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+      automations.replaceForColumn(codeReview.id, [{ ...bothKinds, filter: { ...bothKinds.filter } }]);
+      const [before] = automations.listForColumn(codeReview.id);
+
+      const first = build();
+      expect(first.version).toBe(2);
+      expect(columnNamed(first, 'Code Review')?.automations?.onTurnEnd).toEqual([{
+        name: 'Back for revisions',
+        type: 'move_to_column',
+        condition: { text: 'Verdict: Changes', agent: 'The review found work' },
+        filter: { priorities: ['High', 'Urgent'], labels: ['bug'] },
+        targetColumn: 'Executing',
+      }]);
+
+      applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(first)) as BoardConfig);
+      const [after] = automations.listForColumn(codeReview.id);
+      expect(after).toMatchObject({
+        id: before.id,
+        condition: 'The review found work',
+        final_line: 'Verdict: Changes',
+        filter: { priorities: [3, 4], labels: ['bug'] },
+      });
+      expect(build().columns).toEqual(first.columns);
+    });
+
+    it('stamps format 2 for a filter alone, and format 1 for a board with neither new key', () => {
+      const { lanes, automations } = freshDatabase();
+      const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+      automations.replaceForColumn(codeReview.id, [
+        { name: 'Judged', type: 'notify', trigger: 'turn_end', enabled: true, config: {}, condition: 'The review is clean', filter: null },
+        { name: 'Texted', type: 'notify', trigger: 'turn_end', enabled: true, config: {}, final_line: 'Ready', filter: null },
+      ]);
+      const plain = build();
+      expect(plain.version).toBe(1);
+      expect(fileFormatVersionFor(plain.columns)).toBe(1);
+
+      automations.replaceForColumn(codeReview.id, [
+        { name: 'Judged', type: 'notify', trigger: 'turn_end', enabled: true, config: {}, condition: 'The review is clean', filter: { priorities: [4], labels: [] } },
+      ]);
+      expect(build().version).toBe(2);
+    });
+
+    it('reads a filter by level name, any case, and plans it as indices', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onTurnEnd: [{ name: 'Urgent bugs', type: 'notify', filter: { priorities: ['urgent', 'HIGH'], labels: ['bug'] } }],
+        },
+      });
+
+      expect(plan.keepExisting).toBe(false);
+      expect(plan.warnings).toEqual([]);
+      expect(plan.rows.map((row) => row.filter)).toEqual([{ priorities: [3, 4], labels: ['bug'] }]);
+    });
+
+    it('keeps the column, with a warning, over an unknown priority name', () => {
+      const column = {
+        name: 'Code Review',
+        automations: {
+          onTurnEnd: [{ name: 'Critical only', type: 'notify', filter: { priorities: ['Critical'] } }],
+        },
+      };
+      const plan = planColumnAutomations(column);
+
+      expect(plan.keepExisting).toBe(true);
+      expect(plan.rows).toEqual([]);
+      expect(plan.warnings.join('\n')).toContain('Critical');
+      expect(plan.warnings.at(-1)).toBe('"Code Review" has an automation this build cannot read. Kept the column\'s current automations.');
+      expect(fileHoldsUnreadableAutomations([column] as unknown as BoardColumnConfig[], 2)).toBe(true);
+    });
+
+    it('keeps the column over a malformed filter', () => {
+      const plan = planColumnAutomations({
+        name: 'Code Review',
+        automations: {
+          onTurnEnd: [{ name: 'Odd', type: 'notify', filter: { priorities: ['High'], extra: true } as unknown as undefined }],
+        },
+      });
+
+      expect(plan.keepExisting).toBe(true);
+      expect(plan.rows).toEqual([]);
+    });
+
+    it('keeps the stored rows when apply meets an unknown priority name', () => {
+      const { lanes, automations } = freshDatabase();
+      const codeReview = lanes.list().find((lane) => lane.name === 'Code Review')!;
+      automations.replaceForColumn(codeReview.id, [{ ...bothKinds, filter: { ...bothKinds.filter } }]);
+      const file = build();
+      columnNamed(file, 'Code Review')!.automations = {
+        onTurnEnd: [{ name: 'Back for revisions', type: 'move_to_column', filter: { priorities: ['Critical'] } }],
+      };
+
+      const { warnings } = applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(file)) as BoardConfig);
+
+      expect(automations.listForColumn(codeReview.id)).toMatchObject([{ name: 'Back for revisions', filter: { priorities: [3, 4], labels: ['bug'] } }]);
+      expect(warnings.join('\n')).toContain('Critical');
+    });
   });
 
   describe('On agent turn end, Condition and Frequency', () => {
@@ -381,7 +497,7 @@ describe('kangentic.json automations round-trip', () => {
           automations: {
             onEnter: [{ name: 'Too early', type: 'notify', condition: { text: 'Verdict: Ready' } }],
             onTurnEnd: [
-              { name: 'Both kinds', type: 'notify', condition: { text: 'A', agent: 'B' } as unknown as { text: string } },
+              { name: 'Empty object', type: 'notify', condition: {} as unknown as { text: string } },
               { name: 'Unknown kind', type: 'notify', condition: { pattern: 'A' } as unknown as { text: string } },
               { name: 'Bad list', type: 'notify', condition: { text: ['A', 3] as unknown as string[] } },
               { name: 'Bad agent', type: 'notify', condition: { agent: 3 as unknown as string } },
@@ -393,8 +509,8 @@ describe('kangentic.json automations round-trip', () => {
         expect(plan.rows).toEqual([]);
         expect(plan.warnings).toEqual([
           'Automation "Too early" on "Code Review" has a condition.text in onEnter. A text match reads the agent\'s last message, so it works in onTurnEnd only.',
-          'Automation "Both kinds" on "Code Review" has a condition that is not { "text": ... } or { "agent": ... }.',
-          'Automation "Unknown kind" on "Code Review" has a condition that is not { "text": ... } or { "agent": ... }.',
+          'Automation "Empty object" on "Code Review" has a condition that is not { "text": ... }, { "agent": ... } or both.',
+          'Automation "Unknown kind" on "Code Review" has a condition that is not { "text": ... }, { "agent": ... } or both.',
           'Automation "Bad list" on "Code Review" has a condition.text that is not text or a list of text.',
           'Automation "Bad agent" on "Code Review" has a condition.agent that is not text.',
           '"Code Review" has an automation this build cannot read. Kept the column\'s current automations.',
@@ -418,7 +534,7 @@ describe('kangentic.json automations round-trip', () => {
           ['Rule line', null, 'Verdict: Ready\n!---'],
         ]);
         expect(plan.warnings).toEqual([
-          'Automation "Beside" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the condition.',
+          'Automation "Beside" on "Code Review" has both a condition and a finalLine. It keeps the condition.',
           'Automation "Rule line" on "Code Review" has a condition.text pattern "!---" with no letter, number or *, so it can never match.',
         ]);
       });
@@ -478,7 +594,7 @@ describe('kangentic.json automations round-trip', () => {
           ['Rule', null, '---'],
         ]);
         expect(plan.warnings).toEqual([
-          'Automation "Both" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.',
+          'Automation "Both" on "Code Review" has both a condition and a finalLine. It keeps the finalLine.',
           'Automation "Rule" on "Code Review" has a finalLine with no letter, number or *, so no last line can match it and the row never runs.',
         ]);
       });
@@ -498,7 +614,7 @@ describe('kangentic.json automations round-trip', () => {
         expect(plan.keepExisting).toBe(true);
         expect(plan.rows).toEqual([]);
         expect(plan.warnings).toEqual([
-          'Automation "Empty object" on "Code Review" has a condition that is not { "text": ... } or { "agent": ... }.',
+          'Automation "Empty object" on "Code Review" has a condition that is not { "text": ... }, { "agent": ... } or both.',
           'Automation "Bad agent" on "Code Review" has a condition.agent that is not text.',
           'Automation "Bad text" on "Code Review" has a condition.text that is not text or a list of text.',
           '"Code Review" has an automation this build cannot read. Kept the column\'s current automations.',
@@ -533,8 +649,8 @@ describe('kangentic.json automations round-trip', () => {
           ['String', null, 'Done'],
         ]);
         expect(plan.warnings).toEqual([
-          'Automation "Object" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the condition.',
-          'Automation "String" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the finalLine.',
+          'Automation "Object" on "Code Review" has both a condition and a finalLine. It keeps the condition.',
+          'Automation "String" on "Code Review" has both a condition and a finalLine. It keeps the finalLine.',
         ]);
       });
 
@@ -572,7 +688,7 @@ describe('kangentic.json automations round-trip', () => {
           ['User wins', 'Ready', 'user'],
         ]);
         expect(plan.warnings).toEqual([
-          'Automation "User wins" on "Code Review" has both a condition and a finalLine. A row holds one kind of condition, so it keeps the condition.',
+          'Automation "User wins" on "Code Review" has both a condition and a finalLine. It keeps the condition.',
         ]);
       });
 
@@ -805,7 +921,9 @@ describe('kangentic.json automations round-trip', () => {
       const exported = build();
 
       expect(warnings).toEqual([]);
-      expect(exported.version).toBe(CURRENT_VERSION);
+      // Nothing here uses a Task filter or two-kind condition, so the file stays at format 1.
+      expect(exported.version).toBe(1);
+      expect(fileFormatVersionFor(exported.columns)).toBe(1);
       const text = JSON.stringify(exported);
       for (const legacyKey of ['"finalLine"', '"autoCommand"', '"autoCommandMode"', '"permissionStrategy"', '"actions"', '"transitions"', '"command"', 'send_command']) {
         expect(text).not.toContain(legacyKey);
@@ -827,13 +945,13 @@ describe('kangentic.json automations round-trip', () => {
 
     it('warns that a newer file was saved by a newer version, and applies what it can read', () => {
       freshDatabase();
-      const newer = { ...build(), version: 2 };
+      const newer = { ...build(), version: CURRENT_VERSION + 1 };
       columnNamed(newer, 'Executing')!.color = '#123456';
 
       const { warnings, applied } = applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(newer)) as BoardConfig);
 
       expect(applied).toBe(true);
-      expect(warnings).toContain(newerFormatReason(2));
+      expect(warnings).toContain(newerFormatReason(CURRENT_VERSION + 1));
       expect(columnNamed(build(), 'Executing')?.color).toBe('#123456');
     });
   });
@@ -1494,7 +1612,7 @@ describe('planColumnAutomations over a newer file format', () => {
       automations: {
         onTurnEnd: [{ name: 'On to Code Review', type: 'move_to_column', targetColumn: 'Code Review', onlyWhen: { branch: 'main' } } as unknown as BoardAutomationConfig],
       },
-    }, { formatVersion: 2 });
+    }, { formatVersion: CURRENT_VERSION + 1 });
 
     expect(plan.keepExisting).toBe(true);
     expect(plan.warnings).toEqual([
@@ -1507,7 +1625,7 @@ describe('planColumnAutomations over a newer file format', () => {
     const plan = planColumnAutomations({
       name: 'Executing',
       automations: { onTurnEnd: [{ name: 'On to Code Review', type: 'move_to_column', targetColumn: 'Code Review', condition: { text: 'Ready' } }] },
-    }, { formatVersion: 2 });
+    }, { formatVersion: CURRENT_VERSION + 1 });
 
     expect(plan.keepExisting).toBe(false);
     expect(plan.rows.map((row) => [row.name, row.final_line])).toEqual([['On to Code Review', 'Ready']]);
@@ -1517,7 +1635,7 @@ describe('planColumnAutomations over a newer file format', () => {
     const plan = planColumnAutomations({
       name: 'Executing',
       automations: { onEnter: [{ name: 'Setup', type: 'run_script', script: 'npm ci', retryLimit: 2 } as unknown as BoardAutomationConfig] },
-    }, { formatVersion: 1 });
+    }, { formatVersion: CURRENT_VERSION });
 
     expect(plan.keepExisting).toBe(false);
     expect(plan.rows.map((row) => row.name)).toEqual(['Setup']);

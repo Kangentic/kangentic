@@ -15,6 +15,7 @@ import {
 } from './config-helpers';
 import { AutomationRepository } from '../../db/repositories/automation-repository';
 import { configDeclaresAutomations, configIsAutomationAware, planColumnAutomations } from './apply-automations';
+import { boardPriorityLevels } from './priority-levels';
 import { writeTransaction } from '../../db/transaction';
 import { COLUMN_FIELD_DEFAULTS } from './column-field-defaults';
 
@@ -303,7 +304,7 @@ export function applyBoardConfigToDb(
         // `automations` value here is a malformed one (a well-formed value would
         // have made the file aware), planned only so it is warned about.
         if (!automationAware && !automationsReset(lane.id) && columnConfig.autoCommand === undefined && columnConfig.automations === undefined) continue;
-        const plan = planColumnAutomations(columnConfig, { formatVersion: config.version });
+        const plan = planColumnAutomations(columnConfig, { formatVersion: config.version, priorityLevels: boardPriorityLevels(projectId) });
         warnings.push(...plan.warnings);
         // A malformed container is reported, not applied. Replacing would
         // delete the column's rows over a typo.

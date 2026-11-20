@@ -1235,8 +1235,8 @@ msgid "Reload"
 msgstr "Reload"
 
 #: src/renderer/components/LabelInput.tsx
-msgid "Remove {label}"
-msgstr "Remove {label}"
+msgid "Remove {text}"
+msgstr "Remove {text}"
 
 #: src/renderer/utils/gpu-notice.ts
 msgid "Repeated failures shut down your last run."

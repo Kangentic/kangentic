@@ -407,8 +407,8 @@ test.describe('TemplateTextField', () => {
     await field().click();
     await field().evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(4, 4));
 
-    await editDialog().locator('[data-testid="template-variable-trigger"]').click();
-    await page.locator('[data-testid="template-variable-menu"]')
+    await editDialog().locator('[data-testid="automation-config-message-variable-trigger"]').click();
+    await page.locator('[data-testid="automation-config-message-variable-menu"]')
       .locator('button', { hasText: '{{title}}' }).first().click();
 
     await expect(field()).toHaveValue('Run {{title}} now');

@@ -14,7 +14,6 @@ import type { Browser, Locator, Page } from '@playwright/test';
 test.describe.configure({ mode: 'parallel' });
 
 const PROJECT_NAME = `PatternLinesField Test ${Date.now()}`;
-const CONDITION_DESCRIPTION = 'Runs only when this holds.';
 
 let browser: Browser;
 let page: Page;
@@ -77,7 +76,11 @@ async function openField(): Promise<void> {
   await expect(picker).toBeVisible();
   await picker.locator('[data-testid="column-automation-picker-type"][data-type="notify"]').click();
   await expect(editDialog()).toBeVisible();
-  await conditionCard().getByText(CONDITION_DESCRIPTION).click();
+  await conditionCard().locator('[data-testid="edit-automation-card-condition-header"]').click();
+  // The list is inert while the Condition switch is off, so it goes on before a line is added.
+  await conditionCard().locator('[data-testid="edit-automation-card-condition-switch"]').click();
+  await conditionCard().locator('[data-testid="edit-automation-add-condition"]').click();
+  await page.locator('[data-testid="edit-automation-add-condition-reply"]').click();
   await expect(lineInputs()).toHaveCount(1);
   await expect(lineInputs().nth(0)).toBeEnabled();
 }
@@ -259,18 +262,21 @@ test.describe('Text match pattern lines: keyboard and paste', () => {
   test('a multi-line draft survives a Trigger switch, and turning the Condition off disables the lines', async () => {
     await typeLines(['one', 'two', '']);
 
+    // The Trigger options live in their own section, so the Condition closes behind them.
+    const triggerCard = editDialog().locator('[data-testid="edit-automation-card-trigger"]');
+    await triggerCard.locator('[data-testid="edit-automation-card-trigger-header"]').click();
     await editDialog().locator('[data-testid="edit-automation-trigger-enter"]').click();
     await editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]').click();
-    await expect(editDialog().locator('[data-testid="edit-automation-condition-kind-text"]'))
-      .toHaveAttribute('aria-checked', 'true');
+    await conditionCard().locator('[data-testid="edit-automation-card-condition-header"]').click();
+    await expect(conditionCard().locator('[data-testid="edit-automation-condition-line-reply"]')).toBeVisible();
     await expectLines(['one', 'two', '']);
 
     await conditionCard().locator('[data-testid="edit-automation-card-condition-switch"]').click();
     await expect(conditionCard().locator('[data-testid="edit-automation-card-condition-switch"]'))
       .toHaveAttribute('aria-checked', 'false');
-    // The switched-off card may show fewer lines than the draft held; whatever it shows is disabled.
-    await expect.poll(async () => lineInputs().evaluateAll(
-      (inputs) => inputs.length > 0 && inputs.every((input) => (input as HTMLInputElement).disabled),
-    )).toBe(true);
+    // Switched off, the lines stay in place but are inert, so none can be edited.
+    await expect(conditionCard().locator('[data-testid="edit-automation-condition-lines"]'))
+      .toHaveAttribute('inert', '');
+    await expectLines(['one', 'two', '']);
   });
 });

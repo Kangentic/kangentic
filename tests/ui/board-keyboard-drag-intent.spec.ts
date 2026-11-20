@@ -439,6 +439,48 @@ test('Escape cancels a lifted Board Manager row without closing the Board Manage
   }
 });
 
+// The Board Manager's automations list: the whole row is the sortable now (no grip), so Tab
+// lands on the row itself and Space lifts it from there.
+test('a Board Manager automation row lifts from Tab-placed focus on the row, and Escape cancels it without closing the dialog', async () => {
+  const { browser, page } = await launchWithState(buildPreConfig({ withLiveSession: false }));
+  try {
+    await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const executing = lanes.find((lane) => lane.name === 'Executing');
+      if (!executing) throw new Error('no Executing column');
+      const rowFor = (name: string) => ({
+        name,
+        type: 'run_script',
+        trigger: 'enter',
+        enabled: true,
+        config: { script: `echo ${name}` },
+        condition: null,
+        final_line: null,
+        max_runs: null,
+      });
+      await window.electronAPI.automations.replaceForColumn(executing.id, [rowFor('First'), rowFor('Second')] as never, executing.id);
+    });
+    await page.locator('[data-swimlane-name="Executing"] [data-testid="edit-column-btn"]').click();
+    const railTab = page.locator('[data-testid="board-manager-tab"][data-tab-name="Executing"]');
+    await railTab.waitFor({ state: 'visible', timeout: 10000 });
+    const rowSelector = '[data-testid="column-automation-row"][data-name="First"]';
+    const row = page.locator(rowSelector);
+    await expect(row).toHaveAttribute('aria-roledescription', 'sortable');
+
+    await focusByKeyboard(page, rowSelector);
+    await liftGripWithSpace(page, rowSelector);
+    await page.keyboard.press('Escape');
+    await expect(row).not.toHaveAttribute('aria-pressed', 'true', { timeout: 3000 });
+    await expect(railTab).toBeVisible();
+
+    // With nothing lifted, the next Escape reaches the dialog's own handler.
+    await page.keyboard.press('Escape');
+    await expect(railTab).toBeHidden({ timeout: 3000 });
+  } finally {
+    await browser.close();
+  }
+});
+
 test('Space on a pointer-focused card is swallowed rather than scrolling the lane', async () => {
   const { browser, page } = await launchWithState(buildPreConfig({ withLiveSession: false }));
   try {

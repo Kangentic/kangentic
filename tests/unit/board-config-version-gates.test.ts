@@ -164,9 +164,11 @@ describe('planColumnAutomations at file format 2', () => {
     const column = columnFromFile({
       automations: { onEnter: [{ name: 'Setup', type: 'run_script', script: 'npm ci', futureGuard: true }] },
     });
-    const plan = planColumnAutomations(column, { formatVersion: 2 });
+    // A file newer than this build's format is the one that may carry keys it cannot read.
+    const plan = planColumnAutomations(column, { formatVersion: CURRENT_VERSION + 1 });
     expect(plan.keepExisting).toBe(true);
     expect(plan.warnings.join('\n')).toContain('"futureGuard", which this build cannot read');
     expect(planColumnAutomations(column, { formatVersion: 1 }).keepExisting).toBe(false);
+    expect(planColumnAutomations(column, { formatVersion: CURRENT_VERSION }).keepExisting).toBe(false);
   });
 });

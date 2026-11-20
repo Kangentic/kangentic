@@ -7,10 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-CN\n"
 
-#: src/shared/final-line-match.ts
-msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
-msgstr ""
-
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr ""
@@ -250,15 +246,7 @@ msgid "Condition checks"
 msgstr "条件检查"
 
 #: src/shared/automation-describe.ts
-msgid "Condition: only if {condition}."
-msgstr "条件：仅当 {condition} 时。"
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if the last line {rule}."
-msgstr ""
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if your message {rule}."
+msgid "Condition: {clauses}."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -381,6 +369,14 @@ msgstr "在看板中查找"
 #: src/shared/keybindings.ts
 msgid "Focus the board search, or open Quick Find if not on the board."
 msgstr "聚焦看板搜索；若不在看板上，则打开快速查找。"
+
+#: src/shared/automation-describe.ts
+msgid "for label {labels}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "for priority {levels}"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"

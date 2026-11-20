@@ -22,6 +22,7 @@ import { spareWorktreePool } from '../git/spare-worktree';
 import { PATHS } from '../config/paths';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
+import { setBoardPriorityLevelLookup } from '../config/board-config/priority-levels';
 import { DiffWatcher } from '../git/diff-watcher';
 import { GitDetector } from '../git/git-detector';
 import { ShellResolver } from '../pty/spawn/shell-resolver';
@@ -381,6 +382,15 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     getStore: (projectId) => new ActivityIntervalStore(getProjectDb(projectId)),
   });
   activityIntervalRecorder.start();
+
+  // The kangentic.json reader and writer name a Condition's Priority line by
+  // the project's priority levels, which live in its config (#872).
+  setBoardPriorityLevelLookup((projectId) => {
+    const lookupContext = requireContext();
+    const projectPath = lookupContext.projectRepo.getById(projectId)?.path;
+    if (!projectPath) return null;
+    return lookupContext.configManager.getEffectiveConfig(projectPath).backlog?.priorities ?? null;
+  });
 
   // Command Terminals are named here, from the first prompt, so a terminal a
   // phone started (or one in a project not open on the desktop) gets a name.

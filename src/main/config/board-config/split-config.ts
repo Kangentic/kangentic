@@ -93,7 +93,7 @@ export function splitBoardConfig(params: {
   existingLocalOverrides: Partial<BoardConfig> | null;
   fingerprint: string;
 }): SplitBoardConfig {
-  const { lanes, laneById, automationsByLane } = params.boardLanes;
+  const { lanes, laneById, automationsByLane, priorityLevels } = params.boardLanes;
   const teamColumns = readObjectList<BoardColumnConfig>(params.existingTeamConfig?.columns);
   const existingLocalColumns: unknown = params.existingLocalOverrides?.columns;
   const localColumns = Array.isArray(existingLocalColumns) ? readObjectList<BoardColumnConfig>(existingLocalColumns) : [];
@@ -157,6 +157,7 @@ export function splitBoardConfig(params: {
         automations,
         existingColumn: localEntry,
         targetNameOf: localNameOf,
+        priorityLevels,
       });
       const entry = mergeLocalEntry(localEntry, lane, localNameOf, Object.keys(localEntry));
       const entryFields = entry as unknown as Record<string, unknown>;
@@ -179,6 +180,7 @@ export function splitBoardConfig(params: {
       automations,
       existingColumn: existingTeamColumn,
       targetNameOf: teamNameOf,
+      priorityLevels,
     });
     const rowsPointLocal = renameRowTargets(teamColumn.automations, laneByLocalName, teamNameOf, isLocalOnly);
 
@@ -208,7 +210,7 @@ export function splitBoardConfig(params: {
     const baseEntry: BoardColumnConfig = localEntry ?? ({ id: lane.id } as BoardColumnConfig);
     const entry = mergeLocalEntry(baseEntry, lane, localNameOf, [...localKeys]);
     if (ownsAutomations) {
-      const localAutomations = serializeAutomations(automations, readExistingAutomations(localEntry));
+      const localAutomations = serializeAutomations(automations, readExistingAutomations(localEntry), priorityLevels);
       writeOwnedAutomations(entry, localEntry, localAutomations);
     }
     entry.id = lane.id;

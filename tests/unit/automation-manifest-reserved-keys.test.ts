@@ -25,7 +25,7 @@ import { englishText } from '../../src/shared/i18n/english';
  */
 describe('automation field keys', () => {
   it('reserves every key the row shape owns, both Condition kinds included', () => {
-    expect([...RESERVED_AUTOMATION_KEYS].sort()).toEqual(['condition', 'enabled', 'finalLine', 'maxRuns', 'name', 'type']);
+    expect([...RESERVED_AUTOMATION_KEYS].sort()).toEqual(['condition', 'enabled', 'filter', 'finalLine', 'maxRuns', 'name', 'type']);
   });
 
   it('never collides with a reserved row key', () => {

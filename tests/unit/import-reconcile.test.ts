@@ -114,7 +114,17 @@ function makeIssue(overrides: Partial<ExternalIssue> = {}): ExternalIssue {
   };
 }
 
-const context = { currentProjectId: 'proj-1', currentProjectPath: '/mock/proj' } as unknown as IpcContext;
+const context = {
+  currentProjectId: 'proj-1',
+  currentProjectPath: '/mock/proj',
+  // The default branch every source is handed with its project (`SourceProject`).
+  boardConfigManager: { getDefaultBaseBranch: () => null },
+  configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: 'main' } }) },
+  // Another project's folder, for a reconcile that names its project.
+  projectRepo: { getById: (projectId: string) => ({ path: `/mock/${projectId}` }) },
+} as unknown as IpcContext;
+/** What the reconcile hands the adapter as the source's project. */
+const SOURCE_PROJECT = { path: '/mock/proj', baseBranch: 'main' };
 const INPUT = { source: 'azure_devops' as const, repository: 'org/proj' };
 
 function reconcileHandler() {
@@ -252,6 +262,7 @@ describe('importReconcile', () => {
     expect(adapter.fetch).toHaveBeenCalledWith(
       expect.objectContaining({ since: undefined }),
       expect.any(Function),
+      SOURCE_PROJECT,
     );
   });
 
@@ -266,6 +277,7 @@ describe('importReconcile', () => {
     expect(adapter.fetch).toHaveBeenCalledWith(
       expect.objectContaining({ since: '2026-03-01T00:00:00.000Z' }),
       expect.any(Function),
+      SOURCE_PROJECT,
     );
   });
 
@@ -284,6 +296,7 @@ describe('importReconcile', () => {
     expect(adapter.fetch).toHaveBeenCalledWith(
       expect.objectContaining({ since: '2026-03-01T00:00:00.000Z' }),
       expect.any(Function),
+      SOURCE_PROJECT,
     );
   });
 

@@ -109,11 +109,14 @@ function OverviewCell({ value }: { value: OverviewValue }) {
     );
   }
   if (value.changed) {
+    // The pill hangs its 8px padding to the left (`-ml-2`), so its text starts
+    // where its header and the plain values in the column do (#872, canvas
+    // board F1c): a 2 sits over the 0s beside it.
     return (
       <Tooltip label={value.tip ?? value.label}>
         <span
           data-state="changed"
-          className={`inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg${value.icon ? ' gap-1' : ''}`}
+          className={`-ml-2 inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg${value.icon ? ' gap-1' : ''}`}
         >
           {value.icon}
           <span className="truncate">{value.label}</span>

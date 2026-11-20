@@ -42,3 +42,22 @@ export function interpolateAutomationConfig(
 
   return next;
 }
+
+/**
+ * Fill the template variables in a Text match's patterns (#872), each value
+ * matched literally: its `*`, a leading `!` and its line breaks would be
+ * pattern syntax, so they become spaces, which is what matching turns any
+ * punctuation into anyway. A task title of "Fix *everything*" therefore never
+ * widens a pattern. `{{agentReply}}` is not filled here: it is the text being
+ * matched, so a pattern holding it would always match itself, and the dialog
+ * does not offer it.
+ */
+export function interpolateTextMatch(patterns: string, variables: Record<string, string>): string {
+  if (!patterns.includes('{{')) return patterns;
+  const literal: Record<string, string> = {};
+  for (const [name, value] of Object.entries(variables)) {
+    if (name === 'agentReply') continue;
+    literal[name] = value.replace(/[*!\r\n]/g, ' ');
+  }
+  return interpolateTemplate(patterns, literal);
+}

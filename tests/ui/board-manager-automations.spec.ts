@@ -219,6 +219,24 @@ async function pickType(type: string): Promise<void> {
   await expect(editDialog().locator('[data-testid="edit-automation-type"]')).toHaveAttribute('data-value', type);
 }
 
+/** The Trigger options sit in an accordion section that starts closed (Action opens first). */
+async function openTriggerSection(): Promise<void> {
+  const trigger = editDialog().locator('[data-testid="edit-automation-card-trigger"]');
+  if ((await trigger.getAttribute('data-open')) !== 'true') {
+    await trigger.locator('[data-testid="edit-automation-card-trigger-header"]').click();
+  }
+  await expect(trigger).toHaveAttribute('data-open', 'true');
+}
+
+/**
+ * Where a drag starts: the row's position badge, read live. The whole row is the
+ * sortable, so any pixel that is not a control would do; the badge is inert.
+ */
+async function grabPoint(name: string): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const box = await row(name).boundingBox();
+  return box ? { x: box.x + 20, y: box.y, width: 0, height: box.height } : null;
+}
+
 function row(name: string) {
   return dialog().locator(`[data-testid="column-automation-row"][data-name="${name}"]`);
 }
@@ -284,6 +302,7 @@ test.describe('Column automations', () => {
     await openColumn('Executing');
 
     await row('First').locator('[data-testid="column-automation-edit"]').click();
+    await openTriggerSection();
     await editDialog().locator('[data-testid="edit-automation-trigger-exit"]').click();
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
 
@@ -353,9 +372,9 @@ test.describe('Column automations', () => {
     await expect(target).toHaveAttribute('data-enabled', 'false');
     await expect(editor).toHaveCount(0);
 
-    // The grip is for dragging; a click on it opens nothing.
-    await target.locator('[data-drag-handle]').click();
-    await expect(editor).toHaveCount(0);
+    // There is no grip any more: the whole row is the sortable, so nothing on it is a drag-only
+    // control that a click must leave alone.
+    await expect(target.locator('[data-drag-handle]')).toHaveCount(0);
   });
 
   // 4 ─ The message is a row ──────────────────────────────────────────────────
@@ -452,6 +471,7 @@ test.describe('Column automations', () => {
     await editDialog().locator('[data-testid="edit-automation-name"]').fill('Reset notice');
     // The dialog's Trigger offers On exit only, and the blocked options are
     // disabled rather than absent, so the reader can see the rule.
+    await openTriggerSection();
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-enter"]')).toBeDisabled();
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-turn_end"]')).toBeDisabled();
     await expect(editDialog().locator('[data-testid="edit-automation-trigger-exit"]')).toHaveAttribute('aria-checked', 'true');
@@ -692,6 +712,7 @@ test.describe('Column automations', () => {
   test('Trigger is a three-option radiogroup its arrow keys drive', async () => {
     await openColumn('Executing');
     await addThroughPicker('enter', 'notify');
+    await openTriggerSection();
 
     const trigger = editDialog().locator('[data-testid="edit-automation-trigger"]');
     await expect(trigger).toHaveAttribute('role', 'radiogroup');
@@ -800,7 +821,7 @@ test.describe('Column automations', () => {
   // KeyboardSensor, which is unreliable under Playwright. The mouse drag is the
   // real gesture and the store is the ground truth.
 
-  test('the drag target is the full-height strip, not just the grip glyph', async () => {
+  test('the whole row is the drag target: no grip, the row carries the sortable', async () => {
     // Two rows, because one row in a group is deliberately given no grip at all.
     await seedColumn('Executing', [
       { name: 'First', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
@@ -808,56 +829,36 @@ test.describe('Column automations', () => {
     ]);
     await openColumn('Executing');
 
-    // Hit-testing, not the class list: what the user feels is which pixels
-    // start a drag, and `elementFromPoint` is the only thing that answers that.
-    // The glyph alone was 13 x 13 in a 50px row, so the top and bottom thirds
-    // of the gutter looked grabbable and were not.
-    const probe = await row('First').evaluate((node) => {
+    // The whole row is the sortable now: there is no grip element, the row itself carries
+    // dnd-kit's attributes, and the cursor says it grabs. Every pixel of the row starts a drag.
+    await expect(row('First').locator('[data-drag-handle]')).toHaveCount(0);
+    await expect(row('First')).toHaveAttribute('aria-roledescription', 'sortable');
+    await expect(row('First')).toHaveAttribute('data-no-dismiss', 'true');
+    // The sortable's role is left as the list item it is: the row holds real controls.
+    await expect(row('First')).not.toHaveAttribute('role', 'button');
+    expect(await row('First').evaluate((node) => getComputedStyle(node).cursor)).toBe('grab');
+
+    // Hit-testing: the badge, the icon tile and the name all land inside the row, so a press
+    // on any of them reaches the row's own listeners.
+    const hits = await row('First').evaluate((node) => {
       const rowBox = node.getBoundingClientRect();
-      const handle = node.querySelector('[data-drag-handle]');
-      if (!handle) throw new Error('No drag handle');
-      const handleBox = handle.getBoundingClientRect();
-      const at = (x: number, y: number): string => {
+      const insideRow = (x: number, y: number): boolean => {
         const hit = document.elementFromPoint(x, y);
-        if (!hit) return 'nothing';
-        if (hit.closest('[data-drag-handle]')) return 'handle';
-        if (hit.closest('[data-testid="column-automation-row"]')) return 'row';
-        return 'other';
+        return hit !== null && node.contains(hit);
       };
-      // Probed against the ROW's box, deliberately. Probing the handle's own
-      // box asks whether the handle is where the handle is, which is true at
-      // any size: the small glyph passed a top-and-bottom check written that
-      // way. What the user is reaching for is the top-left of the ROW.
-      const gutterX = rowBox.left + 10;
+      const middle = rowBox.top + rowBox.height / 2;
       return {
-        top: at(gutterX, rowBox.top + 4),
-        bottom: at(gutterX, rowBox.bottom - 4),
-        besideIt: at(handleBox.right + 4, rowBox.top + rowBox.height / 2),
-        // The row's own border is the 1px it does not cover, top and bottom.
-        coversRowHeight: Math.round(handleBox.height) >= Math.round(rowBox.height) - 2,
-        widerThanTheGlyph: handleBox.width > 20,
+        leftEdge: insideRow(rowBox.left + 8, middle),
+        topEdge: insideRow(rowBox.left + rowBox.width / 2, rowBox.top + 3),
+        badge: node.querySelector('[data-testid="column-automation-row-position"]') !== null,
       };
     });
-
-    expect(probe.top).toBe('handle');
-    expect(probe.bottom).toBe('handle');
-    expect(probe.coversRowHeight).toBe(true);
-    expect(probe.widerThanTheGlyph).toBe(true);
-    // The rest of the row still opens the editor, which is the thing the bigger
-    // handle could have eaten.
-    expect(probe.besideIt).toBe('row');
-
-    // Size alone does not tell anyone where the zone ENDS, which was the other
-    // half of the complaint. Hovering the row paints the strip, so the boundary
-    // is visible before the drag rather than discovered by missing it.
-    const handle = row('First').locator('[data-drag-handle]');
-    const background = () => handle.evaluate((node) => getComputedStyle(node).backgroundColor);
-    expect(await background()).toBe('rgba(0, 0, 0, 0)');
-    await row('First').hover();
-    await expect.poll(background).not.toBe('rgba(0, 0, 0, 0)');
+    expect(hits).toEqual({ leftEdge: true, topEdge: true, badge: true });
+    await expect(row('First').locator('[data-testid="column-automation-row-position"]')).toHaveText('1');
+    await expect(row('Second').locator('[data-testid="column-automation-row-position"]')).toHaveText('2');
   });
 
-  test('a lone row in a group has no grip, and still lines up with the group above', async () => {
+  test('a lone row in a group is no sortable, and still lines up with the group above', async () => {
     await seedColumn('Executing', [
       { name: 'First', type: 'run_script', trigger: 'enter', config: { script: 'echo 1' } },
       { name: 'Second', type: 'run_script', trigger: 'enter', config: { script: 'echo 2' } },
@@ -868,10 +869,12 @@ test.describe('Column automations', () => {
     const group = (trigger: string) =>
       dialog().locator(`[data-testid="column-automation-group"][data-trigger="${trigger}"]`);
 
-    // Two rows can be ordered against each other, so both keep a grip.
-    await expect(group('enter').locator('[data-drag-handle]')).toHaveCount(2);
-    // One row has nothing to reorder against, so the affordance would be a lie.
-    await expect(group('exit').locator('[data-drag-handle]')).toHaveCount(0);
+    // Two rows can be ordered against each other, so both are sortable.
+    await expect(group('enter').locator('[data-testid="column-automation-row"][aria-roledescription="sortable"]')).toHaveCount(2);
+    // One row has nothing to reorder against, so announcing it as sortable would be a lie.
+    await expect(group('exit').locator('[data-testid="column-automation-row"]')).toHaveCount(1);
+    await expect(group('exit').locator('[aria-roledescription="sortable"]')).toHaveCount(0);
+    await expect(group('exit').locator('[data-testid="column-automation-row"]')).not.toHaveAttribute('data-no-dismiss', /.*/);
 
     // The gutter survives the grip, or the lone row's text slides left of every
     // row above it. Both groups sit in one card, so that edge is read straight
@@ -916,6 +919,7 @@ test.describe('Column automations', () => {
     const budget = editDialog().locator('[data-testid="edit-automation-exit-budget"]');
 
     await row('Script').locator('[data-testid="column-automation-row-label"]').click();
+    await openTriggerSection();
     // On enter it says nothing: the enter path has no aggregate cap.
     await expect(budget).toHaveCount(0);
     await editDialog().locator('[data-testid="edit-automation-trigger-exit"]').click();
@@ -926,6 +930,7 @@ test.describe('Column automations', () => {
     // A notify cannot outlast the budget, so warning about it there would be
     // noise on a row that will never see it fire.
     await row('Ping').locator('[data-testid="column-automation-row-label"]').click();
+    await openTriggerSection();
     await editDialog().locator('[data-testid="edit-automation-trigger-exit"]').click();
     await expect(budget).toHaveCount(0);
     await editDialog().locator('[data-testid="edit-automation-cancel"]').click();
@@ -945,7 +950,7 @@ test.describe('Column automations', () => {
     const groupBottom = await enterGroup.locator('ul').evaluate((node) => node.getBoundingClientRect().bottom);
     const exitRowTop = await row('Exit one').evaluate((node) => node.getBoundingClientRect().top);
 
-    const handleBox = await row('First').locator('[data-drag-handle]').boundingBox();
+    const handleBox = await grabPoint('First');
     if (!handleBox) throw new Error('Row did not lay out');
     const startX = handleBox.x + handleBox.width / 2;
     const startY = handleBox.y + handleBox.height / 2;
@@ -999,7 +1004,7 @@ test.describe('Column automations', () => {
     // The pane fits its rows, so it has nothing to scroll before the drag.
     expect(await metrics()).toEqual({ scrollTop: 0, overflow: 0 });
 
-    const handleBox = await row('First').locator('[data-drag-handle]').boundingBox();
+    const handleBox = await grabPoint('First');
     const scrollerBox = await scroller.boundingBox();
     if (!handleBox || !scrollerBox) throw new Error('Pane did not lay out');
 
@@ -1051,7 +1056,7 @@ test.describe('Column automations', () => {
         nodes.map((node) => node.getAttribute('data-name')).join(','));
 
     const dragFirstDown = async (): Promise<void> => {
-      const handleBox = await row('First').locator('[data-drag-handle]').boundingBox();
+      const handleBox = await grabPoint('First');
       // Measured live rather than as a row-height delta: `closestCenter` only
       // swaps once the dragged row's centre passes the target's, and the target
       // translates upward as it goes, so a fixed delta can land just short.
@@ -1112,8 +1117,8 @@ test.describe('Column automations', () => {
     const message = editDialog().locator('[data-testid="automation-config-message"]');
     await message.fill('/review ');
 
-    await editDialog().locator('[data-testid="template-variable-trigger"]').click();
-    const menu = page.locator('[data-testid="template-variable-menu"]');
+    await editDialog().locator('[data-testid="automation-config-message-variable-trigger"]').click();
+    const menu = page.locator('[data-testid="automation-config-message-variable-menu"]');
     await expect(menu).toBeVisible();
 
     // The structural property, which geometry cannot see: `boundingBox()`
@@ -1136,8 +1141,8 @@ test.describe('Column automations', () => {
     await openColumn('Code Review');
     await addThroughPicker('enter', 'send_message');
 
-    await editDialog().locator('[data-testid="template-variable-trigger"]').click();
-    const menu = page.locator('[data-testid="template-variable-menu"]');
+    await editDialog().locator('[data-testid="automation-config-message-variable-trigger"]').click();
+    const menu = page.locator('[data-testid="automation-config-message-variable-menu"]');
 
     // Move variables exist only for an automation, and are the pair this whole
     // feature made possible.

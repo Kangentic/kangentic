@@ -39,7 +39,7 @@ vi.mock('../../src/main/config/board-config/apply-config', () => ({
 }));
 
 import { BoardConfigManager } from '../../src/main/config/board-config-manager';
-import { TEAM_FILE, LOCAL_FILE, BoardConfigUnreadableError } from '../../src/main/config/board-config/config-helpers';
+import { TEAM_FILE, LOCAL_FILE, CURRENT_VERSION, BoardConfigUnreadableError } from '../../src/main/config/board-config/config-helpers';
 import { isExpectedFailure } from '../../src/main/analytics/handled-report';
 import { pruneDeletedColumnFromProfiles } from '../../src/main/config/board-config/prune-profile-references';
 import type { BoardProfile } from '../../src/shared/types';
@@ -328,7 +328,7 @@ describe('board-config-manager write refusal and reader edges', () => {
   // build that read every `condition.text` as noise exported the file without
   // them, and the commit after that took the guards from the whole board.
   describe('a team file this build cannot fully read', () => {
-    const newerTeam = JSON.stringify({ ...validTeam, version: 2 }, null, 2);
+    const newerTeam = JSON.stringify({ ...validTeam, version: CURRENT_VERSION + 1 }, null, 2);
     const localOverrides = JSON.stringify({ columns: [{ id: 'lane-1', color: '#123456' }] }, null, 2);
     const unreadableGuardTeam = JSON.stringify({
       version: 1,
@@ -418,7 +418,7 @@ describe('board-config-manager write refusal and reader edges', () => {
 
     it('does not add the unreadable-automations line for a newer file, whose own warning already says why', () => {
       const newerWithUnreadableRow = JSON.stringify({
-        version: 2,
+        version: CURRENT_VERSION + 1,
         columns: [{
           id: 'lane-1',
           name: 'Executing',
@@ -468,7 +468,7 @@ describe('board-config-manager write refusal and reader edges', () => {
     it('lets the profile prune on a column delete pass over a newer file instead of failing the delete', () => {
       const newerWithProfiles = JSON.stringify({
         ...validTeam,
-        version: 2,
+        version: CURRENT_VERSION + 1,
         profiles: [{ id: 'p1', name: 'Heavy', columns: { 'lane-doomed': { modelOverride: 'opus' } } }],
       });
       write(TEAM_FILE, newerWithProfiles);

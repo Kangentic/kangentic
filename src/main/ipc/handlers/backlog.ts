@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { getProjectDb } from '../../db/database';
+import { writeTransaction } from '../../db/transaction';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { RemoteItemCacheRepository } from '../../db/repositories/remote-item-cache-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
@@ -35,8 +36,9 @@ import type {
   ImportExecuteInput,
   Task,
 } from '../../../shared/types';
-import { boardRegistry, ImportSourceStore } from '../../boards';
+import { boardRegistry, ImportSourceStore, repoFolderAdapter, type SourceProject } from '../../boards';
 import { parseUrlForSource } from '../../boards/shared';
+import { resolveDefaultBaseBranch } from './git-stats-capture';
 import { registerAsanaIpcHandlers } from '../../boards/adapters/asana';
 import { registerJiraIpcHandlers } from '../../boards/adapters/jira';
 import { registerLinearIpcHandlers } from '../../boards/adapters/linear';
@@ -125,13 +127,38 @@ function stampAlreadyImported(
   backlogRepo: BacklogRepository,
   source: ExternalSource,
   issues: ExternalIssue[],
+  repository: string,
 ): ExternalIssue[] {
   if (issues.length === 0) return issues;
-  const imported = backlogRepo.findByExternalIds(source, issues.map((issue) => issue.externalId));
+  // By the source's repository too (#872), so another source of this provider
+  // holding the same id does not mark this one's item imported.
+  const imported = backlogRepo.findByExternalIds(source, issues.map((issue) => issue.externalId), repository);
   return issues.map((issue) => ({ ...issue, alreadyImported: imported.has(issue.externalId) }));
 }
 
+/**
+ * An item's labels with its source's Label added, once: a label the item already
+ * carries in any letter case is not added again. No Label leaves them as they are.
+ */
+export function withSourceTaskLabel(labels: string[], taskLabel: string | undefined): string[] {
+  const trimmed = taskLabel?.trim();
+  if (!trimmed) return labels;
+  const lowered = trimmed.toLowerCase();
+  if (labels.some((label) => label.toLowerCase() === lowered)) return labels;
+  return [...labels, trimmed];
+}
+
 export function registerBacklogHandlers(context: IpcContext): void {
+  /**
+   * The project a source reads from, for a provider that reads the project's own
+   * repository (a Repository folder). Undefined when no project resolves.
+   */
+  const sourceProjectFor = (projectId?: string | null): SourceProject | undefined => {
+    const { projectPath } = resolveProjectContext(context, projectId);
+    if (!projectPath) return undefined;
+    return { path: projectPath, baseBranch: resolveDefaultBaseBranch(context, projectPath) };
+  };
+
   ipcMain.handle(IPC.BACKLOG_LIST, () => {
     return getBacklogRepo(context).list();
   });
@@ -222,6 +249,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
           priority: item.priority,
           externalId: item.external_id ?? undefined,
           externalSource: item.external_source ?? undefined,
+          externalRepository: item.external_repository ?? undefined,
           externalUrl: item.external_url ?? undefined,
         });
         createdTaskIds.push(task.id);
@@ -374,7 +402,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
         task.description,
         input.priority ?? task.priority,
         input.labels ?? task.labels,
-        { externalId: task.external_id, externalSource: task.external_source, externalUrl: task.external_url },
+        { externalId: task.external_id, externalSource: task.external_source, externalUrl: task.external_url, externalRepository: task.external_repository ?? null },
       );
 
       // Copy task attachments to backlog task before deleting
@@ -409,7 +437,23 @@ export function registerBacklogHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.BACKLOG_REMAP_PRIORITIES, (_, mapping: Record<number, number>) => {
-    return getBacklogRepo(context).remapPriorities(mapping);
+    const projectId = context.currentProjectId;
+    if (!projectId) throw new RefusalError('No project is currently open');
+    const backlogRepo = getBacklogRepo(context);
+    const repos = getProjectRepos(context, projectId);
+    // One transaction over all three, which share the project database: a
+    // failure part way would leave Priority lines naming levels the tasks no
+    // longer hold. Each repository's own transaction nests as a savepoint.
+    const remapAll = writeTransaction(getProjectDb(projectId), () => {
+      // Board tasks take the mapping too: a task promoted before a level was
+      // deleted otherwise kept a number that now names another level, or none.
+      const remapped = backlogRepo.remapPriorities(mapping) + repos.tasks.remapPriorities(mapping);
+      // An automation's Priority line names levels by index, so it follows the
+      // same mapping and keeps matching the tasks it matched.
+      repos.automations.remapFilterPriorities(mapping);
+      return remapped;
+    });
+    return remapAll();
   });
 
   ipcMain.handle(IPC.BACKLOG_RENAME_LABEL, (_, oldName: string, newName: string) => {
@@ -484,7 +528,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const cacheRepo = new RemoteItemCacheRepository(db);
     const backlogRepo = new BacklogRepository(db);
     const issues = cacheRepo.getForSource(input.source, input.repository);
-    return { issues: stampAlreadyImported(backlogRepo, input.source, issues) };
+    return { issues: stampAlreadyImported(backlogRepo, input.source, issues, input.repository) };
   });
 
   // Fetch items changed since the cache high-water mark, merge them in, prune
@@ -508,7 +552,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const backlogRepo = new BacklogRepository(db);
     const adapter = boardRegistry.requireStable(input.source);
     const findAlreadyImported = (source: ExternalSource, externalIds: string[]) =>
-      backlogRepo.findByExternalIds(source, externalIds);
+      backlogRepo.findByExternalIds(source, externalIds, input.repository);
+    const sourceProject = sourceProjectFor(projectId);
 
     // A provider with a cheap id listing prunes on every reconcile, so its cache
     // never goes stale. The others prune only on a full pass, so escalate one when
@@ -537,6 +582,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
       const result = await adapter.fetch(
         { source: input.source, repository: input.repository, page, perPage: RECONCILE_PAGE_SIZE, state: 'all', since },
         findAlreadyImported,
+        sourceProject,
       );
       fetched.push(...result.issues);
       if (!result.hasNextPage) break;
@@ -569,7 +615,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     let removed = 0;
     try {
       if (adapter.listExternalIds) {
-        const keepIds = await adapter.listExternalIds({ source: input.source, repository: input.repository });
+        const keepIds = await adapter.listExternalIds({ source: input.source, repository: input.repository }, sourceProject);
         if (keepIds.length > 0) {
           removed = cacheRepo.pruneMissing(input.source, input.repository, keepIds);
         }
@@ -581,7 +627,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     }
 
     const all = cacheRepo.getForSource(input.source, input.repository);
-    return { issues: stampAlreadyImported(backlogRepo, input.source, all), added, updated, removed };
+    return { issues: stampAlreadyImported(backlogRepo, input.source, all, input.repository), added, updated, removed };
   }
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_EXECUTE, async (_, input: ImportExecuteInput) => {
@@ -593,7 +639,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const adapter = boardRegistry.requireStable(input.source);
 
     const externalIds = input.issues.map((issue) => issue.externalId);
-    const alreadyImportedIds = backlogRepo.findByExternalIds(input.source, externalIds);
+    const alreadyImportedIds = backlogRepo.findByExternalIds(input.source, externalIds, input.repository);
 
     // Fetch deferred per-item detail (e.g. ADO comments) for the selected items
     // and fold it into each body, so the imported backlog item carries the same
@@ -624,6 +670,10 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const priorityScale = priorityScaleFrom(
       context.configManager.getEffectiveConfig(context.currentProjectPath).backlog?.priorities,
     );
+    // The saved source's Label goes on every item it imports, beside the item's own.
+    const sourceTaskLabel = input.sourceId
+      ? new ImportSourceStore(context.currentProjectPath).list().find((saved) => saved.id === input.sourceId)?.taskLabel
+      : undefined;
 
     for (const issue of issuesToImport) {
       if (alreadyImportedIds.has(issue.externalId)) {
@@ -654,13 +704,14 @@ export function registerBacklogHandlers(context: IpcContext): void {
         title: issue.title,
         description: issue.body,
         priority: priorityIndexForName(issue.priority, priorityScale),
-        labels: issue.labels,
+        labels: withSourceTaskLabel(issue.labels, sourceTaskLabel),
         assignee: issue.assignee ?? undefined,
         itemType: adapter.workItemTypeIsItemType ? issue.itemType || undefined : undefined,
         dueDate: issue.dueDate || undefined,
         externalId: issue.externalId,
         externalSource: input.source,
         externalUrl: issue.externalUrl,
+        externalRepository: input.repository,
         syncStatus: 'imported',
         externalMetadata: attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : undefined,
       });
@@ -693,10 +744,11 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return new ImportSourceStore(context.currentProjectPath).list();
   });
 
-  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_ADD, async (_, input: { source: ExternalSource; url: string }) => {
+  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_ADD, async (_, input: { source: ExternalSource; url: string; taskLabel?: string }) => {
     if (!context.currentProjectPath) throw new RefusalError('No project is currently open');
     const store = new ImportSourceStore(context.currentProjectPath);
     const adapter = boardRegistry.get(input.source);
+    const taskLabel = typeof input.taskLabel === 'string' ? input.taskLabel : undefined;
 
     // A provider that validates sources (Jira) checks the parsed source against
     // the remote before anything is saved, so a board the account cannot open is
@@ -704,16 +756,16 @@ export function registerBacklogHandlers(context: IpcContext): void {
     // refusal reaches the renderer as the popover's error line.
     if (adapter?.prepareSource) {
       const { repository } = parseUrlForSource(input.source, input.url);
-      const prepared = await adapter.prepareSource(repository);
+      const prepared = await adapter.prepareSource(repository, sourceProjectFor());
       return store.add(input.source, input.url, {
         label: prepared.label,
         repository: prepared.repository ?? repository,
         scopeKind: prepared.scopeKind,
         host: prepared.host,
-      });
+      }, taskLabel);
     }
 
-    const source = store.add(input.source, input.url);
+    const source = store.add(input.source, input.url, undefined, taskLabel);
 
     // Let the adapter enrich the label with a human-readable name if it can
     // (e.g. Asana: project GID -> project name). Best-effort; any failure
@@ -735,6 +787,22 @@ export function registerBacklogHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_REMOVE, (_, id: string) => {
     if (!context.currentProjectPath) throw new RefusalError('No project is currently open');
     new ImportSourceStore(context.currentProjectPath).remove(id);
+  });
+
+  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_UPDATE, (_, input: { id: string; taskLabel: string }) => {
+    if (!context.currentProjectPath) throw new RefusalError('No project is currently open');
+    const updated = new ImportSourceStore(context.currentProjectPath).update(input.id, {
+      taskLabel: typeof input.taskLabel === 'string' ? input.taskLabel : '',
+    });
+    if (!updated) throw new RefusalError('That source is no longer saved.');
+    return updated;
+  });
+
+  // Browse in the Repository folder form: the default branch's folders, read on the project's host.
+  ipcMain.handle(IPC.BACKLOG_REPO_FOLDERS_LIST, (_, input?: { projectId?: string }) => {
+    const sourceProject = sourceProjectFor(input?.projectId);
+    if (!sourceProject) throw new RefusalError('No project is currently open');
+    return repoFolderAdapter.listFolders(sourceProject);
   });
 
   // Asana and Jira own their own IPC surfaces under

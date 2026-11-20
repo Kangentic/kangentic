@@ -23,7 +23,7 @@ import { createChokepointReporter } from '../../analytics/handled-report';
  * them all for that task.
  */
 export const turnEndReporter = createChokepointReporter('turn_end');
-import { hasCondition, hasFinalLine, hasUserTextMatch, needsAgentReply } from '../row-guards';
+import { hasCondition, hasFinalLine, hasUserTextMatch, needsAgentReply, rowMatchesTaskFilter } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { heldMoveReason, runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from '../../workflows/workflow-step';
@@ -628,10 +628,14 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
   if (request.reclaimedForColumnId !== undefined && request.reclaimedForColumnId !== column.id) return;
 
   // The fast path: most columns have no turn-end rows, and most tasks are in
-  // no workflow.
+  // no workflow. A row whose Task lines this task does not match is not for it,
+  // so it is dropped before every other guard: it records no skip, joins no
+  // check, and cannot stop the card (#872). A column whose rows all leave this
+  // task out is, for this task, a column with none.
   const rows = repos.automations.getForTrigger(column.id, 'turn_end');
+  const rowsForTask = rows.filter((row) => rowMatchesTaskFilter(row, task));
   const stepApplies = workflowStepApplies(task, payload.projectId);
-  if (rows.length === 0 && !stepApplies) return;
+  if (rowsForTask.length === 0 && !stepApplies) return;
   // Off a running workflow, a held turn end runs nothing: the column's rows
   // wait for the background work to drain, as they always have.
   if (held && !stepApplies) return;
@@ -675,7 +679,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
   // per visit, or a gate that stopped moving the task looks like a failure with
   // no reason.
   const pending: ColumnAutomation[] = [];
-  for (const row of rows) {
+  for (const row of rowsForTask) {
     // A held turn end runs the rows behind a Text match, which read the reply
     // it ended on. The rest keep waiting for the drain, which runs only them.
     if (held && !hasFinalLine(row)) continue;
@@ -811,7 +815,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
       await judgeColumnStop({
         taskId: task.id,
         swimlaneId: column.id,
-        rows: rows.filter((row) => automationRegistry.get(row.type) !== undefined && canColumnRun(row.type, facts, 'turn_end').ok),
+        rows: rowsForTask.filter((row) => automationRegistry.get(row.type) !== undefined && canColumnRun(row.type, facts, 'turn_end').ok),
         runs,
         visitStartedAt,
         readReply,
@@ -1070,8 +1074,12 @@ async function runRows(
     releaseHeldMoves?: ReadonlySet<string>;
   },
 ): Promise<{ messagedAgent: boolean; newerTurn: boolean; heldMove: boolean }> {
-  const { task, column, repos, sessionRepo, pending, visitStartedAt, controller } = input;
+  const { task, column, repos, sessionRepo, visitStartedAt, controller } = input;
+  // A row whose Task lines this task does not match is not for it: it reads no
+  // reply, joins no paid check and records nothing (#872).
+  const pending = input.pending.filter((row) => rowMatchesTaskFilter(row, task));
   const none = { messagedAgent: false, newerTurn: false, heldMove: false };
+  if (pending.length === 0) return none;
   const runs = repos.automationRuns;
   const project = context.projectRepo.getById(payload.projectId);
   const projectPath = project?.path ?? null;

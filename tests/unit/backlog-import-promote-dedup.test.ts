@@ -212,8 +212,9 @@ describe('findByExternalIds (import dedup query)', () => {
     // The fix: promoted tasks live in `tasks`, so the dedup query must scan it too.
     expect(sql).toContain('FROM tasks');
     expect(sql).toContain('UNION');
-    // source + ids are bound once per unioned table.
-    expect(statements[0].args).toEqual(['github_issues', '623', 'github_issues', '623']);
+    // source, ids and the repository (twice, for its null check and its match)
+    // are bound once per unioned table; no repository binds null.
+    expect(statements[0].args).toEqual(['github_issues', '623', null, null, 'github_issues', '623', null, null]);
   });
 
   // The Import dialog's paint path passes the whole remote cache, not a page, and
@@ -231,8 +232,8 @@ describe('findByExternalIds (import dedup query)', () => {
 
     expect(statements.length).toBeGreaterThan(1);
     for (const statement of statements) {
-      // Two bindings per id plus the source once per unioned table.
-      expect(statement.args.length).toBeLessThanOrEqual(400 * 2 + 2);
+      // Two bindings per id, plus the source and the repository twice, once per unioned table.
+      expect(statement.args.length).toBeLessThanOrEqual(400 * 2 + 6);
     }
     const boundIds = new Set(statements.flatMap((statement) => statement.args.slice(1)));
     for (const externalId of externalIds) expect(boundIds.has(externalId)).toBe(true);

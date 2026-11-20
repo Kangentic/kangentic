@@ -108,20 +108,22 @@ sources:
 | `backlog:demote` | invoke | Demote a board task back to the backlog. Takes a trailing `projectId` (the task's project, which the Agent Monitor names for a task of a project the board is not on) |
 | `backlog:renameLabel` | invoke | Rename a label across all backlog items |
 | `backlog:deleteLabel` | invoke | Remove a label from all backlog items |
-| `backlog:remapPriorities` | invoke | Remap priority values across all backlog items |
+| `backlog:remapPriorities` | invoke | Remap priority values across backlog items, board tasks, and each automation row's `filter` levels |
 | `backlog:changedByAgent` | on | Event: backlog was modified by an agent via MCP tool call |
 | `backlog:labelColorsChanged` | on | Event: label color mappings changed by agent via MCP tool call |
 
-## Backlog Import (7 channels)
+## Backlog Import (9 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `backlog:importCheckCli` | invoke | Check that a source can be read: its CLI and sign-in, or for a folder source (Obsidian) that the folder exists and is inside a vault. An optional saved `repository` scopes the check for a per-site provider (Jira) and lets a folder source report a folder that moved; `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect |
 | `backlog:importGetCached` | invoke | Read the persistent remote-item cache for a source (no network), for an instant dialog paint |
 | `backlog:importReconcile` | invoke | Fetch items changed since the cache high-water mark, merge and prune, and return the merged set |
-| `backlog:importExecute` | invoke | Import selected items into the backlog, hydrating deferred per-item detail (e.g. Azure DevOps comments) and downloading attachments |
+| `backlog:importExecute` | invoke | Import selected items into the backlog, hydrating deferred per-item detail (e.g. Azure DevOps comments) and downloading attachments. With `sourceId`, the saved source's Label (`taskLabel`) is added to every item, once |
 | `backlog:importSourcesList` | invoke | List saved import sources for the current project |
 | `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). A provider with a `prepareSource` hook (Jira, GitLab) checks the source against the remote first and refuses it with the popover's error line; others with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
 | `backlog:importSourcesRemove` | invoke | Remove a saved import source |
+| `backlog:importSourcesUpdate` | invoke | Set or clear a saved source's Label (`{ id, taskLabel }`), from Edit source in the row's menu |
+| `backlog:repoFoldersList` | invoke | Browse for a Repository folder source: the folders on the project's default branch that would import a task, with their counts, read through git on the project's host |
 
 ## Board Auth - Asana (3 channels)
 | Channel | Pattern | Purpose |

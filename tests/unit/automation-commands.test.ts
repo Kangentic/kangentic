@@ -523,6 +523,50 @@ describe('automation MCP commands', () => {
       });
     });
 
+    describe('filter, the Condition\'s Task lines (#872)', () => {
+      const setOne = (row: Record<string, unknown>) => handleSetAutomations({
+        column: 'Executing',
+        automations: [{ name: 'Ping urgent bugs', type: 'send_message', on: 'turn_end', message: 'Look', ...row }],
+      }, context);
+
+      it('saves level names as indices and echoes names', () => {
+        const response = setOne({ filter: { priorities: ['urgent', 'High'], labels: ['bug'] } });
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0].filter).toEqual({ priorities: [3, 4], labels: ['bug'] });
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.filter).toEqual({ priorities: ['High', 'Urgent'], labels: ['bug'] });
+      });
+
+      it('echoes null for a row with no filter, and clears one on null', () => {
+        const response = setOne({});
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.filter).toBeNull();
+        expect(setOne({ filter: { labels: ['bug'] } }).success).toBe(true);
+        expect(setOne({ filter: null }).success).toBe(true);
+        expect(automations.listForColumn(executingId())[0].filter).toBeNull();
+      });
+
+      it('refuses an unknown level name, naming the levels, and saves nothing', () => {
+        const response = setOne({ filter: { priorities: ['Critical'] } });
+
+        expect(response.success).toBe(false);
+        expect(response.error).toContain('"Critical"');
+        expect(response.error).toContain('None, Low, Medium, High, Urgent');
+        expect(response.error).toContain('Nothing was saved.');
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      it('refuses a malformed filter and saves nothing', () => {
+        for (const filter of ['High', { priorities: 'High' }, { priority: ['High'] }]) {
+          const response = setOne({ filter });
+          expect(response.success, JSON.stringify(filter)).toBe(false);
+          expect(response.error).toContain('filter must be');
+        }
+        expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+    });
+
     describe('condition: { text } or { agent }', () => {
       const setOne = (row: Record<string, unknown>) => handleSetAutomations({
         column: 'Executing',
@@ -588,10 +632,22 @@ describe('automation MCP commands', () => {
         expect(saved.condition).toEqual({ agent: 'The review found work' });
       });
 
+      it('accepts both kinds in one condition and echoes both', () => {
+        const response = setOne({ condition: { text: 'Verdict: Ready', agent: 'The review is clean' } });
+
+        expect(response.success).toBe(true);
+        expect(automations.listForColumn(executingId())[0]).toMatchObject({
+          final_line: 'Verdict: Ready',
+          condition: 'The review is clean',
+        });
+        const [saved] = (response.data as { automations: Array<Record<string, unknown>> }).automations;
+        expect(saved.condition).toEqual({ text: 'Verdict: Ready', agent: 'The review is clean' });
+      });
+
       it.each([
-        [{ text: 'A', agent: 'B' }, 'condition takes one kind: give "text" or "agent", not both.'],
-        [{}, 'condition must hold exactly one key, "text" or "agent".'],
-        [{ pattern: 'A' }, 'condition must hold exactly one key, "text" or "agent".'],
+        [{}, 'condition must hold "text", "agent", or both, and no other key.'],
+        [{ pattern: 'A' }, 'condition must hold "text", "agent", or both, and no other key.'],
+        [{ text: 'A', pattern: 'B' }, 'condition must hold "text", "agent", or both, and no other key.'],
         [{ text: ['A', 3] }, 'condition.text must be a pattern or a list of patterns, each text.'],
         [{ agent: 3 }, 'condition.agent must be a sentence for the Automation agent to judge.'],
         [['A'], 'condition must be { "text": pattern or [patterns] } or { "agent": sentence } (or null to always run).'],

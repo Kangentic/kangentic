@@ -12,6 +12,8 @@ export type {
   AuthInput,
   AuthResult,
   SyncResult,
+  SourceProject,
+  PreparedSource,
 } from './types';
 export { prerequisiteToCheckCli } from './types';
 export { extractInlineImageUrls } from './mapping';

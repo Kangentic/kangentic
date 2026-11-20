@@ -375,10 +375,10 @@ describe('saving', () => {
   // The dialog keeps a Text match line while the Trigger is off a turn end, so
   // switching back restores it. What a Save sends holds the two rules instead.
   describe('the Condition kinds a Save sends', () => {
-    it('sends a turn-end Text match trimmed, and drops the prose a row held before it', () => {
+    it('sends a turn-end Text match trimmed, and keeps the Agent evaluation beside it', () => {
       const row = draft({ trigger: 'turn_end', condition: 'The review is clean', final_line: '  Verdict: Ready  ' });
-      expect(draftConditionKinds(row)).toEqual({ condition: null, final_line: 'Verdict: Ready', text_match_source: 'agent' });
-      expect(toWriteInput(row)).toMatchObject({ condition: null, final_line: 'Verdict: Ready' });
+      expect(draftConditionKinds(row)).toEqual({ condition: 'The review is clean', final_line: 'Verdict: Ready', text_match_source: 'agent' });
+      expect(toWriteInput(row)).toMatchObject({ condition: 'The review is clean', final_line: 'Verdict: Ready' });
     });
 
     it('drops a Text match off a turn end and keeps the Agent evaluation (S1)', () => {

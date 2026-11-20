@@ -7,10 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: es\n"
 
-#: src/shared/final-line-match.ts
-msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
-msgstr ""
-
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr ""
@@ -302,16 +298,7 @@ msgid "Condition checks"
 msgstr "Comprobaciones de condiciones"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Condition: only if {condition}."
-msgstr "Condición: solo si {condition}."
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if the last line {rule}."
-msgstr ""
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if your message {rule}."
+msgid "Condition: {clauses}."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -459,6 +446,14 @@ msgstr "Buscar en el tablero"
 #, fuzzy
 msgid "Focus the board search, or open Quick Find if not on the board."
 msgstr "Enfoca la búsqueda del tablero o abre la búsqueda rápida si no está en el tablero."
+
+#: src/shared/automation-describe.ts
+msgid "for label {labels}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "for priority {levels}"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy

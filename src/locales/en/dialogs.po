@@ -317,6 +317,10 @@ msgstr "Add automation"
 msgid "Add column"
 msgstr "Add column"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Add condition"
+msgstr "Add condition"
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Add project"
 msgstr "Add project"
@@ -363,14 +367,15 @@ msgctxt "board overview group"
 msgid "Agent"
 msgstr "Agent"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Agent"
+msgstr "Agent"
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Agent default"
 msgstr "Agent default"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Agent evaluation"
-msgstr "Agent evaluation"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Agent Override"
@@ -390,15 +395,11 @@ msgstr "Agent runtime"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "Agent: {agentOverrideLabel}"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Agent's message"
-msgstr "Agent's message"
-
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "All columns"
 msgstr "All columns"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "All tests pass"
 msgstr "All tests pass"
 
@@ -410,9 +411,17 @@ msgstr "Already up to date"
 msgid "Already used on this column."
 msgstr "Already used on this column."
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An agent checks your statement"
+msgstr "An agent checks your statement"
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"
 msgstr "An alternate set of per-column agent, model, and effort settings"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An Automation agent reads this statement against the turn and answers yes or no, after the variables are filled in."
+msgstr "An Automation agent reads this statement against the turn and answers yes or no, after the variables are filled in."
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 msgid "Another column uses this icon"
@@ -806,10 +815,6 @@ msgstr "Condition"
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgid "Condition check"
 msgstr "Condition check"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Condition kind"
-msgstr "Condition kind"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgid "Condition: {condition}"
@@ -1216,6 +1221,11 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "Error"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Evaluation"
+msgstr "Evaluation"
+
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples"
 msgstr "Examples"
@@ -1373,6 +1383,10 @@ msgstr "History"
 msgid "History: {historyFileName}"
 msgstr "History: {historyFileName}"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "How Evaluation works"
+msgstr "How Evaluation works"
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "How many times it can run on a task."
 msgstr "How many times it can run on a task."
@@ -1476,6 +1490,11 @@ msgstr "Knowledge Graph indexing is off"
 msgid "Labels"
 msgstr "Labels"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Labels"
+msgstr "Labels"
+
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Last message"
 msgstr "Last message"
@@ -1531,14 +1550,6 @@ msgstr "Mark as not viewed"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Mark as viewed"
 msgstr "Mark as viewed"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
-msgstr "Matches the last line the agent writes when its turn ends, with * and ! supported."
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches your messages in the turn, with * and ! supported."
-msgstr "Matches your messages in the turn, with * and ! supported."
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"
@@ -1598,6 +1609,10 @@ msgstr "Name terminal"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
 msgstr "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Needs an Automation agent."
+msgstr "Needs an Automation agent."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Needs both images"
@@ -1915,7 +1930,6 @@ msgstr "Open project folder"
 msgid "Open settings"
 msgstr "Open settings"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Open Settings"
 msgstr "Open Settings"
@@ -2026,6 +2040,10 @@ msgctxt "column header"
 msgid "Permissions"
 msgstr "Permissions"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Pick levels..."
+msgstr "Pick levels..."
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Pinned for the whole task, ignoring column settings."
 msgstr "Pinned for the whole task, ignoring column settings."
@@ -2079,6 +2097,11 @@ msgstr "Previous change"
 msgid "Priority"
 msgstr "Priority"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Priority"
+msgstr "Priority"
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 msgid "Profile"
@@ -2096,6 +2119,11 @@ msgstr "Project Folder Not Found"
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Project relocated"
 msgstr "Project relocated"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Prompt"
+msgstr "Prompt"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
@@ -2156,6 +2184,10 @@ msgstr "Remove column"
 msgid "Remove column \"{removeTargetName}\""
 msgstr "Remove column \"{removeTargetName}\""
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Remove condition"
+msgstr "Remove condition"
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Removed profile"
 msgstr "Removed profile"
@@ -2177,9 +2209,10 @@ msgctxt "file status"
 msgid "Renamed"
 msgstr "Renamed"
 
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-msgid "Reorder {name}"
-msgstr "Reorder {name}"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Reply"
+msgstr "Reply"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Reset"
@@ -2275,9 +2308,13 @@ msgctxt "completed task card"
 msgid "Runs"
 msgstr "Runs"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Runs for every task."
+msgstr "Runs for every task."
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Runs only when this holds."
-msgstr "Runs only when this holds."
+msgid "Runs only when all match."
+msgstr "Runs only when all match."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
@@ -2391,9 +2428,9 @@ msgstr "Sessions don't run in {roleName} columns, so {label} doesn't apply."
 msgid "Sessions don't run in {terminalName} columns."
 msgstr "Sessions don't run in {terminalName} columns."
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Set up an Automation agent"
-msgstr "Set up an Automation agent"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Set up"
+msgstr "Set up"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Share the task's conversation with the other columns."
@@ -2609,6 +2646,11 @@ msgstr "Switch to flat list"
 msgid "Switch to tree"
 msgstr "Switch to tree"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Task"
+msgstr "Task"
+
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Task archived"
 msgstr "Task archived"
@@ -2651,6 +2693,11 @@ msgstr "Text File"
 msgid "Text match"
 msgstr "Text match"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Text match"
+msgstr "Text match"
+
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match, line {lineNumber}"
 msgstr "Text match, line {lineNumber}"
@@ -2658,6 +2705,10 @@ msgstr "Text match, line {lineNumber}"
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
 msgstr "The agent CLI this task runs on"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The agent's last line"
+msgstr "The agent's last line"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {baseLabel}, which does not move."
@@ -2706,6 +2757,14 @@ msgstr "The task's changes could not be read"
 #: src/renderer/components/dialogs/task-detail/completed/useTaskReport.ts
 msgid "The task's changes could not be read."
 msgstr "The task's changes could not be read."
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's labels"
+msgstr "The task's labels"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's priority level"
+msgstr "The task's priority level"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "The window could not be created."
@@ -2843,6 +2902,10 @@ msgstr "Trigger"
 msgid "Try again in a moment."
 msgstr "Try again in a moment."
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Turn end only"
+msgstr "Turn end only"
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
 msgstr "Turn on \"Start an agent here\" in the Agent section to enable {label}."
@@ -2954,16 +3017,12 @@ msgid "What is this column for?"
 msgstr "What is this column for?"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "What it does."
-msgstr "What it does."
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "What runs. Each type brings its own fields."
 msgstr "What runs. Each type brings its own fields."
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "What starts it."
-msgstr "What starts it."
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "What you sent this turn"
+msgstr "What you sent this turn"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."
@@ -3036,7 +3095,3 @@ msgstr "Your Board Profile changes will be discarded."
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Your column order changes will be discarded."
 msgstr "Your column order changes will be discarded."
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Your message"
-msgstr "Your message"

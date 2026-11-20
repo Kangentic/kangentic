@@ -6,11 +6,11 @@ import {
   Clock,
   Columns3Cog,
   CornerDownLeft,
+  Funnel,
   MessageSquare,
   Repeat,
   SquareArrowRight,
   SquareTerminal,
-  TextSearch,
   Webhook,
   type LucideIcon,
 } from 'lucide-react';
@@ -62,13 +62,11 @@ export function AutomationIcon({ name, ...iconProps }: { name: string } & Lucide
  * creating a component during render. The message mark is the Send message
  * type's own bubble: a Move to column row with a Message carries one.
  *
- * A Condition marks with its kind's own icon, the one its option carries in
- * the Edit automation dialog: the robot for an Agent evaluation, the text
- * search for a Text match. The funnel stays on the dialog's Condition card.
+ * A Condition is one mark, the funnel its section carries in the Edit
+ * automation dialog, whatever lines it holds; its tip lists them (#872).
  */
 const MARK_ICONS: Record<AutomationRowMarkKind, ReactElement> = {
-  condition: <Bot size={12} />,
-  'text-match': <TextSearch size={12} />,
+  condition: <Funnel size={12} />,
   frequency: <Repeat size={12} />,
   delivery: <Clock size={12} />,
   message: <MessageSquare size={12} />,

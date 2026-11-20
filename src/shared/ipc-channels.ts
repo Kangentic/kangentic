@@ -456,6 +456,8 @@ export const IPC = {
   BACKLOG_IMPORT_SOURCES_LIST: 'backlog:importSourcesList',
   BACKLOG_IMPORT_SOURCES_ADD: 'backlog:importSourcesAdd',
   BACKLOG_IMPORT_SOURCES_REMOVE: 'backlog:importSourcesRemove',
+  BACKLOG_IMPORT_SOURCES_UPDATE: 'backlog:importSourcesUpdate',
+  BACKLOG_REPO_FOLDERS_LIST: 'backlog:repoFoldersList',
 
   // Board Auth - Jira
   BOARDS_JIRA_AUTH_STATUS: 'boards:jira:authStatus',

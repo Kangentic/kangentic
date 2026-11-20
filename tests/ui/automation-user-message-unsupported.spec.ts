@@ -64,12 +64,30 @@ test('a row on the user\'s message is shown off where the agent cannot report on
   await expect(toggle).toBeDisabled();
   await expect(toggle).toHaveAccessibleDescription(UNSUPPORTED_REASON);
 
-  // The saved row keeps its tab, so it reads what it is; a new choice of it is refused with the agent named.
+  // The saved row keeps its Prompt line, so it reads what it is; a new choice of Prompt is not
+  // offered where the agent cannot report one, though Reply still is.
   await row.click();
   const editor = page.locator('[data-testid="edit-automation-dialog"]');
   await expect(editor).toBeVisible();
-  const userTab = editor.locator('[data-testid="edit-automation-condition-kind-user"]');
-  await expect(userTab).toHaveAttribute('aria-checked', 'true');
-  await expect(userTab).toBeDisabled();
-  await expect(userTab).toHaveAccessibleDescription(/doesn't report the messages you send, so this can't run in Executing\./);
+  await editor.locator('[data-testid="edit-automation-card-condition-header"]').click();
+  const condition = editor.locator('[data-testid="edit-automation-card-condition"]');
+  const promptLine = condition.locator('[data-testid="edit-automation-condition-line-prompt"]');
+  await expect(promptLine).toBeVisible();
+  await expect(condition.locator('[data-testid="edit-automation-final-line-line"]')).toHaveValue('*signed off*');
+
+  const menu = page.locator('[data-testid="edit-automation-add-condition-menu"]');
+  await condition.locator('[data-testid="edit-automation-add-condition"]').click();
+  await expect(menu).toBeVisible();
+  // Text match is one stored field, so the line already holding it leaves both out.
+  await expect(menu.locator('[data-testid="edit-automation-add-condition-reply"]')).toHaveCount(0);
+  await expect(menu.locator('[data-testid="edit-automation-add-condition-prompt"]')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(editor).toBeVisible();
+
+  await condition.locator('[data-testid="edit-automation-condition-line-prompt-remove"]').click();
+  await expect(promptLine).toHaveCount(0);
+  await condition.locator('[data-testid="edit-automation-add-condition"]').click();
+  await expect(menu.locator('[data-testid="edit-automation-add-condition-reply"]')).toBeVisible();
+  await expect(menu.locator('[data-testid="edit-automation-add-condition-prompt"]')).toHaveCount(0);
 });

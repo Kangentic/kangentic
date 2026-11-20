@@ -14,8 +14,7 @@
  * the nested `condition`, the long form of `condition.text` (#1078), and no
  * `finalLine`.
  */
-export const FORMAT_SIGNATURE_BY_VERSION: Record<number, readonly string[]> = {
-  1: [
+const VERSION_1_SIGNATURE: readonly string[] = [
     '_modifiedBy:string',
     'columns[].agentOverride:string',
     'columns[].archived:boolean',
@@ -102,5 +101,21 @@ export const FORMAT_SIGNATURE_BY_VERSION: Record<number, readonly string[]> = {
     'shortcuts[].label:string',
     'stopScript:string',
     'version:number',
-  ],
+];
+
+/**
+ * Version 2 was recorded on 2026-11-20 for #872: a row's `filter` (Task lines,
+ * by priority level name and label), and a `condition` that holds both `text`
+ * and `agent`. The only new shape lines are the two filter lists, since both
+ * condition kinds were already in version 1's signature on their own.
+ */
+const VERSION_2_SIGNATURE: readonly string[] = [
+  ...VERSION_1_SIGNATURE,
+  'columns[].automations.onTurnEnd[].filter.labels[]:string',
+  'columns[].automations.onTurnEnd[].filter.priorities[]:string',
+].sort();
+
+export const FORMAT_SIGNATURE_BY_VERSION: Record<number, readonly string[]> = {
+  1: VERSION_1_SIGNATURE,
+  2: VERSION_2_SIGNATURE,
 };

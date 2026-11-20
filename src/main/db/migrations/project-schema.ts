@@ -1950,6 +1950,35 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE column_automations ADD COLUMN text_match_source TEXT DEFAULT NULL');
   }
 
+  // Migration: a row's Condition Task lines (#872), `{ priorities, labels }`
+  // as JSON. NULL is no Task lines, which every row written before has, so no
+  // backfill. An older build ignores the column and runs the row for every
+  // task, which `kangentic.json`'s format version 2 keeps from reaching a
+  // teammate's older build through the file.
+  if (!automationColumnsWithSource.has('filter_json')) {
+    db.exec('ALTER TABLE column_automations ADD COLUMN filter_json TEXT DEFAULT NULL');
+  }
+
+  // Migration: the saved source an imported item came from (#872), as the
+  // source's `repository` (a GitHub owner/repo, a repository folder's path),
+  // on the backlog item and on the task it is promoted to. The "already
+  // imported" check matches by it, so two sources of one provider (two
+  // repository folders each holding an `add-dark-mode`, two GitHub repos each
+  // with an issue 12) no longer mark each other's items imported. NULL on
+  // every row imported before, which still matches by provider alone, as it did.
+  const backlogColumnsWithRepository = new Set(
+    (db.pragma('table_info(backlog_tasks)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!backlogColumnsWithRepository.has('external_repository')) {
+    db.exec('ALTER TABLE backlog_tasks ADD COLUMN external_repository TEXT DEFAULT NULL');
+  }
+  const taskColumnsWithRepository = new Set(
+    (db.pragma('table_info(tasks)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!taskColumnsWithRepository.has('external_repository')) {
+    db.exec('ALTER TABLE tasks ADD COLUMN external_repository TEXT DEFAULT NULL');
+  }
+
   // Migration: what Kangentic itself typed into a session (#1078), so a Text
   // match on the user's message never reads Kangentic's own words as theirs.
   // A hash of the whole normalized text, never the text: the record answers

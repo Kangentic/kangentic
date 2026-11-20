@@ -319,6 +319,10 @@ msgstr "添加自动化"
 msgid "Add column"
 msgstr "添加列"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Add condition"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Add project"
@@ -367,14 +371,15 @@ msgctxt "board overview group"
 msgid "Agent"
 msgstr "智能体"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Agent"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Agent default"
 msgstr "智能体默认值"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Agent evaluation"
-msgstr "智能体评估"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Agent Override"
@@ -394,15 +399,11 @@ msgstr "智能体运行时长"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "智能体：{agentOverrideLabel}"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Agent's message"
-msgstr ""
-
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "All columns"
 msgstr "所有列"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 msgid "All tests pass"
 msgstr "所有测试通过"
 
@@ -414,9 +415,17 @@ msgstr "已是最新"
 msgid "Already used on this column."
 msgstr "此列中已使用。"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An agent checks your statement"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"
 msgstr "另一套按列设置的智能体、模型和推理强度配置"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An Automation agent reads this statement against the turn and answers yes or no, after the variables are filled in."
+msgstr ""
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 msgid "Another column uses this icon"
@@ -812,10 +821,6 @@ msgstr "条件"
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgid "Condition check"
 msgstr "条件检查"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Condition kind"
-msgstr "条件类型"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgid "Condition: {condition}"
@@ -1225,6 +1230,11 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "错误"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Evaluation"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples"
 msgstr ""
@@ -1382,6 +1392,10 @@ msgstr "历史记录"
 msgid "History: {historyFileName}"
 msgstr "历史记录：{historyFileName}"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "How Evaluation works"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "How many times it can run on a task."
 msgstr "每个任务可运行的次数。"
@@ -1485,6 +1499,11 @@ msgstr "知识图谱索引已关闭"
 msgid "Labels"
 msgstr "标签"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Labels"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Last message"
 msgstr "最后一条消息"
@@ -1541,14 +1560,6 @@ msgstr "标记为未查看"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Mark as viewed"
 msgstr "标记为已查看"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
-msgstr ""
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches your messages in the turn, with * and ! supported."
-msgstr ""
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 msgid "Maximize dialog"
@@ -1608,6 +1619,10 @@ msgstr "命名终端"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
 msgstr "所有配置方案共享名称、描述、颜色和图标。切换到「默认」进行编辑。"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Needs an Automation agent."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Needs both images"
@@ -1927,7 +1942,6 @@ msgstr "打开项目文件夹"
 msgid "Open settings"
 msgstr "打开设置"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Open Settings"
 msgstr "打开设置"
@@ -2040,6 +2054,10 @@ msgctxt "column header"
 msgid "Permissions"
 msgstr "权限"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Pick levels..."
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Pinned for the whole task, ignoring column settings."
 msgstr "固定用于整个任务，忽略列设置。"
@@ -2093,6 +2111,11 @@ msgstr "上一处更改"
 msgid "Priority"
 msgstr "优先级"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Priority"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 msgid "Profile"
@@ -2110,6 +2133,11 @@ msgstr "未找到项目文件夹"
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Project relocated"
 msgstr "项目已重新定位"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Prompt"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
@@ -2172,6 +2200,10 @@ msgstr "删除列"
 msgid "Remove column \"{removeTargetName}\""
 msgstr "删除列「{removeTargetName}」"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Remove condition"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Removed profile"
 msgstr "已移除的配置方案"
@@ -2193,9 +2225,10 @@ msgctxt "file status"
 msgid "Renamed"
 msgstr "已重命名"
 
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-msgid "Reorder {name}"
-msgstr "重新排序 {name}"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Reply"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Reset"
@@ -2292,9 +2325,13 @@ msgctxt "completed task card"
 msgid "Runs"
 msgstr "运行"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Runs for every task."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Runs only when this holds."
-msgstr "仅在满足此条件时运行。"
+msgid "Runs only when all match."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
@@ -2408,9 +2445,9 @@ msgstr "会话不会在 {roleName} 列中运行，因此 {label} 不适用。"
 msgid "Sessions don't run in {terminalName} columns."
 msgstr "会话不会在 {terminalName} 列中运行。"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Set up an Automation agent"
-msgstr "设置自动化智能体"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Set up"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Share the task's conversation with the other columns."
@@ -2628,6 +2665,11 @@ msgstr "切换到平铺列表"
 msgid "Switch to tree"
 msgstr "切换到树视图"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Task"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Task archived"
 msgstr "任务已归档"
@@ -2670,6 +2712,11 @@ msgstr "文本文件"
 msgid "Text match"
 msgstr "文本匹配"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Text match"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match, line {lineNumber}"
 msgstr ""
@@ -2677,6 +2724,10 @@ msgstr ""
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
 msgstr "此任务运行所用的智能体 CLI"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The agent's last line"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {baseLabel}, which does not move."
@@ -2725,6 +2776,14 @@ msgstr "无法读取任务的更改"
 #: src/renderer/components/dialogs/task-detail/completed/useTaskReport.ts
 msgid "The task's changes could not be read."
 msgstr "无法读取任务的更改。"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's labels"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's priority level"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "The window could not be created."
@@ -2863,6 +2922,10 @@ msgstr "触发器"
 msgid "Try again in a moment."
 msgstr "请稍后重试。"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Turn end only"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
 msgstr "在「智能体」部分开启「在此启动智能体」以启用 {label}。"
@@ -2976,16 +3039,12 @@ msgid "What is this column for?"
 msgstr "此列的用途是什么？"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "What it does."
-msgstr "执行的动作。"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "What runs. Each type brings its own fields."
 msgstr "运行的内容。每种类型有各自的字段。"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "What starts it."
-msgstr "触发方式。"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "What you sent this turn"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."
@@ -3060,7 +3119,3 @@ msgstr "你对看板配置的更改将被放弃。"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Your column order changes will be discarded."
 msgstr "你对列顺序的更改将被放弃。"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Your message"
-msgstr ""

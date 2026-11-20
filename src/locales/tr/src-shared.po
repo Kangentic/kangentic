@@ -7,10 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: tr\n"
 
-#: src/shared/final-line-match.ts
-msgid "{agentName} doesn't report the messages you send, so this can't run in {columnName}."
-msgstr ""
-
 #: src/shared/task-artifacts.ts
 msgid "{baseName}, frame {frame}"
 msgstr ""
@@ -302,16 +298,7 @@ msgid "Condition checks"
 msgstr "Koşul denetimleri"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Condition: only if {condition}."
-msgstr "Koşul: yalnızca şu durumda: {condition}."
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if the last line {rule}."
-msgstr ""
-
-#: src/shared/automation-describe.ts
-msgid "Condition: only if your message {rule}."
+msgid "Condition: {clauses}."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -459,6 +446,14 @@ msgstr "Panoda bul"
 #, fuzzy
 msgid "Focus the board search, or open Quick Find if not on the board."
 msgstr "Pano aramasına odaklanın veya panoda değilseniz Hızlı Bul'u açın."
+
+#: src/shared/automation-describe.ts
+msgid "for label {labels}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "for priority {levels}"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy

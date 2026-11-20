@@ -33,7 +33,12 @@ function marksOf(
   type: AutomationType,
   trigger: AutomationTrigger,
   config: AutomationConfig,
-  guards: { condition?: string | null; final_line?: string | null; max_runs?: number | null } = {},
+  guards: {
+    condition?: string | null;
+    final_line?: string | null;
+    max_runs?: number | null;
+    filter?: { priorities: number[]; labels: string[] } | null;
+  } = {},
 ) {
   return describeAutomationMarks({
     type,
@@ -41,6 +46,7 @@ function marksOf(
     config,
     condition: guards.condition ?? null,
     final_line: guards.final_line ?? null,
+    filter: guards.filter ?? null,
     max_runs: guards.max_runs ?? null,
   });
 }
@@ -138,11 +144,11 @@ describe('the marks beside a row name', () => {
     expect(condition.phrase).toBe('only if the review is clean and CI is green');
   });
 
-  it('marks a Text match as its own Condition kind, first, with the pattern quoted whole', () => {
+  it('marks a Text match as the one Condition mark, first, with the pattern quoted whole', () => {
     const marks = marksOf('move_to_column', 'turn_end', { targetColumn: 'Testing' }, { final_line: 'Verdict:   Ready', max_runs: 1 });
-    expect(marks.map((mark) => mark.kind)).toEqual(['text-match', 'frequency']);
+    expect(marks.map((mark) => mark.kind)).toEqual(['condition', 'frequency']);
     expect(marks[0]).toEqual({
-      kind: 'text-match',
+      kind: 'condition',
       label: 'Condition: only if the last line reads "Verdict: Ready".',
       phrase: 'only if the last line reads "Verdict: Ready"',
     });
@@ -163,7 +169,7 @@ describe('the marks beside a row name', () => {
   it('words a bare ! as the stored pattern, never as an empty one, and still marks the row', () => {
     expect(textMatchRule('!', englishI18n)).toBe('reads "!"');
     const marks = marksOf('notify', 'turn_end', { title: 'a' }, { final_line: '!' });
-    expect(marks.map((mark) => mark.kind)).toEqual(['text-match']);
+    expect(marks.map((mark) => mark.kind)).toEqual(['condition']);
     expect(marks[0].label).toBe('Condition: only if the last line reads "!".');
   });
 
@@ -184,9 +190,22 @@ describe('the marks beside a row name', () => {
     expect(textMatchRule('A\nB', invalid)).toBe('reads "A" or "B"');
   });
 
-  it('marks one Condition kind, the Text match, when a row somehow carries both', () => {
+  it('lists every Condition line in its one mark, Text match before Evaluation (#872)', () => {
     const marks = marksOf('notify', 'turn_end', { title: 'a' }, { condition: 'The review is clean', final_line: 'Verdict: *' });
-    expect(marks.map((mark) => mark.kind)).toEqual(['text-match']);
+    expect(marks.map((mark) => mark.kind)).toEqual(['condition']);
+    expect(marks[0].label).toBe('Condition: only if the last line reads "Verdict: *"; only if the review is clean.');
+    expect(marks[0].phrase).toBe('only if the last line reads "Verdict: *"; only if the review is clean');
+  });
+
+  it('names a Priority line by level name and a Labels line by label, in the one Condition mark (#872)', () => {
+    const marks = marksOf('send_message', 'enter', { message: 'Go' }, {
+      filter: { priorities: [3, 4], labels: ['openspec'] },
+    });
+    expect(marks).toEqual([{
+      kind: 'condition',
+      label: 'Condition: for priority "High" or "Urgent"; for label "openspec".',
+      phrase: 'for priority "High" or "Urgent"; for label "openspec"',
+    }]);
   });
 
   it('marks no Text match off a turn end, where it never runs', () => {

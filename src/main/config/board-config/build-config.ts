@@ -10,9 +10,12 @@ import type {
   ColumnAutomation,
   Swimlane,
 } from '../../../shared/types';
-import { CURRENT_VERSION, isJsonObject } from './config-helpers';
+import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
+import { fileFormatVersionFor, isJsonObject } from './config-helpers';
 import { COLUMN_FIELD_DEFAULTS } from './column-field-defaults';
-import { textMatchFileValue } from '../../../shared/final-line-match';
+import { boardConditionOf } from '../../../shared/final-line-match';
+import { taskFilterToBoard } from '../../../shared/automation-filter';
+import { boardPriorityLevels, type PriorityLevelName } from './priority-levels';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGERS,
@@ -46,11 +49,12 @@ export function buildBoardConfigFromDb(params: {
   existingTeamConfig: BoardConfig | null;
   fingerprint: string;
 }): BoardConfig {
-  const { lanes, laneById, automationsByLane } = readBoardLanes(params.projectId);
+  const { lanes, laneById, automationsByLane, priorityLevels } = readBoardLanes(params.projectId);
   const columns = lanes.map((lane) => serializeColumn(lane, {
     automations: automationsByLane.get(lane.id) ?? [],
     existingColumn: findExistingColumn(params.existingTeamConfig?.columns, lane),
     targetNameOf: (laneId) => laneById.get(laneId)?.name,
+    priorityLevels,
   }));
   return assembleBoardConfig(columns, params.existingTeamConfig, params.fingerprint);
 }
@@ -60,6 +64,8 @@ export interface BoardLanes {
   lanes: Swimlane[];
   laneById: Map<string, Swimlane>;
   automationsByLane: Map<string, ColumnAutomation[]>;
+  /** The project's priority levels, which name a Priority line's levels in the file. */
+  priorityLevels: readonly PriorityLevelName[];
 }
 
 /**
@@ -80,7 +86,7 @@ export function readBoardLanes(projectId: string): BoardLanes {
     existing.push(automation);
     automationsByLane.set(automation.swimlane_id, existing);
   }
-  return { lanes, laneById, automationsByLane };
+  return { lanes, laneById, automationsByLane, priorityLevels: boardPriorityLevels(projectId) };
 }
 
 /** The file's entry for a lane: by id, else by name (a hand-written file may carry no ids). */
@@ -107,6 +113,8 @@ export function serializeColumn(
     automations: ColumnAutomation[];
     existingColumn: BoardColumnConfig | null;
     targetNameOf: (laneId: string) => string | undefined;
+    /** Names a Priority line's levels. Defaults to the default priority levels. */
+    priorityLevels?: readonly PriorityLevelName[];
   },
 ): BoardColumnConfig {
   const column: BoardColumnConfig = {
@@ -134,7 +142,7 @@ export function serializeColumn(
   // A To Do or Done column runs no agent, so it has no limit to share.
   if (lane.max_agents !== null && lane.role !== 'todo' && lane.role !== 'done') column.maxAgents = lane.max_agents;
 
-  const automations = serializeAutomations(options.automations, readExistingAutomations(options.existingColumn));
+  const automations = serializeAutomations(options.automations, readExistingAutomations(options.existingColumn), options.priorityLevels);
   if (automations) column.automations = automations;
 
   // Resolve plan_exit_target_id to target column name
@@ -226,7 +234,9 @@ export function assembleBoardConfig(
   fingerprint: string,
 ): BoardConfig {
   const boardConfig: BoardConfig = {
-    version: CURRENT_VERSION,
+    // The oldest format that holds these columns, so a board that uses no
+    // format 2 key stays readable by a teammate's older build (#872).
+    version: fileFormatVersionFor(columns),
     columns,
   };
 
@@ -283,12 +293,13 @@ export function assembleBoardConfig(
 export function serializeAutomations(
   automations: ColumnAutomation[],
   existing: Record<string, unknown> | null,
+  priorityLevels: readonly PriorityLevelName[] = DEFAULT_PRIORITY_CONFIG,
 ): BoardColumnAutomations | undefined {
   const result: Record<string, unknown> = {};
   for (const trigger of AUTOMATION_TRIGGERS) {
     const fileKey = AUTOMATION_TRIGGER_FILE_KEYS[trigger];
     const existingGroup = Array.isArray(existing?.[fileKey]) ? (existing?.[fileKey] as unknown[]) : [];
-    const group = carryUnknownRows(serializeGroup(automations, trigger, existingGroup), existingGroup);
+    const group = carryUnknownRows(serializeGroup(automations, trigger, existingGroup, priorityLevels), existingGroup);
     if (group.length > 0) result[fileKey] = group;
   }
   if (existing) {
@@ -304,6 +315,7 @@ function serializeGroup(
   automations: ColumnAutomation[],
   trigger: AutomationTrigger,
   existingGroup: unknown[],
+  priorityLevels: readonly PriorityLevelName[],
 ): BoardAutomationConfig[] {
   return automations
     .filter((automation) => automation.trigger === trigger)
@@ -313,15 +325,15 @@ function serializeGroup(
       // Only `false` is written: an absent key means enabled, which keeps the
       // common row to two keys plus its fields.
       if (!automation.enabled) row.enabled = false;
-      // One Condition kind per row, written as the dialog's card holds it: the
-      // kind inside `condition`. One pattern stays a string, as a reader expects
-      // in a diff; several are a list. The old `finalLine` key is never written.
-      // A Text match on the user's message takes the long form, which says so
-      // (#1078); the agent's line keeps the short form.
-      const text = textMatchFileValue(automation.final_line);
-      if (text !== null && automation.text_match_source === 'user') row.condition = { text: { from: 'user', patterns: text } };
-      else if (text !== null) row.condition = { text };
-      else if (automation.condition) row.condition = { agent: automation.condition };
+      // The Condition's Task lines, by level name (#872). Written only when
+      // the row has some, so a board without them keeps format version 1.
+      const filter = taskFilterToBoard(automation.filter, priorityLevels);
+      if (filter) row.filter = filter;
+      // The Condition's text kinds, written as the dialog holds them. One
+      // pattern stays a string, as a reader expects in a diff; several are a
+      // list. The old `finalLine` key is never written.
+      const condition = boardConditionOf(automation);
+      if (condition) row.condition = condition;
       if (automation.max_runs !== null) row.maxRuns = automation.max_runs;
 
       const fields = isAutomationType(automation.type) ? AUTOMATION_MANIFEST[automation.type].fields : [];

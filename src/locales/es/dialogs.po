@@ -380,6 +380,10 @@ msgstr "Agregar automatización"
 msgid "Add column"
 msgstr "Agregar columna"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Add condition"
+msgstr ""
+
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Add project"
@@ -436,16 +440,16 @@ msgctxt "board overview group"
 msgid "Agent"
 msgstr "Agente"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Agent"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Agent default"
 msgstr "Agente predeterminado"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Agent evaluation"
-msgstr "Evaluación del agente"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -469,16 +473,12 @@ msgstr "Tiempo de ejecución del agente"
 msgid "Agent: {agentOverrideLabel}"
 msgstr "Agente: {agentOverrideLabel}"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Agent's message"
-msgstr ""
-
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #, fuzzy
 msgid "All columns"
 msgstr "Todas las columnas"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
 #, fuzzy
 msgid "All tests pass"
 msgstr "Todas las pruebas pasan"
@@ -493,10 +493,18 @@ msgstr "Ya está actualizado"
 msgid "Already used on this column."
 msgstr "Ya se usa en esta columna."
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An agent checks your statement"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "An alternate set of per-column agent, model, and effort settings"
 msgstr "Un conjunto alternativo de ajustes de agente, modelo y esfuerzo por columna"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "An Automation agent reads this statement against the turn and answers yes or no, after the variables are filled in."
+msgstr ""
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
 #, fuzzy
@@ -971,11 +979,6 @@ msgstr "Condición"
 #, fuzzy
 msgid "Condition check"
 msgstr "Comprobación de condición"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Condition kind"
-msgstr "Tipo de condición"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -1470,6 +1473,11 @@ msgctxt "call outcome"
 msgid "Error"
 msgstr "Error"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Evaluation"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/TextMatchPatternsTip.tsx
 msgid "Examples"
 msgstr ""
@@ -1660,6 +1668,10 @@ msgstr "Historial"
 msgid "History: {historyFileName}"
 msgstr "Historial: {historyFileName}"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "How Evaluation works"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
 msgid "How many times it can run on a task."
@@ -1786,6 +1798,11 @@ msgstr "La indexación del Knowledge Graph está desactivada"
 msgid "Labels"
 msgstr "Etiquetas"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Labels"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy
 msgid "Last message"
@@ -1853,14 +1870,6 @@ msgstr "Marcar como no visto"
 #, fuzzy
 msgid "Mark as viewed"
 msgstr "Marcar como visto"
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches the last line the agent writes when its turn ends, with * and ! supported."
-msgstr ""
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Matches your messages in the turn, with * and ! supported."
-msgstr ""
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
 #, fuzzy
@@ -1933,6 +1942,10 @@ msgstr "Nombrar terminal"
 #, fuzzy
 msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
 msgstr "El nombre, la descripción, el color y el icono son comunes a todos los perfiles. Cambie a Predeterminado para editarlos."
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Needs an Automation agent."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -2319,7 +2332,6 @@ msgstr "Abrir carpeta del proyecto"
 msgid "Open settings"
 msgstr "Abrir configuración"
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy
 msgid "Open Settings"
@@ -2451,6 +2463,10 @@ msgctxt "column header"
 msgid "Permissions"
 msgstr "Permisos"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Pick levels..."
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Pinned for the whole task, ignoring column settings."
@@ -2517,6 +2533,11 @@ msgstr "Cambio anterior"
 msgid "Priority"
 msgstr "Prioridad"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Priority"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #, fuzzy
@@ -2538,6 +2559,11 @@ msgstr "No se encontró la carpeta del proyecto"
 #, fuzzy
 msgid "Project relocated"
 msgstr "Proyecto reubicado"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Prompt"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPullRequestSection.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
@@ -2610,6 +2636,10 @@ msgstr "Eliminar columna"
 msgid "Remove column \"{removeTargetName}\""
 msgstr "Eliminar columna \"{removeTargetName}\""
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Remove condition"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Removed profile"
@@ -2636,10 +2666,10 @@ msgctxt "file status"
 msgid "Renamed"
 msgstr "Renombrado"
 
-#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
-msgid "Reorder {name}"
-msgstr "Reordenar {name}"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition kind"
+msgid "Reply"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2756,10 +2786,13 @@ msgctxt "completed task card"
 msgid "Runs"
 msgstr "Ejecuciones"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Runs for every task."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Runs only when this holds."
-msgstr "Solo se ejecuta cuando esto se cumple."
+msgid "Runs only when all match."
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2898,10 +2931,9 @@ msgstr "Las sesiones no se ejecutan en columnas {roleName}, así que {label} no 
 msgid "Sessions don't run in {terminalName} columns."
 msgstr "Las sesiones no se ejecutan en columnas {terminalName}."
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "Set up an Automation agent"
-msgstr "Configurar un agente de automatización"
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Set up"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -3164,6 +3196,11 @@ msgstr "Cambiar a lista plana"
 msgid "Switch to tree"
 msgstr "Cambiar a árbol"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Task"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 #, fuzzy
 msgid "Task archived"
@@ -3216,6 +3253,11 @@ msgstr "Archivo de texto"
 msgid "Text match"
 msgstr "Coincidencia de texto"
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgctxt "condition group"
+msgid "Text match"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/PatternLinesField.tsx
 msgid "Text match, line {lineNumber}"
 msgstr ""
@@ -3224,6 +3266,10 @@ msgstr ""
 #, fuzzy
 msgid "The agent CLI this task runs on"
 msgstr "La CLI de agente en la que se ejecuta esta tarea"
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The agent's last line"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "The base is the commit {baseLabel}, which does not move."
@@ -3278,6 +3324,14 @@ msgstr "No se pudieron leer los cambios de la tarea"
 #, fuzzy
 msgid "The task's changes could not be read."
 msgstr "No se pudieron leer los cambios de la tarea."
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's labels"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "The task's priority level"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
@@ -3445,6 +3499,10 @@ msgstr "Desencadenador"
 msgid "Try again in a moment."
 msgstr "Inténtalo de nuevo en un momento."
 
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "Turn end only"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
@@ -3581,18 +3639,12 @@ msgstr "¿Para qué sirve esta columna?"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
-msgid "What it does."
-msgstr "Lo que hace."
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "What runs. Each type brings its own fields."
 msgstr "Lo que se ejecuta. Cada tipo tiene sus propios campos."
 
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
-msgid "What starts it."
-msgstr "Lo que la inicia."
+#: src/renderer/components/dialogs/board-manager/ConditionList.tsx
+msgid "What you sent this turn"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -3682,7 +3734,3 @@ msgstr "Se descartarán los cambios del perfil de tablero."
 #, fuzzy
 msgid "Your column order changes will be discarded."
 msgstr "Se descartarán los cambios en el orden de las columnas."
-
-#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "Your message"
-msgstr ""

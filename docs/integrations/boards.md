@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Board integration
-description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, the daily check that the shipped Trello, Jira, Linear and GitLab sign-ins still work, the keep-alive pass that renews an idle sign-in, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the registry and URL parsers, and the steps to add a provider.
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps, Asana, Jira, Linear, Trello and GitLab and notes from an Obsidian vault, safeStorage async-API behavior for stored credentials, Jira's per-site and GitLab's per-server sign-ins, Linear's API key and OAuth sign-in, the browser sign-ins for Jira and Trello through the kangentic.com token service, the daily check that the shipped Trello, Jira, Linear and GitLab sign-ins still work, the keep-alive pass that renews an idle sign-in, GitLab's own browser sign-in, Trello's Connect dialog, the folder-added Obsidian sources, the Repository folder source read from the project's default branch, a source's Label, the registry and URL parsers, and the steps to add a provider.
 tags: [boards, import, adapters, credentials]
 sources:
   - resource: src/main/boards/board-registry.ts
@@ -52,6 +52,7 @@ src/main/boards/
     gitlab/           # gitlab.com and self-managed; per-server sign-ins, REST client, dedicated IPC group
     obsidian/         # a vault on this computer: two source types, added by folder
     trello/           # API key + user token, read-only, dedicated IPC group
+    repo-folder/      # a folder of the project's own repository, read from its default branch
   board-registry.ts   # BoardRegistry + boardRegistry singleton
   sign-in-keep-alive.ts  # the pass that asks each adapter to renew its idle sign-ins
   index.ts
@@ -74,12 +75,12 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `icon` | yes | lucide-react icon name for the picker |
 | `status` | yes | `'stable'` for working providers, `'stub'` for placeholder folders. IPC handlers short-circuit stubs before dispatch. |
 | `checkPrerequisites(repository?)` | yes | Structured check of CLI availability + auth state. Returns `{ cliOk, authOk, message? }`. `repository` scopes the check for a provider whose sign-ins are per site (Jira); others ignore it. |
-| `checkCli(repository?)` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. The Import dialog passes the saved source's `repository` (`importCheckCli(source, repository)`), so a provider whose sign-ins are per site (Jira) checks the right one, and one whose source can disappear on its own says so before the list loads (Obsidian answers "Folder not found" here). An `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect. Providers that check only a CLI ignore the repository. |
-| `prepareSource(repository)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site, a GitLab link its server's real base and canonical path). It may also return `scopeKind` (`project` or `group`) and `host`, which the saved source keeps for its subtitle ("GitLab Group on git.example.com"). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. When the saved sign-in is what the provider refused (a 401), the adapter throws `SignInRefusedError` (`src/shared/refusal.ts`), a `RefusalError` whose class name survives IPC: the popover reads it with `ipcErrorClassName` and opens the provider's Connect dialog with that line, the site filled in, and the add carried on once a new sign-in is saved. Before that, a refused sign-in on a site with no saved source could not be replaced at all. Implemented by Jira and GitLab; other providers keep `resolveLabel`. |
+| `checkCli(repository?, project?)` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. The Import dialog passes the saved source's `repository` (`importCheckCli(source, repository)`), so a provider whose sign-ins are per site (Jira) checks the right one, and one whose source can disappear on its own says so before the list loads (Obsidian answers "Folder not found" here). An `authenticated: false` from a provider whose sign-in Kangentic holds makes the Import dialog's banner offer that provider's Connect. Providers that check only a CLI ignore the repository. |
+| `prepareSource(repository, project?)` | optional | Validate a parsed source against the remote before it is saved and return its label (and a completed repository: typed JQL gains its site, a GitLab link its server's real base and canonical path). It may also return `scopeKind` (`project` or `group`) and `host`, which the saved source keeps for its subtitle ("GitLab Group on git.example.com"). A `RefusalError` thrown here is the Add Source popover's error line, and nothing is saved. When the saved sign-in is what the provider refused (a 401), the adapter throws `SignInRefusedError` (`src/shared/refusal.ts`), a `RefusalError` whose class name survives IPC: the popover reads it with `ipcErrorClassName` and opens the provider's Connect dialog with that line, the site filled in, and the add carried on once a new sign-in is saved. Before that, a refused sign-in on a site with no saved source could not be replaced at all. Implemented by Jira and GitLab; other providers keep `resolveLabel`. |
 | `workItemTypeIsItemType` | optional | True when `ExternalIssue.workItemType` is the item's type, so the import stores it as the backlog item's type. Set by Azure DevOps, Jira and GitLab; Asana uses the field for its section and leaves it off. |
-| `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. In the Azure DevOps and GitHub adapters, a CLI sign-in or network failure throws `AzUnavailableError` / `AzTransientError` or `GhUnavailableError` / `GhTransientError`, judged on the CLI's stderr with URLs removed, its errno and the timeout kill, never on the command line. An az answer that carries an Azure DevOps server code other than a sign-in code, and a gh `unavailable` without gh's own sign-in words, rethrow the original error with its class and message unchanged (the az one gains an `azServerCode` property, which `handled-report.ts` sends as the `az_server_code` tag, see `docs/telemetry/error-reporting.md`), because those messages echo the user's project and owner names. For the same reason the az classifier drops the "The error is caused by ..." tail a refused WIQL quotes. A project that is not there (`TF200016`, or az's code-less "The project specified is not found in hierarchy.") throws `AzProjectNotFoundError`, a `UserConfigurationError`. The Import dialog shows the reason, the error report skips it, and a failure the classifier does not recognize rethrows unchanged and still reports, carrying its server code or `none` for the `az_server_code` tag. The same throw covers the az token the import's downloads use. |
+| `fetch(input, findAlreadyImported, project?)` | yes | Fetch a page of issues. `project` (on this and on `checkCli`, `prepareSource` and `listExternalIds`) is the source's `SourceProject`: the project's folder and default branch, which only the Repository folder adapter reads. `input.since` (optional) is an ISO 8601 watermark for incremental reconcile; adapters that support it return only items changed at or after that instant. The callback returns the set of external IDs already imported so the UI can mark duplicates. In the Azure DevOps and GitHub adapters, a CLI sign-in or network failure throws `AzUnavailableError` / `AzTransientError` or `GhUnavailableError` / `GhTransientError`, judged on the CLI's stderr with URLs removed, its errno and the timeout kill, never on the command line. An az answer that carries an Azure DevOps server code other than a sign-in code, and a gh `unavailable` without gh's own sign-in words, rethrow the original error with its class and message unchanged (the az one gains an `azServerCode` property, which `handled-report.ts` sends as the `az_server_code` tag, see `docs/telemetry/error-reporting.md`), because those messages echo the user's project and owner names. For the same reason the az classifier drops the "The error is caused by ..." tail a refused WIQL quotes. A project that is not there (`TF200016`, or az's code-less "The project specified is not found in hierarchy.") throws `AzProjectNotFoundError`, a `UserConfigurationError`. The Import dialog shows the reason, the error report skips it, and a failure the classifier does not recognize rethrows unchanged and still reports, carrying its server code or `none` for the `az_server_code` tag. The same throw covers the az token the import's downloads use. |
 | `hydrateForImport(repository, issues)` | optional | Fetch deferred per-item detail for the SELECTED import set and fold it into each body, called at import time only. Lets a provider keep the list fetch cheap. Implemented by Azure DevOps to fetch work item comments (one `az rest` per item) for just the items being imported instead of every listed one, and by Jira to fetch each issue's comments, four issues at a time. |
-| `listExternalIds(input)` | optional | Cheap, id-only listing of every current remote item, used by the reconcile to prune cache rows the remote no longer has. Implemented by Azure DevOps as an ids-only WIQL, by Jira as an ids-only search or board listing, and by Obsidian as a vault walk that shares the fetch's read (see Obsidian below). Providers without a cheap listing omit it; their deletions clear on a full reconcile, which the reconcile escalates to on its own once their cache goes a day without one. An empty result must mean the remote genuinely has no items, so an adapter that cannot answer THROWS rather than returning `[]`: the reconcile prunes against whatever this resolves to, and an empty list claims the remote is empty. |
+| `listExternalIds(input, project?)` | optional | Cheap, id-only listing of every current remote item, used by the reconcile to prune cache rows the remote no longer has. Implemented by Azure DevOps as an ids-only WIQL, by Jira as an ids-only search or board listing, and by Obsidian as a vault walk that shares the fetch's read (see Obsidian below). Providers without a cheap listing omit it; their deletions clear on a full reconcile, which the reconcile escalates to on its own once their cache goes a day without one. An empty result must mean the remote genuinely has no items, so an adapter that cannot answer THROWS rather than returning `[]`: the reconcile prunes against whatever this resolves to, and an empty list claims the remote is empty. |
 | `downloadImages(markdownBody)` | yes | Download inline markdown images referenced in an issue body. |
 | `downloadFileAttachments(...)` | optional | Download authenticated file attachments. Takes `Array<FileAttachmentRef>` (see below). Implemented by Azure DevOps for `AttachedFile` relations, by Asana for inline images and uploaded attachments, by Trello for uploaded attachments (the OAuth header goes only to Trello's own download address), and by Obsidian for files embedded in a note (copied from the vault on disk). |
 | `resolveLabel(repository)` | optional | Resolve a human-readable display label from a repository identifier, called by the backlog handler after a source is added (Asana: project GID to project name; Linear: team key to team name; Trello: board short link to board name). Best-effort: returning `null`, or throwing, keeps the label the URL parser built. |
@@ -571,6 +572,48 @@ vault, and the vault is read on this computer even for a remote project.
   file to `shell.openPath`, since `shell.openExternal` refuses `file:` by design. A `file:` URL that
   does not decode is not a local file, so the icon opens nothing.
 
+## Repository folder
+
+`src/main/boards/adapters/repo-folder/`, source `repo_folder`. Each direct child of a folder in the
+project's own repository, file or folder, is one task: an OpenSpec `changes/` folder gives one task
+per change. Nothing here writes to the repository.
+
+- **Read from the default branch.** `branch-reader.ts` reads through git, never the working tree:
+  the newer of local `<base>` and `origin/<base>` (the base from `resolveDefaultBaseBranch`), with
+  no fetch. When one is an ancestor of the other it takes the descendant (`merge-base`, since the
+  git client does not report `--is-ancestor`'s exit code), when they diverged the later committer
+  date, and when only one exists that one. A repository with neither is refused. Every call goes
+  through `gitAt`, so a remote project's git runs on its host, and a host that cannot answer is an
+  error, never an empty list.
+- **The project.** The repository is the folder's repo-relative path. The backlog handlers pass
+  every adapter a `SourceProject` (the project's folder and default branch) beside it; this is the
+  one adapter that reads it.
+- **Items.** `folder-tree.ts` classifies once, for the list and for Browse. A file counts unless it
+  is a dot-file or a README. A folder counts only when it holds a top-level file that is not a
+  dot-file, so an `archive/` of subfolders drops out, and a change moved into it drops from the
+  list on the next reconcile (`listExternalIds`). The title, `externalId` and `displayId` are the
+  child's name. The description lists the item's repo-relative paths (a folder's top-level files,
+  then its subfolders with a trailing `/`) and copies no file content. `externalUrl` is empty: a
+  `file:` link would name this computer, which is wrong for a remote project.
+- **Dates.** Each item is dated by the last commit that touched it, one `git log -1` per item, up to
+  `ITEM_DATE_LOOKUP_LIMIT` (50) items. Past that every item takes the commit's own date.
+- **Browse.** `BACKLOG_REPO_FOLDERS_LIST` answers the add form's Browse with every folder on the
+  branch that would import at least one task, and its count, leaving out dot-folders. A typed
+  folder the branch does not have is refused by `prepareSource` before anything is saved.
+- **Reads.** One `ls-tree` lists the whole commit, and a reconcile's fetch and prune share it
+  through a five-second reuse window, as Obsidian's do.
+
+## A source's Label
+
+Every saved source has an optional Label (`ImportSource.taskLabel`; `label` stays the display
+name). The add form fills it from the last part of the typed link or the picked folder (a `.git`
+ending dropped) until the user types in it, and a blank Label is not saved. A source picker
+(Linear, Trello) connects on pick, so its Label is set afterwards. **Edit source** in a saved row's
+menu changes or clears it through `BACKLOG_IMPORT_SOURCES_UPDATE` (`ImportSourceStore.update`).
+`BACKLOG_IMPORT_EXECUTE` takes the saved source's id (`sourceId`) and adds its Label to every item
+it creates, unless the item already carries it in any letter case. Promote carries the labels on
+to the task.
+
 ## Adding a New Provider
 
 1. **Folder.** Create `src/main/boards/adapters/<provider>/` with at minimum `adapter.ts` (implementing `BoardAdapter`) and `index.ts` (exporting the class).
@@ -598,8 +641,9 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | Obsidian Notes | stable | none | A vault folder on this computer, chosen in the folder dialog. Each note is a task. |
 | Obsidian Checklist items | stable | none | Same folder source. Each task line (`- [ ]`, `- [x]`, `- [/]`, `- [-]`) is a task, with the Tasks plugin's markers and Kanban plugin lanes. |
 | Trello | stable | none | API key plus user token, sent only in an `Authorization: OAuth` header and stored encrypted in `trello-credentials.json` under the config directory. Kangentic's own key also signs in through the browser, with nothing to paste (see Trello's Connect dialog). Read-only: a board is read whole (lists and cards, archived ones included), and Closed means an archived card or a card on an archived list. Boards are picked from a list under their Workspace. Ships its own `boards:trello:*` IPC group. |
+| Repository folder | stable | `git` | A folder of the project's own repository, read from its default branch (local or `origin`, whichever is newer). No sign-in. Each file or folder inside is a task. |
 
-The registry enumerates all 10 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
+The registry enumerates all 11 providers, and every one is stable. Stable providers dispatch normally. A provider still marked `stub` would not be offered in the import UI (`src/renderer/components/backlog/import-providers.tsx` lists only the stable ones), and IPC handlers would short-circuit it before any throwing method runs.
 
 ### Trello's Connect dialog
 

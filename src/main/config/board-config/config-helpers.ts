@@ -16,8 +16,40 @@ import { RefusalError } from '../../../shared/refusal';
  * it back. `tests/unit/board-config-format-version.test.ts` fails when the
  * written shape changes without a bump. A key the new format replaces joins
  * `LEGACY_FILE_KEYS` with the old version as its `lastVersion`.
+ *
+ * Format 2 (#872) added a row's `filter` (the Condition's Task lines) and a
+ * `condition` holding both `text` and `agent`. The export stamps 2 only on a
+ * file that uses one of them (`fileFormatVersionFor`), so a board without them
+ * stays format 1 and a teammate on an older build keeps saving it.
  */
-export const CURRENT_VERSION = 1;
+export const CURRENT_VERSION = 2;
+
+/** The last format that wrote none of format 2's keys. */
+const FORMAT_WITHOUT_CONDITION_LINES = 1;
+
+/**
+ * The format a file of these columns needs: the oldest one that can hold
+ * everything in them. Format 2 only when some row has a `filter`, or a
+ * `condition` with both kinds, since an older build reads either one as a
+ * guard it does not know and keeps its column instead.
+ */
+export function fileFormatVersionFor(columns: readonly BoardColumnConfig[]): number {
+  for (const column of columns) {
+    const automations: unknown = column.automations;
+    if (!isJsonObject(automations)) continue;
+    for (const fileKey of Object.values(AUTOMATION_TRIGGER_FILE_KEYS)) {
+      const group: unknown = automations[fileKey];
+      if (!Array.isArray(group)) continue;
+      for (const row of group) {
+        if (!isJsonObject(row)) continue;
+        if (row.filter !== undefined) return CURRENT_VERSION;
+        const condition: unknown = row.condition;
+        if (isJsonObject(condition) && 'text' in condition && 'agent' in condition) return CURRENT_VERSION;
+      }
+    }
+  }
+  return FORMAT_WITHOUT_CONDITION_LINES;
+}
 export const TEAM_FILE = 'kangentic.json';
 export const LOCAL_FILE = 'kangentic.local.json';
 
