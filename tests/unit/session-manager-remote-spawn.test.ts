@@ -233,7 +233,7 @@ describe('an id found after a session on a host has started', () => {
 
     reportFound?.('s1', 'agent-from-index');
     // The call the pty host's output scan makes for the exit hint (`agentSessionId` in `handleHostEvent`).
-    (rig.manager as unknown as { telemetry: { notifyAgentSessionId(sessionId: string, id: string): void } }).telemetry.notifyAgentSessionId('s1', 'agent-from-exit-hint');
+    (rig.manager as unknown as { telemetry: { notifyAgentSessionId(sessionId: string, id: string, source: 'output'): void } }).telemetry.notifyAgentSessionId('s1', 'agent-from-exit-hint', 'output');
 
     expect(rig.manager.getSession('s1')?.agentSessionId).toBe('agent-from-exit-hint');
     expect(told).toHaveBeenLastCalledWith('s1', 'agent-from-exit-hint');
@@ -252,14 +252,14 @@ describe('an id found after a session on a host has started', () => {
     reportFound?.('s1', 'agent-from-index');
     expect(knownCommands()).toEqual([]);
 
-    (rig.manager as unknown as { telemetry: { notifyAgentSessionId(sessionId: string, id: string): void } }).telemetry.notifyAgentSessionId('s1', 'agent-from-exit-hint');
+    (rig.manager as unknown as { telemetry: { notifyAgentSessionId(sessionId: string, id: string, source: 'output'): void } }).telemetry.notifyAgentSessionId('s1', 'agent-from-exit-hint', 'output');
     expect(knownCommands()).toEqual([{ type: 'setAgentSessionIdKnown', sessionId: 's1' }]);
     foundListener.mockRestore();
   });
 });
 
 describe('an agent session id that arrives for a session on a host', () => {
-  type TelemetryAccess = { telemetry: { notifyAgentSessionId(sessionId: string, id: string): void } };
+  type TelemetryAccess = { telemetry: { notifyAgentSessionId(sessionId: string, id: string, source: 'output'): void } };
   type RegistryAccess = { registry: { get(sessionId: string): { hostId?: string } | undefined } };
 
   // A hook's id comes from the host and becomes part of a path here, so one that climbs out of a folder
@@ -277,7 +277,7 @@ describe('an agent session id that arrives for a session on a host', () => {
     const before = rig.manager.getSession('s1')?.agentSessionId;
     const knownBefore = rig.postedCommands.filter((command) => command.type === 'setAgentSessionIdKnown').length;
 
-    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', '../../x');
+    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', '../../x', 'output');
 
     // The agent did report, so the launch counts as run: one read as never started would get a retry.
     expect(ran).toHaveBeenCalledWith('s1');
@@ -295,7 +295,7 @@ describe('an agent session id that arrives for a session on a host', () => {
     const emitted: string[] = [];
     rig.manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, id: string) => emitted.push(id));
 
-    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', 'agent-abc.1');
+    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', 'agent-abc.1', 'output');
 
     expect(rig.manager.getSession('s1')?.agentSessionId).toBe('agent-abc.1');
     expect(told).toHaveBeenCalledWith('s1', 'agent-abc.1');
@@ -310,7 +310,7 @@ describe('an agent session id that arrives for a session on a host', () => {
     if (!row) throw new Error('the session has no registry row');
     row.hostId = undefined;
 
-    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', '../../x');
+    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', '../../x', 'output');
 
     expect(rig.manager.getSession('s1')?.agentSessionId).toBe('../../x');
   });

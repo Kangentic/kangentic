@@ -209,6 +209,70 @@ describe('UserInterruptCoordinator', () => {
     });
   });
 
+  describe('idle-prompt windows', () => {
+    function hotWithLiveSubagent() {
+      const made = makeCoordinator();
+      made.engine.initSession(SESSION_ID);
+      made.engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+      made.engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.SubagentStart });
+      made.engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+      const state = made.engine.getState(SESSION_ID);
+      expect(state?.activity).toBe('thinking');
+      expect(state?.subagentDepth).toBe(1);
+      expect(state?.pendingToolCount).toBeGreaterThan(0);
+      return made;
+    }
+
+    it('synthesizes nothing for an idle prompt while a subagent is live, but a Ctrl+C does', () => {
+      const idlePrompt = hotWithLiveSubagent();
+      idlePrompt.coordinator.notify(SESSION_ID, 'idle-prompt');
+      vi.advanceTimersByTime(SETTLE_MS + 10);
+      expect(idlePrompt.pushedEvents).toHaveLength(0);
+      idlePrompt.coordinator.dispose();
+      idlePrompt.engine.dispose();
+
+      const ctrlC = hotWithLiveSubagent();
+      ctrlC.coordinator.notify(SESSION_ID, 'user-ctrl-c');
+      vi.advanceTimersByTime(SETTLE_MS + 10);
+      expect(ctrlC.pushedEvents).toHaveLength(1);
+      expect(ctrlC.pushedEvents[0].event.detail).toBe('user-ctrl-c');
+      ctrlC.coordinator.dispose();
+      ctrlC.engine.dispose();
+    });
+
+    it('an idle prompt on top of an armed Ctrl+C window keeps its deadline and reason', () => {
+      const { coordinator, engine, pushedEvents } = makeCoordinator();
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+
+      coordinator.notify(SESSION_ID);
+      vi.advanceTimersByTime(SETTLE_MS - 100);
+      coordinator.notify(SESSION_ID, 'idle-prompt');
+      expect(pushedEvents).toHaveLength(0);
+      vi.advanceTimersByTime(100);
+
+      expect(pushedEvents).toHaveLength(1);
+      expect(pushedEvents[0].event.detail).toBe('user-ctrl-c');
+
+      coordinator.dispose();
+      engine.dispose();
+    });
+
+    it('dispose() before an idle-prompt window fires pushes nothing', () => {
+      const { coordinator, engine, pushedEvents } = makeCoordinator();
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+
+      coordinator.notify(SESSION_ID, 'idle-prompt');
+      vi.advanceTimersByTime(SETTLE_MS / 2);
+      coordinator.dispose();
+      vi.advanceTimersByTime(SETTLE_MS * 2);
+
+      expect(pushedEvents).toHaveLength(0);
+      engine.dispose();
+    });
+  });
+
   describe('fireIfStillHot suppression: engine already idle', () => {
     it('does not push an event when the session is already idle at fire time', () => {
       const { coordinator, engine, pushedEvents } = makeCoordinator();

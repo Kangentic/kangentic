@@ -162,6 +162,60 @@ describe('SessionTelemetry: status-file channel id capture is change-sensitive',
   });
 });
 
+describe('SessionTelemetry: each capture channel names its source', () => {
+  type CaptureOptions = { source: string; conversationMoved?: boolean; inferred?: boolean };
+  let optionsSeen: CaptureOptions[];
+  let telemetry: SessionTelemetry;
+
+  beforeEach(() => {
+    optionsSeen = [];
+    telemetry = new SessionTelemetry(
+      {
+        onUsageChange: () => {},
+        onActivityChange: () => {},
+        onEvent: () => {},
+        onIdleTimeout: () => {},
+        onPlanExit: () => {},
+        onPRCandidate: () => {},
+        onAgentSessionId: (_sessionId, _agentReportedId, options) => {
+          optionsSeen.push(options);
+        },
+        requestSuspend: () => {},
+        isSessionRunning: () => true,
+      },
+      { disableBgShellWatcher: true },
+    );
+  });
+
+  afterEach(() => {
+    telemetry.dispose();
+  });
+
+  it('a status write reports source status', () => {
+    telemetry.initSession('s1');
+    telemetry.processStatusUpdate('s1', statusUsage('agent-id-a'));
+    expect(optionsSeen).toEqual([{ source: 'status' }]);
+  });
+
+  it('a hook capture reports source hook', () => {
+    telemetry.initSession('s1', makeHookCaptureParser());
+    telemetry.captureHookSessionIds('s1', [sessionStartLine('agent-id-a')]);
+    expect(optionsSeen).toEqual([{ source: 'hook' }]);
+  });
+
+  it('an inferred id reports source index and inferred', () => {
+    telemetry.initSession('s1');
+    telemetry.notifyInferredAgentSessionId('s1', 'guessed-id');
+    expect(optionsSeen).toEqual([{ source: 'index', inferred: true }]);
+  });
+
+  it('notifyAgentSessionId passes the source it was given through', () => {
+    telemetry.initSession('s1');
+    telemetry.notifyAgentSessionId('s1', 'agent-id-a', 'scrollback');
+    expect(optionsSeen).toEqual([{ source: 'scrollback' }]);
+  });
+});
+
 describe('SessionTelemetry: one-shot channels stay one-shot and close after a status capture', () => {
   let captured: CapturedId[];
   let telemetry: SessionTelemetry;
@@ -177,15 +231,15 @@ describe('SessionTelemetry: one-shot channels stay one-shot and close after a st
 
   it('notifyAgentSessionId (PTY output) fires once and never again', () => {
     telemetry.initSession('s1');
-    telemetry.notifyAgentSessionId('s1', 'pty-id-a');
-    telemetry.notifyAgentSessionId('s1', 'pty-id-b');
+    telemetry.notifyAgentSessionId('s1', 'pty-id-a', 'output');
+    telemetry.notifyAgentSessionId('s1', 'pty-id-b', 'output');
     expect(captured).toEqual([{ sessionId: 's1', agentReportedId: 'pty-id-a' }]);
   });
 
   it('after a status capture, notifyAgentSessionId does not fire (poisoning pin)', () => {
     telemetry.initSession('s1');
     telemetry.processStatusUpdate('s1', statusUsage('agent-id-a'));
-    telemetry.notifyAgentSessionId('s1', 'stale-echoed-id');
+    telemetry.notifyAgentSessionId('s1', 'stale-echoed-id', 'output');
     expect(captured).toEqual([{ sessionId: 's1', agentReportedId: 'agent-id-a' }]);
   });
 
@@ -219,7 +273,7 @@ describe('SessionTelemetry: one-shot channels stay one-shot and close after a st
     // comment in notifyAgentSessionId), so a same-id status write is quiet
     // and only a genuine fork re-fires.
     telemetry.initSession('s1');
-    telemetry.notifyAgentSessionId('s1', 'agent-id-a');
+    telemetry.notifyAgentSessionId('s1', 'agent-id-a', 'output');
     expect(captured).toEqual([{ sessionId: 's1', agentReportedId: 'agent-id-a' }]);
     // The first statusline write reports the SAME id the PTY-output channel
     // already delivered: no redundant re-fire.

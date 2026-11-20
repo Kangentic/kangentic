@@ -90,6 +90,39 @@ describe('SessionTelemetry: a SessionStart move switches the id of an agent with
     ]);
   });
 
+  it('a move reports source hook with conversationMoved, and the seeding SessionStart only source hook', () => {
+    const optionsSeen: unknown[] = [];
+    const recording = new SessionTelemetry(
+      {
+        onUsageChange: () => {},
+        onActivityChange: () => {},
+        onEvent: () => {},
+        onIdleTimeout: () => {},
+        onPlanExit: () => {},
+        onPRCandidate: () => {},
+        onAgentSessionId: (_sessionId, _agentReportedId, options) => { optionsSeen.push(options); },
+        requestSuspend: () => {},
+        isSessionRunning: () => true,
+      },
+      { disableBgShellWatcher: true },
+    );
+    try {
+      recording.initSession('s1', new QwenAdapter());
+      const lines = [qwenSessionStartLine(STARTED, 'startup')];
+      recording.captureHookSessionIds('s1', lines);
+      recording.noteSessionStartHooks('s1', lines);
+      const moved = [qwenSessionStartLine(CLEARED, 'clear')];
+      recording.captureHookSessionIds('s1', moved);
+      recording.noteSessionStartHooks('s1', moved);
+      expect(optionsSeen).toEqual([
+        { source: 'hook' },
+        { source: 'hook', conversationMoved: true },
+      ]);
+    } finally {
+      recording.dispose();
+    }
+  });
+
   it('a resume or a compaction naming the same id switches nothing', () => {
     telemetry.initSession('s1', new QwenAdapter());
     deliver([qwenSessionStartLine(STARTED, 'resume')]);
@@ -129,7 +162,7 @@ describe('SessionTelemetry: a SessionStart move switches the id of an agent with
   // admits a status write (session-telemetry-conversation-switch.test.ts).
   it('an adapter that does not opt in is not moved by a hook alone', () => {
     telemetry.initSession('s1', new ClaudeAdapter());
-    telemetry.notifyAgentSessionId('s1', STARTED);
+    telemetry.notifyAgentSessionId('s1', STARTED, 'output');
     telemetry.noteSessionStartHooks('s1', [claudeSessionStartLine(CLEARED, 'clear')]);
     expect(captures.map((capture) => capture.agentReportedId)).toEqual([STARTED]);
   });
