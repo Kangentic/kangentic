@@ -733,7 +733,7 @@ describe('the spawn flow onData guard once remove() has cleared the row', () => 
 
     mock.feedData('session=captured-id\r\n');
 
-    expect(notifySpy).toHaveBeenCalledWith(session.id, 'captured-id');
+    expect(notifySpy).toHaveBeenCalledWith(session.id, 'captured-id', 'output');
     manager.killAll();
   });
 

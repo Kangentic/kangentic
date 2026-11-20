@@ -7,7 +7,7 @@ import { isKangenticHookCommand, safelyUpdateSettingsFile } from '../../shared/h
 import { copyEventBridgeInto } from '../../shared/workspace-bridge-copy';
 import {
   appendPermissionWaitForTool,
-  captureHookContext,
+  captureHookContextFields,
   extractDetailPath,
   extractToolPath,
   replyJson,
@@ -74,6 +74,10 @@ export const AGY_BRIDGE_COPY_NAME = 'agy-event-bridge.cjs';
  * kept LITERAL (a quoted path reached node as `"C:\...\x.js"` including both
  * quotes, resolved relative to `.agents`, and failed module lookup - observed
  * in the E1 rig). So no token may contain a space and no token may be quoted.
+ * Since 1.5.8 agy on Windows hands the command to `cmd.exe` as written
+ * (CHANGELOG 1.5.8), and these unquoted relative tokens still resolve there:
+ * every hook below ran on 1.5.13 (2026-11-20). Older versions still split on
+ * whitespace, so the rule stands.
  * Every path we emit is relative to `.agents/` and traverses only
  * Kangentic-owned, space-free segments (`.kangentic`, session UUIDs, the
  * bridge copy name); the user's absolute project path, which CAN contain
@@ -191,25 +195,39 @@ export function filterOurHooks(root: AntigravityHooksFile): AntigravityHooksFile
   return kept;
 }
 
-/** The primary-argument keys a tool event's detail is read from, under `toolCall.args`. */
-const TOOL_DETAIL_ARGS = ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Query'];
+/**
+ * The primary-argument keys a tool event's detail is read from, under
+ * `toolCall.args`. `Path` is `read_file`'s file on 1.5.13 (measured: its
+ * PreToolUse carried `{"Path": ..., "StartLine": 1}`), and without it a read
+ * showed no file.
+ */
+const TOOL_DETAIL_ARGS = ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Path', 'Query'];
 
 /**
  * Build the merged hooks.json content: user hooks preserved, one fresh
  * Kangentic named hook injected. `bridgeToken` and `eventsToken` are the
  * `.agents`-relative space-free tokens produced by the command builder.
  *
- * Event mapping (agy's six hook events, https://antigravity.google/docs/hooks):
- * - SessionStart -> `session_start`. Fires once when a NEW conversation
- *   starts, before the first model call. The bridge captures a session_start
- *   payload as `hookContext` on its own, so the conversation id is read before
- *   the first turn. A `--conversation` resume gets none, which is why
- *   PreInvocation keeps its capture. The hooks reference lists the event, but
- *   no changelog entry dates it; not yet run against a real agy.
+ * Event mapping (agy's six hook events, https://antigravity.google/docs/hooks).
+ * Measured on 1.5.13 from a board start with a 2.4k-character opening prompt
+ * (2026-11-20, payloads in `tests/fixtures/antigravity-hooks/agy-1.5.13-*`):
+ * all six fire, and every payload carries `conversationId` as its second key,
+ * after `artifactDirectoryPath`, and `lastUserInput`, the whole latest prompt,
+ * after it. So the bridge's 2048-character cut lands in the prompt and the id
+ * survives it, read by `fromHook`'s fallback scan.
+ * - SessionStart -> `session_start`. Fired within a second of the spawn, before
+ *   the first PreInvocation. The bridge captures a session_start payload as
+ *   `hookContext` on its own, and the id was on the row from it. A
+ *   `--conversation` resume fires none (measured on 1.5.13: a suspended task
+ *   moved back started with no SessionStart, and its first hook was the next
+ *   turn's PreInvocation), which is why PreInvocation keeps its capture.
  * - PreInvocation -> `prompt`. The turn-initiating signal (ModelStart is NOT
  *   in TURN_INITIATING_EVENTS), fired before every model call. Also carries
- *   `captureHookContext` so `runtime.sessionId.fromHook` can read
- *   `conversationId` from a resumed conversation's payload.
+ *   `captureHookContextFields(['conversationId'])` so `runtime.sessionId.fromHook`
+ *   can read the id from a resumed conversation's payload. The id alone: every
+ *   payload carries the whole latest prompt as `lastUserInput` (CHANGELOG
+ *   1.4.7), and the full capture wrote about 2 KB of it to the events file per
+ *   turn, cut mid-JSON at the bridge's 2048-character cap.
  * - PreToolUse -> `tool_start` for every tool (matcher `*`), with the same
  *   name and detail directives as PostToolUse. The hooks reference makes
  *   `decision` REQUIRED and agy treats a response without one as a DENY
@@ -234,7 +252,8 @@ const TOOL_DETAIL_ARGS = ['TargetFile', 'CommandLine', 'DirectoryPath', 'Absolut
  * - PostToolUse -> `tool_end`, with the tool name at `toolCall.name` and the
  *   primary argument under `toolCall.args` (path-addressed directives).
  * - Stop -> `idle`. Fires when the execution loop terminates (payload carries
- *   `fullyIdle`), the authoritative turn-end.
+ *   `fullyIdle` and `terminationReason`), the authoritative turn-end. A turn
+ *   the user interrupted with Esc during a tool fired none on 1.5.13.
  * - PostInvocation is skipped as pure noise (fires with PreInvocation's
  *   cadence, carries nothing Stop/Prompt do not).
  *
@@ -295,7 +314,7 @@ export function buildHooks(
       PreInvocation: [
         {
           type: 'command',
-          command: bridge(EventType.Prompt, captureHookContext()),
+          command: bridge(EventType.Prompt, captureHookContextFields(['conversationId'])),
           timeout: 10,
         },
       ],

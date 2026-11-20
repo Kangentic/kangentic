@@ -76,7 +76,7 @@ let capturedCallbacks: {
   isAgentAbsenceCandidate?: (sessionId: string) => boolean;
   retireAgentlessSession?: (sessionId: string) => void;
   onEvent?: (sessionId: string, event: { ts: number; type: string; detail?: string }) => void;
-  onAgentSessionId?: (sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean }) => void;
+  onAgentSessionId?: (sessionId: string, agentReportedId: string, options: { source: SessionIdCaptureSource; conversationMoved?: boolean }) => void;
 } | null = null;
 const requestAgentAbsenceCheck = vi.fn();
 const cancelAgentAbsenceCheck = vi.fn();
@@ -117,6 +117,7 @@ import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { AGENT_START_CEILING_MS } from '../../src/main/pty/lifecycle/agent-output-tracker';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/main/pty/host/pty-host-client';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
+import type { SessionIdCaptureSource } from '../../src/main/pty/lifecycle/session-id-manager';
 import { PromptReason, type AgentParser } from '../../src/shared/types';
 import type { ProcessInfo } from '../../src/main/activity-engine/background-shell/process-tree';
 
@@ -465,7 +466,7 @@ describe('SessionManager agent-absence wiring', () => {
       manager.on('agent-ran', agentRan);
       expect(await manager.mayRetryLaunch('session-1')).toBe(true);
 
-      capturedCallbacks?.onAgentSessionId?.('session-1', 'agent-uuid');
+      capturedCallbacks?.onAgentSessionId?.('session-1', 'agent-uuid', { source: 'hook' });
 
       expect(typeof session.agentIdReportedAt).toBe('number');
       expect(agentRan).toHaveBeenCalledTimes(1);

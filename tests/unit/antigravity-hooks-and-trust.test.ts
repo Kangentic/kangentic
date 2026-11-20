@@ -138,6 +138,61 @@ describe('buildHooks', () => {
     expect(hookReplyFrom(directives)).toBe('{"decision":"allow"}');
   });
 
+  // Measured on agy 1.5.13 from a board start with a long opening prompt (Sentry
+  // DESKTOP-4J). Each payload carries the whole prompt as `lastUserInput`, so the
+  // bridge's 2048-character cut lands inside it and the captured JSON no longer
+  // parses. The id must still come out of the first hook, or a fresh session has
+  // none until its shutdown summary is scanned at a suspend.
+  describe('the real agy 1.5.13 payloads, through the commands buildHooks writes', () => {
+    const fixture = (name: string): string =>
+      fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'antigravity-hooks', name), 'utf-8');
+    const entry = (): ReturnType<typeof buildHooks>[string] => buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {})[KANGENTIC_HOOK_NAME];
+
+    /** One hook command run on its payload, as the bridge writes it: the events it appends. */
+    function runCommand(command: string, payload: string): Array<Record<string, unknown>> {
+      const [, , , eventType, ...directives] = command.split(' ');
+      return transformHookEvent({ eventType, directives, input: payload, now: 1, logError: () => undefined })
+        .map((line: string) => JSON.parse(line) as Record<string, unknown>);
+    }
+
+    /** The conversation id the adapter reads off an event the bridge wrote, or null. */
+    function idFrom(event: Record<string, unknown>): string | null {
+      const hookContext = event.hookContext;
+      if (typeof hookContext !== 'string') return null;
+      return new AntigravityAdapter().runtime.sessionId!.fromHook!(hookContext);
+    }
+
+    const ZERO_ID = '00000000-0000-0000-0000-000000000000';
+
+    it('reads the id from the first hook, SessionStart, though the prompt cuts its payload short', () => {
+      const payload = fixture('agy-1.5.13-session-start.json');
+      expect(payload.length).toBeGreaterThan(2048);
+      const [event] = runCommand(entry().SessionStart![0].command, payload);
+      expect(event.type).toBe('session_start');
+      expect(idFrom(event)).toBe(ZERO_ID);
+    });
+
+    // Every PreInvocation carries the whole prompt as `lastUserInput`, so a full
+    // capture wrote about 2 KB of the user's prompt to events.jsonl per turn, cut
+    // mid-JSON. The entry captures the id alone.
+    it('reads the id from the first PreInvocation, which a resumed conversation still fires, and writes nothing else of the payload', () => {
+      const [event] = runCommand(entry().PreInvocation![0].command, fixture('agy-1.5.13-pre-invocation.json'));
+      expect(event.type).toBe('prompt');
+      expect(idFrom(event)).toBe(ZERO_ID);
+      expect(JSON.parse(event.hookContext as string)).toEqual({ conversationId: ZERO_ID });
+    });
+
+    it('names read_file\'s file, which 1.5.13 passes as Path', () => {
+      const [event] = runCommand(entry().PreToolUse![0].hooks[0].command, fixture('agy-1.5.13-pre-tool-use-read-file.json'));
+      expect(event).toMatchObject({ type: 'tool_start', tool: 'read_file', detail: 'C:\\Users\\dev\\repo\\README.md' });
+    });
+
+    it('turns Stop into the turn end', () => {
+      const [event] = runCommand(entry().Stop![0].command, fixture('agy-1.5.13-stop.json'));
+      expect(event.type).toBe('idle');
+    });
+  });
+
   it('wires no PreToolUse for a WSL agy, whose hook transport carries no reply, but keeps SessionStart', () => {
     const eventCommand = (eventType: string, ...directives: string[]): string => ['sh', 'hook.sh', 'event', eventType, ...directives].join(' ');
     const entry = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {}, eventCommand)[KANGENTIC_HOOK_NAME];
@@ -164,11 +219,11 @@ describe('buildHooks', () => {
     }
   });
 
-  it('maps events to prompt/tool_end/idle and captures hookContext on PreInvocation', () => {
+  it('maps events to prompt/tool_end/idle and captures the conversation id on PreInvocation', () => {
     const merged = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {});
     const entry = merged[KANGENTIC_HOOK_NAME];
     expect(entry.PreInvocation![0].command).toContain(' prompt ');
-    expect(entry.PreInvocation![0].command).toContain('captureHookContext:');
+    expect(entry.PreInvocation![0].command).toContain('captureHookContextFields:');
     expect(entry.PostToolUse![0].matcher).toBe('*');
     expect(entry.PostToolUse![0].hooks[0].command).toContain(' tool_end ');
     expect(entry.PostToolUse![0].hooks[0].command).toContain('extractToolPath:');
@@ -188,11 +243,11 @@ describe('buildHooks', () => {
 
   // Decodes the ACTUAL base64 directive payloads the production call in
   // hook-manager.ts writes (extractToolPath/extractDetailPath on PostToolUse,
-  // captureHookContext on PreInvocation), rather than substring-matching the
+  // captureHookContextFields on PreInvocation), rather than substring-matching the
   // opaque wire tokens like the tests above. A typo'd path segment or a
   // dropped field in that call is invisible to `.toContain('extractToolPath:')`
   // but must fail this decode.
-  it('decodes the production extractToolPath / extractDetailPath / captureHookContext payloads written to hooks.json', () => {
+  it('decodes the production extractToolPath / extractDetailPath / captureHookContextFields payloads written to hooks.json', () => {
     const merged = buildHooks('../.kangentic/agy-event-bridge.cjs', '../.kangentic/sessions/s1/events.jsonl', {});
     const entry = merged[KANGENTIC_HOOK_NAME];
 
@@ -213,7 +268,7 @@ describe('buildHooks', () => {
     expect(decodedDetailPath.kind).toBe('extractDetailPath');
     expect(decodedDetailPath.payload).toEqual({
       parents: ['toolCall', 'args'],
-      fields: ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Query'],
+      fields: ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Path', 'Query'],
     });
 
     // PreToolUse reads the same tool name and detail as PostToolUse.
@@ -223,8 +278,28 @@ describe('buildHooks', () => {
 
     const preInvocationTokens = entry.PreInvocation![0].command.split(' ');
     const decodedCapture = decodeDirective(preInvocationTokens[4]);
-    expect(decodedCapture.kind).toBe('captureHookContext');
-    expect(decodedCapture.payload).toEqual({});
+    expect(decodedCapture.kind).toBe('captureHookContextFields');
+    expect(decodedCapture.payload).toEqual({ fields: ['conversationId'] });
+  });
+});
+
+describe('the Antigravity idle footer', () => {
+  function idleDetector(): (data: string) => boolean {
+    const { activity } = new AntigravityAdapter().runtime;
+    if (activity.kind !== 'hooks_and_pty' || !activity.detectIdle) throw new Error('no idle detector declared');
+    return activity.detectIdle;
+  }
+
+  it('ends a turn the hooks left open, so an Esc interrupt that fires no Stop does not stay thinking', () => {
+    expect(new AntigravityAdapter().runtime.idlePromptEndsOpenTurn).toBe(true);
+  });
+
+  it('reads the ? for shortcuts footer as idle through ANSI color codes', () => {
+    expect(idleDetector()('\x1b[2m\x1b[38;5;244m? for shortcuts\x1b[0m')).toBe(true);
+  });
+
+  it('does not read the running footer esc to cancel as idle', () => {
+    expect(idleDetector()('\x1b[2m\x1b[38;5;244mesc to cancel\x1b[0m')).toBe(false);
   });
 });
 

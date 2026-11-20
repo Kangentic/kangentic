@@ -7687,6 +7687,19 @@ export interface AdapterRuntimeStrategy {
   readonly reportsTurnEnd: boolean;
 
   /**
+   * The agent's idle prompt (`activity.detectIdle`) paints only between turns,
+   * and a turn the user interrupts fires no turn-end hook. Set, a prompt seen
+   * while hooks are live (when PTY detection is otherwise ignored) arms the
+   * interrupt settle window (`UserInterruptCoordinator`): a turn the hooks
+   * still hold open after it ends as interrupted. Antigravity sets it:
+   * measured on 1.5.13, an Esc during a tool fired neither PostToolUse nor
+   * Stop, and the footer drew `? for shortcuts` at once, while an approval
+   * dialog keeps `esc to cancel`. Leave it unset for an agent whose idle
+   * pattern can match mid-turn: the window would end a running turn.
+   */
+  readonly idlePromptEndsOpenTurn?: boolean;
+
+  /**
    * How the agent's real CLI session ID is captured for resume support.
    * Omit entirely for agents that don't support resume (e.g. Ollama) or
    * that use caller-owned IDs (e.g. Claude Code's --session-id, Aider's

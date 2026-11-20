@@ -74,12 +74,15 @@ const HOOK_CONVERSATION_RE = new RegExp(`"conversationId"\\s*:\\s*"(${CONVERSATI
  * Google Antigravity CLI (`agy`) adapter. Verified against a real agy 1.1.13
  * install (2026-08-16, the E1/E2/E3 rig runs): hooks, trust,
  * MCP-via-workspace-plugin, `--conversation` resume, the brain-dir
- * transcript, print mode, and the double-Ctrl+C exit. Built later from agy's
+ * transcript, print mode, and the double-Ctrl+C exit. The hooks were run again
+ * on 1.5.13 (2026-11-20, a board start with a long opening prompt): all six
+ * fire, SessionStart and every-tool PreToolUse included, and SessionStart gave
+ * the conversation id within a second of the spawn. Built later from agy's
  * documentation and its 1.4.12 `--help`, and not yet run against a real agy:
- * the per-session status line, SessionStart and every-tool PreToolUse hooks,
- * `--mode auto`, help-derived effort levels, the live `/model` and `/effort`
- * swap, and the warm answer session (docs/integrations/agents/antigravity.md
- * lists each with its source). Antigravity shares `~/.gemini` with the Gemini
+ * the per-session status line, `--mode auto`, help-derived effort levels, the
+ * live `/model` and `/effort` swap, and the warm answer session
+ * (docs/integrations/agents/antigravity.md lists each with its source).
+ * Antigravity shares `~/.gemini` with the Gemini
  * CLI but keeps its own subtree, its own trust store, and a different hook/MCP
  * schema - hence a sibling adapter rather than a Gemini variant.
  */
@@ -584,9 +587,15 @@ export class AntigravityAdapter implements AgentAdapter {
    *   which never paints while a turn runs (the running footer shows
    *   "esc to cancel" instead).
    * - sessionId.fromHook: every hook payload carries `conversationId`
-   *   (camelCase protojson). A new conversation's SessionStart delivers it
-   *   before the first turn; the PreInvocation entry's captureHookContext
-   *   covers a resumed conversation, which fires no SessionStart. The status
+   *   (camelCase protojson), second after `artifactDirectoryPath` on 1.5.13.
+   *   A new conversation's SessionStart delivers it before the first turn
+   *   (measured on 1.5.13). The PreInvocation entry captures `conversationId`
+   *   alone, for a resumed conversation, which fires no SessionStart
+   *   (measured on 1.5.13). Since 1.4.7 each payload also carries the
+   *   whole latest prompt as `lastUserInput`, after the id, so a long prompt
+   *   cuts SessionStart's full capture and the fallback scan below reads the
+   *   id. A bridge copy older than the fields directive writes PreInvocation
+   *   in full, which the same scan reads. The status
    *   line's `conversation_id` is deliberately not reported (status-parser.ts).
    * - sessionId.fromOutput: the graceful-shutdown summary prints
    *   `agy --conversation=<uuid>`, and a print-mode run emits
@@ -604,6 +613,11 @@ export class AntigravityAdapter implements AgentAdapter {
     },
     // Its turn-end hook reaches the engine as an Idle event.
     reportsTurnEnd: true,
+    // A turn interrupted with Esc fires no Stop and no PostToolUse (measured
+    // on 1.5.13), and the `? for shortcuts` footer paints only between turns:
+    // an approval dialog keeps `esc to cancel`. So the footer ends a turn the
+    // hooks left open, after the interrupt settle window.
+    idlePromptEndsOpenTurn: true,
     activity: ActivityDetection.hooksAndPty((data: string) => {
       const clean = data.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07\x1b]*[\x07\x1b]/g, '');
       return /\?\s+for shortcuts/.test(clean);

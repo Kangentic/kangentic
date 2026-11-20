@@ -807,7 +807,7 @@ export class SessionManager extends EventEmitter {
 
     this.sessionIdManager = new SessionIdManager({
       hasAgentSessionId: (id) => this.telemetry.hasAgentSessionId(id),
-      notifyAgentSessionId: (id, capturedId) => this.telemetry.notifyAgentSessionId(id, capturedId),
+      notifyAgentSessionId: (id, capturedId, source) => this.telemetry.notifyAgentSessionId(id, capturedId, source),
       sessionExists: (id) => this.registry.has(id),
       agentSessionIdOf: (id) => this.registry.get(id)?.agentSessionId ?? null,
       onCaptureWindowPassed: (id) => {
@@ -983,10 +983,10 @@ export class SessionManager extends EventEmitter {
         }
         // A session past the capture window was waiting on this: a late capture, not a miss.
         // Below the drop above, so an id the row never takes stays a miss.
-        this.sessionIdManager.noteCaptured(sessionId);
+        this.sessionIdManager.noteCaptured(sessionId, options.source);
         // The host can stop scanning this session's output for an id, unless this one was only worked
         // out, when the agent's own report is still wanted to confirm it.
-        if (!options?.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
+        if (!options.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
         // Reflect the captured ID on the live Session so the renderer (and
         // tests) can observe it via sessions.list() without a DB round-trip.
         if (session.agentSessionId !== agentReportedId) {
@@ -1201,6 +1201,15 @@ export class SessionManager extends EventEmitter {
         );
       },
       onEventsParsed: (sessionId, rawLines, events) => {
+        // Every line here is one the agent's hook wrote through the event bridge
+        // (or a WSL or host relay of it), never a stand-in the engine or the PTY
+        // tracker pushes, so this is the session-id report's `hook_seen`. A status
+        // line's events come with no lines, and do not count.
+        const hookSession = rawLines.length > 0 ? this.registry.get(sessionId) : undefined;
+        if (hookSession) {
+          hookSession.agentHookLineAt ??= Date.now();
+          this.telemetry.notifyHookLines(sessionId);
+        }
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
         // Before the events, and on every batch: a SessionStart that moves the
         // conversation is what lets the status channel follow a new id. After
@@ -1385,7 +1394,7 @@ export class SessionManager extends EventEmitter {
       case 'agentSessionId':
         if (!this.registry.has(event.sessionId)) return;
         if (this.telemetry.hasAgentSessionId(event.sessionId)) return;
-        this.telemetry.notifyAgentSessionId(event.sessionId, event.capturedId);
+        this.telemetry.notifyAgentSessionId(event.sessionId, event.capturedId, 'output');
         return;
       case 'streamTelemetry':
         if (!this.registry.has(event.sessionId)) return;

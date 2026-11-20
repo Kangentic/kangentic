@@ -52,9 +52,21 @@ export class SessionIdScanner {
   }
 }
 
+/**
+ * Which capture path delivered an agent session id. `hook` is the agent's own
+ * hook payload (`sessionId.fromHook`), `status` its status line, `output` the
+ * live PTY stream scan, `scrollback` the suspend-time scan of the whole
+ * scrollback, `filesystem` a file the agent wrote, `index` an id worked out
+ * from a CLI's session index on a host. `unknown` is an id the row holds that
+ * reached no `noteCaptured`. The late report sends it, so a report says which
+ * path the id finally came through (Sentry DESKTOP-4J could not).
+ */
+export const SESSION_ID_CAPTURE_SOURCES = ['hook', 'status', 'output', 'scrollback', 'filesystem', 'index', 'unknown'] as const;
+export type SessionIdCaptureSource = typeof SESSION_ID_CAPTURE_SOURCES[number];
+
 export interface SessionIdManagerCallbacks {
   hasAgentSessionId(sessionId: string): boolean;
-  notifyAgentSessionId(sessionId: string, capturedId: string): void;
+  notifyAgentSessionId(sessionId: string, capturedId: string, source: SessionIdCaptureSource): void;
   /** True if the session is still in the SessionManager map. Used to
    *  avoid logging a capture for a session that was killed while the
    *  filesystem promise was in flight. */
@@ -97,7 +109,7 @@ export const SESSION_ID_CAPTURE_WINDOW_MS = 30_000;
  * so the report measures against the session's own timestamps without a clock.
  */
 export type SessionIdCaptureOutcome =
-  | { kind: 'late'; capturedAfterMs: number; capturedAt: number; filesystemScan: FilesystemScanOutcome }
+  | { kind: 'late'; capturedAfterMs: number; capturedAt: number; capturedBy: SessionIdCaptureSource; filesystemScan: FilesystemScanOutcome }
   /** `removed`: the row went with no id. `ceiling`: still none `CAPTURE_CEILING_MS` after the spawn. */
   | { kind: 'never'; settledBy: 'removed' | 'ceiling'; settledAt: number; filesystemScan: FilesystemScanOutcome };
 
@@ -247,7 +259,7 @@ export class SessionIdManager {
             return;
           }
           console.log(`[${agentName}] Captured session ID from filesystem: ${capturedId.slice(0, 16)}...`);
-          this.callbacks.notifyAgentSessionId(sessionId, capturedId);
+          this.callbacks.notifyAgentSessionId(sessionId, capturedId, 'filesystem');
         })
         .catch((err) => {
           // report-ok: recorded as the `failed` scan, which the not-captured report sends as a fixed value.
@@ -260,9 +272,10 @@ export class SessionIdManager {
   /**
    * An id reached the session, by any pathway (`SessionManager`'s
    * `onAgentSessionId`, where every capture lands). For a session past the
-   * window this is a late capture, and its outcome is known.
+   * window this is a late capture, and its outcome is known. `source` is the
+   * path that delivered it.
    */
-  noteCaptured(sessionId: string): void {
+  noteCaptured(sessionId: string, source: SessionIdCaptureSource): void {
     const pending = this.pastWindow.get(sessionId);
     if (!pending) return;
     this.settlePastWindow(sessionId);
@@ -271,6 +284,7 @@ export class SessionIdManager {
       kind: 'late',
       capturedAfterMs: capturedAt - pending.spawnedAt,
       capturedAt,
+      capturedBy: source,
       filesystemScan: this.filesystemScanOf(sessionId),
     });
   }
@@ -309,7 +323,7 @@ export class SessionIdManager {
     // An id that arrived through a path that never reached `noteCaptured` is
     // still a late capture, timed from when it was noticed here (an upper bound).
     if (this.holdsAgentSessionId(sessionId)) {
-      this.noteCaptured(sessionId);
+      this.noteCaptured(sessionId, 'unknown');
       return;
     }
     this.reportNever(sessionId, settledBy);
@@ -344,7 +358,7 @@ export class SessionIdManager {
     const capturedId = scanner.scanChunk(data, fromOutput);
     if (capturedId) {
       scanner.reset();
-      this.callbacks.notifyAgentSessionId(sessionId, capturedId);
+      this.callbacks.notifyAgentSessionId(sessionId, capturedId, 'output');
     }
   }
 
@@ -366,7 +380,7 @@ export class SessionIdManager {
     const scanner = this.scanners.get(sessionId) ?? new SessionIdScanner();
     const capturedId = scanner.scanScrollback(rawScrollback, fromOutput);
     if (capturedId) {
-      this.callbacks.notifyAgentSessionId(sessionId, capturedId);
+      this.callbacks.notifyAgentSessionId(sessionId, capturedId, 'scrollback');
     }
   }
 

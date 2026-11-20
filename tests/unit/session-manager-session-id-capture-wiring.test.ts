@@ -47,6 +47,9 @@ vi.mock('../../src/main/agent/shared/shim-launch', async (importOriginal) => {
 const reportHandledError = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 
+// The session-id report asks whether `node` is on PATH; answer at once, as a machine with node would.
+vi.mock('which', () => ({ default: Object.assign(async () => '/usr/local/bin/node', { sync: () => '/usr/local/bin/node' }) }));
+
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
@@ -99,7 +102,7 @@ function makeManager(): SessionManager {
 /** The agent reports its id: the path every capture lands on, whichever pathway found it. */
 function reportAgentSessionId(manager: SessionManager, sessionId: string, agentReportedId: string): void {
   const { telemetry } = manager as unknown as { telemetry: SessionTelemetry };
-  telemetry.notifyAgentSessionId(sessionId, agentReportedId);
+  telemetry.notifyAgentSessionId(sessionId, agentReportedId, 'output');
 }
 
 function registryRowOf(manager: SessionManager, sessionId: string): ManagedSession {
@@ -485,6 +488,96 @@ describe('a session that never gave an id', () => {
     await vi.advanceTimersByTimeAsync(SessionIdManager.CAPTURE_CEILING_MS + 10);
 
     expect(reportsNamed('AgentSessionIdNotCapturedError')[0]?.tags).toMatchObject({ settled_by: 'ceiling', agent_ran_for_s: 'running' });
+  });
+});
+
+// Sentry DESKTOP-4J: agy's id came minutes late, and the report could say neither
+// whether an agy hook had fired (`hook_seen` counted the PTY tracker's first-frame
+// Prompt) nor which path the id finally came through.
+describe('what a late report says about the hooks and the path', () => {
+  type ReaderCallbacks = { onEventsParsed(sessionId: string, rawLines: string[], events: unknown[]): void };
+
+  /** A batch read from the session's events file, as the status-file reader hands it on. */
+  function deliverHookLines(manager: SessionManager, sessionId: string, rawLines: string[]): void {
+    const { statusFileReader } = manager as unknown as { statusFileReader: { callbacks: ReaderCallbacks } };
+    statusFileReader.callbacks.onEventsParsed(sessionId, rawLines, []);
+  }
+
+  it('reads hook_seen no when only the PTY stand-in prompt reached the session by the window', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager, 'command_line');
+    ingestAgentEvent(manager, sessionId, EventType.Prompt, PromptReason.PtyActivity);
+    // A status line's events carry no hook lines either.
+    deliverHookLines(manager, sessionId, []);
+    await passTheWindow();
+
+    reportAgentSessionId(manager, sessionId, 'agent-session-0008');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(registryRowOf(manager, sessionId).agentHookObservedAt).toEqual(expect.any(Number));
+    expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags).toMatchObject({ hook_seen: 'no', captured_by: 'output' });
+  });
+
+  it('reads hook_seen yes for a line the agent\'s hooks wrote, and names the hook path that gave the id', async () => {
+    const manager = makeManager();
+    const parser = makeAgentParser();
+    (parser.runtime!.sessionId as { fromHook?: (hookContext: string) => string | null }).fromHook = (hookContext) =>
+      (JSON.parse(hookContext) as { conversationId?: string }).conversationId ?? null;
+    const session = await manager.spawn({
+      taskId: 'task-1', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser: parser, agentName: 'antigravity',
+    });
+    deliverHookLines(manager, session.id, [JSON.stringify({ ts: Date.now(), type: 'prompt' })]);
+    await passTheWindow();
+
+    const hookLine = JSON.stringify({ ts: Date.now(), type: 'prompt', hookContext: JSON.stringify({ conversationId: 'agent-session-0009' }) });
+    deliverHookLines(manager, session.id, [hookLine]);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(registryRowOf(manager, session.id).agentSessionId).toBe('agent-session-0009');
+    expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags).toMatchObject({ hook_seen: 'yes', captured_by: 'hook' });
+  });
+
+  it('keeps the time of the first hook batch when later batches arrive', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager, 'command_line');
+    const firstBatchAt = Date.now();
+    deliverHookLines(manager, sessionId, [JSON.stringify({ ts: firstBatchAt, type: 'prompt' })]);
+    expect(registryRowOf(manager, sessionId).agentHookLineAt).toBe(firstBatchAt);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    deliverHookLines(manager, sessionId, [JSON.stringify({ ts: Date.now(), type: 'prompt' })]);
+
+    expect(Date.now()).toBeGreaterThan(firstBatchAt);
+    expect(registryRowOf(manager, sessionId).agentHookLineAt).toBe(firstBatchAt);
+  });
+
+  it('tells telemetry about a batch that carries hook lines, and not about an empty one', async () => {
+    const manager = makeManager();
+    const sessionId = await spawnAgentSession(manager, 'command_line');
+    const { telemetry } = manager as unknown as { telemetry: SessionTelemetry };
+    const notifyHookLines = vi.spyOn(telemetry, 'notifyHookLines');
+
+    deliverHookLines(manager, sessionId, []);
+    expect(notifyHookLines).not.toHaveBeenCalled();
+
+    deliverHookLines(manager, sessionId, [JSON.stringify({ ts: Date.now(), type: 'prompt' })]);
+    expect(notifyHookLines).toHaveBeenCalledTimes(1);
+    expect(notifyHookLines).toHaveBeenCalledWith(sessionId);
+  });
+
+  it('names the scrollback scan for an id first found at the suspend', async () => {
+    const manager = makeManager();
+    const parser = makeAgentParser();
+    const session = await manager.spawn({
+      taskId: 'task-1', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser: parser, agentName: 'antigravity',
+    });
+    await passTheWindow();
+
+    const { sessionIdManager } = manager as unknown as { sessionIdManager: SessionIdManager };
+    sessionIdManager.scanScrollback(session.id, { ...parser, runtime: { ...parser.runtime!, sessionId: { fromOutput: () => 'agent-session-0010' } } } as AgentParser, 'shutdown summary');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(reportsNamed('AgentSessionIdCapturedLateError')[0].tags).toMatchObject({ hook_seen: 'no', captured_by: 'scrollback' });
   });
 });
 

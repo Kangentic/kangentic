@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionIdManager } from '../../src/main/pty/lifecycle/session-id-manager';
+import { SessionIdManager, type SessionIdCaptureSource } from '../../src/main/pty/lifecycle/session-id-manager';
 import type { AgentParser } from '../../src/shared/types';
 
 function makeAdapter(sessionIdStrategy: Partial<{
@@ -23,6 +23,7 @@ function makeAdapter(sessionIdStrategy: Partial<{
 
 describe('SessionIdManager', () => {
   let capturedIds: Map<string, string>;
+  let capturedSources: Map<string, SessionIdCaptureSource>;
   let existingSessions: Set<string>;
   let manager: SessionIdManager;
   let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -30,10 +31,14 @@ describe('SessionIdManager', () => {
 
   beforeEach(() => {
     capturedIds = new Map();
+    capturedSources = new Map();
     existingSessions = new Set();
     manager = new SessionIdManager({
       hasAgentSessionId: (id) => capturedIds.has(id),
-      notifyAgentSessionId: (id, capturedId) => capturedIds.set(id, capturedId),
+      notifyAgentSessionId: (id, capturedId, source) => {
+        capturedIds.set(id, capturedId);
+        capturedSources.set(id, source);
+      },
       sessionExists: (id) => existingSessions.has(id),
       agentSessionIdOf: (id) => capturedIds.get(id) ?? null,
     });
@@ -59,6 +64,14 @@ describe('SessionIdManager', () => {
       existingSessions.add('s1');
       manager.onData('s1', 'session id: 019d60ac-b67c-7a22-bcbb-af55c8295c38\n', makeAdapter({ fromOutput }));
       expect(capturedIds.get('s1')).toBe('019d60ac-b67c-7a22-bcbb-af55c8295c38');
+      expect(capturedSources.get('s1')).toBe('output');
+    });
+
+    // The late report tells an id the live stream found from one only the
+    // suspend's scan of the whole scrollback found (Sentry DESKTOP-4J).
+    it('names the suspend-time scrollback scan as its own path', () => {
+      manager.scanScrollback('s1', makeAdapter({ fromOutput }), 'session id: 019d60ac-b67c-7a22-bcbb-af55c8295c38\n');
+      expect(capturedSources.get('s1')).toBe('scrollback');
     });
 
     it('spans chunks via the rolling buffer', () => {
@@ -297,7 +310,10 @@ describe('SessionIdManager', () => {
       const outcomes = vi.fn();
       const outcomeManager = new SessionIdManager({
         hasAgentSessionId: (id) => capturedIds.has(id),
-        notifyAgentSessionId: (id, capturedId) => capturedIds.set(id, capturedId),
+        notifyAgentSessionId: (id, capturedId, source) => {
+          capturedIds.set(id, capturedId);
+          capturedSources.set(id, source);
+        },
         sessionExists: (id) => existingSessions.has(id),
         agentSessionIdOf: (id) => capturedIds.get(id) ?? null,
         onCaptureWindowPassed: windowPassed,
@@ -392,11 +408,12 @@ describe('SessionIdManager', () => {
       resolveScan('late-id');
       await vi.advanceTimersByTimeAsync(0);
       expect(capturedIds.get('s1')).toBe('late-id');
-      outcomeManager.noteCaptured('s1');
+      expect(capturedSources.get('s1')).toBe('filesystem');
+      outcomeManager.noteCaptured('s1', 'filesystem');
 
       expect(outcomes).toHaveBeenCalledTimes(1);
       // When it was captured, and how long after the spawn: the report counts from the first prompt with the one, and buckets the other.
-      expect(outcomes.mock.calls[0][1]).toEqual({ kind: 'late', capturedAfterMs: 31_000, capturedAt: Date.now(), filesystemScan: 'found' });
+      expect(outcomes.mock.calls[0][1]).toEqual({ kind: 'late', capturedAfterMs: 31_000, capturedAt: Date.now(), capturedBy: 'filesystem', filesystemScan: 'found' });
     });
 
     it('settles an earlier spawn under the same id on init, so its ceiling never fires for the new spawn', async () => {
@@ -429,7 +446,7 @@ describe('SessionIdManager', () => {
       manager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
       await vi.advanceTimersByTimeAsync(30_000);
       expect(vi.getTimerCount()).toBe(0);
-      manager.noteCaptured('s1');
+      manager.noteCaptured('s1', 'output');
       manager.removeSession('s1');
     });
 
@@ -443,7 +460,8 @@ describe('SessionIdManager', () => {
 
       expect(outcomes).toHaveBeenCalledTimes(1);
       expect(outcomes.mock.calls[0][0]).toBe('s1');
-      expect(outcomes.mock.calls[0][1].kind).toBe('late');
+      // No path said it delivered the id, so the report cannot name one.
+      expect(outcomes.mock.calls[0][1]).toMatchObject({ kind: 'late', capturedBy: 'unknown' });
       outcomeManager.removeSession('s1');
       expect(outcomes).toHaveBeenCalledTimes(1);
     });
@@ -480,7 +498,7 @@ describe('SessionIdManager', () => {
       existingSessions.add('s1');
       outcomeManager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'codex');
       capturedIds.set('s1', 'early-id');
-      outcomeManager.noteCaptured('s1');
+      outcomeManager.noteCaptured('s1', 'output');
       await vi.advanceTimersByTimeAsync(10 * 60_000);
 
       expect(windowPassed).not.toHaveBeenCalled();
