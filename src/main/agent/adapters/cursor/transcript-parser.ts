@@ -199,7 +199,7 @@ function timestampBefore(filePath: string, beforeByte: number): number {
       let raw: unknown;
       try {
         raw = JSON.parse(line);
-      } catch {
+      } catch { // report-ok: a truncated JSONL line in the lookback window is not a turn
         continue;
       }
       if (!isRecord(raw) || raw.role !== 'user' || !isRecord(raw.message)) continue;
@@ -209,7 +209,7 @@ function timestampBefore(filePath: string, beforeByte: number): number {
       if (parsed > 0) return parsed;
     }
     return 0;
-  } catch {
+  } catch { // report-ok: a missing transcript during lookback leaves those assistant lines at ts 0
     return 0;
   } finally {
     if (file !== undefined) fs.closeSync(file);
@@ -249,7 +249,7 @@ function parseCursorRecord(
   let raw: unknown;
   try {
     raw = JSON.parse(line);
-  } catch {
+  } catch { // report-ok: a truncated JSONL line is not a turn
     return lastTimestampMs;
   }
   if (!isRecord(raw) || !isRecord(raw.message)) return lastTimestampMs;
