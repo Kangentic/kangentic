@@ -260,8 +260,9 @@ describe('parseCursorTranscript', () => {
     // tag and user_query wrapper, tool_use with no id, the turn_ended marker),
     // with every value its own. The second turn's slash-command record (the
     // manually_attached_skills and cursor_commands wrappers in front of the
-    // clock) takes its wrapper shape from the contributor's live Cursor CLI
-    // run in PR 871. Replace it with a sanitized capture when one is recorded.
+    // clock) follows the wrapper shape PR 871's tests write, which its author
+    // reports from a live Cursor CLI run; no capture of it is committed yet.
+    // Replace it with a sanitized capture when one is recorded.
     const fixturePath = path.join(__dirname, '..', 'fixtures', 'cursor-agent-transcript.jsonl');
     const parsed = await parseCursorTranscript(SESSION_ID, fixturePath);
     expect(parsed.sourcePath).toBe(fixturePath);
