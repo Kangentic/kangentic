@@ -2,7 +2,7 @@ import type { WebContents } from 'electron';
 import type { QueryAllResult } from './types';
 import { keyboardFocusIsInHost, KeyboardFocusNotInGuestError } from './keyboard-focus';
 import { MODIFIER_FLAGS, chordKeyIdentity, parseKeyCombo } from './key-combo';
-import { holdGuestRendering, type CaptureHoldOutcome, type CaptureHostState } from './guest-capture-hold';
+import { holdGuestRendering, type CaptureHoldOutcome, type CaptureHostState, type HoldSettlement } from './guest-capture-hold';
 import { AMBIGUOUS_CANDIDATE_LIMIT, AmbiguousSelectorError, parseSelectorCandidates } from './ambiguous-selector';
 
 /**
@@ -613,11 +613,17 @@ export const SCREENSHOT_TIMEOUT_MS = 5000;
 export interface CaptureHoldDiagnostics {
   hold: CaptureHoldOutcome;
   hostState: CaptureHostState;
+  /** Whether any of the host's hold calls had returned when the capture timed out. */
+  hostHold: HoldSettlement;
+  /** The same for the guest's. */
+  guestHold: HoldSettlement;
 }
 
 export class ScreenshotNotComposited extends Error {
   readonly hold: CaptureHoldOutcome;
   readonly hostState: CaptureHostState;
+  readonly hostHold: HoldSettlement;
+  readonly guestHold: HoldSettlement;
 
   constructor(diagnostics: CaptureHoldDiagnostics) {
     // The bound is interpolated, never restated: the agent-facing message, the
@@ -628,6 +634,8 @@ export class ScreenshotNotComposited extends Error {
     this.name = 'ScreenshotNotComposited';
     this.hold = diagnostics.hold;
     this.hostState = diagnostics.hostState;
+    this.hostHold = diagnostics.hostHold;
+    this.guestHold = diagnostics.guestHold;
   }
 }
 
@@ -647,10 +655,17 @@ export async function captureScreenshot(
       captureBeyondViewport: options.captureBeyondViewport ?? options.fullPage ?? false,
     }) as Promise<{ data: string }>;
     const bounded = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new ScreenshotNotComposited({ hold: captureHold.outcome, hostState: captureHold.hostState })),
-        SCREENSHOT_TIMEOUT_MS,
-      );
+      timer = setTimeout(() => {
+        // Read the settlement now, while the hold is still running: at its start
+        // nothing had had time to return.
+        const settlement = captureHold.settlement();
+        reject(new ScreenshotNotComposited({
+          hold: captureHold.outcome,
+          hostState: captureHold.hostState,
+          hostHold: settlement.host,
+          guestHold: settlement.guest,
+        }));
+      }, SCREENSHOT_TIMEOUT_MS);
     });
     const result = await Promise.race([capture, bounded]);
     return result.data ?? null;

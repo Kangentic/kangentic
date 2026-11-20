@@ -276,7 +276,8 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   host hidden outright, and stops stacking calls that do not settle. No unit tier has a composited
   guest, so whether Chromium still draws is the probe's to answer: re-run it on an Electron upgrade.
   `tests/unit/error-reporting-mcp-browser-behavior.test.ts` times out a real capture and pins that
-  the report names the surface, the host window, the hold and the time since the last wake.
+  the report names the surface, the host window, the hold, whether the hold's calls on each side
+  returned (`host_hold`, `guest_hold`), and the time since the last wake.
 - **Test (pane-bounded capture):** `tests/unit/browser-capture-bounds.test.ts` holds its own
   statement of Chromium's `requested_image_size` rule, checks it reproduces the shipped bug, and
   asserts no planned capture exceeds its pane across display scales 1 to 2, four pane sizes, and

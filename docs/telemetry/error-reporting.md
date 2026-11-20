@@ -444,14 +444,21 @@ in one Sentry org, one triage surface.
   - `mobile_verb` (tag `verb`), `automation_runner` (tag `automation_type`), `turn_end`,
     `workflow_engine` (tag `stage`), `pr` (tag `stage`), `browser_driver` (tag `kind`, built-in
     classes and the attach, capture and composite failures only). A `ScreenshotNotComposited`
-    report also carries four fixed tags, so it can say why the capture got no frame (Sentry
+    report also carries six fixed tags, so it can say why the capture got no frame (Sentry
     DESKTOP-46, a timeout 18 s after an unlock that could not say whether the capture hold armed):
     `surface` (`pane`, `hidden`, `parked`, `popout`, `lane`), `host_window` (`visible`,
     `minimized`, `hidden`, `none`) and `hold` (`armed`, `skipped_hidden`, `no_host`), both read
-    when the capture started, and `since_wake` (`none`, `under_30s`, `under_2m`, `under_10m`,
-    `over_10m`), the time since the last `unlock-screen` or `resume` (`src/main/browser/wake-clock.ts`).
-    None is a new data class: the `electron` breadcrumbs already carry power events and window
-    focus with their timestamps. A `CaptureExceedsSurface` report carries five, so it can say what
+    when the capture started, `host_hold` and `guest_hold` (`settled`, `none`), and `since_wake`
+    (`none`, `under_30s`, `under_2m`, `under_10m`, `over_10m`), the time since the last
+    `unlock-screen` or `resume` (`src/main/browser/wake-clock.ts`). `host_hold` and `guest_hold`
+    are read when the capture times out, not when it starts. Each says whether any of the hold's
+    own `capturePage` calls on that side had returned by then. They came after DESKTOP-46's 0.60.0
+    event armed the hold on a visible host and still got no frame: `host_hold: none` means the
+    host compositor stopped answering, and `settled` on both means the hold was answered and CDP's
+    capture hung anyway. They mean something only with `hold: armed`. A hold that never armed
+    reports `none` on both. None is a new data class: the `electron` breadcrumbs already carry
+    power events and window focus with their timestamps, and the two hold tags describe
+    Kangentic's own calls. A `CaptureExceedsSurface` report carries five, so it can say what
     the refused request looked like (Sentry DESKTOP-48, a refusal that could not say which of the
     bound's inputs was wrong): `surface` as above, `target` (`viewport`, `full_page`, `element`),
     `clipped` (`yes`, `no`), `emulated` (`yes`, `no`, and `unknown` when no CDP session was
