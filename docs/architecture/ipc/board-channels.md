@@ -102,7 +102,7 @@ sources:
 | `backlog:create` | invoke | Create a new backlog item |
 | `backlog:update` | invoke | Update a backlog item |
 | `backlog:delete` | invoke | Delete a backlog item |
-| `backlog:reorder` | invoke | Reorder backlog items by ID array |
+| `backlog:reorder` | invoke | Reorder backlog items by ID array. An optional `movedId`, the dragged item, also has its `updated_at` stamped |
 | `backlog:bulk-delete` | invoke | Delete multiple backlog items by ID array |
 | `backlog:promote` | invoke | Promote backlog items to board tasks (move to a swimlane) |
 | `backlog:demote` | invoke | Demote a board task back to the backlog. Takes a trailing `projectId` (the task's project, which the Agent Monitor names for a task of a project the board is not on) |
