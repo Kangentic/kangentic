@@ -174,14 +174,27 @@
   // it), so a refusal whose text can name a session posts a fixed line here instead.
   var postedErrors = [];
 
+  // refuse and refuseWithFixedLine are the only writers of `errors` and `postedErrors`, so the two
+  // stay line for line.
+
   /**
-   * Refuse the frame. The only writer of `errors` and `postedErrors`, so the two stay line for
-   * line. `postedText` is what the host is told when `cardText` can name a session; without it
-   * the host reads the card's text. Returns the card's text.
+   * Refuse the frame with text the host may read whole. The card, the console and the message
+   * posted to the host all carry it. Never pass it text that can name a session. Returns the text.
    */
-  function refuse(cardText, postedText) {
+  function refuse(text) {
+    errors.push(text);
+    postedErrors.push(text);
+    return text;
+  }
+
+  /**
+   * Refuse the frame with text the host must not read, because it can name a session. The card
+   * and the console carry `cardText`; the host is told only `postedLine`, a fixed sentence.
+   * Returns the card's text.
+   */
+  function refuseWithFixedLine(cardText, postedLine) {
     errors.push(cardText);
-    postedErrors.push(postedText === undefined ? cardText : postedText);
+    postedErrors.push(postedLine);
     return cardText;
   }
 
@@ -410,7 +423,7 @@
       urlState = null;
       // A session patch's refusal names its session id. The validator's text is never posted,
       // whichever check refused, so the host reads one fixed line for every state= refusal.
-      refuse(
+      refuseWithFixedLine(
         'The state= parameter is not usable: ' + (error && error.message ? error.message : String(error)),
         'The state= parameter is not usable; the frame\'s error card says why.'
       );
@@ -854,7 +867,7 @@
     if (unloadedFrames.length > 0) {
       // The card names the session, as every refusal names what it refused; the host is told
       // without the id.
-      refuse(
+      refuseWithFixedLine(
         'The frame the session "' + unloadedFrames.join('", "') + '" rests on before its recorded Send did not load.',
         'The frame a session rests on before its recorded Send did not load; the frame\'s error card names it.'
       );
@@ -1260,7 +1273,7 @@
       // failure names its selector, and a scene's selector can name a session.
       var cardText = error && error.demoFontLoad
         ? refuse(reason)
-        : refuse('Boot step failed: ' + reason, 'A boot step failed; the frame\'s error card says why.');
+        : refuseWithFixedLine('Boot step failed: ' + reason, 'A boot step failed; the frame\'s error card says why.');
       console.error('[kangentic-demo]', cardText);
       renderErrorCard();
       notifyParent({ type: 'kangentic-demo-error', reason: postedErrors.join(' ') });

@@ -480,8 +480,8 @@ for (const reasonCase of POSTED_REASON_CASES) {
 }
 
 test('a refusal that names no session posts the card\'s own text to the host', async ({ page }) => {
-  // refuse() posts the card's text unless a caller passes a fixed line, so a host reads why a
-  // frame refused when nothing in the text is private.
+  // refuse() posts the card's text whole, so a host reads why a frame refused when nothing in the
+  // text is private. Only refuseWithFixedLine() swaps in a fixed line.
   await hostFrame(page, { view: 'no-such-scene' });
   const errorCard = page.frameLocator('#demo').locator('[data-testid="demo-error"]');
   await expect(errorCard).toBeVisible({ timeout: READY_TIMEOUT_MS });
