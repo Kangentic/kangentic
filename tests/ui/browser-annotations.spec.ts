@@ -183,6 +183,39 @@ test('selections and strokes join the active annotation, and Enter in its note s
   await expect.poll(async () => (await draftOf())?.annotations[0]?.note).toBe('Swap these two');
 });
 
+test('an annotation keeps its page capture when the guest first answers with no pixels', async () => {
+  // A young guest that has not produced a frame hands capturePage() an empty
+  // image. The first two captures come back empty, the third has pixels, and
+  // the annotation has to end up naming that picture rather than none.
+  await openPane();
+  await page.evaluate(() => {
+    const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as {
+      capturePage: () => Promise<unknown>;
+    };
+    const realCapture = webview.capturePage;
+    let calls = 0;
+    (window as unknown as { __captureCalls: () => number }).__captureCalls = () => calls;
+    webview.capturePage = () => {
+      calls += 1;
+      return calls <= 2
+        ? Promise.resolve({ toDataURL: () => 'data:image/png;base64,', getSize: () => ({ width: 0, height: 0 }) })
+        : realCapture();
+    };
+  });
+
+  await selectElements([{ selector: '#save', name: 'Save' }]);
+  await expect(page.locator('[data-testid="annotation-items-1"]')).toHaveText('1');
+
+  await expect.poll(
+    () => page.evaluate((taskId) => {
+      const draft = window.__mockBrowser?.getAnnotationDraft(taskId) as { annotations: Array<{ captureId: string | null }> } | null;
+      return draft?.annotations[0]?.captureId ?? null;
+    }, TASK_ID),
+    { message: 'the annotation never named a capture after the empty ones', timeout: 10000 },
+  ).not.toBeNull();
+  expect(await page.evaluate(() => (window as unknown as { __captureCalls: () => number }).__captureCalls())).toBe(3);
+});
+
 test('the summary opens the items, and one can go while the rest stay', async () => {
   await openPane();
   await selectElements([{ selector: '#save', name: 'Save' }, { selector: '#cancel', name: 'Cancel' }]);

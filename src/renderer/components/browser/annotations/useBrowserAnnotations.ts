@@ -61,6 +61,33 @@ function stripDataUrl(dataUrl: string): string {
   return dataUrl.replace(/^data:image\/png;base64,/, '');
 }
 
+// A capture of the guest can come back with no pixels, or never settle, while
+// the guest has not produced its first frame (a young guest on a slow machine).
+// Neither says anything about the next try, so a capture is tried again a few
+// times before the annotation goes without a picture.
+const CAPTURE_ATTEMPTS = 4;
+const CAPTURE_ATTEMPT_TIMEOUT_MS = 3000;
+const CAPTURE_RETRY_DELAY_MS = 500;
+
+/** One capture of the guest as base64 PNG, or null when it threw, timed out or held no pixels. */
+async function captureGuestPng(webview: WebviewElement): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), CAPTURE_ATTEMPT_TIMEOUT_MS);
+  });
+  try {
+    const image = await Promise.race([webview.capturePage(), timedOut]);
+    if (!image) return null;
+    const png = stripDataUrl(image.toDataURL());
+    return png.length > 0 ? png : null;
+  } catch {
+    // report-ok: a failed attempt is retried by the caller, and the last one is the fallback picture's own miss.
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** A zoom factor that is safe to divide by. */
 function positiveZoom(zoomFactor: number): number {
   return zoomFactor > 0 ? zoomFactor : 1;
@@ -297,12 +324,17 @@ export function useBrowserAnnotations({
     if (!webview || typeof webview.capturePage !== 'function') return;
     const epoch = sessionEpochRef.current;
     try {
-      // The render that drew the new badge has run, but may not have painted:
-      // capturing now could take the frame before it.
-      await runInGuest(webview, ANNOTATION_LAYER_AFTER_PAINT_SCRIPT);
-      const image = await webview.capturePage();
-      if (sessionEpochRef.current !== epoch) return;
-      const captureId = await window.electronAPI.browser.saveAnnotationCapture(taskId, stripDataUrl(image.toDataURL()), projectId);
+      let png: string | null = null;
+      for (let attempt = 1; attempt <= CAPTURE_ATTEMPTS && !png; attempt += 1) {
+        if (attempt > 1) await new Promise<void>((resolve) => setTimeout(resolve, CAPTURE_RETRY_DELAY_MS));
+        if (sessionEpochRef.current !== epoch) return;
+        // The render that drew the new badge has run, but may not have painted:
+        // capturing now could take the frame before it.
+        await runInGuest(webview, ANNOTATION_LAYER_AFTER_PAINT_SCRIPT);
+        png = await captureGuestPng(webview);
+      }
+      if (!png || sessionEpochRef.current !== epoch) return;
+      const captureId = await window.electronAPI.browser.saveAnnotationCapture(taskId, png, projectId);
       if (sessionEpochRef.current !== epoch) return;
       const key = `${layerStatus.url}|${Math.round(layerStatus.scrollX)}|${Math.round(layerStatus.scrollY)}|${layerStatus.width}x${layerStatus.height}`;
       // The same view captured again shows everything the last capture did plus
