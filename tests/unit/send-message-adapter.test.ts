@@ -98,6 +98,21 @@ describe('send_message adapter', () => {
     expect(result.detail).toBe(expectedWord);
   });
 
+  describe('pendingPrompt', () => {
+    it('defaults the mode to immediate', () => {
+      expect(sendMessageAdapter.pendingPrompt?.({ message: 'x' })).toEqual({ message: 'x', mode: 'immediate' });
+    });
+
+    it('keeps a deferred mode', () => {
+      expect(sendMessageAdapter.pendingPrompt?.({ message: 'x', mode: 'deferred' })).toEqual({ message: 'x', mode: 'deferred' });
+    });
+
+    it('is nothing for an empty message', () => {
+      expect(sendMessageAdapter.pendingPrompt?.({ message: '' })).toBeUndefined();
+      expect(sendMessageAdapter.pendingPrompt?.({})).toBeUndefined();
+    });
+  });
+
   it('reads the legacy send_command payload key', async () => {
     const delivered: string[] = [];
     await sendMessageAdapter.execute({ command: '/legacy' }, makeContext('exit', delivered));
