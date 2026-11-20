@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AGENT_PAUSED_REASON, runAutomations } from '../../src/main/automations/automation-runner';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
+import { sendMessageAdapter } from '../../src/main/automations/adapters/send-message';
 import {
   AutomationPermanentError,
   AutomationRetryableError,
@@ -598,6 +599,90 @@ describe('a move of a task whose agent is paused', () => {
     });
 
     expect(checkConditions).toHaveBeenCalledTimes(expectedChecks);
+  });
+});
+
+// #1138: an immediate message follows a fresh spawn's task template in the
+// opening, a deferred one waits for the template's turn. The spawn decides from
+// the mode the runner hands it, so the real Send message adapter's answer must
+// reach `startAgent` intact, interpolated, and only for a row that will run.
+// What a user loses if it breaks: a deferred message typed into the template's
+// turn, or a message with a Condition or Frequency limit sent with no check.
+describe('the opening prompt a Send message row offers the agent start', () => {
+  type StartAgent = NonNullable<Parameters<typeof runAutomations>[0]['startAgent']>;
+
+  async function runRow(
+    row: Partial<ColumnAutomation>,
+    extra: { startAgent: StartAgent; conditionAnswers?: ReadonlyMap<string, { met: boolean; reason: string | null }>; priorRuns?: number },
+  ): Promise<void> {
+    const { repository } = fakeRuns();
+    (repository as unknown as { countRuns: () => number }).countRuns = () => extra.priorRuns ?? 0;
+    await runAutomations({
+      automations: [automation({ type: 'send_message', ...row })],
+      column: COLUMN,
+      context: context({ task: task({ session_id: null }) }),
+      runs: repository,
+      signal: new AbortController().signal,
+      startAgent: extra.startAgent,
+      conditionAnswers: extra.conditionAnswers,
+      registry: registryOf(sendMessageAdapter),
+    });
+  }
+
+  it.each([
+    ['immediate', { message: 'Review {{title}}', mode: 'immediate' }, { message: 'Review A task', mode: 'immediate' }],
+    ['deferred', { message: 'Review {{title}}', mode: 'deferred' }, { message: 'Review A task', mode: 'deferred' }],
+    ['unset, which reads as immediate', { message: 'Review {{title}}' }, { message: 'Review A task', mode: 'immediate' }],
+  ])('hands over the interpolated message with its mode: %s', async (_label, config, expected) => {
+    const startAgent = vi.fn<StartAgent>(async () => {});
+
+    await runRow({ config }, { startAgent });
+
+    expect(startAgent).toHaveBeenCalledTimes(1);
+    expect(startAgent).toHaveBeenCalledWith(expected);
+  });
+
+  it('hands over nothing for a row with no message, so the start is still asked for', async () => {
+    const startAgent = vi.fn<StartAgent>(async () => {});
+
+    await runRow({ config: { message: '', mode: 'immediate' } }, { startAgent });
+
+    expect(startAgent).toHaveBeenCalledTimes(1);
+    expect(startAgent).toHaveBeenCalledWith(undefined);
+  });
+
+  it('never offers a message whose Condition answered no, and starts no agent for it', async () => {
+    const startAgent = vi.fn<StartAgent>(async () => {});
+
+    await runRow(
+      { config: { message: 'Ship it', mode: 'immediate' }, condition: 'The PR is ready.' },
+      { startAgent, conditionAnswers: new Map([['a1', { met: false, reason: 'Not ready.' }]]) },
+    );
+
+    expect(startAgent).not.toHaveBeenCalled();
+  });
+
+  it('offers a message whose Condition answered yes', async () => {
+    const startAgent = vi.fn<StartAgent>(async () => {});
+
+    await runRow(
+      { config: { message: 'Ship it', mode: 'immediate' }, condition: 'The PR is ready.' },
+      { startAgent, conditionAnswers: new Map([['a1', { met: true, reason: null }]]) },
+    );
+
+    expect(startAgent).toHaveBeenCalledWith({ message: 'Ship it', mode: 'immediate' });
+  });
+
+  it('never offers a message whose Frequency limit is spent, and offers one with runs left', async () => {
+    const spent = vi.fn<StartAgent>(async () => {});
+    const remaining = vi.fn<StartAgent>(async () => {});
+    const row = { config: { message: 'Ship it', mode: 'immediate' }, max_runs: 1 } as const;
+
+    await runRow(row, { startAgent: spent, priorRuns: 1 });
+    await runRow(row, { startAgent: remaining, priorRuns: 0 });
+
+    expect(spent).not.toHaveBeenCalled();
+    expect(remaining).toHaveBeenCalledWith({ message: 'Ship it', mode: 'immediate' });
   });
 });
 
