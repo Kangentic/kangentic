@@ -195,6 +195,29 @@ been seen writing into `todos`, `tasks` or `paste-cache` from an account (TodoWr
 are off in a session against the stand-in), so those three are not measured. macOS and Linux were
 not measured either. Claude's docs say the same two-path check applies to directory symlinks there.
 
+A read out of `projects` is not covered by the real-path fix, and the one an agent makes is a
+copy of a screenshot (task #1136). Claude saves every MCP image block it is handed under
+`projects/<project>/<session>/tool-results/`, whatever its size, and names that file to the agent.
+An agent that publishes the image copies it from there. Measured on 2.1.329 with
+`--target tool-results`: the probe's tool returns a 1x1 PNG inline, then the stand-in runs a Bash
+`cp` of it, with `Bash(cp:*)` allowed. The stand-in quotes each path and writes its backslashes as
+forward slashes, the form Git Bash takes. An agent that passes a Windows path in another form was
+not measured.
+
+| `cp` from | `control` (no account) | `real` (account, real folder) | `protected-junction` (account) |
+|---|---|---|---|
+| The `tool-results` file Claude names | Prompts: "a sensitive file" | Prompts: "needs approval" | Prompts: "a sensitive file", naming the path in `~/.claude` |
+| The tool's own copy inside the cwd | Runs, no prompt | Runs, no prompt | Runs, no prompt |
+
+So the prompt is not an account's. With no account the file is in `~/.claude`, and with a real
+folder it is outside the working directory. `projects` has to stay a link, since transcripts must
+land in the home, and the fix is the second row. On a project on this computer, every Kangentic
+screenshot tool also writes its image into a `copies/` folder in the caller's capture folder and
+names it as `filePath`. The tool descriptions say to copy that, and the browser instructions add
+`saveToFile` for a result that names none. A project on an SSH host gets no copy, and its
+`saveToFile` still delivers there (see "A screenshot is also written to a copies folder" in
+[browser-actions.md](mcp-server/browser-actions.md)).
+
 A user who already runs Claude with `CLAUDE_CONFIG_DIR` keeps that folder as account #1, and
 Kangentic's own writes follow it: trust, the diff-panel key and project relocation go to the
 `.claude.json` inside that folder (`claudeJsonPath`, `claudeHomeDir` in `claude-json-lock.ts`).

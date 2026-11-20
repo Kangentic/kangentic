@@ -31,22 +31,30 @@ import type { RequestResolver } from '../../src/main/agent/mcp-http/project-reso
 /** Above any real pid on every platform CI runs. */
 const DEAD_PID = 2 ** 30;
 
-type ToolHandler = (input: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
+type ToolHandler = (input: Record<string, unknown>) => Promise<{
+  content: Array<{ type: string; text?: string; data?: string; uri?: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}>;
 
 let server: http.Server;
 let answeringPort: number;
 let closedPort: number;
 let projectPath: string;
 const bridgeRequests: string[] = [];
+/** What the bridge answers, `{}` unless a test sets it. */
+let bridgeBody = '{}';
+/** The status the bridge answers with, 200 unless a test sets it. */
+let bridgeStatus = 200;
 
 /** The real tools, registered as the MCP server does, on the test's project. */
-function registeredTools(): Map<string, ToolHandler> {
+function registeredTools(captureCopyDirectory: string | null = null): Map<string, ToolHandler> {
   const tools = new Map<string, ToolHandler>();
   const mcpServer = {
     registerTool: (name: string, _config: unknown, handler: ToolHandler) => { tools.set(name, handler); },
   };
   const resolver = { defaultContextResolved: () => ({ context: { getProjectPath: () => projectPath } }) };
-  registerDevtoolsPreviewTools(mcpServer as unknown as McpServer, resolver as unknown as RequestResolver);
+  registerDevtoolsPreviewTools(mcpServer as unknown as McpServer, resolver as unknown as RequestResolver, () => captureCopyDirectory);
   return tools;
 }
 
@@ -77,8 +85,8 @@ function listen(target: http.Server): Promise<number> {
 beforeAll(async () => {
   server = http.createServer((request, response) => {
     bridgeRequests.push(request.url ?? '');
-    response.writeHead(200);
-    response.end('{}');
+    response.writeHead(request.url === '/info' ? 200 : bridgeStatus);
+    response.end(bridgeBody);
   });
   answeringPort = await listen(server);
   const closed = http.createServer();
@@ -94,6 +102,8 @@ beforeEach(() => {
   projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-preview-discovery-'));
   enumerateWorktrees.mockClear();
   bridgeRequests.length = 0;
+  bridgeBody = '{}';
+  bridgeStatus = 200;
 });
 
 afterEach(() => {
@@ -163,5 +173,124 @@ describe('a devtools tool called with no instanceId', () => {
     expect(result?.content[0].text).toContain('multiple-instances');
     expect(result?.content[0].text).toContain('task-a');
     expect(bridgeRequests).not.toContain('/terminal-state');
+  });
+});
+
+/**
+ * Claude Code saves every image block under its config folder, and copying it
+ * out of there stops on a permission prompt (task #1136). A devtools screenshot
+ * is also written to the caller's own captures folder, and its metadata names
+ * that copy.
+ */
+describe('a devtools screenshot names a copy in the caller\'s captures folder', () => {
+  const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const shotFields = {
+    format: 'png', byteLength: PNG_BYTES.byteLength, width: 2156, height: 29, viewportWidth: 2560, viewportHeight: 1392,
+    deviceScaleFactor: 1, scale: 1, fullPage: false, elementClip: null, retries: 0,
+  };
+
+  it('keeps the inline image and writes the same bytes to the caller\'s folder', async () => {
+    writeLockfile(projectPath);
+    bridgeBody = JSON.stringify({ mode: 'inline', base64: PNG_BYTES.toString('base64'), ...shotFields });
+    const copyFolder = path.join(projectPath, 'caller-captures');
+    const screenshotElement = registeredTools(copyFolder).get('kangentic_devtools_screenshot_element');
+
+    const result = await screenshotElement?.({ selector: '.tab-row' });
+
+    expect(result?.content.find((block) => block.type === 'image')?.data).toBe(PNG_BYTES.toString('base64'));
+    const meta = result?.structuredContent as { mode: string; filePath: string; location: string };
+    expect(meta).toMatchObject({ mode: 'inline', location: 'local' });
+    expect(path.dirname(meta.filePath)).toBe(copyFolder);
+    expect(path.basename(meta.filePath)).toMatch(/^element-.*\.png$/);
+    expect(fs.readFileSync(meta.filePath).equals(PNG_BYTES)).toBe(true);
+  });
+
+  it('copies a capture the bridge wrote under another checkout, and names the copy', async () => {
+    writeLockfile(projectPath);
+    const bridgeFile = path.join(projectPath, '.kangentic', 'devtools-shots', 'shot.png');
+    fs.mkdirSync(path.dirname(bridgeFile), { recursive: true });
+    fs.writeFileSync(bridgeFile, PNG_BYTES);
+    bridgeBody = JSON.stringify({ mode: 'file', filePath: bridgeFile, fileUri: 'file:///unused', reason: 'over-inline-ceiling', ...shotFields });
+    const copyFolder = path.join(projectPath, 'caller-captures');
+    const screenshot = registeredTools(copyFolder).get('kangentic_devtools_screenshot');
+
+    const result = await screenshot?.({});
+
+    const meta = result?.structuredContent as { mode: string; filePath: string };
+    expect(meta.mode).toBe('file');
+    expect(path.dirname(meta.filePath)).toBe(copyFolder);
+    expect(fs.readFileSync(meta.filePath).equals(PNG_BYTES)).toBe(true);
+    expect(result?.content.find((block) => block.type === 'resource_link')?.uri).toMatch(/^file:.*screenshot-.*\.png$/);
+  });
+
+  it('names no file when the caller has no folder of its own', async () => {
+    writeLockfile(projectPath);
+    bridgeBody = JSON.stringify({ mode: 'inline', base64: PNG_BYTES.toString('base64'), ...shotFields });
+    const screenshotElement = registeredTools(null).get('kangentic_devtools_screenshot_element');
+
+    const result = await screenshotElement?.({ selector: '.tab-row' });
+
+    expect(result?.content.find((block) => block.type === 'image')).toBeDefined();
+    expect(result?.structuredContent).not.toHaveProperty('filePath');
+  });
+
+  it('still returns the image, with no filePath, when the copy cannot be written', async () => {
+    writeLockfile(projectPath);
+    bridgeBody = JSON.stringify({ mode: 'inline', base64: PNG_BYTES.toString('base64'), ...shotFields });
+    const blockerFile = path.join(projectPath, 'not-a-directory');
+    fs.writeFileSync(blockerFile, 'file');
+    const screenshotElement = registeredTools(path.join(blockerFile, 'captures')).get('kangentic_devtools_screenshot_element');
+
+    const result = await screenshotElement?.({ selector: '.tab-row' });
+
+    expect(result?.isError).toBeFalsy();
+    expect(result?.content.find((block) => block.type === 'image')?.data).toBe(PNG_BYTES.toString('base64'));
+    expect(result?.structuredContent).not.toHaveProperty('filePath');
+  });
+
+  it('reports a bridge error as an error and never creates the copy folder', async () => {
+    writeLockfile(projectPath);
+    bridgeStatus = 500;
+    bridgeBody = JSON.stringify({ error: { kind: 'capture-failed', detail: 'no frame' } });
+    const copyFolder = path.join(projectPath, 'caller-captures');
+    const screenshot = registeredTools(copyFolder).get('kangentic_devtools_screenshot');
+
+    const result = await screenshot?.({});
+
+    expect(result?.isError).toBe(true);
+    expect(result?.content.find((block) => block.type === 'image')).toBeUndefined();
+    expect(fs.existsSync(copyFolder)).toBe(false);
+  });
+
+  describe('a file-mode capture that gets no copy keeps its original path', () => {
+    async function screenshotOf(originalPath: string, copyFolder: string) {
+      writeLockfile(projectPath);
+      bridgeBody = JSON.stringify({ mode: 'file', filePath: originalPath, fileUri: 'file:///original', reason: 'over-inline-ceiling', ...shotFields });
+      return registeredTools(copyFolder).get('kangentic_devtools_screenshot')?.({});
+    }
+
+    it('when the file under devtools-shots is missing', async () => {
+      const copyFolder = path.join(projectPath, 'caller-captures');
+      const missing = path.join(projectPath, '.kangentic', 'devtools-shots', 'gone.png');
+
+      const result = await screenshotOf(missing, copyFolder);
+
+      expect(result?.isError).toBeFalsy();
+      expect(result?.structuredContent).toMatchObject({ mode: 'file', filePath: missing });
+      expect(fs.existsSync(copyFolder)).toBe(false);
+    });
+
+    it('when the real file is not under a devtools-shots folder', async () => {
+      const copyFolder = path.join(projectPath, 'caller-captures');
+      const elsewhere = path.join(projectPath, 'other-folder', 'shot.png');
+      fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+      fs.writeFileSync(elsewhere, PNG_BYTES);
+
+      const result = await screenshotOf(elsewhere, copyFolder);
+
+      expect(result?.isError).toBeFalsy();
+      expect(result?.structuredContent).toMatchObject({ mode: 'file', filePath: elsewhere });
+      expect(fs.existsSync(copyFolder)).toBe(false);
+    });
   });
 });

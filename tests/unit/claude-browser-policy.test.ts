@@ -208,6 +208,10 @@ describe('Claude browser policy: the system prompt and Claude in Chrome', () => 
     expect(BROWSER_POLICY_PROMPT).toContain('mcp__claude-in-chrome__*');
     expect(BROWSER_POLICY_PROMPT).toContain('Open a browser only when the work needs one');
     expect(BROWSER_POLICY_PROMPT).toContain('saveToFile');
+    // A copy out of Claude Code's tool-results folder stops on a permission prompt (task #1136).
+    expect(BROWSER_POLICY_PROMPT).toContain('never from the path your client gives the image');
+    // A remote project or a failed copy names no filePath, so the agent is given a way out.
+    expect(BROWSER_POLICY_PROMPT).toContain('With no filePath, use saveToFile.');
   });
 });
 

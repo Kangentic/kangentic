@@ -1,5 +1,6 @@
 import type { DriverError, DriverResult } from '../../browser/browser-pane-driver';
 import type { ScreenshotResponse } from '../../browser/cdp/screenshot';
+import type { CaptureCopy } from './browser-capture-file';
 
 /**
  * MCP tool-result helpers for the in-process `kangentic_browser_*` family.
@@ -61,8 +62,16 @@ function formatBytes(bytes: number): string {
 /**
  * Screenshot result: a real MCP image block (inline) or a resource_link
  * (persisted file) plus a metadata text block.
+ *
+ * An inline image with a copy on disk (`copyScreenshotForCaller`) names the copy as
+ * `filePath`, with its `location`, so an agent that copies or publishes the
+ * image copies a file inside its working directory, not the one Claude Code
+ * spills it to.
  */
-export function screenshotToolResult(result: DriverResult<ScreenshotResponse>): McpToolResult {
+export function screenshotToolResult(
+  result: DriverResult<ScreenshotResponse>,
+  inlineCopy: CaptureCopy | null = null,
+): McpToolResult {
   if (!result.ok) return errorToolResult(result.error);
   const data = result.data;
   const mimeType = data.format === 'jpeg' ? 'image/jpeg' : 'image/png';
@@ -107,6 +116,10 @@ export function screenshotToolResult(result: DriverResult<ScreenshotResponse>): 
       ],
       structuredContent: meta,
     };
+  }
+  if (inlineCopy) {
+    meta.filePath = inlineCopy.filePath;
+    meta.location = inlineCopy.location;
   }
   return {
     content: [

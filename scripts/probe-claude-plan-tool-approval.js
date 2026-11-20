@@ -89,6 +89,21 @@
  *   carry    without the file, ExitPlanMode opened "Exit plan mode? Claude wants to exit plan
  *            mode" with no plan; with it copied in, the usual plan dialog on the account's copy.
  *
+ * Tool results (task #1136): `--layouts control,real,protected-junction --target tool-results
+ * --permission-modes default [--copy-from tool-results|captures]`. The probe's `snap` tool returns an
+ * inline image, as a Kangentic screenshot tool does, and writes the same bytes to
+ * `<cwd>/.kangentic/captures`. The stand-in then copies the image with a Bash `cp`. With `--copy-from
+ * tool-results` it copies from the path Claude names in `[Image: source: ...]`. With `--copy-from
+ * captures` it copies from the tool's own `filePath`. Allow rules cover `snap` and `Bash(cp:*)`.
+ *
+ * Measured 2026-11-20 on Claude Code 2.1.329, Windows 11 build 26200, print mode:
+ *   Claude saves every MCP image block under `<config>/projects/<project>/<session>/tool-results/`,
+ *   a 1x1 PNG too.
+ *   tool-results  control: "Claude requested permissions to edit ... which is a sensitive file".
+ *                 real: "cp in '...tool-results/...png' needs approval". protected-junction: the
+ *                 sensitive-file prompt, naming the path in ~/.claude it resolves to. Nothing copied.
+ *   captures      every layout: copied, no permission request.
+ *
  * Measured 2026-10-31 on Claude Code 2.1.316, Windows, print mode, with a
  * built-in tool and no allow rule (`--tool Write --matcher "mcp__.*|Write"`,
  * task #952): control was refused, "Cannot write ... while in plan mode."; hook
@@ -122,6 +137,9 @@ const INTERACTIVE_TIMEOUT_MS = 60000;
 // After a permission prompt opens, how long the run waits for a hook's answer
 // to take the call through before it counts the dialog as left open.
 const DIALOG_SETTLE_MS = 4000;
+/** A 1x1 PNG, the image the `snap` tool returns. */
+const PROBE_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const SNAP_TOOL = 'mcp__probe__snap';
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -216,7 +234,23 @@ function runMcpServer() {
           name: 'lookup',
           description: 'Look up a word in the probe dictionary.',
           inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        }, {
+          name: 'snap',
+          description: 'Take a probe screenshot.',
+          inputSchema: { type: 'object', properties: {} },
+          annotations: { readOnlyHint: true },
         }] } });
+      } else if (request.method === 'tools/call' && request.params?.name === 'snap') {
+        // The `tool-results` target: an inline image, as a Kangentic screenshot tool returns
+        // one, and the same bytes in a captures folder inside the working directory.
+        appendJsonLine(callsPath, { at: Date.now(), tool: 'snap' });
+        const capturePath = path.join(process.cwd(), '.kangentic', 'captures', 'snap.png');
+        fs.mkdirSync(path.dirname(capturePath), { recursive: true });
+        fs.writeFileSync(capturePath, Buffer.from(PROBE_PNG_BASE64, 'base64'));
+        send({ jsonrpc: '2.0', id: request.id, result: { content: [
+          { type: 'image', data: PROBE_PNG_BASE64, mimeType: 'image/png' },
+          { type: 'text', text: JSON.stringify({ mode: 'inline', filePath: capturePath, location: 'local' }) },
+        ] } });
       } else if (request.method === 'tools/call') {
         appendJsonLine(callsPath, { at: Date.now(), arguments: request.params?.arguments ?? null });
         send({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: 'LOOKUP-RESULT' }] } });
@@ -268,6 +302,7 @@ class FakeAnthropicApi {
     this.carrySeen = [];
     this.layoutResults = [];
     this.layoutPaths = [];
+    this.snapSpill = null;
     this.requests = [];
   }
 
@@ -341,6 +376,39 @@ class FakeAnthropicApi {
       if (done >= steps.length) return [{ kind: 'text', text: 'Done.' }];
       const step = steps[done];
       return [{ kind: 'tool', name: step.name, id: `toolu_probe_toolstep_${done}_${Date.now()}`, input: step.input }];
+    }
+
+    // The `tool-results` target: take a screenshot, then copy the image out with Bash. From the
+    // path Claude names in `[Image: source: ...]` (its tool-results folder), or with
+    // `--copy-from captures` from the `filePath` the tool itself wrote inside the cwd.
+    if (userText.includes('PROBE-LAYOUT-SNAP')) {
+      if (lastResult && lastResult.tool_use_id.includes('_snapcopy_')) {
+        this.layoutResults.push({ isError: lastResult.is_error === true, text: resultText(lastResult).slice(0, 300) });
+        return [{ kind: 'text', text: 'Done.' }];
+      }
+      if (lastResult && lastResult.tool_use_id.includes('_snapcall_')) {
+        const text = resultText(lastResult);
+        const spilled = text.match(/\[Image: source: ([^\]]+)\]/);
+        const captured = text.match(/"filePath":"((?:[^"\\]|\\.)*)"/);
+        const source = argument('copy-from', 'tool-results') === 'captures'
+          ? (captured ? JSON.parse(`"${captured[1]}"`) : null)
+          : (spilled ? spilled[1].trim() : null);
+        this.layoutPaths.push(source);
+        this.snapSpill = spilled ? spilled[1].trim() : null;
+        if (!source) return [{ kind: 'text', text: 'NO-SOURCE-PATH' }];
+        const quote = (value) => `"${value.replace(/\\/g, '/')}"`;
+        return [{ kind: 'tool', name: 'Bash', id: `toolu_probe_snapcopy_${Date.now()}`, input: {
+          command: `cp ${quote(source)} ${quote(path.join(this.toolsRunDir, 'copied.png'))}`,
+          description: 'Copy the screenshot',
+        } }];
+      }
+      if (toolNames.includes(SNAP_TOOL)) {
+        return [{ kind: 'tool', name: SNAP_TOOL, id: `toolu_probe_snapcall_${Date.now()}`, input: {} }];
+      }
+      if (toolNames.includes('ToolSearch') && !(lastResult && lastResult.tool_use_id.includes('_search_'))) {
+        return [{ kind: 'tool', name: 'ToolSearch', id: `toolu_probe_search_screenshot_${Date.now()}`, input: { query: `select:${SNAP_TOOL}`, max_results: 1 } }];
+      }
+      return [{ kind: 'text', text: 'NO-SNAP-TOOL' }];
     }
 
     const layoutTarget = userText.includes('PROBE-LAYOUT-PLAN') ? 'plan'
@@ -448,6 +516,7 @@ const LAYOUT_FOLDERS = {
   plan: ['plans'],
   memory: ['projects'],
   tools: ['projects', 'todos', 'tasks', 'file-history', 'session-env', 'shell-snapshots', 'paste-cache', 'transcripts'],
+  'tool-results': ['projects'],
 };
 
 /** The tool calls the `tools` target makes, in order, each once the one before has answered. */
@@ -600,22 +669,35 @@ async function runLayout(claude, api, port, mode, layout, target, permissionMode
   if (target === 'memory' && argument('auto-memory-dir') === 'home') {
     settings.autoMemoryDirectory = path.join(built.claudeHome, 'projects', repoDir.replace(/[^a-zA-Z0-9]/g, '-'), 'memory');
   }
+  // `tool-results`: the probe's `snap` tool and a `cp` are allowed by rule, as a session that
+  // trusts both would have them, so only a protected-path check can still stop the copy.
+  const snapping = target === 'tool-results';
+  if (snapping) settings.permissions = { allow: [SNAP_TOOL, 'Bash(cp:*)'] };
   const settingsPath = path.join(root, 'settings.json');
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   const files = { hookLog, callsPath: path.join(root, 'calls.jsonl'), settingsPath };
+  const mcpConfigPath = path.join(root, 'mcp.json');
+  if (snapping) {
+    fs.writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: { probe: {
+      type: 'stdio', command: process.execPath, args: [PROBE_PATH, '--mcp-server', files.callsPath],
+    } } }, null, 2));
+  }
   const layoutArguments = [
     '--permission-mode', permissionMode,
     '--settings', settingsPath,
     '--setting-sources', 'project,local',
+    ...(snapping ? ['--mcp-config', mcpConfigPath] : []),
     '--strict-mcp-config',
     '--model', 'haiku',
   ];
   const prompt = target === 'plan' ? 'PROBE-LAYOUT-PLAN: write the plan file.'
-    : target === 'memory' ? 'PROBE-LAYOUT-MEMORY: save one memory.' : 'PROBE-LAYOUT-TOOLS: run the tool steps.';
+    : target === 'memory' ? 'PROBE-LAYOUT-MEMORY: save one memory.'
+      : snapping ? 'PROBE-LAYOUT-SNAP: take a screenshot and copy it.' : 'PROBE-LAYOUT-TOOLS: run the tool steps.';
   const environment = layoutEnvironment(port, built);
+  const ranTool = snapping ? 'Bash' : 'Write';
   const writeRan = target === 'tools'
     ? () => api.toolResults.length >= 5
-    : () => readJsonLines(hookLog).some((line) => (line.label === 'post-tool' || line.label === 'post-tool-failure') && line.tool === 'Write');
+    : () => readJsonLines(hookLog).some((line) => (line.label === 'post-tool' || line.label === 'post-tool-failure') && line.tool === ranTool);
   api.reset();
   api.toolsRunDir = runDir;
   const startedAt = Date.now();
@@ -631,8 +713,14 @@ async function runLayout(claude, api, port, mode, layout, target, permissionMode
   const folderRoot = layout === 'real' ? path.join(root, 'account')
     : layout === 'plain-junction' ? path.join(root, 'plain') : built.claudeHome;
   const requestedPath = api.layoutPaths.find(Boolean) ?? null;
+  const snapRecord = snapping ? {
+    copyFrom: argument('copy-from', 'tool-results'),
+    spilledTo: api.snapSpill ? path.relative(root, api.snapSpill).replace(/\\/g, '/') : null,
+    copied: fs.existsSync(path.join(runDir, 'copied.png')),
+    bashPermissionRequests: hooks.filter((line) => line.label === 'permission' && line.tool === 'Bash').length,
+  } : {};
   let landedAt = null;
-  if (requestedPath && fs.existsSync(requestedPath)) {
+  if (!snapping && requestedPath && fs.existsSync(requestedPath)) {
     const real = fs.realpathSync.native(requestedPath);
     landedAt = path.relative(root, real).replace(/\\/g, '/');
   }
@@ -650,6 +738,7 @@ async function runLayout(claude, api, port, mode, layout, target, permissionMode
     writeRan: writeRan(),
     landedAt,
     writeResults: api.layoutResults,
+    ...snapRecord,
     ...(target === 'tools' ? {
       toolResults: api.toolResults,
       permissionRequestTools: hooks.filter((line) => line.label === 'permission').map((line) => line.tool),

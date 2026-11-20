@@ -9,7 +9,14 @@ import { registerDevtoolsPreviewTools } from './preview-tools';
  *
  * Production builds drop this entire module via dead-code elimination
  * because the import in mcp-http-server.ts is gated.
+ *
+ * `captureCopyDirectory` is the caller's copies folder, where a screenshot's
+ * copy goes, or null for none (the browser tools' `captureCopyDirectory`).
  */
-export function registerDevtoolsMcpTools(server: McpServer, resolver: RequestResolver): void {
-  registerDevtoolsPreviewTools(server, resolver);
+export function registerDevtoolsMcpTools(
+  server: McpServer,
+  resolver: RequestResolver,
+  captureCopyDirectory: () => string | null,
+): void {
+  registerDevtoolsPreviewTools(server, resolver, captureCopyDirectory);
 }

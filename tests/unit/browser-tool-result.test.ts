@@ -111,6 +111,22 @@ describe('screenshotToolResult - inline mode', () => {
     const resourceBlock = result.content.find((block) => block.type === 'resource_link');
     expect(resourceBlock).toBeUndefined();
   });
+
+  it('names no file when the image has no copy on disk', () => {
+    const result = screenshotToolResult({ ok: true, data: INLINE_RESPONSE });
+    expect(result.structuredContent).not.toHaveProperty('filePath');
+    expect(result.structuredContent).not.toHaveProperty('location');
+  });
+
+  // Task #1136: the copy is what an agent copies instead of Claude Code's tool-results file.
+  it('names the copy, with its location, in both the text and the structured metadata, and keeps the image', () => {
+    const copy = { filePath: '/mock/.kangentic/captures/screenshot-1.jpg', fileUri: 'file:///mock/.kangentic/captures/screenshot-1.jpg', location: 'local' as const };
+    const result = screenshotToolResult({ ok: true, data: INLINE_RESPONSE }, copy);
+    expect(result.content.find((block) => block.type === 'image')).toBeDefined();
+    expect(result.structuredContent).toMatchObject({ mode: 'inline', filePath: copy.filePath, location: 'local' });
+    const textBlock = result.content.find((block) => block.type === 'text');
+    expect(textBlock && textBlock.type === 'text' ? JSON.parse(textBlock.text) : null).toMatchObject({ filePath: copy.filePath, location: 'local' });
+  });
 });
 
 describe('screenshotToolResult - file mode', () => {

@@ -58,7 +58,7 @@ import { mcpRequestReporter, withToolReporting } from './mcp-http/tool-reporting
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import { resolveMcpCaller, callerBrowserOwner } from './mcp-http/caller-task';
-import { browserCaptureDirectory, deliverCapture, fetchFilesFromHost } from './mcp-http/browser-capture-file';
+import { browserCaptureDirectory, captureCopiesFolder, copiesInlineCaptures, deliverCapture, fetchFilesFromHost } from './mcp-http/browser-capture-file';
 import {
   registerBrowserTools,
   type AutomationConfigReader,
@@ -199,18 +199,21 @@ export async function startMcpHttpServer(
     projectPath: () => string | null,
   ): BrowserToolDependencies => {
     const sessionManager = getSteeringContext()?.sessionManager ?? null;
+    // Where saveToFile writes: a Kangentic folder inside the caller's own
+    // working directory, so it can Read the file back without a prompt.
+    // Read only when a tool saves.
+    const captureDirectory = (): string => browserCaptureDirectory({
+      projectPath: projectPath(),
+      callerSessionId,
+      sessionCwd: callerSessionId ? sessionManager?.getSessionCommandCwd(callerSessionId) ?? null : null,
+      projectId,
+    });
     return {
       projectId,
       callerSessionId,
-      // Where saveToFile writes: a Kangentic folder inside the caller's own
-      // working directory, so it can Read the file back without a prompt.
-      // Read only when a tool saves.
-      captureDirectory: () => browserCaptureDirectory({
-        projectPath: projectPath(),
-        callerSessionId,
-        sessionCwd: callerSessionId ? sessionManager?.getSessionCommandCwd(callerSessionId) ?? null : null,
-        projectId,
-      }),
+      captureDirectory,
+      // Every screenshot's copy goes to a copies folder inside it, on a project on this computer.
+      captureCopyDirectory: () => (copiesInlineCaptures(projectPath()) ? captureCopiesFolder(captureDirectory()) : null),
       deliverCapture: (saved) => deliverCapture(saved, projectPath()),
       fetchDroppedFiles: (paths, directory) => fetchFilesFromHost(paths, directory, projectPath()),
       // A narrow adapter over SessionManager: these tools only need to resolve
@@ -460,7 +463,8 @@ export function buildConfiguredMcpServer(
   // inspection bridge. Production builds drop both the import (top of file) and
   // this call via `__KANGENTIC_DEV__` dead-code elimination.
   if (__KANGENTIC_DEV__) {
-    registerDevtoolsMcpTools(mcpServer, resolver);
+    // Its screenshots copy into the caller's own captures folder, as the browser tools' do.
+    registerDevtoolsMcpTools(mcpServer, resolver, browser.captureCopyDirectory ?? (() => null));
   }
 
   return createdServer;
