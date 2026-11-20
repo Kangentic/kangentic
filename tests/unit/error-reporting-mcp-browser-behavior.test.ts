@@ -541,14 +541,18 @@ describe('withGuest reports a driver failure', () => {
     // The error's name is in the reported set, so it still reports. What the guard
     // decides is whether its fields may become tags. A hold settlement outside the
     // fixed set (page or user text) must never ride into a tag.
-    it('adds none of the capture tags to a ScreenshotNotComposited whose hostHold is outside its set', async () => {
-      const wrongShaped = Object.assign(new Error('no frame'), {
-        name: 'ScreenshotNotComposited',
-        hold: 'armed',
-        hostState: 'visible',
-        hostHold: 'bogus',
-        guestHold: 'settled',
-      });
+    const WELL_FORMED_TIMEOUT = { hold: 'armed', hostState: 'visible', hostHold: 'settled', guestHold: 'settled' };
+    const WRONG_TIMEOUT_SHAPES: { label: string; fields: Record<string, unknown> }[] = [
+      { label: 'a hostHold outside its set', fields: { ...WELL_FORMED_TIMEOUT, hostHold: 'bogus' } },
+      { label: 'a guestHold outside its set', fields: { ...WELL_FORMED_TIMEOUT, guestHold: 'bogus' } },
+      { label: 'no hostHold', fields: { ...WELL_FORMED_TIMEOUT, hostHold: undefined } },
+      { label: 'no guestHold', fields: { ...WELL_FORMED_TIMEOUT, guestHold: undefined } },
+      { label: 'a hostHold that is an inherited property name', fields: { ...WELL_FORMED_TIMEOUT, hostHold: 'toString' } },
+      { label: 'a guestHold that is an inherited property name', fields: { ...WELL_FORMED_TIMEOUT, guestHold: 'constructor' } },
+    ];
+
+    it.each(WRONG_TIMEOUT_SHAPES)('adds none of the capture tags to a ScreenshotNotComposited with $label', async ({ fields }) => {
+      const wrongShaped = Object.assign(new Error('no frame'), { name: 'ScreenshotNotComposited' }, fields);
 
       await withGuest(options, async () => {
         throw wrongShaped;
@@ -561,6 +565,18 @@ describe('withGuest reports a driver failure', () => {
         expect(tags).not.toHaveProperty(captureTag);
       }
       expect(JSON.stringify(tags)).not.toContain('bogus');
+      expect(JSON.stringify(tags)).not.toContain('toString');
+      expect(JSON.stringify(tags)).not.toContain('constructor');
+    });
+
+    it('does tag a well-formed ScreenshotNotComposited built the same way, so the cases above fail for their fields', async () => {
+      const wellFormed = Object.assign(new Error('no frame'), { name: 'ScreenshotNotComposited' }, WELL_FORMED_TIMEOUT);
+
+      await withGuest(options, async () => {
+        throw wellFormed;
+      });
+
+      expect(reportedTags()).toMatchObject({ hold: 'armed', host_hold: 'settled', guest_hold: 'settled' });
     });
   });
 
