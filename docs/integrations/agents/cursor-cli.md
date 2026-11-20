@@ -265,7 +265,9 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   `<user_query>` wrapper is removed. A line whose whole body is one `<task>` element is
   unwrapped once more. The user line's `<timestamp>` tag (minute precision) is stamped
   onto that turn and the assistant lines that follow, marked `tsPrecision: 'minute'`, so
-  Route tabs can place it.
+  Route tabs can place it. A window or page that opens between two turns reads back up to
+  256 KB before its first line, only when it needs to, for the nearest earlier user turn's
+  clock, so the assistant lines at its head still carry the minute.
   `transcriptHasTimestamps` stays false: the viewer still pages by position, because a
   minute clock is not a JSON field the timeline can probe. There is still no
   `command-injection` verifier: the records have no timestamp field, so a confirm cannot bound
