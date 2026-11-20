@@ -69,6 +69,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
 /** VS Code's heartbeat: a beat every 5 s, unresponsive after 11 s. */
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HEARTBEAT_UNRESPONSIVE_MS = 11_000;
+/** A threshold timer this late did not watch the host: the machine slept, or main's own loop
+ *  did not run, for over four times the ping's budget. The budget ran out while nothing was
+ *  measuring, so the beat says nothing about the host and is voided (Sentry DESKTOP-43 fired
+ *  15.7 h late). Four budgets is far above any hold of main the stall report exists to name,
+ *  and a host that stays frozen is still caught by the next beat, whose timer fires on time. */
+const HEARTBEAT_UNMEASURED_LATE_MS = 4 * REQUEST_TIMEOUT_MS;
 /** Late answers kept waiting at once. A live host whose reap hung never answers,
  *  so past this the oldest entry goes rather than one per reap for the run. */
 const MAX_LATE_RESULTS = 64;
@@ -488,7 +494,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
    * A ping every `HEARTBEAT_INTERVAL_MS`. One that passes
    * `HEARTBEAT_UNRESPONSIVE_MS` is logged at once and reported when it
    * settles, so the report says how the stall ended: answered late, the host
-   * exited, no answer within the ping's budget, or the app quit.
+   * exited, no answer within the ping's budget, or the app quit. A beat whose
+   * threshold timer fires over `HEARTBEAT_UNMEASURED_LATE_MS` late spanned a
+   * sleep or a held main loop, and reports nothing.
    */
   private startHeartbeat(): void {
     this.stopHeartbeat();
@@ -506,15 +514,21 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
       };
       this.currentBeat = beat;
       const warnTimer = setTimeout(() => {
+        const timerLateMs = Math.max(0, Date.now() - beat.startedAt - HEARTBEAT_UNRESPONSIVE_MS);
+        // A beat that spans a sleep never stalls, so however its ping settles, nothing is sent.
+        if (timerLateMs > HEARTBEAT_UNMEASURED_LATE_MS) {
+          console.info(`[pty-host] a heartbeat spanned ${Math.round(timerLateMs / 1000)} s with main not running; not measured`);
+          return;
+        }
         beat.stalled = true;
-        beat.timerLateMs = Math.max(0, Date.now() - beat.startedAt - HEARTBEAT_UNRESPONSIVE_MS);
+        beat.timerLateMs = timerLateMs;
         beat.inFlight = this.pendingMethodsBesidePing();
         console.warn(`[pty-host] has not answered a heartbeat for ${HEARTBEAT_UNRESPONSIVE_MS / 1000} s; terminals may be stalled`);
       }, HEARTBEAT_UNRESPONSIVE_MS);
       warnTimer.unref();
       this.request('ping', {}).then(() => {
         const elapsedMs = Date.now() - beat.startedAt;
-        if (elapsedMs >= HEARTBEAT_UNRESPONSIVE_MS) console.warn(`[pty-host] answered a heartbeat after ${elapsedMs} ms`);
+        if (beat.stalled) console.warn(`[pty-host] answered a heartbeat after ${elapsedMs} ms`);
         this.endStall(beat, 'answered', elapsedMs);
       }, (error: unknown) => {
         // A ping that fails is how a stall ends without an answer. Any other
