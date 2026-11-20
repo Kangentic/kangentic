@@ -22,6 +22,11 @@ msgstr "{duplicateCount} już w backlogu"
 msgid "{failedServer} is not a GitLab instance."
 msgstr "{failedServer} nie jest instancją GitLab."
 
+#: src/renderer/components/backlog/view/BacklogLabels.tsx
+#, fuzzy
+msgid "{hiddenCount, plural, one {# more label} other {# more labels}}"
+msgstr "{hiddenCount, plural, one {# etykieta więcej} few {# etykiety więcej} many {# etykiet więcej} other {# etykiety więcej}}"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{importedCount} imported"

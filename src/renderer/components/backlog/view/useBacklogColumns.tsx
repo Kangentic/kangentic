@@ -5,11 +5,11 @@ import { GitHubIcon } from '../../icons/GitHubIcon';
 import { formatRelativeTime, relativeTimeSamples } from '../../../lib/datetime';
 import { DATA_TABLE_GRIP_WIDTH_PX, type DataTableColumn } from '../../DataTable';
 import { Tooltip } from '../../Tooltip';
-import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { PriorityBadge } from '../PriorityBadge';
 import { stripMarkdown } from '../../../utils/strip-markdown';
-import { measureTextWidth } from '../../../utils/text-measure';
-import { CELL_PADDING_PX, priorityColumnWidthPx, updatedColumnWidthPx } from './column-widths';
+import { bodyFontFamily, measureTextWidth } from '../../../utils/text-measure';
+import { CELL_PADDING_PX, LABELS_WIDTH_PX, priorityColumnWidthPx, updatedColumnWidthPx } from './column-widths';
+import { BacklogLabels } from './BacklogLabels';
 import type { BacklogTask } from '../../../../shared/types';
 import { getProviderLabel } from '../import-providers';
 import { isLocalNoteLink, openExternalIssueLink } from '../../../utils/external-issue-link';
@@ -21,7 +21,6 @@ export type SortKey = 'select' | 'priority' | 'title' | 'labels' | 'updated' | '
 const TITLE_MIN_WIDTH_PX = 240;
 
 const SELECT_WIDTH_PX = 40;
-const LABELS_WIDTH_PX = 200;
 /** The menu button inside the cell's padding. */
 const ACTIONS_WIDTH_PX = ROW_MENU_BUTTON_SIZE_PX + CELL_PADDING_PX;
 
@@ -78,6 +77,9 @@ export function useBacklogColumns(input: {
     // i18n.locale: the samples are formatted in the session's language.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.locale is the trigger; relativeTimeSamples reads the locale itself
   }, [updatedHeader, i18n.locale]);
+  // Read once, not per labels cell: getComputedStyle on every row render is a style recalc each.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.locale is the trigger; a language can switch the body face
+  const fontFamily = useMemo(() => bodyFontFamily(), [i18n.locale]);
 
   // `t` is in the memo's deps so the headers and tips follow the session's catalog.
   return useMemo(() => {
@@ -129,7 +131,11 @@ export function useBacklogColumns(input: {
       width: 'min-w-[300px]',
       sortValue: (item) => item.title.toLowerCase(),
       render: (item) => (
-        <div className="min-w-0">
+        // Always as tall as a title plus its description line: the title's 20px line, the
+        // description's `mt-0.5` (2px) and its `text-xs` 16px line, 38px in all. A row with no
+        // description is then the same height as every other row, with its title centered.
+        // Change it with those classes; the backlog-list-columns spec checks the rows match.
+        <div className="min-w-0 min-h-[2.375rem] flex flex-col justify-center">
           <div className="flex items-center gap-1.5">
             {item.external_source && item.external_url && (
               <Tooltip label={openInSourceLabel(item.external_source, item.external_url)}>
@@ -160,21 +166,7 @@ export function useBacklogColumns(input: {
       widthPx: LABELS_WIDTH_PX,
       render: (item) =>
         item.labels.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {item.labels.map((label) => {
-              const color = labelColors[label];
-              return (
-                <Pill
-                  key={label}
-                  size="sm"
-                  className={color ? 'font-medium border' : 'bg-surface-hover/60 text-fg-muted'}
-                  style={color ? { color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE } : undefined}
-                >
-                  {label}
-                </Pill>
-              );
-            })}
-          </div>
+          <BacklogLabels labels={item.labels} labelColors={labelColors} fontFamily={fontFamily} />
         ) : null,
     },
     {
@@ -204,5 +196,5 @@ export function useBacklogColumns(input: {
       ),
     },
     ];
-  }, [selectedIds, toggleSelected, selectAll, openRowMenu, menuItemId, labelColors, priorityHeader, priorityWidthPx, updatedHeader, updatedWidthPx, t]);
+  }, [selectedIds, toggleSelected, selectAll, openRowMenu, menuItemId, labelColors, fontFamily, priorityHeader, priorityWidthPx, updatedHeader, updatedWidthPx, t]);
 }

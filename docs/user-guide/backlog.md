@@ -28,7 +28,10 @@ Double-click any row to open it for editing. You can also choose **Edit** from t
 Each row shows its priority, title and description, labels, and when it was last updated.
 
 - **Priority** is a level meter in a pill tinted with the level's color: one bar per level above None, filled up to the item's level, so the bar count tells levels apart without relying on color. Hover the pill for the level's name. None shows an empty meter.
+- **Labels** stay on one line. The ones that do not fit fold into a **+N** chip; hover it, or Tab to it, to see them. A label too long for the column ends in an ellipsis, and hovering it shows the whole name.
 - **Updated** is when the item last changed: an edit, a new priority or labels, or a drag to a new place in the list. Hover the date to see when the item was created.
+
+Every row is the same height, whether or not it has a description or labels.
 
 The Priority and Updated columns size themselves to what they can show in your language, so a long priority name or date never runs into the next column. When the window is too narrow for every column, the list scrolls sideways and keeps the title readable.
 

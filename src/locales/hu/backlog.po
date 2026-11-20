@@ -22,6 +22,11 @@ msgstr "{duplicateCount} már szerepel a backlogban"
 msgid "{failedServer} is not a GitLab instance."
 msgstr "A(z) {failedServer} nem GitLab-példány."
 
+#: src/renderer/components/backlog/view/BacklogLabels.tsx
+#, fuzzy
+msgid "{hiddenCount, plural, one {# more label} other {# more labels}}"
+msgstr "{hiddenCount, plural, one {# további címke} other {# további címke}}"
+
 #: src/renderer/components/backlog/ImportDialog.tsx
 #, fuzzy
 msgid "{importedCount} imported"
