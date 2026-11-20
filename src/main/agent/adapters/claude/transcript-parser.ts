@@ -21,6 +21,7 @@ import {
 } from '../../shared/tool-call-cursor';
 import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { estimateToolResultTokens } from './tool-result-tokens';
+import { unwrapPastedContent } from './pasted-content';
 import { isNarrationSignature, reportUnrecognizedTextThinking } from './thinking-signature';
 import {
   parseWindowBytes,
@@ -197,7 +198,8 @@ function parseTranscriptLine(
 
     // Strip <system-reminder> spans from real user text; drop the entry
     // entirely if nothing meaningful remains (a reminder-only injection).
-    const stripped = stripSystemReminders(userText);
+    // A paste keeps its text and loses Claude's wrapper around it.
+    const stripped = unwrapPastedContent(stripSystemReminders(userText)).trim();
     if (stripped.length === 0) return;
     entries.push({ kind: 'user', uuid, ts, text: stripped });
     return;

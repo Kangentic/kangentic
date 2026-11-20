@@ -124,9 +124,15 @@ Two places build an opening message, and only they claim held messages (pinned b
 - **`spawnAgent`** claims them in `startAgent`, or in the handoff branch before its engine call.
   With a prompt slot open (a resume, or a spawn with no task template) they go into the resume
   prompt after the lead: the row's message, the task's own command, or a plan continuation. On a
-  fresh spawn whose prompt is the task, or a resume whose prompt could not ride, they join the
-  first message typed at the agent, as one delivery. When nothing is typed, they go alone after the
-  enter group.
+  fresh spawn whose prompt is the task, an `immediate` row message that is not a slash command
+  follows the task template in the opening. The held messages go after that message, so the
+  opening reads template, column message, held messages (#1138). Behind any other row on such a
+  spawn, or on a resume whose prompt could
+  not ride, they join the first message typed at the agent, as one delivery. When nothing is typed,
+  they go alone after the enter group. The handoff branch does the same with the destination's
+  message: behind an `immediate` one that is not a slash command they ride the new agent's opening
+  and commit once its session runs, or settle from the one delivery that types what the command
+  line could not carry.
 - **`resumeTaskSession`** (the Resume button, the phone's resume of a paused task) claims them and
   composes them with the prompt the Resume carries, or makes them a plain Resume's whole opening
   message.

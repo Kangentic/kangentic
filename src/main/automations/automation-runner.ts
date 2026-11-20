@@ -9,7 +9,7 @@ import { createChokepointReporter } from '../analytics/handled-report';
 import type { ConditionCheckLimits } from './condition-check/condition-check';
 import { interpolateAutomationConfig } from './interpolate-config';
 import { hasCondition, hasFinalLine, hasFrequencyLimit, textMatchSourceOf } from './row-guards';
-import type { AutomationContext } from './shared/automation-adapter';
+import type { AutomationContext, PendingPrompt } from './shared/automation-adapter';
 import {
   AutomationTimeoutError,
   isRetryableAutomationError,
@@ -93,12 +93,13 @@ export interface RunAutomationsOptions {
    * Start the agent, for the first row that needs one. Present only on enter:
    * an exit row cannot start an agent for a column the task is leaving.
    *
-   * `pendingPrompt` is the text the row that triggered the start would rather
-   * have as the agent's own starting prompt (see `AutomationAdapter.pendingPrompt`).
-   * The caller decides whether the slot is free and reports back, so the row is
-   * not then delivered a second time by keystroke.
+   * `pendingPrompt` is the message the row that triggered the start would
+   * rather have in the agent's own starting prompt, with its delivery mode (see
+   * `AutomationAdapter.pendingPrompt`). The caller decides whether the slot is
+   * free and reports back, so the row is not then delivered a second time by
+   * keystroke.
    */
-  startAgent?: (pendingPrompt?: string) => Promise<AgentStartReport | void>;
+  startAgent?: (pendingPrompt?: PendingPrompt) => Promise<AgentStartReport | void>;
   /** Overrides the per-adapter budgets. Exit groups pass the short-lock cap. */
   groupBudgetMs?: number;
   /**

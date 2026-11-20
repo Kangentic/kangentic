@@ -2,7 +2,7 @@ import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
 import { englishI18n } from '../../../../shared/i18n/english';
-import type { AutomationAdapter } from '../../shared/automation-adapter';
+import type { AutomationAdapter, PendingPrompt } from '../../shared/automation-adapter';
 
 /**
  * Send message to agent. This is what the column's `auto_command` field used to
@@ -31,8 +31,9 @@ export const sendMessageAdapter: AutomationAdapter = {
    * spoken yet. `deliverToAgent` is told whether the slot was taken, so the
    * message is never delivered twice.
    */
-  pendingPrompt(config: AutomationConfig): string | undefined {
-    return readMessage(config) || undefined;
+  pendingPrompt(config: AutomationConfig): PendingPrompt | undefined {
+    const message = readMessage(config);
+    return message ? { message, mode: config.mode ?? 'immediate' } : undefined;
   },
 
   async execute(config, context) {

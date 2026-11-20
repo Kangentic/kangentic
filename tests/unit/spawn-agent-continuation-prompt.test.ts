@@ -27,6 +27,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
+import type { PendingPrompt } from '../../src/main/automations/shared/automation-adapter';
 
 vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
@@ -158,7 +159,7 @@ function makeDeps(args: { resumeRecord: SessionRecord | undefined; taskFields?: 
       lane: Swimlane,
       _trigger: string,
       runOptions: {
-        startAgent: (pendingPrompt?: string) => Promise<void>;
+        startAgent: (pendingPrompt?: PendingPrompt) => Promise<void>;
         deliverToAgent: (message: string, mode: 'immediate' | 'deferred') => Promise<void>;
         suppressAgentMessages?: boolean;
       },
@@ -167,7 +168,7 @@ function makeDeps(args: { resumeRecord: SessionRecord | undefined; taskFields?: 
       if (!message || runOptions.suppressAgentMessages) {
         return { outcomes: [], failures: [], startedAgent: false };
       }
-      await runOptions.startAgent(message);
+      await runOptions.startAgent({ message, mode: 'immediate' });
       await runOptions.deliverToAgent(message, 'immediate');
       return { outcomes: [], failures: [], startedAgent: true };
     }),

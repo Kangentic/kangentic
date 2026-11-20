@@ -142,6 +142,17 @@ export interface AutomationOutcome {
   detail: string;
 }
 
+/**
+ * The message a row would rather have in the agent's opening prompt
+ * (`AutomationAdapter.pendingPrompt`), with the row's delivery mode. The mode
+ * decides whether the message may follow a fresh spawn's task template: an
+ * `immediate` one may, a `deferred` one waits for the template's turn to end.
+ */
+export interface PendingPrompt {
+  message: string;
+  mode: AutoCommandMode;
+}
+
 export interface AutomationAdapter {
   readonly id: AutomationType;
   readonly manifest: AutomationManifestEntry;
@@ -161,11 +172,12 @@ export interface AutomationAdapter {
    * a promptless fresh spawn (an isolated review column) would otherwise sit at
    * an empty prompt emitting no activity, so the keystroke scheduler waits out
    * its full 30 second fallback before the message appears. That reads as "the
-   * automation never ran".
+   * automation never ran". Where the slot holds the task template, the row's
+   * mode decides whether the message follows it (`PendingPrompt`).
    *
-   * Only `send_message` implements it. Returning a string is a request, not a
+   * Only `send_message` implements it. Returning a message is a request, not a
    * guarantee: the spawn decides whether the slot is free, and tells
    * `deliverToAgent` so the row is not delivered twice.
    */
-  pendingPrompt?(config: AutomationConfig): string | undefined;
+  pendingPrompt?(config: AutomationConfig): PendingPrompt | undefined;
 }

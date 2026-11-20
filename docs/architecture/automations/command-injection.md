@@ -224,7 +224,7 @@ A column's message reaches the agent by more than one mechanism, and they do not
 
 | Rung | Mechanism | When | Guarantee |
 |---|---|---|---|
-| 1 | **argv prompt** | The session is being spawned or resumed anyway (fresh spawn; a move that already needs a restart for a model or effort change) | Guaranteed by the spawn. A resume whose prompt cannot ride its command line hands it back (`unsentPrompt`), and it is typed in once the agent is ready, with no rung 3 behind it |
+| 1 | **argv prompt** | The session is being spawned or resumed anyway (fresh spawn; a move that already needs a restart for a model or effort change) | Guaranteed by the spawn. On a fresh spawn the task template has the slot, and an `immediate` message that is not a slash command follows it in the same opening (`carriedMessageJoinsTemplate`). A resume whose prompt cannot ride its command line, or an opening the message would push past it on an agent that cannot type it, hands the message back (`unsentPrompt`), and it is typed in once the agent is ready, with no rung 3 behind it |
 | 2 | **keystrokes** | A live warm session | Verified in the transcript, or falls to rung 3 |
 | 3 | **restart + argv prompt** | Rung 2 exhausted its retries on a *verifiable* command, on an adapter whose resume carries a prompt (`resumePromptDelivery: 'command-line'`) | Guaranteed by the spawn |
 | 4 | **recorded failure + notice** | Rung 3 unavailable or itself failed | Observable |
@@ -395,7 +395,7 @@ Every scheduled injection ends in exactly one recorded outcome, persisted on the
 
 | Context | Caller | What gets verified | Latency |
 |---------|--------|-------------------|---------|
-| `'paste'` | `TerminalSubmit.submitContent` (browser captures, single auto-command paste, and a column message of more than one line or over 1,000 characters that is not a slash command) | "the agent acknowledged this prompt" | 100-500ms |
+| `'paste'` | `TerminalSubmit.submitContent` (browser captures, single auto-command paste, and a column message of more than one line or over 1,000 characters that is not a slash command and did not ride a fresh spawn's opening) | "the agent acknowledged this prompt" | 100-500ms |
 | `'command-injection'` | `TerminalSubmit.submitKeystrokes` (chained slash commands) | "this exact command was processed as a discrete invocation" | 50-150ms typical, ~12s worst case (five 400ms windows plus the 2000ms grace and the 8000ms passive window) |
 
 The two contexts solve different problems: `'paste'` confirms one-shot paste submissions of arbitrary user prompts, while `'command-injection'` confirms each link in a multi-command chain landed cleanly. They share an interface (`getSubmissionVerifier`) so adapters declare what they support per context, and the renderer/IPC layer never has to branch on agent name.

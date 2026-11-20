@@ -273,10 +273,12 @@ session manager announces it (`'transcript-path'`) and `persistHookTranscriptPat
   through `spawnAgent`, and a `never-started` the agent's own report decided.
 
   Either way the spawn is re-resolved `forceFresh`, with no recap and no notice. Where the
-  template takes the prompt, a column message the resume carried goes out after the spawn, as on
-  any fresh spawn, and the spawn hands it back in `SpawnOutcome.unsentPrompt` for the caller to
-  type in. A start that opens on the owed prompt hands nothing back: its caller built the whole
-  opening, the carried message included.
+  template takes the prompt, a column message the resume carried is treated as on any fresh spawn.
+  One the caller lets follow the template (`SpawnOverrides.carriedMessageJoinsTemplate`: an
+  `immediate` message that is not a slash command) joins the opening after it, #1138. Any other
+  goes out after the spawn, and the spawn hands it back in `SpawnOutcome.unsentPrompt` for the
+  caller to type in. A start that opens on the owed prompt hands nothing back: its caller built the
+  whole opening, the carried message included.
 - **`expired`** needs turns and the adapter's proof that the file is gone
   (`AgentAdapter.proveConversationGone`). Claude's (`adapters/claude/conversation-gone.ts`) wants an
   absolute reported path named `<id>.jsonl`; that path and the one every reader would open both
@@ -339,8 +341,9 @@ that wait once.
 - **On an isolated column set to keep its own conversation** (isolated plus `create_or_resume`,
   never the default) the old conversation says the column's pass is old, not the task, so it starts
   a normal fresh pass with the recap prepended as context, and its turn end runs the column's rows.
-  When the column sends its task template, the template is the pass's prompt and the column's
-  message goes out after the spawn, as on any fresh spawn. A column prompt too long to leave room
+  When the column sends its task template, the template is the pass's prompt. The column's
+  message follows it when it is `immediate` and not a slash command (#1138). A `deferred` message
+  or a slash command goes out after the spawn, as on any fresh spawn. A column prompt too long to leave room
   for the recap's header and pointer gets no recap, and the pass runs on its own prompt.
 
 Once the new session exists, main queues a notice for the task's project
@@ -647,8 +650,9 @@ back in `SpawnOutcome.unsentPrompt`, the handoff pointer included, and calls
 `markIdleAuthoritative` on the new session. Claude's resume reloads its context with no hook, which
 the status heartbeat reads as 30 s of thinking, and that would hold the typed delivery back.
 `unsentPrompt` is also set when a fresh spawn's task template took the prompt slot (a resume that
-started over, a forced-fresh spawn). It replaced `resumePromptUnsent`, a boolean that covered only
-that case.
+started over, a forced-fresh spawn) and the carried message could not follow it: the caller did
+not set `carriedMessageJoinsTemplate`, or the joined opening would not fit a command line the agent
+cannot type past. It replaced `resumePromptUnsent`, a boolean that covered only that case.
 
 Every caller types what comes back once the agent is ready:
 

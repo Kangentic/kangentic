@@ -99,6 +99,9 @@ typing.
 The same answer decides what happens to a fresh prompt too long for its command line: typed in on
 an agent that declares it, refused on the card on any other, for the same reason
 ([A prompt too long for its command line](../../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
+A column message that follows the task template is the exception: on an agent that cannot type its
+first prompt, a message that would push the opening past the line is not refused. The opening
+starts on the template alone and the message is handed back (`SpawnOutcome.unsentPrompt`).
 
 The same answer marks the session (`SpawnSessionInput.inputInAlternateScreen`), so a background
 paste (a held message, a Send message row, the setup-failure note) waits until the TUI has entered

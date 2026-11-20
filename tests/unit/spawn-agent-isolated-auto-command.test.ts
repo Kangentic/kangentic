@@ -35,6 +35,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
+import type { PendingPrompt } from '../../src/main/automations/shared/automation-adapter';
 
 vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
@@ -81,6 +82,9 @@ vi.mock('../../src/main/transition-engine/turn-completion', () => ({
  */
 const columnMessages = vi.hoisted(() => new Map<string, string>());
 
+/** A column message row's delivery mode, per column. Absent means `immediate`, the row default. */
+const columnMessageModes = vi.hoisted(() => new Map<string, 'immediate' | 'deferred'>());
+
 /** A message row's Condition and Frequency limit, as the automations table holds them. */
 type MessageGuard = { condition: string | null; max_runs: number | null };
 
@@ -105,7 +109,7 @@ vi.mock('../../src/main/db/repositories/automation-repository', () => ({
         trigger: 'enter' as const,
         position: 0,
         enabled: true,
-        config: { message, mode: 'immediate' as const },
+        config: { message, mode: columnMessageModes.get(swimlaneId) ?? 'immediate' },
         condition: guard?.condition ?? null,
         max_runs: guard?.max_runs ?? null,
         created_at: '2025-01-01T00:00:00.000Z',
@@ -117,6 +121,7 @@ vi.mock('../../src/main/db/repositories/automation-repository', () => ({
 
 beforeEach(() => {
   columnMessages.clear();
+  columnMessageModes.clear();
   columnMessageGuards.clear();
 });
 
@@ -131,7 +136,15 @@ vi.mock('../../src/main/agent/handoff/session-history-reference', () => ({
   buildSessionHistoryReference: vi.fn(() => '[handoff context: mock]'),
 }));
 
+// Held messages are claimed from the project database; the claim is faked so a
+// test can hand spawnAgent one. The rest of the module stays real.
+vi.mock('../../src/main/held-messages/held-messages', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/held-messages/held-messages')>();
+  return { ...actual, claimHeldMessages: vi.fn(() => null) };
+});
+
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
+import { claimHeldMessages, type HeldClaim } from '../../src/main/held-messages/held-messages';
 import { resolveTargetAgent } from '../../src/main/transition-engine/agent-resolver';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import { buildSessionHistoryReference } from '../../src/main/agent/handoff/session-history-reference';
@@ -276,7 +289,7 @@ function makeDeps(args: {
       lane: Swimlane,
       _trigger: string,
       runOptions: {
-        startAgent: (pendingPrompt?: string) => Promise<void>;
+        startAgent: (pendingPrompt?: PendingPrompt) => Promise<void>;
         deliverToAgent: (message: string, mode: 'immediate' | 'deferred') => Promise<void>;
         suppressAgentMessages?: boolean;
       },
@@ -285,11 +298,16 @@ function makeDeps(args: {
       if (!message || runOptions.suppressAgentMessages) {
         return { outcomes: [], failures: [], startedAgent: false };
       }
-      await runOptions.startAgent(message);
-      await runOptions.deliverToAgent(message, 'immediate');
+      const mode = columnMessageModes.get(lane.id) ?? 'immediate';
+      await runOptions.startAgent({ message, mode });
+      await runOptions.deliverToAgent(message, mode);
       return { outcomes: [], failures: [], startedAgent: true };
     }),
-    resumeSuspendedSession: vi.fn(async () => { sessionStarted = true; }),
+    // What the engine reports; nothing by default, as for a prompt that rode the command line.
+    resumeSuspendedSession: vi.fn(async (): Promise<{ startOver: null; recapOnly: false; unsentPrompt: string | null } | undefined> => {
+      sessionStarted = true;
+      return undefined;
+    }),
   };
   const scheduleKeystrokes = vi.fn();
   const submitContent = vi.fn(async () => undefined);
@@ -304,6 +322,8 @@ function makeDeps(args: {
       awaitInputReady: vi.fn(async () => true),
       isAgentLaunching: vi.fn(() => false),
       awaitAgentLaunched: vi.fn(async () => true),
+      // Read when held messages rode the opening: they count as delivered once it runs.
+      agentStartPending: vi.fn(() => false),
     },
     terminalSubmit: { submitContent },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
@@ -699,8 +719,155 @@ describe('spawnAgent auto_command suppression on recovery move out of Done (hand
   });
 });
 
+/** The spawn overrides are the 8th positional arg of resumeSuspendedSession. */
+function spawnOverridesArg(engine: ReturnType<typeof makeDeps>['engine']): { carriedMessageJoinsTemplate?: boolean } | undefined {
+  return engine.resumeSuspendedSession.mock.calls[0]?.[7] as { carriedMessageJoinsTemplate?: boolean } | undefined;
+}
+
 /**
- * A column message with line breaks on the cold spawn path.
+ * A fresh spawn whose prompt slot holds the task template (#1138). A Design
+ * column's contract, 1,139 characters on one line, went out after the spawn as a
+ * paste that waited out the agent's whole 26-minute first turn, so that turn ran
+ * without it. An `immediate` message that is not a slash command now joins the
+ * opening after the template: `spawnAgent` hands it to the engine as the carried
+ * message with `carriedMessageJoinsTemplate`, and sends nothing after the spawn.
+ */
+describe('spawnAgent: an immediate column message follows the task template in the opening', () => {
+  const CONTRACT = `Design phase. ${'Draw the design canvas and end each turn with the sign-off line. '.repeat(18)}`;
+  const SHORT_PROSE = 'Run the tests before you finish.';
+
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    turnWaits.length = 0;
+    vi.mocked(claimHeldMessages).mockReturnValue(null);
+  });
+
+  it.each([
+    { label: 'over the paste threshold', message: CONTRACT },
+    { label: 'short prose', message: SHORT_PROSE },
+  ])('MAIN + fresh from To Do: a message $label rides the opening and is not sent again', async ({ message }) => {
+    expect(CONTRACT.length).toBeGreaterThan(1000);
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: message });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false);
+    await settle();
+
+    expect(resumePromptArg(deps.engine)).toBe(message);
+    expect(spawnOverridesArg(deps.engine)?.carriedMessageJoinsTemplate).toBe(true);
+    // Red before the fix: the long one waited on the first turn for its paste,
+    // and the short one was typed into that turn.
+    expect(turnWaits).toHaveLength(0);
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('a column that always starts fresh lets the message follow the template its spawn will run', async () => {
+    const freshLane = makeSwimlane(EXEC_LANE_ID, { session_spawn_strategy: 'always_spawn_new', auto_command: SHORT_PROSE });
+    const mainRecord = makeRecord({ id: 'rec-main', isolated_swimlane_id: null, agent_session_id: 'agent-main' });
+    const deps = makeDeps({ manualPauseRecord: mainRecord, resumeRecord: mainRecord });
+
+    await runSpawn(freshLane, deps, false);
+
+    expect(resumePromptArg(deps.engine)).toBe(SHORT_PROSE);
+    expect(spawnOverridesArg(deps.engine)?.carriedMessageJoinsTemplate).toBe(true);
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('a slash command never follows the template: it runs only as a prompt\'s first word', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: '/standup' });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false);
+
+    expect(resumePromptArg(deps.engine)).toBeUndefined();
+    expect(spawnOverridesArg(deps.engine)?.carriedMessageJoinsTemplate).toBe(false);
+    expect(deps.scheduleKeystrokes).toHaveBeenCalledTimes(1);
+  });
+
+  it('a task command that is a slash command keeps the row out of the opening too', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: SHORT_PROSE });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined, taskFields: { auto_command: '/task-command' } });
+
+    await runSpawn(normalLane, deps, false);
+
+    // The task's command replaces the row's message, and that is what is judged.
+    expect(resumePromptArg(deps.engine)).toBeUndefined();
+    expect(deps.scheduleKeystrokes).toHaveBeenCalledWith(
+      TASK_ID,
+      FRESH_PTY_SESSION_ID,
+      [{ text: '/task-command', verify: 'submitted' }],
+      expect.objectContaining({ freshlySpawned: true }),
+    );
+  });
+
+  it('a deferred message waits for the template\'s turn, as before', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: CONTRACT });
+    columnMessageModes.set(EXEC_LANE_ID, 'deferred');
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false);
+    await settle();
+
+    expect(resumePromptArg(deps.engine)).toBeUndefined();
+    expect(turnWaits.map((wait) => wait.sessionId)).toEqual([FRESH_PTY_SESSION_ID]);
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(deps.submitContent).toHaveBeenCalledWith(FRESH_PTY_SESSION_ID, CONTRACT, expect.anything());
+  });
+
+  it('a message the engine could not fit in the opening goes out after the spawn, once', async () => {
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: CONTRACT });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+    deps.engine.resumeSuspendedSession.mockImplementationOnce(async () => {
+      deps.tasks.getById.mockImplementation(() => makeTask({ session_id: FRESH_PTY_SESSION_ID }));
+      return { startOver: null, recapOnly: false, unsentPrompt: CONTRACT };
+    });
+
+    await runSpawn(normalLane, deps, false);
+    await settle();
+
+    expect(turnWaits.map((wait) => wait.sessionId)).toEqual([FRESH_PTY_SESSION_ID]);
+    turnWaits[0].resolve('completed');
+    await settle();
+    expect(deps.submitContent).toHaveBeenCalledTimes(1);
+    expect(deps.submitContent).toHaveBeenCalledWith(FRESH_PTY_SESSION_ID, CONTRACT, expect.anything());
+  });
+
+  it('held messages follow the column\'s message in the opening, and settle with it', async () => {
+    const claim = {
+      projectId: 'project-held',
+      taskId: TASK_ID,
+      ids: ['held-1'],
+      text: '1. Check the migration.',
+      commit: vi.fn<(sessionId: string) => void>(),
+      fail: vi.fn<(reason: string) => void>(),
+      release: vi.fn<(options?: { flush?: boolean }) => void>(),
+      isSettled: vi.fn(() => false),
+    } satisfies HeldClaim;
+    vi.mocked(claimHeldMessages).mockReturnValueOnce(claim);
+    const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: SHORT_PROSE });
+    const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
+
+    await runSpawn(normalLane, deps, false, false, 'project-held');
+    await settle();
+
+    expect(resumePromptArg(deps.engine)).toBe(`${SHORT_PROSE}\n\n${claim.text}`);
+    // Not typed again, not released back on hold, and delivered once the session runs.
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(deps.submitContent).not.toHaveBeenCalled();
+    expect(claim.release).not.toHaveBeenCalled();
+    expect(claim.commit).toHaveBeenCalledWith(FRESH_PTY_SESSION_ID);
+  });
+});
+
+/**
+ * A column message with line breaks on the cold spawn path, where it cannot
+ * ride the opening (a `deferred` row, or the engine had no room for it).
  *
  * Keystrokes flatten line breaks to spaces, so a multi-line message is pasted
  * instead. A freshly spawned agent's TUI is not ready at once, so the paste
@@ -721,8 +888,9 @@ describe('spawnAgent: a multi-line column message is pasted after the first turn
     turnWaits.length = 0;
   });
 
-  it('MAIN + fresh from To Do: pastes the message once the first turn ends, never as keystrokes', async () => {
+  it('MAIN + fresh from To Do, deferred: pastes the message once the first turn ends, never as keystrokes', async () => {
     const normalLane = makeSwimlane(EXEC_LANE_ID, { session_target: 'main', auto_command: MULTI_LINE });
+    columnMessageModes.set(EXEC_LANE_ID, 'deferred');
     const deps = makeDeps({ manualPauseRecord: null, resumeRecord: undefined });
 
     await runSpawn(normalLane, deps, false);
@@ -751,7 +919,7 @@ describe('spawnAgent: a multi-line column message is pasted after the first turn
     expect(deps.submitContent).not.toHaveBeenCalled();
   });
 
-  it('handoff branch: pastes the destination message once the new agent finishes its first turn', async () => {
+  it('handoff branch: an immediate destination message rides the new agent\'s opening, and is not pasted', async () => {
     vi.mocked(agentRegistry.get).mockReturnValue(null as never);
     const codexLane = makeSwimlane('lane-codex', {
       session_target: 'main',
@@ -759,6 +927,34 @@ describe('spawnAgent: a multi-line column message is pasted after the first turn
       handoff_context: true,
       agent_override: 'codex',
     });
+    const priorRecord = makeRecord({ id: 'rec-claude', isolated_swimlane_id: null, agent_session_id: 'claude-session-1' });
+    const deps = makeDeps({
+      manualPauseRecord: priorRecord,
+      resumeRecord: undefined,
+      taskFields: { session_id: FRESH_PTY_SESSION_ID },
+    });
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+
+    await runSpawn(codexLane, deps, true, false, 'proj-handoff-test');
+    await settle();
+
+    // Red before #1138: it waited out the new agent's first turn for its paste.
+    expect(resumePromptArg(deps.engine)).toBe(MULTI_LINE);
+    expect(spawnOverridesArg(deps.engine)?.carriedMessageJoinsTemplate).toBe(true);
+    expect(turnWaits).toHaveLength(0);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+    expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  it('handoff branch: pastes a deferred destination message once the new agent finishes its first turn', async () => {
+    vi.mocked(agentRegistry.get).mockReturnValue(null as never);
+    const codexLane = makeSwimlane('lane-codex', {
+      session_target: 'main',
+      auto_command: MULTI_LINE,
+      handoff_context: true,
+      agent_override: 'codex',
+    });
+    columnMessageModes.set('lane-codex', 'deferred');
     const priorRecord = makeRecord({ id: 'rec-claude', isolated_swimlane_id: null, agent_session_id: 'claude-session-1' });
     const deps = makeDeps({
       manualPauseRecord: priorRecord,
