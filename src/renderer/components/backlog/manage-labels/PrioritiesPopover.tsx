@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import { Trash2, GripVertical, Plus, Pencil, Flag } from 'lucide-react';
+import { Trash2, GripVertical, Plus, Pencil, Signal } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -26,6 +26,7 @@ import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import { DEFAULT_PRIORITY_CONFIG, type AppConfig } from '../../../../shared/types';
 import { displayPriorityLabel, storedPriorityLabel } from '../priority-labels';
+import { PriorityMeter } from '../PriorityMeter';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
 import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
@@ -176,7 +177,7 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
           }`}
           data-testid="manage-priorities-btn"
         >
-          <Flag size={14} className="shrink-0" />
+          <Signal size={14} className="shrink-0" />
           <span className={collapse?.label}>{prioritiesLabel}</span>
         </button>
       </Tooltip>
@@ -206,6 +207,8 @@ export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesP
                     id={`priority-${priority.index}`}
                     label={priority.label}
                     color={priority.color}
+                    level={priority.index}
+                    levelCount={priorities.length}
                     isLocked={priority.index === 0}
                     onRename={(newLabel) => handleRename(priority.index, newLabel)}
                     onColorChange={(newColor) => handleColorChange(priority.index, newColor)}
@@ -260,6 +263,8 @@ function PriorityRow({
   id,
   label,
   color,
+  level,
+  levelCount,
   isLocked,
   onRename,
   onColorChange,
@@ -268,6 +273,9 @@ function PriorityRow({
   id: string;
   label: string;
   color: string;
+  /** This entry's index in the scale, and the scale's length, for its meter. */
+  level: number;
+  levelCount: number;
   isLocked: boolean;
   onRename: (newLabel: string) => void;
   onColorChange: (newColor: string) => void;
@@ -340,20 +348,17 @@ function PriorityRow({
             onClick={() => setShowColorPicker(!showColorPicker)}
             aria-label={changeColorLabel}
           >
-            {editing ? (
-              <span
-                className="w-4 h-4 rounded-full border border-edge-input hover:border-fg-faint transition-colors block"
-                style={{ backgroundColor: color }}
-              />
-            ) : (
-              <Pill
-                size="sm"
-                className="font-medium border cursor-pointer"
-                style={{ color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
-              >
-                {shownLabel}
-              </Pill>
-            )}
+            {/* The popover is the key to the meter, so every pill shows its meter beside its
+                name, None included. While the name is being edited the pill keeps the meter
+                alone, so a color change shows on the meter as it is picked. */}
+            <Pill
+              size="sm"
+              className="font-medium border cursor-pointer"
+              style={{ color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE, gap: 6 }}
+            >
+              <PriorityMeter level={level} levelCount={levelCount} color={color} />
+              {!editing && shownLabel}
+            </Pill>
           </button>
         </Tooltip>
         {showColorPicker && (

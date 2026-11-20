@@ -94,15 +94,17 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-test.describe('Task card priority pill', () => {
-  test('leads the label row with a flag and the level name', async () => {
+test.describe('Task card priority meter', () => {
+  test('leads the label row with a level meter named for the level', async () => {
     const pills = page.locator(`[data-task-id="${LABELLED_TASK_ID}"] [data-testid="task-pills"]`);
     await expect(pills).toBeVisible();
     const first = pills.locator('> *').first();
     await expect(first).toHaveAttribute('data-testid', 'priority-pill');
-    await expect(first).toHaveText('High');
-    await expect(first.locator('svg.lucide-flag')).toHaveCount(1);
-    await expect(pills.locator('> *')).toHaveText(['High', 'ui', 'git']);
+    await expect(first).toHaveAccessibleName('Priority: High');
+    // High is the third of four levels above None: three filled bars of four.
+    await expect(first.locator('[data-testid="priority-meter"] > span')).toHaveCount(4);
+    await expect(first.locator('[data-testid="priority-meter"] [data-filled]')).toHaveCount(3);
+    await expect(pills.locator('> *')).toHaveText(['', 'ui', 'git']);
   });
 
   test('the bottom entry of the scale draws no pill', async () => {
@@ -116,7 +118,7 @@ test.describe('Task card priority pill', () => {
     // The trail must be showing, or the rule is there for the old reason and
     // this passes without the fix.
     await expect(card.locator('[data-testid="task-card-trail"]')).toBeVisible();
-    await expect(card.locator('[data-testid="priority-pill"]')).toHaveText('Medium');
+    await expect(card.locator('[data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Medium');
     const footer = card.locator('[data-testid="usage-bar"], [data-testid="status-bar"]').first();
     await expect(footer).toBeVisible();
     await expect.poll(() => footer.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('solid');
@@ -124,7 +126,7 @@ test.describe('Task card priority pill', () => {
 
   test('the Done list row shows the pill', async () => {
     const row = page.locator(`[data-task-id="${DONE_TASK_ID}"]`);
-    await expect(row.locator('[data-testid="priority-pill"]')).toHaveText('Urgent');
+    await expect(row.locator('[data-testid="priority-pill"]')).toHaveAccessibleName('Priority: Urgent');
   });
 
   test('an agent update to priority repaints the card without a reload', async () => {
@@ -133,7 +135,7 @@ test.describe('Task card priority pill', () => {
       const fire = (window as unknown as { __mockFireTaskUpdatedByAgent?: (id: string, title: string, project: string) => void }).__mockFireTaskUpdatedByAgent;
       fire?.(taskId, 'Rename the base picker local', projectId);
     }, { taskId: NONE_TASK_ID, projectId: PROJECT_ID });
-    await expect(page.locator(`[data-task-id="${NONE_TASK_ID}"] [data-testid="priority-pill"]`)).toHaveText('Urgent');
+    await expect(page.locator(`[data-task-id="${NONE_TASK_ID}"] [data-testid="priority-pill"]`)).toHaveAccessibleName('Priority: Urgent');
   });
 
   test('the task detail header carries no priority badge', async () => {

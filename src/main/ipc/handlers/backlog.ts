@@ -166,8 +166,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
     new BacklogRepository(db).delete(id);
   });
 
-  ipcMain.handle(IPC.BACKLOG_REORDER, (_, ids: string[]) => {
-    getBacklogRepo(context).reorder(ids);
+  ipcMain.handle(IPC.BACKLOG_REORDER, (_, ids: string[], movedId?: string) => {
+    getBacklogRepo(context).reorder(ids, typeof movedId === 'string' ? movedId : undefined);
   });
 
   ipcMain.handle(IPC.BACKLOG_BULK_DELETE, (_, ids: string[]) => {

@@ -21,7 +21,16 @@ Click **New Task** in the backlog toolbar to create a backlog item with a title,
 
 ## Editing Items
 
-Double-click any row to open it for editing. You can also click the pencil icon in the row's action buttons, or right-click and select **Edit** from the context menu.
+Double-click any row to open it for editing. You can also choose **Edit** from the row's menu: the more-actions button at the end of the row, or a right-click.
+
+## The list
+
+Each row shows its priority, title and description, labels, and when it was last updated.
+
+- **Priority** is a level meter in a pill tinted with the level's color: one bar per level above None, filled up to the item's level, so the bar count tells levels apart without relying on color. Hover the pill for the level's name. None shows an empty meter.
+- **Updated** is when the item last changed: an edit, a new priority or labels, or a drag to a new place in the list. Hover the date to see when the item was created.
+
+The Priority and Updated columns size themselves to what they can show in your language, so a long priority name or date never runs into the next column. When the window is too narrow for every column, the list scrolls sideways and keeps the title readable.
 
 ## Labels
 
@@ -29,7 +38,7 @@ Click **Labels** in the toolbar to manage labels. Labels are free-form text tags
 
 ## Priorities
 
-Click **Priorities** in the toolbar to manage the priority scale. The default scale is None, Low, Medium, High, Urgent (indices 0 to 4; a scale you extend has more, and agents set a level by its index). You can rename priority levels, reorder them, add new ones, or remove existing ones. Priority colors are customizable.
+Click **Priorities** in the toolbar to manage the priority scale. The default scale is None, Low, Medium, High, Urgent (indices 0 to 4; a scale you extend has more, and agents set a level by its index). You can rename priority levels, reorder them, add new ones, or remove existing ones. Priority colors are customizable. Each level's pill in the popover shows its meter beside its name, so it is the key to the meters in the list and on board cards. The meter has one bar per level above None, so adding or removing a level changes every meter.
 
 ## Filtering
 
@@ -39,22 +48,22 @@ Click **Filter** to filter by priority level and/or label. While filters are act
 
 Click a row to select it, or use the checkboxes. The header checkbox selects/deselects all visible items. When multiple items are selected, a bulk toolbar appears at the bottom with **Move to Board** and **Delete** actions. Right-clicking with multiple items selected shows a context menu that operates on the entire selection.
 
-## Context Menu
+## Row menu
 
-Right-click any backlog row to open a context menu with:
-- **Move to Board** - submenu listing all available columns as targets
+Click the more-actions button at the end of a row, or right-click the row, to open its menu. It follows the board's task menu:
 - **Edit** - open the item for editing
+- **Move to** - every available column, to promote the item to the board
 - **Delete** - permanently remove the item
 
-When multiple items are selected and you right-click one of them, the context menu operates on all selected items (e.g., "Move 5 to Board", "Delete 3 items").
+The more-actions button acts on its own row only. When multiple items are selected and you right-click one of them, the menu operates on all selected items (e.g., "Move 5 items to", "Delete 3 items").
 
 ## Drag to Reorder
 
-Drag rows by the grip handle on the left to manually reorder items, or Tab to the grip and use Space and the arrow keys. Drag-to-reorder is available when no column sort is active. When you sort by a column header (priority, title, created date), manual reorder is disabled until the sort is cleared.
+Drag rows by the grip handle on the left to manually reorder items, or Tab to the grip and use Space and the arrow keys. Drag-to-reorder is available when no column sort is active. When you sort by a column header (priority, title, updated date), manual reorder is disabled until the sort is cleared. The first click on **Updated** puts the most recently changed items on top. A drag counts as a change, so the item you moved shows as just updated.
 
 ## Promoting to the Board
 
-Select one or more items using the checkboxes, then click **Move to Board** in the bulk toolbar that appears at the bottom. Choose a target column and the items become board tasks. If the target column has auto-spawn enabled, an agent session starts immediately. You can also promote individual items using the arrow icon in the row action buttons or the context menu.
+Select one or more items using the checkboxes, then click **Move to Board** in the bulk toolbar that appears at the bottom. Choose a target column and the items become board tasks. If the target column has auto-spawn enabled, an agent session starts immediately. You can also promote a single item from **Move to** in its row menu.
 
 ## Importing from External Sources
 

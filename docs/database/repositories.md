@@ -253,7 +253,7 @@ Operates on a per-project DB. Manages items in the Backlog View staging area.
 | `create(input)` | Insert at the end (next position) |
 | `update(input)` | Partial update - only provided fields are changed |
 | `delete(id)` | Delete and shift positions to keep them contiguous |
-| `reorder(ids)` | Set positions from ordered array of IDs |
+| `reorder(ids, movedId?)` | Set positions from ordered array of IDs. An optional `movedId`, the row a drag moved, also has its `updated_at` stamped; the rows it displaces keep theirs |
 | `bulkDelete(ids)` | Delete multiple items and reindex positions |
 | `renameLabel(oldName, newName)` | Rename a label across all items |
 | `deleteLabel(name)` | Remove a label from all items |

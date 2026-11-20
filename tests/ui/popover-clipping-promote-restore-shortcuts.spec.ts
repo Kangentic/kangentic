@@ -5,17 +5,10 @@
  * zero prior coverage.
  *
  *   - PromotePopover (src/renderer/components/backlog/PromotePopover.tsx):
- *     mounts anchored to the per-row "Move to board" button in BacklogView's
- *     DataTable. With drag-to-reorder enabled (the default), the row itself
- *     renders through DataTable's SortableRow, whose own <td> is NOT
- *     overflow-hidden - the clip instead comes from the table's scrollable
- *     wrapper (DataTable.tsx's `overflow-auto` scroll container), since an
- *     absolutely-positioned dropdown anchored to the row (position: relative)
- *     extends past the row without growing the scroll container's
- *     scrollHeight, so it was clipped and unreachable rather than scrollable
- *     into view. (The CompletedTasksDialog mount below, which does not set
- *     `sortableEnabled`, takes DataTable's other virtualized branch, whose
- *     <td> IS `overflow-hidden` directly - DataTable.tsx:331.)
+ *     mounts anchored to the backlog bulk toolbar's "Move to Board" button
+ *     (`bulk-move-to-board-btn`), which sits under the table inside the
+ *     backlog view's clipping boxes. A row's own menu moves a row through
+ *     BacklogContextMenu instead, which portals itself.
  *   - RestorePopover (src/renderer/components/dialogs/completed-tasks/RestorePopover.tsx):
  *     mounts anchored to the per-row "Restore to board" button inside
  *     CompletedTasksDialog's DataTable, whose <td> is directly
@@ -162,7 +155,11 @@ async function readBacklogPromoteCalls(page: Page): Promise<Array<{ backlogTaskI
   }).__backlogPromoteCalls ?? []);
 }
 
-/** Switch to the Backlog view and open the row's Move-to-board popover. */
+/**
+ * Switch to the Backlog view, select the row, and open the selection toolbar's Move-to-board
+ * popover. Rows have no move button of their own since task #1137 (their menu holds Move to),
+ * so the bulk toolbar is where PromotePopover mounts now, inside the backlog view's clip.
+ */
 async function openPromotePopover(page: Page): Promise<void> {
   // Explicit load rather than trusting the initial-mount project-open path:
   // BacklogView renders nothing until `hydrated` is true, and `hydrated`
@@ -175,11 +172,12 @@ async function openPromotePopover(page: Page): Promise<void> {
   });
   await page.locator('[data-testid="view-toggle-backlog"]').click();
   await page.locator('[data-testid="backlog-task-row"]').waitFor({ state: 'visible', timeout: 10000 });
-  await page.locator('[data-testid="move-to-board-btn"]').click();
+  await page.locator('[data-testid="backlog-task-checkbox"]').first().check();
+  await page.locator('[data-testid="bulk-move-to-board-btn"]').click();
   await page.locator('[data-testid="promote-popover"]').waitFor({ state: 'visible', timeout: 3000 });
 }
 
-test.describe('PromotePopover (backlog row action)', () => {
+test.describe('PromotePopover (backlog selection toolbar)', () => {
   test('portal escapes the backlog view container', async () => {
     const { browser, page } = await launchWithBacklogItem();
     try {

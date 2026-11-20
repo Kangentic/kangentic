@@ -47,7 +47,8 @@ interface BacklogState {
   createItem: (input: BacklogTaskCreateInput) => Promise<BacklogTask>;
   updateItem: (input: BacklogTaskUpdateInput) => Promise<BacklogTask>;
   deleteItem: (id: string) => Promise<void>;
-  reorderItems: (ids: string[]) => Promise<void>;
+  /** `movedId`: the row a drag moved, whose Updated time the reorder stamps. */
+  reorderItems: (ids: string[], movedId?: string) => Promise<void>;
   bulkDelete: (ids: string[]) => Promise<void>;
   promoteItems: (ids: string[], targetSwimlaneId: string) => Promise<Task[]>;
   demoteTask: (input: BacklogDemoteInput, projectId?: string | null) => Promise<BacklogTask>;
@@ -144,18 +145,20 @@ const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
     }));
   },
 
-  reorderItems: async (ids) => {
-    // Optimistic: reorder locally first
+  reorderItems: async (ids, movedId) => {
+    // Optimistic: reorder locally first, and stamp the moved row as main will.
     const { items } = get();
     const itemMap = new Map(items.map((item) => [item.id, item]));
+    const now = new Date().toISOString();
     const reordered = ids.map((id, index) => {
       const item = itemMap.get(id);
-      return item ? { ...item, position: index } : null;
+      if (!item) return null;
+      return id === movedId ? { ...item, position: index, updated_at: now } : { ...item, position: index };
     }).filter(Boolean) as BacklogTask[];
     set({ items: reordered });
 
     try {
-      await window.electronAPI.backlog.reorder(ids);
+      await window.electronAPI.backlog.reorder(ids, movedId);
     } catch (error) {
       console.error('[backlog-store] Reorder failed, reloading:', error);
       get().loadBacklog();

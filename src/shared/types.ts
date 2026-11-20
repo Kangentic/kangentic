@@ -10142,7 +10142,8 @@ export interface ElectronAPI {
     create: (input: BacklogTaskCreateInput) => Promise<BacklogTask>;
     update: (input: BacklogTaskUpdateInput) => Promise<BacklogTask>;
     delete: (id: string) => Promise<void>;
-    reorder: (ids: string[]) => Promise<void>;
+    /** Persist a new order. `movedId`, the row a drag moved, has its `updated_at` stamped. */
+    reorder: (ids: string[], movedId?: string) => Promise<void>;
     bulkDelete: (ids: string[]) => Promise<void>;
     promote: (input: BacklogPromoteInput) => Promise<Task[]>;
     /** Send a board task to the backlog. `projectId` is the task's project, which

@@ -142,6 +142,37 @@ export function formatRelativeTime(value: DateLike): string {
   return '';
 }
 
+/** A spread of counts that covers every language's plural forms. */
+const RELATIVE_SAMPLE_COUNTS = [1, 2, 3, 4, 5, 6, 11, 12, 21, 23, 59, 99];
+/** Years have no larger unit to stop at, so their samples stop here. */
+const RELATIVE_YEAR_SAMPLE_MAX = 99;
+
+/**
+ * The largest count `formatRelativeTime` prints in the unit at `unitIndex`. It uses a unit only
+ * below the next larger one and rounds, so the count reaches the larger unit's length, rounded:
+ * 6.6 days prints "7 days ago".
+ */
+function relativeUnitMaxCount(unitIndex: number): number {
+  if (unitIndex === 0) return RELATIVE_YEAR_SAMPLE_MAX;
+  return Math.round(RELATIVE_UNITS[unitIndex - 1].unitMs / RELATIVE_UNITS[unitIndex].unitMs);
+}
+
+/**
+ * Past relative times `formatRelativeTime` can print, in the session's language: "now", then
+ * each unit at a spread of counts that covers its plural forms and at the largest count it
+ * reaches. A column sized to the widest of these fits any date it shows, whatever the language.
+ */
+export function relativeTimeSamples(): string[] {
+  const formatter = getRelativeFormatter();
+  const samples: string[] = [formatter.format(0, 'second')];
+  RELATIVE_UNITS.forEach(({ unit }, unitIndex) => {
+    const maxCount = relativeUnitMaxCount(unitIndex);
+    const counts = new Set([...RELATIVE_SAMPLE_COUNTS.filter((count) => count <= maxCount), maxCount]);
+    for (const count of counts) samples.push(formatter.format(-count, unit));
+  });
+  return samples;
+}
+
 const MINUTE_MS = 60 * 1000;
 
 /**

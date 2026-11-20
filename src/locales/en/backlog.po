@@ -232,9 +232,8 @@ msgid "Create your first task"
 msgstr "Create your first task"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
-msgctxt "column header"
-msgid "Created"
-msgstr "Created"
+msgid "Created {created}"
+msgstr "Created {created}"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Created {createdAgo}, updated {updatedAgo}"
@@ -267,10 +266,6 @@ msgstr "Delete {selectedCount, plural, one {# item} other {# items}}"
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Delete backlog task"
 msgstr "Delete backlog task"
-
-#: src/renderer/components/backlog/view/BacklogRowActions.tsx
-msgid "Delete item"
-msgstr "Delete item"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 msgid "Delete label"
@@ -320,8 +315,8 @@ msgid "Edit Backlog Task"
 msgstr "Edit Backlog Task"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
-msgid "Edit item"
-msgstr "Edit item"
+msgid "Edit, move or delete"
+msgstr "Edit, move or delete"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -450,6 +445,10 @@ msgstr "Issues"
 msgid "Issues imported"
 msgstr "Issues imported"
 
+#: src/renderer/components/backlog/view/BacklogRowActions.tsx
+msgid "Item actions"
+msgstr "Item actions"
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Keep editing"
 msgstr "Keep editing"
@@ -484,19 +483,19 @@ msgid "Medium"
 msgstr "Medium"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
-msgid "Move {selectedCount} to Board"
-msgstr "Move {selectedCount} to Board"
+msgid "Move {selectedCount, plural, one {# item} other {# items}} to"
+msgstr "Move {selectedCount, plural, one {# item} other {# items}} to"
 
 #: src/renderer/components/backlog/PromotePopover.tsx
 msgid "Move to"
 msgstr "Move to"
 
-#: src/renderer/components/backlog/view/BacklogRowActions.tsx
-msgid "Move to board"
-msgstr "Move to board"
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
+msgctxt "menu header"
+msgid "Move to"
+msgstr "Move to"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
-#: src/renderer/components/backlog/BacklogContextMenu.tsx
 msgid "Move to Board"
 msgstr "Move to Board"
 
@@ -634,6 +633,10 @@ msgctxt "priority"
 msgid "Priority {number}"
 msgstr "Priority {number}"
 
+#: src/renderer/components/backlog/PriorityBadge.tsx
+msgid "Priority: {label}"
+msgstr "Priority: {label}"
+
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
 msgid "Project"
@@ -737,6 +740,11 @@ msgstr "Title"
 msgctxt "import filter"
 msgid "Type"
 msgstr "Type"
+
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgctxt "column header"
+msgid "Updated"
+msgstr "Updated"
 
 #: src/renderer/components/backlog/priority-labels.ts
 msgctxt "priority"

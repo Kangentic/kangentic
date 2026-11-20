@@ -16,8 +16,9 @@ msgid "{duplicateCount} already in the backlog"
 msgstr "{duplicateCount} 项已在待办列表中"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "{failedServer} is not a GitLab instance."
-msgstr ""
+msgstr "{failedServer} 不是 GitLab 实例。"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "{importedCount} imported"
@@ -54,9 +55,10 @@ msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# atta
 msgstr "{skippedAttachmentCount, plural, other {已跳过 # 个附件}}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source"
 msgid "{sourceLabel} on {host}"
-msgstr ""
+msgstr "{host} 上的 {sourceLabel}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgid "{summary}."
@@ -126,8 +128,9 @@ msgid "Change color"
 msgstr "更改颜色"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Check the server address."
-msgstr ""
+msgstr "请检查服务器地址。"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -196,8 +199,9 @@ msgid "Connect {sourceTypeLabel}"
 msgstr "连接 {sourceTypeLabel}"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Connect GitLab"
-msgstr ""
+msgstr "连接 GitLab"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't delete backlog task"
@@ -205,12 +209,14 @@ msgstr "无法删除待办任务"
 
 #. placeholder {0}: result.detail
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Couldn't reach {failedServer}: {0}."
-msgstr ""
+msgstr "无法连接到 {failedServer}：{0}。"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Couldn't reach {failedServer}."
-msgstr ""
+msgstr "无法连接到 {failedServer}。"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Couldn't remove attachment"
@@ -238,9 +244,9 @@ msgid "Create your first task"
 msgstr "创建第一个任务"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
-msgctxt "column header"
-msgid "Created"
-msgstr "创建时间"
+#, fuzzy
+msgid "Created {created}"
+msgstr "创建于 {created}"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Created {createdAgo}, updated {updatedAgo}"
@@ -273,10 +279,6 @@ msgstr "{selectedCount, plural, other {删除 # 项}}"
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Delete backlog task"
 msgstr "删除待办任务"
-
-#: src/renderer/components/backlog/view/BacklogRowActions.tsx
-msgid "Delete item"
-msgstr "删除条目"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 msgid "Delete label"
@@ -328,8 +330,9 @@ msgid "Edit Backlog Task"
 msgstr "编辑待办任务"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
-msgid "Edit item"
-msgstr "编辑条目"
+#, fuzzy
+msgid "Edit, move or delete"
+msgstr "编辑、移动或删除"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
@@ -349,17 +352,20 @@ msgid "Filter by ID, title, label, or assignee..."
 msgstr "按 ID、标题、标签或经办人筛选..."
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "GitLab rejected this token."
-msgstr ""
+msgstr "GitLab 拒绝了此令牌。"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "GitLab sign-in did not finish."
-msgstr ""
+msgstr "GitLab 登录未完成。"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Group"
-msgstr ""
+msgstr "群组"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
@@ -400,9 +406,10 @@ msgid "Import from a GitHub Project board"
 msgstr "从 GitHub Project 看板导入"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a GitLab project, group or board"
-msgstr ""
+msgstr "从 GitLab 项目、群组或看板导入"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -462,6 +469,11 @@ msgstr "议题"
 msgid "Issues imported"
 msgstr "议题已导入"
 
+#: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
+msgid "Item actions"
+msgstr "项操作"
+
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 msgid "Keep editing"
 msgstr "继续编辑"
@@ -496,19 +508,21 @@ msgid "Medium"
 msgstr "中"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
-msgid "Move {selectedCount} to Board"
-msgstr "将 {selectedCount} 项移至看板"
+#, fuzzy
+msgid "Move {selectedCount, plural, one {# item} other {# items}} to"
+msgstr "{selectedCount, plural, other {将 # 项移动到}}"
 
 #: src/renderer/components/backlog/PromotePopover.tsx
 msgid "Move to"
 msgstr "移至"
 
-#: src/renderer/components/backlog/view/BacklogRowActions.tsx
-msgid "Move to board"
-msgstr "移至看板"
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
+#, fuzzy
+msgctxt "menu header"
+msgid "Move to"
+msgstr "移动到"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
-#: src/renderer/components/backlog/BacklogContextMenu.tsx
 msgid "Move to Board"
 msgstr "移至看板"
 
@@ -550,8 +564,9 @@ msgid "Open"
 msgstr "打开"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Open access tokens on {shownServer}"
-msgstr ""
+msgstr "打开 {shownServer} 上的访问令牌"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
@@ -571,13 +586,15 @@ msgid "Open the page again"
 msgstr "重新打开页面"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Open your GitLab access tokens"
-msgstr ""
+msgstr "打开你的 GitLab 访问令牌"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste a GitLab project, group or board link."
-msgstr ""
+msgstr "粘贴 GitLab 项目、群组或看板链接。"
 
 #: src/renderer/components/backlog/import-providers.tsx
 #, fuzzy
@@ -591,8 +608,9 @@ msgid "Paste a search link so the site is known."
 msgstr "请粘贴搜索链接，以便识别所属站点。"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Paste a token from your GitLab settings"
-msgstr ""
+msgstr "粘贴 GitLab 设置中的令牌"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
@@ -655,6 +673,11 @@ msgctxt "priority"
 msgid "Priority {number}"
 msgstr "优先级 {number}"
 
+#: src/renderer/components/backlog/PriorityBadge.tsx
+#, fuzzy
+msgid "Priority: {label}"
+msgstr "优先级：{label}"
+
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"
 msgid "Project"
@@ -689,8 +712,9 @@ msgid "Select all"
 msgstr "全选"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Server"
-msgstr ""
+msgstr "服务器"
 
 #: src/renderer/components/backlog/connect/ConnectParts.tsx
 #, fuzzy
@@ -702,8 +726,9 @@ msgid "Show imported items"
 msgstr "显示已导入条目"
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Sign in with GitLab"
-msgstr ""
+msgstr "使用 GitLab 登录"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 msgctxt "import filter"
@@ -731,8 +756,9 @@ msgstr "团队"
 
 #. read_api is GitLab's own name for the scope. Keep it as written.
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "The name and <0>read_api</0> scope are filled in. Create it, then copy it."
-msgstr ""
+msgstr "名称和 <0>read_api</0> 范围已填好。创建令牌后将其复制。"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
@@ -762,6 +788,12 @@ msgctxt "import filter"
 msgid "Type"
 msgstr "类型"
 
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
+msgctxt "column header"
+msgid "Updated"
+msgstr "更新时间"
+
 #: src/renderer/components/backlog/priority-labels.ts
 msgctxt "priority"
 msgid "Urgent"
@@ -772,8 +804,9 @@ msgid "Use a personal access token"
 msgstr ""
 
 #: src/renderer/components/backlog/gitlab/GitLabConnectDialog.tsx
+#, fuzzy
 msgid "Waiting for GitLab in your browser"
-msgstr ""
+msgstr "正在浏览器中等待 GitLab"
 
 #: src/renderer/components/backlog/import-providers.tsx
 msgctxt "import source type"

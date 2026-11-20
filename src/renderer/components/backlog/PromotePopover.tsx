@@ -13,10 +13,9 @@ interface PromotePopoverProps {
 
 export function PromotePopover({ triggerRef, swimlanes, onSelect, onClose }: PromotePopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  // Portal + fixed: this renders into a DataTable `<td>`, which is
-  // `overflow-hidden`, so an in-flow absolute popover was clipped to a single
-  // ~40px table row. The bulk-toolbar mount is clipped by the backlog content
-  // well for the same reason.
+  // Portal + fixed: the selection toolbar mounts this inside the backlog content
+  // well, which clips. It once mounted in a DataTable `<td>` too, which is
+  // `overflow-hidden` and clipped an in-flow popover to one ~40px row.
   const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, true, {
     mode: 'dropdown',
     strategy: 'fixed',

@@ -29,6 +29,16 @@ const amountColumn = { key: 'amount', align: 'right' as const, sortValue: (row: 
 const unsortableColumn = { key: 'id' };
 const columns = [nameColumn, amountColumn, unsortableColumn];
 
+describe('a column\'s own first-click direction', () => {
+  // The backlog's Updated column is left-aligned but opens newest first.
+  it('initialSortDirection wins over the align-based default', () => {
+    const updatedColumn = { key: 'updated', initialSortDirection: 'desc' as const, sortValue: (row: Row) => row.name };
+    expect(computeNextSorts([], updatedColumn, false)).toEqual([{ key: 'updated', direction: 'desc' }]);
+    expect(computeNextSorts([{ key: 'updated', direction: 'desc' }], updatedColumn, false)).toEqual([{ key: 'updated', direction: 'asc' }]);
+    expect(computeNextSorts([{ key: 'updated', direction: 'asc' }], updatedColumn, false)).toEqual([]);
+  });
+});
+
 describe('sortStateOf (a header\'s aria-sort)', () => {
   it('names the primary sort\'s direction and leaves the attribute off otherwise', () => {
     expect(sortStateOf('asc')).toBe('ascending');
