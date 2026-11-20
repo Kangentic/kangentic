@@ -719,13 +719,13 @@ test.describe('Task Detail description peek', () => {
     await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
 
-    // Toggle it open: the panel renders the priority pill ("High"), not any
-    // description text, since task.description is empty. Scoped to the
-    // description-peek side panel so the board card's own "High" pill behind
-    // the dialog cannot satisfy it.
+    // Toggle it open: the panel renders the priority pill (a level meter named
+    // "Priority: High"), not any description text, since task.description is
+    // empty. Scoped to the description-peek side panel so the board card's own
+    // pill behind the dialog cannot satisfy it.
     const descriptionContainer = dialog.locator('[data-testid="task-detail-description-panel"]');
     await page.locator('text=Show description').click();
-    await expect(descriptionContainer.getByText('High', { exact: true })).toBeVisible({ timeout: 8000 });
+    await expect(descriptionContainer.getByRole('img', { name: 'Priority: High', exact: true })).toBeVisible({ timeout: 8000 });
 
     // Close the dialog (active session -> Control+Shift+W, not Escape).
     await page.keyboard.press('Control+Shift+W');
