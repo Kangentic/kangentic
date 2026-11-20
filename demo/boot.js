@@ -175,11 +175,10 @@
   var postedErrors = [];
 
   // refuse and refuseWithFixedLine are the only writers of `errors` and `postedErrors`, so the two
-  // stay line for line. Neither picks between its arguments: text that can name a session goes
-  // only to refuseWithFixedLine, which never writes it to `postedErrors`.
+  // stay line for line.
 
   /**
-   * Refuse the frame with text the host may read whole: the card, the console and the message
+   * Refuse the frame with text the host may read whole. The card, the console and the message
    * posted to the host all carry it. Never pass it text that can name a session. Returns the text.
    */
   function refuse(text) {
