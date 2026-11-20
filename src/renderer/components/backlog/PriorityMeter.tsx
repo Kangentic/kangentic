@@ -47,7 +47,7 @@ interface PriorityMeterProps {
 
 /**
  * The priority level meter, drawn from spans rather than an inline SVG
- * (ui-conventions.md). Decorative: the pill around it carries the level's name.
+ * (ui-conventions.md). Decorative: the `PriorityBadge` around it carries the level's name.
  */
 export const PriorityMeter = React.memo(function PriorityMeter({ level, levelCount, color }: PriorityMeterProps) {
   const bars = priorityMeterBars(level, levelCount);

@@ -492,7 +492,7 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }:
   // The rule above the footer closes what sits over it, and the agent's output
   // well already closes itself with its own edge. Labels and a plain
   // description (a paused card, or the card preview turned off) keep it, or
-  // the description's grey runs straight into the footer's. A priority pill is
+  // the description's grey runs straight into the footer's. A priority meter is
   // in the labels' row, so it keeps the rule as a label does.
   const footerDivider = !(view.shownTrail && view.trailMode && !taskHasPills(task.priority ?? 0, view.taskLabels));
   return (
