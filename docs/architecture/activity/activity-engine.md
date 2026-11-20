@@ -371,11 +371,17 @@ The heartbeat's `markThinkingSignal` keep-warm - which refreshes `lastSignalAt` 
 
 ## Ctrl+C user-interrupt synthesis (3s)
 
-When the user presses Ctrl+C in a session terminal, the renderer fires the `notifyUserInterrupt` IPC alongside the regular `\x03` write to the PTY. Telemetry arms a 3-second settle timer per session. After the window, if the engine is still in `thinking` AND state is hot (`pendingToolCount > 0` OR `turnActive`), telemetry synthesizes an `Interrupted` event with `detail: 'user-ctrl-c'`. The engine's Interrupted handler clears all counters and commits idle immediately.
+When the user presses Ctrl+C in a session terminal, the renderer fires the `notifyUserInterrupt` IPC alongside the regular `\x03` write to the PTY. Telemetry arms a 3-second settle timer per session, with reason `user-ctrl-c`. After the window, if the engine is still in `thinking` AND state is hot (`pendingToolCount > 0`, or `turnActive` with `subagentDepth` 0, since a live subagent's own Stop settles the turn), telemetry synthesizes an `Interrupted` event whose `detail` is the reason (`user-ctrl-c`, or `idle-prompt` for the path below). A Ctrl+C still synthesizes while a subagent is live, because the user asked for the interrupt. The engine's Interrupted handler clears all counters and commits idle immediately.
 
 If Claude's hooks already recovered the engine state during the settle window, the synthetic is a no-op (state isn't hot). Multiple rapid Ctrl+C presses collapse to one - the existing timer is cleared and re-armed each time.
 
 Without this path, hook-drop scenarios on Ctrl+C have to wait for the 5-minute stuck-pending-tools watchdog to fire.
+
+### The idle prompt arms the same window
+
+Live hooks make the PTY tracker ignore the adapter's `detectIdle` match. An adapter whose idle prompt paints only between turns declares `idlePromptEndsOpenTurn`, and then a match seen while hooks are live arms this same window, with `detail: 'idle-prompt'` (`SessionTelemetry.notifyPtyIdle`). A line the agent's hooks write inside the window drops it (`notifyHookLines`), since a live hook proves the turn is running: a footer can paint just before the next turn's first hook. So does new terminal text after the prompt (`notifyPtyData`), which means the match came from a tool's output rather than the footer. A status line's events do not drop it. A repeated prompt keeps the first deadline, and the window never ends a turn a live subagent holds. A Ctrl+C window is kept through all of these, and keeps its own detail.
+
+Antigravity is the one adapter that declares it. Measured on agy 1.5.13: an Esc during a tool fired neither PostToolUse nor Stop, so the engine held the turn with the tool pending until the next prompt, while the `? for shortcuts` footer was already on screen. An approval dialog keeps the `esc to cancel` footer, so a wait on the user does not match. Pinned by `tests/unit/session-telemetry-idle-prompt-interrupt.test.ts`.
 
 ## Open work
 

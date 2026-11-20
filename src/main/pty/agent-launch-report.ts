@@ -24,6 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import which from 'which';
 import { trackEvent } from '../analytics/analytics';
 import { reportHandledError } from '../analytics/error-reporting';
 import { isReported, markReported, pathFreeCopy } from '../analytics/handled-report';
@@ -32,7 +33,7 @@ import { isAbortError } from '../../shared/abort-utils';
 import { AgentUserSetupError, isUserConfigurationError, type UserSetupFailure } from '../../shared/user-configuration-error';
 import { shellProgramName } from '../../shared/shell-quote';
 import type { LaunchStartPath, OpeningPromptDelivery, SessionIdCreationOutcome, SessionIdLoginEvidence, SessionIdStoreEvidence } from '../../shared/types';
-import { SESSION_ID_CAPTURE_WINDOW_MS, type SessionIdCaptureOutcome } from './lifecycle/session-id-manager';
+import { SESSION_ID_CAPTURE_SOURCES, SESSION_ID_CAPTURE_WINDOW_MS, type SessionIdCaptureOutcome } from './lifecycle/session-id-manager';
 import { cliIdentitySinceDetection, type CliIdentitySinceDetection } from '../agent/shared/cli-identity';
 import { cliVersionTag } from '../agent/shared/cli-version-tag';
 import { WorktreeSetupScriptError } from '../git/worktree-errors';
@@ -638,6 +639,7 @@ interface PendingSessionIdReport {
   tags: Record<string, string>;
   storeEvidence: Promise<SessionIdStoreEvidence>;
   loginEvidence: Promise<SessionIdLoginEvidence>;
+  nodeEvidence: Promise<NodeOnPathEvidence>;
   /** Kept past a removal from the registry: the prompt, run and exit times are read off it at the outcome. */
   session: ManagedSession;
 }
@@ -663,6 +665,48 @@ const SESSION_ID_CREATION_TAGS: ReadonlySet<string> = new Set<SessionIdCreationO
 /** How the launch got the conversation id before it ran, or `unknown`: a value from anywhere else never reaches a tag. */
 function sessionIdCreationTag(outcome: unknown): string {
   return typeof outcome === 'string' && SESSION_ID_CREATION_TAGS.has(outcome) ? outcome : 'unknown';
+}
+
+const CAPTURE_SOURCE_TAGS: ReadonlySet<string> = new Set(SESSION_ID_CAPTURE_SOURCES);
+
+/** The path that delivered a late id, or `unknown`: a value from anywhere else never reaches a tag. */
+function captureSourceTag(source: unknown): string {
+  return typeof source === 'string' && CAPTURE_SOURCE_TAGS.has(source) ? source : 'unknown';
+}
+
+/** Whether a bare `node` resolves where the session's hooks would look for it. */
+type NodeOnPathEvidence = 'yes' | 'no' | 'unknown';
+
+/** The longest the `node` lookup may take before it reads `unknown`. */
+const NODE_EVIDENCE_WAIT_MS = 2_000;
+
+/**
+ * Whether a bare `node` resolves on main's PATH, the one a local session's shell
+ * starts from. The command hooks Kangentic installs start the event bridge as
+ * `node <bridge>` (OpenCode's plugin runs inside OpenCode and needs none), and
+ * agy runs a hook whose program is missing silently (measured on 1.5.13), so
+ * with no node no hook reaches Kangentic and an agent that makes its id at
+ * its first turn gives it only in its output (Sentry DESKTOP-4J: an agy id
+ * minutes late, with no SessionStart seen, on an install whose Codex sessions
+ * missed their ids too). `unknown` for a session whose hooks run somewhere
+ * else, in a WSL distro or on a host, and for a lookup that fails or overruns.
+ * A node that only the shell's profile adds (a PowerShell profile running a
+ * version manager), or one installed after Kangentic started, reads `no` here
+ * and still runs the hooks, so `no` is a hint rather than proof.
+ */
+function nodeOnPathEvidence(session: ManagedSession): Promise<NodeOnPathEvidence> {
+  if (session.hostId || session.cliTarget || parseWslShellSpec(session.shell) !== null) return Promise.resolve('unknown');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'unknown'>((resolve) => {
+    timer = setTimeout(() => resolve('unknown'), NODE_EVIDENCE_WAIT_MS);
+    timer.unref?.();
+  });
+  const lookup = which('node', { nothrow: true }).then(
+    (found): NodeOnPathEvidence => (found ? 'yes' : 'no'),
+    // report-ok: a failed lookup is reported as the fixed value `unknown`.
+    (): NodeOnPathEvidence => 'unknown',
+  );
+  return Promise.race([lookup, timeout]).finally(() => clearTimeout(timer));
 }
 
 /** One of the agent's own checks, bounded, and `unknown` for anything but an answer it may give. */
@@ -713,12 +757,14 @@ export function noteSessionIdCaptureWindowPassed(
       shell: shellLabelOf(session.shell),
       opening_prompt: openingPromptTag(session.openingPrompt),
       create_chat: sessionIdCreationTag(session.sessionIdCreation),
-      hook_seen: observedTag(session.agentHookObservedAt),
+      // A line the agent's hooks wrote, never a stand-in the PTY or the engine pushed.
+      hook_seen: observedTag(session.agentHookLineAt),
       agent_started: observedTag(session.agentStartObservedAt),
       first_output: observedTag(session.firstOutputAt),
     },
     storeEvidence: boundedEvidence(storeCheck, STORE_EVIDENCE_ANSWERS, STORE_EVIDENCE_WAIT_MS),
     loginEvidence: boundedEvidence(loginCheck, LOGIN_EVIDENCE_ANSWERS, LOGIN_EVIDENCE_WAIT_MS),
+    nodeEvidence: nodeOnPathEvidence(session),
     session,
   });
 }
@@ -820,7 +866,7 @@ export function reportSessionIdCaptureOutcome(
   if (outcomeReport.latch.has(pending.agent)) return;
   const session = pending.session;
   const promptSettled = outcome.kind === 'late' ? firstPromptSettled(session) : Promise.resolve();
-  void Promise.all([pending.storeEvidence, pending.loginEvidence, promptSettled]).then(([idStore, login]) => {
+  void Promise.all([pending.storeEvidence, pending.loginEvidence, pending.nodeEvidence, promptSettled]).then(([idStore, login, nodeOnPath]) => {
     if (isShuttingDown()) return;
     if (outcome.kind === 'late' && capturedOnTime(session, outcome.capturedAt)) return;
     if (explainedBySignedOutCli(session, login, idStore)) {
@@ -831,7 +877,11 @@ export function reportSessionIdCaptureOutcome(
     if (outcomeReport.latch.has(pending.agent)) return;
     outcomeReport.latch.add(pending.agent);
     const outcomeTags: Record<string, string> = outcome.kind === 'late'
-      ? { captured_after_s: secondsBucket(outcome.capturedAfterMs), after_prompt_s: afterPromptTag(session, outcome.capturedAt) }
+      ? {
+        captured_after_s: secondsBucket(outcome.capturedAfterMs),
+        after_prompt_s: afterPromptTag(session, outcome.capturedAt),
+        captured_by: captureSourceTag(outcome.capturedBy),
+      }
       : { settled_by: outcome.settledBy, session_status: sessionStatus ?? 'removed', agent_ran_for_s: agentRanForTag(session, outcome) };
     const error = new Error(`${outcomeReport.message} (${pending.agent})`);
     error.name = outcomeReport.errorName;
@@ -849,6 +899,7 @@ export function reportSessionIdCaptureOutcome(
         fs_scan: outcome.filesystemScan,
         id_store: idStore,
         login,
+        node_on_path: nodeOnPath,
       },
       {},
       [outcomeReport.fingerprintHead, pending.agent],

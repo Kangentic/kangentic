@@ -200,8 +200,20 @@ export interface ManagedSession {
    * shell's own "command not found" lands here too.
    */
   agentOutputAt?: number | null;
-  /** Epoch ms of the agent's first hook event, SessionEnd aside (a kill synthesizes one). */
+  /**
+   * Epoch ms of the first event of any kind on the session's event stream,
+   * SessionEnd aside (a kill synthesizes one). Stand-ins count: the PTY
+   * tracker's first-frame Prompt and the engine's watchdog idles, which is
+   * right for `hasAgentRunEvidence` (a drawn frame is the agent running) and
+   * wrong for asking whether a hook fired (`agentHookLineAt`).
+   */
   agentHookObservedAt?: number | null;
+  /**
+   * Epoch ms of the first line the agent's own hooks wrote to the session's
+   * events file (`onEventsParsed`). No stand-in reaches it. The session-id
+   * report's `hook_seen` (Sentry DESKTOP-4J's `yes` came from a stand-in).
+   */
+  agentHookLineAt?: number | null;
   /**
    * Epoch ms of the agent's first Prompt event: someone sent the agent a prompt.
    * Never PTY output standing in for one (`PromptReason.PtyActivity`), which a

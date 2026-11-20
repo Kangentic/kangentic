@@ -25,6 +25,7 @@ import { OpenWorkLedger, type OpenWork } from './open-work-ledger';
 import { ConversationSwitchGate } from './conversation-switch-gate';
 import { sessionStartOfLine } from '../agent/shared/session-start-hook';
 import { isContextOccupancyKnown } from '../../shared/context-occupancy';
+import type { SessionIdCaptureSource } from '../pty/lifecycle/session-id-manager';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -117,9 +118,14 @@ interface SessionTelemetryCallbacks {
    * hook, or its output). `conversationMoved` is set when a SessionStart hook
    * moved the live conversation to this id with no status write behind it
    * (`runtime.sessionId.followsSessionStartMoves`), so the listener re-points
-   * what it tails at the new conversation.
+   * what it tails at the new conversation. `source` is the capture path that
+   * delivered the id, which the late-capture report sends.
    */
-  onAgentSessionId?(sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean; inferred?: boolean }): void;
+  onAgentSessionId?(
+    sessionId: string,
+    agentReportedId: string,
+    options: { source: SessionIdCaptureSource; conversationMoved?: boolean; inferred?: boolean },
+  ): void;
   /**
    * A SessionStart hook named the transcript file of the conversation
    * `agentSessionId` (`SessionStartReport.transcriptPath`). Every hook that
@@ -753,7 +759,7 @@ export class SessionTelemetry {
         conversationSwitched = previouslyReportedId !== undefined;
         this.recordReportedId(sessionId, usage.sessionId);
         this.agentSessionIdChecked.add(sessionId);
-        this.callbacks.onAgentSessionId(sessionId, usage.sessionId);
+        this.callbacks.onAgentSessionId(sessionId, usage.sessionId, { source: 'status' });
       }
     } else if (this.callbacks.onAgentSessionId && !this.agentSessionIdChecked.has(sessionId)) {
       // Status write without a session id: keep the legacy "checked on first
@@ -889,7 +895,7 @@ export class SessionTelemetry {
     this.agentSessionIdChecked.add(sessionId);
     // Seed the status channel's change detection (see notifyAgentSessionId).
     this.recordReportedId(sessionId, capturedId);
-    this.callbacks.onAgentSessionId?.(sessionId, capturedId);
+    this.callbacks.onAgentSessionId?.(sessionId, capturedId, { source: 'hook' });
   }
 
   /**
@@ -922,7 +928,7 @@ export class SessionTelemetry {
       if (runtime?.sessionId?.followsSessionStartMoves) {
         if (currentId !== undefined && currentId !== sessionStart.agentSessionId) {
           this.recordReportedId(sessionId, sessionStart.agentSessionId);
-          this.callbacks.onAgentSessionId?.(sessionId, sessionStart.agentSessionId, { conversationMoved: true });
+          this.callbacks.onAgentSessionId?.(sessionId, sessionStart.agentSessionId, { source: 'hook', conversationMoved: true });
         }
         continue;
       }
@@ -1051,17 +1057,18 @@ export class SessionTelemetry {
   }
 
   /**
-   * Notify that an agent session ID was captured from PTY output.
-   * Called by SessionManager when an adapter's
-   * `runtime.sessionId.fromOutput` returns a non-null value.
+   * Notify that an agent session ID was captured from PTY output, the
+   * suspend-time scrollback, or a file the agent wrote (`source`). Called by
+   * SessionManager when an adapter's `runtime.sessionId.fromOutput` or
+   * `fromFilesystem` returns a non-null value.
    */
-  notifyAgentSessionId(sessionId: string, agentReportedId: string): void {
+  notifyAgentSessionId(sessionId: string, agentReportedId: string, source: SessionIdCaptureSource): void {
     if (!this.agentSessionIdChecked.has(sessionId)) {
       this.agentSessionIdChecked.add(sessionId);
       // Seed the status channel's change detection so its first write with
       // this same id does not redundantly re-fire.
       this.recordReportedId(sessionId, agentReportedId);
-      this.callbacks.onAgentSessionId?.(sessionId, agentReportedId);
+      this.callbacks.onAgentSessionId?.(sessionId, agentReportedId, { source });
     }
   }
 
@@ -1073,7 +1080,7 @@ export class SessionTelemetry {
    */
   notifyInferredAgentSessionId(sessionId: string, inferredId: string): void {
     if (this.agentSessionIdChecked.has(sessionId)) return;
-    this.callbacks.onAgentSessionId?.(sessionId, inferredId, { inferred: true });
+    this.callbacks.onAgentSessionId?.(sessionId, inferredId, { source: 'index', inferred: true });
   }
 
   /**
@@ -1188,10 +1195,33 @@ export class SessionTelemetry {
   // ==== PTY data forwarding ====
 
   notifyPtyData(sessionId: string): void {
+    // New text after an idle prompt: the agent is still printing, so the
+    // prompt's text came from somewhere other than its footer.
+    this.userInterrupts.cancelIdlePrompt(sessionId);
     this.ptyTracker.onData(sessionId);
   }
 
+  /**
+   * A batch of lines the agent's own hooks wrote to its events file arrived
+   * (`StatusFileReader.onEventsParsed` with lines). A live hook proves the turn
+   * an idle prompt seemed to end is running, so its settle window is dropped.
+   * A status line's events are not this: a plan-mode toggle proves no turn.
+   */
+  notifyHookLines(sessionId: string): void {
+    this.userInterrupts.cancelIdlePrompt(sessionId);
+  }
+
   notifyPtyIdle(sessionId: string): void {
+    // Live hooks make the tracker ignore the prompt. An agent whose prompt
+    // paints only between turns says a turn is over by drawing it, which an
+    // interrupted turn's hooks never do, so the prompt arms the interrupt
+    // settle window instead (`idlePromptEndsOpenTurn`).
+    if (this.ptyTracker.isSuppressed(sessionId)) {
+      if (this.sessionParsers.get(sessionId)?.runtime?.idlePromptEndsOpenTurn) {
+        this.userInterrupts.notify(sessionId, 'idle-prompt');
+      }
+      return;
+    }
     this.ptyTracker.onIdleDetected(sessionId);
   }
 

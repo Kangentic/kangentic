@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Antigravity
-description: Google's Antigravity CLI (agy), which tokenizes its own hook commands so paths are unquoted and .agents-relative, a copied agy-event-bridge.cjs, MCP as a workspace plugin, per-cwd trustedWorkspaces, a per-session status line through --settings, SessionStart and every-tool PreToolUse hooks that answer allow, and brain transcript.jsonl history.
+description: Google's Antigravity CLI (agy), whose hook commands take unquoted .agents-relative paths, a copied agy-event-bridge.cjs, MCP as a workspace plugin, per-cwd trustedWorkspaces, a per-session status line through --settings, SessionStart and every-tool PreToolUse hooks measured on 1.5.13, and brain transcript.jsonl history.
 tags: [agents, adapter, antigravity]
 sources:
   - resource: src/main/agent/adapters/antigravity/antigravity-adapter.ts
@@ -21,7 +21,7 @@ sources:
 
 Antigravity CLI (`agy`, https://antigravity.google/docs/cli/getting-started) is Google's terminal TUI coding agent, Gemini-family models by default with optional Claude and open-source backends. It shares the `~/.gemini` home directory with the Gemini CLI but keeps everything of its own under the `~/.gemini/antigravity-cli/` subtree, with its own trust store, hook schema, and MCP config format - hence a sibling adapter rather than a Gemini variant.
 
-The adapter was first verified against a real agy 1.1.13 install (2026-08-16). A later pass (2026-11-03) built more of it from agy's own documentation and the 1.4.12 `--help`, without a signed-in agy to run it against. Those parts are listed in [Built from documentation](#built-from-documentation), each with its source.
+The adapter was first verified against a real agy 1.1.13 install (2026-08-16). A later pass (2026-11-03) built more of it from agy's own documentation and the 1.4.12 `--help`, without a signed-in agy to run it against. Those parts are listed in [Built from documentation](#built-from-documentation), each with its source. The hooks were run again on agy 1.5.13 (2026-11-20, Sentry DESKTOP-4J): see [Hooks on 1.5.13](#hooks-on-1513).
 
 ## CLI Detection
 
@@ -71,10 +71,10 @@ agy has a lifecycle hook system (https://antigravity.google/docs/hooks): six eve
 | agy event | Kangentic event | Notes |
 |-----------|-----------------|-------|
 | `SessionStart` | `session_start` (log-only) | Fires once when a NEW conversation starts, before the first model call. The bridge captures its payload as `hookContext`, so the conversation id is known before the first turn. |
-| `PreInvocation` | `prompt` | The turn-initiating signal, fired before every model call. Carries `captureHookContext`, since a `--conversation` resume fires no SessionStart. |
-| `PreToolUse` (matcher `*`) | `tool_start` | Every tool, with its name at `toolCall.name` and its primary argument from `toolCall.args`. For `ask_question` alone it also appends a question wait. Replies `{"decision":"allow"}`. Not wired for an agy in a WSL distro. |
+| `PreInvocation` | `prompt` | The turn-initiating signal, fired before every model call. Captures `conversationId` alone (`captureHookContextFields`), since a `--conversation` resume fires no SessionStart (measured on 1.5.13). The whole payload would put the user's prompt (`lastUserInput`) in the events file on every turn. |
+| `PreToolUse` (matcher `*`) | `tool_start` | Every tool, with its name at `toolCall.name` and its primary argument from `toolCall.args` (`TargetFile`, `CommandLine`, `DirectoryPath`, `AbsolutePath`, `Path`, `Query`, the first present). For `ask_question` alone it also appends a question wait. Replies `{"decision":"allow"}`. Not wired for an agy in a WSL distro. |
 | `PostToolUse` (matcher `*`) | `tool_end` | Same name and detail directives as PreToolUse. |
-| `Stop` | `idle` | When the execution loop terminates; the payload carries `fullyIdle`. |
+| `Stop` | `idle` | When the execution loop terminates; the payload carries `fullyIdle` and `terminationReason`. |
 | `PostInvocation` | (not wired) | Fires with PreInvocation's cadence and carries nothing Stop and Prompt do not. |
 
 **The PreToolUse reply.** The hooks reference makes `decision` required, and agy treats a response without one as a DENY (observed on 1.1.13: a `{}` response put the model in a tool-denied retry loop). So the entry carries `replyJson({ decision: 'allow' })`, the one directive that makes the event bridge write to stdout (see [Bridge scripts](bridge-scripts.md#event-bridgejs)). `allow` "proceed[s], deferring to the next hook or default policy". A probe on agy 1.3.4 in a `/preview` showed it: a PreToolUse hook answering `allow` for every tool left both the question dialog ("Question 1/1: Which color?") and the command dialog ("Run this command?") on screen. Its payload names the tool at `toolCall.name` with the questions in `toolCall.args.questions` (`tests/fixtures/antigravity-hooks/`). Kangentic's question entry was then run live: the card showed the bubble while the dialog stayed up, and the answer fired `PostToolUse` for `ask_question` and a `PreInvocation`, which cleared it.
@@ -83,9 +83,24 @@ The every-tool entry carries two costs the question-only one did not. A handler 
 
 Approvals come from the status line, not a hook. PreToolUse fires for every tool, and agy's own policy decides whether a dialog follows, so the hook cannot tell a tool that asks from one that just runs. The status payload's `tool_confirmation_pending` can: see [Live telemetry](#live-telemetry). A distro's agy (WSL) gets no PreToolUse entry at all: its hook transport carries no stdout reply, and an entry without one would deny every tool. It keeps SessionStart, PreInvocation, PostToolUse and Stop.
 
-Two agy quirks shape the wiring. First, agy tokenizes hook commands on whitespace with quote characters kept literal, so no command token may be quoted or contain a space: every path is emitted `.agents`-relative (hooks run with cwd = the directory containing hooks.json) and the event-bridge is copied to `<cwd>/.kangentic/agy-event-bridge.cjs` on each spawn whose copy differs from the app's bridge (`.cjs` so a `"type": "module"` in the user's package.json cannot make node parse the CommonJS bridge as ESM). Second, hooks do NOT fire in `-p` print mode, so activity is `hooks_and_pty`: hook events are primary, and the PTY silence timer plus a `detectIdle` match on the idle footer (`? for shortcuts`; the running footer shows `esc to cancel` instead) cover print-mode spawns and any workspace where hook wiring was skipped.
+Two agy quirks shape the wiring. First, agy before 1.5.8 tokenizes hook commands on whitespace with quote characters kept literal, so no command token may be quoted or contain a space. From 1.5.8 agy on Windows hands the command to `cmd.exe` as written (CHANGELOG 1.5.8), and the same unquoted tokens still run there (measured on 1.5.13), so the rule holds for every version: every path is emitted `.agents`-relative (hooks run with cwd = the directory containing hooks.json) and the event-bridge is copied to `<cwd>/.kangentic/agy-event-bridge.cjs` on each spawn whose copy differs from the app's bridge (`.cjs` so a `"type": "module"` in the user's package.json cannot make node parse the CommonJS bridge as ESM). Second, hooks do NOT fire in `-p` print mode, so activity is `hooks_and_pty`: hook events are primary, and the PTY silence timer plus a `detectIdle` match on the idle footer (`? for shortcuts`; the running footer shows `esc to cancel` instead) cover print-mode spawns and any workspace where hook wiring was skipped.
 
 Session ids are captured two ways: `fromHook` reads `conversationId` (present in every hook payload, camelCase protojson) from SessionStart or PreInvocation, and `fromOutput` matches the graceful-shutdown summary (`agy --conversation=<uuid>`) plus print-mode JSON (`"conversation_id"`). The status line's `conversation_id` is deliberately not a third (see [Live telemetry](#live-telemetry)). There is no `fromFilesystem` capture: `cache/last_conversations.json` is written only at CLI exit, after the spawn-time polling window has closed.
+
+### Hooks on 1.5.13
+
+Run on 2026-11-20 from a board start in a `/preview`, with an opening prompt of about 2,400 characters on the command line, after Sentry DESKTOP-4J reported a 1.5.13 conversation id captured minutes late. A second named hook beside `kangentic-events` dumped each payload whole; the scrubbed copies are `tests/fixtures/antigravity-hooks/agy-1.5.13-*.json`.
+
+- **All six events fire:** SessionStart (within a second of the spawn), PreInvocation, PreToolUse and PostToolUse for each tool, PostInvocation, and Stop at the turn's end.
+- **An interrupted turn fires no turn end.** An Esc during a tool fired neither PostToolUse nor Stop, and the engine held the turn, the tool pending, until the next prompt. The `? for shortcuts` footer painted at once, and an approval dialog keeps `esc to cancel`, so the adapter declares `idlePromptEndsOpenTurn`: the footer arms the interrupt settle window, and a turn the hooks still hold 3 s later ends as interrupted.
+- **A resume fires no SessionStart.** The same task, suspended and moved back, started `agy --conversation <id>` with both hook entries wired. No SessionStart came, and its first hook was the next turn's PreInvocation. The hooks reference says SessionStart fires when a new conversation starts, and says nothing of a resume.
+- **Every payload names the conversation second.** `artifactDirectoryPath`, then `conversationId`, then `cwd` and `hookEventName` (CHANGELOG 1.5.4), then `lastUserInput`, the whole latest prompt (CHANGELOG 1.4.7). The keys are in alphabetical order.
+- **The id survives the bridge's cut.** The bridge keeps the first 2048 characters of a SessionStart payload, and a long prompt pushes the end past that, so the captured JSON no longer parses. `conversationId` sits about 150 characters in, and `fromHook`'s fallback scan reads it. The id was on the session's row from SessionStart. PreInvocation now captures the id alone, so its events carry no prompt text.
+- **`read_file` names its file `Path`**, which the tool-start detail now reads.
+- **The every-tool PreToolUse ran.** Its `allow` reply let `read_file` run with no dialog, and `run_command` still waited for approval in accept-edits mode.
+- **A missing program fails silently.** A named hook whose command named a program that does not exist showed nothing in the TUI, and Kangentic's hooks beside it still ran and gave the id.
+
+So on a machine where the hooks run, this version gives the id at once. A capture minutes late means no hook reached Kangentic, and the id came only from the shutdown summary when the session was suspended. One way to get there: every hook command starts a bare `node`, so a machine with no node on PATH runs none of them, and agy says nothing. The session-id report says which path delivered a late id (`captured_by`), whether a hook line arrived by the window (`hook_seen`) and whether main found `node` on PATH (`node_on_path`, see [Error reporting](../../telemetry/error-reporting.md)).
 
 ## Live telemetry
 
@@ -157,8 +172,6 @@ Built on 2026-11-03 from agy's documentation and its 1.4.12 `--help`. None of th
 |----------|--------|
 | Quota buckets as rate-limit windows, the approval wait from `tool_confirmation_pending`, and plan mode from `cycle_mode` | statusline doc |
 | The per-session status line through `--settings`, and `parseStatus` | statusline doc; `agy --help` (1.4.12) for `--settings`, which no changelog entry dates. Whether the file merges over the saved settings is undocumented (see [Live telemetry](#live-telemetry)) |
-| `SessionStart` -> `session_start` | hooks reference (no changelog entry dates the event) |
-| PreToolUse for every tool -> `tool_start` | hooks reference; the allow reply measured on 1.3.4 for the question tool |
 | `--mode auto`, and `dontAsk` -> `--mode plan` | modes doc; CHANGELOG 1.3.5 and 1.4.4; `agy --help` (1.4.12) |
 | Effort levels from the `--effort` help line (`xhigh`, `max`) | `agy --help` (1.4.12); `/effort` doc |
 | `getInjectionSequence` (`/model`, `/effort`) | `/effort` doc; CHANGELOG 1.1.5 and 1.1.22 |

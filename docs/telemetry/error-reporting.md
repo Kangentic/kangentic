@@ -519,8 +519,12 @@ in one Sentry org, one triage surface.
     DESKTOP-36 reported there and could not tell late from never). An id that arrives later sends
     `AgentSessionIdCapturedLateError` with `captured_after_s` (a seconds bucket, counted to when
     Kangentic noticed the id, so an upper bound: an id the suspend-time scrollback scan finds
-    counts at the suspend) and `after_prompt_s` (the same buckets from the agent's first prompt
-    to the capture, or `none` when no prompt was seen). One late capture sends nothing: a session
+    counts at the suspend), `after_prompt_s` (the same buckets from the agent's first prompt
+    to the capture, or `none` when no prompt was seen) and `captured_by` (the path that finally
+    delivered the id: `hook`, `status`, `output` for the live PTY stream, `scrollback` for the
+    suspend-time scan, `filesystem`, `index` for a host's session index, or `unknown`). Sentry
+    DESKTOP-4J, an Antigravity id minutes late, could not say whether the id came from a hook
+    that fired late or only from the shutdown summary at a suspend. One late capture sends nothing: a session
     started with no opening prompt (`opening_prompt` `none`) whose first prompt came no more than
     30 s before the id, or within 2 s after it. Such an agent may have no conversation, and so no
     id, until someone types, so the capture window is counted from the prompt (Sentry DESKTOP-4C
@@ -557,7 +561,9 @@ in one Sentry org, one triage surface.
     `createSessionId`; `aborted` when the spawn stopped waiting for it; `not_asked` for a CLI that
     takes Kangentic's id, one that cannot create one, a run that reports its own, and a resume;
     `unknown` where the spawn did not say), `hook_seen`, `agent_started` and `first_output`
-    (`yes`, `no`, at the window), `prompt_seen` (`yes`, `no`: whether the agent's own Prompt event
+    (`yes`, `no`, at the window; `hook_seen` is a line the agent's own hooks wrote to the
+    session's events file, and no longer counts PTY output or the engine's watchdog standing in
+    for an event, which set it for DESKTOP-4J), `prompt_seen` (`yes`, `no`: whether the agent's own Prompt event
     arrived, read when the outcome is known, so a prompt typed after the window counts; with no
     opening prompt and none seen, the agent may never have made a conversation to resume; PTY
     output standing in for a prompt, which the tracker pushes for a session's first frame, does
@@ -566,7 +572,13 @@ in one Sentry org, one triage surface.
     `found`, `empty`, `dropped` for a match another session could own, `failed`), `id_store`
     (`present`, `absent`, `unknown`: whether the agent's own store exists, from the adapter's
     `sessionId.storeEvidence`, today's or yesterday's rollout folder for Codex and `opencode.db`
-    for OpenCode) and `login` (`signed_in`, `signed_out`, `unknown`: whether the CLI holds a
+    for OpenCode), `node_on_path` (`yes`, `no`, `unknown`: whether a bare `node` resolves on
+    main's PATH, the one a local session's shell starts from, asked at the window. The command
+    hooks Kangentic installs start the event bridge as `node`, so `no` says main found none for
+    them; OpenCode's hooks run as a plugin inside OpenCode and need none. A session in a WSL
+    distro or on a host, a failed lookup and one past 2 s read `unknown`. A node that only a shell
+    profile adds reads `no` though the hooks still find it, since a PowerShell session loads its
+    profile, and so does one installed after Kangentic started, so `no` is a hint) and `login` (`signed_in`, `signed_out`, `unknown`: whether the CLI holds a
     login, from the adapter's `sessionId.loginEvidence`, asked at the window about the home the
     session ran in, its account's folder or the agent's own. Codex reads `auth.json` there and
     runs `codex login status` only when there is none; every other agent, a CLI in a distro or on

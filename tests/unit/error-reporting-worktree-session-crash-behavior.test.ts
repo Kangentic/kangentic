@@ -38,6 +38,9 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: hoisted.reportHandledError,
 }));
 
+// The session-id report asks whether `node` is on PATH; answer at once, as a machine with node would.
+vi.mock('which', () => ({ default: Object.assign(async () => '/usr/local/bin/node', { sync: () => '/usr/local/bin/node' }) }));
+
 // Worktree removal: real git is replaced by a spawn that fails the `worktree remove`.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -245,7 +248,7 @@ describe('session id not captured', () => {
     /** An id arriving, as SessionManager's `onAgentSessionId` takes it. */
     const capture = (id: string): void => {
       state.agentSessionId = id;
-      manager.noteCaptured('session-1');
+      manager.noteCaptured('session-1', 'hook');
     };
     /** The agent's first Prompt event, as SessionManager's `onEvent` stamps it on the row. */
     const prompt = (): void => {
@@ -307,6 +310,7 @@ describe('session id not captured', () => {
       fs_scan: 'none',
       id_store: 'absent',
       login: 'unknown',
+      node_on_path: 'yes',
     });
   });
 

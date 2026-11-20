@@ -29,19 +29,32 @@ export interface UserInterruptCoordinatorOptions {
 }
 
 /**
- * Owns the per-session settle timers for user-initiated interrupts
- * (Ctrl+C in the terminal). Self-contained: takes the engine + a
- * pushEvent pipe, exposes `notify` and `dispose`.
+ * Why a settle window was armed, sent as the synthetic Interrupted event's
+ * `detail`. `user-ctrl-c` is a Ctrl+C in the terminal; `idle-prompt` is an
+ * idle prompt drawn while the hooks still hold a turn open
+ * (`AdapterRuntimeStrategy.idlePromptEndsOpenTurn`).
+ */
+export type UserInterruptReason = 'user-ctrl-c' | 'idle-prompt';
+
+/**
+ * Owns the per-session settle timers for interrupts the hooks never report:
+ * a Ctrl+C in the terminal, or an idle prompt that says a turn ended.
+ * Self-contained: takes the engine + a pushEvent pipe, exposes `notify`,
+ * `cancelIdlePrompt` and `dispose`.
  *
  * Multiple Ctrl+C presses within the window collapse to one - the
  * existing settle timer is cleared and re-armed each time, since the
- * user clearly still wants to interrupt.
+ * user clearly still wants to interrupt. A repeated idle prompt keeps the
+ * first deadline, since the footer repaints. A Ctrl+C keeps its reason over a
+ * later idle prompt.
  */
 export class UserInterruptCoordinator {
   private readonly engine: ActivityEngine;
   private readonly pushEvent: (sessionId: string, event: SessionEvent) => void;
   private readonly settleMs: number;
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  /** Why each armed window was armed, carried on the synthetic event's `detail`. */
+  private readonly reasons = new Map<string, UserInterruptReason>();
   private disposed = false;
 
   constructor(options: UserInterruptCoordinatorOptions) {
@@ -51,20 +64,45 @@ export class UserInterruptCoordinator {
   }
 
   /**
-   * Called when the user presses Ctrl+C in `sessionId`'s terminal.
-   * Schedules a settle window before checking if the engine is still
-   * stuck and synthesizing an Interrupted event if so.
+   * Called when the user presses Ctrl+C in `sessionId`'s terminal, or
+   * (`reason` `idle-prompt`) when an agent whose idle prompt paints only
+   * between turns drew it while its hooks still hold a turn open
+   * (`AdapterRuntimeStrategy.idlePromptEndsOpenTurn`). Schedules a settle
+   * window before checking if the engine is still stuck and synthesizing an
+   * Interrupted event if so. A Ctrl+C keeps its reason over a later prompt,
+   * and an idle prompt never moves a deadline already armed: a footer that
+   * repaints would otherwise hold the window off.
    */
-  notify(sessionId: string): void {
+  notify(sessionId: string, reason: UserInterruptReason = 'user-ctrl-c'): void {
     if (this.disposed) return;
     const existing = this.timers.get(sessionId);
+    if (existing && reason === 'idle-prompt') return;
     if (existing) clearTimeout(existing);
+    if (this.reasons.get(sessionId) !== 'user-ctrl-c') this.reasons.set(sessionId, reason);
     const timer = setTimeout(() => {
       this.timers.delete(sessionId);
-      this.fireIfStillHot(sessionId);
+      const firedReason = this.reasons.get(sessionId) ?? reason;
+      this.reasons.delete(sessionId);
+      this.fireIfStillHot(sessionId, firedReason);
     }, this.settleMs);
     timer.unref();
     this.timers.set(sessionId, timer);
+  }
+
+  /**
+   * The agent showed it is still working: one of its hooks wrote a line, or
+   * its terminal printed new text after the prompt. A window an idle prompt
+   * armed is dropped, since the turn the prompt seemed to end is running (a
+   * footer painted just before the next turn's first hook, or the footer's
+   * text inside a tool's output). A Ctrl+C window stays: the user asked for
+   * the interrupt.
+   */
+  cancelIdlePrompt(sessionId: string): void {
+    if (this.reasons.get(sessionId) !== 'idle-prompt') return;
+    const timer = this.timers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(sessionId);
+    this.reasons.delete(sessionId);
   }
 
   /** Idempotent. Clears all pending timers. */
@@ -73,9 +111,10 @@ export class UserInterruptCoordinator {
     this.disposed = true;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    this.reasons.clear();
   }
 
-  private fireIfStillHot(sessionId: string): void {
+  private fireIfStillHot(sessionId: string, reason: UserInterruptReason): void {
     const state = this.engine.getState(sessionId);
     if (!state) return;
     if (state.activity !== 'thinking') return;
@@ -92,13 +131,17 @@ export class UserInterruptCoordinator {
     const stillHot =
       state.pendingToolCount > 0 || (state.turnActive && state.subagentDepth === 0);
     if (!stillHot) return;
+    // A Ctrl+C ends a subagent's call too, because the user asked. An idle
+    // prompt is only inferred, and a live subagent holds its parent's tool
+    // open while it runs, so the prompt never ends a turn a subagent holds.
+    if (reason === 'idle-prompt' && state.subagentDepth > 0) return;
     // Synthesize an Interrupted event so the engine's normal
     // bypass path runs. This clears all counters and emits idle
     // immediately (no stability window).
     const syntheticEvent: SessionEvent = {
       ts: Date.now(),
       type: EventType.Interrupted,
-      detail: 'user-ctrl-c',
+      detail: reason,
     };
     this.pushEvent(sessionId, syntheticEvent);
     this.engine.processEvent(sessionId, syntheticEvent);

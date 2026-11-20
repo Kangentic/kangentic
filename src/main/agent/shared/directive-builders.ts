@@ -67,9 +67,10 @@ export function extractDetailPath(parents: string[], fields: string[]): string {
  * `session_start` events; this directive is for a session no once-per-session
  * event reaches, so the session-id capture path
  * (`SessionTelemetry.captureHookSessionIds` -> `runtime.sessionId.fromHook`)
- * still gets a payload to parse. Antigravity's `SessionStart` fires only for a
- * NEW conversation, so a `--conversation` resume's first payload is its
- * per-invocation `PreInvocation`, which carries this directive.
+ * still gets a payload to parse. No adapter writes it now: Antigravity's
+ * `PreInvocation` carried it until agy 1.4.7 put the whole prompt in every
+ * payload, and it moved to `captureHookContextFields`. The bridge keeps the
+ * kind for a hooks file an earlier Kangentic wrote.
  * `captureHookSessionIds` is type-agnostic and one-shot, so repeated captures
  * cost only JSONL bytes, never a re-parse. Unknown to older bridge copies ->
  * logged no-op, and the adapter's other capture paths (`fromOutput`) still

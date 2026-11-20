@@ -10,6 +10,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const reportHandledError = vi.hoisted(() => vi.fn());
 const shuttingDown = vi.hoisted(() => ({ value: false }));
 const existsSync = vi.hoisted(() => vi.fn(() => true));
+// The session-id report's `node` lookup, which would otherwise read this machine's PATH.
+const nodeLookup = vi.hoisted(() => vi.fn(async (): Promise<string | null> => 'C:\\Users\\dev\\node\\node.exe'));
+vi.mock('which', () => ({ default: Object.assign(nodeLookup, { sync: () => null }) }));
 
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError }));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
@@ -48,7 +51,8 @@ import os from 'node:os';
 import path from 'node:path';
 import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
-import type { AgentParser, SessionIdLoginEvidence, SessionIdStoreEvidence } from '../../src/shared/types';
+import { SESSION_ID_CAPTURE_SOURCES } from '../../src/main/pty/lifecycle/session-id-manager';
+import type { AgentParser, SessionIdLoginEvidence, SessionIdStoreEvidence, StoredCliTarget } from '../../src/shared/types';
 
 const STARTED_AT = '2026-11-04T12:00:00.000Z';
 const STARTED_AT_MS = Date.parse(STARTED_AT);
@@ -82,6 +86,8 @@ function session(overrides: Partial<ManagedSession> = {}): ManagedSession {
 beforeEach(() => {
   reportHandledError.mockClear();
   existsSync.mockReturnValue(true);
+  nodeLookup.mockReset();
+  nodeLookup.mockResolvedValue('C:\\Users\\dev\\node\\node.exe');
   shuttingDown.value = false;
   resetLaunchReports();
   resetDetectedCliIdentities();
@@ -707,7 +713,7 @@ describe('reportPtyPortFailure', () => {
 
 describe('the session id capture reports', () => {
   const never = { kind: 'never', settledBy: 'removed', settledAt: STARTED_AT_MS + 90_000, filesystemScan: 'empty' } as const;
-  const late = { kind: 'late', capturedAfterMs: 42_000, capturedAt: STARTED_AT_MS + 42_000, filesystemScan: 'pending' } as const;
+  const late = { kind: 'late', capturedAfterMs: 42_000, capturedAt: STARTED_AT_MS + 42_000, capturedBy: 'scrollback', filesystemScan: 'pending' } as const;
 
   /** A session past the capture window, then its outcome, and what was sent. */
   async function settle(
@@ -735,6 +741,7 @@ describe('the session id capture reports', () => {
         openingPrompt: 'typed',
         sessionIdCreation: 'not_asked',
         agentHookObservedAt: STARTED_AT_MS + 2_000,
+        agentHookLineAt: STARTED_AT_MS + 2_000,
         promptObservedAt: STARTED_AT_MS + 2_500,
         firstOutputAt: STARTED_AT_MS + 900,
       },
@@ -763,6 +770,7 @@ describe('the session id capture reports', () => {
       fs_scan: 'empty',
       id_store: 'present',
       login: 'unknown',
+      node_on_path: 'yes',
     });
     expect(contexts).toEqual({});
     expect(fingerprint).toEqual(['agent-session-id-not-captured', 'codex']);
@@ -857,10 +865,86 @@ describe('the session id capture reports', () => {
       create_chat: 'unknown',
       prompt_seen: 'no',
       after_prompt_s: 'none',
+      captured_by: 'scrollback',
     });
     expect(eventTags).not.toHaveProperty('settled_by');
     expect(eventTags).not.toHaveProperty('agent_ran_for_s');
     expect(fingerprint).toEqual(['agent-session-id-captured-late', 'opencode']);
+  });
+
+  // Sentry DESKTOP-4J: agy's id came minutes late with `hook_seen=yes`, and that
+  // `yes` came from the PTY tracker's first-frame Prompt, which stamps the event
+  // stream's `agentHookObservedAt` like any hook. So the report could not say
+  // whether a single agy hook had fired, or which path finally gave the id.
+  describe('a late capture says which path delivered it, and whether a real hook fired', () => {
+    it.each(SESSION_ID_CAPTURE_SOURCES)('sends captured_by %s', async (capturedBy) => {
+      await settle({ agentName: 'antigravity' }, { ...late, capturedBy });
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ captured_by: capturedBy });
+    });
+
+    it('sends unknown for a path it does not know, never the value', async () => {
+      await settle({ agentName: 'antigravity' }, { ...late, capturedBy: 'C:\\Users\\dev\\x' as unknown as 'hook' });
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ captured_by: 'unknown' });
+    });
+
+    it('reads hook_seen no when only a stand-in reached the event stream', async () => {
+      await settle(
+        { agentName: 'antigravity', agentHookObservedAt: STARTED_AT_MS + 900, firstOutputAt: STARTED_AT_MS + 900 },
+        late,
+      );
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ hook_seen: 'no', first_output: 'yes', captured_by: 'scrollback' });
+    });
+
+    // Every command hook Kangentic installs starts the bridge as a bare `node`,
+    // so with none on PATH no hook reaches Kangentic and the id comes only from
+    // the output.
+    it('says no node was found on PATH, with no path in the tag', async () => {
+      nodeLookup.mockResolvedValue(null);
+      await settle({ agentName: 'antigravity' }, late);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ node_on_path: 'no', hook_seen: 'no', captured_by: 'scrollback' });
+    });
+
+    it('reads node_on_path unknown for a lookup that fails, with nothing of the error in the tags', async () => {
+      nodeLookup.mockRejectedValue(new Error('EACCES C:\\Users\\dev\\bin'));
+      await settle({ agentName: 'antigravity' }, late);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ node_on_path: 'unknown' });
+      expect(JSON.stringify(reportHandledError.mock.calls[0][1])).not.toContain('Users');
+    });
+
+    it('never asks for node for a session whose hooks run on a host, and reads unknown', async () => {
+      await settle({ agentName: 'antigravity', hostId: 'host-1' }, late);
+      expect(nodeLookup).not.toHaveBeenCalled();
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ node_on_path: 'unknown' });
+    });
+
+    // Hooks that run in a distro or behind an SSH target never use this
+    // computer's PATH, so a lookup here would answer for the wrong machine.
+    it.each([
+      ['a WSL CLI target', { cliTarget: { kind: 'wsl', distro: 'Ubuntu' } as StoredCliTarget }],
+      ['a WSL shell', { shell: 'wsl.exe -d Ubuntu' }],
+    ])('never asks for node for %s, and reads unknown', async (_label, overrides) => {
+      await settle({ agentName: 'antigravity', ...overrides }, late);
+      expect(nodeLookup).not.toHaveBeenCalled();
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ node_on_path: 'unknown' });
+    });
+
+    it('stops waiting on a node lookup that hangs, and reports unknown', async () => {
+      vi.useFakeTimers();
+      try {
+        nodeLookup.mockReturnValue(new Promise(() => undefined));
+        noteSessionIdCaptureWindowPassed(session({ agentName: 'antigravity', resuming: false }), null);
+        reportSessionIdCaptureOutcome('session-1-long-id', late, 'running');
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(reportHandledError.mock.calls[0][1]).toMatchObject({ node_on_path: 'unknown' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('reads hook_seen yes once a line the agent\'s hooks wrote arrived by the window', async () => {
+      await settle({ agentName: 'antigravity', agentHookLineAt: STARTED_AT_MS + 3_000 }, { ...late, capturedBy: 'hook' });
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ hook_seen: 'yes', captured_by: 'hook' });
+    });
   });
 
   // Sentry DESKTOP-4C: a Codex terminal started with no prompt. Its first prompt
@@ -868,7 +952,7 @@ describe('the session id capture reports', () => {
   // against the spawn. An agent may have no conversation until someone types.
   describe('a late capture, counted from the first prompt', () => {
     const PROMPT_AT = STARTED_AT_MS + 100_000;
-    const capturedAt = (at: number) => ({ kind: 'late', capturedAfterMs: at - STARTED_AT_MS, capturedAt: at, filesystemScan: 'empty' } as const);
+    const capturedAt = (at: number) => ({ kind: 'late', capturedAfterMs: at - STARTED_AT_MS, capturedAt: at, capturedBy: 'hook', filesystemScan: 'empty' } as const);
 
     it('sends nothing for a session started with no prompt whose id came soon after its first one, and keeps the agent\'s one late report', async () => {
       const onTime = session({ agentName: 'codex', resuming: false, openingPrompt: 'none' });
@@ -1107,6 +1191,8 @@ describe('the session id capture reports', () => {
   it('does not run the store check for an agent that already spent both kinds, and sends nothing later', async () => {
     await settle({ agentName: 'claude' }, never);
     await settle({ agentName: 'claude' }, late);
+    // settle() returns once any report was sent, which the first one already was.
+    await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(2));
     reportHandledError.mockClear();
 
     const storeCheck = vi.fn(async (): Promise<SessionIdStoreEvidence> => 'present');
