@@ -122,6 +122,27 @@ describe('unwrapPastedContent', () => {
     expect(unwrapPastedContent('<pasted_content id="a1">\nhello\n</pasted_content>')).toBe('hello');
   });
 
+  // A wrapper closes at the FIRST closing tag that carries its own id or none,
+  // so a bare closer ahead of its own-id closer ends it, and the text after
+  // that stays outside the wrapper.
+  it('closes at the earlier of its own-id closer and a closer with no id', () => {
+    const bareFirst = '<pasted_content id="a1">\nx\n</pasted_content>\ny\n</pasted_content id="a1">';
+    expect(unwrapPastedContent(bareFirst)).toBe('x\ny\n</pasted_content id="a1">');
+
+    const ownIdFirst = '<pasted_content id="a1">\nx\n</pasted_content id="a1">\ny\n</pasted_content>';
+    expect(unwrapPastedContent(ownIdFirst)).toBe('x\ny\n</pasted_content>');
+  });
+
+  it('drops only one CRLF inside each end, so a pasted blank line at either end stays', () => {
+    const text = '<pasted_content id="a1">\r\n\r\nhello\r\n\r\n</pasted_content id="a1">';
+    expect(unwrapPastedContent(text)).toBe('\r\nhello\r\n');
+  });
+
+  it('still unwraps a complete paste that follows an opener left unclosed', () => {
+    const text = `see <pasted_content id="a1">\nunclosed\n${wrapped('kept', 'b2')}`;
+    expect(unwrapPastedContent(text)).toBe('see <pasted_content id="a1">\nunclosed\nkept');
+  });
+
   it('leaves an opening tag with no closer as it is', () => {
     const unclosed = 'see <pasted_content id="a1">\nhello';
     expect(unwrapPastedContent(unclosed)).toBe(unclosed);

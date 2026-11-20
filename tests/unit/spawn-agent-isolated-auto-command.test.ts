@@ -1040,6 +1040,12 @@ describe('spawnAgent handoff branch: a column message with a Condition or a Freq
     expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
     expect(turnWaits).toHaveLength(0);
     expect(deps.submitContent).not.toHaveBeenCalled();
+    // Nor does it ride the new agent's opening (#1138), which would skip both
+    // checks just the same. A multi-line message is not a slash command, so it
+    // is the case that would join the opening if the guard were not read first.
+    const resumeArguments = vi.mocked(deps.engine.resumeSuspendedSession).mock.calls[0];
+    expect(resumeArguments[3]).toBeUndefined();
+    expect(resumeArguments[7]).toEqual(expect.objectContaining({ carriedMessageJoinsTemplate: false }));
   });
 
   const UNGUARDED_CASES: Array<{ label: string; guard?: MessageGuard }> = [
