@@ -494,6 +494,12 @@ in one Sentry org, one triage surface.
     sent when it ends, not at the 11 s threshold, because DESKTOP-43 could not tell a late answer
     from none. Its `outcome` tag is `answered` (with `answeredAfterMs`), `host_exited`,
     `no_answer` (no answer within the ping's 15 s budget) or `shutdown` (the app quit first).
+    A beat whose 11 s threshold timer fired more than 60 s late, four times the ping's budget, is
+    voided and sends nothing. The machine slept or main's own loop did not run, so the budget ran
+    out with nothing watching the host (the 0.60.0 DESKTOP-43 event fired 15.7 h late). The
+    wall-clock lateness decides it, not the wake clock, because a wake's overdue timers can run
+    before the `resume` event arrives. A host that stays frozen is still reported by the next
+    beat, whose timer fires on time.
     Nothing sent from the quit path lands. So a `shutdown` stall is written to
     `pty-host-stall-at-quit.json` in the config directory, and the next launch reports it, as
     `abandoned-launches.ts` does. Its `pty_host` context lists the other requests in flight and

@@ -211,8 +211,9 @@ at the Windows timer floor.
   `tests/unit/utility-pty-host-transport.test.ts` pins the fork, init, request timeout (its
   rejection types, the budget a queued reap or Stop gets back on `batch-started`, and the late
   answer of a request that timed out), crash restart, fallback, heartbeat (the stall report's
-  outcome, stderr tail and held step) and shutdown; `tests/unit/event-loop-watchdog.test.ts` pins
-  the watchdog's start in the host's `initialize()`; `tests/unit/headless-frame.test.ts` pins the
+  outcome, stderr tail and held step, and the beat a sleep voids) and shutdown;
+  `tests/unit/event-loop-watchdog.test.ts` pins the watchdog's start in the host's
+  `initialize()`; `tests/unit/headless-frame.test.ts` pins the
   parse and serialize spans and the xterm seam; `tests/unit/verify-unpacked-worker.test.ts` pins the
   packaging (all of `node_modules/node-pty/**` and `.vite/build/pty-host.js` unpacked) and runs the
   afterPack probe's real spawn under this checkout's Electron.
