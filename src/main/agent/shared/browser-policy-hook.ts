@@ -50,6 +50,7 @@ export const BROWSER_POLICY_PROMPT = [
   'Open a browser only when the work needs one, and when it does, use this one.',
   `If no pane is open, call ${BROWSER_POLICY_REPLACEMENT_TOOL} with the URL; you do not need to ask.`,
   'For a large capture, pass saveToFile to kangentic_browser_screenshot, _screenshot_element, _query_dom (page HTML) or _eval, which writes it to a file and returns the path instead of filling your context.',
+  'Copy or publish a screenshot from the filePath it names, inside your working directory, never from the path your client gives the image, which needs approval. With no filePath, use saveToFile.',
 ].join(' ');
 
 /**

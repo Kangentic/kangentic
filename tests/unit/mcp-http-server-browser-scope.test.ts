@@ -327,4 +327,20 @@ describe('startMcpHttpServer - resolveBrowser host wiring (deliverCapture, fetch
     expect(await dependencies.deliverCapture?.(saved)).toMatchObject({ filePath: saved.filePath, location: 'local' });
     expect(await dependencies.fetchDroppedFiles?.(['/tmp/a.png'], path.join(shell, 'drops'))).toBeNull();
   });
+
+  // Task #1136: a screenshot's copy goes to a copies folder inside the saveToFile folder on a
+  // project here, and nowhere on a remote one, whose agent could not open this computer's file. A
+  // folder of its own runs its own prune, so a run of screenshots never prunes a saved file.
+  it('copies a screenshot into a copies folder inside the capture folder for a project here, and never for a remote one', async () => {
+    setRemoteProjectLookup((projectPath) => (projectPath === shell ? { hostId: 'host-1', path: '/home/dev/proj' } : null));
+    const local = await dependenciesFor(path.join(os.tmpdir(), 'kangentic-local-project'));
+    const captureDirectory = local.captureDirectory?.();
+    expect(captureDirectory).toBeDefined();
+    expect(local.captureCopyDirectory?.()).toBe(path.join(captureDirectory ?? '', 'copies'));
+    handle?.close();
+    registerBrowserToolsSpy.mockClear();
+
+    const remote = await dependenciesFor(shell);
+    expect(remote.captureCopyDirectory?.()).toBeNull();
+  });
 });

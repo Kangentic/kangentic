@@ -48,6 +48,8 @@ import {
 import {
   browserCaptureDirectory,
   captureFileFields,
+  CAPTURE_COPY_DESCRIPTION,
+  copyScreenshotForCaller,
   deliverLocally,
   evaluatedValueText,
   saveScreenshotToFile,
@@ -180,6 +182,13 @@ export interface BrowserToolDependencies {
    */
   captureDirectory?: () => string;
   /**
+   * Where every screenshot is also written, so the agent copies it from
+   * inside its working directory and never from Claude Code's tool-results
+   * folder (`copyScreenshotForCaller`, task #1136). Null, or absent, for no
+   * copy: a remote project, or a caller with no folder of its own.
+   */
+  captureCopyDirectory?: () => string | null;
+  /**
    * Puts a saved capture where the caller's agent reads it. Absent, it stays here. Bound to the URL's project, like
    * `captureDirectory`, so the family still has no path to another project.
    */
@@ -189,7 +198,7 @@ export interface BrowserToolDependencies {
 }
 
 const SAVE_TO_FILE_DESC =
-  'Write the result to a file in a Kangentic captures folder inside your working directory and return its path and size instead of the inline result. Use it for large output you will read, copy or build on, such as page HTML or a screenshot for an artifact.';
+  'Write the result to a file in a Kangentic captures folder inside your working directory and return its path and size instead of the inline result. Use it for large output you will read, copy or build on, such as page HTML or a full-quality screenshot for an artifact.';
 
 /**
  * A capture's byte budget: the caller's `maxBytes` inline, or none when the
@@ -304,13 +313,24 @@ export function registerBrowserTools(
       fn,
     );
 
-  /** A screenshot as the tool returns it: inline, or written to a file when the caller asked. */
+  /**
+   * A screenshot as the tool returns it. Written to a file when the caller
+   * asked. Otherwise with a copy in the caller's copies folder, which the
+   * result names: an inline image's bytes, or the file a capture past the
+   * inline ceiling wrote under the inspected checkout. With no copy folder, or
+   * a copy that fails, the result is the capture's own.
+   */
   const screenshotResult = async (
     shot: ScreenshotResponse,
     save: boolean,
     prefix: 'screenshot' | 'element',
   ): Promise<McpToolResult> => {
-    if (!save || shot.mode === 'file') return screenshotToolResult({ ok: true, data: shot });
+    if (shot.mode === 'file' || !save) {
+      const copyDirectory = dependencies.captureCopyDirectory?.() ?? null;
+      const copy = copyDirectory ? await copyScreenshotForCaller(copyDirectory, prefix, shot) : null;
+      if (shot.mode === 'inline') return screenshotToolResult({ ok: true, data: shot }, copy);
+      return screenshotToolResult({ ok: true, data: copy ? { ...shot, filePath: copy.filePath, fileUri: copy.fileUri } : shot });
+    }
     try {
       return screenshotToolResult({ ok: true, data: await saveScreenshotToFile(captureDirectory(), prefix, shot, deliver) });
     } catch (error) {
@@ -469,7 +489,7 @@ export function registerBrowserTools(
     'kangentic_browser_screenshot',
     {
       description:
-        "Capture a screenshot of the task's Browser pane (the loaded dev server). Returns an inline image. Defaults to JPEG; the response includes viewport + scale metadata for mapping image coordinates back to the page: divide an image coordinate by `pixelsPerCssPixel` for the CSS one. A pane's screenshot can hold no more pixels than the pane itself, so a viewport wider than the pane comes back scaled down to fit, and `note` says so.",
+        "Capture a screenshot of the task's Browser pane (the loaded dev server). Returns an inline image. Defaults to JPEG; the response includes viewport + scale metadata for mapping image coordinates back to the page: divide an image coordinate by `pixelsPerCssPixel` for the CSS one. A pane's screenshot can hold no more pixels than the pane itself, so a viewport wider than the pane comes back scaled down to fit, and `note` says so." + CAPTURE_COPY_DESCRIPTION,
       inputSchema: z.object({
         ...TARGET_SHAPE,
         fullPage: z.boolean().optional().describe('Capture the full scrollable page instead of just the viewport. On a pane this is scaled down to fit the pane\'s own pixels, so a long page comes back small; scroll and take viewport screenshots for detail.'),
@@ -517,7 +537,7 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_screenshot_element',
     {
-      description: "Capture a screenshot clipped to a single element in the task's Browser pane, at up to 1:1 (one image pixel per CSS pixel, or the page's own devicePixelRatio if higher) even when the page is zoomed out to fit a wide viewport. The right tool for reading detail in a desktop-width layout. An element too large for the pane at 1:1 comes back scaled to fit, and `note` says so.",
+      description: "Capture a screenshot clipped to a single element in the task's Browser pane, at up to 1:1 (one image pixel per CSS pixel, or the page's own devicePixelRatio if higher) even when the page is zoomed out to fit a wide viewport. The right tool for reading detail in a desktop-width layout. An element too large for the pane at 1:1 comes back scaled to fit, and `note` says so." + CAPTURE_COPY_DESCRIPTION,
       inputSchema: z.object({
         ...TARGET_SHAPE,
         selector: z.string().describe('CSS selector (or text=/aria= form) of the element to capture.'),

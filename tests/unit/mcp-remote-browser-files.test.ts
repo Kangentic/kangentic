@@ -8,6 +8,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  copiesInlineCaptures,
   deliverCapture,
   deliverLocally,
   droppedFileName,
@@ -147,6 +148,17 @@ describe('saveToFile on a remote project', () => {
     const delivered = await deliverCapture(saved, local);
 
     expect(delivered).toEqual({ filePath: saved.filePath, fileUri: saved.fileUri, bytes: saved.bytes, location: 'local' });
+  });
+});
+
+// An inline screenshot is also written to the caller's folder on a project here (task #1136). A
+// remote project's agent cannot open this computer's copy, and a copy to the host would be an SSH
+// write on every screenshot, so it gets none and keeps the inline image alone.
+describe('the copy beside an inline screenshot', () => {
+  it('is made for a project on this computer and never for a remote one', () => {
+    expect(copiesInlineCaptures(path.join(scratch, 'local-project'))).toBe(true);
+    expect(copiesInlineCaptures(shell)).toBe(false);
+    expect(copiesInlineCaptures(null)).toBe(false);
   });
 });
 
