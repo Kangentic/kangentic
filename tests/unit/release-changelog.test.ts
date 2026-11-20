@@ -233,8 +233,10 @@ interface ScriptResult {
   stderr: string;
 }
 
+// gc.auto and maintenance.auto are off so no detached git process runs after a commit and touches
+// .git/objects while makeRepository copies the template: the copy failed once on CI with ENOENT there.
 function git(repository: string, gitArguments: string[]): void {
-  execFileSync('git', ['-C', repository, '-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.com', '-c', 'commit.gpgsign=false', ...gitArguments], {
+  execFileSync('git', ['-C', repository, '-c', 'user.name=Release Test', '-c', 'user.email=release-test@example.com', '-c', 'commit.gpgsign=false', '-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...gitArguments], {
     stdio: 'pipe',
   });
 }
