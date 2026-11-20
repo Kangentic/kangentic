@@ -446,6 +446,20 @@ describe('SessionManager: suspend and the last-resort scrollback scan', () => {
     expect(registryRow(manager, session.id)?.status).toBe('suspended');
     expect(registryRow(manager, session.id)?.agentSessionId).toBe('agent-session-402');
   });
+
+  // Red-green: change the 'output' argument at the host-event case and the third
+  // argument no longer reads 'output', so the late report would name the wrong path.
+  it("hands an id the host captured from the output to telemetry as an 'output' capture", async () => {
+    const { manager, transport } = makeManager();
+    const session = await spawnSession(manager, 'task-output-source', 403);
+    const { telemetry } = manager as unknown as { telemetry: { notifyAgentSessionId(sessionId: string, capturedId: string, source: string): void } };
+    const notifyAgentSessionId = vi.spyOn(telemetry, 'notifyAgentSessionId');
+
+    transport.emitHostEvent({ type: 'agentSessionId', sessionId: session.id, capturedId: 'agent-session-403' });
+
+    expect(notifyAgentSessionId).toHaveBeenCalledTimes(1);
+    expect(notifyAgentSessionId).toHaveBeenCalledWith(session.id, 'agent-session-403', 'output');
+  });
 });
 
 describe("SessionManager: a relayed host 'trace' event", () => {
