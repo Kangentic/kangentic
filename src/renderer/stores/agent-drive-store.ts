@@ -23,7 +23,14 @@ import { refreshPinnedStore } from './hmr-store-pin';
 interface AgentDriveState {
   /** Session ids whose pane an agent is driving right now. */
   drivingSessionIds: string[];
-  setAgentDriving: (sessionId: string, driving: boolean) => void;
+  /**
+   * The reason each session's agent gave for its pane (decision 46), from the
+   * drive push's active edge. The drive label reads "Agent is <reason>". Kept
+   * when the drive ends, so the label keeps its words through its fade out; the
+   * next active edge replaces it, or drops it when that edge carries none.
+   */
+  driveReasons: Record<string, string>;
+  setAgentDriving: (sessionId: string, driving: boolean, reason?: string | null) => void;
   /**
    * Monotonic counter, bumped when the user presses Ctrl+C in this session's
    * terminal. A COUNTER rather than a flag because it is an EVENT: two
@@ -51,15 +58,26 @@ interface AgentDriveState {
 
 const agentDriveStoreInitializer: StateCreator<AgentDriveState> = (set) => ({
   drivingSessionIds: [],
-  setAgentDriving: (sessionId, driving) =>
+  driveReasons: {},
+  setAgentDriving: (sessionId, driving, reason) =>
     set((state) => {
       const isTracked = state.drivingSessionIds.includes(sessionId);
-      if (driving === isTracked) return state;
-      return {
-        drivingSessionIds: driving
+      const patch: Partial<Pick<AgentDriveState, 'drivingSessionIds' | 'driveReasons'>> = {};
+      if (driving !== isTracked) {
+        patch.drivingSessionIds = driving
           ? [...state.drivingSessionIds, sessionId]
-          : state.drivingSessionIds.filter((id) => id !== sessionId),
-      };
+          : state.drivingSessionIds.filter((id) => id !== sessionId);
+      }
+      // Only the active edge speaks for the reason; an end leaves it for the fade.
+      // An empty reason is no reason, so it compares equal to none.
+      const nextReason = reason || null;
+      if (driving && reason !== undefined && (state.driveReasons[sessionId] ?? null) !== nextReason) {
+        const nextReasons = { ...state.driveReasons };
+        if (nextReason) nextReasons[sessionId] = nextReason;
+        else delete nextReasons[sessionId];
+        patch.driveReasons = nextReasons;
+      }
+      return Object.keys(patch).length === 0 ? state : patch;
     }),
   userInterrupts: {},
   noteUserInterrupt: (sessionId) =>
@@ -104,6 +122,11 @@ if (import.meta.hot) {
 // Resetting costs at most the remainder of one in-flight burst and self-corrects
 // on the next begin/end edge. A renderer reload never restarts main, so its
 // refcount is untouched: the mirror can lag by one burst, but it cannot stick.
+
+/** The reason this session's agent gave for its pane, or null. */
+export function useAgentDriveReason(sessionId: string | null | undefined): string | null {
+  return useAgentDriveStore((state) => (sessionId ? state.driveReasons[sessionId] ?? null : null));
+}
 
 /** True while an agent is driving this session's Browser pane. */
 export function useIsAgentDrivingSession(sessionId: string | null | undefined): boolean {

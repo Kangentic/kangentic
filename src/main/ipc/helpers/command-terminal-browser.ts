@@ -24,6 +24,7 @@ import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { commandTerminalBrowserOwner } from '../../../shared/browser-owner';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { destroyLanesForTask } from '../../browser/browser-lane-manager';
+import { clearBrowserPaneReason } from '../../browser/browser-pane-reason';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { discardAnnotationDraft } from '../../browser/annotation-drafts';
 import { commandTerminalBrowserStore } from '../../browser/command-terminal-browser-store';
@@ -176,6 +177,7 @@ function endCommandTerminalBrowser(context: IpcContext, projectId: string, slot:
     popOutWindowManager.close('browser', { projectId, taskId: ownerKey });
   }
   destroyLanesForTask(ownerKey);
+  clearBrowserPaneReason(ownerKey);
   void releaseViewportOverridesForSession(sessionId).catch((error: unknown) => {
     console.warn(`[browser-viewport] Could not reset viewports for session ${sessionId.slice(0, 8)}:`, error);
   });

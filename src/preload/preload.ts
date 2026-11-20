@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { QueueSnapshot, StopScriptFailedEvent } from '../shared/types';
+import type { BrowserPaneOpenPurpose, QueueSnapshot, StopScriptFailedEvent } from '../shared/types';
 import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationEventKey, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
@@ -989,8 +989,12 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.BROWSER_ZOOM_CHANGED, handler);
     },
     onPaneOpenRequest: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, projectId: string, taskId: string) =>
-        callback(projectId, taskId);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        projectId: string,
+        taskId: string,
+        purpose: BrowserPaneOpenPurpose,
+      ) => callback(projectId, taskId, purpose);
       ipcRenderer.on(IPC.BROWSER_PANE_OPEN_REQUEST, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_PANE_OPEN_REQUEST, handler);
     },
@@ -1001,8 +1005,12 @@ const api: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.BROWSER_PANE_CLOSE_REQUEST, handler);
     },
     onAgentInput: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, webContentsId: number, active: boolean) =>
-        callback(webContentsId, active);
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        webContentsId: number,
+        active: boolean,
+        reason?: string | null,
+      ) => callback(webContentsId, active, reason ?? null);
       ipcRenderer.on(IPC.BROWSER_AGENT_INPUT, handler);
       return () => ipcRenderer.removeListener(IPC.BROWSER_AGENT_INPUT, handler);
     },

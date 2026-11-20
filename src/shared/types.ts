@@ -10651,8 +10651,16 @@ export interface ElectronAPI {
      * project, the per-project browser gate, the task, and the URL (which it
      * seeded into the task sidecar), so the handler's only job is to set the
      * pane open and make sure a task-detail window exists for it.
+     *
+     * `purpose` is the agent's (decision 46): `for-user` shows the pane, and
+     * `own-work` mounts it HELD behind the terminal unless it is already
+     * showing. Every main sender passes it, and it is required here so a
+     * preload that dropped it would fail typecheck rather than turn every push
+     * into `for-user`.
      */
-    onPaneOpenRequest: (callback: (projectId: string, taskId: string) => void) => () => void;
+    onPaneOpenRequest: (
+      callback: (projectId: string, taskId: string, purpose: BrowserPaneOpenPurpose) => void,
+    ) => () => void;
     /**
      * Main asking this renderer to close Browser panes, on behalf of
      * `kangentic_browser_close_pane`. The taskIds are computed by main from the
@@ -10676,8 +10684,14 @@ export interface ElectronAPI {
      * `webContentsId` identifies WHICH guest, since one window can host several
      * panes and each must ignore the others'.
      * See `.claude/rules/agent-driven-focus.md`.
+     *
+     * `reason` rides the active edge: the one line the owner's agent gave in
+     * its last `kangentic_browser_open_pane`, which the pane's drive label
+     * shows as "Agent is <reason>". Null when there is none.
      */
-    onAgentInput: (callback: (webContentsId: number, active: boolean) => void) => () => void;
+    onAgentInput: (
+      callback: (webContentsId: number, active: boolean, reason: string | null) => void,
+    ) => () => void;
     /**
      * An agent set or cleared the viewport this guest lays out against.
      *
@@ -11016,6 +11030,24 @@ export type BrowserPaneVisibility = (typeof BROWSER_PANE_VISIBILITIES)[number];
  * keep a window born parked for at least this long.
  */
 export const BROWSER_PANE_OPEN_TIMEOUT_MS = 10_000;
+
+/**
+ * Why an agent opened its Browser pane, as `kangentic_browser_open_pane` takes
+ * it. `for-user` is a page the user should look at, so the pane opens beside
+ * the terminal (and a pane the user hid is shown again). `own-work` is a page
+ * the agent uses itself, so the pane opens behind the terminal, held the way
+ * the Browser pill hides it, and a pane already showing stays as it is.
+ * Decision 46 in `docs/architecture/embedded-browser/decision-log.md`.
+ */
+export const BROWSER_PANE_OPEN_PURPOSES = ['for-user', 'own-work'] as const;
+export type BrowserPaneOpenPurpose = (typeof BROWSER_PANE_OPEN_PURPOSES)[number];
+
+/**
+ * The longest `reason` `kangentic_browser_open_pane` accepts. The pane shows it
+ * as one line, "Agent is <reason>", centred on the page's bottom edge while the
+ * agent drives.
+ */
+export const BROWSER_PANE_REASON_MAX_LENGTH = 80;
 
 /**
  * A Command Terminal slot's Browser layout, saved per project and slot so the

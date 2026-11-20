@@ -526,6 +526,101 @@ test.describe('an agent drive is visible', () => {
     }), GUEST_ID);
   }
 
+  test('says why in one sentence, centred on the bar row and clear of the bar in either bottom corner', async () => {
+    // Decision 46: the drive label carries the reason the agent gave in
+    // open_pane as "Agent is <reason>" (3B), sits at the bottom centre (4D) and
+    // goes with the veil (1A). The padding that keeps it off the annotation bar
+    // is symmetric, so the bounds below hold for a bar in either bottom corner.
+    // Three runs wait out the 5s link window each, plus two bar drags, so the
+    // bound sits well above the 30s this measured locally.
+    test.setTimeout(60000);
+    await openPaneWithGuest(sharedPage);
+    await settleIdle(sharedPage);
+    const label = sharedPage.locator('[data-testid="browser-agent-driving-label"]');
+    const bar = sharedPage.locator('[data-corner]');
+
+    // The bar defaults to top-right, so the bar-row check needs it moved. Drag its
+    // grip to a point inside the pane's bottom-right quadrant, as a user would.
+    // The step owns this state and puts the bar back at the end (the page is shared).
+    async function dragBarTo(target: 'bottom-right' | 'top-right') {
+      const grip = await sharedPage.locator('[data-testid="annotation-bar-grip"]').boundingBox();
+      const bounds = await sharedPage.locator('[data-annotation-bar-bounds]').boundingBox();
+      if (!grip || !bounds) throw new Error('annotation bar or its bounds not laid out');
+      const targetX = bounds.x + bounds.width * 0.9;
+      const targetY = target === 'bottom-right' ? bounds.y + bounds.height * 0.9 : bounds.y + bounds.height * 0.1;
+      await sharedPage.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+      await sharedPage.mouse.down();
+      await sharedPage.mouse.move(targetX, targetY, { steps: 8 });
+      await sharedPage.mouse.up();
+      await expect(bar).toHaveAttribute('data-corner', target);
+    }
+    await dragBarTo('bottom-right');
+    try {
+
+    await test.step('reads the reason as a sentence', async () => {
+      await sharedPage.evaluate(
+        (guestId) => window.__mockBrowser?.emitAgentInput(guestId, true, 'measuring canvas board heights'),
+        GUEST_ID,
+      );
+      await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+      await expect(label).toHaveText('Agent is measuring canvas board heights');
+    });
+
+    await test.step('is centred on the page and its row is the bar row', async () => {
+      const geometry = await sharedPage.evaluate(() => {
+        const layer = document.querySelector('[data-testid="browser-agent-driving"]')!.getBoundingClientRect();
+        const labelBox = document.querySelector('[data-testid="browser-agent-driving-label"]')!.getBoundingClientRect();
+        const barBox = document.querySelector('[data-corner]')!.getBoundingClientRect();
+        return {
+          layerCenter: layer.left + layer.width / 2,
+          labelCenter: labelBox.left + labelBox.width / 2,
+          labelMiddle: labelBox.top + labelBox.height / 2,
+          barMiddle: barBox.top + barBox.height / 2,
+        };
+      });
+      expect(Math.abs(geometry.labelCenter - geometry.layerCenter)).toBeLessThan(2);
+      // The bar is in a bottom corner (moved above), so the label sits on its row.
+      await expect(bar).toHaveAttribute('data-corner', /^bottom/);
+      expect(Math.abs(geometry.labelMiddle - geometry.barMiddle)).toBeLessThan(2);
+    });
+
+    await test.step('a reason too long for the space is cut, never under the bar', async () => {
+      await releaseDrive(sharedPage);
+      await settleIdle(sharedPage);
+      await sharedPage.evaluate(
+        (guestId) => window.__mockBrowser?.emitAgentInput(guestId, true, 'checking '.repeat(30).trim()),
+        GUEST_ID,
+      );
+      await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+      const bounds = await sharedPage.evaluate(() => {
+        const layer = document.querySelector('[data-testid="browser-agent-driving"]')!.getBoundingClientRect();
+        const labelBox = document.querySelector('[data-testid="browser-agent-driving-label"]')!.getBoundingClientRect();
+        const barBox = document.querySelector('[data-corner]')!.getBoundingClientRect();
+        return {
+          left: labelBox.left - layer.left,
+          right: layer.right - labelBox.right,
+          reserve: barBox.width + 8,
+        };
+      });
+      expect(bounds.left).toBeGreaterThanOrEqual(bounds.reserve - 1);
+      expect(bounds.right).toBeGreaterThanOrEqual(bounds.reserve - 1);
+    });
+
+    await test.step('with no reason it still says the agent is driving', async () => {
+      await releaseDrive(sharedPage);
+      await settleIdle(sharedPage);
+      await sharedPage.evaluate((guestId) => window.__mockBrowser?.emitAgentInput(guestId, true, null), GUEST_ID);
+      await expect(veil(sharedPage)).toHaveAttribute('data-driving', 'true');
+      await expect(label).toHaveText('Agent is driving');
+    });
+
+    } finally {
+      await releaseDrive(sharedPage);
+      await settleIdle(sharedPage);
+      await dragBarTo('top-right');
+    }
+  });
+
   test('marks the pane on the FIRST call, with no threshold to cross', async () => {
     // Show as soon as possible is a requirement in its own right, not a
     // nicety: the pointer block engages on this same call, and a page that

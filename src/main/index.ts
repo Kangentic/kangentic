@@ -36,6 +36,7 @@ import { holdTaskMessage } from './held-messages/held-messages';
 import { recordMcpServerStartFailure } from './agent/mcp-server-start-failure';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
+import { agentInputReason } from './browser/browser-pane-reason';
 import { setAgentInputSender, isAgentDriving } from './browser/agent-input-signal';
 import { setViewportOverrideSender } from './browser/viewport-override-store';
 import { encodeTerminalKey } from '../shared/terminal-key-encoding';
@@ -938,11 +939,15 @@ app.on('web-contents-created', (_event, contents) => {
 // - exactly as the zoom readout above is routed, and for the same reason: the
 // pane that has to restore focus lives in that renderer, not necessarily in the
 // main one. See `.claude/rules/agent-driven-focus.md`.
+//
+// The active edge carries the reason the owner's agent gave in its last
+// `kangentic_browser_open_pane`, so the pane's label reads "Agent is <reason>"
+// for exactly as long as the agent drives (decision 46).
 setAgentInputSender((guest, active) => {
   if (guest.isDestroyed()) return;
   const hostWindow = BrowserWindow.fromWebContents(guest.hostWebContents ?? guest);
   if (!hostWindow || hostWindow.isDestroyed()) return;
-  hostWindow.webContents.send(IPC.BROWSER_AGENT_INPUT, guest.id, active);
+  hostWindow.webContents.send(IPC.BROWSER_AGENT_INPUT, guest.id, active, agentInputReason(guest.id, active));
 });
 
 // Routed exactly as the two above are, and for the same reason: a detached

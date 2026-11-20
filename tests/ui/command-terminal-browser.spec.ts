@@ -522,6 +522,21 @@ test.describe('Command Terminal Browser pane', () => {
       .toHaveAttribute('data-visibility', 'showing', { timeout: 5000 });
   });
 
+  test('in the detached window an own-work open_pane request mounts the pane behind the terminal', async () => {
+    // Decision 46: with the panel showing, an agent using the page itself keeps
+    // it out of the user's way. The pane mounts held: hosted, hidden, no slot.
+    const page = await openDetachedWindow();
+    await expect(hostedPane(page)).toHaveCount(0);
+
+    await page.evaluate(({ projectId, ownerKey }) => {
+      window.__mockBrowser?.emitPaneOpenRequest(projectId, ownerKey, 'own-work');
+    }, { projectId: PROJECT_ID, ownerKey: OWNER_KEY });
+
+    await expect(page.getByTestId('command-terminal-browser-host').locator(`[data-owner-key="${OWNER_KEY}"]`))
+      .toHaveAttribute('data-visibility', 'hidden', { timeout: 10000 });
+    await expect(page.getByTestId('command-bar-browser-slot')).toHaveCount(0);
+  });
+
   test('a saved layout reopens the pane on first mount of its slot', async () => {
     const page = await openFreshPage(`
       window.__mockBrowser.seedTaskUrl('${OWNER_KEY}', '${PAGE_URL}');

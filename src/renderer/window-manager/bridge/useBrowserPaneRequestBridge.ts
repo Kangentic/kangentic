@@ -35,6 +35,7 @@ import { isCommandTerminalBrowserOwner } from '../../../shared/browser-owner';
 import { BROWSER_PANE_OPEN_TIMEOUT_MS, type Task } from '../../../shared/types';
 import { resolvePaneOpenAction } from './pane-open-action';
 import { monitorMountsDetail, taskDetailWindowInput } from './window-parking';
+import { applyAgentPaneOpen } from '../../utils/agent-pane-open';
 
 /**
  * How long a window born parked may wait for its guest. Past main's own wait on
@@ -115,7 +116,7 @@ export function useBrowserPaneRequestBridge(): void {
     const browser = window.electronAPI?.browser;
     if (!browser?.onPaneOpenRequest) return;
     const boardWaits = new Map<string, () => void>();
-    const unsubscribe = browser.onPaneOpenRequest((projectId, taskId) => {
+    const unsubscribe = browser.onPaneOpenRequest((projectId, taskId, purpose) => {
       // A Command Terminal's pane is no task's: opening a task-detail window for
       // its key would open a window for a task that does not exist.
       // `useCommandTerminalBrowserBridge` owns those requests.
@@ -126,8 +127,9 @@ export function useBrowserPaneRequestBridge(): void {
       // renders with the pane already there. Setting it afterwards
       // would change the task-detail split row's shape one commit after mount,
       // which is the remount hazard in
-      // .claude/rules/retained-pane-never-remounts.md.
-      session.setBrowserOpen(taskId, true);
+      // .claude/rules/retained-pane-never-remounts.md. An own-work pane opens
+      // held, behind the terminal; a for-user pane shows.
+      applyAgentPaneOpen(taskId, purpose);
       // Main seeded the task's URL sidecar just before pushing. A pane already
       // mounted on its empty state has no reason to refetch on its own, so nudge
       // it; this is a refetch, never a remount.

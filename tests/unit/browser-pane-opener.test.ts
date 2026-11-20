@@ -67,6 +67,13 @@ import {
 } from '../../src/main/browser/browser-pane-opener';
 import { IPC } from '../../src/shared/ipc-channels';
 import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
+import type { BrowserPaneOpenPurpose } from '../../src/shared/types';
+import {
+  getBrowserPaneReason,
+  setBrowserPaneReason,
+  clearAllBrowserPaneReasons,
+  clearBrowserPaneReasonsForSession,
+} from '../../src/main/browser/browser-pane-reason';
 
 const PROJECT = 'proj-1';
 const CALLER_TASK = 'task-1';
@@ -138,11 +145,13 @@ function installHost(overrides: Partial<BrowserPaneOpenerHost> = {}): void {
   }));
 }
 
-const openInput = (url?: string) => ({
+const openInput = (url?: string, purpose: BrowserPaneOpenPurpose = 'for-user') => ({
   projectId: PROJECT,
   callerSessionId: CALLER_SESSION,
   callerTaskId: CALLER_TASK,
   url,
+  purpose,
+  reason: 'checking the app',
   capability: 'navigate' as const,
   config: CONFIG,
 });
@@ -160,6 +169,88 @@ describe('openPaneForCallerTask', () => {
     vi.mocked(validateNavigationUrl).mockImplementation((url: string) => ({ ok: true, url }) as never);
     vi.mocked(capabilityGate).mockReturnValue(null);
     vi.mocked(browserUrlStore.get).mockReturnValue(null);
+    clearAllBrowserPaneReasons();
+  });
+
+  /** A cold open that succeeds: the pane registers and the driver proves it driveable. */
+  function arrangeSuccessfulColdOpen(): void {
+    vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue({ sessionId: CALLER_SESSION } as never);
+    vi.mocked(browserPaneRegistry.list).mockReturnValue([pane()] as never);
+    runWithGuestBody();
+  }
+
+  describe('the reason the agent gave', () => {
+    it('is kept for the owner, one line, replaced by the next call and cleared when its session ends', async () => {
+      // The pane shows it only while the agent drives, as "Agent is <reason>",
+      // so it is stored whichever path the surface takes.
+      arrangeSuccessfulColdOpen();
+      await openPaneForCallerTask({ ...openInput('http://localhost:5173', 'own-work'), reason: '  measuring\n canvas   heights ' });
+      expect(getBrowserPaneReason(CALLER_TASK)).toEqual({
+        purpose: 'own-work',
+        reason: 'measuring canvas heights',
+        sessionId: CALLER_SESSION,
+      });
+
+      await openPaneForCallerTask({ ...openInput('http://localhost:5173'), reason: 'showing you the login page' });
+      expect(getBrowserPaneReason(CALLER_TASK)).toMatchObject({ purpose: 'for-user', reason: 'showing you the login page' });
+
+      clearBrowserPaneReasonsForSession('some-other-session');
+      expect(getBrowserPaneReason(CALLER_TASK)).not.toBeNull();
+      clearBrowserPaneReasonsForSession(CALLER_SESSION);
+      expect(getBrowserPaneReason(CALLER_TASK)).toBeNull();
+    });
+
+    it('is cleared when the agent closes the pane', async () => {
+      arrangeSuccessfulColdOpen();
+      await openPaneForCallerTask(openInput('http://localhost:5173', 'own-work'));
+      expect(getBrowserPaneReason(CALLER_TASK)).not.toBeNull();
+
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({ ok: true, entry: pane() } as never);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([pane()] as never);
+      await closePanes({ projectId: PROJECT, callerSessionId: CALLER_SESSION, callerTaskId: CALLER_TASK, config: CONFIG });
+      expect(getBrowserPaneReason(CALLER_TASK)).toBeNull();
+    });
+  });
+
+  describe('a refused open leaves the reason as it was', () => {
+    function refuseNavigation(): void {
+      vi.mocked(validateNavigationUrl).mockReturnValue({
+        ok: false,
+        error: { kind: 'navigation-host-blocked', detail: 'blocked' },
+      } as never);
+    }
+
+    it('puts the previous reason and purpose back when a later call for the same owner is refused', async () => {
+      arrangeSuccessfulColdOpen();
+      await openPaneForCallerTask({ ...openInput('http://localhost:5173', 'own-work'), reason: 'measuring heights' });
+      const first = getBrowserPaneReason(CALLER_TASK);
+      expect(first).toMatchObject({ purpose: 'own-work', reason: 'measuring heights' });
+
+      refuseNavigation();
+      const result = await openPaneForCallerTask({ ...openInput('http://example.com', 'for-user'), reason: 'showing you the login' });
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'navigation-host-blocked' } });
+      expect(getBrowserPaneReason(CALLER_TASK)).toEqual(first);
+    });
+
+    it('leaves no reason for an owner that never opened a surface', async () => {
+      refuseNavigation();
+      const result = await openPaneForCallerTask({ ...openInput('http://example.com'), reason: 'never shown' });
+
+      expect(result).toMatchObject({ ok: false });
+      expect(getBrowserPaneReason(CALLER_TASK)).toBeNull();
+    });
+  });
+
+  it('an empty or whitespace reason clears a stale one instead of keeping it', async () => {
+    arrangeSuccessfulColdOpen();
+    await openPaneForCallerTask({ ...openInput('http://localhost:5173'), reason: 'old words' });
+    expect(getBrowserPaneReason(CALLER_TASK)).not.toBeNull();
+
+    const result = await openPaneForCallerTask({ ...openInput('http://localhost:5173'), reason: '   ' });
+
+    expect(result.ok).toBe(true);
+    expect(getBrowserPaneReason(CALLER_TASK)).toBeNull();
   });
 
   describe('refusals decided in main, before any push', () => {
@@ -299,7 +390,13 @@ describe('openPaneForCallerTask', () => {
       vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(null as never);
       await openPaneForCallerTask(openInput('http://localhost:5173'));
       expect(order).toEqual(['seed', 'push']);
-      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] });
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK, 'for-user'] });
+    });
+
+    it('carries an own-work purpose on the cold push, so the renderer mounts the pane held', async () => {
+      vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(null as never);
+      await openPaneForCallerTask(openInput('http://localhost:5173', 'own-work'));
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK, 'own-work'] });
     });
 
     it('refuses with url-seed-failed when the sidecar write throws, and never pushes', async () => {
@@ -389,7 +486,7 @@ describe('openPaneForCallerTask', () => {
       const result = await openPaneForCallerTask(openInput('http://localhost:5173'));
       expect(result).toMatchObject({ ok: false, error: { kind: 'pane-open-timeout' } });
       expect(browserUrlStore.set).toHaveBeenCalledWith('/projects/app', CALLER_TASK, 'http://localhost:5173');
-      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] });
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK, 'for-user'] });
       expect(browserPaneRegistry.waitForLivePane).toHaveBeenCalledWith({ taskId: CALLER_TASK, projectId: PROJECT }, expect.any(Number));
       expect(withGuest).not.toHaveBeenCalled();
     });
@@ -420,7 +517,7 @@ describe('openPaneForCallerTask', () => {
       const result = await openPaneForCallerTask({ ...openInput('http://localhost:5173'), callerTaskId: ownerKey });
 
       expect(result).toMatchObject({ ok: false, error: { kind: 'pane-open-timeout' } });
-      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, ownerKey] });
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, ownerKey, 'for-user'] });
     });
 
     it('returns the EXISTING offscreen surface rather than opening a second one', async () => {
@@ -491,7 +588,7 @@ describe('openPaneForCallerTask', () => {
       // id, so reaching it with a backgrounded project would leave a stray db.
       // The push is not project-scoped (the renderer's bridge only ends a hold on
       // a window it already has), so it still goes out.
-      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] }]);
+      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK, 'for-user'] }]);
       expect(browserUrlStore.set).not.toHaveBeenCalled();
     });
 
@@ -523,7 +620,20 @@ describe('openPaneForCallerTask', () => {
       expect(withGuest).not.toHaveBeenCalled();
     });
 
-    it('asks the renderer to end a hold on both warm paths, whatever main last heard', async () => {
+    it('pushes nothing on either warm path for own work, so no pane is shown or hidden', async () => {
+      // Decision 46: an agent using the pane for itself must not slide in a pane
+      // the user hid, and must not hide one the user is looking at. Both warm
+      // paths therefore leave the renderer alone.
+      runWithGuestBody();
+      const navigated = await openPaneForCallerTask(openInput('http://localhost:7777', 'own-work'));
+      expect(navigated).toMatchObject({ ok: true, data: { opened: false, navigated: true } });
+      expect(loadedUrls).toEqual(['http://localhost:7777']);
+      const statusOnly = await openPaneForCallerTask(openInput(undefined, 'own-work'));
+      expect(statusOnly).toMatchObject({ ok: true, data: { opened: false, navigated: false } });
+      expect(sent).toEqual([]);
+    });
+
+    it('asks the renderer to end a hold on both warm paths for the user, whatever main last heard', async () => {
       // A live pane can be held behind the terminal (the user hid it with the
       // pill). The agent asked for its pane to be open, so the same push the cold
       // path sends goes out, and the renderer ends the hold. A parked pane stays
@@ -533,12 +643,12 @@ describe('openPaneForCallerTask', () => {
       // ignored by its locked src anyway.
       runWithGuestBody();
       await openPaneForCallerTask(openInput('http://localhost:7777'));
-      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] }]);
+      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK, 'for-user'] }]);
       expect(browserUrlStore.set).not.toHaveBeenCalled();
 
       sent.length = 0;
       await openPaneForCallerTask(openInput(undefined));
-      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK] }]);
+      expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, CALLER_TASK, 'for-user'] }]);
     });
 
     it('does not push when the navigation of a live pane was refused', async () => {
@@ -676,6 +786,7 @@ describe('closePanes', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearAllBrowserPaneReasons();
     sent = [];
     installHost();
     vi.mocked(browserPaneRegistry.waitForPanesGone).mockResolvedValue([] as never);
@@ -911,6 +1022,21 @@ describe('closePanes', () => {
       expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_CLOSE_REQUEST, args: [PROJECT, [CALLER_TASK]] });
     });
 
+    it('clears the reason of a detached window that has no pane entry', async () => {
+      setBrowserPaneReason(CALLER_TASK, { purpose: 'for-user', reason: 'showing the app', sessionId: CALLER_SESSION });
+      installDetachedHost([CALLER_TASK]);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: false,
+        kind: 'no-pane-open',
+        detail: 'none',
+      } as never);
+
+      const result = await closePanes(closeInput());
+
+      expect(result).toMatchObject({ ok: true, data: { closed: [], closedWindows: [{ taskId: CALLER_TASK }] } });
+      expect(getBrowserPaneReason(CALLER_TASK)).toBeNull();
+    });
+
     it('clears the open flag BEFORE closing the window, so the close does not turn into a dock', async () => {
       // Closing a detached window is a dock: with the task's open flag still
       // set, the in-app pane mounts again and the browser comes back instead of
@@ -1058,6 +1184,7 @@ describe('openPaneForCallerTask for a Command Terminal caller', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearAllBrowserPaneReasons();
     sent = [];
     laneExistsForTask = false;
     vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
@@ -1077,7 +1204,7 @@ describe('openPaneForCallerTask for a Command Terminal caller', () => {
     expect(taskExists).not.toHaveBeenCalled();
     expect(commandTerminalLive).toHaveBeenCalledWith(PROJECT, 'slot-1');
     expect(browserUrlStore.set).toHaveBeenCalledWith('/projects/app', OWNER, 'http://localhost:5173');
-    expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, OWNER] }]);
+    expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, OWNER, 'for-user'] }]);
   });
 
   it('refuses before any push when the slot runs no terminal', async () => {

@@ -23,6 +23,11 @@ msgstr "20 annotations is the most one send carries. Send these, then start agai
 msgid "Add a note or a mark to send"
 msgstr "Add a note or a mark to send"
 
+#. reason is the agent's own words, in English, written to follow 'Agent is'
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Agent is {driveReason}"
+msgstr "Agent is {driveReason}"
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Agent is driving"
 msgstr "Agent is driving"
