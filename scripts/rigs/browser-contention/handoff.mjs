@@ -57,11 +57,12 @@ try {
 
   // The first open on a cold preview can exceed the tool's own 10s bound while
   // the webview mounts; a retry finds the pane already up.
-  let opened = await client.call('kangentic_browser_open_pane', { url: pageUrl });
+  const openArgs = { url: pageUrl, purpose: 'for-user', reason: 'running the browser contention rig' };
+  let opened = await client.call('kangentic_browser_open_pane', openArgs);
   if (opened.isError) {
     info('first open_pane timed out (cold mount), retrying once');
     await new Promise((resolve) => setTimeout(resolve, 4000));
-    opened = await client.call('kangentic_browser_open_pane', { url: pageUrl });
+    opened = await client.call('kangentic_browser_open_pane', openArgs);
   }
   if (opened.isError) throw new Error(`open_pane: ${opened.text.slice(0, 300)}`);
   const before = await paneSummary();

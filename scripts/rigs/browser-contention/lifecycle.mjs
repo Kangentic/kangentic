@@ -85,7 +85,11 @@ try {
   const starting = await allPanes();
   if (starting.length > 0) info(`WARNING: ${starting.length} pane(s) already registered - use a clean preview`);
 
-  const opened = await client.call('kangentic_browser_open_pane', { url: pageUrl });
+  const opened = await client.call('kangentic_browser_open_pane', {
+    url: pageUrl,
+    purpose: 'for-user',
+    reason: 'running the browser contention rig',
+  });
   if (opened.isError) throw new Error(`open pane: ${opened.text.slice(0, 200)}`);
   await dropTaskWindow(taskId);
   const live = (await allPanes()).filter((pane) => pane.kind === 'lane' && pane.alive);

@@ -26,7 +26,7 @@ export { BROWSER_POLICY_REPLACEMENT_TOOL };
 /** What a denied call is told, inside the CLI's reply envelope. */
 export const BROWSER_POLICY_DENY_TEXT =
   `Kangentic blocked ${BROWSER_POLICY_TOOL_PLACEHOLDER}: the Kangentic browser is the only browser in this session. `
-  + `Call ${BROWSER_POLICY_REPLACEMENT_TOOL} with the URL, then use the kangentic_browser_* tools. `
+  + `Call ${BROWSER_POLICY_REPLACEMENT_TOOL} with the URL, a purpose and a reason, then use the kangentic_browser_* tools. `
   + 'kangentic_browser_screenshot, _screenshot_element, _query_dom (page HTML) and _eval take saveToFile to write a large capture to a file. '
   + 'Do not switch to a Playwright, Puppeteer or Selenium script instead.';
 
@@ -48,7 +48,7 @@ export const BROWSER_POLICY_PROMPT = [
   'Each drives a different browser from the pane the user watches, and Kangentic blocks those MCP tools in this session.',
   'Running the project test suite (npx playwright test) is not driving a browser and is fine.',
   'Open a browser only when the work needs one, and when it does, use this one.',
-  `If no pane is open, call ${BROWSER_POLICY_REPLACEMENT_TOOL} with the URL; you do not need to ask.`,
+  `If no pane is open, call ${BROWSER_POLICY_REPLACEMENT_TOOL} with the URL, a purpose and a reason; you do not need to ask.`,
   'For a large capture, pass saveToFile to kangentic_browser_screenshot, _screenshot_element, _query_dom (page HTML) or _eval: it writes the capture to a file and returns the path.',
   'Copy or publish a screenshot from the filePath it names, inside your working directory, never from the path your client gives the image, which needs approval. With no filePath, use saveToFile.',
 ].join(' ');

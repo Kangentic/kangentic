@@ -167,7 +167,11 @@ async function typeConcurrently(drivers, sessionId, label, pageUrl) {
 
 async function scenarioParkedPane(drivers, pageUrl) {
   console.log('\n=== A1. three concurrent callers, a parked pane (no window open) ===');
-  const opened = await drivers[0].call('kangentic_browser_open_pane', { url: pageUrl });
+  const opened = await drivers[0].call('kangentic_browser_open_pane', {
+    url: pageUrl,
+    purpose: 'for-user',
+    reason: 'running the browser contention rig',
+  });
   if (opened.isError) return fail('open the pane', opened.text.slice(0, 300));
   const handle = (/"?sessionId"?\s*[:=]\s*"(pane_[^"]+)"/.exec(opened.text) || [])[1];
   if (!handle) return fail('read the pane handle', opened.text.slice(0, 300));
