@@ -3,7 +3,7 @@ import { LabelPillItems } from '../Pill';
 import { PriorityBadge } from './PriorityBadge';
 
 interface TaskPillsProps {
-  /** Index into the project's priority scale. 0, the scale's bottom entry, draws no pill. */
+  /** Index into the project's priority scale. 0, the scale's bottom entry, draws nothing. */
   priority: number;
   labels: string[];
   labelColors: Record<string, string>;
@@ -23,13 +23,14 @@ export function taskHasPills(priority: number, labels: readonly string[]): boole
  * A task's pill row: its priority first, then its labels, in ONE wrap run so a
  * long row wraps pill by pill rather than the labels dropping as a block. Every
  * surface that shows a task's labels draws them through this, so priority shows
- * wherever labels do and in the same place.
+ * wherever labels do and in the same place. The priority is the bare meter, not a
+ * pill, so it reads apart from the labels by shape and takes 16px less (#1143).
  */
 export const TaskPills = React.memo(function TaskPills({ priority, labels, labelColors, className }: TaskPillsProps) {
   if (!taskHasPills(priority, labels)) return null;
   return (
     <div className={`flex flex-wrap gap-1 ${className ?? ''}`} data-testid="task-pills">
-      <PriorityBadge priority={priority} />
+      <PriorityBadge priority={priority} variant="bare" />
       <LabelPillItems labels={labels} labelColors={labelColors} />
     </div>
   );
