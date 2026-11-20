@@ -6,6 +6,7 @@ paths:
   - "src/renderer/window-manager/**"
   - "src/renderer/utils/terminal-arrival-focus.ts"
   - "src/renderer/utils/agent-input-focus-guard.ts"
+  - "src/renderer/utils/agent-pane-open.ts"
   - "src/renderer/stores/agent-drive-store.ts"
 ---
 
@@ -92,7 +93,10 @@ reveals what that one cannot avoid.
   a return of the focus acquisition above.
 - **The focus move is SHOWN, not hidden, and it is shown ON THE PAGE.** This is the design, and it
   is what the three failed attempts above were replaced with. While a burst is open the pane takes
-  a veil, an accent border, and a static "Agent is driving" label in its bottom-left corner.
+  a veil, an accent border, and a label centred on the page's bottom edge, on the annotation bar's
+  row and padded clear of a bar in either bottom corner. The label reads "Agent is <reason>", the
+  one line the agent gave in `open_pane` (it rides the agent-input push's active edge), or "Agent
+  is driving" when there is none, and it goes with the veil (decision 46).
   `agent-drive-store.ts` holds the state, keyed by sessionId; `BrowserPane` owns the translation
   from the guest id the signal carries, because it is the only component that knows both.
 
@@ -348,8 +352,15 @@ reveals what that one cannot avoid.
 
   **A window the user closed stays closed.** An existing board window of any kind answers
   `flag-only` (`resolvePaneOpenAction`, `bridge/pane-open-action.ts`). Nothing on this path can
-  un-park. The warm path keeps its push because it ends a HOLD inside a window the user has open,
-  which is a change inside a window already showing, and a repeat changes nothing.
+  un-park. The warm path keeps its push for a `for-user` call because it ends a HOLD inside a window
+  the user has open, which is a change inside a window already showing, and a repeat changes
+  nothing.
+
+  **An agent's own work stays behind the terminal** (decision 46). An `own-work` call mounts a pane
+  that is not yet open HELD (`applyAgentPaneOpen`, `utils/agent-pane-open.ts`, for the board and the
+  Command Terminal alike), leaves a held, showing or parked pane as it is, and sends no push on the
+  warm path. Only a `for-user` call may show a pane the user hid, and no call hides a pane the user
+  is looking at.
 
   **An agent's work runs without an open window.** Parked is a host, not a refusal, so every tool
   works and the agent can read `visibility` to tell the user it is working out of sight. A screenshot
@@ -362,7 +373,7 @@ reveals what that one cannot avoid.
   owner's decision, not a stamp.
 - **A Command Terminal panel stays hidden the same way.** `CommandTerminalBrowserHost` already keeps
   a hidden panel's pane mounted at `opacity: 0`, so `useCommandTerminalBrowserBridge` only sets the
-  open flag, and the user opening the panel shows it.
+  open flag (or, for an `own-work` call, the hold), and the user opening the panel shows it.
 - **`resolveFocusedWindowTerminal` stays ONE resolver,** shared between dictation and arrival focus;
   the two differ in POLICY. Dictation is a later user action and must resolve a target; arrival focus
   must abstain.

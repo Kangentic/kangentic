@@ -8715,10 +8715,11 @@
         });
       });
     },
-    /** Fire main's "open this task's Browser pane" push (kangentic_browser_open_pane). */
-    emitPaneOpenRequest: function (projectId, taskId) {
+    /** Fire main's "open this task's Browser pane" push (kangentic_browser_open_pane).
+     *  `purpose` is 'for-user' or 'own-work'; omitted, the push reads as for-user. */
+    emitPaneOpenRequest: function (projectId, taskId, purpose) {
       browserPaneOpenSubscribers.slice().forEach(function (callback) {
-        callback(projectId, taskId);
+        callback(projectId, taskId, purpose);
       });
     },
     /** Fire main's "close these Browser panes" push (kangentic_browser_close_pane). */
@@ -8728,10 +8729,11 @@
       });
     },
     /** Fire main's "an agent is driving this guest" interval edge. Pass true to
-     *  arm the pane's focus guard and false to end the drive. */
-    emitAgentInput: function (webContentsId, active) {
+     *  arm the pane's focus guard and false to end the drive. `reason` rides the
+     *  active edge: the line the agent gave in open_pane, shown as "Agent is <reason>". */
+    emitAgentInput: function (webContentsId, active, reason) {
       browserAgentInputSubscribers.slice().forEach(function (callback) {
-        callback(webContentsId, active);
+        callback(webContentsId, active, reason === undefined ? null : reason);
       });
     },
     /** Fire main's "an agent set this guest's viewport" push. Pass null to

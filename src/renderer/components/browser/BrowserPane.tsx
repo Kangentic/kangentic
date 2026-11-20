@@ -22,7 +22,7 @@ import { useAgentInputFocusGuard } from '../../utils/agent-input-focus-guard';
 import { ANCHOR_BOUNDS_ATTRIBUTE } from '../../utils/dictation-anchor';
 import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-registry';
 import { KEEPS_PANE_FOCUS_ATTRIBUTE } from '../../utils/pane-focus';
-import { useAgentDriveStore } from '../../stores/agent-drive-store';
+import { useAgentDriveStore, useAgentDriveReason } from '../../stores/agent-drive-store';
 import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { PopOutButton } from '../../pop-out/PopOutButton';
 import { Tooltip } from '../Tooltip';
@@ -290,6 +290,25 @@ function BrowserPaneActive({
     blocking: driveBlocking,
     stopped: driveStopped,
   } = useAgentDriveVeil(sessionId);
+  // What the agent said it is doing in this pane (decision 46), for the label.
+  const driveReason = useAgentDriveReason(sessionId);
+
+  // The annotation bar's box. The drive label sits on the bar's row, centred,
+  // and keeps clear of a bar in either bottom corner (decision 46, option 4D).
+  const [barBox, setBarBox] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const measure = () => {
+      const width = bar.offsetWidth;
+      const height = bar.offsetHeight;
+      setBarBox((previous) => (previous.width === width && previous.height === height ? previous : { width, height }));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, []);
 
   // The pane's height, which decides how tall the annotation list may grow.
   useEffect(() => {
@@ -918,9 +937,11 @@ function BrowserPaneActive({
   useEffect(() => {
     const browser = window.electronAPI?.browser;
     if (!browser?.onAgentInput) return;
-    const unsubscribe = browser.onAgentInput((webContentsId, active) => {
+    const unsubscribe = browser.onAgentInput((webContentsId, active, reason) => {
       if (webContentsId !== registeredWebContentsIdRef.current) return;
-      useAgentDriveStore.getState().setAgentDriving(sessionId, active);
+      // The active edge carries the reason the agent gave in open_pane, for the
+      // label below (decision 46).
+      useAgentDriveStore.getState().setAgentDriving(sessionId, active, active ? reason : undefined);
     });
     return () => {
       unsubscribe();
@@ -1517,10 +1538,31 @@ function BrowserPaneActive({
           aria-hidden={!agentDriving}
         >
           <div className="absolute inset-0 bg-[rgb(113_113_122/0.26)]" />
-          <span className="absolute left-2 bottom-2 flex items-center gap-1.5 rounded bg-[rgb(9_11_18/0.82)] px-2 py-1 text-[11px] text-fg">
-            <span className={`h-1.5 w-1.5 rounded-full bg-active ${agentDriving ? 'kng-drive-pulse' : ''}`} />
-            <Trans>Agent is driving</Trans>
-          </span>
+          {/* The label sits on the annotation bar's row, centred, held clear of
+              a bar in either bottom corner by inline padding of the bar's width
+              plus its 8px inset and a gap (decision 46, option 4D). It carries
+              the reason the agent gave in open_pane as one sentence, "Agent is
+              <reason>", and goes with the veil when the run ends (option 1A).
+              A reason too long for the pane is cut with an ellipsis. It has no
+              tip: this layer never takes the pointer, and the agent's own
+              open_pane call shows the whole reason in its terminal. */}
+          <div
+            className="absolute inset-x-0 bottom-2 flex items-center justify-center"
+            style={{ paddingInline: barBox.width + 14, height: barBox.height || undefined }}
+            data-testid="browser-agent-driving-row"
+          >
+            <span
+              className="flex min-w-0 items-center gap-1.5 rounded bg-[rgb(9_11_18/0.82)] px-2 py-1 text-[11px] text-fg"
+              data-testid="browser-agent-driving-label"
+            >
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full bg-active ${agentDriving ? 'kng-drive-pulse' : ''}`} />
+              <span className="truncate">
+                {driveReason
+                  ? <Trans comment="reason is the agent's own words, in English, written to follow 'Agent is'">Agent is {driveReason}</Trans>
+                  : <Trans>Agent is driving</Trans>}
+              </span>
+            </span>
+          </div>
         </div>
       </div>
 

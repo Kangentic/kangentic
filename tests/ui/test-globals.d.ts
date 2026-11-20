@@ -52,12 +52,13 @@ declare global {
       getTaskUrlProject: (taskId: string) => string | null;
       /** Fire the main-process zoom broadcast at one specific guest. */
       emitZoomChanged: (factor: number, webContentsId: number) => void;
-      /** Fire main's open push, as kangentic_browser_open_pane does. */
-      emitPaneOpenRequest: (projectId: string, taskId: string) => void;
+      /** Fire main's open push, as kangentic_browser_open_pane does. Omitted purpose reads as for-user. */
+      emitPaneOpenRequest: (projectId: string, taskId: string, purpose?: 'for-user' | 'own-work') => void;
       /** Fire main's close push, as kangentic_browser_close_pane does. */
       emitPaneCloseRequest: (projectId: string, taskIds: string[]) => void;
-      /** Fire main's agent-input push for one guest (an agent is / is no longer driving it). */
-      emitAgentInput: (webContentsId: number, active: boolean) => void;
+      /** Fire main's agent-input push for one guest (an agent is / is no longer driving it).
+       *  `reason` rides the active edge, for the drive label. */
+      emitAgentInput: (webContentsId: number, active: boolean, reason?: string | null) => void;
       /** Fire main's "these tasks hold their browser surface offscreen" push.
        *  Takes the WHOLE set, as main does. */
       emitOffscreenSurfaces: (taskIds: string[]) => void;

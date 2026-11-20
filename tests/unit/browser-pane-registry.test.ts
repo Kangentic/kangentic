@@ -291,6 +291,22 @@ describe('BrowserPaneRegistry', () => {
     });
   });
 
+  describe('ownerKeyForWebContents', () => {
+    // The agent-input push resolves a guest to its owner through this, then reads
+    // the reason the owner's agent gave in open_pane (decision 46). A wrong owner
+    // would put one task's reason on another task's page.
+    it('names the owner of each registered guest, and null for an unknown or forgotten one', () => {
+      registry.register(REGISTER_A);
+      registry.register(REGISTER_B);
+      expect(registry.ownerKeyForWebContents(11)).toBe('task-1');
+      expect(registry.ownerKeyForWebContents(22)).toBe('task-2');
+      expect(registry.ownerKeyForWebContents(99)).toBeNull();
+
+      registry.unregisterByWebContentsId(11, 'renderer-unmount');
+      expect(registry.ownerKeyForWebContents(11)).toBeNull();
+    });
+  });
+
   it('updates url by handle and by webContentsId', () => {
     registry.register(REGISTER_B);
     registry.updateUrl('pane_bbbbbbbb', 'http://localhost:5173');

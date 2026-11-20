@@ -23,6 +23,11 @@ msgstr ""
 msgid "Add a note or a mark to send"
 msgstr ""
 
+#. reason is the agent's own words, in English, written to follow 'Agent is'
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Agent is {driveReason}"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Agent is driving"
 msgstr "智能体正在操作"

@@ -19,7 +19,8 @@ import type { ResolvedBrowserAutomationConfig } from './browser-automation-confi
 import { openLane, destroyLane, hasLaneForTask } from './browser-lane-manager';
 import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
 import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
-import { BROWSER_PANE_OPEN_TIMEOUT_MS } from '../../shared/types';
+import { BROWSER_PANE_OPEN_TIMEOUT_MS, type BrowserPaneOpenPurpose } from '../../shared/types';
+import { setBrowserPaneReason, clearBrowserPaneReason, getBrowserPaneReason } from './browser-pane-reason';
 
 /**
  * Opens and closes a task's embedded Browser pane on behalf of the
@@ -125,6 +126,14 @@ export interface OpenPaneInput {
    *  then the project default. */
   url?: string;
   /**
+   * Why the agent is opening its pane. `own-work` mounts it behind the terminal
+   * and never shows a pane the user is not looking at; `for-user` shows it, as
+   * every call did before decision 46.
+   */
+  purpose: BrowserPaneOpenPurpose;
+  /** One line that follows "Agent is", shown on the page while the agent drives. */
+  reason: string;
+  /**
    * The capability tier opening is gated at. Declared by the caller (the tool)
    * rather than hardcoded here so the tier sits next to the MCP `annotations:`
    * it has to agree with, which is what
@@ -216,9 +225,14 @@ function paneStatus(sessionId: string): BrowserPaneStatus | null {
 
 /**
  * A live pane may be HELD: put away behind the terminal with the Browser pill,
- * inside a window the user has open. The agent asked for its pane to be open,
- * so the warm path pushes the same request the cold path does, and the renderer
- * ends the hold, a style change on the same guest.
+ * inside a window the user has open. An agent that opens its pane FOR THE USER
+ * wants it seen, so the warm path pushes the same request the cold path does,
+ * and the renderer ends the hold, a style change on the same guest.
+ *
+ * An agent opening it for its OWN WORK pushes nothing: a showing pane stays
+ * showing, a held pane stays held, and a parked one stays parked. Showing a
+ * page the user does not need to look at is the #1131 slide-in this purpose
+ * exists to stop (decision 46).
  *
  * That is all this reaches. A window the user closed stays closed (parked), and
  * the agent goes on driving the page in it. Decided by the renderer, not here:
@@ -229,8 +243,14 @@ function paneStatus(sessionId: string): BrowserPaneStatus | null {
  * Best-effort on purpose: the pane is registered and driveable whatever the
  * window does, so a missing window is not a failure of this call.
  */
-function endHoldOnLivePane(host: BrowserPaneOpenerHost, projectId: string, taskId: string): void {
-  host.send(IPC.BROWSER_PANE_OPEN_REQUEST, projectId, taskId);
+function showLivePaneForUser(
+  host: BrowserPaneOpenerHost,
+  projectId: string,
+  taskId: string,
+  purpose: BrowserPaneOpenPurpose,
+): void {
+  if (purpose !== 'for-user') return;
+  host.send(IPC.BROWSER_PANE_OPEN_REQUEST, projectId, taskId, purpose);
 }
 
 /** The task's live OFFSCREEN surface, or null. At most one, by construction. */
@@ -395,7 +415,7 @@ async function openOffscreenSurface(
  * caller's own task is both safer and simpler.
  */
 export async function openPaneForCallerTask(input: OpenPaneInput): Promise<DriverResult<OpenPaneData>> {
-  const { projectId, callerSessionId, callerTaskId, config } = input;
+  const { callerSessionId, callerTaskId, config } = input;
 
   if (!callerTaskId) {
     return failure(
@@ -417,6 +437,45 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   if (!host) {
     return failure('app-not-ready', 'Kangentic is still starting up. Retry in a moment.');
   }
+
+  // The reason is the owner's, whichever path below the surface takes: a pane,
+  // a parked window, or an offscreen surface that becomes a pane later. It is
+  // stored BEFORE the open, because every path that succeeds drives the guest
+  // through `withGuest` first, and that drive's active edge is what carries the
+  // reason to the pane's label. The pane shows it only while the agent drives,
+  // so storing it now cannot put it on screen ahead of the agent's work.
+  //
+  // A refused call puts the previous reason back. The surface it would have
+  // described is still the one the earlier call opened, and its label must not
+  // read the words of a call that did nothing.
+  const previousReason = getBrowserPaneReason(callerTaskId);
+  storeBrowserPaneReason(callerTaskId, input.purpose, input.reason, callerSessionId ?? null);
+  const result = await openPaneWithReasonStored(input, host, callerTaskId);
+  if (!result.ok) {
+    if (previousReason) setBrowserPaneReason(callerTaskId, previousReason);
+    else clearBrowserPaneReason(callerTaskId);
+  }
+  return result;
+}
+
+/** Record the reason an open gave, or clear it when the call gave none. */
+function storeBrowserPaneReason(
+  ownerKey: string,
+  purpose: BrowserPaneOpenPurpose,
+  reason: string,
+  sessionId: string | null,
+): void {
+  if (reason.trim()) setBrowserPaneReason(ownerKey, { purpose, reason, sessionId });
+  else clearBrowserPaneReason(ownerKey);
+}
+
+/** Everything `openPaneForCallerTask` does past its gate, with the reason already stored. */
+async function openPaneWithReasonStored(
+  input: OpenPaneInput,
+  host: BrowserPaneOpenerHost,
+  callerTaskId: string,
+): Promise<DriverResult<OpenPaneData>> {
+  const { projectId, callerSessionId, config } = input;
 
   const selectorFor = (sessionId?: string): ResolveTargetSelector => ({
     sessionId,
@@ -468,7 +527,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     const pane = paneStatus(live.sessionId);
     if (!pane) return failure('pane-destroyed', 'The Browser pane closed while opening. Retry.');
     if (pane.url) {
-      endHoldOnLivePane(host, projectId, callerTaskId);
+      showLivePaneForUser(host, projectId, callerTaskId, input.purpose);
       return { ok: true, data: { opened: false, navigated: false, url: pane.url, pane } };
     }
     // A live guest with no URL is a pane sitting on its empty state. Reporting
@@ -492,7 +551,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     if (!navigateResult.ok) return { ok: false, error: navigateResult.error };
     const pane = paneStatus(live.sessionId);
     if (!pane) return failure('pane-destroyed', 'The Browser pane closed while navigating. Retry.');
-    endHoldOnLivePane(host, projectId, callerTaskId);
+    showLivePaneForUser(host, projectId, callerTaskId, input.purpose);
     return { ok: true, data: { opened: false, navigated: true, url: validatedLive.url, pane } };
   }
 
@@ -588,7 +647,9 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     );
   }
 
-  if (!host.send(IPC.BROWSER_PANE_OPEN_REQUEST, projectId, callerTaskId)) {
+  // The purpose rides the push: the renderer mounts an own-work pane held,
+  // behind the terminal, and a for-user pane showing.
+  if (!host.send(IPC.BROWSER_PANE_OPEN_REQUEST, projectId, callerTaskId, input.purpose)) {
     return failure('app-not-ready', 'The Kangentic window is not available.');
   }
 
@@ -728,6 +789,10 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   const laneTargets = targets.filter((pane) => pane.kind === 'lane');
   const paneTargets = targets.filter((pane) => pane.kind !== 'lane');
   const closedLanes = laneTargets.filter((lane) => destroyLane(lane.sessionId)).map(summarize);
+
+  // A closed surface takes its reason with it: the next open_pane says its own.
+  for (const pane of targets) clearBrowserPaneReason(pane.taskId);
+  for (const detachedWindow of windowTargets.values()) clearBrowserPaneReason(detachedWindow.taskId);
 
   if (paneTargets.length === 0 && windowTargets.size === 0) {
     return { ok: true, data: { closed: closedLanes, closedWindows: [], skipped: [], scope, otherProjectPaneCount } };

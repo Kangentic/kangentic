@@ -21,6 +21,7 @@ import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos
 import { translatePasteSubmitError } from '../helpers/paste-error-message';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
+import { clearBrowserPaneReason } from '../../browser/browser-pane-reason';
 import { setBrowserPaneOpenerHost, offscreenSurfaceUrl } from '../../browser/browser-pane-opener';
 import { installLaneHandoff } from '../../browser/browser-lane-handoff';
 import { destroyLane, laneTaskIds, setLaneChangeListener } from '../../browser/browser-lane-manager';
@@ -480,6 +481,9 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // that follows unregisters a guest this registry no longer knows: a no-op.
   ipcMain.handle(IPC.BROWSER_PANE_USER_CLOSE, (_event, webContentsId: number) => {
     if (typeof webContentsId !== 'number' || !Number.isInteger(webContentsId) || webContentsId <= 0) return;
+    // The agent's reason goes with the browser the user closed.
+    const ownerKey = browserPaneRegistry.ownerKeyForWebContents(webContentsId);
+    if (ownerKey) clearBrowserPaneReason(ownerKey);
     browserPaneRegistry.unregisterByWebContentsId(webContentsId, 'user-closed');
   });
 
@@ -584,6 +588,8 @@ export function registerBrowserHandlers(context: IpcContext): void {
       if (entry.kind !== 'lane') continue;
       if (destroyLane(entry.sessionId)) closed = true;
     }
+    // The user closed the surface the agent's reason described, so the reason goes too.
+    if (closed) clearBrowserPaneReason(taskId);
     return closed;
   });
 }

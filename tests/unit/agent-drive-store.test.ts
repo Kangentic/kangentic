@@ -24,11 +24,50 @@ import { useAgentDriveStore, useIsAgentDrivingSession } from '../../src/renderer
 
 describe('agent-drive-store', () => {
   beforeEach(() => {
-    useAgentDriveStore.setState({ drivingSessionIds: [] });
+    useAgentDriveStore.setState({ drivingSessionIds: [], driveReasons: {} });
   });
 
   it('starts with no session being driven', () => {
     expect(useAgentDriveStore.getState().drivingSessionIds).toEqual([]);
+  });
+
+  it('keeps the reason through the drive end, for the label fade, and the next active edge replaces or drops it', () => {
+    // Decision 46: the label reads "Agent is <reason>" while the agent drives,
+    // and fades with the veil. Clearing the reason on the end edge would swap
+    // the label's words mid-fade.
+    const store = useAgentDriveStore.getState();
+    store.setAgentDriving('sess-1', true, 'measuring canvas board heights');
+    expect(useAgentDriveStore.getState().driveReasons).toEqual({ 'sess-1': 'measuring canvas board heights' });
+
+    store.setAgentDriving('sess-1', false);
+    expect(useAgentDriveStore.getState().driveReasons).toEqual({ 'sess-1': 'measuring canvas board heights' });
+
+    store.setAgentDriving('sess-1', true, 'showing you the login page');
+    expect(useAgentDriveStore.getState().driveReasons).toEqual({ 'sess-1': 'showing you the login page' });
+
+    store.setAgentDriving('sess-1', false);
+    store.setAgentDriving('sess-1', true, null);
+    expect(useAgentDriveStore.getState().driveReasons).toEqual({});
+  });
+
+  it('a repeated active edge with the same reason changes nothing', () => {
+    useAgentDriveStore.getState().setAgentDriving('sess-1', true, 'measuring');
+    const before = useAgentDriveStore.getState();
+    useAgentDriveStore.getState().setAgentDriving('sess-1', true, 'measuring');
+    expect(useAgentDriveStore.getState()).toBe(before);
+  });
+
+  it('an active edge with an empty reason is no reason: no state change when none is stored, and it drops a stored one', () => {
+    useAgentDriveStore.getState().setAgentDriving('sess-1', true);
+    const before = useAgentDriveStore.getState();
+    useAgentDriveStore.getState().setAgentDriving('sess-1', true, '');
+    expect(useAgentDriveStore.getState()).toBe(before);
+    expect(useAgentDriveStore.getState().driveReasons).toBe(before.driveReasons);
+
+    useAgentDriveStore.getState().setAgentDriving('sess-1', true, 'measuring');
+    expect(useAgentDriveStore.getState().driveReasons).toEqual({ 'sess-1': 'measuring' });
+    useAgentDriveStore.getState().setAgentDriving('sess-1', true, '');
+    expect(useAgentDriveStore.getState().driveReasons).toEqual({});
   });
 
   it('setAgentDriving(id, true) adds the session id', () => {

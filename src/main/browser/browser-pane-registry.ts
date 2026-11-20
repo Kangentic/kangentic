@@ -214,7 +214,7 @@ const FOREIGN_PROJECT_HINT =
  * can actually perform. Keep this pointing at the tool, not at the pill.
  */
 const NO_PANE_OPEN_HINT =
-  'Call kangentic_browser_open_pane with a url to open and load your own Browser pane, then retry.';
+  'Call kangentic_browser_open_pane with a url, a purpose and a reason to open and load your own Browser pane, then retry.';
 
 /**
  * Why a pane left the registry. Every deletion names one.
@@ -564,6 +564,15 @@ export class BrowserPaneRegistry {
   }
 
   /**
+   * The owner key (a task id, or a Command Terminal's) of the surface whose
+   * guest this is, or null for a guest no surface registered. How a per-guest
+   * signal, such as the agent-input push, finds the owner's state.
+   */
+  ownerKeyForWebContents(webContentsId: number): string | null {
+    return this.findByWebContentsId(webContentsId)?.taskId ?? null;
+  }
+
+  /**
    * Record where a registered pane is on the user's screen. Reported by the
    * renderer, which is the only side that knows; a guest this registry does
    * not know is ignored (the report can race a registration either way, and
@@ -909,7 +918,7 @@ export class BrowserPaneRegistry {
       .sort((left, right) => surfaceRank(left) - surfaceRank(right));
     const owner = isCommandTerminalBrowserOwner(selector.callerTaskId) ? 'Your Command Terminal' : 'Your task';
     if (surfaces.length === 0) {
-      return `${owner} has no Browser surface open now. Call kangentic_browser_open_pane with a url to open one, then pass the handle it returns as sessionId (or omit sessionId to use it).`;
+      return `${owner} has no Browser surface open now. Call kangentic_browser_open_pane with a url, a purpose and a reason to open one, then pass the handle it returns as sessionId (or omit sessionId to use it).`;
     }
     const named = surfaces.map((entry) => `${describeSurface(entry)} at ${this.readLiveUrl(entry) ?? 'no URL yet'}`);
     if (named.length === 1) {

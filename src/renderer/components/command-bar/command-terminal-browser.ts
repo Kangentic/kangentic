@@ -16,6 +16,7 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../stores/session-store';
 import { usePopOutStore } from '../../stores/pop-out-store';
+import { applyAgentPaneOpen } from '../../utils/agent-pane-open';
 import { popOutInstanceKey } from '../../../shared/pop-out';
 import {
   commandTerminalBrowserOwner,
@@ -188,14 +189,15 @@ export function useCommandTerminalBrowserBridge(scopeProjectId?: string): void {
     if (!browser?.onPaneOpenRequest) return;
     // An agent's open_pane never shows the panel. A hidden panel's pane is already
     // mounted and composited at `opacity: 0` by `CommandTerminalBrowserHost`, so
-    // the open flag is all it needs, and the user opening the panel shows it.
-    const unsubscribeOpen = browser.onPaneOpenRequest((projectId, ownerKey) => {
+    // the open flag is all it needs, and the user opening the panel shows it. An
+    // own-work open mounts the pane held, behind the terminal, even with the
+    // panel showing (decision 46).
+    const unsubscribeOpen = browser.onPaneOpenRequest((projectId, ownerKey, purpose) => {
       if (!isCommandTerminalBrowserOwner(ownerKey)) return;
       if (scopeProjectId !== undefined && projectId !== scopeProjectId) return;
       if (scopeProjectId === undefined && isCommandTerminalPanelDetached(projectId)) return;
-      const session = useSessionStore.getState();
-      session.setBrowserOpen(ownerKey, true);
-      session.refreshBrowserUrl(ownerKey);
+      applyAgentPaneOpen(ownerKey, purpose);
+      useSessionStore.getState().refreshBrowserUrl(ownerKey);
     });
     const unsubscribeClose = browser.onPaneCloseRequest?.((projectId, ownerKeys) => {
       if (scopeProjectId !== undefined && projectId !== scopeProjectId) return;

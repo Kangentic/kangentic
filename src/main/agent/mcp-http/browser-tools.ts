@@ -67,6 +67,7 @@ import {
 } from '../../browser/viewport-override';
 import { driverToolResult, screenshotToolResult, errorToolResult, type McpToolResult } from './tool-result';
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
+import { BROWSER_PANE_OPEN_PURPOSES, BROWSER_PANE_REASON_MAX_LENGTH } from '../../../shared/types';
 
 /**
  * The user-facing `kangentic_browser_*` MCP tool family. Drives the embedded
@@ -96,6 +97,17 @@ const TARGET_SHAPE = {
   sessionId: z.string().optional().describe(SESSION_DESC),
   taskId: z.string().optional().describe(TASK_DESC),
 };
+
+/**
+ * What `kangentic_browser_open_pane` answers when the agent leaves out why it
+ * is opening the pane (decision 46, option 2C). The MCP SDK returns a schema
+ * failure to the agent as a tool error carrying these messages, so the call
+ * opens nothing and the agent is told exactly what to send on its retry.
+ */
+const OPEN_PANE_PURPOSE_REQUIRED =
+  'Say why you are opening the Browser pane: pass purpose "for-user" if the user should look at the page, or "own-work" if you are using it for your own work. Nothing was opened.';
+const OPEN_PANE_REASON_REQUIRED =
+  `Pass reason: one line up to ${BROWSER_PANE_REASON_MAX_LENGTH} characters that follows "Agent is", for example "measuring canvas board heights". Nothing was opened.`;
 
 type TargetArgs = { sessionId?: string; taskId?: string };
 
@@ -392,7 +404,7 @@ export function registerBrowserTools(
     'kangentic_browser_open_pane',
     {
       description:
-        "Open the user's VISIBLE embedded Browser pane for YOUR OWN task and load a URL, so you can then drive it with the other kangentic_browser_* tools. Use this instead of asking the user to open the Browser pill. It never opens, raises or focuses a window: with the task's window closed the pane runs out of sight, fully driveable, screenshots included, and `pane.visibility` says so. The user opening the task shows that same page. Returns the surface once it is registered and driveable, so the very next call can act on it; `pane.sessionId` is its handle. A task has exactly ONE browser surface: there is no argument for a second one, and no way to open a pane for another task or project. Calling it again with a different url navigates that surface rather than opening another. A pane the user hid with the Browser pill is shown again, the same tab with nothing reloaded. A window the user closed stays closed. If your project is not the one currently open in Kangentic, no pane can be mounted, so the surface comes up OFFSCREEN instead and the response says `offscreen: true` - it is fully driveable, the user can see it exists on the task card, and it turns back into a visible pane by itself as soon as one can mount.",
+        "Open the embedded Browser pane for YOUR OWN task and load a URL, so you can drive it with the other kangentic_browser_* tools. Say why with `purpose` and `reason`. \"for-user\": a page the user should look at; the pane opens beside the terminal, and a pane the user hid is shown again. \"own-work\": a page you use yourself; the pane opens behind the terminal, where the user can open it to watch, and a pane already showing stays as it is. While you drive the page, its label reads \"Agent is <reason>\". It never opens, raises or focuses a window: with the task's window closed the pane runs out of sight, fully driveable, and `pane.visibility` says so. Returns the surface once it is registered and driveable; `pane.sessionId` is its handle. A task has exactly ONE browser surface: calling again with a different url navigates it, and there is no way to open one for another task or project. If your project is not the one open in Kangentic, the surface comes up OFFSCREEN (`offscreen: true`), fully driveable, and becomes a visible pane by itself once one can mount.",
       inputSchema: z.object({
         url: z
           .string()
@@ -400,15 +412,30 @@ export function registerBrowserTools(
           .describe(
             "Absolute http(s) URL to load, e.g. http://localhost:5173. Omit to reuse the task's saved Browser URL, or the project default. If neither exists, pass one - a pane with no URL registers nothing and cannot be driven.",
           ),
+        purpose: z
+          .enum(BROWSER_PANE_OPEN_PURPOSES, { error: OPEN_PANE_PURPOSE_REQUIRED })
+          .describe(
+            '"for-user" if the user should look at the page (it opens beside the terminal); "own-work" if you are using it yourself, to measure, capture or check your own files (it opens behind the terminal).',
+          ),
+        reason: z
+          .string({ error: OPEN_PANE_REASON_REQUIRED })
+          .trim()
+          .min(1, { error: OPEN_PANE_REASON_REQUIRED })
+          .max(BROWSER_PANE_REASON_MAX_LENGTH, { error: OPEN_PANE_REASON_REQUIRED })
+          .describe(
+            `What you are doing, one line up to ${BROWSER_PANE_REASON_MAX_LENGTH} characters, written to follow "Agent is". For example "measuring canvas board heights" or "showing you the Priority column in the Backlog list".`,
+          ),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ url }) => {
+    async ({ url, purpose, reason }) => {
       const result = await openPaneForCallerTask({
         projectId,
         callerSessionId,
         callerTaskId,
         url,
+        purpose,
+        reason,
         // Opening always loads a URL, so this is a navigation-tier action:
         // "Allow navigation" off in Settings disables this tool too.
         capability: 'navigate',

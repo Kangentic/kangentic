@@ -8,6 +8,7 @@ import {
 } from './browser-pane-driver';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 import { openPaneForCallerTask } from './browser-pane-opener';
+import { getBrowserPaneReason } from './browser-pane-reason';
 import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
 import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
 import { BROWSER_PANE_OPEN_TIMEOUT_MS } from '../../shared/types';
@@ -234,7 +235,19 @@ async function abandonDetach(
     );
   }
 
-  const opened = await openPaneForCallerTask({ projectId, callerSessionId, callerTaskId, capability, config });
+  // A recovery, not a new open: it keeps the reason the agent last gave. The
+  // pane was on screen in its own window, so with no reason it comes back as one
+  // the user sees.
+  const given = getBrowserPaneReason(callerTaskId);
+  const opened = await openPaneForCallerTask({
+    projectId,
+    callerSessionId,
+    callerTaskId,
+    capability,
+    config,
+    purpose: given?.purpose ?? 'for-user',
+    reason: given?.reason ?? '',
+  });
   if (opened.ok) {
     return failure(
       cause.kind,

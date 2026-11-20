@@ -311,15 +311,15 @@ test.describe('hold on hide', () => {
     expect(await taskWindow(sharedPage)).toMatchObject({ parked: false });
   });
 
-  test("an agent's open_pane shows a held pane again: the same guest, now visible", async () => {
+  test("an agent's open_pane for the user shows a held pane again: the same guest, now visible", async () => {
     await openRegisteredPane(sharedPage);
     await hidePaneWithPill(sharedPage);
 
     // Main's push for kangentic_browser_open_pane on a live-but-hidden pane
-    // (the warm path pushes too, so the agent's "open" means "show"). The
-    // bridge ends the hold; the pane's slot restyles, never remounts.
+    // (the warm path pushes for a for-user call, so that "open" means "show").
+    // The bridge ends the hold; the pane's slot restyles, never remounts.
     await sharedPage.evaluate(({ projectId, taskId }) => {
-      window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId);
+      window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId, 'for-user');
     }, { projectId: PROJECT_ID, taskId: TASK_ID });
 
     await sharedPage.locator('[data-testid="task-detail-right-panel"]').waitFor({ state: 'attached', timeout: 5000 });
@@ -329,6 +329,37 @@ test.describe('hold on hide', () => {
     expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
     await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
     expect(await taskWindow(sharedPage)).toMatchObject({ parked: false });
+  });
+
+  test("an agent's open_pane for its own work leaves a held pane held, on the same guest", async () => {
+    await openRegisteredPane(sharedPage);
+    await hidePaneWithPill(sharedPage);
+
+    // Decision 46: the agent is using the page itself, so a pane the user put
+    // away stays behind the terminal. Main sends no push on the warm path for
+    // own work; a push that does arrive (a cold-path race) must not show it.
+    await sharedPage.evaluate(({ projectId, taskId }) => {
+      window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId, 'own-work');
+    }, { projectId: PROJECT_ID, taskId: TASK_ID });
+
+    await expect(sharedPage.locator('[data-testid="task-detail-browser-held"]')).toHaveCount(1);
+    await expect(sharedPage.locator('[data-testid="task-detail-right-panel"]')).toHaveCount(0);
+    expect(await paneFlags(sharedPage)).toEqual({ open: false, held: true });
+    expect(await registersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(1);
+    expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
+  });
+
+  test("an agent's open_pane for its own work leaves a showing pane showing", async () => {
+    await openRegisteredPane(sharedPage);
+
+    await sharedPage.evaluate(({ projectId, taskId }) => {
+      window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId, 'own-work');
+    }, { projectId: PROJECT_ID, taskId: TASK_ID });
+
+    // An agent never hides a pane the user is looking at.
+    await expect(sharedPage.locator('[data-testid="task-detail-right-panel"]')).toHaveCount(1);
+    await expect(sharedPage.locator('[data-testid="task-detail-browser-held"]')).toHaveCount(0);
+    expect(await paneFlags(sharedPage)).toEqual({ open: true, held: false });
   });
 
   test("an agent's close_pane discards a held pane", async () => {

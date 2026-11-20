@@ -110,11 +110,22 @@ async function loadApp(page: Page): Promise<void> {
 }
 
 /** Fire main's open push, as `kangentic_browser_open_pane` does. */
-async function emitOpenRequest(page: Page): Promise<void> {
+async function emitOpenRequest(page: Page, purpose: 'for-user' | 'own-work' = 'for-user'): Promise<void> {
   await page.evaluate(
-    ([projectId, taskId]) => window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId),
-    [PROJECT_ID, TASK_ID],
+    ([projectId, taskId, openPurpose]) => window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId, openPurpose),
+    [PROJECT_ID, TASK_ID, purpose],
   );
+}
+
+/** The fixture task's open and held flags, as the session store sees them. */
+async function paneFlags(page: Page): Promise<{ open: boolean; held: boolean }> {
+  return page.evaluate((taskId: string) => {
+    const stores = (window as unknown as {
+      __zustandStores: { session: { getState: () => { browserOpenTasks: Set<string>; browserHeldTasks: Set<string> } } };
+    }).__zustandStores;
+    const state = stores.session.getState();
+    return { open: state.browserOpenTasks.has(taskId), held: state.browserHeldTasks.has(taskId) };
+  }, TASK_ID);
 }
 
 test.beforeAll(async () => {
@@ -156,6 +167,41 @@ test.describe('browser pane request bridge', () => {
     expect(await frame.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
     expect(await frame.evaluate((element) => getComputedStyle(element).visibility)).toBe('visible');
     expect(await frame.getAttribute('inert')).not.toBeNull();
+  });
+
+  test('an own-work push with the task window open mounts the pane held, behind the terminal', async () => {
+    // Decision 46: the #1131 case. The agent is using the page itself, so the
+    // pane must not slide in beside the terminal the user is looking at.
+    await sharedPage.evaluate((url) => {
+      window.__mockBrowser?.reset();
+      window.__mockBrowser?.seedTaskUrl('task-pane-bridge', url);
+    }, SEEDED_URL);
+    await sharedPage.locator('[data-swimlane-name="Code Review"]').locator('text=Pane Bridge Task').first().click();
+    await sharedPage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 10000 });
+
+    await emitOpenRequest(sharedPage, 'own-work');
+
+    await sharedPage.locator('[data-testid="task-detail-browser-held"]').waitFor({ state: 'attached', timeout: 10000 });
+    await expect(sharedPage.locator('[data-testid="task-detail-right-panel"]')).toHaveCount(0);
+    await expect(sharedPage.locator('[data-testid="task-detail-browser-held"] [data-testid="browser-pane"]')).toHaveCount(1);
+    expect(await paneFlags(sharedPage)).toEqual({ open: false, held: true });
+  });
+
+  test('an own-work push with no window open mounts the pane held in a parked window', async () => {
+    await sharedPage.evaluate((url) => {
+      window.__mockBrowser?.reset();
+      window.__mockBrowser?.seedTaskUrl('task-pane-bridge', url);
+    }, SEEDED_URL);
+    await expect(sharedPage.locator('[data-testid="task-detail-dialog"]')).toHaveCount(0);
+
+    await emitOpenRequest(sharedPage, 'own-work');
+
+    const pane = sharedPage.locator('[data-testid="browser-pane"]');
+    await pane.waitFor({ state: 'attached', timeout: 10000 });
+    const frame = sharedPage.locator('[data-testid^="window-frame-"]').filter({ has: pane });
+    expect(await frame.getAttribute('inert')).not.toBeNull();
+    expect(await frame.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+    expect(await paneFlags(sharedPage)).toEqual({ open: false, held: true });
   });
 
   test('an open push that beats the task to the board mounts the pane once the task lands', async () => {

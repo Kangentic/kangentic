@@ -2,6 +2,7 @@ import type { SessionRepository } from '../db/repositories/session-repository';
 import { resolveOwnSessionRecord } from '../db/repositories/session-own-record';
 import type { SessionRecord, SuspendedBy } from '../../shared/types';
 import { destroyLanesForSession } from '../browser/browser-lane-manager';
+import { clearBrowserPaneReasonsForSession } from '../browser/browser-pane-reason';
 import { releaseViewportOverridesForSession } from '../browser/viewport-override';
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,8 @@ export function markRecordExited(
     } catch (error) {
       console.warn(`[browser-lane] Could not close lanes for session ${recordId.slice(0, 8)}:`, error);
     }
+    // The reasons this session gave for its Browser pane end with it.
+    clearBrowserPaneReasonsForSession(recordId);
     // Put back any viewport this session overrode on a pane it did NOT own.
     //
     // Lanes are covered by the line above, because a lane's viewport is its
