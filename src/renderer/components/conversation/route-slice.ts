@@ -9,8 +9,13 @@
  * working columns only, and no turn happens in To Do or Done, so a gap the task
  * spent there never needs a stay of its own. An entry with no timestamp (0), or
  * one from before the first logged move, belongs to no stay: it shows in All
- * and in no column tab. A tool result follows its tool call's stay, so a card is
- * never split from its result across a boundary.
+ * and in no column tab. A clock that names only the minute (Cursor's
+ * `<timestamp>` tag) still belongs to a stay that starts later in that
+ * minute: the card often moves, then the column types, inside the same
+ * minute the clock reports. A millisecond clock does not get that bump, so
+ * a Claude turn a few seconds before the move stays in the column it ran
+ * in. A tool result follows its tool call's stay, so a card is never split
+ * from its result across a boundary.
  *
  * The dividers are synthetic system entries, built here and never sent
  * anywhere: they use the subtype whose text is ready to display
@@ -109,6 +114,8 @@ function staysOf(route: ReadonlyArray<TaskReportRouteColumn>): Stay[] {
   return stays.sort((first, second) => first.startMs - second.startMs);
 }
 
+const MINUTE_MS = 60_000;
+
 /** The index of the stay an instant falls in, or -1 for none (no timestamp, or before the first stay).
  *  A binary search: with older pages loaded this runs once per entry over thousands of entries. */
 function stayIndexAt(stays: ReadonlyArray<Stay>, timestampMs: number): number {
@@ -123,6 +130,20 @@ function stayIndexAt(stays: ReadonlyArray<Stay>, timestampMs: number): number {
       low = middle + 1;
     } else {
       high = middle - 1;
+    }
+  }
+  // A clock that only names the minute cannot say whether it beat a stay
+  // that starts later in that minute. Give that later stay the turn, so a
+  // Cursor slash command typed as the card arrived still lands in the new
+  // column. A timestamp with leftover milliseconds is a real clock and
+  // stays on the earlier stay.
+  if (timestampMs % MINUTE_MS === 0) {
+    const candidate = found + 1;
+    if (candidate >= 0 && candidate < stays.length) {
+      const stay = stays[candidate];
+      if (stay.startMs > timestampMs && stay.startMs < timestampMs + MINUTE_MS) {
+        return candidate;
+      }
     }
   }
   return found;

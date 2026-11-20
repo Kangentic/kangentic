@@ -107,6 +107,28 @@ describe('sliceConversationByRoute', () => {
     expect(uuids(sliceConversationByRoute(ENTRIES, ROUTE, ALL_CONVERSATION_TAB).entries)).toContain('untimed');
   });
 
+  it('a minute-precision clock in the minute a stay starts belongs to that stay', () => {
+    // Cursor clocks name only the minute. A card moved 43 seconds in still
+    // owns the turn whose clock is that minute (the column often types then).
+    const route = [column('executing', 'Executing', [0.5])];
+    const prompt: TranscriptEntry = { kind: 'user', uuid: 'prompt', ts: at(0), text: '/code-review' };
+
+    expect(uuids(sliceConversationByRoute([prompt], route, 'executing').entries)).toContain('prompt');
+  });
+
+  it('a millisecond clock before a stay that starts later in the same minute stays in the earlier stay', () => {
+    const route = [
+      column('executing', 'Executing', [0]),
+      column('review', 'Code Review', [0.5]),
+    ];
+    const stillExecuting: TranscriptEntry = {
+      kind: 'assistant', uuid: 'still', ts: at(0) + 20_000, blocks: [{ type: 'text', text: 'still' }],
+    };
+
+    expect(uuids(sliceConversationByRoute([stillExecuting], route, 'executing').entries)).toContain('still');
+    expect(uuids(sliceConversationByRoute([stillExecuting], route, 'review').entries)).not.toContain('still');
+  });
+
   it('keeps a tool result with its tool call when the result lands after the next move', () => {
     const entries: TranscriptEntry[] = [
       { kind: 'assistant', uuid: 'call', ts: at(19), blocks: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: {} }] },

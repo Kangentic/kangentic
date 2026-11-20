@@ -83,9 +83,9 @@ export type EscalationHandler = (commands: string[]) => Promise<boolean>;
 export interface ScheduleKeystrokesOptions {
   /**
    * True when the session was just spawned (or is `queued` waiting to spawn).
-   * The scheduler waits for the CLI's first `'thinking'` activity event
-   * before pushing keystrokes - sending them while the CLI still prints its
-   * banner gets the text rendered into the wrong place.
+   * A fresh spawn waits for the CLI's first `'thinking'` or `'idle'`. A
+   * queued resume waits for `'idle'` after it starts: its first `'thinking'`
+   * is the PTY painting the boot screen, and keys typed then are lost.
    */
   freshlySpawned?: boolean;
   /** Per-command verifier; forwarded to TerminalSubmit.submitKeystrokes. */
@@ -96,9 +96,10 @@ export interface ScheduleKeystrokesOptions {
    */
   mode?: AutoCommandMode;
   /**
-   * Hard timeout for the fresh-spawn wait. When the CLI never emits
-   * `'thinking'` (e.g. agent hung at startup), we cancel this task's
-   * pending injection rather than wait forever. Default 120s.
+   * Hard timeout for the wait after the session is running. When the CLI
+   * never becomes ready (hung at startup), we cancel this task's pending
+   * injection rather than wait forever. Default 120s. A card still queued
+   * for a column slot does not consume this budget.
    */
   timeoutMs?: number;
   /**
@@ -218,9 +219,13 @@ interface LaunchWait {
  *   2. **Existing session, deferred mode** - holds until the current turn
  *      genuinely completes (see `turn-completion.ts`), then delivers.
  *
- *   3. **Freshly spawned / queued session** - waits for the CLI's first
- *      `'thinking'` activity event. 30s fallback delivers anyway if hooks
- *      never fire; `opts.timeoutMs` (default 120s) caps the total wait.
+   *   3. **Freshly spawned / queued session** - waits until the CLI can take
+   *      keys. A fresh spawn delivers on the first `'thinking'` or `'idle'`.
+   *      A queued resume waits for `'idle'` after it starts: its first
+   *      `'thinking'` is the PTY painting the boot screen, and keys typed
+   *      then are lost. 30s fallback delivers anyway if neither fires. The
+   *      hard timeout (`opts.timeoutMs`, default 120s) caps the wait after
+   *      the session is running, not the time spent queued for a column slot.
  *
  *   4. **Existing session whose agent is still starting** - a session the
  *      caller did not flag as fresh, but whose agent is not on screen yet
@@ -823,15 +828,23 @@ export class TerminalSubmitScheduler {
   /**
    * Wait for the right moment, then start the burst.
    *
-   * Fresh spawn / queued: wait for the CLI's first `'thinking'` or `'idle'`
-   * event (it is alive), with a 30s fallback for adapters that report neither
-   * and a hard timeout for a genuinely hung startup.
+   * Fresh spawn: wait for the CLI's first `'thinking'` or `'idle'` (it is
+   * alive), with a 30s fallback for adapters that report neither and a hard
+   * timeout for a genuinely hung startup.
+   *
+   * Queued: the same after the session starts. Do not type on the first
+   * `'thinking'`: for a resume that types its prompt, that edge is the PTY
+   * painting the boot screen. Wait for `'idle'` (the prompt). The hard
+   * timeout starts only once the session is running, so a card waiting on
+   * "one agent at a time" can sit in line longer than 120s without losing
+   * the column's message.
    */
   private scheduleDeferred(taskId: string, burst: QueuedBurst, isQueued: boolean): void {
     const { sessionId, opts } = burst;
     const timeoutMs = opts.timeoutMs ?? 120_000;
     let state: 'queued' | 'waiting' = isQueued ? 'queued' : 'waiting';
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let hardTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Identity, not presence. `entry` is created at the foot of this function,
     // before any listener or timer below can fire. A bare
@@ -840,24 +853,27 @@ export class TerminalSubmitScheduler {
     // place and strand the new one. See `PendingDeferred.burst`.
     const isCurrent = (): boolean => this.deferred.get(taskId) === entry;
 
-    const hardTimer = setTimeout(() => {
-      console.warn(`[TerminalSubmitScheduler] Hard timeout (${timeoutMs}ms) for task ${taskId.slice(0, 8)} -- cancelling`);
-      // This burst reports its own failure below; `cancel` stops the rest.
-      if (isCurrent()) this.dropDeferred(taskId);
-      this.cancel(taskId);
-      this.report(opts, {
-        taskId,
-        sessionId,
-        commands: burst.commands.map((command) => command.text),
-        outcome: 'failed',
-        unconfirmedCommands: burst.commands.map((command) => command.text),
-        discardedDraft: null,
-        interruptedTurn: false,
-        escalated: false,
-        reason: 'The agent never became ready, so the command was not sent.',
-        textReachedAgent: false,
-      });
-    }, timeoutMs);
+    const startHardTimer = (): void => {
+      if (hardTimer) return;
+      hardTimer = setTimeout(() => {
+        console.warn(`[TerminalSubmitScheduler] Hard timeout (${timeoutMs}ms) for task ${taskId.slice(0, 8)} -- cancelling`);
+        // This burst reports its own failure below; `cancel` stops the rest.
+        if (isCurrent()) this.dropDeferred(taskId);
+        this.cancel(taskId);
+        this.report(opts, {
+          taskId,
+          sessionId,
+          commands: burst.commands.map((command) => command.text),
+          outcome: 'failed',
+          unconfirmedCommands: burst.commands.map((command) => command.text),
+          discardedDraft: null,
+          interruptedTurn: false,
+          escalated: false,
+          reason: 'The agent never became ready, so the command was not sent.',
+          textReachedAgent: false,
+        });
+      }, timeoutMs);
+    };
 
     const startFallbackTimer = (): void => {
       if (fallbackTimer) return;
@@ -868,12 +884,17 @@ export class TerminalSubmitScheduler {
       }, 30_000);
     };
 
+    const beginWaitingForCli = (): void => {
+      startFallbackTimer();
+      startHardTimer();
+    };
+
     const detachAndDeliver = (): void => {
       this.sessionManager.off('activity', onActivity);
       this.sessionManager.off('session-changed', onSessionChanged);
       this.sessionManager.off('exit', onExit);
       if (fallbackTimer) clearTimeout(fallbackTimer);
-      clearTimeout(hardTimer);
+      if (hardTimer) clearTimeout(hardTimer);
       this.deferred.delete(taskId);
       this.startBurst(taskId, burst);
     };
@@ -883,11 +904,17 @@ export class TerminalSubmitScheduler {
     // listener exists, so its only edge here is the idle its first turn ends
     // on; waiting for a thinking edge alone left a column's message on the 30s
     // fallback. A permission prompt is not alive enough: typed keys would
-    // answer it.
+    // answer it. A queued resume's first thinking is the boot paint, so that
+    // path waits for idle.
     const onActivity = (evtSessionId: string, activityState: string): void => {
       if (evtSessionId !== sessionId) return;
       if (!isCurrent()) return;
-      if (state === 'waiting' && (activityState === 'thinking' || activityState === 'idle')) detachAndDeliver();
+      if (state !== 'waiting') return;
+      if (activityState === 'idle') {
+        detachAndDeliver();
+        return;
+      }
+      if (!isQueued && activityState === 'thinking') detachAndDeliver();
     };
 
     const onSessionChanged = (evtSessionId: string, evtSession: { status: string }): void => {
@@ -895,7 +922,7 @@ export class TerminalSubmitScheduler {
       if (!isCurrent()) return;
       if (state === 'queued' && evtSession.status === 'running') {
         state = 'waiting';
-        startFallbackTimer();
+        beginWaitingForCli();
       }
     };
 
@@ -924,7 +951,7 @@ export class TerminalSubmitScheduler {
     this.sessionManager.on('session-changed', onSessionChanged);
     this.sessionManager.on('exit', onExit);
 
-    if (!isQueued) startFallbackTimer();
+    if (!isQueued) beginWaitingForCli();
 
     const entry: PendingDeferred = {
       cleanup: (): void => {
@@ -932,7 +959,7 @@ export class TerminalSubmitScheduler {
         this.sessionManager.off('session-changed', onSessionChanged);
         this.sessionManager.off('exit', onExit);
         if (fallbackTimer) clearTimeout(fallbackTimer);
-        clearTimeout(hardTimer);
+        if (hardTimer) clearTimeout(hardTimer);
       },
       burst,
     };
