@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Cursor CLI
-description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, confirm-changes, --force skip-approval and --mode plan sessions, and -p --trust stream-json commands, activity hooks in the project .cursor/hooks.json gated to session screens, turn ends from the stop hook and the stream-json result event, --model ids resolved from display names, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, create-chat session ids before an interactive session opens, structured transcripts read from agent-transcripts jsonl with the user_query wrapper removed and no clock, and which parts were built from Cursor's docs without a live run.
+description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, confirm-changes, --force skip-approval and --mode plan sessions, and -p --trust stream-json commands, activity hooks in the project .cursor/hooks.json gated to session screens, turn ends from the stop hook and the stream-json result event, --model ids resolved from display names, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, create-chat session ids before an interactive session opens, structured transcripts read from agent-transcripts jsonl with skill and cursor_commands wrappers stripped, the user_query wrapper removed, and the minute clock stamped onto the turn, and which parts were built from Cursor's docs without a live run.
 tags: [agents, adapter, cursor]
 sources:
   - resource: src/main/agent/adapters/cursor/cursor-adapter.ts
@@ -260,9 +260,16 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` when that file
   exists, else the path the agent itself reported when that file exists. The slug is Cursor's own: non-alphanumeric characters become `-`, runs of dashes
   collapse, and case stays as the working directory was given. View conversation reads that
-  JSONL. A user line's `<timestamp>` tag is dropped and not shown as a clock (`ts: 0`,
-  `transcriptHasTimestamps` false), and the `<user_query>` wrapper is removed. A line whose
-  whole body is one `<task>` element is unwrapped once more. There is still no
+  JSONL. Skill and `cursor_commands` wrappers that Cursor puts in front of a board-typed
+  slash command (`/pull-request`, `/merge-pull-request`) are stripped, then the
+  `<user_query>` wrapper is removed. A line whose whole body is one `<task>` element is
+  unwrapped once more. The user line's `<timestamp>` tag (minute precision) is stamped
+  onto that turn and the assistant lines that follow, marked `tsPrecision: 'minute'`, so
+  Route tabs can place it. A window or page that opens between two turns reads back up to
+  256 KB before its first line, only when it needs to, for the nearest earlier user turn's
+  clock, so the assistant lines at its head still carry the minute.
+  `transcriptHasTimestamps` stays false: the viewer still pages by position, because a
+  minute clock is not a JSON field the timeline can probe. There is still no
   `command-injection` verifier: the records have no timestamp field, so a confirm cannot bound
   itself to "written after send", and the stored text is not the raw submitted text. See
   [Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified).

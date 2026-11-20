@@ -351,6 +351,19 @@ function cdpMouse(
   });
 }
 
+/**
+ * Queue a chord of CDP mouse events, then wait for all of them. Awaiting each
+ * send on a loaded CI runner can put more than 200ms (the navigation tap
+ * window) between press and release, and a tap becomes a hold.
+ */
+function cdpMouseBurst(
+  cdp: CDPSession,
+  point: { x: number; y: number },
+  events: ReadonlyArray<{ type: CdpMouseType; button: CdpMouseButton; buttons: number }>,
+): Promise<unknown[]> {
+  return Promise.all(events.map((event) => cdpMouse(cdp, point, event.type, event.button, event.buttons)));
+}
+
 /** A Back button press or lift as the window sees it, dispatched on `document.body`. */
 function backPointer(page: Page, type: 'pointerdown' | 'pointerup'): Promise<void> {
   return page.evaluate((eventType) => {
@@ -1245,9 +1258,11 @@ test.describe('dictation into the Browser pane note input', () => {
       const cdp = await page.context().newCDPSession(page);
       const point = await paneCenter(page);
       await cdpMouse(cdp, point, 'mouseMoved', 'none', 0);
-      await cdpMouse(cdp, point, 'mousePressed', 'back', 8);
-      await cdpMouse(cdp, point, 'mousePressed', 'left', 9);
-      await cdpMouse(cdp, point, 'mouseReleased', 'back', 1);
+      await cdpMouseBurst(cdp, point, [
+        { type: 'mousePressed', button: 'back', buttons: 8 },
+        { type: 'mousePressed', button: 'left', buttons: 9 },
+        { type: 'mouseReleased', button: 'back', buttons: 1 },
+      ]);
 
       await expect.poll(() => navigationCalls(page), { timeout: 10000 }).toEqual(['goBack']);
       expect(await holdEnds(page)).toEqual(['navigation-tap']);

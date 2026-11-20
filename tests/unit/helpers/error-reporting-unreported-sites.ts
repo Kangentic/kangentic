@@ -96,7 +96,6 @@ export const UNREPORTED_CATCH_SITES: Readonly<Record<string, number>> = {
   'src/main/agent/adapters/cursor/project-mcp-config.ts': 4,
   'src/main/agent/adapters/cursor/session-paths.ts': 1,
   'src/main/agent/adapters/cursor/stream-parser.ts': 1,
-  'src/main/agent/adapters/cursor/transcript-parser.ts': 1,
   'src/main/agent/adapters/droid/browser-servers.ts': 1,
   'src/main/agent/adapters/droid/capability-discovery.ts': 1,
   'src/main/agent/adapters/droid/command-builder.ts': 6,

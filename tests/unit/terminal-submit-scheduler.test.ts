@@ -8,8 +8,9 @@
  *      the new request QUEUES behind it - nothing is dropped.
  *   2. Existing session, deferred mode: hold until the agent's current turn
  *      genuinely completes, then deliver.
- *   3. Freshly spawned / queued: wait for the CLI's first `'thinking'` event,
- *      with a 30s fallback and a hard timeout.
+ *   3. Freshly spawned / queued: wait until the CLI can take keys (thinking
+ *      or idle on a fresh spawn; idle after a queued session starts), with a
+ *      30s fallback and a hard timeout that starts only once it is running.
  *   4. Cancel: tears down listeners and timers AND aborts an in-flight burst.
  *   5. Report a definite outcome for every scheduled burst, escalating a
  *      confirmed failure to a restart-with-prompt.
@@ -574,8 +575,8 @@ describe('TerminalSubmitScheduler', () => {
     });
   });
 
-  describe('queued session: wait for running then thinking', () => {
-    it('ignores activity:thinking before status:running', async () => {
+  describe('queued session: wait for running then idle', () => {
+    it('ignores activity before status:running, and thinking after it (boot paint)', async () => {
       sessionManager.registry.set('s1', { status: 'queued' });
 
       scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], { freshlySpawned: true });
@@ -588,7 +589,140 @@ describe('TerminalSubmitScheduler', () => {
       sessionManager.emitSessionChanged('s1', { status: 'running' });
       sessionManager.emitActivity('s1', 'thinking');
       await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
       expect(terminalSubmit.calls).toHaveLength(1);
+    });
+
+    it('does not spend the hard timeout while the session is still queued', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        timeoutMs: 1000,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      vi.advanceTimersByTime(5000);
+      await tick();
+      expect(reports).toHaveLength(0);
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(reports).toHaveLength(0);
+    });
+
+    it.each(['suspended', 'exited'])('fails the burst at once when the queued session is %s before it ever runs', async (status) => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      sessionManager.emitSessionChanged('s1', { status });
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        commands: ['/test'],
+        reason: 'The session stopped before it started, so the command was not sent.',
+        textReachedAgent: false,
+      });
+
+      // Every later signal and both timers: nothing may deliver or report again.
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      sessionManager.emitActivity('s1', 'idle');
+      sessionManager.emitExit('s1');
+      vi.advanceTimersByTime(130_000);
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(terminalSubmit.calls).toHaveLength(0);
+    });
+
+    it('ignores another session stopping, starting, or going idle while this one is queued', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        timeoutMs: 1000,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      // A sibling's stop must not fail this burst, and its start must neither
+      // begin this burst's wait nor its hard timer.
+      sessionManager.emitSessionChanged('other', { status: 'suspended' });
+      sessionManager.emitSessionChanged('other', { status: 'running' });
+      sessionManager.emitActivity('other', 'idle');
+      vi.advanceTimersByTime(5000);
+      await tick();
+      expect(reports).toHaveLength(0);
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(reports).toHaveLength(0);
+    });
+
+    it('does not deliver on idle that arrives before the queued session is running', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], { freshlySpawned: true });
+      await tick();
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+    });
+
+    it('delivers a running queued session that never goes idle at the 30s fallback, and clears the hard timer', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      await tick();
+
+      vi.advanceTimersByTime(29_999);
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(0);
+
+      vi.advanceTimersByTime(1);
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+
+      // Delivery cleared the 120s hard timer: no failed report may follow.
+      vi.advanceTimersByTime(130_000);
+      await tick();
+      expect(reports.filter((report) => report.outcome === 'failed')).toHaveLength(0);
     });
   });
 
@@ -1580,14 +1714,11 @@ describe('TerminalSubmitScheduler', () => {
       expect(currentReports[0].outcome).toBe('confirmed');
     });
 
-    it.each([
-      { label: 'a freshly spawned session that shows no activity', status: 'running' },
-      { label: 'a queued session that never starts', status: 'queued' },
-    ])('reports the hard timeout while waiting on $label once, as failed with nothing typed', async ({ status }) => {
+    it('reports the hard timeout while waiting on a freshly spawned session that shows no activity once, as failed with nothing typed', async () => {
       // Red for a double report: the hard-timer callback drops its own wait
       // before it calls `cancel`. Without that, `cancel` finds the pending wait
       // and reports it `cancelled` too, ahead of the `failed` report below.
-      sessionManager.registry.set('s1', { status });
+      sessionManager.registry.set('s1', { status: 'running' });
       const reports: InjectionReport[] = [];
 
       scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
@@ -1617,6 +1748,36 @@ describe('TerminalSubmitScheduler', () => {
       await tick();
 
       expect(reports).toHaveLength(1);
+      expect(terminalSubmit.calls).toHaveLength(0);
+    });
+
+    it('reports the hard timeout after a queued session starts and still shows no activity', async () => {
+      sessionManager.registry.set('s1', { status: 'queued' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        timeoutMs: 1000,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      vi.advanceTimersByTime(5000);
+      await tick();
+      expect(reports).toHaveLength(0);
+
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      await tick();
+      vi.advanceTimersByTime(1500);
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        commands: ['/test'],
+        reason: 'The agent never became ready, so the command was not sent.',
+        textReachedAgent: false,
+      });
       expect(terminalSubmit.calls).toHaveLength(0);
     });
 

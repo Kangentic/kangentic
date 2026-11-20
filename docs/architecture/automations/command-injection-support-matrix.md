@@ -115,10 +115,10 @@ What exists on disk:
 Three things must be settled before Cursor earns a verifier, and none is done:
 
 1. **Flush latency is unmeasured.** The harness has no Cursor entry yet.
-2. **The records carry no timestamp.** The shared scan bounds itself with a `sentAt` watermark read off each record; with none, the same guards Aider needs apply (file mtime at/after `sentAt`, and match only the LAST user block). The per-session file at least bounds staleness to one session, unlike Aider's per-project log.
+2. **The records carry no JSON timestamp field.** The user line's `<timestamp>` tag names only the minute, too coarse to tell a send from the turn before it. The shared scan bounds itself with a `sentAt` watermark read off each record; with none, the same guards Aider needs apply (file mtime at/after `sentAt`, and match only the LAST user block). The per-session file at least bounds staleness to one session, unlike Aider's per-project log.
 3. **The stored text is WRAPPED.** The captured turn reads `<user_query>\n<task>...</task>\n</user_query>`, not the raw submitted text, so exact trim-equality would fail unless the extractor unwraps it. Whether a keystroke-injected auto_command is wrapped the same way is itself unverified.
 
-View conversation does read this file. It drops the leading `<timestamp>` tag, unwraps `<user_query>`, and unwraps a body that is one `<task>` element. Entries carry no clock (`ts: 0`). That is a reader, not a verifier: a confirm still needs a time bound and a match against the text that was submitted, and neither of those is settled.
+View conversation does read this file. It strips skill and `cursor_commands` wrappers, unwraps `<user_query>`, unwraps a body that is one `<task>` element, and stamps the `<timestamp>` tag onto the turn. That is a reader, not a verifier: a confirm still needs a time bound and a match against the text that was submitted, and neither of those is settled.
 
 Droid is different: it WAS measured, on an authenticated session, and failed on variance rather than on being unmeasurable. Do not re-litigate it without new numbers.
 

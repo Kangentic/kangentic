@@ -276,8 +276,10 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   /**
-   * `agent-transcripts` lines have no timestamp field. Entries use `ts: 0`,
-   * so the viewer shows no clock and orders the conversation by file order.
+   * The JSONL has no timestamp field. The parser reads the user line's
+   * `<timestamp>` tag (minute precision) onto `ts` so Route tabs can place
+   * the turn, but this stays false: the viewer pages by position and asks
+   * for no timeline.
    */
   readonly transcriptHasTimestamps = false;
   /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the sessions still using each. */

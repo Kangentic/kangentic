@@ -481,13 +481,59 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     const sideBySide = page.locator('.monaco-diff-editor.side-by-side');
     await expect(sideBySide).toBeVisible({ timeout: 8000 });
 
-    // Count the rendered rows Monaco produced for each pane's content.
-    const renderedRows = () =>
+    // Read the live diff editor through the dev-only Monaco handle (window.__monaco,
+    // exposed by monacoConfig.ts and used by the other Changes specs). Rows are counted
+    // inside that one editor, and the state beside them says whether Monaco is wrapping
+    // each pane, so a failure prints why a pane stayed unwrapped, not just a row count.
+    const readDiffEditor = () =>
       page.evaluate(() => {
-        const rows = (selector: string) =>
-          document.querySelectorAll(`.monaco-diff-editor ${selector} .view-line`).length;
-        return { original: rows('.editor.original'), modified: rows('.editor.modified') };
+        interface PaneEditor {
+          getOption: (option: number) => unknown;
+          getLayoutInfo: () => { width: number };
+        }
+        const monaco = (window as unknown as {
+          __monaco: {
+            editor: {
+              EditorOption: { wrappingInfo: number };
+              getDiffEditors: () => Array<{
+                getContainerDomNode: () => HTMLElement;
+                getOriginalEditor: () => PaneEditor;
+                getModifiedEditor: () => PaneEditor;
+              }>;
+            };
+          };
+        }).__monaco;
+        const diffEditors = monaco.editor.getDiffEditors();
+        const wraps = (pane: PaneEditor) =>
+          (pane.getOption(monaco.editor.EditorOption.wrappingInfo) as { isViewportWrapping: boolean }).isViewportWrapping;
+        const root = diffEditors[0]?.getContainerDomNode().querySelector('.monaco-diff-editor') ?? null;
+        const rows = (pane: string) => root?.querySelectorAll(`.editor.${pane} .view-line`).length ?? 0;
+        return {
+          editorCount: diffEditors.length,
+          sideBySide: root?.classList.contains('side-by-side') ?? false,
+          laidOut: document.querySelector('[data-testid="diff-editor-area"]')?.getAttribute('data-diff-state') === 'laid-out',
+          originalWidth: diffEditors[0]?.getOriginalEditor().getLayoutInfo().width ?? 0,
+          originalWraps: diffEditors[0] ? wraps(diffEditors[0].getOriginalEditor()) : false,
+          modifiedWraps: diffEditors[0] ? wraps(diffEditors[0].getModifiedEditor()) : false,
+          originalRows: rows('original'),
+          modifiedRows: rows('modified'),
+        };
       });
+
+    type DiffEditorState = Awaited<ReturnType<typeof readDiffEditor>>;
+    // Polls until `holds` is true of the live editor. A poll that has not settled returns
+    // the whole state as text, so the failure shows it (toMatchObject would print only
+    // the keys it was given).
+    const editorSettles = (holds: (state: DiffEditorState) => boolean, timeout = 5000) =>
+      expect.poll(async () => {
+        const state = await readDiffEditor();
+        return holds(state) ? 'settled' : JSON.stringify(state);
+      }, { timeout }).toBe('settled');
+
+    // The expand click remounts the Changes panel, so wait for the one editor that is
+    // left to be side by side, laid out (DiffViewer's data-diff-state) and given real
+    // width before anything is measured or toggled against it.
+    await editorSettles((state) => state.editorCount === 1 && state.sideBySide && state.laidOut && state.originalWidth > 0, 8000);
 
     // Wrap lives in the "View options" menu; open it, flip the option, and
     // close so the menu never overlaps the panes being measured.
@@ -503,9 +549,9 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     };
 
     // Unwrapped: the long line is one row, so each pane renders only a handful.
-    await expect.poll(async () => (await renderedRows()).modified).toBeLessThan(10);
-    const unwrapped = await renderedRows();
-    expect(unwrapped.original).toBeLessThan(10);
+    await editorSettles((state) => !state.originalWraps && !state.modifiedWraps && state.modifiedRows < 10);
+    const unwrapped = await readDiffEditor();
+    expect(unwrapped.originalRows).toBeLessThan(10);
 
     await toggleWrap('true');
 
@@ -513,21 +559,27 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
     // Measured against the unwrapped count rather than a fixed number: Monaco renders
     // only the rows that fit its viewport, so how many a pane shows is capped by the
     // pane's height, which differs between machines. A pane that did wrap still shows
-    // several more rows than the same pane unwrapped, whatever its height.
+    // several more rows than the same pane unwrapped, whatever its height. A pane that
+    // stays unwrapped is reported with Monaco's own wrapping flag, width and mode beside
+    // the row count.
     const WRAP_ROW_GAIN = 8;
-    await expect.poll(async () => (await renderedRows()).modified).toBeGreaterThan(unwrapped.modified + WRAP_ROW_GAIN);
-    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(unwrapped.original + WRAP_ROW_GAIN);
+    await editorSettles((state) =>
+      state.modifiedWraps && state.originalWraps &&
+      state.modifiedRows > unwrapped.modifiedRows + WRAP_ROW_GAIN &&
+      state.originalRows > unwrapped.originalRows + WRAP_ROW_GAIN);
 
     // Survives a side-by-side -> inline -> side-by-side round trip, which is the exact
     // sequence that strands override2 on the original editor.
     await page.locator('[data-testid="diff-view-inline"]').click();
     await page.locator('[data-testid="diff-view-split"]').click();
     await expect(sideBySide).toBeVisible();
-    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(unwrapped.original + WRAP_ROW_GAIN);
+    await editorSettles((state) =>
+      state.editorCount === 1 && state.sideBySide && state.originalWraps &&
+      state.originalRows > unwrapped.originalRows + WRAP_ROW_GAIN);
 
     // Turning wrap back off restores single-row rendering.
     await toggleWrap('false');
-    await expect.poll(async () => (await renderedRows()).original).toBeLessThan(10);
+    await editorSettles((state) => !state.originalWraps && state.originalRows < 10);
 
     // Restore shared state: collapse, un-maximize, clear the diff, close the dialog.
     await page.locator('[data-testid="changes-collapse"]').click();

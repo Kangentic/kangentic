@@ -3,3 +3,6 @@
 {"role":"assistant","message":{"content":[{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"kangentic","toolName":"kangentic_search","mcpDetails":{"description":"Hybrid search for release checklist"},"arguments":{"query":"release checklist","mode":"hybrid"}}}]}}
 {"role":"assistant","message":{"content":[{"type":"text","text":"The search found no task matching release checklist."}]}}
 {"type":"turn_ended","status":"success"}
+{"role":"user","message":{"content":[{"type":"text","text":"<manually_attached_skills>\nThe user has manually attached the following skills to their message.\nSkill Name: pull-request\n</manually_attached_skills>\n<cursor_commands>\n--- Cursor Command: pull-request ---\nOpen a pull request for the current branch.\n</cursor_commands>\n<timestamp>Thursday, Jan 1, 2026, 9:05 AM (UTC+0)</timestamp>\n<user_query>\n/pull-request\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Opened a pull request for the branch. All checks passed."}]}}
+{"type":"turn_ended","status":"success"}
