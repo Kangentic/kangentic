@@ -55,6 +55,7 @@ import { useMobileTerminalStreamsSync } from '../../hooks/useMobileTerminalStrea
 import { useSshHostsSync } from '../../hooks/useSshHostsSync';
 import { useMonitorDetailOwnership } from '../monitor/useMonitorDetailOwnership';
 import { useDictation } from '../../hooks/useDictation';
+import { useBrowserMouseNavigation } from '../../hooks/useBrowserMouseNavigation';
 import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { useCycleShortcuts } from '../../hooks/useCycleShortcuts';
@@ -253,6 +254,9 @@ export function AppLayout() {
   // window store survives - see `useMonitorDetailOwnership`.
   useMonitorDetailOwnership();
   useDictation();
+  // Mouse back/forward over a Browser pane, for every button push-to-talk does
+  // not hold. This window is the one dictation runs in.
+  useBrowserMouseNavigation({ canDictate: true });
 
   // Idle-warm the lazy stats chunk (recharts) once per session, off the
   // startup path: the first stats open then resolves from the module cache

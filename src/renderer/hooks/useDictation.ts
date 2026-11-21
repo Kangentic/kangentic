@@ -9,14 +9,20 @@ import { createDictationSink, type DictationSink } from '../utils/dictation-sink
 import { mayAutoSubmit } from '../utils/text-target';
 import { probeGuestField, type GuestFieldProbe } from '../utils/guest-text-target';
 import { startAudioCapture, type AudioCaptureHandle } from '../audio/audio-capture';
-import { effectiveCombo, isMouseCombo, mouseComboToButton } from '../../shared/keybindings';
+import { isMouseCombo } from '../../shared/keybindings';
 import { isMouseComboButton, matchesCombo } from '../utils/keybindings';
 import { decidePress, holdEndFromPointer } from '../utils/dictation-hold';
 import type { DictationHoldEndReason } from '../../shared/types';
 import { isRebindCaptureActive } from '../utils/rebind-state';
-import { resolveBrowserNavigationTarget } from '../utils/browser-navigation-registry';
-
-const ACTION_ID = 'dictation.pushToTalk';
+import {
+  resolveBrowserNavigationTarget,
+  resolveBrowserNavigationTargetForGuest,
+} from '../utils/browser-navigation-registry';
+import {
+  PUSH_TO_TALK_ACTION_ID as ACTION_ID,
+  usePushToTalkCombo,
+  usePushToTalkMouseButtons,
+} from '../utils/push-to-talk-buttons';
 
 /**
  * Below this, a press is a CLICK rather than a hold, and means "navigate the
@@ -36,11 +42,6 @@ const NAVIGATION_TAP_MS = 200;
 /** How long the "still sending the last one" refusal stays up. Long enough to
  *  read, short enough that it is gone before the user's next attempt. */
 const BUSY_NOTICE_MS = 1600;
-
-/** `PointerEvent.button` for the forward mouse button (back is 3). Read from the
- *  keybindings registry rather than restated, so the gesture and the `Mouse:Forward`
- *  combo a user can bind can never disagree about which button they mean. */
-const FORWARD_MOUSE_BUTTON = mouseComboToButton('Mouse:Forward');
 
 /** Spoken phrases that clear the current dictation instead of committing it.
  *  Only a STANDALONE utterance equal to one of these clears (safe + predictable);
@@ -126,15 +127,14 @@ export function useDictation(): void {
   // Live is the only experience now: the transcript types straight into the
   // resolved target. (The popup/docked surfaces are retired.)
   const experience: 'popup' | 'docked' | 'live' = 'live';
-  const override = useConfigStore((state) => state.globalConfig.hotkeyOverrides?.[ACTION_ID]);
-  const combo = effectiveCombo(ACTION_ID, override ? { [ACTION_ID]: override } : undefined);
-  // Which mouse button push-to-talk actually holds. Both are rebindable, so
-  // neither direction may be assumed: the guest path already branches on the
-  // reported button, and the window paths below read these for the same reason.
-  // A button push-to-talk does NOT hold is a bare navigation button; one it DOES
-  // hold has to go through tap-vs-hold arbitration instead.
-  const boundToMouseBack = !!combo && isMouseCombo(combo) && combo.split('+').includes('Mouse:Back');
-  const boundToMouseForward = !!combo && isMouseCombo(combo) && combo.split('+').includes('Mouse:Forward');
+  const combo = usePushToTalkCombo();
+  // Which mouse buttons push-to-talk holds while dictation is on. Both are
+  // rebindable, so neither direction may be assumed. Only these go through
+  // tap-vs-hold arbitration here; every other back or forward press is plain
+  // navigation, owned by `useBrowserMouseNavigation`, which reads this same set.
+  const pushToTalkButtons = usePushToTalkMouseButtons({ canDictate: true });
+  const boundToMouseBack = pushToTalkButtons.has('back');
+  const boundToMouseForward = pushToTalkButtons.has('forward');
 
   // `true` while the push-to-talk input is held, and what tells the release
   // handler to act.
@@ -791,53 +791,18 @@ export function useDictation(): void {
   }, [cancelDictation, traceHold]);
 
   /**
-   * Mouse FORWARD navigates the active pane on PRESS, with no threshold - but
-   * only while push-to-talk is not bound to that same button.
-   *
-   * The gate is load-bearing rather than defensive. `Mouse:Forward` is a
-   * first-class rebindable token, and this listener and `useKeybinding`'s press
-   * handler both sit on `window` in the capture phase, where `stopPropagation`
-   * does NOT stop a sibling listener on the same node. So without it, a user who
-   * rebinds push-to-talk to Forward gets BOTH on every press: dictation starts
-   * and the pane navigates out from under it. A button push-to-talk holds must
-   * go through the tap-vs-hold arbitration on release instead, which is exactly
-   * what the guest path already does.
-   *
-   * Bound here rather than in the pane because the pane never sees the event:
-   * with focus inside the guest, a mouse-forward press goes to the guest's
-   * widget, and the host only learns about it from a window-level listener.
-   */
-  useEffect(() => {
-    if (!enabled || boundToMouseForward) return;
-    const onForward = (event: PointerEvent): void => {
-      // A rebind capture owns every input while it is open. Without this, a
-      // capture-phase `window` listener consumes the press before the Hotkeys
-      // capture widget (on `document`) can record it, so the user cannot bind
-      // this button at all while a pane happens to be active.
-      if (isRebindCaptureActive()) return;
-      if (event.button !== FORWARD_MOUSE_BUTTON) return;
-      const pane = resolveBrowserNavigationTarget();
-      if (!pane || !pane.canGoForward()) return;
-      event.preventDefault();
-      event.stopPropagation();
-      pane.goForward();
-    };
-    window.addEventListener('pointerdown', onForward, true);
-    return () => window.removeEventListener('pointerdown', onForward, true);
-  }, [enabled, boundToMouseForward]);
-
-  /**
-   * Mouse back / forward pressed inside a Browser pane's guest page.
+   * Mouse back / forward pressed inside a Browser pane's guest page, for a button
+   * push-to-talk holds.
    *
    * These arrive over IPC rather than as DOM events, because a guest consumes
    * the mouse outright: measured on a live guest, one real back press produced
    * 31 events inside the page and ZERO on the host window. So while the page has
-   * focus, the window listeners above are blind and this is the only path. Main
+   * focus, the window listeners are blind and this is the only path. Main
    * reports a true down/up PAIR, which is what lets a hold stay a hold.
    *
    * Gated on the user's ACTUAL binding: someone who rebound push-to-talk to a key
-   * must not have the back button start dictating at them. A back press with no
-   * dictation binding still navigates, which is the behaviour they asked for.
+   * must not have the back button start dictating at them. A button push-to-talk
+   * does not hold is `useBrowserMouseNavigation`'s, which navigates on release.
    */
   useEffect(() => {
     if (!enabled) return;
@@ -845,28 +810,17 @@ export function useDictation(): void {
     if (!subscribe) return;
     return subscribe((event) => {
       const boundToThisButton = event.button === 'back' ? boundToMouseBack : boundToMouseForward;
+      if (!boundToThisButton) return;
 
       if (event.phase === 'down') {
-        if (!boundToThisButton) return;
         if (!handlePress({ repeat: false, recoveryReason: 'guest-second-press', buttons: null })) return;
         guestPressedAtRef.current = event.at;
         startDictationSafely();
         return;
       }
 
-      // Release. A button with no dictation binding navigates on its own; one
-      // that IS bound goes through the same tap-vs-hold arbitration as the
-      // window path, so a hold dictates and a tap navigates.
-      if (!boundToThisButton) {
-        const pane = resolveBrowserNavigationTarget();
-        if (!pane) return;
-        if (event.button === 'forward' ? pane.canGoForward() : pane.canGoBack()) {
-          if (event.button === 'forward') pane.goForward();
-          else pane.goBack();
-        }
-        return;
-      }
-
+      // Release: the same tap-vs-hold arbitration as the window path, so a hold
+      // dictates and a tap navigates.
       // A second press may already have finished this hold, and its release is
       // not a tap: it must not navigate the page out from under the user.
       if (!activeRef.current) return;
@@ -874,8 +828,8 @@ export function useDictation(): void {
       guestPressedAtRef.current = null;
       const wasTap = pressedAt !== null && event.at - pressedAt < NAVIGATION_TAP_MS;
       if (wasTap) {
-        const pane = resolveBrowserNavigationTarget();
-        const canNavigate = pane
+        const pane = resolveBrowserNavigationTargetForGuest(event.webContentsId);
+  const canNavigate = pane
           && (event.button === 'forward' ? pane.canGoForward() : pane.canGoBack());
         if (canNavigate) {
           traceHold('end', 'navigation-tap', null);

@@ -11,12 +11,14 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   registerBrowserNavigationTarget,
   resolveBrowserNavigationTarget,
+  resolveBrowserNavigationTargetForGuest,
   type BrowserNavigationTarget,
 } from '../../src/renderer/utils/browser-navigation-registry';
 
 function fakeTarget(overrides: Partial<BrowserNavigationTarget> = {}): BrowserNavigationTarget {
   return {
     isActive: () => false,
+    webContentsId: () => null,
     canGoBack: () => false,
     canGoForward: () => false,
     goBack: () => { /* no-op */ },
@@ -80,5 +82,42 @@ describe('browser-navigation-registry', () => {
     register(secondMounted);
 
     expect(resolveBrowserNavigationTarget()).toBe(firstMounted);
+  });
+});
+
+// A press inside a page names its guest. A window just brought forward may have
+// seen neither hover nor focus on the pane, so the id is what finds it.
+describe('resolveBrowserNavigationTargetForGuest', () => {
+  it('takes the pane whose guest sent the press over a pane that is merely active', () => {
+    const active = fakeTarget({ isActive: () => true, webContentsId: () => 7 });
+    const sender = fakeTarget({ webContentsId: () => 42 });
+    register(active);
+    register(sender);
+
+    expect(resolveBrowserNavigationTargetForGuest(42)).toBe(sender);
+  });
+
+  it('falls back to an active pane whose guest has not registered yet', () => {
+    const idle = fakeTarget({ webContentsId: () => 8 });
+    const unregistered = fakeTarget({ isActive: () => true });
+    register(idle);
+    register(unregistered);
+
+    expect(resolveBrowserNavigationTargetForGuest(99)).toBe(unregistered);
+  });
+
+  // Main sends a release for a guest destroyed mid-press after its pane has
+  // already unregistered. That release names a guest no pane holds, and it must
+  // not navigate whichever other pane happens to be hovered or focused.
+  it('never takes an active pane that holds a different guest', () => {
+    register(fakeTarget({ isActive: () => true, webContentsId: () => 7 }));
+
+    expect(resolveBrowserNavigationTargetForGuest(99)).toBeNull();
+  });
+
+  it('finds nothing when no pane holds that guest and none is active', () => {
+    register(fakeTarget());
+
+    expect(resolveBrowserNavigationTargetForGuest(99)).toBeNull();
   });
 });

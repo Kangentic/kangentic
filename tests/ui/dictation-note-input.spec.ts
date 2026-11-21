@@ -134,12 +134,14 @@ interface LaunchOptions {
   hotkey?: string;
   /** The saved dictation Mode. Left out, the config saves none, as before. */
   mode?: 'accurate' | 'balanced' | 'fast' | 'custom';
+  /** Whether dictation is turned on. Defaults to true. */
+  dictationEnabled?: boolean;
 }
 
 /** A fresh context and page on the shared browser. `autoSubmit` has to be
  *  per-context because it is seeded by an init script, which is why this returns
  *  a page rather than reusing one. */
-async function launch({ autoSubmit, hotkey = 'Alt+Shift+Q', mode }: LaunchOptions): Promise<Page> {
+async function launch({ autoSubmit, hotkey = 'Alt+Shift+Q', mode, dictationEnabled = true }: LaunchOptions): Promise<Page> {
   const context = await sharedBrowser.newContext({
     viewport: { width: 1600, height: 1000 },
     permissions: ['microphone'],
@@ -149,7 +151,7 @@ async function launch({ autoSubmit, hotkey = 'Alt+Shift+Q', mode }: LaunchOption
     (window as unknown as { __mockConfigOverrides: Record<string, unknown> }).__mockConfigOverrides = config;
   }, {
     dictation: {
-      enabled: true,
+      enabled: dictationEnabled,
       autoSubmit,
       // The trailing-capture buffer keeps the mic open a beat past release so a
       // half-voiced last word is not clipped. There is no real speech here, so
@@ -304,6 +306,22 @@ function setGuestNavigable(page: Page, canGoBack: boolean, canGoForward: boolean
     webview.__canGoBack = flags.canGoBack;
     webview.__canGoForward = flags.canGoForward;
   }, { canGoBack, canGoForward });
+}
+
+/** Attach a guest id to the `<webview>` stub and fire `dom-ready`, as Electron
+ *  does once the guest loads, so the pane registers that id. */
+async function attachGuest(page: Page, webContentsId: number): Promise<void> {
+  await page.evaluate((guestWebContentsId) => {
+    const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as
+      (HTMLElement & { getWebContentsId: () => number }) | null;
+    if (!webview) throw new Error('no webview stub');
+    webview.getWebContentsId = () => guestWebContentsId;
+    webview.dispatchEvent(new Event('dom-ready'));
+  }, webContentsId);
+  await expect.poll(() => page.evaluate((guestWebContentsId) => {
+    const calls = window.__mockBrowser?.getPaneCalls() ?? [];
+    return calls.some((call) => call.type === 'register' && call.input.webContentsId === guestWebContentsId);
+  }, webContentsId), { timeout: 5000 }).toBe(true);
 }
 
 /** `goBack` / `goForward` calls the stub recorded, in order. */
@@ -1637,13 +1655,13 @@ test.describe('dictation into the Browser pane note input', () => {
   });
 
   test('rebinding push-to-talk to Mouse:Forward starts dictation without also navigating', async () => {
-    // Pins a fix in useDictation.ts. `Mouse:Forward` is a first-class
-    // rebindable token, and the window-level `onForward` pointerdown listener
-    // and useKeybinding's press handler both sit on `window` in the capture
-    // phase, where `stopPropagation` does not stop a sibling listener on the
-    // SAME node - so before the `boundToMouseForward` gate was added, a user
-    // who rebound push-to-talk to Forward got BOTH on every press: dictation
-    // started AND the pane navigated forward out from under it.
+    // `Mouse:Forward` is a first-class rebindable token, and the window-level
+    // navigation pointerdown listener (`useBrowserMouseNavigation`) and
+    // useKeybinding's press handler both sit on `window` in the capture phase,
+    // where `stopPropagation` does not stop a sibling listener on the SAME node.
+    // Without the shared `pushToTalkMouseButtons` gate, a user who rebound
+    // push-to-talk to Forward got BOTH on every press: dictation started AND the
+    // pane navigated forward out from under it.
     //
     // No release is dispatched here on purpose: the bug is a PRESS-time
     // double-fire, and a release would additionally exercise the legitimate
@@ -1679,6 +1697,169 @@ test.describe('dictation into the Browser pane note input', () => {
       // free.
       await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
       expect(await navigationCalls(page)).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('with dictation off, mouse back and forward still navigate the pane', async () => {
+    // Every navigation path for these buttons used to sit inside useDictation
+    // behind the dictation setting, so with dictation off neither button did
+    // anything. Push-to-talk stays bound to Mouse:Back: off, it holds nothing.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back', dictationEnabled: false });
+    const guestId = 4343;
+    try {
+      await openBrowserPane(page);
+      await setGuestNavigable(page, true, true);
+      await attachGuest(page, guestId);
+
+      await test.step('a guest tap navigates, found by the guest that sent it', async () => {
+        // Pointer off the pane and focus out of it, so only the event's guest id
+        // can name the pane.
+        await page.mouse.move(1, 1);
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.evaluate((guestWebContentsId) => {
+          const at = Date.now();
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'back', 'down', at);
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'back', 'up', at + 40);
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'forward', 'down', at + 100);
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'forward', 'up', at + 140);
+        }, guestId);
+        await expect.poll(() => navigationCalls(page), { timeout: 10000 }).toEqual(['goBack', 'goForward']);
+      });
+
+      await test.step('a window press over the pane navigates', async () => {
+        const center = await paneCenter(page);
+        await page.mouse.move(center.x, center.y);
+        await page.evaluate(() => {
+          for (const [button, buttons] of [[3, 8], [4, 16]]) {
+            document.body.dispatchEvent(new PointerEvent('pointerdown', {
+              button, buttons, pointerType: 'mouse', bubbles: true, cancelable: true,
+            }));
+          }
+        });
+        await expect.poll(() => navigationCalls(page), { timeout: 10000 })
+          .toEqual(['goBack', 'goForward', 'goBack', 'goForward']);
+      });
+
+      await test.step('with no page to go to, a tap does nothing', async () => {
+        await setGuestNavigable(page, false, false);
+        // Both paths run synchronously inside this evaluate, so the read after
+        // it is already the final answer.
+        await page.evaluate((guestWebContentsId) => {
+          const at = Date.now();
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'back', 'down', at);
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'back', 'up', at + 40);
+          document.body.dispatchEvent(new PointerEvent('pointerdown', {
+            button: 3, buttons: 8, pointerType: 'mouse', bubbles: true, cancelable: true,
+          }));
+        }, guestId);
+        expect(await navigationCalls(page)).toEqual(['goBack', 'goForward', 'goBack', 'goForward']);
+      });
+
+      expect(await dictationStatus(page)).toBe('idle');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('with dictation on and push-to-talk on Mouse:Back, forward navigates and a back tap navigates by guest id', async () => {
+    // The most common real setup. Forward is not held by push-to-talk, so
+    // useBrowserMouseNavigation owns it and useDictation ignores it. Back is
+    // held, so useDictation starts dictation on the press and, on a short release,
+    // cancels it and navigates, finding the pane by the guest id the event names.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    const guestId = 4545;
+    try {
+      await openBrowserPane(page);
+      await setGuestNavigable(page, true, true);
+      await attachGuest(page, guestId);
+
+      await test.step('a guest forward tap navigates once and leaves dictation idle', async () => {
+        await page.mouse.move(1, 1);
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.evaluate((guestWebContentsId) => {
+          const at = Date.now();
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'forward', 'down', at);
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'forward', 'up', at + 40);
+        }, guestId);
+        await expect.poll(() => navigationCalls(page), { timeout: 10000 }).toEqual(['goForward']);
+        expect(await dictationStatus(page)).toBe('idle');
+      });
+
+      await test.step('a window forward press over the pane navigates once more', async () => {
+        const center = await paneCenter(page);
+        await page.mouse.move(center.x, center.y);
+        await page.evaluate(() => {
+          document.body.dispatchEvent(new PointerEvent('pointerdown', {
+            button: 4, buttons: 16, pointerType: 'mouse', bubbles: true, cancelable: true,
+          }));
+        });
+        await expect.poll(() => navigationCalls(page), { timeout: 10000 })
+          .toEqual(['goForward', 'goForward']);
+      });
+
+      await test.step('a guest back tap starts dictation, then navigates back by guest id', async () => {
+        // Pointer and focus off the pane: only the event's guest id can name it.
+        await page.mouse.move(1, 1);
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        const pressedAt = Date.now();
+        await page.evaluate(({ guestWebContentsId, at }) => {
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'back', 'down', at);
+        }, { guestWebContentsId: guestId, at: pressedAt });
+        await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+        await page.evaluate(({ guestWebContentsId, at }) => {
+          window.__mockBrowser?.emitGuestMouseButton(guestWebContentsId, 'back', 'up', at);
+        }, { guestWebContentsId: guestId, at: pressedAt + 40 });
+        await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+        expect(await navigationCalls(page)).toEqual(['goForward', 'goForward', 'goBack']);
+      });
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('while a hotkey rebind capture is open, a back or forward press does not navigate the active pane', async () => {
+    // useBrowserMouseNavigation listens on window in the capture phase and stops
+    // propagation on a press it navigates. Without its rebind guard, that press
+    // never reaches the Hotkeys capture widget on document, so Mouse:Back and
+    // Mouse:Forward could not be recorded while a pane was hovered or focused.
+    const page = await launch({ autoSubmit: false, hotkey: 'Alt+Shift+Q', dictationEnabled: false });
+    try {
+      await openBrowserPane(page);
+      await setGuestNavigable(page, true, true);
+      // Mark the pane hovered without moving the real pointer: the settings panel
+      // opened below covers it, so a real hover would not hold.
+      await page.evaluate(() => {
+        document.querySelector('[data-testid="browser-pane"]')
+          ?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
+      });
+      const pressNavigationButtons = (): Promise<void> => page.evaluate(() => {
+        for (const [button, buttons] of [[3, 8], [4, 16]]) {
+          document.body.dispatchEvent(new PointerEvent('pointerdown', {
+            button, buttons, pointerType: 'mouse', bubbles: true, cancelable: true,
+          }));
+        }
+      });
+
+      await test.step('control: with no capture open, the active pane navigates', async () => {
+        await pressNavigationButtons();
+        expect(await navigationCalls(page)).toEqual(['goBack', 'goForward']);
+      });
+
+      await test.step('with a capture open, neither press navigates', async () => {
+        await page.locator('[data-testid="settings-button"]').click();
+        await page.getByRole('button', { name: 'Hotkeys', exact: true }).click();
+        await page.getByTestId('hotkey-row-view.toggleSidebar').getByTestId('key-capture-input').click();
+        await page.getByTestId('key-capture-box').waitFor({ state: 'visible', timeout: 5000 });
+        await page.evaluate(() => {
+          document.querySelector('[data-testid="browser-pane"]')
+            ?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: null }));
+        });
+        await pressNavigationButtons();
+        // Both presses ran synchronously inside the evaluate, so this is final.
+        expect(await navigationCalls(page)).toEqual(['goBack', 'goForward']);
+      });
     } finally {
       await page.context().close();
     }

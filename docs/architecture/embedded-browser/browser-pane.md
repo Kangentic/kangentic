@@ -46,6 +46,8 @@ sources:
   - resource: src/main/browser/no-caller-refusal.ts
   - resource: src/main/ipc/helpers/command-terminal-browser.ts
   - resource: src/shared/browser-owner.ts
+  - resource: src/renderer/hooks/useBrowserMouseNavigation.ts
+  - resource: src/renderer/utils/browser-navigation-registry.ts
 ---
 # Embedded browser pane
 
@@ -57,7 +59,7 @@ A "decision N" below is entry N of the [decision log](decision-log.md).
 
 1. Open a task with an active agent session. Click the **Browser** pill in the dialog header (mutually exclusive with **Changes**). The pill only shows and hides: a hidden pane's page is kept alive for the agent. Editing the task covers the pane with the edit form and keeps its page alive the same way, so the page is as it was when the form closes. A green running dot on the Browser pill, and a green globe at the right end of the task card's title row, both say a browser guest is running for the task (showing, hidden, or parked). Whether the agent is driving it right now is shown in the pane itself. **Close browser** (the red-tinted button at the far left of the pane's navigation bar, ahead of Back, or the item of the same name in the task menu) is the discard: it ends the page and frees its renderer process; Show then opens the saved URL fresh.
 2. First time in a project: the empty-state prompt asks for a URL. Pick a quick-pick (`localhost:3000`, `5173`, `4321`, `8080`) or type one. Submitting auto-saves it as the project default.
-3. URL bar supports back/forward/reload, pin to project default, pin to task override.
+3. URL bar supports back/forward/reload, pin to project default, pin to task override. The mouse back and forward buttons go back and forward too, in the main window and in a popped-out one, whether dictation is on or off (`useBrowserMouseNavigation`, mounted in `AppLayout` and in every pop-out root). A press inside the page reaches the host only as main's forwarded `browser:guestMouseButton` (decision 25), which goes to the window hosting that guest and names it, so the pane is found by its guest id. A button push-to-talk holds in the main window is left to `useDictation`, where a tap navigates and a hold dictates.
 4. **Annotations.** A small bar floats over the page with **Select element** (`Ctrl/Cmd+Shift+C`), **Draw** (`Ctrl/Cmd+Shift+D`) and **Undo**. It can be dragged to any corner, and the corner is kept per project. A mode stays on until `Esc` or its button again, and the two are exclusive. Every element selected and every stroke drawn joins the ACTIVE annotation: an annotation is a layer of any number of elements and drawings under one note. Selecting an element the active annotation already holds takes it out. A stroke that touches one of the annotation's drawings joins it, so an arrow's head and shaft are one drawing. Numbered badges are drawn into the page, so they scroll with it: an element's on its top-left corner, a drawing's on the first point drawn (decision 45, and `annotation-layout.ts` for the four cases that move one).
 5. **The composer.** With nothing marked the pane keeps its single note row. The first mark turns it into the composer: an **Annotations** header with the count (it folds the list; folded with a mode on, only the active row shows), one row per annotation (number, note, a summary that opens the annotation's items so one can be removed, and an X), a dashed **New annotation** row, and a fixed bottom row with **Clear** and **Send**. Text typed in the single row becomes annotation 1's note, and a push-to-talk hold writing there follows it (`dictationPopupActions.detachInput`, then `moveToInput`). `Enter` in a note starts the next annotation, `Ctrl/Cmd+Enter` in any note sends, and `Ctrl/Cmd+Z` in an EMPTY note takes back the last mark. At 20 annotations the New annotation row is gone. The page keeps its own Enter: composer keys act only inside a note. The list grows to four rows and gives way before the page does (annotationRowsMaxHeight): the page keeps 120px or 40% of the pane, down to a list of one row, which is what the 900x600 window floor leaves (a pane of about 275px).
 6. **Send** (the Send button, `Ctrl/Cmd+Enter` in a note, or `Enter` in the single row): captures the page with its badges, captures any text selection, builds an XML-tagged prompt, and submits it to the agent's PTY through the paste engine. A failed Send keeps every annotation. One that lands clears them back to the single row. Turning Draw on or starting a stroke puts focus on the note being written, so typing and dictation go with the marks; the canvas and the composer are excluded from `WindowFrame`'s press-to-focus-the-terminal rule (`KEEPS_PANE_FOCUS_ATTRIBUTE`). A click into the terminal still moves focus.
@@ -449,7 +451,11 @@ src/renderer/utils/
                                             decoder
   guest-text-target.ts                      the same, one process away: the three scripts injected
                                             into a guest page (probe / write / submit)
-  browser-navigation-registry.ts            which pane a mouse back/forward gesture acts on
+  browser-navigation-registry.ts            which pane a mouse back/forward gesture acts on: the
+                                            guest that sent it, else a hovered or focused pane
+                                            whose guest has not registered yet
+  push-to-talk-buttons.ts                   which mouse buttons push-to-talk holds in this window;
+                                            navigation owns every other back/forward press
   dictation-target.ts                       which terminal OR text input dictation writes to
   dictation-sink.ts                         how it writes there (PTY bytes vs a DOM write)
   dictation-anchor.ts                       WHERE the dictation chip sits: the anchor for each

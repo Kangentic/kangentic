@@ -904,9 +904,9 @@ function BrowserPaneActive({
   useKeybinding('browser.zoomReset', () => resetZoom(), { ...browserKeyOptions, when: paneActive });
 
   // Publish this pane as the target for a mouse back/forward gesture. The
-  // gesture itself is owned by `useDictation`, which binds the same button for
-  // push-to-talk and is therefore the only place that can tell a tap from a
-  // hold; this just says "I am the pane it applies to, here is my history".
+  // gesture itself is owned by `useBrowserMouseNavigation`, and by
+  // `useDictation` for a button push-to-talk holds, since only it can tell a tap
+  // from a hold; this just says "I am the pane it applies to, here is my history".
   //
   // Empty deps: every function reads a ref at call time, so the registration
   // never churns as the pane re-renders. `paneActive`'s own inputs (hover, focus
@@ -914,6 +914,7 @@ function BrowserPaneActive({
   useEffect(() => registerBrowserNavigationTarget({
     isActive: () => hoveredRef.current
       || (!!paneRef.current && paneRef.current.contains(document.activeElement)),
+    webContentsId: () => registeredWebContentsIdRef.current,
     canGoBack: () => { try { return webviewRef.current?.canGoBack() ?? false; } catch { return false; } },
     canGoForward: () => { try { return webviewRef.current?.canGoForward() ?? false; } catch { return false; } },
     goBack: () => { try { webviewRef.current?.goBack(); } catch { /* not attached */ } },
