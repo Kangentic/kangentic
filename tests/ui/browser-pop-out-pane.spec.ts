@@ -301,6 +301,57 @@ test.describe('Detached Browser window', () => {
     }
   });
 
+  test('mouse back and forward inside the page navigate the detached pane', async () => {
+    // Main sends a guest's buttons to the window that hosts the guest, and before
+    // this nothing in a pop-out listened, so both buttons did nothing there.
+    // Nothing hovers or focuses the pane here: the event's guest id names it.
+    const { browser, page } = await launchPopOut(
+      { kind: 'browser', params: { taskId: TASK_ID, projectId: TASK_PROJECT_ID } },
+      TASK_PROJECT_ID,
+    );
+    try {
+      await registerGuest(page);
+      await page.evaluate(() => {
+        const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as
+          (HTMLElement & { __navigable: boolean; __navigationCalls: string[] }) | null;
+        if (!webview) throw new Error('no webview stub');
+        webview.__navigable = true;
+        webview.__navigationCalls = [];
+        Object.assign(webview, {
+          canGoBack: () => webview.__navigable,
+          canGoForward: () => webview.__navigable,
+          goBack: () => { webview.__navigationCalls.push('goBack'); },
+          goForward: () => { webview.__navigationCalls.push('goForward'); },
+        });
+      });
+      const navigationCalls = (): Promise<string[]> => page.evaluate(() => {
+        const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as
+          { __navigationCalls?: string[] } | null;
+        return webview?.__navigationCalls ?? [];
+      });
+      const tap = (button: 'back' | 'forward'): Promise<void> => page.evaluate(({ webContentsId, pressedButton }) => {
+        const at = Date.now();
+        window.__mockBrowser?.emitGuestMouseButton(webContentsId, pressedButton, 'down', at);
+        window.__mockBrowser?.emitGuestMouseButton(webContentsId, pressedButton, 'up', at + 40);
+      }, { webContentsId: MOCK_WEB_CONTENTS_ID, pressedButton: button });
+
+      await tap('back');
+      await tap('forward');
+      await expect.poll(navigationCalls, { timeout: 5000 }).toEqual(['goBack', 'goForward']);
+
+      // With no page to go to, a tap does nothing. The push runs synchronously
+      // inside the evaluate, so the read after it is final.
+      await page.evaluate(() => {
+        const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as { __navigable: boolean };
+        webview.__navigable = false;
+      });
+      await tap('back');
+      expect(await navigationCalls()).toEqual(['goBack', 'goForward']);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('mounts the pane from the task\'s own row when the open board does not hold it', async () => {
     // The task's project is backgrounded: main has another project open, so the
     // board holds THAT project's tasks and this one is missing, as in main. A

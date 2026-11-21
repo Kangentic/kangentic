@@ -9,6 +9,8 @@ sources:
   - resource: src/main/transcription/transcription-service.ts
   - resource: src/renderer/hooks/useDictation.ts
   - resource: src/renderer/utils/dictation-hold.ts
+  - resource: src/renderer/utils/push-to-talk-buttons.ts
+  - resource: src/renderer/hooks/useBrowserMouseNavigation.ts
   - resource: src/renderer/utils/keybindings.ts
     title: matchesMouseRelease, matchesMouseChordPress
   - resource: src/main/ipc/handlers/transcription.ts
@@ -28,7 +30,10 @@ in the app, plus fields inside an embedded browser's guest page; a terminal is t
 rule. A password field REFUSES outright rather than falling through to a terminal, and says so on the
 chip. Because the default binding is a mouse button that also means "back", press DURATION separates
 the two: a hold dictates, and a tap under `NAVIGATION_TAP_MS` instead navigates an active Browser
-pane's history. See `docs/architecture/embedded-browser/decision-log.md` decisions 21 and 24 for the target rules in full.
+pane's history. That split applies only to a button push-to-talk holds (`pushToTalkMouseButtons`):
+dictation on, a mouse binding, and the main window, the only window dictation runs in. Every other
+back or forward press is plain navigation in `useBrowserMouseNavigation`, so the buttons still
+navigate with dictation off and in a popped-out pane. See `docs/architecture/embedded-browser/decision-log.md` decisions 21 and 24 for the target rules in full.
 Global-only (App Settings only; no per-project override).
 Engines run on-device via `sherpa-onnx-node`; a Cloud refinement option routes only the final clip to
 an OpenAI-compatible endpoint. The engines live in the `kangentic-dictation` utility process, which
