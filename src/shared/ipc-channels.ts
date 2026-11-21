@@ -657,6 +657,11 @@ export const IPC = {
   // a drive is the user), already encoded as terminal bytes. The renderer routes
   // it to the terminal the user was typing in.
   BROWSER_USER_KEY_DURING_DRIVE: 'browser:userKeyDuringDrive',
+  // Main -> renderer: the user pressed a Browser pane tool shortcut (Select
+  // element, Draw) while the pane's guest held keyboard focus. A key typed into
+  // a guest never reaches the app's document, so main matched it at the guest,
+  // kept it from the page, and names the action (`browser-pane-guest-shortcuts.ts`).
+  BROWSER_PANE_SHORTCUT: 'browser:paneShortcut',
   // Main -> renderer: the user pressed or released a mouse BACK / FORWARD button
   // while a Browser pane's guest held focus.
   //

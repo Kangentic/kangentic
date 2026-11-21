@@ -8,7 +8,7 @@ import { useDrawingOverlay } from './useDrawingOverlay';
 import { compositeCapture } from './captureComposite';
 import { BrowserEmptyState } from './BrowserEmptyState';
 import { useBrowserUrl } from './useBrowserUrl';
-import { INSPECT_SCRIPT } from './inspectScript';
+import { INSPECT_CANCEL_SCRIPT, INSPECT_SCRIPT } from './inspectScript';
 import { useBrowserAnnotations } from './annotations/useBrowserAnnotations';
 import { AnnotationComposer, ANNOTATION_NOTE_ATTRIBUTE, annotationRowsMaxHeight } from './annotations/AnnotationComposer';
 import { AnnotationBar, readBarCorner, writeBarCorner, type AnnotationBarCorner } from './annotations/AnnotationBar';
@@ -686,20 +686,9 @@ function BrowserPaneActive({
     inspectRunRef.current += 1;
     inspectActiveRef.current = false;
     setInspectActive(false);
-    // Forcibly clean up the webview side: drop the active flag, remove
-    // any leftover hover overlay, and dispatch Escape so any in-flight
-    // inspect script promise resolves with null.
-    webviewRef.current
-      ?.executeJavaScript(`
-        (function () {
-          window.__kangenticInspectActive = false;
-          window.__kangenticInspectMode = false;
-          var overlay = document.querySelector('[data-kangentic-inspector]');
-          if (overlay) overlay.remove();
-          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        })();
-      `)
-      .catch(() => undefined);
+    // Forcibly clean up the webview side, without sending the page anything
+    // (see INSPECT_CANCEL_SCRIPT).
+    webviewRef.current?.executeJavaScript(INSPECT_CANCEL_SCRIPT).catch(() => undefined);
   }, []);
 
   // Select element mode: stays on, so every click on the page adds an element
@@ -735,7 +724,7 @@ function BrowserPaneActive({
         // The loop ended on its own (Esc in the page, or an error): the page's
         // presses go back to it.
         try {
-          void webview.executeJavaScript('window.__kangenticInspectMode = false;').catch(() => undefined);
+          void webview.executeJavaScript(INSPECT_CANCEL_SCRIPT).catch(() => undefined);
         } catch {
           // A guest that is gone has no guard left to clear.
         }
@@ -749,13 +738,12 @@ function BrowserPaneActive({
   }, [cancelInspect, startInspect]);
 
   const toggleDraw = useCallback(() => {
-    setDrawMode((previous) => {
-      // Drawing and inspecting both want pointer events; only one at a time.
-      // Aborting Inspect's loop is what actually stops the script from
-      // intercepting clicks in the webview.
-      if (!previous) cancelInspect();
-      return !previous;
-    });
+    // Drawing and inspecting both want pointer events; only one at a time.
+    // Aborting Inspect's loop is what actually stops the script from
+    // intercepting clicks in the webview. Only a running Select is ended:
+    // turning Draw on sends the page nothing.
+    if (inspectActiveRef.current) cancelInspect();
+    setDrawMode((previous) => !previous);
   }, [cancelInspect]);
 
   // Esc ends Select element or Draw. Kept as a hand-written CAPTURE-phase
@@ -902,6 +890,19 @@ function BrowserPaneActive({
   useKeybinding('browser.zoomIn', () => zoomIn(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomOut', () => zoomOut(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomReset', () => resetZoom(), { ...browserKeyOptions, when: paneActive });
+
+  // Select element and Draw typed INTO the page. The guest keeps its keys, so
+  // the bindings above never see them: main matches them at the guest, keeps
+  // them from the page, and names the action for the pane hosting that guest.
+  useEffect(() => {
+    const browser = window.electronAPI?.browser;
+    if (!browser?.onPaneShortcut) return;
+    return browser.onPaneShortcut((webContentsId, actionId) => {
+      if (webContentsId !== registeredWebContentsIdRef.current) return;
+      if (actionId === 'browser.inspect') toggleInspect();
+      else if (actionId === 'browser.draw') toggleDraw();
+    });
+  }, [toggleInspect, toggleDraw]);
 
   // Publish this pane as the target for a mouse back/forward gesture. The
   // gesture itself is owned by `useBrowserMouseNavigation`, and by

@@ -68,6 +68,7 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
+import { INSPECT_CANCEL_SCRIPT, INSPECT_SCRIPT } from '../../src/renderer/components/browser/inspectScript';
 
 // Each describe is isolated per worker (separate process; page.goto() in beforeEach resets
 // state), so the file's tests can fan out across the UI workers safely.
@@ -609,13 +610,8 @@ test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspec
   // assert the pane-local callbacks never ran.
 
   test('Ctrl+Shift+D does NOT toggle draw mode when the pane is neither hovered nor focused', async () => {
-    // setDrawMode's updater calls cancelInspect() synchronously when turning
-    // draw ON, which calls webviewRef.current?.executeJavaScript(...). The
-    // headless <webview> stub has no such method, so if the gate fails to
-    // block the callback, the resulting TypeError is thrown during React's
-    // render phase and the ErrorBoundary tears down BrowserPaneActive. "Pane
-    // stays mounted" is therefore proof the callback did not run, not just
-    // that draw settled back to off.
+    // Draw is a plain toggle with nothing to settle, so the button staying off
+    // is proof the callback did not run.
     await openBrowserPane(sharedPage);
     const drawButton = sharedPage.locator('[data-testid="browser-draw-toggle"]');
     await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
@@ -662,5 +658,129 @@ test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspec
     await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
     await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
     await expect(sharedPage.locator('[data-testid="browser-send-error"]')).not.toBeVisible();
+  });
+});
+
+test.describe('BrowserPaneActive tool shortcuts typed into the page', () => {
+  // A key typed into the <webview> guest never reaches the app's document, so
+  // main matches Select element and Draw at the guest and pushes the action
+  // (IPC.BROWSER_PANE_SHORTCUT). The pane runs it only for its own guest.
+  const GUEST_ID = 4242;
+
+  async function registerGuest(page: Page, webContentsId: number): Promise<void> {
+    await page.evaluate((guestId: number) => {
+      const element = document.querySelector('[data-testid="browser-webview"]');
+      if (!element) throw new Error('browser-webview element not found in DOM');
+      const stub = element as HTMLElement & { getWebContentsId: () => number; getURL: () => string };
+      stub.getWebContentsId = () => guestId;
+      stub.getURL = () => 'http://localhost:5173/';
+      element.dispatchEvent(new Event('dom-ready'));
+    }, webContentsId);
+    await expect.poll(() => page.evaluate((guestId: number) => {
+      const calls = window.__mockBrowser?.getPaneCalls() ?? [];
+      return calls.filter((call) => call.type === 'register' && call.input.webContentsId === guestId).length;
+    }, webContentsId), { timeout: 5000 }).toBeGreaterThan(0);
+  }
+
+  test('a Draw shortcut from this pane\'s guest toggles Draw, and one from another guest does not', async () => {
+    await openBrowserPane(sharedPage);
+    await registerGuest(sharedPage, GUEST_ID);
+    const drawButton = sharedPage.locator('[data-testid="browser-draw-toggle"]');
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
+
+    await sharedPage.evaluate(() => window.__mockBrowser?.emitPaneShortcut(9999, 'browser.draw'));
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
+
+    await sharedPage.evaluate((guestId: number) => window.__mockBrowser?.emitPaneShortcut(guestId, 'browser.draw'), GUEST_ID);
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'true');
+
+    await sharedPage.evaluate((guestId: number) => window.__mockBrowser?.emitPaneShortcut(guestId, 'browser.draw'), GUEST_ID);
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  /**
+   * Gives the stand-in guest an `executeJavaScript` that records every script and keeps the
+   * Select element picker pending until the cancel script ends it, as a real page does.
+   */
+  async function recordGuestScripts(page: Page, inspectScript: string, cancelScript: string): Promise<void> {
+    await page.evaluate(([pickerSource, cancelSource]) => {
+      const webview = document.querySelector('[data-testid="browser-webview"]');
+      if (!webview) throw new Error('browser-webview element not found in DOM');
+      const scripts: string[] = [];
+      let endPicker: ((value: null) => void) | null = null;
+      (window as unknown as { __guestScripts: string[] }).__guestScripts = scripts;
+      Object.assign(webview, {
+        executeJavaScript: (code: string) => {
+          scripts.push(code);
+          if (code === pickerSource) {
+            return new Promise((resolve) => { endPicker = resolve; });
+          }
+          if (code === cancelSource && endPicker) {
+            const resolve = endPicker;
+            endPicker = null;
+            resolve(null);
+          }
+          return Promise.resolve();
+        },
+      });
+    }, [inspectScript, cancelScript]);
+  }
+
+  const guestScripts = (page: Page): Promise<string[]> =>
+    page.evaluate(() => [...((window as unknown as { __guestScripts: string[] }).__guestScripts)]);
+
+  const pushPaneShortcut = (page: Page, guestId: number, actionId: 'browser.inspect' | 'browser.draw'): Promise<void> =>
+    page.evaluate(([id, action]) => {
+      window.__mockBrowser?.emitPaneShortcut(id as number, action as 'browser.inspect' | 'browser.draw');
+    }, [guestId, actionId] as const);
+
+  test('a Select element shortcut from this pane\'s guest toggles Select element, and one from another guest does not', async () => {
+    await openBrowserPane(sharedPage);
+    await registerGuest(sharedPage, GUEST_ID);
+    await recordGuestScripts(sharedPage, INSPECT_SCRIPT, INSPECT_CANCEL_SCRIPT);
+    const inspectButton = sharedPage.locator('[data-testid="browser-inspect-toggle"]');
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
+
+    await pushPaneShortcut(sharedPage, 9999, 'browser.inspect');
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
+    expect(await guestScripts(sharedPage)).toEqual([]);
+
+    await pushPaneShortcut(sharedPage, GUEST_ID, 'browser.inspect');
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => guestScripts(sharedPage)).toContain(INSPECT_SCRIPT);
+
+    await pushPaneShortcut(sharedPage, GUEST_ID, 'browser.inspect');
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => guestScripts(sharedPage)).toContain(INSPECT_CANCEL_SCRIPT);
+  });
+
+  test('a Draw shortcut ends a running Select element, and sends the page nothing when Select element is off', async () => {
+    await openBrowserPane(sharedPage);
+    await registerGuest(sharedPage, GUEST_ID);
+    await recordGuestScripts(sharedPage, INSPECT_SCRIPT, INSPECT_CANCEL_SCRIPT);
+    const inspectButton = sharedPage.locator('[data-testid="browser-inspect-toggle"]');
+    const drawButton = sharedPage.locator('[data-testid="browser-draw-toggle"]');
+
+    // Select element off: Draw turns on and the page is sent no cancel script.
+    await pushPaneShortcut(sharedPage, GUEST_ID, 'browser.draw');
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'true');
+    expect((await guestScripts(sharedPage)).filter((script) => script === INSPECT_CANCEL_SCRIPT)).toHaveLength(0);
+    await pushPaneShortcut(sharedPage, GUEST_ID, 'browser.draw');
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
+    expect((await guestScripts(sharedPage)).filter((script) => script === INSPECT_CANCEL_SCRIPT)).toHaveLength(0);
+
+    // Select element on: Draw turns on, Select element ends, and the page is told to end its picker.
+    await pushPaneShortcut(sharedPage, GUEST_ID, 'browser.inspect');
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => guestScripts(sharedPage)).toContain(INSPECT_SCRIPT);
+    await pushPaneShortcut(sharedPage, GUEST_ID, 'browser.draw');
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(async () => (await guestScripts(sharedPage)).filter((script) => script === INSPECT_CANCEL_SCRIPT).length)
+      .toBe(1);
+
+    // Leave Draw off for the next test.
+    await pushPaneShortcut(sharedPage, GUEST_ID, 'browser.draw');
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
   });
 });

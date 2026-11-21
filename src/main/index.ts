@@ -40,6 +40,7 @@ import { agentInputReason } from './browser/browser-pane-reason';
 import { setAgentInputSender, isAgentDriving } from './browser/agent-input-signal';
 import { setViewportOverrideSender } from './browser/viewport-override-store';
 import { encodeTerminalKey } from '../shared/terminal-key-encoding';
+import { guestShortcutFor } from '../shared/browser-pane-guest-shortcuts';
 import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
@@ -868,6 +869,21 @@ app.on('web-contents-created', (_event, contents) => {
       const hostWindow = BrowserWindow.fromWebContents(contents.hostWebContents ?? contents);
       if (encoded !== null && hostWindow && !hostWindow.isDestroyed()) {
         hostWindow.webContents.send(IPC.BROWSER_USER_KEY_DURING_DRIVE, contents.id, encoded);
+      }
+      return;
+    }
+
+    // A Browser pane tool shortcut (Select element, Draw) typed into the page.
+    // A key the guest holds never reaches the app's document, so the pane's own
+    // listener cannot see it: right after a click in the page, the tools would
+    // not answer their keys. The page never gets it either, so a menu it has
+    // open stays open for the tool to mark.
+    const paneShortcut = guestShortcutFor(input, process.platform);
+    if (paneShortcut) {
+      inputEvent.preventDefault();
+      const shortcutHostWindow = BrowserWindow.fromWebContents(contents.hostWebContents ?? contents);
+      if (shortcutHostWindow && !shortcutHostWindow.isDestroyed()) {
+        shortcutHostWindow.webContents.send(IPC.BROWSER_PANE_SHORTCUT, contents.id, paneShortcut);
       }
       return;
     }

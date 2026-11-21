@@ -605,7 +605,10 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // ── Browser ──
   // Registered so the shortcuts work, but hidden from the panel: they are
   // pane-scoped, non-rebindable, and already surfaced as buttons in the browser
-  // pane toolbar, so listing them here adds only clutter.
+  // pane toolbar, so listing them here adds only clutter. A key typed INTO the
+  // page never reaches the app's document, so main also matches Select element
+  // and Draw at the guest (`browser-pane-guest-shortcuts.ts`); the others stay
+  // with the page while it has focus.
   {
     id: 'browser.inspect',
     label: msg`Select element`,
@@ -631,8 +634,8 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     id: 'browser.undoMark',
     label: msg`Undo the last mark`,
     // Removes the active annotation's last element or stroke. Only while its
-    // note is empty or focus is on the page: a note with text keeps its own
-    // text undo.
+    // note is empty, or focus is elsewhere in the pane: a note with text keeps
+    // its own text undo, and a page with focus keeps Ctrl/Cmd+Z for its fields.
     group: 'Browser',
     scope: 'browser-pane',
     defaultCombo: 'Mod+Z',

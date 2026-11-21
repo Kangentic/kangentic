@@ -240,6 +240,8 @@
   let commandTerminalBrowserStates = {};
   let browserDownloadSubscribers = [];
   let browserUserKeySubscribers = [];
+  // Browser pane tool shortcuts main matched while a guest held focus.
+  let browserPaneShortcutSubscribers = [];
   // Guest mouse back/forward presses forwarded from main. A real guest
   // consumes the mouse, so this push is the only way they reach the renderer.
   let browserGuestMouseSubscribers = [];
@@ -8609,6 +8611,16 @@
           if (index >= 0) browserUserKeySubscribers.splice(index, 1);
         };
       },
+      // Main -> renderer push naming a tool shortcut (browser.inspect,
+      // browser.draw) the user pressed while the guest held keyboard focus.
+      // Driven via window.__mockBrowser.emitPaneShortcut(webContentsId, actionId).
+      onPaneShortcut: function (callback) {
+        browserPaneShortcutSubscribers.push(callback);
+        return function () {
+          const index = browserPaneShortcutSubscribers.indexOf(callback);
+          if (index >= 0) browserPaneShortcutSubscribers.splice(index, 1);
+        };
+      },
       onPaneCloseRequest: function (callback) {
         browserPaneCloseSubscribers.push(callback);
         return function () {
@@ -8842,6 +8854,12 @@
     emitUserKeyDuringDrive: function (webContentsId, data) {
       browserUserKeySubscribers.slice().forEach(function (callback) {
         callback(webContentsId, data);
+      });
+    },
+    /** Fire main's "a tool shortcut was pressed in the guest" push. */
+    emitPaneShortcut: function (webContentsId, actionId) {
+      browserPaneShortcutSubscribers.slice().forEach(function (callback) {
+        callback(webContentsId, actionId);
       });
     },
   };

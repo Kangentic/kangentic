@@ -10,6 +10,7 @@ import type {
 } from './announcements';
 import type { AppLocale } from './i18n/locales';
 import type { UserSetupMatch } from './user-configuration-error';
+import type { GuestBrowserShortcut } from './browser-pane-guest-shortcuts';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
 import {
   DEFAULT_AGENT_ACCOUNTS_CONFIG,
@@ -10806,6 +10807,15 @@ export interface ElectronAPI {
      */
     onUserKeyDuringDrive: (
       callback: (webContentsId: number, data: string) => void,
+    ) => () => void;
+    /**
+     * The user pressed a tool shortcut (`browser.inspect`, `browser.draw`)
+     * while this guest held keyboard focus. A key typed into a guest never
+     * reaches the app's document, so main matched it, kept it from the page,
+     * and names the action here; the pane hosting `webContentsId` runs it.
+     */
+    onPaneShortcut: (
+      callback: (webContentsId: number, actionId: GuestBrowserShortcut) => void,
     ) => () => void;
     /**
      * The user pressed or released a mouse BACK / FORWARD button while this
