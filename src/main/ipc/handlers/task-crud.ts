@@ -35,7 +35,7 @@ import { wakeWorkflowEngine } from '../../workflows/workflow-wake';
 import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import { taskHoldRefusal } from '../../workflows/workflow-lock-check';
 import type { IpcContext } from '../ipc-context';
-import type { Task, TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
+import type { Task, TaskArtifactInput, TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
 import { RefusalError } from '../../../shared/refusal';
 
 /**
@@ -105,6 +105,15 @@ function withDeadline<T>(
 }
 
 /** Refuse a save the dialogs would have blocked, so no other caller gets past the limit. */
+/**
+ * Artifacts a person sends from a task window, with only a link and a name: a
+ * name they send is a chosen one, so no mark the payload carries (`nameFrom`)
+ * lets a later publish replace it.
+ */
+function chosenArtifactInputs(inputs: readonly TaskArtifactInput[]): TaskArtifactInput[] {
+  return inputs.map((entry) => ({ url: entry.url, name: entry.name }));
+}
+
 function assertDescriptionFits(description: string | undefined, previousDescription: string | null): void {
   if (description === undefined) return;
   const refusal = taskDescriptionRefusal(description, previousDescription);
@@ -122,7 +131,9 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.TASK_CREATE, async (event, input, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     const { tasks, swimlanes, automations, automationRuns, attachments } = getProjectRepos(context, resolvedProjectId);
-    const { pendingAttachments, ...taskInput } = input;
+    const { pendingAttachments, artifactSource: _payloadArtifactSource, ...taskInput } = input;
+    // A task created from the window is a person's, whatever the payload says.
+    if (taskInput.artifacts) taskInput.artifacts = chosenArtifactInputs(taskInput.artifacts);
     assertDescriptionFits(taskInput.description, null);
     const task = tasks.create(taskInput);
     trackMilestone('first_task');
@@ -253,7 +264,13 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     }
 
     // An artifact edit from the window is a person's, whatever the payload says.
-    if (input.artifactChanges) input.artifactChanges = { ...input.artifactChanges, source: 'user' };
+    if (input.artifactChanges) {
+      input.artifactChanges = {
+        ...input.artifactChanges,
+        ...(input.artifactChanges.add ? { add: chosenArtifactInputs(input.artifactChanges.add) } : {}),
+        source: 'user',
+      };
+    }
 
     const updated = timeSyncWork('ipc:task:update', () => tasks.update(input));
     if (input.artifactChanges) reportAddedArtifactDomains(existing?.artifacts ?? [], updated.artifacts, 'user');

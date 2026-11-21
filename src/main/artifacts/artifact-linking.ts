@@ -26,7 +26,7 @@ export interface LinkArtifactsOptions {
   /** Defaults to the session's project, else the open one. */
   projectId?: string | null;
   artifacts: readonly TaskArtifactInput[];
-  /** `agent` for an agent's own publish, `detected` for a link read out of text. */
+  /** `publish` for an agent's own publish, `detected` for a link read out of text. */
   source: TaskArtifactSource;
 }
 

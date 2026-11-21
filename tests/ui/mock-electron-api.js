@@ -617,7 +617,30 @@
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return text;
     var host = parsed.hostname.toLowerCase().replace(/^www\./, '');
     var path = parsed.pathname.length > 1 ? parsed.pathname.replace(/\/+$/, '') : '';
-    return 'https://' + host + (parsed.port ? ':' + parsed.port : '') + path + parsed.search + parsed.hash;
+    // A Claude canvas links each board by fragment, and every board is one
+    // artifact, as main's `fragmentIsAnchor` keys it.
+    var hash = fragmentIsAnchor(host, parsed.pathname) ? '' : parsed.hash;
+    return 'https://' + host + (parsed.port ? ':' + parsed.port : '') + path + parsed.search + hash;
+  }
+
+  function fragmentIsAnchor(host, pathname) {
+    return (host === 'claude.ai' && /^\/(artifact|public\/artifacts|code\/artifact)\//.test(pathname))
+      || (host === 'claude.site' && /^\/artifacts\//.test(pathname));
+  }
+
+  // Whether a name sent with a held link replaces the row's, as main's `nameReplaces`.
+  function artifactNameReplaces(row, source) {
+    if (row.name === null || source === 'user') return true;
+    if (source === 'publish') return row.name_from !== undefined;
+    return false;
+  }
+
+  // `artifact` named `name`, with where the name came from when nobody chose it.
+  function withArtifactName(artifact, name, nameFrom) {
+    var named = Object.assign({}, artifact, { name: name });
+    delete named.name_from;
+    if (name !== null && nameFrom) named.name_from = nameFrom;
+    return named;
   }
 
   function isHttpLink(url) {
@@ -642,8 +665,9 @@
     });
     (changes.rename || []).forEach(function (entry) {
       var key = artifactKeyOf(entry.url);
+      // A rename is a chosen name, so it drops a publish or borrowed mark.
       artifacts = artifacts.map(function (a) {
-        return artifactKeyOf(a.url) === key ? Object.assign({}, a, { name: cleanArtifactName(entry.name) }) : a;
+        return artifactKeyOf(a.url) === key ? withArtifactName(a, cleanArtifactName(entry.name)) : a;
       });
     });
     (changes.add || []).forEach(function (entry) {
@@ -652,15 +676,17 @@
       var key = artifactKeyOf(url);
       var existing = artifacts.findIndex(function (a) { return artifactKeyOf(a.url) === key; });
       var name = cleanArtifactName(entry.name);
+      var nameFrom = name === null ? undefined : (entry.nameFrom || (source === 'publish' ? 'publish' : undefined));
       if (existing !== -1) {
-        if (name !== null && source !== 'detected') {
-          artifacts[existing] = Object.assign({}, artifacts[existing], { name: name });
+        // A re-add never takes a name away: only a person's, or a publish over a title, replaces it.
+        if (name !== null && artifactNameReplaces(artifacts[existing], source)) {
+          artifacts[existing] = withArtifactName(artifacts[existing], name, nameFrom);
         }
         return;
       }
       if (source === 'detected' && dismissed.indexOf(key) !== -1) return;
       if (artifacts.length >= MAX_MOCK_TASK_ARTIFACTS) return;
-      artifacts.push({ url: url, name: name, source: source, added_at: now() });
+      artifacts.push(withArtifactName({ url: url, source: source, added_at: now() }, name, nameFrom));
       dismissed = dismissed.filter(function (k) { return k !== key; });
     });
     dismissedArtifactKeys[task.id] = dismissed;
@@ -728,7 +754,8 @@
     };
     // The artifacts a create names, as main's `TaskRepository.create` stores them.
     if (input.artifacts && input.artifacts.length > 0) {
-      row.artifacts = applyMockArtifactChanges(row, { add: input.artifacts }, input.artifactSource || 'user');
+      // A create from the window is a person's, as main's TASK_CREATE handler records it.
+      row.artifacts = applyMockArtifactChanges(row, { add: input.artifacts.map(function (entry) { return { url: entry.url, name: entry.name }; }) }, 'user');
     }
     return row;
   }
