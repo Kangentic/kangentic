@@ -340,11 +340,13 @@ export function closeMcpHttpServerSafely(httpServer: Pick<Server, 'closeAllConne
  * `/mcp/<projectId>/<callerSessionId>`.
  *
  * `callerSessionId` (the third segment) is OPTIONAL by design and its absence
- * is never an error: a human running `claude` outside Kangentic, an older
- * session whose mcp.json predates the third segment, and the per-project
- * `.kangentic/mcp-config.json` all legitimately dial the two-segment form.
- * Steering degrades gracefully to an unattributed caller rather than refusing
- * (see caller-url.ts). A fourth-and-later segment is ignored, matching the
+ * is never an error: a human running `claude` outside Kangentic and the
+ * per-project `.kangentic/mcp-config.json` legitimately dial the two-segment
+ * form. Every agent Kangentic starts gets the third segment in the config its
+ * spawn writes (`appendCallerSession`), so an absent one is a client outside
+ * Kangentic, and a `kangentic_move_task` from it counts as the owner's
+ * (`onTaskMove`). Steering degrades gracefully to an unattributed caller
+ * rather than refusing (see caller-url.ts). A fourth-and-later segment is ignored, matching the
  * behavior before this was extracted (only segments[1]/segments[2] were ever
  * read).
  *

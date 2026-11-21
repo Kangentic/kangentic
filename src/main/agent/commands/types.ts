@@ -119,8 +119,10 @@ export interface CommandContext {
    * `moverSessionId` names the task's own agent session that asked for the
    * move: a move that ends it lets its turn finish first.
    * `callerSessionId` names the session that made the call, whatever task it
-   * runs: when its current turn holds a message the owner typed, the move
-   * counts as the owner's for a row's Frequency (`turnStartedByOwner`).
+   * runs, and decides whether the move counts as the owner's for a row's
+   * Frequency. A Command Terminal's move does, and so does a call with no
+   * caller session (a client outside Kangentic). Any other session's move does
+   * when its current turn holds a message the owner typed (`turnStartedByOwner`).
    */
   onTaskMove: (
     input: { taskId: string; targetSwimlaneId: string; targetPosition: number },

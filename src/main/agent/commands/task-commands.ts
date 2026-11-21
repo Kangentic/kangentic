@@ -1135,8 +1135,10 @@ export const handleMoveTask: CommandHandler = (
     // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
     // The MCP response confirms intent; the LLM should re-query to verify state if needed.
     const moveInput = { taskId: movingTask.id, targetSwimlaneId: targetSwimlane.id, targetPosition };
-    // Any calling session, not only the task's own: main reads its current
-    // turn to tell an owner's request from the board's (`turnStartedByOwner`).
+    // Any calling session, not only the task's own: main decides from it
+    // whether the owner asked for the move. A Command Terminal's move is the
+    // owner's, and any other session's is read from its current turn
+    // (`turnStartedByOwner`).
     const moveOptions = {
       ...(message ? { message } : {}),
       ...(moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
