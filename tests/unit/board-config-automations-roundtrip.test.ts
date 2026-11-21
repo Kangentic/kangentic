@@ -142,6 +142,32 @@ describe('kangentic.json automations round-trip', () => {
     expect(second.columns).toEqual(first.columns);
   });
 
+  // #1141: Notify and Webhook run on enter in To Do and Done, so those rows are
+  // team-shared board state like any other. Nothing in build or apply skips a
+  // role-bearing lane, and this pins it: a role skip added later would drop the
+  // row on the next project open and a teammate's To Do would go quiet.
+  it('keeps an On enter row in To Do and Done through build and apply', () => {
+    const { lanes, automations } = freshDatabase();
+    const todo = lanes.list().find((lane) => lane.role === 'todo')!;
+    const done = lanes.list().find((lane) => lane.role === 'done')!;
+    automations.replaceForColumn(todo.id, [
+      { name: 'Reopened', type: 'webhook', trigger: 'enter', enabled: true, config: { url: 'https://hooks.example.com/reopened' } },
+    ]);
+    automations.replaceForColumn(done.id, [
+      { name: 'Shipped', type: 'notify', trigger: 'enter', enabled: true, config: { title: 'Shipped', body: 'Task finished' } },
+    ]);
+
+    const first = build();
+    expect(columnNamed(first, todo.name)?.automations?.onEnter?.map((row) => `${row.name}:${row.type}`)).toEqual(['Reopened:webhook']);
+    expect(columnNamed(first, done.name)?.automations?.onEnter?.map((row) => `${row.name}:${row.type}`)).toEqual(['Shipped:notify']);
+
+    // Through the file and back, then a second apply: the rows survive both.
+    applyBoardConfigToDb('p1', JSON.parse(JSON.stringify(first)) as BoardConfig);
+    expect(automations.listForColumn(todo.id).map((row) => [row.name, row.trigger])).toEqual([['Reopened', 'enter']]);
+    expect(automations.listForColumn(done.id).map((row) => [row.name, row.trigger])).toEqual([['Shipped', 'enter']]);
+    expect(build().columns).toEqual(first.columns);
+  });
+
   // #872: a row's Task lines (filter) and a Text match beside an Agent
   // evaluation are file format 2. A board that uses neither stays format 1, so
   // an older build keeps reading it.
