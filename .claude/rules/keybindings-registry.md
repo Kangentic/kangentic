@@ -117,4 +117,8 @@ the same array.
 Renderer keyboard shortcuts under `src/renderer/`. The xterm clipboard handler and structural
 dialog Escape handling are the documented exceptions above. Main-process accelerators (the
 global-shortcut availability probe in `handlers/system.ts`) consume the registry's
-`comboToAccelerator` but are not themselves `useKeybinding` consumers.
+`comboToAccelerator` but are not themselves `useKeybinding` consumers. A key typed into a Browser
+pane's page never reaches the app's document, so main matches Select element and Draw at the
+guest (`guestShortcutFor`, `src/shared/browser-pane-guest-shortcuts.ts`) through the renderer's
+own matcher (`src/shared/keyboard-combo-match.ts`). It reads no user overrides, so only a
+`rebindable: false` entry may join that list, which `browser-pane-guest-shortcuts.test.ts` pins.

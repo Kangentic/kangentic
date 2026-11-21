@@ -7,6 +7,7 @@
 import { i18n, type MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { CLICK_TOKEN, isMouseCombo, normalizeCombo } from '../../shared/keybindings';
+import { keyStateMatchesCombo } from '../../shared/keyboard-combo-match';
 
 /** True on macOS, where `Mod` resolves to Cmd (metaKey) instead of Ctrl.
  *  Guard `window` so this module is safe to import in the node/unit test
@@ -79,25 +80,6 @@ export function isMouseComboButton(button: number, combo: string): boolean {
   return token !== null && combo.split('+').includes(token);
 }
 
-/** Compare the event's main key against a canonical main-key token. */
-function keyMatches(event: KeyboardEvent, mainKey: string, withAlt: boolean): boolean {
-  // The key left of 1 types a different character on each layout (`, ^, ², a
-  // dead key), and Shift changes it again, so it is matched by position.
-  if (mainKey === 'Backquote') return event.code === 'Backquote';
-  // Letters: case-insensitive (Shift changes event.key casing).
-  if (mainKey.length === 1 && /[a-z]/i.test(mainKey)) {
-    if (event.key.toLowerCase() === mainKey.toLowerCase()) return true;
-    // Alt composes a character on macOS (Option+Shift+D types another letter)
-    // and is AltGr with Ctrl on many Windows layouts, so event.key never names
-    // the letter there. With Alt held the letter is also matched by position.
-    return withAlt && event.code === `Key${mainKey.toUpperCase()}`;
-  }
-  // Zoom-in: treat '=' and '+' as equivalent (layout-dependent event.key).
-  if (mainKey === '=') return event.key === '=' || event.key === '+';
-  // Digits, other symbols, and named keys (Enter, Escape, F5): exact match.
-  return event.key === mainKey;
-}
-
 /**
  * Whether an input event satisfies a canonical combo.
  *
@@ -122,34 +104,8 @@ export function matchesCombo(event: KeyboardEvent | PointerEvent, combo: string)
   }
   // A keyboard combo never matches a pointer event.
   if (!('key' in event)) return false;
-
-  const parts = combo.split('+');
-  const mainKey = parts[parts.length - 1];
-  const modifiers = new Set(parts.slice(0, -1).map((modifier) => modifier.toLowerCase()));
-
-  const wantMod = modifiers.has('mod');
-  const wantCtrlLiteral = modifiers.has('ctrl');
-  const wantAlt = modifiers.has('alt');
-  const wantShift = modifiers.has('shift');
-
-  const modActive = IS_MAC ? event.metaKey : event.ctrlKey;
-
-  if (wantMod && !modActive) return false;
-  if (wantCtrlLiteral && !(event.ctrlKey && !event.metaKey)) return false;
-  // No primary modifier requested: neither Ctrl nor Meta may be down.
-  if (!wantMod && !wantCtrlLiteral && (event.ctrlKey || event.metaKey)) return false;
-  if (wantAlt !== event.altKey) return false;
-  // The zoom-in key is canonical '=', but on most layouts '+' is Shift+'='.
-  // keyMatches() treats '=' and '+' as equivalent, so a combo that wants a bare
-  // '=' must also accept the Shift-held '+' press (e.g. Ctrl+Shift+= to zoom in).
-  // Every other key requires an exact Shift match.
-  if (mainKey === '=') {
-    if (wantShift && !event.shiftKey) return false;
-  } else if (wantShift !== event.shiftKey) {
-    return false;
-  }
-
-  return keyMatches(event, mainKey, wantAlt);
+  // Shared with main's match of keys typed into a Browser pane's page.
+  return keyStateMatchesCombo(event, combo, IS_MAC);
 }
 
 const MAC_GLYPHS: Record<string, string> = {
